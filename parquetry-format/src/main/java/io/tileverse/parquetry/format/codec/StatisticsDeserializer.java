@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.format.codec;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.Optional;
 
 import io.tileverse.parquetry.format.Statistics;
@@ -41,12 +42,12 @@ final class StatisticsDeserializer {
     private StatisticsDeserializer() {}
 
     static Statistics read(CompactProtocolReader r) throws IOException {
-        Optional<byte[]> max = Optional.empty();
-        Optional<byte[]> min = Optional.empty();
+        Optional<ByteBuffer> max = Optional.empty();
+        Optional<ByteBuffer> min = Optional.empty();
         Optional<Long> nullCount = Optional.empty();
         Optional<Long> distinctCount = Optional.empty();
-        Optional<byte[]> maxValue = Optional.empty();
-        Optional<byte[]> minValue = Optional.empty();
+        Optional<ByteBuffer> maxValue = Optional.empty();
+        Optional<ByteBuffer> minValue = Optional.empty();
         Optional<Boolean> isMaxValueExact = Optional.empty();
         Optional<Boolean> isMinValueExact = Optional.empty();
         int lastFieldId = 0;

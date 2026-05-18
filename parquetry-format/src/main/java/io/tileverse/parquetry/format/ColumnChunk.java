@@ -15,6 +15,7 @@
  */
 package io.tileverse.parquetry.format;
 
+import java.nio.ByteBuffer;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
@@ -30,4 +31,9 @@ public record ColumnChunk(
         OptionalLong columnIndexOffset,
         OptionalInt columnIndexLength,
         Optional<ColumnCryptoMetaData> cryptoMetadata,
-        Optional<byte[]> encryptedColumnMetadata) {}
+        Optional<ByteBuffer> encryptedColumnMetadata) {
+
+    public ColumnChunk {
+        encryptedColumnMetadata = encryptedColumnMetadata.map(ByteBuffer::asReadOnlyBuffer);
+    }
+}

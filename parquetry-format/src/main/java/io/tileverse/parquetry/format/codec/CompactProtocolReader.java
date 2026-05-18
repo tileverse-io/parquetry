@@ -18,6 +18,7 @@ package io.tileverse.parquetry.format.codec;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
 /**
@@ -58,13 +59,14 @@ public final class CompactProtocolReader {
         return Double.longBitsToDouble(bits);
     }
 
-    public byte[] readBinary() throws IOException {
+    public ByteBuffer readBinary() throws IOException {
         int len = (int) readVarLong();
-        return readN(len);
+        byte[] bytes = readN(len);
+        return ByteBuffer.wrap(bytes).asReadOnlyBuffer();
     }
 
     public String readString() throws IOException {
-        return new String(readBinary(), StandardCharsets.UTF_8);
+        return StandardCharsets.UTF_8.decode(readBinary()).toString();
     }
 
     public boolean readBool() throws IOException {

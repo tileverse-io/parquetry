@@ -13,15 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.format.crypto;
+package io.tileverse.parquetry.schema;
 
-import java.nio.ByteBuffer;
-import java.util.Optional;
-
-/** Stub. Real fields: encryptionAlgorithm, keyMetadata. */
-public record FileCryptoMetaData(Optional<EncryptionAlgorithm> encryptionAlgorithm, Optional<ByteBuffer> keyMetadata) {
-
-    public FileCryptoMetaData {
-        keyMetadata = keyMetadata.map(ByteBuffer::asReadOnlyBuffer);
-    }
+/** Parquet field repetition level: how many times a field may appear in a record. */
+public enum Repetition {
+    REQUIRED,
+    OPTIONAL,
+    REPEATED
 }

@@ -13,15 +13,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.format.crypto;
+package io.tileverse.parquetry.codec.impl;
 
 import java.nio.ByteBuffer;
-import java.util.Optional;
 
-/** Stub. Real fields: encryptionAlgorithm, keyMetadata. */
-public record FileCryptoMetaData(Optional<EncryptionAlgorithm> encryptionAlgorithm, Optional<ByteBuffer> keyMetadata) {
+import io.tileverse.parquetry.codec.Codec;
+import io.tileverse.parquetry.format.enums.CompressionCodec;
 
-    public FileCryptoMetaData {
-        keyMetadata = keyMetadata.map(ByteBuffer::asReadOnlyBuffer);
+public final class UncompressedCodec implements Codec {
+
+    @Override
+    public CompressionCodec algorithm() {
+        return CompressionCodec.UNCOMPRESSED;
+    }
+
+    @Override
+    public int decompress(ByteBuffer compressed, ByteBuffer output) {
+        int remaining = compressed.remaining();
+        output.put(compressed);
+        return remaining;
     }
 }

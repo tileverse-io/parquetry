@@ -18,6 +18,8 @@ package io.tileverse.parquetry.format.codec;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.ByteArrayInputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 
 import org.junit.jupiter.api.Test;
 
@@ -44,12 +46,17 @@ class CompactProtocolReaderPrimitivesTest {
 
     @Test
     void readBinary_emptyAndNonEmpty() throws Exception {
-        CompactProtocolReader empty = new CompactProtocolReader(new ByteArrayInputStream(new byte[] {0x00}));
-        assertThat(empty.readBinary()).isEmpty();
+        CompactProtocolReader emptyReader = new CompactProtocolReader(new ByteArrayInputStream(new byte[] {0x00}));
+        ByteBuffer empty = emptyReader.readBinary();
+        assertThat(empty.remaining()).isZero();
+        assertThat(empty.isReadOnly()).isTrue();
 
-        CompactProtocolReader hello =
+        CompactProtocolReader helloReader =
                 new CompactProtocolReader(new ByteArrayInputStream(new byte[] {0x05, 'h', 'e', 'l', 'l', 'o'}));
-        assertThat(hello.readBinary()).containsExactly('h', 'e', 'l', 'l', 'o');
+        ByteBuffer hello = helloReader.readBinary();
+        assertThat(hello.isReadOnly()).isTrue();
+        ByteBuffer expected = ByteBuffer.wrap("hello".getBytes(StandardCharsets.UTF_8));
+        assertThat(hello).isEqualTo(expected);
     }
 
     @Test

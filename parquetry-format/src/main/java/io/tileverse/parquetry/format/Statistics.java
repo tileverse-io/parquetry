@@ -15,6 +15,7 @@
  */
 package io.tileverse.parquetry.format;
 
+import java.nio.ByteBuffer;
 import java.util.Optional;
 
 /**
@@ -23,13 +24,23 @@ import java.util.Optional;
  * <p>The (deprecated) {@code max}/{@code min} byte arrays are the legacy fields written
  * by older parquet writers; modern writers use {@code maxValue}/{@code minValue} which
  * obey the column's {@link ColumnOrder}. Both pairs are optional.
+ *
+ * <p>All {@link ByteBuffer} fields are read-only; callers cannot mutate the backing bytes.
  */
 public record Statistics(
-        Optional<byte[]> max,
-        Optional<byte[]> min,
+        Optional<ByteBuffer> max,
+        Optional<ByteBuffer> min,
         Optional<Long> nullCount,
         Optional<Long> distinctCount,
-        Optional<byte[]> maxValue,
-        Optional<byte[]> minValue,
+        Optional<ByteBuffer> maxValue,
+        Optional<ByteBuffer> minValue,
         Optional<Boolean> isMaxValueExact,
-        Optional<Boolean> isMinValueExact) {}
+        Optional<Boolean> isMinValueExact) {
+
+    public Statistics {
+        max = max.map(ByteBuffer::asReadOnlyBuffer);
+        min = min.map(ByteBuffer::asReadOnlyBuffer);
+        maxValue = maxValue.map(ByteBuffer::asReadOnlyBuffer);
+        minValue = minValue.map(ByteBuffer::asReadOnlyBuffer);
+    }
+}

@@ -13,15 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.format.crypto;
+package io.tileverse.parquetry.schema;
 
-import java.nio.ByteBuffer;
-import java.util.Optional;
-
-/** Stub. Real fields: encryptionAlgorithm, keyMetadata. */
-public record FileCryptoMetaData(Optional<EncryptionAlgorithm> encryptionAlgorithm, Optional<ByteBuffer> keyMetadata) {
-
-    public FileCryptoMetaData {
-        keyMetadata = keyMetadata.map(ByteBuffer::asReadOnlyBuffer);
-    }
+/** Physical encoding types for Parquet primitive columns (Thrift {@code Type} enum). */
+public enum PrimitiveKind {
+    BOOLEAN,
+    INT32,
+    INT64,
+    INT96,
+    FLOAT,
+    DOUBLE,
+    BYTE_ARRAY,
+    FIXED_LEN_BYTE_ARRAY
 }

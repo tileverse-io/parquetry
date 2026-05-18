@@ -15,6 +15,7 @@
  */
 package io.tileverse.parquetry.format;
 
+import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Optional;
 
@@ -22,8 +23,8 @@ import io.tileverse.parquetry.format.enums.BoundaryOrder;
 
 public record ColumnIndex(
         List<Boolean> nullPages,
-        List<byte[]> minValues,
-        List<byte[]> maxValues,
+        List<ByteBuffer> minValues,
+        List<ByteBuffer> maxValues,
         BoundaryOrder boundaryOrder,
         Optional<List<Long>> nullCounts,
         Optional<List<Long>> repetitionLevelHistograms,
@@ -31,8 +32,8 @@ public record ColumnIndex(
 
     public ColumnIndex {
         nullPages = List.copyOf(nullPages);
-        minValues = List.copyOf(minValues);
-        maxValues = List.copyOf(maxValues);
+        minValues = minValues.stream().map(ByteBuffer::asReadOnlyBuffer).toList();
+        maxValues = maxValues.stream().map(ByteBuffer::asReadOnlyBuffer).toList();
         nullCounts = nullCounts.map(List::copyOf);
         repetitionLevelHistograms = repetitionLevelHistograms.map(List::copyOf);
         definitionLevelHistograms = definitionLevelHistograms.map(List::copyOf);

@@ -15,6 +15,7 @@
  */
 package io.tileverse.parquetry.format;
 
+import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Optional;
 
@@ -29,12 +30,13 @@ public record FileMetaData(
         Optional<String> createdBy,
         Optional<List<ColumnOrder>> columnOrders,
         Optional<EncryptionAlgorithm> encryptionAlgorithm,
-        Optional<byte[]> footerSigningKeyMetadata) {
+        Optional<ByteBuffer> footerSigningKeyMetadata) {
 
     public FileMetaData {
         schema = List.copyOf(schema);
         rowGroups = List.copyOf(rowGroups);
         keyValueMetadata = List.copyOf(keyValueMetadata);
         columnOrders = columnOrders.map(List::copyOf);
+        footerSigningKeyMetadata = footerSigningKeyMetadata.map(ByteBuffer::asReadOnlyBuffer);
     }
 }
