@@ -20,21 +20,20 @@ import io.tileverse.parquetry.schema.ColumnPath;
 /**
  * Row-by-row column accessor combining decoded values with rep/def levels.
  *
- * <p>The Dremel record assembler walks multiple ColumnReaders in lockstep; each reader
- * exposes:
+ * <p>The Dremel record assembler walks multiple ColumnReaders in lockstep; each reader exposes:
  *
  * <ul>
- *   <li>{@link #currentRepetitionLevel()} indicating where the next row starts (0 for top-level
- *       rows; higher values for nested repeated fields).
- *   <li>{@link #currentDefinitionLevel()} indicating null-ness and the level at which an optional
- *       ancestor became null. Equal to {@link #maxDefinitionLevel()} means the non-null value is
- *       materialized in {@link #currentValue()}; less means null at some level.
- *   <li>{@link #currentValue()} the boxed primitive (or read-only ByteBuffer for binary), valid
- *       only when def level == max def level.
+ *   <li>{@link #currentRepetitionLevel()} indicating where the next row starts (0 for top-level rows; higher values for
+ *       nested repeated fields).
+ *   <li>{@link #currentDefinitionLevel()} indicating null-ness and the level at which an optional ancestor became null.
+ *       Equal to {@link #maxDefinitionLevel()} means the non-null value is materialized in {@link #currentValue()};
+ *       less means null at some level.
+ *   <li>{@link #currentValue()} the boxed primitive (or read-only ByteBuffer for binary), valid only when def level ==
+ *       max def level.
  * </ul>
  *
- * <p>Lifecycle: positioned BEFORE the first row. Call {@link #hasNext()} to check whether the
- * reader has more rows, then read the levels/value, then {@link #consume()} to advance.
+ * <p>Lifecycle: positioned BEFORE the first row. Call {@link #hasNext()} to check whether the reader has more rows,
+ * then read the levels/value, then {@link #consume()} to advance.
  *
  * <p>Thread-confined; one reader per column per row-group-reader instance.
  */
@@ -50,9 +49,8 @@ public interface ColumnReader {
     int currentDefinitionLevel();
 
     /**
-     * The current row's value. Returns null if {@code currentDefinitionLevel() <
-     * maxDefinitionLevel()}. For binary types returns a read-only {@code ByteBuffer}; for INT96 a
-     * read-only 12-byte buffer.
+     * The current row's value. Returns null if {@code currentDefinitionLevel() < maxDefinitionLevel()}. For binary
+     * types returns a read-only {@code ByteBuffer}; for INT96 a read-only 12-byte buffer.
      */
     Object currentValue();
 

@@ -28,8 +28,8 @@ class PlainBooleanDecoderTest {
     /**
      * Verify basic LSB-first bit packing within a single byte.
      *
-     * <p>Byte 0 = 0b10101010 = 0xAA: bits 0,2,4,6 are 0; bits 1,3,5,7 are 1.
-     * Value order: false, true, false, true, false, true, false, true.
+     * <p>Byte 0 = 0b10101010 = 0xAA: bits 0,2,4,6 are 0; bits 1,3,5,7 are 1. Value order: false, true, false, true,
+     * false, true, false, true.
      */
     @Test
     void decodesLsbFirstWithinOneByte() {
@@ -52,8 +52,8 @@ class PlainBooleanDecoderTest {
     /**
      * Verify crossing the byte boundary: 16 values across 2 bytes.
      *
-     * <p>Byte 0 = 0b01010101 = 0x55: alternating F/T starting at T (bit0=1).
-     * Byte 1 = 0b11111111 = 0xFF: all eight values true.
+     * <p>Byte 0 = 0b01010101 = 0x55: alternating F/T starting at T (bit0=1). Byte 1 = 0b11111111 = 0xFF: all eight
+     * values true.
      */
     @Test
     void decodesCrossesByteBounderCorrectly() {

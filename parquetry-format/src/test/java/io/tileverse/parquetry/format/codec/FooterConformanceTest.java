@@ -38,15 +38,15 @@ import io.tileverse.storage.StorageFactory;
 import io.tileverse.parquetry.format.FileMetaData;
 
 /**
- * Conformance test: reads footer via parquetry and compares against the parquet-avro oracle
- * for each of the 10 representative fixture files.
+ * Conformance test: reads footer via parquetry and compares against the parquet-avro oracle for each of the 10
+ * representative fixture files.
  *
- * <p>The test verifies row counts, row group counts, per-group row count, total byte size,
- * and column count - i.e. all metadata that is structurally load-bearing for page reading.
+ * <p>The test verifies row counts, row group counts, per-group row count, total byte size, and column count - i.e. all
+ * metadata that is structurally load-bearing for page reading.
  *
- * <p>The oracle reads the raw footer bytes directly (mirroring the Parquet file layout), then
- * decodes them via {@link ParquetMetadataConverter}. This avoids loading Hadoop's filesystem
- * and mapreduce classes, which are incompatible with Java 24+.
+ * <p>The oracle reads the raw footer bytes directly (mirroring the Parquet file layout), then decodes them via
+ * {@link ParquetMetadataConverter}. This avoids loading Hadoop's filesystem and mapreduce classes, which are
+ * incompatible with Java 24+.
  */
 class FooterConformanceTest {
 
@@ -93,11 +93,11 @@ class FooterConformanceTest {
     }
 
     /**
-     * Reads the oracle {@link ParquetMetadata} by extracting the raw footer bytes from the
-     * Parquet file layout and decoding them via {@link ParquetMetadataConverter}.
+     * Reads the oracle {@link ParquetMetadata} by extracting the raw footer bytes from the Parquet file layout and
+     * decoding them via {@link ParquetMetadataConverter}.
      *
-     * <p>Avoids Hadoop filesystem and mapreduce class loading, which is incompatible with
-     * Java 24+ (Subject.getSubject removed, FileInputFormat classloading issues).
+     * <p>Avoids Hadoop filesystem and mapreduce class loading, which is incompatible with Java 24+ (Subject.getSubject
+     * removed, FileInputFormat classloading issues).
      */
     private ParquetMetadata readOracleFooter(Path file) throws Exception {
         byte[] footerBytes = extractRawFooterBytes(file);
@@ -106,8 +106,8 @@ class FooterConformanceTest {
     }
 
     /**
-     * Extracts the raw Thrift-encoded footer bytes from a Parquet file by reading
-     * the trailing 8 bytes (footer length + magic) and then seeking to the footer start.
+     * Extracts the raw Thrift-encoded footer bytes from a Parquet file by reading the trailing 8 bytes (footer length +
+     * magic) and then seeking to the footer start.
      */
     private byte[] extractRawFooterBytes(Path file) throws Exception {
         try (RandomAccessFile raf = new RandomAccessFile(file.toFile(), "r")) {

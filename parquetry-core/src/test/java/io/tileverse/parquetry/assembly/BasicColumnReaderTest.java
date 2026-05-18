@@ -214,9 +214,8 @@ class BasicColumnReaderTest {
     // --- helper ---
 
     /**
-     * Encodes the given values into one bit-packed group of 8 values at {@code bitWidth}.
-     * The group header is {@code (1 << 1) | 1} (one group, bit-packed flag).
-     * Values are packed LSB-first per the Parquet RLE-bit-packed hybrid spec.
+     * Encodes the given values into one bit-packed group of 8 values at {@code bitWidth}. The group header is {@code (1
+     * << 1) | 1} (one group, bit-packed flag). Values are packed LSB-first per the Parquet RLE-bit-packed hybrid spec.
      */
     private static ByteBuffer encodeBitPacked(int[] vals, int bitWidth) {
         if (vals.length != 8) {

@@ -25,16 +25,14 @@ import org.apache.parquet.hadoop.ParquetWriter;
 import org.apache.parquet.hadoop.metadata.CompressionCodecName;
 import org.apache.parquet.io.LocalOutputFile;
 
-/**
- * Generates Parquet fixture files for integration tests using the reference parquet-avro writer.
- */
+/** Generates Parquet fixture files for integration tests using the reference parquet-avro writer. */
 final class TestFiles {
 
     private TestFiles() {}
 
     /**
-     * Functional interface for a fixture factory: given a temp directory, generates a Parquet file
-     * and returns its path, or {@code null} if the fixture cannot be generated on this platform.
+     * Functional interface for a fixture factory: given a temp directory, generates a Parquet file and returns its
+     * path, or {@code null} if the fixture cannot be generated on this platform.
      */
     @FunctionalInterface
     public interface Fixture {
@@ -61,9 +59,7 @@ final class TestFiles {
         return out;
     }
 
-    /**
-     * 5 columns (int, long, float, double, boolean), Snappy, 1000 rows.
-     */
+    /** 5 columns (int, long, float, double, boolean), Snappy, 1000 rows. */
     static Path flatIntSnappy(Path tmpDir) throws Exception {
         Schema schema = new Schema.Parser().parse("""
                 {"type":"record","name":"FlatInt","fields":[
@@ -84,9 +80,7 @@ final class TestFiles {
         });
     }
 
-    /**
-     * Single string column, GZIP, 1000 rows.
-     */
+    /** Single string column, GZIP, 1000 rows. */
     static Path flatStringGzip(Path tmpDir) throws Exception {
         Schema schema = new Schema.Parser().parse("""
                 {"type":"record","name":"FlatString","fields":[
@@ -99,9 +93,7 @@ final class TestFiles {
         });
     }
 
-    /**
-     * Record with one map&lt;string,int&gt; field, 100 rows, Snappy.
-     */
+    /** Record with one map&lt;string,int&gt; field, 100 rows, Snappy. */
     static Path nestedMap(Path tmpDir) throws Exception {
         Schema mapSchema = Schema.createMap(Schema.create(Schema.Type.INT));
         Schema schema = Schema.createRecord("NestedMap", null, null, false);
@@ -116,9 +108,7 @@ final class TestFiles {
         });
     }
 
-    /**
-     * Record with one array&lt;int&gt; field, 100 rows, Snappy.
-     */
+    /** Record with one array&lt;int&gt; field, 100 rows, Snappy. */
     static Path nestedList(Path tmpDir) throws Exception {
         Schema arraySchema = Schema.createArray(Schema.create(Schema.Type.INT));
         Schema schema = Schema.createRecord("NestedList", null, null, false);
@@ -130,9 +120,7 @@ final class TestFiles {
         });
     }
 
-    /**
-     * 3 optional columns with 50% nulls, 200 rows.
-     */
+    /** 3 optional columns with 50% nulls, 200 rows. */
     static Path nullableFlat(Path tmpDir) throws Exception {
         Schema nullableInt = Schema.createUnion(Schema.create(Schema.Type.NULL), Schema.create(Schema.Type.INT));
         Schema nullableStr = Schema.createUnion(Schema.create(Schema.Type.NULL), Schema.create(Schema.Type.STRING));
@@ -151,9 +139,7 @@ final class TestFiles {
         });
     }
 
-    /**
-     * Flat int column, 3 row groups (forced via small row group size), 3000 rows total.
-     */
+    /** Flat int column, 3 row groups (forced via small row group size), 3000 rows total. */
     static Path multiRowGroup(Path tmpDir) throws Exception {
         Schema schema = new Schema.Parser().parse("""
                 {"type":"record","name":"MultiRG","fields":[
@@ -176,9 +162,7 @@ final class TestFiles {
         return out;
     }
 
-    /**
-     * Low-cardinality string column (10 unique values), 1000 rows; parquet-avro picks dictionary encoding.
-     */
+    /** Low-cardinality string column (10 unique values), 1000 rows; parquet-avro picks dictionary encoding. */
     static Path dictionaryEncoded(Path tmpDir) throws Exception {
         Schema schema = new Schema.Parser().parse("""
                 {"type":"record","name":"DictEncoded","fields":[
@@ -193,9 +177,7 @@ final class TestFiles {
         });
     }
 
-    /**
-     * Sequential int column with writer version v2 to encourage DELTA_BINARY_PACKED encoding.
-     */
+    /** Sequential int column with writer version v2 to encourage DELTA_BINARY_PACKED encoding. */
     static Path deltaEncoded(Path tmpDir) throws Exception {
         Schema schema = new Schema.Parser().parse("""
                 {"type":"record","name":"DeltaEncoded","fields":[
@@ -218,8 +200,8 @@ final class TestFiles {
     }
 
     /**
-     * Double column; BYTE_STREAM_SPLIT requires explicit column property configuration.
-     * Returns null if parquet-avro cannot be configured for it in this environment.
+     * Double column; BYTE_STREAM_SPLIT requires explicit column property configuration. Returns null if parquet-avro
+     * cannot be configured for it in this environment.
      */
     static Path byteStreamSplit(Path tmpDir) throws Exception {
         // BYTE_STREAM_SPLIT encoding requires parquet v2 writer properties with
@@ -251,9 +233,7 @@ final class TestFiles {
         return out;
     }
 
-    /**
-     * Flat int column, ZSTD compression, 1000 rows.
-     */
+    /** Flat int column, ZSTD compression, 1000 rows. */
     static Path zstdCompressed(Path tmpDir) throws Exception {
         Schema schema = new Schema.Parser().parse("""
                 {"type":"record","name":"ZstdCompressed","fields":[
@@ -266,9 +246,7 @@ final class TestFiles {
         });
     }
 
-    /**
-     * Helper that writes a fixed number of rows using a record-factory function.
-     */
+    /** Helper that writes a fixed number of rows using a record-factory function. */
     private static Path writeFile(
             Path tmpDir,
             String name,

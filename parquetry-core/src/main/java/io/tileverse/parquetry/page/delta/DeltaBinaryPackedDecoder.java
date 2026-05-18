@@ -19,13 +19,11 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 /**
- * Shared DELTA_BINARY_PACKED decode engine. Works on {@code long} internally; INT32 and
- * INT64 decoders delegate here.
+ * Shared DELTA_BINARY_PACKED decode engine. Works on {@code long} internally; INT32 and INT64 decoders delegate here.
  *
- * <p>Per parquet-format Encodings.md, the encoding is block-based: a header gives block
- * size, miniblock count, total value count, and the first value (zigzag varint). Each
- * block is preceded by a zigzag min-delta and N bit-widths (one byte per miniblock); then
- * the deltas are bit-packed in miniblocks at the per-miniblock width.
+ * <p>Per parquet-format Encodings.md, the encoding is block-based: a header gives block size, miniblock count, total
+ * value count, and the first value (zigzag varint). Each block is preceded by a zigzag min-delta and N bit-widths (one
+ * byte per miniblock); then the deltas are bit-packed in miniblocks at the per-miniblock width.
  *
  * <p>Value reconstruction: {@code value[i] = value[i-1] + (packed[i] + min_delta)}.
  */
@@ -105,14 +103,13 @@ final class DeltaBinaryPackedDecoder {
     }
 
     /**
-     * Returns the number of values actually encoded in complete blocks, including any padding
-     * values appended to fill the last block. This is always {@code >= totalValueCount()}.
+     * Returns the number of values actually encoded in complete blocks, including any padding values appended to fill
+     * the last block. This is always {@code >= totalValueCount()}.
      *
-     * <p>DELTA_BINARY_PACKED encoders always write at least one full block after the header
-     * value, even when {@code totalValueCount == 1}. Callers that share a single
-     * {@link ByteBuffer} across multiple DELTA_BINARY_PACKED segments (as in DELTA_BYTE_ARRAY)
-     * must drain this many values from each segment to leave the buffer positioned at the start
-     * of the next segment.
+     * <p>DELTA_BINARY_PACKED encoders always write at least one full block after the header value, even when
+     * {@code totalValueCount == 1}. Callers that share a single {@link ByteBuffer} across multiple DELTA_BINARY_PACKED
+     * segments (as in DELTA_BYTE_ARRAY) must drain this many values from each segment to leave the buffer positioned at
+     * the start of the next segment.
      */
     int paddedValueCount() {
         if (totalValueCount == 0) {

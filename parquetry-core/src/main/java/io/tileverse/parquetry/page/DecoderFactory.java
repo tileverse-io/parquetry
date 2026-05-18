@@ -41,15 +41,15 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
 /**
  * Static dispatch table mapping {@code (Encoding, PrimitiveKind)} to a concrete {@link PageDecoder}.
  *
- * <p>Call {@link #decoderFor} once per data page, then call {@link PageDecoder#load} with the
- * decompressed page bytes and value count. Reuse across pages is possible for stateless decoders,
- * but callers typically create a fresh decoder per page for clarity.
+ * <p>Call {@link #decoderFor} once per data page, then call {@link PageDecoder#load} with the decompressed page bytes
+ * and value count. Reuse across pages is possible for stateless decoders, but callers typically create a fresh decoder
+ * per page for clarity.
  *
- * <p>For {@link Encoding#PLAIN_DICTIONARY} and {@link Encoding#RLE_DICTIONARY} a non-empty
- * {@code dictionary} is mandatory; an absent dictionary produces an {@link IllegalArgumentException}.
+ * <p>For {@link Encoding#PLAIN_DICTIONARY} and {@link Encoding#RLE_DICTIONARY} a non-empty {@code dictionary} is
+ * mandatory; an absent dictionary produces an {@link IllegalArgumentException}.
  *
- * <p>For {@link Encoding#PLAIN} on {@link PrimitiveKind#FIXED_LEN_BYTE_ARRAY} a non-empty
- * {@code typeLength} is mandatory.
+ * <p>For {@link Encoding#PLAIN} on {@link PrimitiveKind#FIXED_LEN_BYTE_ARRAY} a non-empty {@code typeLength} is
+ * mandatory.
  */
 public final class DecoderFactory {
 
@@ -58,13 +58,12 @@ public final class DecoderFactory {
     /**
      * Returns the decoder for the given encoding/kind combination.
      *
-     * @param encoding      page encoding from the page header
-     * @param kind          column's physical type
-     * @param typeLength    byte length, required only for PLAIN FIXED_LEN_BYTE_ARRAY
-     * @param dictionary    pre-loaded dictionary, required for PLAIN_DICTIONARY / RLE_DICTIONARY
+     * @param encoding page encoding from the page header
+     * @param kind column's physical type
+     * @param typeLength byte length, required only for PLAIN FIXED_LEN_BYTE_ARRAY
+     * @param dictionary pre-loaded dictionary, required for PLAIN_DICTIONARY / RLE_DICTIONARY
      * @return a ready-to-{@link PageDecoder#load load} decoder instance
-     * @throws IllegalArgumentException for invalid (encoding, kind) combinations or missing
-     *         required arguments
+     * @throws IllegalArgumentException for invalid (encoding, kind) combinations or missing required arguments
      * @throws UnsupportedOperationException for encodings that are reserved or not supported
      */
     @SuppressWarnings("unchecked")

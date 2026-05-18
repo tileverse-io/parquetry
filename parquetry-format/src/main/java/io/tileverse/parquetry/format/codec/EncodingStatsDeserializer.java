@@ -22,8 +22,7 @@ import io.tileverse.parquetry.format.enums.Encoding;
 import io.tileverse.parquetry.format.enums.PageType;
 
 /**
- * Deserializer for the Thrift {@code PageEncodingStats} struct (our model calls it
- * {@link EncodingStats}).
+ * Deserializer for the Thrift {@code PageEncodingStats} struct (our model calls it {@link EncodingStats}).
  *
  * <pre>
  * struct PageEncodingStats {

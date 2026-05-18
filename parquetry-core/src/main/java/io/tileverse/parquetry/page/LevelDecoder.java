@@ -21,17 +21,17 @@ import java.nio.ByteOrder;
 /**
  * Decodes Parquet repetition and definition level streams.
  *
- * <p>Both level streams use the RLE-Bit-Packed hybrid encoding (Parquet spec). A run is
- * either:
+ * <p>Both level streams use the RLE-Bit-Packed hybrid encoding (Parquet spec). A run is either:
+ *
  * <ul>
- *   <li><b>Bit-packed</b>: varint header with low bit set; followed by N values bit-packed
- *       at the column's level bit-width</li>
- *   <li><b>RLE</b>: varint header with low bit clear; followed by a single value (in
- *       little-endian {@code ceil(bitWidth/8)} bytes) that repeats run-length times</li>
+ *   <li><b>Bit-packed</b>: varint header with low bit set; followed by N values bit-packed at the column's level
+ *       bit-width
+ *   <li><b>RLE</b>: varint header with low bit clear; followed by a single value (in little-endian
+ *       {@code ceil(bitWidth/8)} bytes) that repeats run-length times
  * </ul>
  *
- * <p>Used identically for both rep and def levels; the bit width per stream is computed
- * from the column's max level (see {@link #computeBitWidth(int)}).
+ * <p>Used identically for both rep and def levels; the bit width per stream is computed from the column's max level
+ * (see {@link #computeBitWidth(int)}).
  */
 public final class LevelDecoder {
 
@@ -66,9 +66,9 @@ public final class LevelDecoder {
     }
 
     /**
-     * Load the level stream's bytes. For DataPage V1 the stream is prefixed by a 4-byte LE
-     * length; for DataPage V2 the page header carries the length explicitly and the bytes
-     * here start at the first run header. Caller supplies the right slice.
+     * Load the level stream's bytes. For DataPage V1 the stream is prefixed by a 4-byte LE length; for DataPage V2 the
+     * page header carries the length explicitly and the bytes here start at the first run header. Caller supplies the
+     * right slice.
      */
     public void load(ByteBuffer bytes) {
         this.buffer = bytes.order(ByteOrder.LITTLE_ENDIAN);
@@ -120,9 +120,8 @@ public final class LevelDecoder {
     }
 
     /**
-     * Pull the next bit-packed value from the internal bit buffer, refilling from
-     * {@code buffer} one byte at a time as needed. Values are packed LSB-first per
-     * the Parquet spec.
+     * Pull the next bit-packed value from the internal bit buffer, refilling from {@code buffer} one byte at a time as
+     * needed. Values are packed LSB-first per the Parquet spec.
      */
     private int readBitPackedValue() {
         while (bitsInBuffer < bitWidth) {

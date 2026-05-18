@@ -16,9 +16,8 @@
 package io.tileverse.parquetry.format.enums;
 
 /**
- * Deprecated Parquet "converted type" enum; superseded by
- * {@link io.tileverse.parquetry.format.logical.LogicalType} but still emitted by older writers and
- * must be decoded for backward compatibility.
+ * Deprecated Parquet "converted type" enum; superseded by {@link io.tileverse.parquetry.format.logical.LogicalType} but
+ * still emitted by older writers and must be decoded for backward compatibility.
  */
 public enum ConvertedType {
     UTF8,

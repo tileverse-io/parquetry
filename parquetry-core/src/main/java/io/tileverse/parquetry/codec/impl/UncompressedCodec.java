@@ -15,7 +15,7 @@
  */
 package io.tileverse.parquetry.codec.impl;
 
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 
 import io.tileverse.parquetry.codec.Codec;
 import io.tileverse.parquetry.format.enums.CompressionCodec;
@@ -28,9 +28,9 @@ public final class UncompressedCodec implements Codec {
     }
 
     @Override
-    public int decompress(ByteBuffer compressed, ByteBuffer output) {
-        int remaining = compressed.remaining();
-        output.put(compressed);
-        return remaining;
+    public int decompress(MemorySegment compressed, MemorySegment output) {
+        long size = compressed.byteSize();
+        MemorySegment.copy(compressed, 0L, output, 0L, size);
+        return (int) size;
     }
 }

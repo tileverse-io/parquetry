@@ -15,8 +15,7 @@
  */
 package io.tileverse.parquetry.codec.impl;
 
-import java.io.IOException;
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 
 import io.tileverse.parquetry.codec.Codec;
 import io.tileverse.parquetry.format.enums.CompressionCodec;
@@ -33,11 +32,7 @@ public final class SnappyCodec implements Codec {
     }
 
     @Override
-    public int decompress(ByteBuffer compressed, ByteBuffer output) throws IOException {
-        byte[] in = ByteBuffers.toArray(compressed);
-        byte[] out = new byte[output.remaining()];
-        int written = decompressor.decompress(in, 0, in.length, out, 0, out.length);
-        output.put(out, 0, written);
-        return written;
+    public int decompress(MemorySegment compressed, MemorySegment output) {
+        return decompressor.decompress(compressed, output);
     }
 }

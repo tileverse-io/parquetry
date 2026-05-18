@@ -70,16 +70,16 @@ class DeltaBinaryPackedDecoderTest {
     }
 
     /**
-     * Encode int values into DELTA_BINARY_PACKED. The values array length must be a multiple
-     * of blockSize. Produces a single complete page suitable for the decoder.
+     * Encode int values into DELTA_BINARY_PACKED. The values array length must be a multiple of blockSize. Produces a
+     * single complete page suitable for the decoder.
      */
     static byte[] encodeInts(int[] values, int blockSize, int miniblocksPerBlock) throws Exception {
         return encodeInts(values, blockSize, miniblocksPerBlock, values.length);
     }
 
     /**
-     * Encode int values into DELTA_BINARY_PACKED with an explicit total value count in the header.
-     * Useful when the values array is padded to a block boundary but the actual count is smaller.
+     * Encode int values into DELTA_BINARY_PACKED with an explicit total value count in the header. Useful when the
+     * values array is padded to a block boundary but the actual count is smaller.
      */
     static byte[] encodeInts(int[] values, int blockSize, int miniblocksPerBlock, int totalValueCount)
             throws Exception {
@@ -93,8 +93,8 @@ class DeltaBinaryPackedDecoderTest {
     }
 
     /**
-     * Encode long values into DELTA_BINARY_PACKED with an explicit total value count in the header.
-     * Useful when the values array is padded to a block boundary but the actual count is smaller.
+     * Encode long values into DELTA_BINARY_PACKED with an explicit total value count in the header. Useful when the
+     * values array is padded to a block boundary but the actual count is smaller.
      */
     static byte[] encodeLongs(long[] values, int blockSize, int miniblocksPerBlock, int totalValueCount)
             throws Exception {

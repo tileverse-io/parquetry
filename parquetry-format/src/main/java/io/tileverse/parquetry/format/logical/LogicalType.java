@@ -18,12 +18,12 @@ package io.tileverse.parquetry.format.logical;
 /**
  * Parquet logical-type annotation (Thrift union {@code LogicalType}).
  *
- * <p>Sealed interface with one record per Thrift-union variant. Records that need no payload
- * (e.g. {@link StringType}) are empty records to give every variant the same shape.
+ * <p>Sealed interface with one record per Thrift-union variant. Records that need no payload (e.g. {@link StringType})
+ * are empty records to give every variant the same shape.
  *
  * <p>Variants {@link VariantStub}, {@link GeometryStub}, {@link GeographyStub} are stubs initially;
- * GeometryStub/GeographyStub gain CRS+algorithm fields later, and VariantStub gains the variant
- * type carrier later. They're declared here so the sealed-type list is final from the start.
+ * GeometryStub/GeographyStub gain CRS+algorithm fields later, and VariantStub gains the variant type carrier later.
+ * They're declared here so the sealed-type list is final from the start.
  */
 public sealed interface LogicalType
         permits LogicalType.StringType,

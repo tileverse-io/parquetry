@@ -20,9 +20,7 @@ import java.nio.ByteOrder;
 
 import io.tileverse.parquetry.page.PageDecoder;
 
-/**
- * PLAIN decoder for INT32: four bytes, little-endian per value.
- */
+/** PLAIN decoder for INT32: four bytes, little-endian per value. */
 public final class PlainInt32Decoder implements PageDecoder<Integer> {
 
     private ByteBuffer buffer;

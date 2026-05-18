@@ -200,9 +200,8 @@ class RecordAssemblerTest {
     }
 
     /**
-     * Encodes values as a single bit-packed group of 8.
-     * Header varint encodes (groups << 1) | 1 where groups=1 yields header=3.
-     * Values are packed LSB-first.
+     * Encodes values as a single bit-packed group of 8. Header varint encodes (groups << 1) | 1 where groups=1 yields
+     * header=3. Values are packed LSB-first.
      */
     private static ByteBuffer encodeBitPacked(int[] values, int bitWidth) {
         if (values.length != 8) {

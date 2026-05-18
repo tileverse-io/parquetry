@@ -20,9 +20,7 @@ import java.nio.ByteOrder;
 
 import io.tileverse.parquetry.page.PageDecoder;
 
-/**
- * PLAIN decoder for DOUBLE: eight bytes, little-endian IEEE 754 per value.
- */
+/** PLAIN decoder for DOUBLE: eight bytes, little-endian IEEE 754 per value. */
 public final class PlainDoubleDecoder implements PageDecoder<Double> {
 
     private ByteBuffer buffer;

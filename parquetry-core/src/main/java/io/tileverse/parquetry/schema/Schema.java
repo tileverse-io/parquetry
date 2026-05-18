@@ -23,11 +23,12 @@ import java.util.Set;
 /**
  * The schema of a Parquet file: a root group with named leaf columns and optional nested groups.
  *
- * <p>The root group itself is anonymous in path notation; paths start from its direct children.
- * For example, a flat schema with columns "year" and "country" yields paths
- * {@code ColumnPath.of("year")} and {@code ColumnPath.of("country")}.
+ * <p>The root group itself is anonymous in path notation; paths start from its direct children. For example, a flat
+ * schema with columns "year" and "country" yields paths {@code ColumnPath.of("year")} and
+ * {@code ColumnPath.of("country")}.
  *
  * <p>Three operations:
+ *
  * <ul>
  *   <li>{@link #leafColumns()} - depth-first list of all primitive column paths.
  *   <li>{@link #find(ColumnPath)} - look up the field at a given path.

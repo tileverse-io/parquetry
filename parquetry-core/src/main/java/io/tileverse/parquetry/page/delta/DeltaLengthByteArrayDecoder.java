@@ -22,13 +22,12 @@ import io.tileverse.parquetry.page.PageDecoder;
 /**
  * DELTA_LENGTH_BYTE_ARRAY page decoder.
  *
- * <p>Per parquet-format Encodings.md: lengths are encoded with DELTA_BINARY_PACKED int32,
- * followed by the concatenated payload bytes. Each {@link #next()} yields a read-only
- * ByteBuffer slice of the payload.
+ * <p>Per parquet-format Encodings.md: lengths are encoded with DELTA_BINARY_PACKED int32, followed by the concatenated
+ * payload bytes. Each {@link #next()} yields a read-only ByteBuffer slice of the payload.
  *
- * <p>The length stream is decoded first (consuming bytes from the page buffer via
- * DELTA_BINARY_PACKED's lazy block reads). After all lengths are read, the buffer's
- * position sits at the start of the concatenated payload, ready to slice.
+ * <p>The length stream is decoded first (consuming bytes from the page buffer via DELTA_BINARY_PACKED's lazy block
+ * reads). After all lengths are read, the buffer's position sits at the start of the concatenated payload, ready to
+ * slice.
  */
 public final class DeltaLengthByteArrayDecoder implements PageDecoder<ByteBuffer> {
 

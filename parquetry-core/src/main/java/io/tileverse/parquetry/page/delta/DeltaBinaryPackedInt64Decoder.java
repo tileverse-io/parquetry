@@ -22,8 +22,8 @@ import io.tileverse.parquetry.page.PageDecoder;
 /**
  * DELTA_BINARY_PACKED decoder for INT64 columns.
  *
- * <p>Delegates all decoding to {@link DeltaBinaryPackedDecoder} and returns the
- * {@code long} result directly on each call to {@link #next()}.
+ * <p>Delegates all decoding to {@link DeltaBinaryPackedDecoder} and returns the {@code long} result directly on each
+ * call to {@link #next()}.
  */
 public final class DeltaBinaryPackedInt64Decoder implements PageDecoder<Long> {
 

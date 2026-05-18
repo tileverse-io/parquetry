@@ -21,11 +21,10 @@ import java.nio.ByteOrder;
 import io.tileverse.parquetry.page.PageDecoder;
 
 /**
- * PLAIN decoder for BYTE_ARRAY: a 4-byte little-endian length prefix followed by that
- * many bytes per value.
+ * PLAIN decoder for BYTE_ARRAY: a 4-byte little-endian length prefix followed by that many bytes per value.
  *
- * <p>Each value is returned as a read-only {@link ByteBuffer} slice backed by the original
- * page buffer (zero-copy). The slice's {@code remaining()} equals the byte array length.
+ * <p>Each value is returned as a read-only {@link ByteBuffer} slice backed by the original page buffer (zero-copy). The
+ * slice's {@code remaining()} equals the byte array length.
  */
 public final class PlainBinaryDecoder implements PageDecoder<ByteBuffer> {
 

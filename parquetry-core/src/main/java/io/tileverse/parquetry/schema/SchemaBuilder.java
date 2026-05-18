@@ -25,17 +25,16 @@ import io.tileverse.parquetry.format.enums.FieldRepetitionType;
 import io.tileverse.parquetry.format.enums.Type;
 
 /**
- * Converts the depth-first flat {@code List<SchemaElement>} from {@link
- * io.tileverse.parquetry.format.FileMetaData#schema()} into the nested {@link Schema} tree.
+ * Converts the depth-first flat {@code List<SchemaElement>} from
+ * {@link io.tileverse.parquetry.format.FileMetaData#schema()} into the nested {@link Schema} tree.
  *
- * <p>The Parquet Thrift wire format stores the schema as a pre-order traversal of the tree:
- * the first element is always the root group, followed by its children recursively.
- * Group elements carry {@code numChildren > 0}; primitive (leaf) elements have {@code type}
- * present and no {@code numChildren}.
+ * <p>The Parquet Thrift wire format stores the schema as a pre-order traversal of the tree: the first element is always
+ * the root group, followed by its children recursively. Group elements carry {@code numChildren > 0}; primitive (leaf)
+ * elements have {@code type} present and no {@code numChildren}.
  *
- * <p>A single mutable {@link Cursor} tracks the current position in the list and is threaded
- * through recursive calls. Each call to {@link #consumeNext} advances the cursor by one (the
- * current element) plus however many descendants it owns.
+ * <p>A single mutable {@link Cursor} tracks the current position in the list and is threaded through recursive calls.
+ * Each call to {@link #consumeNext} advances the cursor by one (the current element) plus however many descendants it
+ * owns.
  */
 public final class SchemaBuilder {
 
@@ -62,11 +61,11 @@ public final class SchemaBuilder {
     }
 
     /**
-     * Consumes the next element (and all its descendants) from {@code cursor}, returning the
-     * corresponding {@link Field}.
+     * Consumes the next element (and all its descendants) from {@code cursor}, returning the corresponding
+     * {@link Field}.
      *
-     * <p>After this method returns, {@code cursor.position} points to the element immediately
-     * after the subtree rooted at the consumed element.
+     * <p>After this method returns, {@code cursor.position} points to the element immediately after the subtree rooted
+     * at the consumed element.
      */
     private static Field consumeNext(Cursor cursor) {
         SchemaElement element = cursor.elements.get(cursor.position);
@@ -124,9 +123,8 @@ public final class SchemaBuilder {
     }
 
     /**
-     * Mutable position pointer threaded through recursive calls to track where we are in the
-     * flat schema element list. Using a small wrapper object is cleaner than returning index
-     * values from each recursive call.
+     * Mutable position pointer threaded through recursive calls to track where we are in the flat schema element list.
+     * Using a small wrapper object is cleaner than returning index values from each recursive call.
      */
     private static final class Cursor {
         final List<SchemaElement> elements;

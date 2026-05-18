@@ -80,8 +80,8 @@ final class ColumnIndexDeserializer {
     }
 
     /**
-     * Reads a list of booleans. In Thrift Compact Protocol, boolean values in a list are encoded
-     * as individual bytes: 0x01 for true, 0x02 for false.
+     * Reads a list of booleans. In Thrift Compact Protocol, boolean values in a list are encoded as individual bytes:
+     * 0x01 for true, 0x02 for false.
      */
     private static List<Boolean> readBoolList(CompactProtocolReader r) throws IOException {
         CompactProtocolReader.ListHeader lh = r.readListHeader();

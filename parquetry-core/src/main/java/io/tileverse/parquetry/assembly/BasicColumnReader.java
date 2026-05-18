@@ -24,13 +24,12 @@ import io.tileverse.parquetry.schema.ColumnPath;
 /**
  * Ties a {@link PageDecoder} with rep/def {@link LevelDecoder}s into a row-by-row view.
  *
- * <p>Positioning is lazy: the first call to any {@code current*()} method on a fresh (or just
- * consumed) row pulls the next set of levels and a value from the underlying decoders and caches
- * them until {@link #consume()} is called. This lets the Dremel record assembler read each field
- * multiple times without re-reading from the byte streams.
+ * <p>Positioning is lazy: the first call to any {@code current*()} method on a fresh (or just consumed) row pulls the
+ * next set of levels and a value from the underlying decoders and caches them until {@link #consume()} is called. This
+ * lets the Dremel record assembler read each field multiple times without re-reading from the byte streams.
  *
- * <p>For REQUIRED columns (maxRepetitionLevel == 0 and maxDefinitionLevel == 0) the level decoders
- * are bypassed entirely -- every row has rep=0, def=0, and a non-null value.
+ * <p>For REQUIRED columns (maxRepetitionLevel == 0 and maxDefinitionLevel == 0) the level decoders are bypassed
+ * entirely -- every row has rep=0, def=0, and a non-null value.
  */
 public final class BasicColumnReader implements ColumnReader {
 
@@ -134,16 +133,16 @@ public final class BasicColumnReader implements ColumnReader {
     }
 
     /**
-     * Returns 0 for REQUIRED (maxRep==0) columns without consulting the level decoder; otherwise
-     * reads the next rep level from the stream.
+     * Returns 0 for REQUIRED (maxRep==0) columns without consulting the level decoder; otherwise reads the next rep
+     * level from the stream.
      */
     private int readRepetitionLevel() {
         return (maxRepetitionLevel == 0) ? 0 : repetitionDecoder.next();
     }
 
     /**
-     * Returns maxDef for REQUIRED (maxDef==0) columns without consulting the level decoder;
-     * otherwise reads the next def level from the stream.
+     * Returns maxDef for REQUIRED (maxDef==0) columns without consulting the level decoder; otherwise reads the next
+     * def level from the stream.
      */
     private int readDefinitionLevel() {
         return (maxDefinitionLevel == 0) ? maxDefinitionLevel : definitionDecoder.next();

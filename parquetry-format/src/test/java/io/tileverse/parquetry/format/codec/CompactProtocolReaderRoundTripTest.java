@@ -20,29 +20,87 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 
-import net.jqwik.api.ForAll;
-import net.jqwik.api.Property;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
-class CompactProtocolReaderPropertyTest {
+/**
+ * Verifies the round-trip behavior of zigzag varint and little-endian double encoding against an explicit set of
+ * boundary vectors (signed extremes, sign-flip neighbors, IEEE 754 special values).
+ */
+class CompactProtocolReaderRoundTripTest {
 
-    @Property
-    void zigzagI32_roundTrip(@ForAll int original) throws Exception {
+    @ParameterizedTest
+    @ValueSource(
+            ints = {
+                0,
+                1,
+                -1,
+                2,
+                -2,
+                63,
+                -64,
+                64,
+                -65,
+                127,
+                -128,
+                16_383,
+                -16_384,
+                Integer.MAX_VALUE - 1,
+                Integer.MAX_VALUE,
+                Integer.MIN_VALUE + 1,
+                Integer.MIN_VALUE
+            })
+    void zigzagI32RoundTrip(int original) throws Exception {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         writeZigzagVarLong(bytes, original);
         CompactProtocolReader r = new CompactProtocolReader(new ByteArrayInputStream(bytes.toByteArray()));
         assertThat(r.readI32()).isEqualTo(original);
     }
 
-    @Property
-    void zigzagI64_roundTrip(@ForAll long original) throws Exception {
+    @ParameterizedTest
+    @ValueSource(
+            longs = {
+                0L,
+                1L,
+                -1L,
+                2L,
+                -2L,
+                63L,
+                -64L,
+                Integer.MAX_VALUE,
+                Integer.MIN_VALUE,
+                (long) Integer.MAX_VALUE + 1L,
+                (long) Integer.MIN_VALUE - 1L,
+                Long.MAX_VALUE - 1L,
+                Long.MAX_VALUE,
+                Long.MIN_VALUE + 1L,
+                Long.MIN_VALUE
+            })
+    void zigzagI64RoundTrip(long original) throws Exception {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         writeZigzagVarLong(bytes, original);
         CompactProtocolReader r = new CompactProtocolReader(new ByteArrayInputStream(bytes.toByteArray()));
         assertThat(r.readI64()).isEqualTo(original);
     }
 
-    @Property
-    void doubleRoundTrip(@ForAll double original) throws Exception {
+    @ParameterizedTest
+    @ValueSource(
+            doubles = {
+                0.0,
+                -0.0,
+                1.0,
+                -1.0,
+                Math.PI,
+                -Math.PI,
+                Double.MIN_VALUE,
+                Double.MIN_NORMAL,
+                Double.MAX_VALUE,
+                -Double.MAX_VALUE,
+                Double.POSITIVE_INFINITY,
+                Double.NEGATIVE_INFINITY,
+                Double.NaN
+            })
+    void doubleRoundTrip(double original) throws Exception {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         long bits = Double.doubleToRawLongBits(original);
         for (int i = 0; i < 8; i++) {

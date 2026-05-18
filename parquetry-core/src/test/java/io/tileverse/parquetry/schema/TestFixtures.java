@@ -33,9 +33,7 @@ final class TestFixtures {
 
     private TestFixtures() {}
 
-    /**
-     * Writes a zero-row Parquet file with a single {@code int} column named {@code id}.
-     */
+    /** Writes a zero-row Parquet file with a single {@code int} column named {@code id}. */
     static Path emptyIntColumn(Path tmpDir) throws Exception {
         Schema schema = new Schema.Parser()
                 .parse("{\"type\":\"record\",\"name\":\"m\",\"fields\":[{\"name\":\"id\",\"type\":\"int\"}]}");
@@ -50,9 +48,7 @@ final class TestFixtures {
         return out;
     }
 
-    /**
-     * 5 columns (int, long, float, double, boolean), Snappy, 100 rows.
-     */
+    /** 5 columns (int, long, float, double, boolean), Snappy, 100 rows. */
     static Path flatIntSnappy(Path tmpDir) throws Exception {
         Schema schema = new Schema.Parser().parse("""
                 {"type":"record","name":"FlatInt","fields":[

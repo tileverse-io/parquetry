@@ -22,25 +22,23 @@ import io.tileverse.parquetry.schema.ColumnPath;
 /**
  * Read access to an assembled row's leaf values, keyed by column path.
  *
- * <p>Values are boxed primitives ({@code Integer}, {@code Long}, {@code Float},
- * {@code Double}, {@code Boolean}) or a read-only {@code ByteBuffer} for
- * binary/INT96 columns. A {@code null} entry means the leaf was null at some
- * ancestor or at the leaf itself.
+ * <p>Values are boxed primitives ({@code Integer}, {@code Long}, {@code Float}, {@code Double}, {@code Boolean}) or a
+ * read-only {@code ByteBuffer} for binary/INT96 columns. A {@code null} entry means the leaf was null at some ancestor
+ * or at the leaf itself.
  *
- * <p>Group-valued columns are not represented directly. Whether a group is null
- * vs. having all-null children is preserved by {@link #isGroupNull(ColumnPath)}.
+ * <p>Group-valued columns are not represented directly. Whether a group is null vs. having all-null children is
+ * preserved by {@link #isGroupNull(ColumnPath)}.
  */
 public interface RowAccessor {
 
     /**
-     * Returns the value at {@code path}, or {@code null} if the leaf was null
-     * or was not included in the projection.
+     * Returns the value at {@code path}, or {@code null} if the leaf was null or was not included in the projection.
      */
     Object get(ColumnPath path);
 
     /**
-     * Returns {@code true} if the group at {@code path} was null in the source
-     * row (as opposed to simply having all-null children).
+     * Returns {@code true} if the group at {@code path} was null in the source row (as opposed to simply having
+     * all-null children).
      */
     boolean isGroupNull(ColumnPath path);
 

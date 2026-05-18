@@ -23,8 +23,8 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
 /**
  * Dictionary page payload: list of unique values for a column chunk.
  *
- * <p>One variant per Parquet primitive kind. The {@code values()} list is immutable and
- * indexed in the order values were written; data pages reference values by their index.
+ * <p>One variant per Parquet primitive kind. The {@code values()} list is immutable and indexed in the order values
+ * were written; data pages reference values by their index.
  */
 public sealed interface Dictionary<T>
         permits Dictionary.BooleanDict,

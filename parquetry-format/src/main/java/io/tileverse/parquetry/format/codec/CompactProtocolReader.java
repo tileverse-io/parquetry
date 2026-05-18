@@ -22,11 +22,11 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Hand-rolled Thrift Compact Protocol decoder per
- * <a href="https://github.com/apache/thrift/blob/master/doc/specs/thrift-compact-protocol.md">spec</a>.
+ * Hand-rolled Thrift Compact Protocol decoder per <a
+ * href="https://github.com/apache/thrift/blob/master/doc/specs/thrift-compact-protocol.md">spec</a>.
  *
- * <p>Operates on a plain {@link InputStream} so it composes with buffered/inflater streams.
- * Thread-confined; create one per parse.
+ * <p>Operates on a plain {@link InputStream} so it composes with buffered/inflater streams. Thread-confined; create one
+ * per parse.
  */
 public final class CompactProtocolReader {
 
@@ -120,9 +120,9 @@ public final class CompactProtocolReader {
     /**
      * Reads a field header using the Thrift Compact Protocol delta encoding.
      *
-     * <p>The high nibble carries the delta from {@code lastFieldId} (1-15), or 0 to signal that
-     * the next bytes contain a zigzag-encoded absolute field ID. The low nibble is the
-     * {@link CompactType} code. A zero byte is the STOP marker (end of struct).
+     * <p>The high nibble carries the delta from {@code lastFieldId} (1-15), or 0 to signal that the next bytes contain
+     * a zigzag-encoded absolute field ID. The low nibble is the {@link CompactType} code. A zero byte is the STOP
+     * marker (end of struct).
      */
     public FieldHeader readFieldHeader(int lastFieldId) throws IOException {
         int b = in.read();
@@ -149,9 +149,8 @@ public final class CompactProtocolReader {
     public record ListHeader(int size, CompactType elementType) {}
 
     /**
-     * Reads a list (or set) header. The high nibble is the size when it fits in 4 bits (0-14);
-     * a value of 0xf means the actual size follows as a varint. The low nibble is the element
-     * {@link CompactType} code.
+     * Reads a list (or set) header. The high nibble is the size when it fits in 4 bits (0-14); a value of 0xf means the
+     * actual size follows as a varint. The low nibble is the element {@link CompactType} code.
      */
     public ListHeader readListHeader() throws IOException {
         int b = in.read();
@@ -169,8 +168,8 @@ public final class CompactProtocolReader {
     /**
      * Skips all remaining fields in a struct up to (and including) the STOP byte.
      *
-     * <p>Used for forward compatibility: when a newer writer adds fields that this reader does
-     * not recognise, calling this method consumes those bytes cleanly.
+     * <p>Used for forward compatibility: when a newer writer adds fields that this reader does not recognise, calling
+     * this method consumes those bytes cleanly.
      */
     public void skipStruct() throws IOException {
         int lastFieldId = 0;

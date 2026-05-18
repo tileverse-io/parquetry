@@ -22,11 +22,12 @@ import io.tileverse.parquetry.page.PageDecoder;
 /**
  * BYTE_STREAM_SPLIT page decoder for DOUBLE (8-byte values).
  *
- * <p>Per parquet-format Encodings.md: the page is laid out as 8 byte streams of N bytes
- * each (where N is the value count). Value {@code i} is reconstructed by taking byte
- * {@code s} from stream {@code s} at index {@code i}, for s in [0, 8).
+ * <p>Per parquet-format Encodings.md: the page is laid out as 8 byte streams of N bytes each (where N is the value
+ * count). Value {@code i} is reconstructed by taking byte {@code s} from stream {@code s} at index {@code i}, for s in
+ * [0, 8).
  *
  * <p>The layout is:
+ *
  * <pre>
  *   [byte0 of val0, byte0 of val1, ..., byte0 of valN-1,
  *    byte1 of val0, byte1 of val1, ..., byte1 of valN-1,

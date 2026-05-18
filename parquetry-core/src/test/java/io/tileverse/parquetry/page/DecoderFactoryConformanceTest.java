@@ -59,21 +59,20 @@ import io.tileverse.parquetry.schema.Schema;
 import io.tileverse.parquetry.schema.SchemaBuilder;
 
 /**
- * Decoder conformance test: for each fixture file, walks every column chunk page by page,
- * decompresses via {@link Codec}, dispatches via {@link DecoderFactory}, and asserts that the
- * total decoded value count matches the column's {@code numValues} metadata.
+ * Decoder conformance test: for each fixture file, walks every column chunk page by page, decompresses via
+ * {@link Codec}, dispatches via {@link DecoderFactory}, and asserts that the total decoded value count matches the
+ * column's {@code numValues} metadata.
  *
- * <p>Scope: REQUIRED, non-nested scalar columns only. Optional or repeated columns are
- * skipped with an explicit {@link Assumptions#abort} message, because handling them correctly
- * requires rep/def level decoding and Dremel record assembly.
+ * <p>Scope: REQUIRED, non-nested scalar columns only. Optional or repeated columns are skipped with an explicit
+ * {@link Assumptions#abort} message, because handling them correctly requires rep/def level decoding and Dremel record
+ * assembly.
  *
- * <p>DataPage V1 level stream handling: per the Parquet spec, when max_rep=0 and max_def=0
- * (REQUIRED columns) the level streams are completely absent - no prefix bytes, no data.
- * The decompressed page payload starts directly with the encoded values.
+ * <p>DataPage V1 level stream handling: per the Parquet spec, when max_rep=0 and max_def=0 (REQUIRED columns) the level
+ * streams are completely absent - no prefix bytes, no data. The decompressed page payload starts directly with the
+ * encoded values.
  *
- * <p>DataPage V2: level byte lengths are carried in the page header's
- * {@code repetitionLevelsByteLength} and {@code definitionLevelsByteLength} fields.
- * Those uncompressed bytes precede the optionally-compressed value portion.
+ * <p>DataPage V2: level byte lengths are carried in the page header's {@code repetitionLevelsByteLength} and
+ * {@code definitionLevelsByteLength} fields. Those uncompressed bytes precede the optionally-compressed value portion.
  */
 class DecoderFactoryConformanceTest {
 
@@ -131,8 +130,8 @@ class DecoderFactoryConformanceTest {
     /**
      * Walks all pages in a column chunk, decompressing and decoding each data page.
      *
-     * <p>Reads the entire column chunk byte range into memory, then iterates page headers
-     * and page payloads using the running buffer position.
+     * <p>Reads the entire column chunk byte range into memory, then iterates page headers and page payloads using the
+     * running buffer position.
      */
     private static List<Object> decodeAllValues(
             RangeReader reader, ColumnMetaData meta, PrimitiveKind kind, OptionalInt typeLength, String debugLabel)
@@ -226,8 +225,8 @@ class DecoderFactoryConformanceTest {
     }
 
     /**
-     * Decodes {@code numValues} values from {@code valuePayload} using the given encoding and
-     * appends them to {@code out}.
+     * Decodes {@code numValues} values from {@code valuePayload} using the given encoding and appends them to
+     * {@code out}.
      */
     private static void decodePageValues(
             Encoding encoding,
@@ -249,8 +248,8 @@ class DecoderFactoryConformanceTest {
     /**
      * Resolves the {@link Field} at the given path within the schema.
      *
-     * <p>Uses a depth-first walk rather than {@link Schema#find} because the conformance
-     * fixtures have flat schemas; nested paths still work because we traverse groups.
+     * <p>Uses a depth-first walk rather than {@link Schema#find} because the conformance fixtures have flat schemas;
+     * nested paths still work because we traverse groups.
      */
     private static Field findLeafField(Schema schema, List<String> pathParts) {
         Field current = schema.root();
@@ -286,9 +285,7 @@ class DecoderFactoryConformanceTest {
         };
     }
 
-    /**
-     * Functional interface matching the shape of the fixture generators in {@link TestFixtures}.
-     */
+    /** Functional interface matching the shape of the fixture generators in {@link TestFixtures}. */
     @FunctionalInterface
     interface TestFixtureRef {
         Path generate(Path tmpDir) throws Exception;

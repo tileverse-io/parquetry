@@ -22,9 +22,8 @@ import java.time.LocalDateTime;
 /**
  * Sealed value type for filter predicates. One variant per Parquet primitive shape.
  *
- * <p>Used as the right-hand side of comparison predicates ({@link Predicate.Eq},
- * {@link Predicate.Lt}, etc.). The ADT is total: predicates can never carry an "untyped"
- * value.
+ * <p>Used as the right-hand side of comparison predicates ({@link Predicate.Eq}, {@link Predicate.Lt}, etc.). The ADT
+ * is total: predicates can never carry an "untyped" value.
  */
 public sealed interface Value
         permits Value.BoolVal,

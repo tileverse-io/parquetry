@@ -26,9 +26,9 @@ import io.tileverse.parquetry.format.logical.LogicalType;
 /**
  * One node in the {@link FileMetaData#schema()} list.
  *
- * <p>The list is a depth-first flattening of the schema tree. Group nodes have
- * {@code type=Optional.empty()} and {@code numChildren > 0}; primitive (leaf) nodes have
- * {@code type=Optional.of(...)} and {@code numChildren=OptionalInt.empty()}.
+ * <p>The list is a depth-first flattening of the schema tree. Group nodes have {@code type=Optional.empty()} and
+ * {@code numChildren > 0}; primitive (leaf) nodes have {@code type=Optional.of(...)} and
+ * {@code numChildren=OptionalInt.empty()}.
  */
 public record SchemaElement(
         Optional<Type> type,

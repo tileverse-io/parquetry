@@ -25,8 +25,8 @@ import io.tileverse.parquetry.schema.ColumnPath;
 /**
  * Mutable internal {@link RowAccessor} used by {@link RecordAssembler} while building a row.
  *
- * <p>Once construction is complete the assembler hands this off as a {@link RowAccessor};
- * callers must not mutate it after that point.
+ * <p>Once construction is complete the assembler hands this off as a {@link RowAccessor}; callers must not mutate it
+ * after that point.
  */
 final class MutableRowAccessor implements RowAccessor {
 

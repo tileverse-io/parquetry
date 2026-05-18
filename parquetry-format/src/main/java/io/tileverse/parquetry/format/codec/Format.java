@@ -32,10 +32,11 @@ import io.tileverse.parquetry.format.PageHeader;
 /**
  * Public API facade for reading Parquet file metadata and page-level structures.
  *
- * <p>The primary entry point is {@link #readFooter(RangeReader)}, which locates and decodes the
- * {@code FileMetaData} Thrift struct from the trailing footer of a Parquet file.
+ * <p>The primary entry point is {@link #readFooter(RangeReader)}, which locates and decodes the {@code FileMetaData}
+ * Thrift struct from the trailing footer of a Parquet file.
  *
  * <p>Additional methods support reading page-level structures:
+ *
  * <ul>
  *   <li>{@link #readPageHeader(InputStream)} - decodes a page header from a column chunk stream
  *   <li>{@link #readColumnIndex(RangeReader, long, int)} - decodes the column-level min/max index
@@ -43,6 +44,7 @@ import io.tileverse.parquetry.format.PageHeader;
  * </ul>
  *
  * <p>Parquet file layout:
+ *
  * <pre>
  *   [4-byte magic "PAR1"]
  *   [row group data ...]
@@ -64,9 +66,9 @@ public final class Format {
     /**
      * Reads a {@link PageHeader} from the given {@link InputStream}.
      *
-     * <p>Each page in a column chunk is preceded by a Thrift-encoded {@code PageHeader} struct.
-     * The caller positions the stream at the start of the header (typically the first byte after
-     * the column chunk's {@code data_page_offset} or just after the previous page's payload).
+     * <p>Each page in a column chunk is preceded by a Thrift-encoded {@code PageHeader} struct. The caller positions
+     * the stream at the start of the header (typically the first byte after the column chunk's {@code data_page_offset}
+     * or just after the previous page's payload).
      *
      * @param in stream positioned at the start of a page header; caller retains ownership
      * @return the decoded PageHeader
@@ -79,8 +81,8 @@ public final class Format {
     /**
      * Reads the {@link ColumnIndex} for a column chunk from a Parquet file.
      *
-     * <p>The {@code offset} and {@code length} are taken from
-     * {@code ColumnChunk.columnIndexOffset} and {@code ColumnChunk.columnIndexLength}.
+     * <p>The {@code offset} and {@code length} are taken from {@code ColumnChunk.columnIndexOffset} and
+     * {@code ColumnChunk.columnIndexLength}.
      *
      * @param reader source of byte-range reads for the file; caller retains ownership
      * @param offset byte offset of the ColumnIndex in the file
@@ -99,8 +101,8 @@ public final class Format {
     /**
      * Reads the {@link OffsetIndex} for a column chunk from a Parquet file.
      *
-     * <p>The {@code offset} and {@code length} are taken from
-     * {@code ColumnChunk.offsetIndexOffset} and {@code ColumnChunk.offsetIndexLength}.
+     * <p>The {@code offset} and {@code length} are taken from {@code ColumnChunk.offsetIndexOffset} and
+     * {@code ColumnChunk.offsetIndexLength}.
      *
      * @param reader source of byte-range reads for the file; caller retains ownership
      * @param offset byte offset of the OffsetIndex in the file
@@ -121,8 +123,8 @@ public final class Format {
      *
      * @param reader source of byte-range reads for the file; caller retains ownership
      * @return the decoded FileMetaData
-     * @throws IOException if the file is too small, the magic bytes are wrong,
-     *         the file uses encryption (PARE magic), or Thrift decoding fails
+     * @throws IOException if the file is too small, the magic bytes are wrong, the file uses encryption (PARE magic),
+     *     or Thrift decoding fails
      */
     public static FileMetaData readFooter(RangeReader reader) throws IOException {
         long size = reader.size().orElseThrow(() -> new IOException("Cannot determine file size"));

@@ -16,8 +16,8 @@
 package io.tileverse.parquetry.format.enums;
 
 /**
- * Logical page type discriminator. Not a Thrift enum on its own; derived from
- * {@code PageHeader.type}. Reproduced here for type-safety in our records.
+ * Logical page type discriminator. Not a Thrift enum on its own; derived from {@code PageHeader.type}. Reproduced here
+ * for type-safety in our records.
  */
 public enum PageType {
     DATA_PAGE,

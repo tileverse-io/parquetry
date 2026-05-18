@@ -22,9 +22,8 @@ import io.tileverse.parquetry.schema.ColumnPath;
 /**
  * Column projection for {@code Dataset.read(predicate, projection, ...)}.
  *
- * <p>{@link #ALL} keeps every leaf column; otherwise the projection lists the leaf paths
- * to keep. Nested ancestor groups are preserved automatically by
- * {@link io.tileverse.parquetry.schema.Schema#project(Set)}.
+ * <p>{@link #ALL} keeps every leaf column; otherwise the projection lists the leaf paths to keep. Nested ancestor
+ * groups are preserved automatically by {@link io.tileverse.parquetry.schema.Schema#project(Set)}.
  */
 public sealed interface Projection permits Projection.All, Projection.Columns {
 

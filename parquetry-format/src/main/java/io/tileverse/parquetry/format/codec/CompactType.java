@@ -15,9 +15,7 @@
  */
 package io.tileverse.parquetry.format.codec;
 
-/**
- * Thrift Compact Protocol type IDs as encoded on the wire (4 bits in the type byte).
- */
+/** Thrift Compact Protocol type IDs as encoded on the wire (4 bits in the type byte). */
 public enum CompactType {
     STOP(0),
     BOOLEAN_TRUE(1),

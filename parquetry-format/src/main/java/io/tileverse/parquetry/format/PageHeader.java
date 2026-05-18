@@ -23,9 +23,8 @@ import io.tileverse.parquetry.format.enums.PageType;
 /**
  * Header prefix before every page in a column chunk.
  *
- * <p>The Thrift {@code PageHeader} struct carries optional nested headers for each page type;
- * we keep the same shape with one {@code Optional<XHeader>} per page type. Exactly one is present
- * (cross-validated by {@link #type()}).
+ * <p>The Thrift {@code PageHeader} struct carries optional nested headers for each page type; we keep the same shape
+ * with one {@code Optional<XHeader>} per page type. Exactly one is present (cross-validated by {@link #type()}).
  */
 public record PageHeader(
         PageType type,

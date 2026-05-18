@@ -15,8 +15,7 @@
  */
 package io.tileverse.parquetry.codec.impl;
 
-import java.io.IOException;
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 
 import io.tileverse.parquetry.codec.Codec;
 import io.tileverse.parquetry.format.enums.CompressionCodec;
@@ -24,8 +23,8 @@ import io.tileverse.parquetry.format.enums.CompressionCodec;
 import io.airlift.compress.v3.lz4.Lz4Decompressor;
 
 /**
- * Parquet LZ4_RAW codec. Uses aircompressor's {@link Lz4Decompressor}, which handles
- * the raw LZ4 block format (no frame header) that Parquet's LZ4_RAW encoding uses.
+ * Parquet LZ4_RAW codec. Uses aircompressor's {@link Lz4Decompressor}, which handles the raw LZ4 block format (no frame
+ * header) that Parquet's LZ4_RAW encoding uses.
  */
 public final class Lz4RawCodec implements Codec {
 
@@ -37,11 +36,7 @@ public final class Lz4RawCodec implements Codec {
     }
 
     @Override
-    public int decompress(ByteBuffer compressed, ByteBuffer output) throws IOException {
-        byte[] in = ByteBuffers.toArray(compressed);
-        byte[] out = new byte[output.remaining()];
-        int written = decompressor.decompress(in, 0, in.length, out, 0, out.length);
-        output.put(out, 0, written);
-        return written;
+    public int decompress(MemorySegment compressed, MemorySegment output) {
+        return decompressor.decompress(compressed, output);
     }
 }

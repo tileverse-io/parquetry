@@ -22,9 +22,8 @@ import io.tileverse.parquetry.format.logical.LogicalType;
 /**
  * Deserializer for the Thrift {@code LogicalType} union.
  *
- * <p>Each field ID in the union corresponds to one variant. Variants with no payload are empty
- * Thrift structs (STRUCT type, zero fields before STOP). Variants with payload are decoded into
- * the corresponding record.
+ * <p>Each field ID in the union corresponds to one variant. Variants with no payload are empty Thrift structs (STRUCT
+ * type, zero fields before STOP). Variants with payload are decoded into the corresponding record.
  *
  * <pre>
  * union LogicalType {
@@ -140,16 +139,14 @@ final class LogicalTypeDeserializer {
     }
 
     /**
-     * Reads and discards the body of an empty Thrift struct (just the STOP byte).
-     * Used for logical type variants that carry no payload (StringType, MapType, etc.).
+     * Reads and discards the body of an empty Thrift struct (just the STOP byte). Used for logical type variants that
+     * carry no payload (StringType, MapType, etc.).
      */
     private static void skipEmptyStruct(CompactProtocolReader r) throws IOException {
         r.skipStruct();
     }
 
-    /**
-     * Reads {@code DecimalType}: scale (field 1, i32) and precision (field 2, i32).
-     */
+    /** Reads {@code DecimalType}: scale (field 1, i32) and precision (field 2, i32). */
     private static LogicalType.Decimal readDecimal(CompactProtocolReader r) throws IOException {
         int scale = 0;
         int precision = 0;
@@ -167,9 +164,7 @@ final class LogicalTypeDeserializer {
         return new LogicalType.Decimal(scale, precision);
     }
 
-    /**
-     * Reads {@code TimeType}: isAdjustedToUTC (field 1, bool) and unit (field 2, TimeUnit union).
-     */
+    /** Reads {@code TimeType}: isAdjustedToUTC (field 1, bool) and unit (field 2, TimeUnit union). */
     private static LogicalType.Time readTime(CompactProtocolReader r) throws IOException {
         boolean isAdjustedToUTC = false;
         LogicalType.TimeUnit unit = LogicalType.TimeUnit.MILLIS;
@@ -187,9 +182,7 @@ final class LogicalTypeDeserializer {
         return new LogicalType.Time(isAdjustedToUTC, unit);
     }
 
-    /**
-     * Reads {@code TimestampType}: isAdjustedToUTC (field 1, bool) and unit (field 2, TimeUnit).
-     */
+    /** Reads {@code TimestampType}: isAdjustedToUTC (field 1, bool) and unit (field 2, TimeUnit). */
     private static LogicalType.Timestamp readTimestamp(CompactProtocolReader r) throws IOException {
         boolean isAdjustedToUTC = false;
         LogicalType.TimeUnit unit = LogicalType.TimeUnit.MILLIS;
@@ -207,9 +200,7 @@ final class LogicalTypeDeserializer {
         return new LogicalType.Timestamp(isAdjustedToUTC, unit);
     }
 
-    /**
-     * Reads {@code IntType}: bitWidth (field 1, i8) and isSigned (field 2, bool).
-     */
+    /** Reads {@code IntType}: bitWidth (field 1, i8) and isSigned (field 2, bool). */
     private static LogicalType.IntType readIntType(CompactProtocolReader r) throws IOException {
         byte bitWidth = 0;
         boolean isSigned = false;

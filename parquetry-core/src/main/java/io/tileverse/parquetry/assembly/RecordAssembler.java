@@ -28,21 +28,23 @@ import io.tileverse.parquetry.schema.Schema;
 /**
  * Dremel record assembler (scope-limited).
  *
- * <p>Walks the projected schema in lockstep with one {@link ColumnReader} per projected
- * leaf column and emits one assembled row at a time as a {@link RowAccessor}.
+ * <p>Walks the projected schema in lockstep with one {@link ColumnReader} per projected leaf column and emits one
+ * assembled row at a time as a {@link RowAccessor}.
  *
  * <h2>Supported schema shapes</h2>
+ *
  * <ul>
- *   <li>Flat schemas: a top-level group of REQUIRED and OPTIONAL scalar fields.</li>
- *   <li>One level of OPTIONAL group nesting, e.g. an optional group containing scalar
- *       fields (each leaf has maxDef=2 if the group is optional).</li>
+ *   <li>Flat schemas: a top-level group of REQUIRED and OPTIONAL scalar fields.
+ *   <li>One level of OPTIONAL group nesting, e.g. an optional group containing scalar fields (each leaf has maxDef=2 if
+ *       the group is optional).
  * </ul>
  *
  * <h2>Scope limitation</h2>
- * <p>Columns with a maximum repetition level >= 1 (REPEATED fields or fields nested inside
- * a repeated group) are <em>not</em> supported. The constructor rejects such readers
- * immediately with an {@link UnsupportedOperationException}. Full Dremel repeated/nested
- * array support is deferred to a later iteration alongside the GeoParquet integration tests.
+ *
+ * <p>Columns with a maximum repetition level >= 1 (REPEATED fields or fields nested inside a repeated group) are
+ * <em>not</em> supported. The constructor rejects such readers immediately with an
+ * {@link UnsupportedOperationException}. Full Dremel repeated/nested array support is deferred to a later iteration
+ * alongside the GeoParquet integration tests.
  */
 public final class RecordAssembler {
 
@@ -77,9 +79,8 @@ public final class RecordAssembler {
     // --- schema traversal ---
 
     /**
-     * Walks the children of {@code group}, building their contribution to {@code row}.
-     * When {@code isRoot} is true the group's own name is excluded from the path prefix
-     * (because the Parquet root group is anonymous in column paths).
+     * Walks the children of {@code group}, building their contribution to {@code row}. When {@code isRoot} is true the
+     * group's own name is excluded from the path prefix (because the Parquet root group is anonymous in column paths).
      */
     private void assembleGroup(Field.Group group, List<String> ancestorPath, MutableRowAccessor row, boolean isRoot) {
         List<String> groupPath = buildGroupPath(group, ancestorPath, isRoot);
@@ -101,8 +102,8 @@ public final class RecordAssembler {
     }
 
     /**
-     * Reads the current value from the leaf's column reader and stores it in {@code row}.
-     * When the definition level is below the maximum the leaf is null and no entry is stored.
+     * Reads the current value from the leaf's column reader and stores it in {@code row}. When the definition level is
+     * below the maximum the leaf is null and no entry is stored.
      */
     private void consumeLeaf(Field.Primitive leaf, List<String> ancestorPath, MutableRowAccessor row) {
         ColumnPath path = buildLeafPath(leaf.name(), ancestorPath);
@@ -122,9 +123,8 @@ public final class RecordAssembler {
     }
 
     /**
-     * Delegates assembly of a nested group's children. Null-group tracking is deferred to
-     * a later iteration; for now a fully-null optional group simply leaves its descendants
-     * absent from {@code row.values}.
+     * Delegates assembly of a nested group's children. Null-group tracking is deferred to a later iteration; for now a
+     * fully-null optional group simply leaves its descendants absent from {@code row.values}.
      */
     private void consumeNestedGroup(Field.Group group, List<String> ancestorPath, MutableRowAccessor row) {
         assembleGroup(group, ancestorPath, row, /*isRoot*/ false);

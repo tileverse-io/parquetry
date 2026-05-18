@@ -27,12 +27,12 @@ import io.tileverse.parquetry.schema.ColumnPath;
 /**
  * Fluent builder emitting {@link Predicate} records.
  *
- * <p>Static entry: {@link #col(String)} or {@link #col(ColumnPath)} returns a {@link ColumnRef}
- * with typed overloads for each Parquet primitive ({@code .eq(int)}, {@code .eq(long)},
- * {@code .eq(String)}, etc.). The builder returns standard {@link Predicate} records.
+ * <p>Static entry: {@link #col(String)} or {@link #col(ColumnPath)} returns a {@link ColumnRef} with typed overloads
+ * for each Parquet primitive ({@code .eq(int)}, {@code .eq(long)}, {@code .eq(String)}, etc.). The builder returns
+ * standard {@link Predicate} records.
  *
- * <p>Combinators {@link #and(Predicate...)} / {@link #or(Predicate...)} / {@link #not(Predicate)}
- * are also exposed for top-level composition.
+ * <p>Combinators {@link #and(Predicate...)} / {@link #or(Predicate...)} / {@link #not(Predicate)} are also exposed for
+ * top-level composition.
  */
 public final class Pred {
 

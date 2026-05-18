@@ -21,9 +21,9 @@ import java.util.Optional;
 /**
  * Per-column statistics carried in {@link ColumnMetaData}.
  *
- * <p>The (deprecated) {@code max}/{@code min} byte arrays are the legacy fields written
- * by older parquet writers; modern writers use {@code maxValue}/{@code minValue} which
- * obey the column's {@link ColumnOrder}. Both pairs are optional.
+ * <p>The (deprecated) {@code max}/{@code min} byte arrays are the legacy fields written by older parquet writers;
+ * modern writers use {@code maxValue}/{@code minValue} which obey the column's {@link ColumnOrder}. Both pairs are
+ * optional.
  *
  * <p>All {@link ByteBuffer} fields are read-only; callers cannot mutate the backing bytes.
  */

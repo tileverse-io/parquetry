@@ -23,18 +23,18 @@ import io.tileverse.parquetry.page.PageDecoder;
  * DELTA_BYTE_ARRAY page decoder.
  *
  * <p>Page layout (parquet-format Encodings.md):
+ *
  * <pre>
  *   prefix-lengths (DELTA_BINARY_PACKED i32, N entries)
  *   suffix-lengths (DELTA_BINARY_PACKED i32, N entries)
  *   suffix-bytes   (concatenated)
  * </pre>
  *
- * <p>Reconstruction: {@code V[i] = V[i-1][0..P[i]] + S[i]}. The first prefix length must
- * be zero; each subsequent value reuses a leading slice of the previous value and appends
- * the suffix bytes from the page.
+ * <p>Reconstruction: {@code V[i] = V[i-1][0..P[i]] + S[i]}. The first prefix length must be zero; each subsequent value
+ * reuses a leading slice of the previous value and appends the suffix bytes from the page.
  *
- * <p>Returned {@link ByteBuffer} values are wrapped over fresh byte[] copies (read-only)
- * so they remain stable across subsequent {@link #next()} calls.
+ * <p>Returned {@link ByteBuffer} values are wrapped over fresh byte[] copies (read-only) so they remain stable across
+ * subsequent {@link #next()} calls.
  */
 public final class DeltaByteArrayDecoder implements PageDecoder<ByteBuffer> {
 
@@ -84,14 +84,14 @@ public final class DeltaByteArrayDecoder implements PageDecoder<ByteBuffer> {
     }
 
     /**
-     * Decodes a DELTA_BINARY_PACKED integer sequence from {@code buffer}, advancing its
-     * position past all block bytes including any padding values used to fill the last block.
-     * Returns only the {@code totalValueCount} real values as an int array.
+     * Decodes a DELTA_BINARY_PACKED integer sequence from {@code buffer}, advancing its position past all block bytes
+     * including any padding values used to fill the last block. Returns only the {@code totalValueCount} real values as
+     * an int array.
      *
-     * <p>DELTA_BINARY_PACKED encodes values in fixed-size blocks. The encoder pads the last
-     * block to a full block boundary. If we stop reading after {@code totalValueCount} real
-     * values, the buffer position may be mid-block. Draining the padding values forces the
-     * buffer position to advance past the entire encoding so the next segment starts correctly.
+     * <p>DELTA_BINARY_PACKED encodes values in fixed-size blocks. The encoder pads the last block to a full block
+     * boundary. If we stop reading after {@code totalValueCount} real values, the buffer position may be mid-block.
+     * Draining the padding values forces the buffer position to advance past the entire encoding so the next segment
+     * starts correctly.
      */
     private static int[] decodeDeltaInts(ByteBuffer buffer) {
         DeltaBinaryPackedDecoder decoder = new DeltaBinaryPackedDecoder();

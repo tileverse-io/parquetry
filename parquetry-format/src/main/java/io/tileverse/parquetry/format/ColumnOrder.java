@@ -16,8 +16,8 @@
 package io.tileverse.parquetry.format;
 
 /**
- * Thrift {@code union ColumnOrder} - only one variant exists today ({@code TypeDefinedOrder}),
- * but the union shape is preserved for forward compatibility with future ordering schemes.
+ * Thrift {@code union ColumnOrder} - only one variant exists today ({@code TypeDefinedOrder}), but the union shape is
+ * preserved for forward compatibility with future ordering schemes.
  */
 public sealed interface ColumnOrder permits ColumnOrder.TypeDefined {
     record TypeDefined() implements ColumnOrder {}

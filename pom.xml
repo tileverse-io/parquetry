@@ -42,12 +42,15 @@
 
     <junit.version>5.11.3</junit.version>
     <assertj.version>3.26.3</assertj.version>
-    <jqwik.version>1.9.1</jqwik.version>
     <testcontainers.version>1.20.4</testcontainers.version>
     <parquet-avro.version>1.14.3</parquet-avro.version>
 
     <spotless.version>2.43.0</spotless.version>
     <sortpom.version>4.0.0</sortpom.version>
+    <jacoco.version>0.8.14</jacoco.version>
+
+    <!-- JaCoCo argLine property (overridden by jacoco:prepare-agent when coverage profile is active) -->
+    <argLine/>
   </properties>
 
   <build>
@@ -69,7 +72,8 @@
           <artifactId>maven-surefire-plugin</artifactId>
           <version>3.5.2</version>
           <configuration>
-            <argLine>--enable-preview --enable-native-access=ALL-UNNAMED</argLine>
+            <!-- @{argLine} lets jacoco:prepare-agent inject its agent when the coverage profile is active -->
+            <argLine>@{argLine} --enable-preview --enable-native-access=ALL-UNNAMED</argLine>
           </configuration>
         </plugin>
         <plugin>
@@ -77,8 +81,42 @@
           <artifactId>maven-failsafe-plugin</artifactId>
           <version>3.5.2</version>
           <configuration>
-            <argLine>--enable-preview --enable-native-access=ALL-UNNAMED</argLine>
+            <!-- @{argLine} lets jacoco:prepare-agent-integration inject its agent when the coverage profile is active -->
+            <argLine>@{argLine} --enable-preview --enable-native-access=ALL-UNNAMED</argLine>
           </configuration>
+        </plugin>
+        <plugin>
+          <groupId>org.jacoco</groupId>
+          <artifactId>jacoco-maven-plugin</artifactId>
+          <version>${jacoco.version}</version>
+          <executions>
+            <execution>
+              <id>prepare-agent</id>
+              <goals>
+                <goal>prepare-agent</goal>
+              </goals>
+            </execution>
+            <execution>
+              <id>prepare-agent-integration</id>
+              <goals>
+                <goal>prepare-agent-integration</goal>
+              </goals>
+            </execution>
+            <execution>
+              <id>report</id>
+              <goals>
+                <goal>report</goal>
+              </goals>
+              <phase>test</phase>
+            </execution>
+            <execution>
+              <id>report-integration</id>
+              <goals>
+                <goal>report-integration</goal>
+              </goals>
+              <phase>post-integration-test</phase>
+            </execution>
+          </executions>
         </plugin>
         <plugin>
           <groupId>com.diffplug.spotless</groupId>
@@ -88,6 +126,7 @@
             <java>
               <palantirJavaFormat>
                 <version>2.90.0</version>
+                <formatJavadoc>true</formatJavadoc>
               </palantirJavaFormat>
               <licenseHeader>
                 <content>/*
@@ -182,6 +221,23 @@
                 <phase>validate</phase>
               </execution>
             </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+
+    <profile>
+      <id>coverage</id>
+      <activation>
+        <property>
+          <name>coverage</name>
+        </property>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.jacoco</groupId>
+            <artifactId>jacoco-maven-plugin</artifactId>
           </plugin>
         </plugins>
       </build>

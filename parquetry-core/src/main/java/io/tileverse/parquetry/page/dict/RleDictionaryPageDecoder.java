@@ -23,10 +23,9 @@ import io.tileverse.parquetry.page.PageDecoder;
 /**
  * Data-page decoder for dictionary-encoded columns (PLAIN_DICTIONARY / RLE_DICTIONARY).
  *
- * <p>Each value is an integer index into the column's {@link Dictionary}. Indexes are
- * encoded with the RLE-Bit-Packed hybrid; the bit width is carried as the first byte of
- * the page payload (NOT in the page header). After reading the bit width, the rest of the
- * payload is delegated to a {@link LevelDecoder} configured at that bit width.
+ * <p>Each value is an integer index into the column's {@link Dictionary}. Indexes are encoded with the RLE-Bit-Packed
+ * hybrid; the bit width is carried as the first byte of the page payload (NOT in the page header). After reading the
+ * bit width, the rest of the payload is delegated to a {@link LevelDecoder} configured at that bit width.
  *
  * @param <T> the dictionary value type
  */
@@ -40,8 +39,8 @@ public final class RleDictionaryPageDecoder<T> implements PageDecoder<T> {
     }
 
     /**
-     * Load a data page. Reads the bit-width byte first, then hands the remaining bytes
-     * to a new {@link LevelDecoder} for index decoding.
+     * Load a data page. Reads the bit-width byte first, then hands the remaining bytes to a new {@link LevelDecoder}
+     * for index decoding.
      */
     @Override
     public void load(ByteBuffer page, int valueCount) {

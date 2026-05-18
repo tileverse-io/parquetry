@@ -17,13 +17,20 @@ package io.tileverse.parquetry.codec.impl;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.nio.ByteBuffer;
+import java.io.InputStream;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 
 import org.brotli.dec.BrotliInputStream;
 
 import io.tileverse.parquetry.codec.Codec;
 import io.tileverse.parquetry.format.enums.CompressionCodec;
 
+/**
+ * Brotli codec. The {@code org.brotli:dec} library is stream/byte-array based, so the compressed input is copied into a
+ * {@code byte[]} at the boundary; the decompressed output is written directly into the destination
+ * {@link MemorySegment} in 8KB chunks.
+ */
 public final class BrotliCodec implements Codec {
 
     @Override
@@ -32,20 +39,24 @@ public final class BrotliCodec implements Codec {
     }
 
     @Override
-    public int decompress(ByteBuffer compressed, ByteBuffer output) throws IOException {
-        byte[] in = ByteBuffers.toArray(compressed);
+    public int decompress(MemorySegment compressed, MemorySegment output) throws IOException {
+        byte[] in = compressed.toArray(ValueLayout.JAVA_BYTE);
         try (BrotliInputStream br = new BrotliInputStream(new ByteArrayInputStream(in))) {
-            int written = 0;
-            byte[] buf = new byte[8192];
-            while (true) {
-                int n = br.read(buf);
-                if (n < 0) {
-                    break;
-                }
-                output.put(buf, 0, n);
-                written += n;
-            }
-            return written;
+            return streamToSegment(br, output);
         }
+    }
+
+    private static int streamToSegment(InputStream in, MemorySegment output) throws IOException {
+        byte[] buf = new byte[8192];
+        int written = 0;
+        while (true) {
+            int n = in.read(buf);
+            if (n < 0) {
+                break;
+            }
+            MemorySegment.copy(buf, 0, output, ValueLayout.JAVA_BYTE, written, n);
+            written += n;
+        }
+        return written;
     }
 }

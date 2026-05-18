@@ -24,9 +24,9 @@ import io.tileverse.parquetry.page.PageDecoder;
 /**
  * Boolean data-page decoder using Parquet's RLE encoding (RLE-Bit-Packed hybrid at bitWidth=1).
  *
- * <p>Per the Parquet spec, RLE-encoded data pages are prefixed by a 4-byte little-endian
- * length giving the size of the RLE payload that follows. We strip the prefix in
- * {@link #load} and delegate to a {@link LevelDecoder} for the actual encoded run handling.
+ * <p>Per the Parquet spec, RLE-encoded data pages are prefixed by a 4-byte little-endian length giving the size of the
+ * RLE payload that follows. We strip the prefix in {@link #load} and delegate to a {@link LevelDecoder} for the actual
+ * encoded run handling.
  */
 public final class RleBooleanDecoder implements PageDecoder<Boolean> {
 

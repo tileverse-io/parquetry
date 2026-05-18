@@ -22,9 +22,8 @@ import io.tileverse.parquetry.schema.ColumnPath;
 /**
  * Sealed predicate ADT for filter pushdown.
  *
- * <p>Use pattern matching on the variants to evaluate or transform. The {@code Pred}
- * fluent builder emits these records; the normalizer and the 5-tier
- * evaluator pipeline consume them.
+ * <p>Use pattern matching on the variants to evaluate or transform. The {@code Pred} fluent builder emits these
+ * records; the normalizer and the 5-tier evaluator pipeline consume them.
  */
 public sealed interface Predicate {
 

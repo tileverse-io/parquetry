@@ -25,6 +25,7 @@ import io.tileverse.parquetry.format.logical.LogicalType;
  * A node in a Parquet schema tree.
  *
  * <p>Exactly two cases:
+ *
  * <ul>
  *   <li>{@link Primitive} - a leaf column with a physical type and optional logical annotation.
  *   <li>{@link Group} - an interior node containing child fields.

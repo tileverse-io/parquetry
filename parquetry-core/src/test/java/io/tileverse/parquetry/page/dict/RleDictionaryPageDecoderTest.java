@@ -27,12 +27,13 @@ import io.tileverse.parquetry.page.PageDecoder;
 class RleDictionaryPageDecoderTest {
 
     /**
-     * Verify that indexes [0, 1, 2, 0, 1, 2] are correctly dereferenced against a
-     * three-element INT32 dictionary [10, 20, 30].
+     * Verify that indexes [0, 1, 2, 0, 1, 2] are correctly dereferenced against a three-element INT32 dictionary [10,
+     * 20, 30].
      *
      * <p>Encoding: bit-packed at bitWidth=2, one group of 8 values (padded with 0,0).
      *
      * <p>Bit layout (LSB-first, 2 bits per value):
+     *
      * <pre>
      *   values:  0  1  2  0  1  2  0  0   (8 values, last 2 are padding)
      *   bits:   00 01 10 00 01 10 00 00
@@ -79,6 +80,7 @@ class RleDictionaryPageDecoderTest {
      * <p>Dictionary is [10, 20, 30]. Indexes [2, 0, 1, 2] encoded at bitWidth=2.
      *
      * <p>Bit layout:
+     *
      * <pre>
      *   values:  2  0  1  2  0  0  0  0  (8 values, last 4 are padding)
      *   byte 0: bit 0-1: val0=2 (10), bit 2-3: val1=0 (00),

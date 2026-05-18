@@ -16,8 +16,8 @@
 package io.tileverse.parquetry.format.crypto;
 
 /**
- * Per-column encryption metadata (Thrift {@code union ColumnCryptoMetaData}).
- * Stubbed; readers throw EncryptedFileException if this is present.
+ * Per-column encryption metadata (Thrift {@code union ColumnCryptoMetaData}). Stubbed; readers throw
+ * EncryptedFileException if this is present.
  */
 public sealed interface ColumnCryptoMetaData
         permits ColumnCryptoMetaData.EncryptionWithFooterKeyStub, ColumnCryptoMetaData.EncryptionWithColumnKeyStub {

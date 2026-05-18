@@ -20,20 +20,18 @@ import java.nio.ByteBuffer;
 import io.tileverse.parquetry.page.PageDecoder;
 
 /**
- * PLAIN decoder for FIXED_LEN_BYTE_ARRAY: exactly N bytes per value, where N comes from
- * the column schema's {@code typeLength} field.
+ * PLAIN decoder for FIXED_LEN_BYTE_ARRAY: exactly N bytes per value, where N comes from the column schema's
+ * {@code typeLength} field.
  *
- * <p>Each value is returned as a read-only {@link ByteBuffer} slice backed by the original
- * page buffer (zero-copy). The slice's {@code remaining()} equals {@code length}.
+ * <p>Each value is returned as a read-only {@link ByteBuffer} slice backed by the original page buffer (zero-copy). The
+ * slice's {@code remaining()} equals {@code length}.
  */
 public final class PlainFixedLenBinaryDecoder implements PageDecoder<ByteBuffer> {
 
     private final int length;
     private ByteBuffer buffer;
 
-    /**
-     * @param length bytes per value; must be non-negative (zero is valid for degenerate schemas)
-     */
+    /** @param length bytes per value; must be non-negative (zero is valid for degenerate schemas) */
     public PlainFixedLenBinaryDecoder(int length) {
         if (length < 0) {
             throw new IllegalArgumentException("length must be non-negative; got " + length);

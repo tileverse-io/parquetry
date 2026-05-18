@@ -20,8 +20,8 @@ import java.util.List;
 /**
  * Dot-separated path to a column within a Parquet schema tree.
  *
- * <p>The root group is not included in the path; the first element is the direct child of root.
- * For a flat schema with column "year", the path is simply {@code ColumnPath.of("year")}.
+ * <p>The root group is not included in the path; the first element is the direct child of root. For a flat schema with
+ * column "year", the path is simply {@code ColumnPath.of("year")}.
  */
 public record ColumnPath(List<String> parts) {
 

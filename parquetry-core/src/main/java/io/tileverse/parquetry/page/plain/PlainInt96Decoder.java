@@ -22,9 +22,8 @@ import io.tileverse.parquetry.page.PageDecoder;
 /**
  * PLAIN decoder for INT96: twelve bytes, little-endian per value.
  *
- * <p>INT96 is a deprecated legacy timestamp type used by some older Parquet writers. Each
- * value is returned as a read-only {@link ByteBuffer} slice of twelve bytes backed by the
- * original page buffer (zero-copy).
+ * <p>INT96 is a deprecated legacy timestamp type used by some older Parquet writers. Each value is returned as a
+ * read-only {@link ByteBuffer} slice of twelve bytes backed by the original page buffer (zero-copy).
  */
 public final class PlainInt96Decoder implements PageDecoder<ByteBuffer> {
 

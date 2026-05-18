@@ -22,9 +22,8 @@ import io.tileverse.parquetry.page.PageDecoder;
 /**
  * PLAIN decoder for BOOLEAN: bit-packed, LSB-first, eight values per byte.
  *
- * <p>Bit 0 of byte 0 is value 0, bit 1 of byte 0 is value 1, etc.
- * The decoder maintains an internal bit cursor and does not advance the
- * underlying buffer's position on each call, keeping it simple and allocation-free.
+ * <p>Bit 0 of byte 0 is value 0, bit 1 of byte 0 is value 1, etc. The decoder maintains an internal bit cursor and does
+ * not advance the underlying buffer's position on each call, keeping it simple and allocation-free.
  */
 public final class PlainBooleanDecoder implements PageDecoder<Boolean> {
 

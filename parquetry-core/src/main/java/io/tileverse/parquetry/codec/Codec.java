@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.codec;
 
 import java.io.IOException;
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 
 import io.tileverse.parquetry.format.enums.CompressionCodec;
@@ -23,14 +24,12 @@ import io.tileverse.parquetry.format.enums.CompressionCodec;
 /**
  * Codec SPI for Parquet compression algorithms.
  *
- * <p>Implementations are discovered via {@link java.util.ServiceLoader}. Each implementation
- * declares which {@link CompressionCodec} it handles; the {@link CodecRegistry} looks them up
- * by enum at read time.
+ * <p>Implementations are discovered via {@link java.util.ServiceLoader}. Each implementation declares which
+ * {@link CompressionCodec} it handles; the {@link CodecRegistry} looks them up by enum at read time.
  *
- * <p>The primary API takes both input and output buffers, letting callers manage allocations
- * (e.g., reuse a buffer pool, or wrap a region of a native {@code MemorySegment}). A
- * convenience overload allocates a heap buffer of the expected size when callers don't need
- * control.
+ * <p>The primary entry point takes a pair of {@link MemorySegment}s so the engine can hand zero-copy views of native
+ * memory (e.g. a pooled output region or a slice of a column-chunk buffer). The {@link ByteBuffer} overloads are thin
+ * convenience wrappers that delegate to the {@code MemorySegment} entry point.
  */
 public interface Codec {
 
@@ -38,19 +37,29 @@ public interface Codec {
     CompressionCodec algorithm();
 
     /**
-     * Decompresses {@code compressed} into {@code output}. The {@code compressed} buffer's
-     * position is advanced past the consumed bytes; {@code output}'s position is advanced
-     * past the bytes written. Caller must ensure {@code output.remaining() >= uncompressed
-     * size}.
-     *
-     * @return the number of decompressed bytes written
+     * Decompresses the contents of {@code compressed} into {@code output}. The {@code output} segment must be at least
+     * as large as the expected uncompressed payload. Returns the number of bytes written.
      */
-    int decompress(ByteBuffer compressed, ByteBuffer output) throws IOException;
+    int decompress(MemorySegment compressed, MemorySegment output) throws IOException;
 
     /**
-     * Convenience: allocate a heap buffer of {@code uncompressedLength} bytes, decompress
-     * into it, flip and return it. Use the two-buffer overload if you want to manage the
-     * output buffer yourself.
+     * Convenience overload that wraps the two buffers as memory segments and advances each buffer's position past the
+     * bytes consumed / written. The {@code compressed} buffer's position advances by its full {@code remaining()}; the
+     * {@code output} buffer's position advances by the number of bytes written.
+     */
+    default int decompress(ByteBuffer compressed, ByteBuffer output) throws IOException {
+        int inLength = compressed.remaining();
+        MemorySegment in = MemorySegment.ofBuffer(compressed);
+        MemorySegment out = MemorySegment.ofBuffer(output);
+        int written = decompress(in, out);
+        compressed.position(compressed.position() + inLength);
+        output.position(output.position() + written);
+        return written;
+    }
+
+    /**
+     * Convenience overload that allocates a heap output buffer of {@code uncompressedLength} bytes, decompresses into
+     * it, flips it, and returns it.
      */
     default ByteBuffer decompress(ByteBuffer compressed, int uncompressedLength) throws IOException {
         ByteBuffer output = ByteBuffer.allocate(uncompressedLength);

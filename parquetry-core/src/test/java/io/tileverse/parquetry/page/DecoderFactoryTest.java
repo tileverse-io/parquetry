@@ -46,8 +46,8 @@ import io.tileverse.parquetry.page.rle.RleBooleanDecoder;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 
 /**
- * Verifies the {@link DecoderFactory} dispatch table: correct decoder type for each valid
- * (Encoding, PrimitiveKind) combination, and clear exceptions for invalid combinations.
+ * Verifies the {@link DecoderFactory} dispatch table: correct decoder type for each valid (Encoding, PrimitiveKind)
+ * combination, and clear exceptions for invalid combinations.
  */
 class DecoderFactoryTest {
 

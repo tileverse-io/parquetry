@@ -33,9 +33,9 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
 /**
  * Reads a dictionary page into a {@link Dictionary}.
  *
- * <p>Dictionary pages carry all unique values for a column chunk in PLAIN encoding. This
- * class dispatches to the appropriate PLAIN decoder based on the column's primitive kind,
- * reads {@code valueCount} values, and wraps them in the matching {@link Dictionary} variant.
+ * <p>Dictionary pages carry all unique values for a column chunk in PLAIN encoding. This class dispatches to the
+ * appropriate PLAIN decoder based on the column's primitive kind, reads {@code valueCount} values, and wraps them in
+ * the matching {@link Dictionary} variant.
  */
 public final class DictionaryDecoder {
 
