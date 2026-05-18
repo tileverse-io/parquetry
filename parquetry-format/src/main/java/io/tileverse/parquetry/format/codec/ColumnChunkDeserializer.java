@@ -72,9 +72,7 @@ final class ColumnChunkDeserializer {
                 case 6 -> columnIndexOffset = OptionalLong.of(r.readI64());
                 case 7 -> columnIndexLength = OptionalInt.of(r.readI32());
                 // Fields 8 and 9 are crypto metadata - skipped
-                case 8 -> {
-                    r.skipField(fh.type());
-                }
+                case 8 -> r.skipField(fh.type());
                 case 9 -> encryptedColumnMetadata = Optional.of(r.readBinary());
                 default -> r.skipField(fh.type());
             }

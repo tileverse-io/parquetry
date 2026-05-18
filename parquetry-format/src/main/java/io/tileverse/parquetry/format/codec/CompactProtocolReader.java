@@ -48,7 +48,7 @@ public final class CompactProtocolReader {
 
     public double readDouble() throws IOException {
         byte[] buf = readN(8);
-        long bits = ((long) (buf[0] & 0xff))
+        long bits = (buf[0] & 0xffL)
                 | ((long) (buf[1] & 0xff) << 8)
                 | ((long) (buf[2] & 0xff) << 16)
                 | ((long) (buf[3] & 0xff) << 24)
@@ -188,7 +188,9 @@ public final class CompactProtocolReader {
      */
     public void skipField(CompactType type) throws IOException {
         switch (type) {
-            case BOOLEAN_TRUE, BOOLEAN_FALSE -> {}
+            case BOOLEAN_TRUE, BOOLEAN_FALSE -> {
+                // BOOLEAN values are encoded directly in the field header type nibble; no payload to skip.
+            }
             case BYTE -> readN(1);
             case I16, I32, I64 -> readVarLong();
             case DOUBLE -> readN(8);

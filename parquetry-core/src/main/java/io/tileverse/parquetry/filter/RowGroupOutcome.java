@@ -13,8 +13,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.format;
+package io.tileverse.parquetry.filter;
 
-/** Stub. Real fields exist in newer parquet.thrift revisions; not used by current decoders. */
-@SuppressWarnings("java:S2094")
-public record IndexPageHeader() {}
+/**
+ * The end-of-pipeline outcome for a single row group:
+ *
+ * <ul>
+ *   <li>{@link #ELIMINATED} - no I/O for this row group; some tier proved no row can match.
+ *   <li>{@link #PARTIAL} - a strict subset of rows survives; record-level evaluation still runs.
+ *   <li>{@link #FULL} - every row survives the a-priori tiers; record-level evaluation still applies.
+ * </ul>
+ */
+public enum RowGroupOutcome {
+    ELIMINATED,
+    PARTIAL,
+    FULL
+}

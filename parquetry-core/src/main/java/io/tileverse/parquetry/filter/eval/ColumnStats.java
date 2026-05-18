@@ -13,8 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.format;
+package io.tileverse.parquetry.filter.eval;
 
-/** Stub. Real fields exist in newer parquet.thrift revisions; not used by current decoders. */
-@SuppressWarnings("java:S2094")
-public record IndexPageHeader() {}
+import io.tileverse.parquetry.format.Statistics;
+import io.tileverse.parquetry.schema.PrimitiveKind;
+
+/**
+ * Per-column input to the statistics-tier filter evaluator: the column's primitive kind (so the evaluator knows how to
+ * decode the raw min/max bytes) plus its {@link Statistics} record from {@code ColumnMetaData}.
+ */
+public record ColumnStats(PrimitiveKind kind, Statistics statistics) {}

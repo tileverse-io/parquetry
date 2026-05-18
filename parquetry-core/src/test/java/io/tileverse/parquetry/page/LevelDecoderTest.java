@@ -25,7 +25,7 @@ class LevelDecoderTest {
 
     @Test
     void computeBitWidth() {
-        assertThat(LevelDecoder.computeBitWidth(0)).isEqualTo(0);
+        assertThat(LevelDecoder.computeBitWidth(0)).isZero();
         assertThat(LevelDecoder.computeBitWidth(1)).isEqualTo(1);
         assertThat(LevelDecoder.computeBitWidth(2)).isEqualTo(2);
         assertThat(LevelDecoder.computeBitWidth(3)).isEqualTo(2);

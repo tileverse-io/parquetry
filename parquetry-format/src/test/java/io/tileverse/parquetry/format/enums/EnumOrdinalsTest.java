@@ -23,7 +23,7 @@ class EnumOrdinalsTest {
 
     @Test
     void typeOrdinalsMatchThrift() {
-        assertThat(Type.BOOLEAN.ordinal()).isEqualTo(0);
+        assertThat(Type.BOOLEAN.ordinal()).isZero();
         assertThat(Type.INT32.ordinal()).isEqualTo(1);
         assertThat(Type.INT64.ordinal()).isEqualTo(2);
         assertThat(Type.INT96.ordinal()).isEqualTo(3);
@@ -35,14 +35,14 @@ class EnumOrdinalsTest {
 
     @Test
     void fieldRepetitionTypeOrdinalsMatchThrift() {
-        assertThat(FieldRepetitionType.REQUIRED.ordinal()).isEqualTo(0);
+        assertThat(FieldRepetitionType.REQUIRED.ordinal()).isZero();
         assertThat(FieldRepetitionType.OPTIONAL.ordinal()).isEqualTo(1);
         assertThat(FieldRepetitionType.REPEATED.ordinal()).isEqualTo(2);
     }
 
     @Test
     void encodingOrdinalsMatchThrift() {
-        assertThat(Encoding.PLAIN.ordinal()).isEqualTo(0);
+        assertThat(Encoding.PLAIN.ordinal()).isZero();
         assertThat(Encoding.PLAIN_DICTIONARY.ordinal()).isEqualTo(2);
         assertThat(Encoding.RLE.ordinal()).isEqualTo(3);
         assertThat(Encoding.BIT_PACKED.ordinal()).isEqualTo(4);
@@ -55,7 +55,7 @@ class EnumOrdinalsTest {
 
     @Test
     void compressionCodecOrdinalsMatchThrift() {
-        assertThat(CompressionCodec.UNCOMPRESSED.ordinal()).isEqualTo(0);
+        assertThat(CompressionCodec.UNCOMPRESSED.ordinal()).isZero();
         assertThat(CompressionCodec.SNAPPY.ordinal()).isEqualTo(1);
         assertThat(CompressionCodec.GZIP.ordinal()).isEqualTo(2);
         assertThat(CompressionCodec.LZO.ordinal()).isEqualTo(3);
@@ -67,14 +67,14 @@ class EnumOrdinalsTest {
 
     @Test
     void boundaryOrderOrdinalsMatchThrift() {
-        assertThat(BoundaryOrder.UNORDERED.ordinal()).isEqualTo(0);
+        assertThat(BoundaryOrder.UNORDERED.ordinal()).isZero();
         assertThat(BoundaryOrder.ASCENDING.ordinal()).isEqualTo(1);
         assertThat(BoundaryOrder.DESCENDING.ordinal()).isEqualTo(2);
     }
 
     @Test
     void edgeInterpolationAlgorithmOrdinalsMatchThrift() {
-        assertThat(EdgeInterpolationAlgorithm.SPHERICAL.ordinal()).isEqualTo(0);
+        assertThat(EdgeInterpolationAlgorithm.SPHERICAL.ordinal()).isZero();
         assertThat(EdgeInterpolationAlgorithm.VINCENTY.ordinal()).isEqualTo(1);
         assertThat(EdgeInterpolationAlgorithm.THOMAS.ordinal()).isEqualTo(2);
         assertThat(EdgeInterpolationAlgorithm.ANDOYER.ordinal()).isEqualTo(3);

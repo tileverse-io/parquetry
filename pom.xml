@@ -45,7 +45,7 @@
     <testcontainers.version>1.20.4</testcontainers.version>
     <parquet-avro.version>1.14.3</parquet-avro.version>
 
-    <spotless.version>2.43.0</spotless.version>
+    <spotless.version>3.5.1</spotless.version>
     <sortpom.version>4.0.0</sortpom.version>
     <jacoco.version>0.8.14</jacoco.version>
 
@@ -56,6 +56,11 @@
   <build>
     <pluginManagement>
       <plugins>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-jar-plugin</artifactId>
+          <version>3.4.2</version>
+        </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-compiler-plugin</artifactId>

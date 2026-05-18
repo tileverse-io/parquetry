@@ -28,7 +28,7 @@ class CompactProtocolReaderPrimitivesTest {
     @Test
     void zigzagInt32_zero() throws Exception {
         CompactProtocolReader r = new CompactProtocolReader(new ByteArrayInputStream(new byte[] {0x00}));
-        assertThat(r.readI32()).isEqualTo(0);
+        assertThat(r.readI32()).isZero();
     }
 
     @Test

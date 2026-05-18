@@ -49,12 +49,11 @@ final class TestFiles {
         Schema schema = new Schema.Parser()
                 .parse("{\"type\":\"record\",\"name\":\"m\",\"fields\":[{\"name\":\"id\",\"type\":\"int\"}]}");
         Path out = tmpDir.resolve("empty.parquet");
-        try (ParquetWriter<GenericData.Record> writer = AvroParquetWriter.<GenericData.Record>builder(
-                        new LocalOutputFile(out))
+        try (var _ = AvroParquetWriter.<GenericData.Record>builder(new LocalOutputFile(out))
                 .withSchema(schema)
                 .withCompressionCodec(CompressionCodecName.UNCOMPRESSED)
                 .build()) {
-            // zero records intentionally
+            // zero records intentionally; opening + closing the writer produces a valid empty Parquet footer
         }
         return out;
     }
@@ -151,7 +150,7 @@ final class TestFiles {
                 .withSchema(schema)
                 .withCompressionCodec(CompressionCodecName.SNAPPY)
                 // Force small row groups so 3000 rows produce multiple row groups
-                .withRowGroupSize(4096)
+                .withRowGroupSize(4096L)
                 .build()) {
             for (int i = 0; i < 3000; i++) {
                 GenericData.Record rec = new GenericData.Record(schema);
@@ -226,7 +225,7 @@ final class TestFiles {
                     writer.write(rec);
                 }
             }
-        } catch (Exception e) {
+        } catch (Exception _) {
             // If encoding configuration fails, skip this fixture
             return null;
         }

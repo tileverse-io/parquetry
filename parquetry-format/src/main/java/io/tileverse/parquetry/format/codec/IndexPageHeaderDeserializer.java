@@ -24,7 +24,7 @@ import io.tileverse.parquetry.format.IndexPageHeader;
  *
  * <pre>
  * struct IndexPageHeader {
- *   // TODO - currently empty in parquet.thrift
+ *   // currently empty in parquet.thrift; reserved for future fields
  * }
  * </pre>
  */

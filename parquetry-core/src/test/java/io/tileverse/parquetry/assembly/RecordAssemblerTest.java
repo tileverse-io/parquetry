@@ -193,7 +193,8 @@ class RecordAssemblerTest {
                 dec,
                 1);
 
-        assertThatThrownBy(() -> new RecordAssembler(schema, List.of(repeatedReader)))
+        List<ColumnReader> readers = List.of(repeatedReader);
+        assertThatThrownBy(() -> new RecordAssembler(schema, readers))
                 .isInstanceOf(UnsupportedOperationException.class)
                 .hasMessageContaining("tags")
                 .hasMessageContaining("maxRep=1");

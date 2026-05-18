@@ -73,7 +73,7 @@ class DeltaBinaryPackedDecoderTest {
      * Encode int values into DELTA_BINARY_PACKED. The values array length must be a multiple of blockSize. Produces a
      * single complete page suitable for the decoder.
      */
-    static byte[] encodeInts(int[] values, int blockSize, int miniblocksPerBlock) throws Exception {
+    static byte[] encodeInts(int[] values, int blockSize, int miniblocksPerBlock) {
         return encodeInts(values, blockSize, miniblocksPerBlock, values.length);
     }
 
@@ -81,14 +81,13 @@ class DeltaBinaryPackedDecoderTest {
      * Encode int values into DELTA_BINARY_PACKED with an explicit total value count in the header. Useful when the
      * values array is padded to a block boundary but the actual count is smaller.
      */
-    static byte[] encodeInts(int[] values, int blockSize, int miniblocksPerBlock, int totalValueCount)
-            throws Exception {
+    static byte[] encodeInts(int[] values, int blockSize, int miniblocksPerBlock, int totalValueCount) {
         long[] longs = new long[values.length];
         for (int i = 0; i < values.length; i++) longs[i] = values[i];
         return encodeLongs(longs, blockSize, miniblocksPerBlock, totalValueCount);
     }
 
-    static byte[] encodeLongs(long[] values, int blockSize, int miniblocksPerBlock) throws Exception {
+    static byte[] encodeLongs(long[] values, int blockSize, int miniblocksPerBlock) {
         return encodeLongs(values, blockSize, miniblocksPerBlock, values.length);
     }
 
@@ -96,8 +95,7 @@ class DeltaBinaryPackedDecoderTest {
      * Encode long values into DELTA_BINARY_PACKED with an explicit total value count in the header. Useful when the
      * values array is padded to a block boundary but the actual count is smaller.
      */
-    static byte[] encodeLongs(long[] values, int blockSize, int miniblocksPerBlock, int totalValueCount)
-            throws Exception {
+    static byte[] encodeLongs(long[] values, int blockSize, int miniblocksPerBlock, int totalValueCount) {
         int valuesPerMiniblock = blockSize / miniblocksPerBlock;
         ByteArrayOutputStream out = new ByteArrayOutputStream();
 

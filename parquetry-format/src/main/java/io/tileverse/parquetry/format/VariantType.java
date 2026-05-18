@@ -16,4 +16,5 @@
 package io.tileverse.parquetry.format;
 
 /** Stub. Real fields: see VariantShredding.md. */
+@SuppressWarnings("java:S2094")
 public record VariantType() {}

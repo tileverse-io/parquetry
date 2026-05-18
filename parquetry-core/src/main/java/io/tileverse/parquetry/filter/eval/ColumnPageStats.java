@@ -13,8 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.format;
+package io.tileverse.parquetry.filter.eval;
 
-/** Stub. Real fields exist in newer parquet.thrift revisions; not used by current decoders. */
-@SuppressWarnings("java:S2094")
-public record IndexPageHeader() {}
+import io.tileverse.parquetry.format.ColumnIndex;
+import io.tileverse.parquetry.format.OffsetIndex;
+import io.tileverse.parquetry.schema.PrimitiveKind;
+
+/**
+ * Per-column input to the COLUMN_INDEX-tier evaluator: the column's primitive kind plus its loaded {@link ColumnIndex}
+ * (page min/max + null markers) and {@link OffsetIndex} (page row offsets).
+ */
+public record ColumnPageStats(PrimitiveKind kind, ColumnIndex columnIndex, OffsetIndex offsetIndex) {}

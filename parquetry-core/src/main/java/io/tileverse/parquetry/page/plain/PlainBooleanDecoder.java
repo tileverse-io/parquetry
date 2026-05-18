@@ -45,7 +45,7 @@ public final class PlainBooleanDecoder implements PageDecoder<Boolean> {
     public Boolean next() {
         int byteIndex = byteOffset + (bitPosition >>> 3);
         int bitInByte = bitPosition & 7;
-        boolean value = (bytes[byteIndex] & (1 << bitInByte)) != 0;
+        boolean value = ((bytes[byteIndex] & 0xff) & (1 << bitInByte)) != 0;
         bitPosition++;
         return value;
     }

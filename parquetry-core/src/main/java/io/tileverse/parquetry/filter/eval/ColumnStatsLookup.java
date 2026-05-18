@@ -13,8 +13,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.format;
+package io.tileverse.parquetry.filter.eval;
 
-/** Stub. Real fields exist in newer parquet.thrift revisions; not used by current decoders. */
-@SuppressWarnings("java:S2094")
-public record IndexPageHeader() {}
+import java.util.Optional;
+
+import io.tileverse.parquetry.schema.ColumnPath;
+
+/**
+ * Resolves {@link ColumnStats} for a given column path within a row group. The filter pipeline implements this on top
+ * of a {@code RowGroup}'s column-chunk list and the file schema; tests can supply a tiny map-based lookup.
+ */
+@FunctionalInterface
+public interface ColumnStatsLookup {
+
+    /** Returns the {@link ColumnStats} for {@code path}, or empty if the column has no statistics. */
+    Optional<ColumnStats> get(ColumnPath path);
+}

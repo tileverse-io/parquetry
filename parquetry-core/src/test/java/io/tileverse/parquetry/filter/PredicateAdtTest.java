@@ -52,20 +52,20 @@ class PredicateAdtTest {
         Predicate p = new Predicate.Eq(ColumnPath.of("year"), new Value.IntVal(2020));
         String description =
                 switch (p) {
-                    case Predicate.Always a -> "always(" + a.value() + ")";
-                    case Predicate.Eq eq -> "eq(" + eq.col().dot() + ")";
-                    case Predicate.NotEq ne -> "neq";
-                    case Predicate.Lt lt -> "lt";
-                    case Predicate.LtEq le -> "le";
-                    case Predicate.Gt gt -> "gt";
-                    case Predicate.GtEq ge -> "ge";
-                    case Predicate.In in -> "in";
-                    case Predicate.IsNull n -> "null";
-                    case Predicate.IsNotNull nn -> "notnull";
-                    case Predicate.And and -> "and";
-                    case Predicate.Or or -> "or";
-                    case Predicate.Not not -> "not";
-                    case Predicate.BboxIntersects b -> "bbox";
+                    case Predicate.Always(boolean value) -> "always(" + value + ")";
+                    case Predicate.Eq(ColumnPath col, Value _) -> "eq(" + col.dot() + ")";
+                    case Predicate.NotEq _ -> "neq";
+                    case Predicate.Lt _ -> "lt";
+                    case Predicate.LtEq _ -> "le";
+                    case Predicate.Gt _ -> "gt";
+                    case Predicate.GtEq _ -> "ge";
+                    case Predicate.In _ -> "in";
+                    case Predicate.IsNull _ -> "null";
+                    case Predicate.IsNotNull _ -> "notnull";
+                    case Predicate.And _ -> "and";
+                    case Predicate.Or _ -> "or";
+                    case Predicate.Not _ -> "not";
+                    case Predicate.BboxIntersects _ -> "bbox";
                 };
         assertThat(description).isEqualTo("eq(year)");
     }

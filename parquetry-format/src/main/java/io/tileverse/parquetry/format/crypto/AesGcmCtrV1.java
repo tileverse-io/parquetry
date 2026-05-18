@@ -15,4 +15,6 @@
  */
 package io.tileverse.parquetry.format.crypto;
 
+/** Stub. Real fields: aadPrefix, aadFileUnique, supplyAadPrefix. */
+@SuppressWarnings("java:S2094")
 public record AesGcmCtrV1() {}

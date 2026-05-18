@@ -158,7 +158,8 @@ class PredicateNormalizerTest {
     @Test
     void validateRejectsMissingColumn() {
         Schema schema = flatSchema();
-        assertThatThrownBy(() -> PredicateNormalizer.validate(col("missing").eq(1), schema))
+        Predicate p = col("missing").eq(1);
+        assertThatThrownBy(() -> PredicateNormalizer.validate(p, schema))
                 .isInstanceOf(ParquetSchemaException.class)
                 .hasMessageContaining("missing");
     }
@@ -166,7 +167,8 @@ class PredicateNormalizerTest {
     @Test
     void validateRejectsTypeMismatch() {
         Schema schema = flatSchema();
-        assertThatThrownBy(() -> PredicateNormalizer.validate(col("year").eq("not-an-int"), schema))
+        Predicate p = col("year").eq("not-an-int");
+        assertThatThrownBy(() -> PredicateNormalizer.validate(p, schema))
                 .isInstanceOf(ParquetSchemaException.class)
                 .hasMessageContaining("year");
     }
@@ -174,7 +176,8 @@ class PredicateNormalizerTest {
     @Test
     void validateRejectsGroupReference() {
         Schema schema = nestedSchema();
-        assertThatThrownBy(() -> PredicateNormalizer.validate(col("addr").isNotNull(), schema))
+        Predicate p = col("addr").isNotNull();
+        assertThatThrownBy(() -> PredicateNormalizer.validate(p, schema))
                 .isInstanceOf(ParquetSchemaException.class)
                 .hasMessageContaining("group");
     }
@@ -188,7 +191,8 @@ class PredicateNormalizerTest {
     @Test
     void validateRejectsBboxOnNonBinaryColumn() {
         Schema schema = flatSchema();
-        assertThatThrownBy(() -> PredicateNormalizer.validate(col("year").intersects(Bbox.of2d(0, 0, 1, 1)), schema))
+        Predicate p = col("year").intersects(Bbox.of2d(0, 0, 1, 1));
+        assertThatThrownBy(() -> PredicateNormalizer.validate(p, schema))
                 .isInstanceOf(ParquetSchemaException.class)
                 .hasMessageContaining("binary");
     }

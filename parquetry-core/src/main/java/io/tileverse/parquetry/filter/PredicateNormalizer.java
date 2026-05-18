@@ -49,31 +49,31 @@ public final class PredicateNormalizer {
      */
     public static void validate(Predicate p, Schema schema) {
         switch (p) {
-            case Predicate.Always a -> {
+            case Predicate.Always _ -> {
                 /* no columns to check */
             }
-            case Predicate.And a -> a.children().forEach(c -> validate(c, schema));
-            case Predicate.Or o -> o.children().forEach(c -> validate(c, schema));
-            case Predicate.Not n -> validate(n.child(), schema);
-            case Predicate.Eq e -> checkLeafColumn(e.col(), schema, e.v());
-            case Predicate.NotEq e -> checkLeafColumn(e.col(), schema, e.v());
-            case Predicate.Lt e -> checkLeafColumn(e.col(), schema, e.v());
-            case Predicate.LtEq e -> checkLeafColumn(e.col(), schema, e.v());
-            case Predicate.Gt e -> checkLeafColumn(e.col(), schema, e.v());
-            case Predicate.GtEq e -> checkLeafColumn(e.col(), schema, e.v());
-            case Predicate.In in -> {
-                Field.Primitive prim = requirePrimitive(in.col(), schema);
-                for (Value v : in.values()) {
-                    requireCompatible(in.col(), prim.kind(), v);
+            case Predicate.And(List<Predicate> children) -> children.forEach(c -> validate(c, schema));
+            case Predicate.Or(List<Predicate> children) -> children.forEach(c -> validate(c, schema));
+            case Predicate.Not(Predicate child) -> validate(child, schema);
+            case Predicate.Eq(ColumnPath col, Value v) -> checkLeafColumn(col, schema, v);
+            case Predicate.NotEq(ColumnPath col, Value v) -> checkLeafColumn(col, schema, v);
+            case Predicate.Lt(ColumnPath col, Value v) -> checkLeafColumn(col, schema, v);
+            case Predicate.LtEq(ColumnPath col, Value v) -> checkLeafColumn(col, schema, v);
+            case Predicate.Gt(ColumnPath col, Value v) -> checkLeafColumn(col, schema, v);
+            case Predicate.GtEq(ColumnPath col, Value v) -> checkLeafColumn(col, schema, v);
+            case Predicate.In(ColumnPath col, List<Value> values) -> {
+                Field.Primitive prim = requirePrimitive(col, schema);
+                for (Value v : values) {
+                    requireCompatible(col, prim.kind(), v);
                 }
             }
-            case Predicate.IsNull i -> requirePrimitive(i.col(), schema);
-            case Predicate.IsNotNull i -> requirePrimitive(i.col(), schema);
-            case Predicate.BboxIntersects b -> {
-                Field.Primitive prim = requirePrimitive(b.col(), schema);
+            case Predicate.IsNull(ColumnPath col) -> requirePrimitive(col, schema);
+            case Predicate.IsNotNull(ColumnPath col) -> requirePrimitive(col, schema);
+            case Predicate.BboxIntersects(ColumnPath col, Bbox _) -> {
+                Field.Primitive prim = requirePrimitive(col, schema);
                 if (prim.kind() != PrimitiveKind.BYTE_ARRAY && prim.kind() != PrimitiveKind.FIXED_LEN_BYTE_ARRAY) {
-                    throw new ParquetSchemaException("BboxIntersects requires a binary column; got "
-                            + b.col().dot() + " of type " + prim.kind());
+                    throw new ParquetSchemaException(
+                            "BboxIntersects requires a binary column; got " + col.dot() + " of type " + prim.kind());
                 }
             }
         }
@@ -88,15 +88,13 @@ public final class PredicateNormalizer {
 
     private static Predicate pushDownNot(Predicate p) {
         return switch (p) {
-            case Predicate.Not n -> negate(pushDownNot(n.child()));
-            case Predicate.And a ->
-                new Predicate.And(a.children().stream()
-                        .map(PredicateNormalizer::pushDownNot)
-                        .toList());
-            case Predicate.Or o ->
-                new Predicate.Or(o.children().stream()
-                        .map(PredicateNormalizer::pushDownNot)
-                        .toList());
+            case Predicate.Not(Predicate child) -> negate(pushDownNot(child));
+            case Predicate.And(List<Predicate> children) ->
+                new Predicate.And(
+                        children.stream().map(PredicateNormalizer::pushDownNot).toList());
+            case Predicate.Or(List<Predicate> children) ->
+                new Predicate.Or(
+                        children.stream().map(PredicateNormalizer::pushDownNot).toList());
             default -> p;
         };
     }
@@ -108,35 +106,37 @@ public final class PredicateNormalizer {
      */
     private static Predicate negate(Predicate p) {
         return switch (p) {
-            case Predicate.Always a -> new Predicate.Always(!a.value());
-            case Predicate.And a ->
+            case Predicate.Always(boolean value) -> new Predicate.Always(!value);
+            case Predicate.And(List<Predicate> children) ->
                 new Predicate.Or(
-                        a.children().stream().map(PredicateNormalizer::negate).toList());
-            case Predicate.Or o ->
+                        children.stream().map(PredicateNormalizer::negate).toList());
+            case Predicate.Or(List<Predicate> children) ->
                 new Predicate.And(
-                        o.children().stream().map(PredicateNormalizer::negate).toList());
-            case Predicate.Not n -> n.child();
-            case Predicate.Eq e -> new Predicate.NotEq(e.col(), e.v());
-            case Predicate.NotEq e -> new Predicate.Eq(e.col(), e.v());
-            case Predicate.Lt e -> new Predicate.GtEq(e.col(), e.v());
-            case Predicate.LtEq e -> new Predicate.Gt(e.col(), e.v());
-            case Predicate.Gt e -> new Predicate.LtEq(e.col(), e.v());
-            case Predicate.GtEq e -> new Predicate.Lt(e.col(), e.v());
-            case Predicate.IsNull i -> new Predicate.IsNotNull(i.col());
-            case Predicate.IsNotNull i -> new Predicate.IsNull(i.col());
-            case Predicate.In in -> new Predicate.Not(in);
-            case Predicate.BboxIntersects b -> new Predicate.Not(b);
+                        children.stream().map(PredicateNormalizer::negate).toList());
+            case Predicate.Not(Predicate child) -> child;
+            case Predicate.Eq(ColumnPath col, Value v) -> new Predicate.NotEq(col, v);
+            case Predicate.NotEq(ColumnPath col, Value v) -> new Predicate.Eq(col, v);
+            case Predicate.Lt(ColumnPath col, Value v) -> new Predicate.GtEq(col, v);
+            case Predicate.LtEq(ColumnPath col, Value v) -> new Predicate.Gt(col, v);
+            case Predicate.Gt(ColumnPath col, Value v) -> new Predicate.LtEq(col, v);
+            case Predicate.GtEq(ColumnPath col, Value v) -> new Predicate.Lt(col, v);
+            case Predicate.IsNull(ColumnPath col) -> new Predicate.IsNotNull(col);
+            case Predicate.IsNotNull(ColumnPath col) -> new Predicate.IsNull(col);
+            case Predicate.In _ -> new Predicate.Not(p);
+            case Predicate.BboxIntersects _ -> new Predicate.Not(p);
         };
     }
 
     private static Predicate foldAlways(Predicate p) {
         return switch (p) {
-            case Predicate.Not n -> {
-                Predicate child = foldAlways(n.child());
-                yield child instanceof Predicate.Always a ? new Predicate.Always(!a.value()) : new Predicate.Not(child);
+            case Predicate.Not(Predicate inner) -> {
+                Predicate folded = foldAlways(inner);
+                yield folded instanceof Predicate.Always(boolean value)
+                        ? new Predicate.Always(!value)
+                        : new Predicate.Not(folded);
             }
-            case Predicate.And a -> foldConnective(a.children(), true);
-            case Predicate.Or o -> foldConnective(o.children(), false);
+            case Predicate.And(List<Predicate> children) -> foldConnective(children, true);
+            case Predicate.Or(List<Predicate> children) -> foldConnective(children, false);
             default -> p;
         };
     }
@@ -145,8 +145,8 @@ public final class PredicateNormalizer {
         List<Predicate> kept = new ArrayList<>(children.size());
         for (Predicate raw : children) {
             Predicate folded = foldAlways(raw);
-            if (folded instanceof Predicate.Always always) {
-                if (always.value() != isAnd) {
+            if (folded instanceof Predicate.Always(boolean value)) {
+                if (value != isAnd) {
                     return new Predicate.Always(!isAnd);
                 }
             } else {
@@ -166,9 +166,9 @@ public final class PredicateNormalizer {
 
     private static Predicate flatten(Predicate p) {
         return switch (p) {
-            case Predicate.And a -> flattenConnective(a.children(), true);
-            case Predicate.Or o -> flattenConnective(o.children(), false);
-            case Predicate.Not n -> new Predicate.Not(flatten(n.child()));
+            case Predicate.And(List<Predicate> children) -> flattenConnective(children, true);
+            case Predicate.Or(List<Predicate> children) -> flattenConnective(children, false);
+            case Predicate.Not(Predicate child) -> new Predicate.Not(flatten(child));
             default -> p;
         };
     }
@@ -177,10 +177,10 @@ public final class PredicateNormalizer {
         List<Predicate> flat = new ArrayList<>(children.size());
         for (Predicate raw : children) {
             Predicate inner = flatten(raw);
-            if (isAnd && inner instanceof Predicate.And nested) {
-                flat.addAll(nested.children());
-            } else if (!isAnd && inner instanceof Predicate.Or nested) {
-                flat.addAll(nested.children());
+            if (isAnd && inner instanceof Predicate.And(List<Predicate> nested)) {
+                flat.addAll(nested);
+            } else if (!isAnd && inner instanceof Predicate.Or(List<Predicate> nested)) {
+                flat.addAll(nested);
             } else {
                 flat.add(inner);
             }
@@ -212,15 +212,15 @@ public final class PredicateNormalizer {
 
     private static boolean isCompatible(PrimitiveKind kind, Value v) {
         return switch (v) {
-            case Value.BoolVal __ -> kind == PrimitiveKind.BOOLEAN;
-            case Value.IntVal __ -> kind == PrimitiveKind.INT32;
-            case Value.LongVal __ -> kind == PrimitiveKind.INT64;
-            case Value.FloatVal __ -> kind == PrimitiveKind.FLOAT;
-            case Value.DoubleVal __ -> kind == PrimitiveKind.DOUBLE;
-            case Value.StringVal __ -> kind == PrimitiveKind.BYTE_ARRAY;
-            case Value.BinaryVal __ -> kind == PrimitiveKind.BYTE_ARRAY || kind == PrimitiveKind.FIXED_LEN_BYTE_ARRAY;
-            case Value.DateVal __ -> kind == PrimitiveKind.INT32;
-            case Value.TimestampVal __ -> kind == PrimitiveKind.INT64 || kind == PrimitiveKind.INT96;
+            case Value.BoolVal _ -> kind == PrimitiveKind.BOOLEAN;
+            case Value.IntVal _ -> kind == PrimitiveKind.INT32;
+            case Value.LongVal _ -> kind == PrimitiveKind.INT64;
+            case Value.FloatVal _ -> kind == PrimitiveKind.FLOAT;
+            case Value.DoubleVal _ -> kind == PrimitiveKind.DOUBLE;
+            case Value.StringVal _ -> kind == PrimitiveKind.BYTE_ARRAY;
+            case Value.BinaryVal _ -> kind == PrimitiveKind.BYTE_ARRAY || kind == PrimitiveKind.FIXED_LEN_BYTE_ARRAY;
+            case Value.DateVal _ -> kind == PrimitiveKind.INT32;
+            case Value.TimestampVal _ -> kind == PrimitiveKind.INT64 || kind == PrimitiveKind.INT96;
         };
     }
 }

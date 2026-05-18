@@ -38,12 +38,11 @@ final class TestFixtures {
         Schema schema = new Schema.Parser()
                 .parse("{\"type\":\"record\",\"name\":\"m\",\"fields\":[{\"name\":\"id\",\"type\":\"int\"}]}");
         Path out = tmpDir.resolve("empty.parquet");
-        try (ParquetWriter<GenericData.Record> writer = AvroParquetWriter.<GenericData.Record>builder(
-                        new LocalOutputFile(out))
+        try (var _ = AvroParquetWriter.<GenericData.Record>builder(new LocalOutputFile(out))
                 .withSchema(schema)
                 .withCompressionCodec(CompressionCodecName.UNCOMPRESSED)
                 .build()) {
-            // zero records intentionally
+            // zero records intentionally; opening + closing the writer produces a valid empty Parquet footer
         }
         return out;
     }

@@ -16,4 +16,5 @@
 package io.tileverse.parquetry.format;
 
 /** Stub. Real fields: numBytes (i32), algorithm, hash, compression. */
+@SuppressWarnings("java:S2094")
 public record BloomFilterHeader() {}

@@ -13,8 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.format;
+package io.tileverse.parquetry.filter.eval;
 
-/** Stub. Real fields exist in newer parquet.thrift revisions; not used by current decoders. */
-@SuppressWarnings("java:S2094")
-public record IndexPageHeader() {}
+import java.util.Optional;
+
+import io.tileverse.parquetry.page.dict.Dictionary;
+import io.tileverse.parquetry.schema.ColumnPath;
+
+/**
+ * Resolves the loaded {@link Dictionary} for a given column path within a row group. Returns empty when the column
+ * isn't dictionary-encoded or the dictionary page hasn't been loaded.
+ */
+@FunctionalInterface
+public interface DictionaryLookup {
+
+    @SuppressWarnings("java:S1452") // Dictionary's element type is selected at runtime from PrimitiveKind
+    Optional<Dictionary<?>> get(ColumnPath path);
+}

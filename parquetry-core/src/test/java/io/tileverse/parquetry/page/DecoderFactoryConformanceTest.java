@@ -202,7 +202,7 @@ class DecoderFactoryConformanceTest {
                 // We only get here for REQUIRED columns (non-REQUIRED are skipped above), so
                 // we pass the full decompressed payload directly to the value decoder.
                 ByteBuffer valuePayload = pageBuf.slice();
-                decodePageValues(encoding, kind, typeLength, currentDict, valuePayload, numValues, values, debugLabel);
+                decodePageValues(encoding, kind, typeLength, currentDict, valuePayload, numValues, values);
 
             } else if (type == PageType.DATA_PAGE_V2) {
                 // V2 data page: level bytes are uncompressed and precede the value section.
@@ -217,7 +217,7 @@ class DecoderFactoryConformanceTest {
                 ByteBuffer pageBuf = codec.decompress(compressedPayload, uncompressedSize);
                 pageBuf.position(pageBuf.position() + repLevelBytes + defLevelBytes);
                 ByteBuffer valuePayload = pageBuf.slice();
-                decodePageValues(encoding, kind, typeLength, currentDict, valuePayload, numValues, values, debugLabel);
+                decodePageValues(encoding, kind, typeLength, currentDict, valuePayload, numValues, values);
             }
             // INDEX_PAGE and other types are skipped silently.
         }
@@ -235,8 +235,7 @@ class DecoderFactoryConformanceTest {
             Optional<Dictionary<?>> dictionary,
             ByteBuffer valuePayload,
             int numValues,
-            List<Object> out,
-            String debugLabel) {
+            List<Object> out) {
 
         PageDecoder<?> decoder = DecoderFactory.decoderFor(encoding, kind, typeLength, dictionary);
         decoder.load(valuePayload, numValues);
@@ -351,7 +350,7 @@ class DecoderFactoryConformanceTest {
                                 new org.apache.parquet.io.LocalOutputFile(out))
                         .withSchema(schema)
                         .withCompressionCodec(org.apache.parquet.hadoop.metadata.CompressionCodecName.SNAPPY)
-                        .withRowGroupSize(4096)
+                        .withRowGroupSize(4096L)
                         .build()) {
             for (int i = 0; i < 3000; i++) {
                 org.apache.avro.generic.GenericData.Record rec = new org.apache.avro.generic.GenericData.Record(schema);

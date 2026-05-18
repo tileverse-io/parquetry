@@ -49,6 +49,8 @@ public final class DictionaryDecoder {
      * @param valueCount number of unique values in the dictionary (from the page header)
      * @param typeLength only used for {@link PrimitiveKind#FIXED_LEN_BYTE_ARRAY}
      */
+    // The wildcard return is intentional: the concrete element type is chosen at runtime by PrimitiveKind.
+    @SuppressWarnings("java:S1452")
     public static Dictionary<?> read(ByteBuffer page, PrimitiveKind kind, int valueCount, OptionalInt typeLength) {
         return switch (kind) {
             case BOOLEAN -> readBooleans(page, valueCount);
