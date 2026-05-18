@@ -16,15 +16,22 @@
 package io.tileverse.parquetry.page.dict;
 
 import java.nio.ByteBuffer;
+import java.nio.DoubleBuffer;
+import java.nio.FloatBuffer;
+import java.nio.IntBuffer;
+import java.nio.LongBuffer;
+import java.util.BitSet;
 import java.util.List;
 
 import io.tileverse.parquetry.schema.PrimitiveKind;
 
 /**
- * Dictionary page payload: list of unique values for a column chunk.
+ * Dictionary page payload: the unique values referenced by every data page in a column chunk.
  *
- * <p>One variant per Parquet primitive kind. The {@code values()} list is immutable and indexed in the order values
- * were written; data pages reference values by their index.
+ * <p>One variant per Parquet primitive kind. Fixed-width primitive variants hold a read-only primitive buffer
+ * ({@link IntBuffer}, {@link LongBuffer}, etc.) so dictionary lookups are unboxed and the dictionary owns a single
+ * contiguous heap allocation. The boolean variant uses a {@link BitSet}. Binary variants (BYTE_ARRAY,
+ * FIXED_LEN_BYTE_ARRAY, INT96) hold a {@code List} of owned heap {@link ByteBuffer}s.
  */
 public sealed interface Dictionary<T>
         permits Dictionary.BooleanDict,
@@ -43,19 +50,10 @@ public sealed interface Dictionary<T>
     /** Get the value at {@code index}. */
     T get(int index);
 
-    record BooleanDict(List<Boolean> values) implements Dictionary<Boolean> {
-        public BooleanDict {
-            values = List.copyOf(values);
-        }
-
+    record BooleanDict(BitSet values, int size) implements Dictionary<Boolean> {
         @Override
         public PrimitiveKind kind() {
             return PrimitiveKind.BOOLEAN;
-        }
-
-        @Override
-        public int size() {
-            return values.size();
         }
 
         @Override
@@ -64,10 +62,7 @@ public sealed interface Dictionary<T>
         }
     }
 
-    record IntDict(List<Integer> values) implements Dictionary<Integer> {
-        public IntDict {
-            values = List.copyOf(values);
-        }
+    record IntDict(IntBuffer values) implements Dictionary<Integer> {
 
         @Override
         public PrimitiveKind kind() {
@@ -76,7 +71,7 @@ public sealed interface Dictionary<T>
 
         @Override
         public int size() {
-            return values.size();
+            return values.capacity();
         }
 
         @Override
@@ -85,10 +80,7 @@ public sealed interface Dictionary<T>
         }
     }
 
-    record LongDict(List<Long> values) implements Dictionary<Long> {
-        public LongDict {
-            values = List.copyOf(values);
-        }
+    record LongDict(LongBuffer values) implements Dictionary<Long> {
 
         @Override
         public PrimitiveKind kind() {
@@ -97,7 +89,7 @@ public sealed interface Dictionary<T>
 
         @Override
         public int size() {
-            return values.size();
+            return values.capacity();
         }
 
         @Override
@@ -106,10 +98,7 @@ public sealed interface Dictionary<T>
         }
     }
 
-    record FloatDict(List<Float> values) implements Dictionary<Float> {
-        public FloatDict {
-            values = List.copyOf(values);
-        }
+    record FloatDict(FloatBuffer values) implements Dictionary<Float> {
 
         @Override
         public PrimitiveKind kind() {
@@ -118,7 +107,7 @@ public sealed interface Dictionary<T>
 
         @Override
         public int size() {
-            return values.size();
+            return values.capacity();
         }
 
         @Override
@@ -127,10 +116,7 @@ public sealed interface Dictionary<T>
         }
     }
 
-    record DoubleDict(List<Double> values) implements Dictionary<Double> {
-        public DoubleDict {
-            values = List.copyOf(values);
-        }
+    record DoubleDict(DoubleBuffer values) implements Dictionary<Double> {
 
         @Override
         public PrimitiveKind kind() {
@@ -139,7 +125,7 @@ public sealed interface Dictionary<T>
 
         @Override
         public int size() {
-            return values.size();
+            return values.capacity();
         }
 
         @Override

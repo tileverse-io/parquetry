@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.util.List;
+import java.nio.IntBuffer;
 import java.util.Optional;
 import java.util.OptionalInt;
 
@@ -129,7 +129,7 @@ class DecoderFactoryTest {
 
     @Test
     void plainDictionary_withDictionary() {
-        Dictionary<Integer> dict = new Dictionary.IntDict(List.of(1, 2, 3));
+        Dictionary<Integer> dict = new Dictionary.IntDict(intBuf(1, 2, 3));
         PageDecoder<?> decoder = DecoderFactory.decoderFor(
                 Encoding.PLAIN_DICTIONARY, PrimitiveKind.INT32, OptionalInt.empty(), Optional.of(dict));
         assertThat(decoder).isInstanceOf(RleDictionaryPageDecoder.class);
@@ -137,7 +137,7 @@ class DecoderFactoryTest {
 
     @Test
     void rleDictionary_withDictionary() {
-        Dictionary<Integer> dict = new Dictionary.IntDict(List.of(10, 20));
+        Dictionary<Integer> dict = new Dictionary.IntDict(intBuf(10, 20));
         PageDecoder<?> decoder = DecoderFactory.decoderFor(
                 Encoding.RLE_DICTIONARY, PrimitiveKind.INT32, OptionalInt.empty(), Optional.of(dict));
         assertThat(decoder).isInstanceOf(RleDictionaryPageDecoder.class);
@@ -243,5 +243,9 @@ class DecoderFactoryTest {
 
     private static PageDecoder<?> decoderFor(Encoding encoding, PrimitiveKind kind) {
         return DecoderFactory.decoderFor(encoding, kind, OptionalInt.empty(), Optional.empty());
+    }
+
+    private static IntBuffer intBuf(int... values) {
+        return IntBuffer.wrap(values);
     }
 }

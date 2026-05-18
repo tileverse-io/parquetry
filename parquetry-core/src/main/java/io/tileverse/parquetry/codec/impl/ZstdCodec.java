@@ -22,9 +22,12 @@ import io.tileverse.parquetry.format.enums.CompressionCodec;
 
 import io.airlift.compress.v3.zstd.ZstdDecompressor;
 
+/**
+ * Parquet ZSTD codec. Each {@link #decompress(MemorySegment, MemorySegment)} call constructs a fresh
+ * {@link ZstdDecompressor} so the codec instance itself stays stateless and safe to share across virtual threads -
+ * concurrent fan-out decoding (see {@code ConcurrencyMode#FAN_OUT_ONLY}) cannot race on internal scratch state.
+ */
 public final class ZstdCodec implements Codec {
-
-    private final ZstdDecompressor decompressor = ZstdDecompressor.create();
 
     @Override
     public CompressionCodec algorithm() {
@@ -33,6 +36,6 @@ public final class ZstdCodec implements Codec {
 
     @Override
     public int decompress(MemorySegment compressed, MemorySegment output) {
-        return decompressor.decompress(compressed, output);
+        return ZstdDecompressor.create().decompress(compressed, output);
     }
 }

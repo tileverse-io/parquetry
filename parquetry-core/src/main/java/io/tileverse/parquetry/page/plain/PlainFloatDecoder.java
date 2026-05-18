@@ -17,26 +17,27 @@ package io.tileverse.parquetry.page.plain;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.FloatBuffer;
 
 import io.tileverse.parquetry.page.PageDecoder;
 
 /** PLAIN decoder for FLOAT: four bytes, little-endian IEEE 754 per value. */
 public final class PlainFloatDecoder implements PageDecoder<Float> {
 
-    private ByteBuffer buffer;
+    private FloatBuffer buffer;
 
     @Override
     public void load(ByteBuffer page, int valueCount) {
-        this.buffer = page.order(ByteOrder.LITTLE_ENDIAN);
+        this.buffer = page.order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer().limit(valueCount);
     }
 
     @Override
     public Float next() {
-        return buffer.getFloat();
+        return buffer.get();
     }
 
     @Override
     public void skip(int n) {
-        buffer.position(buffer.position() + n * 4);
+        buffer.position(buffer.position() + n);
     }
 }

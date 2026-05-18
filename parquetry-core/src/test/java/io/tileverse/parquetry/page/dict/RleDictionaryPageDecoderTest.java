@@ -18,7 +18,7 @@ package io.tileverse.parquetry.page.dict;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.ByteBuffer;
-import java.util.List;
+import java.nio.IntBuffer;
 
 import org.junit.jupiter.api.Test;
 
@@ -52,7 +52,7 @@ class RleDictionaryPageDecoderTest {
      */
     @Test
     void dereferencesIndexes() {
-        Dictionary.IntDict dict = new Dictionary.IntDict(List.of(10, 20, 30));
+        Dictionary.IntDict dict = new Dictionary.IntDict(intBuf(10, 20, 30));
 
         // bit-packed header: (groups=1) << 1 | 1 = 3
         // byte 0: 0x24, byte 1: 0x09  (see layout in javadoc above)
@@ -93,7 +93,7 @@ class RleDictionaryPageDecoderTest {
      */
     @Test
     void skipAdvancesPastValues() {
-        Dictionary.IntDict dict = new Dictionary.IntDict(List.of(10, 20, 30));
+        Dictionary.IntDict dict = new Dictionary.IntDict(intBuf(10, 20, 30));
 
         ByteBuffer page = ByteBuffer.wrap(new byte[] {
             2, // bit width
@@ -109,5 +109,9 @@ class RleDictionaryPageDecoderTest {
         assertThat(decoder.next()).isEqualTo(10); // index 0
         assertThat(decoder.next()).isEqualTo(20); // index 1
         assertThat(decoder.next()).isEqualTo(30); // index 2
+    }
+
+    private static IntBuffer intBuf(int... values) {
+        return IntBuffer.wrap(values);
     }
 }

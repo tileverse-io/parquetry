@@ -17,26 +17,27 @@ package io.tileverse.parquetry.page.plain;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.IntBuffer;
 
 import io.tileverse.parquetry.page.PageDecoder;
 
 /** PLAIN decoder for INT32: four bytes, little-endian per value. */
 public final class PlainInt32Decoder implements PageDecoder<Integer> {
 
-    private ByteBuffer buffer;
+    private IntBuffer buffer;
 
     @Override
     public void load(ByteBuffer page, int valueCount) {
-        this.buffer = page.order(ByteOrder.LITTLE_ENDIAN);
+        this.buffer = page.order(ByteOrder.LITTLE_ENDIAN).asIntBuffer().limit(valueCount);
     }
 
     @Override
     public Integer next() {
-        return buffer.getInt();
+        return buffer.get();
     }
 
     @Override
     public void skip(int n) {
-        buffer.position(buffer.position() + n * 4);
+        buffer.position(buffer.position() + n);
     }
 }

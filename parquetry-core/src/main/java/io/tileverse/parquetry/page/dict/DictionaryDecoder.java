@@ -16,26 +16,29 @@
 package io.tileverse.parquetry.page.dict;
 
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.DoubleBuffer;
+import java.nio.FloatBuffer;
+import java.nio.IntBuffer;
+import java.nio.LongBuffer;
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.List;
 import java.util.OptionalInt;
 
 import io.tileverse.parquetry.page.plain.PlainBinaryDecoder;
-import io.tileverse.parquetry.page.plain.PlainBooleanDecoder;
-import io.tileverse.parquetry.page.plain.PlainDoubleDecoder;
 import io.tileverse.parquetry.page.plain.PlainFixedLenBinaryDecoder;
-import io.tileverse.parquetry.page.plain.PlainFloatDecoder;
-import io.tileverse.parquetry.page.plain.PlainInt32Decoder;
-import io.tileverse.parquetry.page.plain.PlainInt64Decoder;
 import io.tileverse.parquetry.page.plain.PlainInt96Decoder;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 
 /**
  * Reads a dictionary page into a {@link Dictionary}.
  *
- * <p>Dictionary pages carry all unique values for a column chunk in PLAIN encoding. This class dispatches to the
- * appropriate PLAIN decoder based on the column's primitive kind, reads {@code valueCount} values, and wraps them in
- * the matching {@link Dictionary} variant.
+ * <p>Dictionary pages carry all unique values for a column chunk in PLAIN encoding. For fixed-width primitives the
+ * decoder bulk-copies the page bytes into an owned primitive buffer (no boxing, single allocation); for variable-length
+ * binary it copies each value into an owned heap {@link ByteBuffer}. Either way, the resulting {@link Dictionary}
+ * outlives the source page bytes, so its values must own their storage to survive the dictionary-page scratch buffer
+ * being returned to its pool.
  */
 public final class DictionaryDecoder {
 
@@ -60,63 +63,49 @@ public final class DictionaryDecoder {
             case FLOAT -> readFloats(page, valueCount);
             case DOUBLE -> readDoubles(page, valueCount);
             case BYTE_ARRAY -> readBinary(page, valueCount);
-            case FIXED_LEN_BYTE_ARRAY ->
-                readFixedLenBinary(
-                        page,
-                        valueCount,
-                        typeLength.orElseThrow(() -> new IllegalArgumentException(
-                                "typeLength required for FIXED_LEN_BYTE_ARRAY dictionary")));
+            case FIXED_LEN_BYTE_ARRAY -> {
+                int valueLength = typeLength.orElseThrow(
+                        () -> new IllegalArgumentException("typeLength required for FIXED_LEN_BYTE_ARRAY dictionary"));
+                yield readFixedLenBinary(page, valueCount, valueLength);
+            }
         };
     }
 
     private static Dictionary.BooleanDict readBooleans(ByteBuffer page, int n) {
-        PlainBooleanDecoder decoder = new PlainBooleanDecoder();
-        decoder.load(page, n);
-        List<Boolean> values = new ArrayList<>(n);
-        for (int i = 0; i < n; i++) {
-            values.add(decoder.next());
+        int requiredBytes = (n + 7) >>> 3;
+        if (page.remaining() < requiredBytes) {
+            throw new IllegalArgumentException("BOOLEAN dictionary page has " + page.remaining() + " byte(s) but "
+                    + requiredBytes + " are required for " + n + " value(s)");
         }
-        return new Dictionary.BooleanDict(values);
+        return new Dictionary.BooleanDict(BitSet.valueOf(page), n);
     }
 
     private static Dictionary.IntDict readInts(ByteBuffer page, int n) {
-        PlainInt32Decoder decoder = new PlainInt32Decoder();
-        decoder.load(page, n);
-        List<Integer> values = new ArrayList<>(n);
-        for (int i = 0; i < n; i++) {
-            values.add(decoder.next());
-        }
-        return new Dictionary.IntDict(values);
+        IntBuffer view =
+                page.duplicate().order(ByteOrder.LITTLE_ENDIAN).asIntBuffer().limit(n);
+        IntBuffer owned = IntBuffer.allocate(n).put(view).flip().asReadOnlyBuffer();
+        return new Dictionary.IntDict(owned);
     }
 
     private static Dictionary.LongDict readLongs(ByteBuffer page, int n) {
-        PlainInt64Decoder decoder = new PlainInt64Decoder();
-        decoder.load(page, n);
-        List<Long> values = new ArrayList<>(n);
-        for (int i = 0; i < n; i++) {
-            values.add(decoder.next());
-        }
-        return new Dictionary.LongDict(values);
+        LongBuffer view =
+                page.duplicate().order(ByteOrder.LITTLE_ENDIAN).asLongBuffer().limit(n);
+        LongBuffer owned = LongBuffer.allocate(n).put(view).flip().asReadOnlyBuffer();
+        return new Dictionary.LongDict(owned);
     }
 
     private static Dictionary.FloatDict readFloats(ByteBuffer page, int n) {
-        PlainFloatDecoder decoder = new PlainFloatDecoder();
-        decoder.load(page, n);
-        List<Float> values = new ArrayList<>(n);
-        for (int i = 0; i < n; i++) {
-            values.add(decoder.next());
-        }
-        return new Dictionary.FloatDict(values);
+        FloatBuffer view =
+                page.duplicate().order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer().limit(n);
+        FloatBuffer owned = FloatBuffer.allocate(n).put(view).flip().asReadOnlyBuffer();
+        return new Dictionary.FloatDict(owned);
     }
 
     private static Dictionary.DoubleDict readDoubles(ByteBuffer page, int n) {
-        PlainDoubleDecoder decoder = new PlainDoubleDecoder();
-        decoder.load(page, n);
-        List<Double> values = new ArrayList<>(n);
-        for (int i = 0; i < n; i++) {
-            values.add(decoder.next());
-        }
-        return new Dictionary.DoubleDict(values);
+        DoubleBuffer view =
+                page.duplicate().order(ByteOrder.LITTLE_ENDIAN).asDoubleBuffer().limit(n);
+        DoubleBuffer owned = DoubleBuffer.allocate(n).put(view).flip().asReadOnlyBuffer();
+        return new Dictionary.DoubleDict(owned);
     }
 
     private static Dictionary.Int96Dict readInt96s(ByteBuffer page, int n) {
@@ -124,7 +113,7 @@ public final class DictionaryDecoder {
         decoder.load(page, n);
         List<ByteBuffer> values = new ArrayList<>(n);
         for (int i = 0; i < n; i++) {
-            values.add(decoder.next());
+            values.add(copyToOwnedBuffer(decoder.next()));
         }
         return new Dictionary.Int96Dict(values);
     }
@@ -134,7 +123,7 @@ public final class DictionaryDecoder {
         decoder.load(page, n);
         List<ByteBuffer> values = new ArrayList<>(n);
         for (int i = 0; i < n; i++) {
-            values.add(decoder.next());
+            values.add(copyToOwnedBuffer(decoder.next()));
         }
         return new Dictionary.BinaryDict(values);
     }
@@ -144,8 +133,22 @@ public final class DictionaryDecoder {
         decoder.load(page, n);
         List<ByteBuffer> values = new ArrayList<>(n);
         for (int i = 0; i < n; i++) {
-            values.add(decoder.next());
+            values.add(copyToOwnedBuffer(decoder.next()));
         }
         return new Dictionary.FixedLenBinaryDict(values, length);
+    }
+
+    /**
+     * Copies the bytes of {@code source} into a freshly-allocated heap buffer and returns a read-only view. The
+     * {@code PlainBinaryDecoder} family returns zero-copy slices of the source page; dictionaries outlive that page
+     * (the dictionary-page scratch buffer is returned to the pool right after decode), so dictionary values must own
+     * their bytes to avoid dangling references into recycled pool memory.
+     */
+    private static ByteBuffer copyToOwnedBuffer(ByteBuffer source) {
+        ByteBuffer view = source.duplicate();
+        ByteBuffer copy = ByteBuffer.allocate(view.remaining());
+        copy.put(view);
+        copy.flip();
+        return copy.asReadOnlyBuffer();
     }
 }

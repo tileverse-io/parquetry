@@ -21,6 +21,8 @@ import java.util.function.Consumer;
 
 import io.tileverse.parquetry.filter.PruningDecision;
 
+import io.tileverse.io.ByteBufferPool;
+
 /**
  * Tunables for a single {@code Dataset.read()} call.
  *
@@ -28,6 +30,10 @@ import io.tileverse.parquetry.filter.PruningDecision;
  * a known-bad statistic). Concurrency knobs default to {@link ConcurrencyMode#AUTO}, prefetch window 2, and an
  * unbounded virtual-thread pool capped by {@code maxConcurrency}. The {@code pruningDecisionListener} receives one
  * {@link PruningDecision} per (row group, tier) pair as the pipeline runs - the same vocabulary as {@code ExplainPlan}.
+ *
+ * <p>The {@code byteBufferPool} backs every column-chunk fetch and every per-page decompression buffer; defaults to
+ * {@link ByteBufferPool#getDefault()}. See the package documentation for the streaming memory contract that motivates
+ * the pool.
  *
  * @param useStatsFilter run the STATS tier
  * @param useDictionaryFilter run the DICTIONARY tier
@@ -39,6 +45,7 @@ import io.tileverse.parquetry.filter.PruningDecision;
  * @param maxConcurrency upper bound on virtual threads spawned per {@code read()} call; 0 means unbounded
  * @param pruningDecisionListener called once per per-row-group tier outcome; never {@code null} (defaults to no-op)
  * @param decryptionKeyRetriever supplied by the encryption module; empty when the file isn't encrypted
+ * @param byteBufferPool source of pooled buffers for column-chunk fetch and per-page decompression
  */
 public record ReadOptions(
         boolean useStatsFilter,
@@ -50,12 +57,14 @@ public record ReadOptions(
         int prefetchWindow,
         int maxConcurrency,
         Consumer<PruningDecision> pruningDecisionListener,
-        Optional<DecryptionKeyRetriever> decryptionKeyRetriever) {
+        Optional<DecryptionKeyRetriever> decryptionKeyRetriever,
+        ByteBufferPool byteBufferPool) {
 
     public ReadOptions {
         Objects.requireNonNull(concurrencyMode, "concurrencyMode");
         Objects.requireNonNull(pruningDecisionListener, "pruningDecisionListener");
         Objects.requireNonNull(decryptionKeyRetriever, "decryptionKeyRetriever");
+        Objects.requireNonNull(byteBufferPool, "byteBufferPool");
         if (prefetchWindow < 0) {
             throw new IllegalArgumentException("prefetchWindow must be >= 0, got " + prefetchWindow);
         }
@@ -64,7 +73,10 @@ public record ReadOptions(
         }
     }
 
-    /** Sensible defaults: all tiers on, AUTO concurrency, prefetch=2, unbounded threads, no listener, no decryption. */
+    /**
+     * Sensible defaults: all tiers on, AUTO concurrency, prefetch=2, unbounded threads, no listener, no decryption,
+     * shared {@link ByteBufferPool#getDefault() default pool}.
+     */
     public static final ReadOptions DEFAULTS = builder().build();
 
     public static Builder builder() {
@@ -84,6 +96,7 @@ public record ReadOptions(
         private int maxConcurrency;
         private Consumer<PruningDecision> pruningDecisionListener = _ -> {};
         private Optional<DecryptionKeyRetriever> decryptionKeyRetriever = Optional.empty();
+        private ByteBufferPool byteBufferPool = ByteBufferPool.getDefault();
 
         private Builder() {}
 
@@ -137,6 +150,11 @@ public record ReadOptions(
             return this;
         }
 
+        public Builder byteBufferPool(ByteBufferPool v) {
+            this.byteBufferPool = Objects.requireNonNull(v, "byteBufferPool");
+            return this;
+        }
+
         public ReadOptions build() {
             return new ReadOptions(
                     useStatsFilter,
@@ -148,7 +166,8 @@ public record ReadOptions(
                     prefetchWindow,
                     maxConcurrency,
                     pruningDecisionListener,
-                    decryptionKeyRetriever);
+                    decryptionKeyRetriever,
+                    byteBufferPool);
         }
     }
 }

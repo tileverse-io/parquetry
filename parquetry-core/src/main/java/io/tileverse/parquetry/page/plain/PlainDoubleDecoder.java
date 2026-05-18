@@ -17,26 +17,27 @@ package io.tileverse.parquetry.page.plain;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.DoubleBuffer;
 
 import io.tileverse.parquetry.page.PageDecoder;
 
 /** PLAIN decoder for DOUBLE: eight bytes, little-endian IEEE 754 per value. */
 public final class PlainDoubleDecoder implements PageDecoder<Double> {
 
-    private ByteBuffer buffer;
+    private DoubleBuffer buffer;
 
     @Override
     public void load(ByteBuffer page, int valueCount) {
-        this.buffer = page.order(ByteOrder.LITTLE_ENDIAN);
+        this.buffer = page.order(ByteOrder.LITTLE_ENDIAN).asDoubleBuffer().limit(valueCount);
     }
 
     @Override
     public Double next() {
-        return buffer.getDouble();
+        return buffer.get();
     }
 
     @Override
     public void skip(int n) {
-        buffer.position(buffer.position() + n * 8);
+        buffer.position(buffer.position() + n);
     }
 }

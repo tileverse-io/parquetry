@@ -20,7 +20,7 @@ import java.nio.ByteBuffer;
 /**
  * Contract every page decoder satisfies.
  *
- * <p>Lifecycle: {@link #load(ByteBuffer, int)} hands the decoder a page's compressed-then- decompressed bytes plus the
+ * <p>Lifecycle: {@link #load(ByteBuffer, int)} hands the decoder a page's compressed-then-decompressed bytes plus the
  * value count from the page header. The decoder then yields values via {@link #next()} (one per call) up to
  * {@code valueCount}. {@link #skip(int)} advances past values without materializing them (used for column-index page
  * skipping where some rows in a kept page aren't needed).

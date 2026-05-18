@@ -36,8 +36,13 @@ import io.tileverse.parquetry.schema.ColumnPath;
  * then read the levels/value, then {@link #consume()} to advance.
  *
  * <p>Thread-confined; one reader per column per row-group-reader instance.
+ *
+ * <p>{@code ColumnReader} extends {@link AutoCloseable} with a no-op default. Implementations that hold transient
+ * resources (e.g. the streaming page reader's pooled decompressed-values buffer) override {@link #close()} to release
+ * them; {@code RowGroupReader} invokes {@code close()} on every reader before closing the underlying
+ * {@code FetchedColumnChunk}s so column-reader-owned buffers return to the pool ahead of the chunk's compressed buffer.
  */
-public interface ColumnReader {
+public interface ColumnReader extends AutoCloseable {
 
     /** Whether there are more rows to read in this column. */
     boolean hasNext();
@@ -65,4 +70,15 @@ public interface ColumnReader {
 
     /** The maximum definition level for this column. */
     int maxDefinitionLevel();
+
+    /**
+     * Releases any transient resources held by this reader (e.g. the current page's pooled decompressed-values buffer).
+     * The default implementation is a no-op for readers that do not own pooled state (e.g. {@code BasicColumnReader},
+     * whose pages are pre-decoded heap buffers). Streaming readers override this to return their page buffer to the
+     * pool.
+     */
+    @Override
+    default void close() {
+        // No transient resources by default.
+    }
 }

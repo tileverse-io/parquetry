@@ -67,9 +67,7 @@ public final class DecoderFactory {
      * @throws UnsupportedOperationException for encodings that are reserved or not supported
      */
     // The wildcard return is intentional: the concrete element type is selected at runtime from (encoding, kind).
-    // Callers either work generically (e.g. write to RowAccessor via Object) or downcast when they know the column's
-    // PrimitiveKind. Surfacing the type variable on the factory signature would push the burden to every caller.
-    @SuppressWarnings({"unchecked", "java:S1452"})
+    @SuppressWarnings({"java:S1452"})
     public static PageDecoder<?> decoderFor(
             Encoding encoding, PrimitiveKind kind, OptionalInt typeLength, Optional<Dictionary<?>> dictionary) {
 

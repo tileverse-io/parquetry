@@ -24,11 +24,11 @@ import io.airlift.compress.v3.lz4.Lz4Decompressor;
 
 /**
  * Parquet LZ4_RAW codec. Uses aircompressor's {@link Lz4Decompressor}, which handles the raw LZ4 block format (no frame
- * header) that Parquet's LZ4_RAW encoding uses.
+ * header) that Parquet's LZ4_RAW encoding uses. Each {@link #decompress(MemorySegment, MemorySegment)} call constructs
+ * a fresh decompressor so the codec instance itself stays stateless and safe to share across virtual threads (see
+ * {@code ConcurrencyMode#FAN_OUT_ONLY}).
  */
 public final class Lz4RawCodec implements Codec {
-
-    private final Lz4Decompressor decompressor = Lz4Decompressor.create();
 
     @Override
     public CompressionCodec algorithm() {
@@ -37,6 +37,6 @@ public final class Lz4RawCodec implements Codec {
 
     @Override
     public int decompress(MemorySegment compressed, MemorySegment output) {
-        return decompressor.decompress(compressed, output);
+        return Lz4Decompressor.create().decompress(compressed, output);
     }
 }

@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.page.plain;
 
 import java.nio.ByteBuffer;
+import java.util.BitSet;
 
 import io.tileverse.parquetry.page.PageDecoder;
 
@@ -27,27 +28,23 @@ import io.tileverse.parquetry.page.PageDecoder;
  */
 public final class PlainBooleanDecoder implements PageDecoder<Boolean> {
 
-    private byte[] bytes;
-    private int byteOffset;
+    private int valueCount;
     private int bitPosition;
+    private BitSet bitset;
 
     @Override
     public void load(ByteBuffer page, int valueCount) {
-        // Copy remaining bytes out so we can index by absolute position.
-        int remaining = page.remaining();
-        bytes = new byte[remaining];
-        page.get(bytes);
-        byteOffset = 0;
-        bitPosition = 0;
+        this.valueCount = valueCount;
+        this.bitPosition = 0;
+        this.bitset = BitSet.valueOf(page);
     }
 
     @Override
     public Boolean next() {
-        int byteIndex = byteOffset + (bitPosition >>> 3);
-        int bitInByte = bitPosition & 7;
-        boolean value = ((bytes[byteIndex] & 0xff) & (1 << bitInByte)) != 0;
-        bitPosition++;
-        return value;
+        if (bitPosition == valueCount) {
+            throw new IllegalStateException();
+        }
+        return bitset.get(bitPosition++);
     }
 
     @Override
