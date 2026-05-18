@@ -15,3 +15,4 @@ target/
 dependency-reduced-pom.xml
 **/.lsp/
 **/.cache/
+.flattened-pom.xml
