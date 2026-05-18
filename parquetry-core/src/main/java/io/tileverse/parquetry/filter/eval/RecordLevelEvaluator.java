@@ -39,40 +39,40 @@ public final class RecordLevelEvaluator {
 
     private RecordLevelEvaluator() {}
 
-    /** Returns {@code true} if {@code record} satisfies {@code predicate}. */
-    public static boolean test(Predicate predicate, RecordAccessor record) {
+    /** Returns {@code true} if {@code row} satisfies {@code predicate}. */
+    public static boolean test(Predicate predicate, RecordAccessor row) {
         return switch (predicate) {
             case Predicate.Always(boolean value) -> value;
-            case Predicate.And(List<Predicate> children) -> testAnd(children, record);
-            case Predicate.Or(List<Predicate> children) -> testOr(children, record);
-            case Predicate.Not(Predicate child) -> !test(child, record);
-            case Predicate.Eq(ColumnPath col, Value v) -> compare(record.value(col), v) == 0;
+            case Predicate.And(List<Predicate> children) -> testAnd(children, row);
+            case Predicate.Or(List<Predicate> children) -> testOr(children, row);
+            case Predicate.Not(Predicate child) -> !test(child, row);
+            case Predicate.Eq(ColumnPath col, Value v) -> compare(row.value(col), v) == 0;
             case Predicate.NotEq(ColumnPath col, Value v) -> {
-                Object got = record.value(col);
+                Object got = row.value(col);
                 yield got != null && compare(got, v) != 0;
             }
             case Predicate.Lt(ColumnPath col, Value v) -> {
-                Object got = record.value(col);
+                Object got = row.value(col);
                 yield got != null && compare(got, v) < 0;
             }
             case Predicate.LtEq(ColumnPath col, Value v) -> {
-                Object got = record.value(col);
+                Object got = row.value(col);
                 yield got != null && compare(got, v) <= 0;
             }
             case Predicate.Gt(ColumnPath col, Value v) -> {
-                Object got = record.value(col);
+                Object got = row.value(col);
                 yield got != null && compare(got, v) > 0;
             }
             case Predicate.GtEq(ColumnPath col, Value v) -> {
-                Object got = record.value(col);
+                Object got = row.value(col);
                 yield got != null && compare(got, v) >= 0;
             }
             case Predicate.In(ColumnPath col, List<Value> values) -> {
-                Object got = record.value(col);
+                Object got = row.value(col);
                 yield got != null && values.stream().anyMatch(v -> compare(got, v) == 0);
             }
-            case Predicate.IsNull(ColumnPath col) -> record.value(col) == null;
-            case Predicate.IsNotNull(ColumnPath col) -> record.value(col) != null;
+            case Predicate.IsNull(ColumnPath col) -> row.value(col) == null;
+            case Predicate.IsNotNull(ColumnPath col) -> row.value(col) != null;
             case Predicate.BboxIntersects _ -> false; // not supported at record-level yet (future geometry work)
         };
     }

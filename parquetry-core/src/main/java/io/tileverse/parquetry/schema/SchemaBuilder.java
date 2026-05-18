@@ -69,7 +69,7 @@ public final class SchemaBuilder {
      */
     private static Field consumeNext(Cursor cursor) {
         SchemaElement element = cursor.elements.get(cursor.position);
-        cursor.position += 1;
+        cursor.position++;
 
         Repetition repetition = mapRepetition(element.repetitionType());
         int fieldId = element.fieldId().orElse(-1);
@@ -98,11 +98,8 @@ public final class SchemaBuilder {
     }
 
     private static Repetition mapRepetition(Optional<FieldRepetitionType> rep) {
-        if (rep.isEmpty()) {
-            // Thrift spec: missing repetition type defaults to REQUIRED
-            return Repetition.REQUIRED;
-        }
-        return switch (rep.get()) {
+        // Thrift spec: missing repetition type defaults to REQUIRED
+        return switch (rep.orElse(FieldRepetitionType.REQUIRED)) {
             case REQUIRED -> Repetition.REQUIRED;
             case OPTIONAL -> Repetition.OPTIONAL;
             case REPEATED -> Repetition.REPEATED;

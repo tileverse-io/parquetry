@@ -20,7 +20,11 @@ package io.tileverse.parquetry;
  * schema, or where the value type is incompatible with the column's primitive kind (e.g. {@code Eq(intCol,
  * StringVal)}).
  *
- * <p>Raised eagerly at {@code Dataset.read()} so callers get a clear error before any I/O is performed.
+ * <p>Raised eagerly at {@code Dataset.read()} setup time so callers get a clear error before any data stream is
+ * returned. Unchecked by design: the condition describes a programming error in the caller (a malformed predicate built
+ * against the wrong schema), not a recoverable I/O state. Callers that want to react to it catch the type explicitly;
+ * all other callers let it propagate. See the package documentation for the full rationale on unchecked exceptions
+ * across the parquetry API.
  */
 public class ParquetSchemaException extends RuntimeException {
 
