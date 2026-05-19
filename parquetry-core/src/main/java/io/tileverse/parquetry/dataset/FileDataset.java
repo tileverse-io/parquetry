@@ -28,6 +28,8 @@ import io.tileverse.storage.RangeReader;
 
 import io.tileverse.parquetry.filter.ExplainPlan;
 import io.tileverse.parquetry.filter.FilterPipeline;
+import io.tileverse.parquetry.filter.FilterPipeline.BloomFilterLookup;
+import io.tileverse.parquetry.filter.FilterPipeline.ColumnBloom;
 import io.tileverse.parquetry.filter.FilterPipeline.ColumnPageStatsLookup;
 import io.tileverse.parquetry.filter.FilterPipeline.ColumnStats;
 import io.tileverse.parquetry.filter.FilterPipeline.ColumnStatsLookup;
@@ -35,6 +37,8 @@ import io.tileverse.parquetry.filter.FilterPipeline.DictionaryLookup;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.RowGroupPlan;
+import io.tileverse.parquetry.filter.bloom.BloomFilterReader;
+import io.tileverse.parquetry.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.FileMetaData;
@@ -126,7 +130,7 @@ final class FileDataset implements ParquetDataset {
         Objects.requireNonNull(materializer, "materializer");
         Objects.requireNonNull(options, "options");
 
-        ExplainPlan plan = runFilterPipeline(predicate, projection);
+        ExplainPlan plan = runFilterPipeline(predicate, projection, options);
         List<RowGroupSurvivor> survivors = survivorsFor(plan);
         ParquetSchema projectedSchema = plan.projectedSchema();
         ReadOptions resolvedOptions = resolveConcurrencyMode(options);
@@ -142,25 +146,112 @@ final class FileDataset implements ParquetDataset {
         Objects.requireNonNull(predicate, "predicate");
         Objects.requireNonNull(projection, "projection");
         Objects.requireNonNull(options, "options");
-        return runFilterPipeline(predicate, projection);
+        return runFilterPipeline(predicate, projection, options);
     }
 
     // --- filter / projection wiring ---
 
-    private ExplainPlan runFilterPipeline(Predicate predicate, Projection projection) {
-        List<FilterPipeline.RowGroupInputs> inputs = filterInputsFor(footer);
+    private ExplainPlan runFilterPipeline(Predicate predicate, Projection projection, ReadOptions options) {
+        List<FilterPipeline.RowGroupInputs> inputs = filterInputsFor(footer, options);
         return FilterPipeline.evaluate(fileSchema, projection, predicate, inputs);
     }
 
-    private List<FilterPipeline.RowGroupInputs> filterInputsFor(FileMetaData fm) {
+    private List<FilterPipeline.RowGroupInputs> filterInputsFor(FileMetaData fm, ReadOptions options) {
         List<FilterPipeline.RowGroupInputs> inputs =
                 new ArrayList<>(fm.rowGroups().size());
         for (io.tileverse.parquetry.format.RowGroup rg : fm.rowGroups()) {
             inputs.add(new FilterPipeline.RowGroupInputs(
-                    rg.numRows(), statsLookup(rg), noDictionaryLookup(), noColumnPageStatsLookup()));
+                    rg.numRows(),
+                    statsLookup(rg),
+                    noDictionaryLookup(),
+                    noColumnPageStatsLookup(),
+                    bloomLookupFor(rg, options)));
         }
         return inputs;
     }
+
+    /**
+     * Builds the per-row-group bloom-filter lookup. The lookup is memoizing and lazy: bytes are only fetched when the
+     * evaluator asks about a specific column (and only Eq/In leaves trigger that), and each column is fetched at most
+     * once per {@code read()} / {@code explain()} call.
+     *
+     * <p>Returns {@link FilterPipeline#emptyBloomLookup()} when {@code options.useBloomFilter()} is off or the row
+     * group has no columns with bloom filters - so the bloom tier degrades gracefully without forcing the evaluator to
+     * handle nulls.
+     */
+    private BloomFilterLookup bloomLookupFor(io.tileverse.parquetry.format.RowGroup rg, ReadOptions options) {
+        if (!options.useBloomFilter()) {
+            return FilterPipeline.emptyBloomLookup();
+        }
+        Map<ColumnPath, BloomChunkLocator> locators = bloomLocatorsFor(rg);
+        if (locators.isEmpty()) {
+            return FilterPipeline.emptyBloomLookup();
+        }
+        Map<ColumnPath, Optional<ColumnBloom>> cache = new LinkedHashMap<>();
+        return path -> cache.computeIfAbsent(path, p -> loadBloom(locators.get(p)));
+    }
+
+    /**
+     * Scans the row group's column chunks once and indexes those that advertise a bloom-filter offset. We capture the
+     * length when the writer provided it ({@code bloom_filter_length} was added in spec 2.10); older writers omit it
+     * and the reader falls back to a two-step fetch.
+     */
+    private Map<ColumnPath, BloomChunkLocator> bloomLocatorsFor(io.tileverse.parquetry.format.RowGroup rg) {
+        Map<ColumnPath, BloomChunkLocator> locators = new LinkedHashMap<>();
+        for (ColumnChunk chunk : rg.columns()) {
+            locatorFor(chunk).ifPresent(entry -> locators.put(entry.path(), entry.locator()));
+        }
+        return locators;
+    }
+
+    /**
+     * Resolves one column chunk to its bloom-filter locator, or empty when the chunk has no bloom-filter offset, no
+     * column metadata, or no matching primitive leaf in the file schema. Extracted from the row-group loop so the loop
+     * stays a single pass without a chain of {@code continue} statements.
+     */
+    private Optional<PathedLocator> locatorFor(ColumnChunk chunk) {
+        return chunk.metaData().flatMap(m -> {
+            if (m.bloomFilterOffset().isEmpty()) {
+                return Optional.empty();
+            }
+            ColumnPath path = new ColumnPath(m.pathInSchema());
+            return primitiveKindAt(path).map(kind -> {
+                int length = m.bloomFilterLength().isPresent()
+                        ? Math.toIntExact(m.bloomFilterLength().getAsLong())
+                        : -1;
+                return new PathedLocator(
+                        path, new BloomChunkLocator(m.bloomFilterOffset().getAsLong(), length, kind));
+            });
+        });
+    }
+
+    /** Carrier returned by {@link #locatorFor} so the calling loop can put the path-keyed entry in one step. */
+    private record PathedLocator(ColumnPath path, BloomChunkLocator locator) {}
+
+    /**
+     * Resolves one locator into a loaded {@link ColumnBloom}. Uses the single-I/O fast path when {@code length} is set;
+     * falls back to {@link BloomFilterReader#readWithoutLength} when the writer omitted {@code bloom_filter_length}.
+     * Decode failures (truncated bitset, unsupported algorithm) surface as empty so the evaluator degrades to
+     * NotApplied for that column instead of aborting the read.
+     */
+    private Optional<ColumnBloom> loadBloom(BloomChunkLocator locator) {
+        if (locator == null) return Optional.empty();
+        try {
+            SplitBlockBloomFilter bloom = locator.length() > 0
+                    ? BloomFilterReader.read(rangeReader, locator.offset(), locator.length())
+                    : BloomFilterReader.readWithoutLength(rangeReader, locator.offset());
+            return Optional.of(new ColumnBloom(locator.kind(), bloom));
+        } catch (RuntimeException _) {
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Pre-computed bloom-filter coordinates per column; cached to avoid re-walking the row group on every lookup.
+     * {@code length} is the total chunk size ({@code bloom_filter_length} from the column metadata) or {@code -1} when
+     * the writer omitted it; the loader picks the fast or slow read path accordingly.
+     */
+    private record BloomChunkLocator(long offset, int length, io.tileverse.parquetry.schema.PrimitiveKind kind) {}
 
     /**
      * Builds the stats lookup from the row group's inline column metadata. Returns empty for columns that have no

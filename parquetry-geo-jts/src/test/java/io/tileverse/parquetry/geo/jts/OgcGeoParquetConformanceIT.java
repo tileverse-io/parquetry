@@ -30,7 +30,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.locationtech.jts.geom.Geometry;
-import org.locationtech.jts.io.ParseException;
 import org.locationtech.jts.io.WKTReader;
 
 import io.tileverse.storage.RangeReader;
@@ -121,7 +120,7 @@ class OgcGeoParquetConformanceIT {
         }
     }
 
-    private static List<String> readExpectedWkt(Path csv) throws IOException, ParseException {
+    private static List<String> readExpectedWkt(Path csv) throws IOException {
         List<String> wkts = new ArrayList<>();
         boolean firstLine = true;
         for (String raw : Files.readAllLines(csv)) {

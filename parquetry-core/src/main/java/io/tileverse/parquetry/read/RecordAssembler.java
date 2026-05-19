@@ -183,7 +183,7 @@ final class RecordAssembler {
         }
         // Legacy repeated group without LIST/MAP annotation: list of struct.
         if (group.repetition() == Repetition.REPEATED) {
-            return buildLegacyRepeatedGroup(group, groupPath, ancestorPath, ctx);
+            return buildLegacyRepeatedGroup(group, groupPath, ctx);
         }
         // Non-repeated nested group: struct.
         return buildStruct(group, groupPath, ctx);
@@ -201,8 +201,7 @@ final class RecordAssembler {
         List<Field> elementFields = repeatedGroup.children();
         if (elementFields.size() != 1) {
             // Some legacy files have a multi-field repeated group annotated as LIST; treat as list-of-struct.
-            return buildLegacyAnnotatedListMultiField(
-                    listGroup, listPath, repeatedGroup, repeatedPath, innerCtx, repLevel, listDefLevel);
+            return buildLegacyAnnotatedListMultiField(repeatedGroup, repeatedPath, innerCtx, repLevel, listDefLevel);
         }
         Field elementField = elementFields.get(0);
         List<String> elementPath = append(repeatedPath, elementField.name());
@@ -219,13 +218,7 @@ final class RecordAssembler {
 
     /** Fallback for old multi-field repeated-group LIST shapes (rare; standard 3-level shape has a single element). */
     private static ValueBuilder buildLegacyAnnotatedListMultiField(
-            Field.Group listGroup,
-            List<String> listPath,
-            Field.Group repeatedGroup,
-            List<String> repeatedPath,
-            Context innerCtx,
-            int repLevel,
-            int listDefLevel) {
+            Field.Group repeatedGroup, List<String> repeatedPath, Context innerCtx, int repLevel, int listDefLevel) {
         ValueBuilder elementBuilder = buildStructFromChildren(repeatedGroup, repeatedPath, innerCtx);
         if (elementBuilder == null) {
             return null;
@@ -264,8 +257,7 @@ final class RecordAssembler {
         return new MapValueBuilder(repLevel, mapDefLevel, keyBuilder, valueBuilder, entryLeaves.get(0), entryLeaves);
     }
 
-    private static ValueBuilder buildLegacyRepeatedGroup(
-            Field.Group group, List<String> groupPath, List<String> ancestorPath, Context ctx) {
+    private static ValueBuilder buildLegacyRepeatedGroup(Field.Group group, List<String> groupPath, Context ctx) {
         int listDefLevel = ctx.maxDef; // group itself is REPEATED, so the "list" sits at the parent's def level
         int repLevel = ctx.maxRep + 1;
         int innerDef = ctx.maxDef + 1; // REPEATED contributes +1

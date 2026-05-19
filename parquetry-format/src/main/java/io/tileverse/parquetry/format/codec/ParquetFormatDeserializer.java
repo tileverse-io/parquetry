@@ -19,6 +19,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 
+import io.tileverse.parquetry.format.BloomFilterHeader;
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.OffsetIndex;
@@ -99,6 +100,25 @@ public final class ParquetFormatDeserializer {
             return OffsetIndexDeserializer.read(new CompactProtocolReader(in));
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to read OffsetIndex", e);
+        }
+    }
+
+    /**
+     * Reads a {@link BloomFilterHeader} from {@code in}. The header lives at
+     * {@code ColumnMetaData.bloom_filter_offset}; the bitset bytes follow immediately and span
+     * {@code BloomFilterHeader.numBytes} bytes.
+     *
+     * @param in stream positioned at the start of a Thrift-compact-encoded {@code BloomFilterHeader}
+     * @return the decoded {@link BloomFilterHeader}
+     * @throws ParquetFormatException if the bytes don't conform to the {@code BloomFilterHeader} Thrift layout or
+     *     declare an unknown algorithm / hash / compression variant
+     * @throws UncheckedIOException if the underlying {@link InputStream} fails
+     */
+    public static BloomFilterHeader readBloomFilterHeader(InputStream in) {
+        try {
+            return BloomFilterHeaderDeserializer.read(new CompactProtocolReader(in));
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to read BloomFilterHeader", e);
         }
     }
 }

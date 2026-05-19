@@ -54,7 +54,7 @@ class JtsMaterializerTest {
         assertThat(materializer.geometryColumns()).containsExactly(GEOM);
 
         Map<ColumnPath, Object> out = materializer.materialize(schema, rowOf(Map.of(ID, 42, GEOM, wkb)));
-        assertThat(out.get(ID)).isEqualTo(42);
+        assertThat(out).containsEntry(ID, 42);
         Geometry decoded = (Geometry) out.get(GEOM);
         assertThat(decoded.equalsExact(pt)).isTrue();
     }

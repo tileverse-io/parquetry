@@ -72,13 +72,14 @@ final class GeoMetadataBridge {
         }
         try {
             return applyGeoJson(schema, geo);
-        } catch (Exception e) {
+        } catch (RuntimeException e) {
+            // JacksonException is unchecked, so this catches both parse failures and our own ill-formed-JSON guards.
             LOG.warn("Malformed GeoParquet 'geo' metadata; leaving schema unchanged: {}", e.getMessage());
             return schema;
         }
     }
 
-    private static ParquetSchema applyGeoJson(ParquetSchema schema, String geoJson) throws Exception {
+    private static ParquetSchema applyGeoJson(ParquetSchema schema, String geoJson) {
         JsonNode root = MAPPER.readTree(geoJson);
         JsonNode columns = root.get("columns");
         if (columns == null || !columns.isObject()) {
@@ -150,7 +151,7 @@ final class GeoMetadataBridge {
         Optional<String> crs = extractCrs(columnEntry);
         String edges = textOrNull(columnEntry.get("edges"));
         if ("spherical".equalsIgnoreCase(edges)) {
-            return Optional.of(new LogicalType.Geography(crs, geographyAlgorithm(columnEntry)));
+            return Optional.of(new LogicalType.Geography(crs, geographyAlgorithm()));
         }
         // Default and "planar" both map to Geometry.
         return Optional.of(new LogicalType.Geometry(crs));
@@ -171,10 +172,11 @@ final class GeoMetadataBridge {
 
     /**
      * GeoParquet 1.x does not carry a Geography {@code algorithm} value (it only has {@code "edges": "spherical"} or
-     * {@code "planar"}). 2.0 native files do; until those land in the bridge we report empty so the consumer falls back
-     * to the spec default {@code SPHERICAL}.
+     * {@code "planar"}). 2.0 native files do, but the bridge only runs against 1.x; the 2.0 path is the native
+     * {@link LogicalType.Geography} annotation. We always report empty here so the consumer falls back to the spec
+     * default {@code SPHERICAL}.
      */
-    private static Optional<EdgeInterpolationAlgorithm> geographyAlgorithm(@SuppressWarnings("unused") JsonNode entry) {
+    private static Optional<EdgeInterpolationAlgorithm> geographyAlgorithm() {
         return Optional.empty();
     }
 

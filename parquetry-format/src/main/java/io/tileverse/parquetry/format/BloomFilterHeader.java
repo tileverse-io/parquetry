@@ -19,8 +19,16 @@ package io.tileverse.parquetry.format;
  * Header that precedes a column chunk's bloom-filter bitset; mirror of {@code BloomFilterHeader} in
  * {@code parquet.thrift}.
  *
- * <p>Located at {@link ColumnMetaData#bloomFilterOffset()} within the file. Empty placeholder; the real fields will be
- * {@code numBytes}, {@code algorithm}, {@code hash}, and {@code compression}.
+ * <p>Located at {@link ColumnMetaData#bloomFilterOffset()} within the file. The header is Thrift-compact-encoded; the
+ * bitset follows immediately after it and spans exactly {@link #numBytes()} bytes.
+ *
+ * @param numBytes size of the bitset in bytes (always a multiple of 32 in a valid Parquet file)
+ * @param algorithm bit-setting algorithm; currently only {@link BloomFilterAlgorithm#SPLIT_BLOCK} is defined
+ * @param hash hash function applied to plain-encoded values; currently only {@link BloomFilterHashStrategy#XXHASH}
+ * @param compression compression applied to the bitset; currently only {@link BloomFilterCompression#UNCOMPRESSED}
  */
-@SuppressWarnings("java:S2094")
-public record BloomFilterHeader() {}
+public record BloomFilterHeader(
+        int numBytes,
+        BloomFilterAlgorithm algorithm,
+        BloomFilterHashStrategy hash,
+        BloomFilterCompression compression) {}

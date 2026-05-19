@@ -20,6 +20,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
+import io.tileverse.parquetry.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.Statistics;
@@ -42,7 +43,24 @@ public final class FilterPipeline {
      * given column, in which case the corresponding tier degrades to {@link PruningDecision.NotApplied}.
      */
     public record RowGroupInputs(
-            long rowCount, ColumnStatsLookup stats, DictionaryLookup dictionaries, ColumnPageStatsLookup pageIndexes) {}
+            long rowCount,
+            ColumnStatsLookup stats,
+            DictionaryLookup dictionaries,
+            ColumnPageStatsLookup pageIndexes,
+            BloomFilterLookup blooms) {
+
+        /**
+         * Backwards-compatible four-arg constructor for callers that don't yet wire a bloom-filter lookup; defaults to
+         * {@link FilterPipeline#emptyBloomLookup()} so the bloom tier degrades to {@link PruningDecision.NotApplied}.
+         */
+        public RowGroupInputs(
+                long rowCount,
+                ColumnStatsLookup stats,
+                DictionaryLookup dictionaries,
+                ColumnPageStatsLookup pageIndexes) {
+            this(rowCount, stats, dictionaries, pageIndexes, emptyBloomLookup());
+        }
+    }
 
     /**
      * Per-column input to the statistics-tier filter evaluator: the column's primitive kind (so the evaluator knows how
@@ -55,6 +73,12 @@ public final class FilterPipeline {
      * {@link ColumnIndex} (page min/max + null markers) and {@link OffsetIndex} (page row offsets).
      */
     public record ColumnPageStats(PrimitiveKind kind, ColumnIndex columnIndex, OffsetIndex offsetIndex) {}
+
+    /**
+     * Per-column input to the BLOOM_FILTER-tier evaluator: the column's primitive kind (drives the Parquet
+     * plain-encoding hash) plus its loaded {@link SplitBlockBloomFilter}.
+     */
+    public record ColumnBloom(PrimitiveKind kind, SplitBlockBloomFilter bloom) {}
 
     /**
      * Resolves {@link ColumnStats} for a given column path within a row group. The filter pipeline implements this on
@@ -86,6 +110,22 @@ public final class FilterPipeline {
     public interface ColumnPageStatsLookup {
 
         Optional<ColumnPageStats> get(ColumnPath path);
+    }
+
+    /**
+     * Resolves the loaded {@link ColumnBloom} for a given column path within a row group. Returns empty when the column
+     * has no bloom filter or the bytes haven't been fetched. The lookup is expected to fetch lazily; the evaluator only
+     * asks for columns the predicate touches.
+     */
+    @FunctionalInterface
+    public interface BloomFilterLookup {
+
+        Optional<ColumnBloom> get(ColumnPath path);
+    }
+
+    /** A {@link BloomFilterLookup} that never resolves a column - used as the default when no blooms are wired. */
+    public static BloomFilterLookup emptyBloomLookup() {
+        return path -> Optional.empty();
     }
 
     /**
@@ -139,9 +179,11 @@ public final class FilterPipeline {
             surviving = Optional.of(n.ranges());
         }
 
-        // Bloom filter tier deferred to a future release. Record a NotApplied entry so consumers can see all 4 a-priori
-        // tiers.
-        tierDecisions.add(new PruningDecision.NotApplied(Tier.BLOOM_FILTER, "deferred to a future release"));
+        PruningDecision bloomDecision = BloomFilterEvaluator.evaluate(normalized, inputs.blooms());
+        tierDecisions.add(bloomDecision);
+        if (bloomDecision instanceof PruningDecision.Eliminated) {
+            return new RowGroupPlan(index, inputs.rowCount(), tierDecisions, RowGroupOutcome.ELIMINATED, surviving);
+        }
 
         RowGroupOutcome outcome = surviving.isPresent() ? RowGroupOutcome.PARTIAL : RowGroupOutcome.FULL;
         return new RowGroupPlan(index, inputs.rowCount(), tierDecisions, outcome, surviving);

@@ -123,8 +123,8 @@ class GeoMetadataBridgeTest {
     @Test
     void nativeGeometryAnnotationWinsOverGeoMetadata() {
         // 2.0 file: schema arrives with the native Geometry logical type already set on the geometry column.
-        LogicalType.Geometry native_ = new LogicalType.Geometry(Optional.of("{\"name\":\"EPSG:3857\"}"));
-        ParquetSchema schemaWithNative = nativeGeometrySchema(native_);
+        LogicalType.Geometry nativeType = new LogicalType.Geometry(Optional.of("{\"name\":\"EPSG:3857\"}"));
+        ParquetSchema schemaWithNative = nativeGeometrySchema(nativeType);
 
         String geo = """
                 {
@@ -140,13 +140,13 @@ class GeoMetadataBridgeTest {
         Field.Primitive leaf =
                 (Field.Primitive) out.find(ColumnPath.of("geometry")).orElseThrow();
         // Native CRS preserved verbatim; the divergent "geo" KV did not overwrite it.
-        assertThat(leaf.logicalType()).contains(native_);
+        assertThat(leaf.logicalType()).contains(nativeType);
     }
 
     @Test
     void nativeGeographyAnnotationWinsOverGeoMetadata() {
-        LogicalType.Geography native_ = new LogicalType.Geography(Optional.empty(), Optional.empty());
-        ParquetSchema schemaWithNative = nativeGeographySchema(native_);
+        LogicalType.Geography nativeType = new LogicalType.Geography(Optional.empty(), Optional.empty());
+        ParquetSchema schemaWithNative = nativeGeographySchema(nativeType);
 
         // "geo" KV says Geometry (planar) - disagrees with native Geography. Native still wins.
         String geo = """
@@ -159,13 +159,13 @@ class GeoMetadataBridgeTest {
         ParquetSchema out = GeoMetadataBridge.apply(schemaWithNative, Map.of("geo", geo));
         Field.Primitive leaf =
                 (Field.Primitive) out.find(ColumnPath.of("geometry")).orElseThrow();
-        assertThat(leaf.logicalType()).contains(native_);
+        assertThat(leaf.logicalType()).contains(nativeType);
     }
 
     @Test
     void nativeAnnotationAgreesWithGeoMetadataAndIsKeptUnchanged() {
-        LogicalType.Geometry native_ = new LogicalType.Geometry(Optional.empty());
-        ParquetSchema schemaWithNative = nativeGeometrySchema(native_);
+        LogicalType.Geometry nativeType = new LogicalType.Geometry(Optional.empty());
+        ParquetSchema schemaWithNative = nativeGeometrySchema(nativeType);
 
         // "geo" KV would have produced the same Geometry(Optional.empty()) - no warning expected at runtime, native
         // path is taken silently. We only assert the resulting schema; warning behavior is observed via log level.
@@ -179,7 +179,7 @@ class GeoMetadataBridgeTest {
         ParquetSchema out = GeoMetadataBridge.apply(schemaWithNative, Map.of("geo", geo));
         Field.Primitive leaf =
                 (Field.Primitive) out.find(ColumnPath.of("geometry")).orElseThrow();
-        assertThat(leaf.logicalType()).contains(native_);
+        assertThat(leaf.logicalType()).contains(nativeType);
     }
 
     // --- helpers ---
