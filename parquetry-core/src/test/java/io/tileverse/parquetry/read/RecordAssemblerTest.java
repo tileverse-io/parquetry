@@ -16,7 +16,6 @@
 package io.tileverse.parquetry.read;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
@@ -171,7 +170,61 @@ class RecordAssemblerTest {
     }
 
     @Test
-    void repeatedColumnRejectedAtConstruction() {
+    void legacyRepeatedGroupAssemblesIntoListOfStructs() {
+        // Schema: root { repeated group phones { required int32 number; } }
+        // Each row has 0..N phone entries. Three logical rows: [{number: 555}, {number: 666}], [], [{number: 777}].
+        Field.Primitive numberField = new Field.Primitive(
+                "number", Repetition.REQUIRED, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
+        Field.Group phonesGroup =
+                new Field.Group("phones", Repetition.REPEATED, List.of(numberField), Optional.empty(), -1);
+        Schema schema =
+                new Schema(new Field.Group("root", Repetition.REQUIRED, List.of(phonesGroup), Optional.empty(), -1));
+
+        // Per Dremel for the number leaf: maxRep=1, maxDef=1 (REPEATED contributes +1 to def).
+        //   row 0: (rep=0, def=1, val=555), (rep=1, def=1, val=666)
+        //   row 1: (rep=0, def=0)   -- empty list placeholder
+        //   row 2: (rep=0, def=1, val=777)
+        // Values present where def==maxDef: [555, 666, 777].
+        ByteBuffer page = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN);
+        page.putInt(555).putInt(666).putInt(777).flip();
+        PlainInt32Decoder dec = new PlainInt32Decoder();
+        dec.load(page, 3);
+
+        LevelDecoder repDecoder = new LevelDecoder(1);
+        repDecoder.load(encodeBitPacked(new int[] {0, 1, 0, 0, 0, 0, 0, 0}, 1));
+        LevelDecoder defDecoder = new LevelDecoder(1);
+        defDecoder.load(encodeBitPacked(new int[] {1, 1, 0, 1, 0, 0, 0, 0}, 1));
+
+        ColumnReader numberReader = new BasicColumnReader(
+                ColumnPath.of("phones", "number"), /* maxRep */ 1, /* maxDef */ 1, repDecoder, defDecoder, dec, 4);
+
+        RecordAssembler assembler = new RecordAssembler(schema, List.of(numberReader));
+
+        // Row 0: List<SubRecordRowAccessor> with two entries.
+        Object row0 = assembler.next().get(ColumnPath.of("phones"));
+        assertThat(row0).isInstanceOf(List.class);
+        @SuppressWarnings("unchecked")
+        List<RowAccessor> phones0 = (List<RowAccessor>) row0;
+        assertThat(phones0).hasSize(2);
+        assertThat(phones0.get(0).get(ColumnPath.of("number"))).isEqualTo(555);
+        assertThat(phones0.get(1).get(ColumnPath.of("number"))).isEqualTo(666);
+
+        // Row 1: empty list (non-null but no elements).
+        Object row1 = assembler.next().get(ColumnPath.of("phones"));
+        assertThat(row1).isEqualTo(List.of());
+
+        // Row 2: one entry.
+        @SuppressWarnings("unchecked")
+        List<RowAccessor> phones2 = (List<RowAccessor>) assembler.next().get(ColumnPath.of("phones"));
+        assertThat(phones2).hasSize(1);
+        assertThat(phones2.get(0).get(ColumnPath.of("number"))).isEqualTo(777);
+
+        assertThat(assembler.hasNext()).isFalse();
+    }
+
+    @Test
+    void repeatedPrimitiveAssemblesIntoList() {
+        // Schema: root { repeated int32 tags; }  (legacy repeated primitive, no LIST annotation).
         Schema schema = new Schema(new Field.Group(
                 "root",
                 Repetition.REQUIRED,
@@ -180,25 +233,45 @@ class RecordAssemblerTest {
                 Optional.empty(),
                 -1));
 
+        // 3 logical rows: [10, 20], [], [30]. Per Dremel: per-row triples are
+        //   row 0: (rep=0, def=1, val=10), (rep=1, def=1, val=20)
+        //   row 1: (rep=0, def=0)  -- empty list placeholder, no value
+        //   row 2: (rep=0, def=1, val=30)
+        // Stored values come only from def == maxDef triples: [10, 20, 30].
         PlainInt32Decoder dec = new PlainInt32Decoder();
-        ByteBuffer page = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN);
-        page.putInt(1).flip();
-        dec.load(page, 1);
+        ByteBuffer page = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN);
+        page.putInt(10).putInt(20).putInt(30).flip();
+        dec.load(page, 3);
 
-        ColumnReader repeatedReader = new BasicColumnReader(
-                ColumnPath.of("tags"),
-                /* maxRep */ 1,
-                /* maxDef */ 1,
-                new LevelDecoder(1),
-                new LevelDecoder(1),
-                dec,
-                1);
+        LevelDecoder repDecoder = new LevelDecoder(1);
+        repDecoder.load(encodeBitPacked(new int[] {0, 1, 0, 0, 0, 0, 0, 0}, 1));
+        LevelDecoder defDecoder = new LevelDecoder(1);
+        defDecoder.load(encodeBitPacked(new int[] {1, 1, 0, 1, 0, 0, 0, 0}, 1));
 
-        List<ColumnReader> readers = List.of(repeatedReader);
-        assertThatThrownBy(() -> new RecordAssembler(schema, readers))
-                .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessageContaining("tags")
-                .hasMessageContaining("maxRep=1");
+        ColumnReader tagsReader = new BasicColumnReader(
+                ColumnPath.of("tags"), /* maxRep */
+                1, /* maxDef */
+                1,
+                repDecoder,
+                defDecoder,
+                dec, /* totalValues */
+                4);
+
+        RecordAssembler assembler = new RecordAssembler(schema, List.of(tagsReader));
+
+        @SuppressWarnings("unchecked")
+        List<Integer> row0 = (List<Integer>) assembler.next().get(ColumnPath.of("tags"));
+        assertThat(row0).containsExactly(10, 20);
+
+        @SuppressWarnings("unchecked")
+        List<Integer> row1 = (List<Integer>) assembler.next().get(ColumnPath.of("tags"));
+        assertThat(row1).isEmpty();
+
+        @SuppressWarnings("unchecked")
+        List<Integer> row2 = (List<Integer>) assembler.next().get(ColumnPath.of("tags"));
+        assertThat(row2).containsExactly(30);
+
+        assertThat(assembler.hasNext()).isFalse();
     }
 
     /**

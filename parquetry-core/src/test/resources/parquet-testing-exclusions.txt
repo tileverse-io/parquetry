@@ -12,36 +12,28 @@ encrypt_columns_and_footer.parquet.encrypted                 # encrypted
 encrypt_columns_plaintext_footer.parquet.encrypted           # encrypted
 external_key_material_java.parquet.encrypted                 # encrypted
 uniform_encryption.parquet.encrypted                         # encrypted
-# Repeated columns / nested LIST and MAP (deferred to a future release)
-nested_lists.snappy.parquet                # repeated columns
-nested_maps.snappy.parquet                 # repeated columns
-nested_structs.rust.parquet                # repeated columns
-list_columns.parquet                       # repeated columns
-repeated_no_annotation.parquet             # repeated columns
-repeated_primitive_no_list.parquet         # repeated columns
-null_list.parquet                          # repeated columns
-old_list_structure.parquet                 # repeated columns
-map_no_value.parquet                       # repeated columns
-large_string_map.brotli.parquet            # repeated columns + Brotli codec (codec also unsupported)
-incorrect_map_schema.parquet               # repeated columns
 # Intentionally malformed fixtures from the upstream corpus (negative-test material, not conformance targets)
 datapage_v1-corrupt-checksum.parquet                # intentionally corrupt page checksum
 rle-dict-uncompressed-corrupt-checksum.parquet      # intentionally corrupt page checksum
 nation.dict-malformed.parquet                       # intentionally malformed dictionary
 unknown-logical-type.parquet                        # intentionally unknown logical type
+incorrect_map_schema.parquet                        # intentionally malformed map schema per upstream README
 
 # Hadoop-flavored LZ4 framing (deprecated, distinct from LZ4_RAW; tracked as a future codec)
 hadoop_lz4_compressed.parquet              # hadoop LZ4 framing (not LZ4_RAW)
 hadoop_lz4_compressed_larger.parquet       # hadoop LZ4 framing (not LZ4_RAW)
 
-# Additional repeated-column fixtures the file-name pattern above misses
-datapage_v2.snappy.parquet                 # repeated column `e.list.element`
-nonnullable.impala.parquet                 # repeated column `Int_Array.list.element`
-nullable.impala.parquet                    # repeated column `int_array.list.element`
-# parquet-avro (the oracle) can't read these; not a parquetry gap
+# Brotli codec not yet wired into parquetry's CodecRegistry (future enhancement)
+large_string_map.brotli.parquet            # Brotli codec; future enhancement
+
+# parquet-avro (the oracle) cannot consume these; not a parquetry gap
 delta_encoding_required_column.parquet     # Avro schema parser rejects column name `c_customer_sk:`
 fixed_length_byte_array.parquet            # ParquetDecodingException from the oracle at block 0
 alltypes_tiny_pages.parquet                # ParquetDecodingException from the oracle at block -1
+map_no_value.parquet                       # Avro requires UTF8 map keys; this file uses int32 keys
+nested_maps.snappy.parquet                 # Avro requires UTF8 map keys; this file uses int32 keys for the inner map
+repeated_no_annotation.parquet             # parquet-avro can't read legacy repeated group without LIST annotation
+repeated_primitive_no_list.parquet         # parquet-avro can't read legacy repeated primitive without LIST annotation
 
 # BYTE_STREAM_SPLIT on FIXED_LEN_BYTE_ARRAY is a Parquet 2.x extension not in the current decoder table; future codec/encoding pass
 byte_stream_split_extended.gzip.parquet    # BYTE_STREAM_SPLIT + FIXED_LEN_BYTE_ARRAY
@@ -56,3 +48,6 @@ float16_zeros_and_nans.parquet             # FOLLOW-UP: Column fetch failure on 
 nulls.snappy.parquet                       # FOLLOW-UP: non-repeated struct `b_struct.b_c_int` reads as null when oracle has value
 alltypes_tiny_pages_plain.parquet          # FOLLOW-UP: BYTE_ARRAY date_string_col at row 0 reads value from a different row (page/dictionary alignment?)
 non_hadoop_lz4_compressed.parquet          # FOLLOW-UP: `Dictionary-encoded data page requires a loaded Dictionary; none supplied for INT32`
+datapage_v2.snappy.parquet                 # FOLLOW-UP: dict-encoded BYTE_ARRAY list element surfaces "Dictionary none supplied" - same family as non_hadoop_lz4_compressed
+nested_lists.snappy.parquet                # FOLLOW-UP: dict-encoded BYTE_ARRAY inside nested LIST surfaces "Dictionary none supplied" - same family
+nullable.impala.parquet                    # FOLLOW-UP: dict-encoded INT32 list element surfaces "Dictionary none supplied" - same family

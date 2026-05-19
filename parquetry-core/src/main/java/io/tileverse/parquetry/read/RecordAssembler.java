@@ -16,138 +16,373 @@
 package io.tileverse.parquetry.read;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
-import java.util.stream.Collectors;
+import java.util.Optional;
 
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.materializer.RowAccessor;
+import io.tileverse.parquetry.read.ValueBuilder.ChildBinding;
+import io.tileverse.parquetry.read.ValueBuilder.LeafValueBuilder;
+import io.tileverse.parquetry.read.ValueBuilder.ListValueBuilder;
+import io.tileverse.parquetry.read.ValueBuilder.MapValueBuilder;
+import io.tileverse.parquetry.read.ValueBuilder.StructValueBuilder;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Field;
+import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.Schema;
 
 /**
- * Dremel record assembler (scope-limited).
+ * Dremel record assembler emitting one logical row at a time as a {@link RowAccessor}.
  *
- * <p>Walks the projected schema in lockstep with one {@link ColumnReader} per projected leaf column and emits one
- * assembled row at a time as a {@link RowAccessor}.
- *
- * <h2>Supported schema shapes</h2>
+ * <p>Built once per row-group reader. The constructor walks the projected schema and pairs each shape it finds with the
+ * right {@link ValueBuilder} subtype:
  *
  * <ul>
- *   <li>Flat schemas: a top-level group of REQUIRED and OPTIONAL scalar fields.
- *   <li>One level of OPTIONAL group nesting, e.g. an optional group containing scalar fields (each leaf has maxDef=2 if
- *       the group is optional).
+ *   <li>{@link Field.Primitive} with no repeated ancestor: {@link LeafValueBuilder}.
+ *   <li>{@link Field.Primitive} with {@code REPEATED} repetition: {@link ListValueBuilder} (legacy repeated primitive).
+ *   <li>{@link Field.Group} annotated {@code LIST} (or legacy repeated group): {@link ListValueBuilder}.
+ *   <li>{@link Field.Group} annotated {@code MAP}: {@link MapValueBuilder}.
+ *   <li>{@link Field.Group} non-repeated, non-LIST/MAP: {@link StructValueBuilder} (handles the "optional group of
+ *       scalars" shape and extends to arbitrary depth).
  * </ul>
  *
- * <h2>Scope limitation</h2>
- *
- * <p>Columns with a maximum repetition level >= 1 (REPEATED fields or fields nested inside a repeated group) are
- * <em>not</em> supported. The constructor rejects such readers immediately with an
- * {@link UnsupportedOperationException}. Full Dremel repeated/nested array support is deferred to a later iteration
- * alongside the GeoParquet integration tests.
+ * <p>{@link #next()} drives every root builder once. Each builder consumes whatever triples the row demands. Builders
+ * that produce composite values store them at the topmost group's {@link ColumnPath} (e.g. {@code mylist} for a list,
+ * {@code mymap} for a map), so consumers see the shape Parquet promised regardless of the leaf names underneath.
  */
 final class RecordAssembler {
 
-    private final Schema schema;
-    private final Map<ColumnPath, ColumnReader> readersByPath;
+    private final List<RootBuilder> roots;
+    private final List<ColumnReader> allReaders;
 
-    public RecordAssembler(Schema schema, List<ColumnReader> readers) {
-        this.schema = schema;
-        this.readersByPath = readers.stream().collect(Collectors.toUnmodifiableMap(ColumnReader::columnPath, r -> r));
-        rejectRepeatedColumns(readers);
+    RecordAssembler(Schema schema, List<ColumnReader> readers) {
+        this.allReaders = List.copyOf(readers);
+        Map<ColumnPath, ColumnReader> readersByPath = new HashMap<>();
+        for (ColumnReader reader : readers) {
+            readersByPath.put(reader.columnPath(), reader);
+        }
+        this.roots = buildRoots(schema, readersByPath);
     }
 
-    /** Returns {@code true} if any reader still has rows to yield. */
-    public boolean hasNext() {
-        return readersByPath.values().stream().anyMatch(ColumnReader::hasNext);
+    boolean hasNext() {
+        for (ColumnReader reader : allReaders) {
+            if (reader.hasNext()) {
+                return true;
+            }
+        }
+        return false;
     }
 
-    /**
-     * Assembles and returns the next row by consuming one value from each reader.
-     *
-     * @throws NoSuchElementException if {@link #hasNext()} is {@code false}.
-     */
-    public RowAccessor next() {
+    RowAccessor next() {
         if (!hasNext()) {
             throw new NoSuchElementException("No more rows to assemble");
         }
         MutableRowAccessor row = new MutableRowAccessor();
-        assembleGroup(schema.root(), List.of(), row, /*isRoot*/ true);
+        for (RootBuilder root : roots) {
+            Object value = root.builder.read();
+            if (value != null) {
+                row.values.put(root.path, value);
+            }
+        }
         return row;
     }
 
-    // --- schema traversal ---
+    // --- builder tree construction ---
 
     /**
-     * Walks the children of {@code group}, building their contribution to {@code row}. When {@code isRoot} is true the
-     * group's own name is excluded from the path prefix (because the Parquet root group is anonymous in column paths).
+     * Top-level roots are flattened: a non-repeated {@link Field.Group} that is <em>not</em> LIST/MAP-annotated has no
+     * record-accessor representation of its own; instead its descendant leaves register one root each at their full
+     * column paths. This preserves the contract that {@code record.get(ColumnPath.of("roll_num", "min"))} returns the
+     * int directly. Sub-records only exist inside list / map elements (handled by {@link StructValueBuilder} when built
+     * from {@code buildAnnotatedList} / {@code buildLegacyRepeatedGroup}).
      */
-    private void assembleGroup(Field.Group group, List<String> ancestorPath, MutableRowAccessor row, boolean isRoot) {
-        List<String> groupPath = buildGroupPath(group, ancestorPath, isRoot);
+    private static List<RootBuilder> buildRoots(Schema schema, Map<ColumnPath, ColumnReader> readersByPath) {
+        List<RootBuilder> built = new ArrayList<>();
+        Context ctx = new Context(readersByPath, /*maxDef*/ 0, /*maxRep*/ 0);
+        Field.Group root = schema.root();
+        for (Field child : root.children()) {
+            collectRoots(child, List.of(), ctx, built);
+        }
+        return built;
+    }
+
+    private static void collectRoots(Field field, List<String> ancestorPath, Context ctx, List<RootBuilder> out) {
+        switch (field) {
+            case Field.Primitive p -> {
+                ValueBuilder builder = buildPrimitive(p, ancestorPath, ctx);
+                if (builder != null) {
+                    out.add(new RootBuilder(appendPath(ancestorPath, p.name()), builder));
+                }
+            }
+            case Field.Group g -> collectGroupRoot(g, ancestorPath, ctx, out);
+        }
+    }
+
+    private static void collectGroupRoot(Field.Group g, List<String> ancestorPath, Context ctx, List<RootBuilder> out) {
+        Optional<LogicalType> annotation = g.logicalType();
+        boolean isList = annotation.isPresent() && annotation.get() instanceof LogicalType.ListType;
+        boolean isMap = annotation.isPresent() && annotation.get() instanceof LogicalType.MapType;
+        boolean isRepeated = g.repetition() == Repetition.REPEATED;
+        // LIST/MAP-annotated and legacy repeated groups become single roots that hold a List / Map / etc.
+        if (isList || isMap || isRepeated) {
+            ValueBuilder builder = buildGroup(g, ancestorPath, ctx);
+            if (builder != null) {
+                out.add(new RootBuilder(appendPath(ancestorPath, g.name()), builder));
+            }
+            return;
+        }
+        // Non-repeated nested struct: descend and register each child as its own root at its full path.
+        List<String> childPath = append(ancestorPath, g.name());
+        Context inner = new Context(ctx.readersByPath, ctx.maxDef + repetitionDef(g), ctx.maxRep);
+        for (Field child : g.children()) {
+            collectRoots(child, childPath, inner, out);
+        }
+    }
+
+    /**
+     * Returns the {@link ValueBuilder} for {@code field} at the given ancestor path, or {@code null} when no descendant
+     * leaf is included in the projection (so the whole subtree drops out of the row accessor).
+     */
+    private static ValueBuilder buildField(Field field, List<String> ancestorPath, Context ctx) {
+        return switch (field) {
+            case Field.Primitive p -> buildPrimitive(p, ancestorPath, ctx);
+            case Field.Group g -> buildGroup(g, ancestorPath, ctx);
+        };
+    }
+
+    private static ValueBuilder buildPrimitive(Field.Primitive leaf, List<String> ancestorPath, Context ctx) {
+        ColumnPath path = appendPath(ancestorPath, leaf.name());
+        ColumnReader reader = ctx.readersByPath.get(path);
+        if (reader == null) {
+            return null; // not projected
+        }
+        if (leaf.repetition() == Repetition.REPEATED) {
+            // Legacy repeated primitive: synthesize a list around the leaf.
+            int repLevel = ctx.maxRep + 1;
+            int listDefLevel = ctx.maxDef;
+            return new ListValueBuilder(repLevel, listDefLevel, new LeafValueBuilder(reader), reader, List.of(reader));
+        }
+        return new LeafValueBuilder(reader);
+    }
+
+    private static ValueBuilder buildGroup(Field.Group group, List<String> ancestorPath, Context ctx) {
+        List<String> groupPath = append(ancestorPath, group.name());
+        Optional<LogicalType> annotation = group.logicalType();
+
+        // Annotated LIST: { repeated group <name> { <element-or-fields> } }
+        if (annotation.isPresent() && annotation.get() instanceof LogicalType.ListType) {
+            return buildAnnotatedList(group, groupPath, ctx);
+        }
+        // Annotated MAP: { repeated group key_value { required K key; <Q> V value; } }
+        if (annotation.isPresent() && annotation.get() instanceof LogicalType.MapType) {
+            return buildMap(group, groupPath, ctx);
+        }
+        // Legacy repeated group without LIST/MAP annotation: list of struct.
+        if (group.repetition() == Repetition.REPEATED) {
+            return buildLegacyRepeatedGroup(group, groupPath, ancestorPath, ctx);
+        }
+        // Non-repeated nested group: struct.
+        return buildStruct(group, groupPath, ctx);
+    }
+
+    private static ValueBuilder buildAnnotatedList(Field.Group listGroup, List<String> listPath, Context ctx) {
+        int listDefLevel = ctx.maxDef + repetitionDef(listGroup);
+        int listRepBase = ctx.maxRep + repetitionRep(listGroup);
+        Field.Group repeatedGroup = expectRepeatedSingleton(listGroup);
+        int repLevel = listRepBase + 1; // the repeated group inside contributes +1 to rep
+        int innerDef = listDefLevel + 1; // and +1 to def (REPEATED contributes to def)
+        List<String> repeatedPath = append(listPath, repeatedGroup.name());
+        Context innerCtx = new Context(ctx.readersByPath, innerDef, repLevel);
+        // The 3-level LIST has one child inside the repeated group.
+        List<Field> elementFields = repeatedGroup.children();
+        if (elementFields.size() != 1) {
+            // Some legacy files have a multi-field repeated group annotated as LIST; treat as list-of-struct.
+            return buildLegacyAnnotatedListMultiField(
+                    listGroup, listPath, repeatedGroup, repeatedPath, innerCtx, repLevel, listDefLevel);
+        }
+        Field elementField = elementFields.get(0);
+        List<String> elementPath = append(repeatedPath, elementField.name());
+        ValueBuilder elementBuilder = buildField(elementField, repeatedPath, innerCtx);
+        if (elementBuilder == null) {
+            return null; // element not projected
+        }
+        List<ColumnReader> elementLeaves = collectLeaves(elementField, elementPath, ctx.readersByPath);
+        if (elementLeaves.isEmpty()) {
+            return null;
+        }
+        return new ListValueBuilder(repLevel, listDefLevel, elementBuilder, elementLeaves.get(0), elementLeaves);
+    }
+
+    /** Fallback for old multi-field repeated-group LIST shapes (rare; standard 3-level shape has a single element). */
+    private static ValueBuilder buildLegacyAnnotatedListMultiField(
+            Field.Group listGroup,
+            List<String> listPath,
+            Field.Group repeatedGroup,
+            List<String> repeatedPath,
+            Context innerCtx,
+            int repLevel,
+            int listDefLevel) {
+        ValueBuilder elementBuilder = buildStructFromChildren(repeatedGroup, repeatedPath, innerCtx);
+        if (elementBuilder == null) {
+            return null;
+        }
+        List<ColumnReader> elementLeaves = collectGroupLeaves(repeatedGroup, repeatedPath, innerCtx.readersByPath);
+        if (elementLeaves.isEmpty()) {
+            return null;
+        }
+        return new ListValueBuilder(repLevel, listDefLevel, elementBuilder, elementLeaves.get(0), elementLeaves);
+    }
+
+    private static ValueBuilder buildMap(Field.Group mapGroup, List<String> mapPath, Context ctx) {
+        int mapDefLevel = ctx.maxDef + repetitionDef(mapGroup);
+        int mapRepBase = ctx.maxRep + repetitionRep(mapGroup);
+        Field.Group keyValueGroup = expectRepeatedSingleton(mapGroup);
+        int repLevel = mapRepBase + 1;
+        int innerDef = mapDefLevel + 1;
+        List<String> kvPath = append(mapPath, keyValueGroup.name());
+        Context kvCtx = new Context(ctx.readersByPath, innerDef, repLevel);
+        if (keyValueGroup.children().size() != 2) {
+            throw new IllegalStateException(
+                    "MAP group at " + columnPath(mapPath) + " must contain exactly two fields (key, value); found "
+                            + keyValueGroup.children().size());
+        }
+        Field keyField = keyValueGroup.children().get(0);
+        Field valueField = keyValueGroup.children().get(1);
+        ValueBuilder keyBuilder = buildField(keyField, kvPath, kvCtx);
+        ValueBuilder valueBuilder = buildField(valueField, kvPath, kvCtx);
+        if (keyBuilder == null && valueBuilder == null) {
+            return null;
+        }
+        List<ColumnReader> entryLeaves = collectGroupLeaves(keyValueGroup, kvPath, ctx.readersByPath);
+        if (entryLeaves.isEmpty()) {
+            return null;
+        }
+        return new MapValueBuilder(repLevel, mapDefLevel, keyBuilder, valueBuilder, entryLeaves.get(0), entryLeaves);
+    }
+
+    private static ValueBuilder buildLegacyRepeatedGroup(
+            Field.Group group, List<String> groupPath, List<String> ancestorPath, Context ctx) {
+        int listDefLevel = ctx.maxDef; // group itself is REPEATED, so the "list" sits at the parent's def level
+        int repLevel = ctx.maxRep + 1;
+        int innerDef = ctx.maxDef + 1; // REPEATED contributes +1
+        Context innerCtx = new Context(ctx.readersByPath, innerDef, repLevel);
+        ValueBuilder elementBuilder = buildStructFromChildren(group, groupPath, innerCtx);
+        if (elementBuilder == null) {
+            return null;
+        }
+        List<ColumnReader> elementLeaves = collectGroupLeaves(group, groupPath, ctx.readersByPath);
+        if (elementLeaves.isEmpty()) {
+            return null;
+        }
+        return new ListValueBuilder(repLevel, listDefLevel, elementBuilder, elementLeaves.get(0), elementLeaves);
+    }
+
+    private static ValueBuilder buildStruct(Field.Group group, List<String> groupPath, Context ctx) {
+        int newMaxDef = ctx.maxDef + repetitionDef(group);
+        Context nested = new Context(ctx.readersByPath, newMaxDef, ctx.maxRep);
+        return buildStructFromChildren(group, groupPath, nested);
+    }
+
+    private static ValueBuilder buildStructFromChildren(Field.Group group, List<String> groupPath, Context ctx) {
+        List<ChildBinding> children = new ArrayList<>();
         for (Field child : group.children()) {
-            switch (child) {
-                case Field.Primitive p -> consumeLeaf(p, groupPath, row);
-                case Field.Group g -> consumeNestedGroup(g, groupPath, row);
+            ValueBuilder childBuilder = buildField(child, groupPath, ctx);
+            if (childBuilder != null) {
+                children.add(new ChildBinding(ColumnPath.of(child.name()), childBuilder));
+            }
+        }
+        if (children.isEmpty()) {
+            return null;
+        }
+        List<ColumnReader> structLeaves = collectGroupLeaves(group, groupPath, ctx.readersByPath);
+        return new StructValueBuilder(columnPath(groupPath), ctx.maxDef, children, structLeaves);
+    }
+
+    // --- helpers ---
+
+    private static Field.Group expectRepeatedSingleton(Field.Group annotated) {
+        if (annotated.children().size() != 1) {
+            throw new IllegalStateException(
+                    "Annotated LIST / MAP group at " + annotated.name() + " must contain exactly one repeated child");
+        }
+        Field child = annotated.children().get(0);
+        if (!(child instanceof Field.Group g) || g.repetition() != Repetition.REPEATED) {
+            throw new IllegalStateException(
+                    "Annotated LIST / MAP group at " + annotated.name() + " must contain a single REPEATED group");
+        }
+        return g;
+    }
+
+    private static int repetitionDef(Field field) {
+        // OPTIONAL and REPEATED both contribute +1 to the definition level chain.
+        return switch (field.repetition()) {
+            case REQUIRED -> 0;
+            case OPTIONAL, REPEATED -> 1;
+        };
+    }
+
+    private static int repetitionRep(Field field) {
+        return field.repetition() == Repetition.REPEATED ? 1 : 0;
+    }
+
+    private static List<ColumnReader> collectLeaves(
+            Field field, List<String> fieldPath, Map<ColumnPath, ColumnReader> readersByPath) {
+        List<ColumnReader> leaves = new ArrayList<>();
+        collectInto(field, fieldPath, readersByPath, leaves);
+        return leaves;
+    }
+
+    private static List<ColumnReader> collectGroupLeaves(
+            Field.Group group, List<String> groupPath, Map<ColumnPath, ColumnReader> readersByPath) {
+        List<ColumnReader> leaves = new ArrayList<>();
+        for (Field child : group.children()) {
+            collectInto(child, append(groupPath, child.name()), readersByPath, leaves);
+        }
+        return leaves;
+    }
+
+    private static void collectInto(
+            Field field,
+            List<String> fieldPath,
+            Map<ColumnPath, ColumnReader> readersByPath,
+            Collection<ColumnReader> out) {
+        switch (field) {
+            case Field.Primitive _ -> {
+                ColumnReader reader = readersByPath.get(columnPath(fieldPath));
+                if (reader != null) {
+                    out.add(reader);
+                }
+            }
+            case Field.Group g -> {
+                for (Field child : g.children()) {
+                    collectInto(child, append(fieldPath, child.name()), readersByPath, out);
+                }
             }
         }
     }
 
-    private List<String> buildGroupPath(Field.Group group, List<String> ancestorPath, boolean isRoot) {
-        if (isRoot) {
-            return ancestorPath;
-        }
-        List<String> path = new ArrayList<>(ancestorPath);
-        path.add(group.name());
-        return path;
+    private static List<String> append(List<String> prefix, String segment) {
+        List<String> next = new ArrayList<>(prefix.size() + 1);
+        next.addAll(prefix);
+        next.add(segment);
+        return next;
     }
 
-    /**
-     * Reads the current value from the leaf's column reader and stores it in {@code row}. When the definition level is
-     * below the maximum the leaf is null and no entry is stored.
-     */
-    private void consumeLeaf(Field.Primitive leaf, List<String> ancestorPath, MutableRowAccessor row) {
-        ColumnPath path = buildLeafPath(leaf.name(), ancestorPath);
-        ColumnReader reader = readersByPath.get(path);
-        if (reader == null) {
-            // Column not projected; nothing to store.
-            return;
-        }
-        if (!reader.hasNext()) {
-            throw new IllegalStateException("Column " + path.dot() + " exhausted while other columns still have rows");
-        }
-        boolean isPresent = reader.currentDefinitionLevel() == reader.maxDefinitionLevel();
-        if (isPresent) {
-            row.values.put(path, reader.currentValue());
-        }
-        reader.consume();
+    private static ColumnPath appendPath(List<String> prefix, String segment) {
+        return columnPath(append(prefix, segment));
     }
 
-    /**
-     * Delegates assembly of a nested group's children. Null-group tracking is deferred to a later iteration; for now a
-     * fully-null optional group simply leaves its descendants absent from {@code row.values}.
-     */
-    private void consumeNestedGroup(Field.Group group, List<String> ancestorPath, MutableRowAccessor row) {
-        assembleGroup(group, ancestorPath, row, /*isRoot*/ false);
-    }
-
-    private ColumnPath buildLeafPath(String leafName, List<String> ancestorPath) {
-        List<String> parts = new ArrayList<>(ancestorPath);
-        parts.add(leafName);
+    private static ColumnPath columnPath(List<String> parts) {
         return new ColumnPath(parts);
     }
 
-    // --- validation ---
+    /** Bound projected leaf readers + the running max def / max rep at the current ancestor depth. */
+    private record Context(Map<ColumnPath, ColumnReader> readersByPath, int maxDef, int maxRep) {}
 
-    private static void rejectRepeatedColumns(List<ColumnReader> readers) {
-        for (ColumnReader reader : readers) {
-            if (reader.maxRepetitionLevel() > 0) {
-                throw new UnsupportedOperationException(
-                        "RecordAssembler does not yet support repeated columns. Column '"
-                                + reader.columnPath().dot() + "' has maxRep="
-                                + reader.maxRepetitionLevel()
-                                + ". Repeated/nested array support is a follow-up task.");
-            }
-        }
-    }
+    /** A top-level projected column and the builder that materializes it. */
+    private record RootBuilder(ColumnPath path, ValueBuilder builder) {}
 }

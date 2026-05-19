@@ -57,6 +57,75 @@ class OvertureBuildingsProbe {
 
     void main() throws Exception {
         opensAndReadsFirstRowGroup();
+        readsFullSchema();
+    }
+
+    /**
+     * Regression check: read every row with {@link Projection#ALL} (no flat-only workaround). Asserts the row count and
+     * inspects a sample row to confirm the repeated / map columns ({@code sources}, {@code names.common}) come back as
+     * the expected {@link java.util.List} / {@link java.util.Map} shapes.
+     */
+    void readsFullSchema() throws Exception {
+        Path file = Path.of(OVERTURE_FILE);
+        try (Storage storage = StorageFactory.open(file.getParent().toUri());
+                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
+            Dataset dataset = Dataset.open(reader);
+            int leafCount = dataset.schema().leafColumns().size();
+            long totalRows =
+                    dataset.rowGroups().stream().mapToLong(RowGroup::rowCount).sum();
+            System.out.println();
+            System.out.println("=== Overture buildings probe :: full schema ===");
+            System.out.println("Leaf columns: " + leafCount + "; rows across "
+                    + dataset.rowGroups().size() + " row groups: " + totalRows);
+
+            ReadOptions opts =
+                    ReadOptions.builder().concurrencyMode(ConcurrencyMode.FULL).build();
+            long[] counted = {0L};
+            ParquetRecord[] sampleHolder = {null};
+            long start = System.nanoTime();
+            try (Stream<ParquetRecord> records = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, opts)) {
+                records.forEach(r -> {
+                    if (sampleHolder[0] == null) {
+                        sampleHolder[0] = r;
+                    }
+                    counted[0]++;
+                });
+            }
+            long ms = (System.nanoTime() - start) / 1_000_000L;
+            System.out.println(String.format(
+                    "Full-schema iterate: %s rows in %d ms (%.1fk rows/sec)",
+                    counted[0], ms, (counted[0] / (ms / 1000.0)) / 1000.0));
+
+            assertThat(counted[0]).as("full-schema read row count").isEqualTo(totalRows);
+
+            ParquetRecord sample = sampleHolder[0];
+            if (sample == null) {
+                return;
+            }
+            ColumnPath sources = ColumnPath.of("sources");
+            Object sourcesValue = sample.get(sources);
+            System.out.println("Sample row[0] sources: "
+                    + (sourcesValue == null
+                            ? "(null)"
+                            : sourcesValue.getClass().getSimpleName() + " of size "
+                                    + ((java.util.Collection<?>) sourcesValue).size()));
+            assertThat(sourcesValue)
+                    .as("sources column must be a non-empty List of structs")
+                    .isInstanceOf(java.util.List.class);
+
+            ColumnPath namesCommon = ColumnPath.of("names", "common");
+            Object namesCommonValue = sample.get(namesCommon);
+            System.out.println("Sample row[0] names.common: "
+                    + (namesCommonValue == null
+                            ? "(null)"
+                            : namesCommonValue.getClass().getSimpleName() + " of size "
+                                    + ((namesCommonValue instanceof java.util.Map<?, ?> m) ? m.size() : -1)));
+            if (namesCommonValue != null) {
+                assertThat(namesCommonValue)
+                        .as("names.common column must be a Map when present")
+                        .isInstanceOf(java.util.Map.class);
+            }
+        }
     }
 
     void opensAndReadsFirstRowGroup() throws Exception {
