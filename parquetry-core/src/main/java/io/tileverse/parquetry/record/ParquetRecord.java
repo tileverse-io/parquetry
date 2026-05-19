@@ -17,6 +17,7 @@ package io.tileverse.parquetry.record;
 
 import java.util.List;
 
+import io.tileverse.parquetry.materializer.RowAccessor;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Schema;
 
@@ -96,4 +97,12 @@ public sealed interface ParquetRecord permits DefaultParquetRecord {
      * with the row-group reader.
      */
     ParquetRecord getStruct(ColumnPath col);
+
+    /**
+     * Builds the canonical {@link ParquetRecord} view over an assembled {@link RowAccessor}. Used by built-in
+     * materializers; user code typically obtains records through {@code Dataset.read}.
+     */
+    static ParquetRecord of(Schema projectedSchema, RowAccessor row) {
+        return new DefaultParquetRecord(projectedSchema, row);
+    }
 }

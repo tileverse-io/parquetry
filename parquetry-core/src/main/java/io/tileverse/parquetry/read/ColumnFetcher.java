@@ -20,7 +20,6 @@ import java.io.IOException;
 import io.tileverse.storage.RangeReader;
 
 import io.tileverse.parquetry.format.ColumnChunk;
-import io.tileverse.parquetry.read.page.RealColumnFetcher;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Schema;
 

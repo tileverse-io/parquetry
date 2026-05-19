@@ -34,6 +34,7 @@ import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.PageHeader;
+import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.enums.PageType;
 
 /**
@@ -57,7 +58,7 @@ class PageHeaderConformanceTest {
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
 
-            FileMetaData footer = Format.readFooter(reader);
+            FileMetaData footer = ParquetFormat.readFooter(reader);
             assertThat(footer.rowGroups()).isNotEmpty();
 
             int columnsWithColumnIndex = 0;
@@ -68,7 +69,7 @@ class PageHeaderConformanceTest {
                         && col.columnIndexLength().isPresent()) {
                     long offset = col.columnIndexOffset().getAsLong();
                     int length = col.columnIndexLength().getAsInt();
-                    ColumnIndex ci = Format.readColumnIndex(reader, offset, length);
+                    ColumnIndex ci = ParquetFormat.readColumnIndex(reader, offset, length);
                     assertThat(ci.nullPages())
                             .as("null_pages must not be empty")
                             .isNotEmpty();
@@ -87,7 +88,7 @@ class PageHeaderConformanceTest {
                         && col.offsetIndexLength().isPresent()) {
                     long offset = col.offsetIndexOffset().getAsLong();
                     int length = col.offsetIndexLength().getAsInt();
-                    OffsetIndex oi = Format.readOffsetIndex(reader, offset, length);
+                    OffsetIndex oi = ParquetFormat.readOffsetIndex(reader, offset, length);
                     assertThat(oi.pageLocations())
                             .as("page_locations must not be empty")
                             .isNotEmpty();
@@ -123,7 +124,7 @@ class PageHeaderConformanceTest {
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
 
-            FileMetaData footer = Format.readFooter(reader);
+            FileMetaData footer = ParquetFormat.readFooter(reader);
             ColumnChunk firstCol = footer.rowGroups().get(0).columns().get(0);
             long pageStart = firstCol.metaData().orElseThrow().dataPageOffset();
 
@@ -134,7 +135,7 @@ class PageHeaderConformanceTest {
             byte[] bytes = new byte[buf.remaining()];
             buf.get(bytes);
             try (InputStream is = new ByteArrayInputStream(bytes)) {
-                PageHeader header = Format.readPageHeader(is);
+                PageHeader header = ParquetFormat.readPageHeader(is);
                 assertThat(header.type())
                         .as("first page type must be a valid page type")
                         .isIn(PageType.DATA_PAGE, PageType.DATA_PAGE_V2, PageType.DICTIONARY_PAGE);
@@ -158,7 +159,7 @@ class PageHeaderConformanceTest {
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
 
-            FileMetaData footer = Format.readFooter(reader);
+            FileMetaData footer = ParquetFormat.readFooter(reader);
             assertThat(footer.rowGroups()).isNotEmpty();
 
             for (ColumnChunk col : footer.rowGroups().get(0).columns()) {
@@ -166,7 +167,7 @@ class PageHeaderConformanceTest {
                         && col.columnIndexLength().isPresent()) {
                     long offset = col.columnIndexOffset().getAsLong();
                     int length = col.columnIndexLength().getAsInt();
-                    ColumnIndex ci = Format.readColumnIndex(reader, offset, length);
+                    ColumnIndex ci = ParquetFormat.readColumnIndex(reader, offset, length);
                     assertThat(ci.nullPages()).isNotEmpty();
                     assertThat(ci.minValues()).hasSameSizeAs(ci.nullPages());
                     assertThat(ci.maxValues()).hasSameSizeAs(ci.nullPages());
@@ -185,7 +186,7 @@ class PageHeaderConformanceTest {
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
 
-            FileMetaData footer = Format.readFooter(reader);
+            FileMetaData footer = ParquetFormat.readFooter(reader);
             assertThat(footer.rowGroups()).hasSizeGreaterThan(1);
 
             for (var rowGroup : footer.rowGroups()) {
@@ -194,7 +195,7 @@ class PageHeaderConformanceTest {
                             && col.offsetIndexLength().isPresent()) {
                         long offset = col.offsetIndexOffset().getAsLong();
                         int length = col.offsetIndexLength().getAsInt();
-                        OffsetIndex oi = Format.readOffsetIndex(reader, offset, length);
+                        OffsetIndex oi = ParquetFormat.readOffsetIndex(reader, offset, length);
                         assertThat(oi.pageLocations()).isNotEmpty();
                     }
                 }

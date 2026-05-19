@@ -21,7 +21,7 @@ package io.tileverse.parquetry.dataset;
  * <p>This is deliberately a thin record rather than the raw thrift {@link io.tileverse.parquetry.format.RowGroup} -
  * keeping the public surface narrow avoids leaking the format module's internal types (column-chunk metadata,
  * encryption, etc.) through {@code Dataset}. Callers needing the full thrift view can call
- * {@link io.tileverse.parquetry.format.codec.Format#readFooter Format.readFooter} directly.
+ * {@link io.tileverse.parquetry.format.ParquetFormat#readFooter ParquetFormat.readFooter} directly.
  *
  * @param index the row group's index in file order, starting at 0
  * @param rowCount number of rows in the row group

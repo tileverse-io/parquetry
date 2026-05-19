@@ -27,7 +27,6 @@ import java.util.stream.StreamSupport;
 
 import io.tileverse.storage.RangeReader;
 
-import io.tileverse.parquetry.assembly.ColumnReader;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.schema.Field;
 import io.tileverse.parquetry.schema.Schema;

@@ -45,13 +45,11 @@ import io.tileverse.parquetry.format.DataPageHeader;
 import io.tileverse.parquetry.format.DataPageHeaderV2;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.PageHeader;
+import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
-import io.tileverse.parquetry.format.codec.Format;
 import io.tileverse.parquetry.format.enums.Encoding;
 import io.tileverse.parquetry.format.enums.PageType;
 import io.tileverse.parquetry.format.enums.Type;
-import io.tileverse.parquetry.page.dict.Dictionary;
-import io.tileverse.parquetry.page.dict.DictionaryDecoder;
 import io.tileverse.parquetry.schema.Field;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
@@ -88,7 +86,7 @@ class DecoderFactoryConformanceTest {
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
 
-            FileMetaData footer = Format.readFooter(reader);
+            FileMetaData footer = ParquetFormat.readFooter(reader);
             Schema schema = SchemaBuilder.build(footer.schema());
 
             for (RowGroup rg : footer.rowGroups()) {
@@ -164,7 +162,7 @@ class DecoderFactoryConformanceTest {
 
             InputStream headerStream = new ByteArrayInputStream(chunkBytes, arrayOffset, remaining);
             int beforeHeaderRead = headerStream.available();
-            PageHeader header = Format.readPageHeader(headerStream);
+            PageHeader header = ParquetFormat.readPageHeader(headerStream);
             int headerLen = beforeHeaderRead - headerStream.available();
             pos += headerLen;
 

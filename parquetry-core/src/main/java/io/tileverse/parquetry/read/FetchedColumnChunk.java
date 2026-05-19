@@ -19,7 +19,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 import io.tileverse.parquetry.format.ColumnMetaData;
-import io.tileverse.parquetry.page.dict.Dictionary;
+import io.tileverse.parquetry.page.Dictionary;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 import io.tileverse.io.ByteBufferPool.PooledByteBuffer;
@@ -45,7 +45,7 @@ import io.tileverse.io.ByteBufferPool.PooledByteBuffer;
  *     ready-to-read (flipped); position/limit on {@code .buffer()} represent the slice the caller should slice from
  * @param dictionary the decoded dictionary page if the column chunk has one; otherwise empty
  */
-public record FetchedColumnChunk(
+record FetchedColumnChunk(
         ColumnPath path,
         ColumnMetaData metadata,
         int maxRepetitionLevel,

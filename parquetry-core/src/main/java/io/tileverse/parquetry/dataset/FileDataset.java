@@ -15,7 +15,6 @@
  */
 package io.tileverse.parquetry.dataset;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -28,19 +27,19 @@ import java.util.stream.Stream;
 import io.tileverse.storage.RangeReader;
 
 import io.tileverse.parquetry.filter.ExplainPlan;
+import io.tileverse.parquetry.filter.FilterPipeline;
+import io.tileverse.parquetry.filter.FilterPipeline.ColumnPageStatsLookup;
+import io.tileverse.parquetry.filter.FilterPipeline.ColumnStats;
+import io.tileverse.parquetry.filter.FilterPipeline.ColumnStatsLookup;
+import io.tileverse.parquetry.filter.FilterPipeline.DictionaryLookup;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.RowGroupPlan;
-import io.tileverse.parquetry.filter.eval.ColumnPageStatsLookup;
-import io.tileverse.parquetry.filter.eval.ColumnStats;
-import io.tileverse.parquetry.filter.eval.ColumnStatsLookup;
-import io.tileverse.parquetry.filter.eval.DictionaryLookup;
-import io.tileverse.parquetry.filter.eval.FilterPipeline;
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.KeyValue;
-import io.tileverse.parquetry.format.codec.Format;
+import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.read.ColumnFetcher;
 import io.tileverse.parquetry.read.ConcurrencyMode;
@@ -65,7 +64,7 @@ import io.tileverse.parquetry.schema.SchemaBuilder;
  * own locally-allocated state, so concurrent {@code read()} calls on a shared {@code Dataset} cannot collide. The
  * underlying {@link RangeReader} is required to be thread-safe (this is part of the {@code RangeReader} contract).
  */
-public final class FileDataset implements Dataset {
+final class FileDataset implements Dataset {
 
     private final RangeReader rangeReader;
     private final FileMetaData footer;
@@ -86,9 +85,9 @@ public final class FileDataset implements Dataset {
         this.rowGroupView = rowGroupView;
     }
 
-    static FileDataset open(RangeReader reader) throws IOException {
+    static FileDataset open(RangeReader reader) {
         Objects.requireNonNull(reader, "reader");
-        FileMetaData footer = Format.readFooter(reader);
+        FileMetaData footer = ParquetFormat.readFooter(reader);
         Schema fileSchema = SchemaBuilder.build(footer.schema());
         Map<String, String> kvMetadata = collapseKeyValueMetadata(footer.keyValueMetadata());
         List<RowGroup> rgView = toRowGroupView(footer);

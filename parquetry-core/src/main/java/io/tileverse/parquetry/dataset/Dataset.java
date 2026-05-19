@@ -15,7 +15,6 @@
  */
 package io.tileverse.parquetry.dataset;
 
-import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
@@ -52,7 +51,8 @@ import io.tileverse.parquetry.schema.Schema;
  *
  * <p>{@link #rowGroups()} exposes a minimal, public view of the on-disk row groups (index, row count, sizes). It is
  * deliberately not the raw thrift {@link io.tileverse.parquetry.format.RowGroup} - that type belongs to the format
- * module's internal API. Callers needing the unfiltered thrift footer can call {@code Format.readFooter} directly.
+ * module's internal API. Callers needing the unfiltered thrift footer can call
+ * {@link io.tileverse.parquetry.format.ParquetFormat#readFooter ParquetFormat.readFooter} directly.
  */
 public sealed interface Dataset permits FileDataset, MultiFileDataset {
 
@@ -104,9 +104,11 @@ public sealed interface Dataset permits FileDataset, MultiFileDataset {
      * for closing it after the last {@code read(...)} stream has been closed. This matches the contract every other
      * parquetry-core reader follows.
      *
-     * @throws IOException if the footer can't be read or decoded
+     * @throws io.tileverse.parquetry.format.ParquetFormatException if the bytes at the file's footer don't conform to
+     *     the Parquet / Thrift spec (bad magic, encrypted file, invalid footer length, malformed metadata, etc.)
+     * @throws java.io.UncheckedIOException if the underlying {@link RangeReader} fails to deliver the bytes
      */
-    static Dataset open(RangeReader reader) throws IOException {
+    static Dataset open(RangeReader reader) {
         return FileDataset.open(reader);
     }
 }

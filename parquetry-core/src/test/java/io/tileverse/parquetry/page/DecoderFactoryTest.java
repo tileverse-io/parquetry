@@ -26,23 +26,6 @@ import java.util.OptionalInt;
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.format.enums.Encoding;
-import io.tileverse.parquetry.page.bss.ByteStreamSplitDoubleDecoder;
-import io.tileverse.parquetry.page.bss.ByteStreamSplitFloatDecoder;
-import io.tileverse.parquetry.page.delta.DeltaBinaryPackedInt32Decoder;
-import io.tileverse.parquetry.page.delta.DeltaBinaryPackedInt64Decoder;
-import io.tileverse.parquetry.page.delta.DeltaByteArrayDecoder;
-import io.tileverse.parquetry.page.delta.DeltaLengthByteArrayDecoder;
-import io.tileverse.parquetry.page.dict.Dictionary;
-import io.tileverse.parquetry.page.dict.RleDictionaryPageDecoder;
-import io.tileverse.parquetry.page.plain.PlainBinaryDecoder;
-import io.tileverse.parquetry.page.plain.PlainBooleanDecoder;
-import io.tileverse.parquetry.page.plain.PlainDoubleDecoder;
-import io.tileverse.parquetry.page.plain.PlainFixedLenBinaryDecoder;
-import io.tileverse.parquetry.page.plain.PlainFloatDecoder;
-import io.tileverse.parquetry.page.plain.PlainInt32Decoder;
-import io.tileverse.parquetry.page.plain.PlainInt64Decoder;
-import io.tileverse.parquetry.page.plain.PlainInt96Decoder;
-import io.tileverse.parquetry.page.rle.RleBooleanDecoder;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 
 /**

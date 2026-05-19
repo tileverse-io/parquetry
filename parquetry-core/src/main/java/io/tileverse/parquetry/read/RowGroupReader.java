@@ -34,14 +34,11 @@ import java.util.stream.StreamSupport;
 
 import io.tileverse.storage.RangeReader;
 
-import io.tileverse.parquetry.assembly.ColumnReader;
-import io.tileverse.parquetry.assembly.RecordAssembler;
-import io.tileverse.parquetry.assembly.RowAccessor;
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.materializer.Materializer;
-import io.tileverse.parquetry.read.page.StreamingColumnReader;
+import io.tileverse.parquetry.materializer.RowAccessor;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Field;
 import io.tileverse.parquetry.schema.Schema;
@@ -84,7 +81,7 @@ import io.tileverse.parquetry.schema.Schema;
  * <p>{@code close()} releases column-reader-owned resources (current page's pooled decompressed-values buffer) before
  * releasing the column-chunk-owned compressed buffers, so the streaming memory contract holds along every exit path.
  */
-public final class RowGroupReader implements AutoCloseable {
+final class RowGroupReader implements AutoCloseable {
 
     private final Schema fileSchema;
     private final Schema projectedSchema;

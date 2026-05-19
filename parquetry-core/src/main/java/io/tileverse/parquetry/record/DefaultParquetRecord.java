@@ -20,7 +20,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
 
-import io.tileverse.parquetry.assembly.RowAccessor;
+import io.tileverse.parquetry.materializer.RowAccessor;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Field;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -42,13 +42,13 @@ import io.tileverse.parquetry.schema.Schema;
  * primitive returns, or dereference of the underlying {@link ByteBuffer} for binary returns). Only
  * {@link #get(ColumnPath)} returns {@code null} for null leaves.
  */
-public final class DefaultParquetRecord implements ParquetRecord {
+final class DefaultParquetRecord implements ParquetRecord {
 
     private final Schema schema;
     private final RowAccessor row;
 
     /** Wraps the given row, exposing it through the {@link ParquetRecord} accessor surface. */
-    public DefaultParquetRecord(Schema schema, RowAccessor row) {
+    DefaultParquetRecord(Schema schema, RowAccessor row) {
         this.schema = schema;
         this.row = row;
     }

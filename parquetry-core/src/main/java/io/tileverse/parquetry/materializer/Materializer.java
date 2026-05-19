@@ -15,7 +15,6 @@
  */
 package io.tileverse.parquetry.materializer;
 
-import io.tileverse.parquetry.assembly.RowAccessor;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.Schema;
 

@@ -15,13 +15,11 @@
  */
 package io.tileverse.parquetry.materializer;
 
-import io.tileverse.parquetry.assembly.RowAccessor;
-import io.tileverse.parquetry.record.DefaultParquetRecord;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.Schema;
 
 /**
- * Built-in {@link Materializer} that wraps each row in a {@link DefaultParquetRecord}.
+ * Built-in {@link Materializer} that wraps each row in the canonical {@link ParquetRecord}.
  *
  * <p>Stateless and shared as a singleton via {@link Materializer#defaultRecord()}; callers should reach for it through
  * that factory rather than constructing this class directly.
@@ -36,6 +34,6 @@ final class DefaultMaterializer implements Materializer<ParquetRecord> {
 
     @Override
     public ParquetRecord materialize(Schema projectedSchema, RowAccessor row) {
-        return new DefaultParquetRecord(projectedSchema, row);
+        return ParquetRecord.of(projectedSchema, row);
     }
 }

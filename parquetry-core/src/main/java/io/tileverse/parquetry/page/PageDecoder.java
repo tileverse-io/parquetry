@@ -18,26 +18,22 @@ package io.tileverse.parquetry.page;
 import java.nio.ByteBuffer;
 
 /**
- * Contract every page decoder satisfies.
+ * Lazily materializes column values from one decompressed data-page payload, one value per {@link #next()} call.
  *
- * <p>Lifecycle: {@link #load(ByteBuffer, int)} hands the decoder a page's compressed-then-decompressed bytes plus the
- * value count from the page header. The decoder then yields values via {@link #next()} (one per call) up to
- * {@code valueCount}. {@link #skip(int)} advances past values without materializing them (used for column-index page
- * skipping where some rows in a kept page aren't needed).
+ * <p>{@link #skip(int)} advances the cursor without producing values (used when column-index narrowing rejects some
+ * rows inside a kept page). Thread-confined; one decoder per column reader per page.
  *
- * <p>Thread-confined; create one decoder per column reader per page.
- *
- * @param <T> the primitive value type yielded; boxed primitive for Java compatibility, but implementations should still
- *     favor specialized internal storage.
+ * <p>{@code valueCount} is the page header's {@code numValues} - the logical row count <em>including nulls</em>. PLAIN
+ * encoding stores only the non-null values, so an all-null OPTIONAL page validly has {@code valueCount = N} and zero
+ * value bytes; the column reader will not call {@link #next()} for those rows. Implementations must therefore not cap
+ * the input buffer at {@code valueCount} (e.g. {@code asIntBuffer().limit(valueCount)}); the buffer's natural capacity
+ * already reflects what was written. Over-consumption past that capacity should fail loudly.
  */
 public interface PageDecoder<T> {
 
-    /** Load a fresh page. Implementations may reset internal buffers. */
     void load(ByteBuffer page, int valueCount);
 
-    /** Yield the next value. Caller must ensure they haven't exceeded {@code valueCount}. */
     T next();
 
-    /** Skip {@code n} values without materializing them. */
     void skip(int n);
 }

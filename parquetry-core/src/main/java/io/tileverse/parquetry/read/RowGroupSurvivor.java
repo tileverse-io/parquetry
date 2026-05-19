@@ -24,7 +24,7 @@ import io.tileverse.parquetry.format.RowGroup;
 /**
  * One row group that the filter pipeline has cleared for reading, optionally narrowed to a set of row ranges.
  *
- * <p>The {@link io.tileverse.parquetry.filter.eval.FilterPipeline} runs each row group through the stats, dictionary,
+ * <p>The {@link io.tileverse.parquetry.filter.FilterPipeline} runs each row group through the stats, dictionary,
  * column-index, bloom-filter, and record-level tiers; the row groups that aren't entirely eliminated come out as
  * survivors. The pipeline that orchestrates reads (see {@link RowGroupPipeline}) receives this already-pruned list and
  * does not re-run the filter.

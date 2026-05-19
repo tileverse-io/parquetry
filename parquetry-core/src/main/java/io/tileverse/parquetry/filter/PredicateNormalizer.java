@@ -18,9 +18,9 @@ package io.tileverse.parquetry.filter;
 import java.util.ArrayList;
 import java.util.List;
 
-import io.tileverse.parquetry.ParquetSchemaException;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Field;
+import io.tileverse.parquetry.schema.ParquetSchemaException;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Schema;
 
@@ -30,7 +30,7 @@ import io.tileverse.parquetry.schema.Schema;
  * flatten nested {@link Predicate.And} / {@link Predicate.Or} - and offers a separate schema-validation pass that
  * throws {@link ParquetSchemaException} for unknown columns or value/type mismatches.
  */
-public final class PredicateNormalizer {
+final class PredicateNormalizer {
 
     private PredicateNormalizer() {}
 

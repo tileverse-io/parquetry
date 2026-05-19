@@ -27,6 +27,7 @@ import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
 
 import io.tileverse.parquetry.format.FileMetaData;
+import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.enums.Type;
 
 class FormatEmptyFileTest {
@@ -36,7 +37,7 @@ class FormatEmptyFileTest {
         Path file = TestFiles.emptyIntColumn(tmp);
         try (Storage storage = StorageFactory.open(tmp.toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            FileMetaData footer = Format.readFooter(reader);
+            FileMetaData footer = ParquetFormat.readFooter(reader);
 
             assertThat(footer.version()).isPositive();
             assertThat(footer.numRows()).isZero();

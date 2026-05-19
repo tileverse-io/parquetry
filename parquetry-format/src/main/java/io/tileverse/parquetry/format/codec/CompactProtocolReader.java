@@ -21,6 +21,8 @@ import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
+import io.tileverse.parquetry.format.ParquetFormatException;
+
 /**
  * Hand-rolled Thrift Compact Protocol decoder per <a
  * href="https://github.com/apache/thrift/blob/master/doc/specs/thrift-compact-protocol.md">spec</a>.
@@ -28,7 +30,7 @@ import java.nio.charset.StandardCharsets;
  * <p>Operates on a plain {@link InputStream} so it composes with buffered/inflater streams. Thread-confined; create one
  * per parse.
  */
-public final class CompactProtocolReader {
+final class CompactProtocolReader {
 
     private final InputStream in;
 
@@ -92,7 +94,7 @@ public final class CompactProtocolReader {
             }
             shift += 7;
             if (shift > 70) {
-                throw new IOException("varint too long");
+                throw new ParquetFormatException("varint too long");
             }
         }
     }
@@ -202,8 +204,8 @@ public final class CompactProtocolReader {
                 }
             }
             case STRUCT -> skipStruct();
-            case MAP -> throw new IOException("MAP not used in parquet.thrift");
-            case STOP -> throw new IOException("unexpected STOP in skipField");
+            case MAP -> throw new ParquetFormatException("MAP not used in parquet.thrift");
+            case STOP -> throw new ParquetFormatException("unexpected STOP in skipField");
         }
     }
 }

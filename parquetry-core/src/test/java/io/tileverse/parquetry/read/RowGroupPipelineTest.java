@@ -38,8 +38,6 @@ import org.junit.jupiter.api.Test;
 
 import io.tileverse.storage.RangeReader;
 
-import io.tileverse.parquetry.assembly.BasicColumnReader;
-import io.tileverse.parquetry.assembly.ColumnReader;
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.RowGroup;
@@ -48,7 +46,7 @@ import io.tileverse.parquetry.format.enums.Encoding;
 import io.tileverse.parquetry.format.enums.Type;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.page.LevelDecoder;
-import io.tileverse.parquetry.page.plain.PlainInt32Decoder;
+import io.tileverse.parquetry.page.PlainInt32Decoder;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Field;

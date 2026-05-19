@@ -27,7 +27,7 @@ import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
 
 import io.tileverse.parquetry.format.FileMetaData;
-import io.tileverse.parquetry.format.codec.Format;
+import io.tileverse.parquetry.format.ParquetFormat;
 
 class SchemaBuilderTest {
 
@@ -82,7 +82,7 @@ class SchemaBuilderTest {
     private static FileMetaData readFooter(Path file) throws Exception {
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            return Format.readFooter(reader);
+            return ParquetFormat.readFooter(reader);
         }
     }
 }

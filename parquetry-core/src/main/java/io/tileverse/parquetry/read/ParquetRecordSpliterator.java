@@ -44,7 +44,7 @@ import java.util.function.Consumer;
  * group {@code numRows}, and even with it the filter pipeline narrows after assembly. {@link #trySplit()} returns
  * {@code null}: parallelism is provided by the pipeline's prefetch, not by {@code Stream.parallel()}.
  */
-public final class ParquetRecordSpliterator<T> implements Spliterator<T> {
+final class ParquetRecordSpliterator<T> implements Spliterator<T> {
 
     private final BlockingQueue<RowGroupPipeline.PipelineItem<T>> queue;
     private RowGroupPipeline.Prepared<T> active;

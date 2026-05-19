@@ -18,7 +18,6 @@ package io.tileverse.parquetry.read;
 import java.util.Objects;
 import java.util.Optional;
 
-import io.tileverse.parquetry.read.page.RealColumnFetcher;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Field;
 import io.tileverse.parquetry.schema.Schema;
@@ -33,7 +32,7 @@ import io.tileverse.parquetry.schema.Schema;
  * <p>Definition-level rule: each OPTIONAL or REPEATED ancestor (including the leaf) contributes one. Repetition-level
  * rule: each REPEATED ancestor contributes one. REQUIRED nodes contribute neither.
  */
-public final class LevelMaximaResolver {
+final class LevelMaximaResolver {
 
     private LevelMaximaResolver() {}
 
