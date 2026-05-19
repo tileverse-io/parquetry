@@ -1,0 +1,387 @@
+/*
+ * Copyright (c) 2026 Tileverse.io
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.tileverse.parquetry.dataset;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.io.IOException;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
+
+import org.apache.avro.generic.GenericData;
+import org.apache.parquet.avro.AvroParquetWriter;
+import org.apache.parquet.column.ParquetProperties.WriterVersion;
+import org.apache.parquet.hadoop.ParquetWriter;
+import org.apache.parquet.hadoop.metadata.CompressionCodecName;
+import org.apache.parquet.io.LocalOutputFile;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+
+import io.tileverse.storage.RangeReader;
+import io.tileverse.storage.Storage;
+import io.tileverse.storage.StorageFactory;
+
+import io.tileverse.parquetry.filter.ExplainPlan;
+import io.tileverse.parquetry.filter.Pred;
+import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.filter.RowGroupOutcome;
+import io.tileverse.parquetry.read.ConcurrencyMode;
+import io.tileverse.parquetry.read.ReadOptions;
+import io.tileverse.parquetry.record.ParquetRecord;
+import io.tileverse.parquetry.schema.ColumnPath;
+
+import io.tileverse.io.ByteBufferPool;
+
+/**
+ * End-to-end coverage for the {@code Dataset} facade: footer caching, filter / projection wiring, the
+ * {@code ConcurrencyMode.AUTO} resolution, the cross-thread reuse contract, and the {@code MultiFileDataset} sealing
+ * seam. Fixtures are written via {@code parquet-avro} (same family as {@code EndToEndV2ReadTest}) so the read path
+ * exercises the production page-cursor stack end-to-end.
+ */
+class DatasetTest {
+
+    private static final ColumnPath YEAR = ColumnPath.of("year");
+    private static final ColumnPath COUNTRY = ColumnPath.of("country");
+    private static final ColumnPath VALUE = ColumnPath.of("value");
+
+    @ParameterizedTest
+    @EnumSource(
+            value = ConcurrencyMode.class,
+            names = {"SYNC", "PREFETCH_ONLY", "FAN_OUT_ONLY"})
+    void readsEveryRecordAcrossConcurrencyModes(ConcurrencyMode mode, @TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("dataset-modes.parquet");
+        List<RowDto> expected = generateRows(120);
+        writeParquetFile(file, expected, CompressionCodecName.SNAPPY, 16L * 1024 * 1024);
+
+        ByteBufferPool pool = new ByteBufferPool();
+        try (Storage storage = StorageFactory.open(file.getParent().toUri());
+                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
+            Dataset dataset = Dataset.open(reader);
+            ReadOptions options = ReadOptions.builder()
+                    .concurrencyMode(mode)
+                    .byteBufferPool(pool)
+                    .build();
+
+            List<RowDto> actual = readAll(dataset, Predicate.ALWAYS_TRUE, Projection.ALL, options);
+
+            assertThat(actual).hasSize(expected.size());
+            assertRowsMatch(actual, expected);
+        }
+        assertThat(outstandingBorrows(pool))
+                .as("pooled buffers must drain after stream close")
+                .isZero();
+    }
+
+    @Test
+    void uncompressedRoundTrip(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("dataset-uncompressed.parquet");
+        List<RowDto> expected = generateRows(50);
+        writeParquetFile(file, expected, CompressionCodecName.UNCOMPRESSED, 16L * 1024 * 1024);
+
+        ByteBufferPool pool = new ByteBufferPool();
+        try (Storage storage = StorageFactory.open(file.getParent().toUri());
+                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
+            Dataset dataset = Dataset.open(reader);
+            ReadOptions options = ReadOptions.builder().byteBufferPool(pool).build();
+
+            try (Stream<ParquetRecord> records = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
+                List<RowDto> actual = records.map(DatasetTest::asRowDto).toList();
+                assertThat(actual).hasSize(expected.size());
+                assertRowsMatch(actual, expected);
+            }
+        }
+        assertThat(outstandingBorrows(pool)).isZero();
+    }
+
+    @Test
+    void footerAndSchemaAreCachedAcrossReads(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("dataset-cache.parquet");
+        List<RowDto> expected = generateRows(30);
+        writeParquetFile(file, expected, CompressionCodecName.SNAPPY, 16L * 1024 * 1024);
+
+        ByteBufferPool pool = new ByteBufferPool();
+        try (Storage storage = StorageFactory.open(file.getParent().toUri());
+                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
+            Dataset dataset = Dataset.open(reader);
+
+            // Schema, row-group view, and key/value metadata are stable across calls.
+            assertThat(dataset.schema()).isSameAs(dataset.schema());
+            assertThat(dataset.rowGroups()).isSameAs(dataset.rowGroups());
+            assertThat(dataset.keyValueMetadata()).isNotNull();
+
+            ReadOptions options = ReadOptions.builder().byteBufferPool(pool).build();
+            for (int i = 0; i < 2; i++) {
+                List<RowDto> actual = readAll(dataset, Predicate.ALWAYS_TRUE, Projection.ALL, options);
+                assertThat(actual).hasSize(expected.size());
+            }
+        }
+        assertThat(outstandingBorrows(pool)).isZero();
+    }
+
+    @Test
+    void rowGroupViewExposesIndexAndSizes(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("dataset-rgs.parquet");
+        List<RowDto> expected = generateRows(2_000);
+        // Tiny row-group target so parquet-avro emits multiple row groups.
+        writeParquetFile(file, expected, CompressionCodecName.SNAPPY, 8_192L);
+
+        try (Storage storage = StorageFactory.open(file.getParent().toUri());
+                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
+            Dataset dataset = Dataset.open(reader);
+
+            List<RowGroup> view = dataset.rowGroups();
+            assertThat(view).hasSizeGreaterThan(1);
+            long totalRows = view.stream().mapToLong(RowGroup::rowCount).sum();
+            assertThat(totalRows).isEqualTo(expected.size());
+            for (int i = 0; i < view.size(); i++) {
+                assertThat(view.get(i).index()).isEqualTo(i);
+                assertThat(view.get(i).rowCount()).isPositive();
+                assertThat(view.get(i).totalByteSize()).isPositive();
+            }
+        }
+    }
+
+    @Test
+    void predicateThatEliminatesEveryRowGroupReturnsNoRecords(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("dataset-filter-elim.parquet");
+        List<RowDto> rows = generateRows(200);
+        writeParquetFile(file, rows, CompressionCodecName.SNAPPY, 8_192L);
+
+        ByteBufferPool pool = new ByteBufferPool();
+        try (Storage storage = StorageFactory.open(file.getParent().toUri());
+                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
+            Dataset dataset = Dataset.open(reader);
+            ReadOptions options = ReadOptions.builder().byteBufferPool(pool).build();
+            Predicate impossibleYear = Pred.col("year").eq(9999);
+
+            List<RowDto> matched = readAll(dataset, impossibleYear, Projection.ALL, options);
+            assertThat(matched).isEmpty();
+
+            ExplainPlan plan = dataset.explain(impossibleYear, Projection.ALL, options);
+            assertThat(plan.rowGroups()).isNotEmpty();
+            assertThat(plan.rowGroups()).allMatch(rg -> rg.outcome() == RowGroupOutcome.ELIMINATED);
+        }
+        assertThat(outstandingBorrows(pool)).isZero();
+    }
+
+    @Test
+    void predicateEliminatesRowGroupsWhoseStatsExclude(@TempDir Path tmp) throws Exception {
+        // Year-clustered fixture: rows are written in contiguous blocks per year so most row groups end up with a tight
+        // [min, max] over `year`. The stats tier can therefore eliminate any row group whose year range excludes the
+        // predicate value; the reader doesn't yet narrow rows within a surviving row group, so the test only asserts
+        // that
+        // (a) every matching row survives, (b) elimination did kick in for at least one row group, and (c) the result
+        // is strictly smaller than the unfiltered dataset.
+        Path file = tmp.resolve("dataset-filter-narrow.parquet");
+        List<RowDto> rows = generateYearClusteredRows(2_000);
+        writeParquetFile(file, rows, CompressionCodecName.SNAPPY, 8_192L);
+
+        ByteBufferPool pool = new ByteBufferPool();
+        try (Storage storage = StorageFactory.open(file.getParent().toUri());
+                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
+            Dataset dataset = Dataset.open(reader);
+            ReadOptions options = ReadOptions.builder().byteBufferPool(pool).build();
+            Predicate keepYear2022 = Pred.col("year").eq(2022);
+
+            List<RowDto> matched = readAll(dataset, keepYear2022, Projection.ALL, options);
+            List<RowDto> expectedYearRows =
+                    rows.stream().filter(r -> r.year() == 2022).toList();
+            assertThat(matched).as("every actual 2022 row must survive").containsAll(expectedYearRows);
+            assertThat(matched)
+                    .as("filter pushdown must drop at least one row group's worth of rows")
+                    .hasSizeLessThan(rows.size());
+
+            ExplainPlan plan = dataset.explain(keepYear2022, Projection.ALL, options);
+            assertThat(plan.rowGroups()).anyMatch(rg -> rg.outcome() == RowGroupOutcome.ELIMINATED);
+            assertThat(plan.rowGroups()).anyMatch(rg -> rg.outcome() != RowGroupOutcome.ELIMINATED);
+        }
+        assertThat(outstandingBorrows(pool)).isZero();
+    }
+
+    @Test
+    void projectionDropsUnselectedColumns(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("dataset-proj.parquet");
+        List<RowDto> rows = generateRows(80);
+        writeParquetFile(file, rows, CompressionCodecName.SNAPPY, 16L * 1024 * 1024);
+
+        ByteBufferPool pool = new ByteBufferPool();
+        try (Storage storage = StorageFactory.open(file.getParent().toUri());
+                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
+            Dataset dataset = Dataset.open(reader);
+            ReadOptions options = ReadOptions.builder().byteBufferPool(pool).build();
+            Projection yearOnly = Projection.of(Set.of(YEAR));
+
+            try (Stream<ParquetRecord> records = dataset.read(Predicate.ALWAYS_TRUE, yearOnly, options)) {
+                List<ParquetRecord> collected = records.toList();
+                assertThat(collected).hasSize(rows.size());
+                for (int i = 0; i < rows.size(); i++) {
+                    ParquetRecord rec = collected.get(i);
+                    assertThat(rec.getInt(YEAR)).isEqualTo(rows.get(i).year());
+                }
+            }
+        }
+        assertThat(outstandingBorrows(pool)).isZero();
+    }
+
+    @Test
+    void concurrentReadsOnSharedDatasetSeeIdenticalContent(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("dataset-threads.parquet");
+        List<RowDto> expected = generateRows(400);
+        writeParquetFile(file, expected, CompressionCodecName.SNAPPY, 8_192L);
+
+        ByteBufferPool pool = new ByteBufferPool();
+        try (Storage storage = StorageFactory.open(file.getParent().toUri());
+                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
+            Dataset dataset = Dataset.open(reader);
+            ReadOptions options = ReadOptions.builder().byteBufferPool(pool).build();
+
+            int workers = 4;
+            CountDownLatch ready = new CountDownLatch(workers);
+            CountDownLatch go = new CountDownLatch(1);
+            List<Thread> threads = new ArrayList<>(workers);
+            List<AtomicReference<List<RowDto>>> results = new ArrayList<>(workers);
+            List<AtomicReference<Throwable>> errors = new ArrayList<>(workers);
+            for (int i = 0; i < workers; i++) {
+                AtomicReference<List<RowDto>> slot = new AtomicReference<>();
+                AtomicReference<Throwable> err = new AtomicReference<>();
+                results.add(slot);
+                errors.add(err);
+                threads.add(Thread.ofVirtual().start(() -> {
+                    try {
+                        ready.countDown();
+                        go.await();
+                        slot.set(readAll(dataset, Predicate.ALWAYS_TRUE, Projection.ALL, options));
+                    } catch (Throwable t) {
+                        err.set(t);
+                    }
+                }));
+            }
+            ready.await();
+            go.countDown();
+            for (Thread t : threads) {
+                t.join();
+            }
+            for (int i = 0; i < workers; i++) {
+                assertThat(errors.get(i).get()).as("worker %d failed", i).isNull();
+                List<RowDto> rows = results.get(i).get();
+                assertThat(rows).as("worker %d row count", i).hasSize(expected.size());
+                assertRowsMatch(rows, expected);
+            }
+        }
+        assertThat(outstandingBorrows(pool))
+                .as("every concurrent read drained its pooled buffers")
+                .isZero();
+    }
+
+    @Test
+    void multiFileDatasetHasNoImplementationsInM1() {
+        // The Dataset facade is sealed with permits FileDataset, MultiFileDataset. MultiFileDataset is intentionally
+        // empty initially (no concrete subtype), so the only Dataset shape an open() call can return is FileDataset.
+        Class<?>[] permitted = Dataset.class.getPermittedSubclasses();
+        assertThat(permitted)
+                .as("Dataset must seal MultiFileDataset alongside FileDataset")
+                .containsExactlyInAnyOrder(FileDataset.class, MultiFileDataset.class);
+        assertThat(MultiFileDataset.class.getPermittedSubclasses())
+                .as("MultiFileDataset is non-sealed initially (sealed with zero permits is illegal Java)")
+                .isNull();
+    }
+
+    // --- fixture helpers ---
+
+    private static List<RowDto> generateRows(int count) {
+        List<RowDto> rows = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            rows.add(new RowDto(2020 + (i % 5), (i % 2 == 0) ? "AR" : "BR", i * 1.5));
+        }
+        return rows;
+    }
+
+    /**
+     * Rows arranged in contiguous year blocks so each row group's {@code year} statistic has a tight, single-valued
+     * range. Years cycle through {2020, 2021, 2022, 2023} in equal-sized blocks.
+     */
+    private static List<RowDto> generateYearClusteredRows(int count) {
+        int years = 4;
+        int blockSize = Math.max(1, count / years);
+        List<RowDto> rows = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            int year = 2020 + Math.min(years - 1, i / blockSize);
+            rows.add(new RowDto(year, (i % 2 == 0) ? "AR" : "BR", i * 1.5));
+        }
+        return rows;
+    }
+
+    private static void writeParquetFile(
+            Path out, List<RowDto> rows, CompressionCodecName compression, long rowGroupBytes) throws IOException {
+        org.apache.avro.Schema schema = new org.apache.avro.Schema.Parser().parse("""
+                {"type":"record","name":"Row","fields":[
+                  {"name":"year","type":"int"},
+                  {"name":"country","type":"string"},
+                  {"name":"value","type":"double"}
+                ]}""");
+        try (ParquetWriter<GenericData.Record> writer = AvroParquetWriter.<GenericData.Record>builder(
+                        new LocalOutputFile(out))
+                .withSchema(schema)
+                .withCompressionCodec(compression)
+                .withWriterVersion(WriterVersion.PARQUET_2_0)
+                .withRowGroupSize(rowGroupBytes)
+                .build()) {
+            for (RowDto r : rows) {
+                GenericData.Record parquetRecord = new GenericData.Record(schema);
+                parquetRecord.put("year", r.year());
+                parquetRecord.put("country", r.country());
+                parquetRecord.put("value", r.value());
+                writer.write(parquetRecord);
+            }
+        }
+    }
+
+    private static List<RowDto> readAll(Dataset dataset, Predicate predicate, Projection projection, ReadOptions opts) {
+        try (Stream<ParquetRecord> records = dataset.read(predicate, projection, opts)) {
+            return records.map(DatasetTest::asRowDto).toList();
+        }
+    }
+
+    private static RowDto asRowDto(ParquetRecord rec) {
+        return new RowDto(rec.getInt(YEAR), rec.getString(COUNTRY), rec.getDouble(VALUE));
+    }
+
+    private static void assertRowsMatch(List<RowDto> actual, List<RowDto> expected) {
+        assertThat(actual).hasSameSizeAs(expected);
+        for (int i = 0; i < expected.size(); i++) {
+            RowDto a = actual.get(i);
+            RowDto e = expected.get(i);
+            assertThat(a.year()).as("year @ row %d", i).isEqualTo(e.year());
+            assertThat(a.country()).as("country @ row %d", i).isEqualTo(e.country());
+            assertThat(a.value()).as("value @ row %d", i).isEqualTo(e.value());
+        }
+    }
+
+    private static long outstandingBorrows(ByteBufferPool pool) {
+        ByteBufferPool.PoolStatistics stats = pool.getStatistics();
+        return (stats.created() + stats.reused()) - (stats.returned() + stats.discarded());
+    }
+
+    private record RowDto(int year, String country, double value) {}
+}

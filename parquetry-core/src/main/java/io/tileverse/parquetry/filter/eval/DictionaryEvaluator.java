@@ -127,6 +127,9 @@ public final class DictionaryEvaluator {
         return new PruningDecision.Eliminated(TIER, opLabel + " " + col.dot() + ": no dictionary value matches");
     }
 
+    // S7475 (bare _ in nested record patterns) is informational only - palantirJavaFormat 2.90 cannot
+    // parse the bare-underscore form Sonar suggests; see memory feedback-palantir-unnamed-pattern.
+    @SuppressWarnings("java:S7475")
     private static boolean equals(Value v, Object dictValue) {
         return switch (v) {
             case Value.BoolVal(boolean qv) when dictValue instanceof Boolean dv -> qv == dv;
@@ -147,6 +150,7 @@ public final class DictionaryEvaluator {
     }
 
     /** Returns negative/zero/positive comparing {@code dictValue} to predicate-side {@code v}. */
+    @SuppressWarnings("java:S7475") // see equals(): palantirJavaFormat 2.90 cannot parse bare _ in nested patterns
     private static int compare(Object dictValue, Value v) {
         return switch (v) {
             case Value.BoolVal(boolean qv) when dictValue instanceof Boolean dv -> Boolean.compare(dv, qv);

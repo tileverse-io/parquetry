@@ -26,9 +26,10 @@ public final class PlainDoubleDecoder implements PageDecoder<Double> {
 
     private DoubleBuffer buffer;
 
+    // See PlainInt32Decoder.load() for the rationale on omitting .limit(valueCount).
     @Override
     public void load(ByteBuffer page, int valueCount) {
-        this.buffer = page.order(ByteOrder.LITTLE_ENDIAN).asDoubleBuffer().limit(valueCount);
+        this.buffer = page.order(ByteOrder.LITTLE_ENDIAN).asDoubleBuffer();
     }
 
     @Override

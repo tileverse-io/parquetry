@@ -15,26 +15,139 @@
  */
 package io.tileverse.parquetry.read.page;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 
+import io.tileverse.parquetry.ParquetFormatException;
 import io.tileverse.parquetry.codec.Codec;
+import io.tileverse.parquetry.format.DataPageHeader;
 import io.tileverse.parquetry.format.PageHeader;
+import io.tileverse.parquetry.format.enums.Encoding;
+import io.tileverse.parquetry.read.LevelMaximaResolver.LevelMaxima;
 
 import io.tileverse.io.ByteBufferPool;
+import io.tileverse.io.ByteBufferPool.PooledByteBuffer;
 
 /**
- * Parquet 1.x Data Page V1 reader. Placeholder; the V1 read path lands as part of the Parquet 1.x compatibility work
- * conformance work. Until then this class exists only to satisfy the {@link DataPageReader} sealed permits clause so A
- * later change can ship the V2 read path behind the same abstraction.
+ * Reads a Parquet 1.x Data Page V1.
+ *
+ * <p>V1 layout (after decompression, per the Parquet spec's Encodings doc):
+ *
+ * <pre>
+ *   [int32 LE repetition_levels_byte_length][repetition_levels bytes]   // omitted when maxRepLevel == 0
+ *   [int32 LE definition_levels_byte_length][definition_levels bytes]   // omitted when maxDefLevel == 0
+ *   [value bytes]
+ * </pre>
+ *
+ * Unlike V2, V1 compresses the entire payload as one blob and embeds the level-byte lengths inside it. The page header
+ * itself only carries the total compressed and uncompressed sizes, so the reader needs the column's max repetition and
+ * definition levels (passed in via {@link LevelMaxima}) to know whether each length prefix is present.
+ *
+ * <p>Pooling contract: one pooled buffer is borrowed for the full decompressed payload. The returned
+ * {@link DecodedPage}'s {@code valueBuffer} owns that single pool ticket; the rep- and def-level slices are zero-copy
+ * read-only views into the same pooled buffer. Closing the {@link DecodedPage} returns the ticket and invalidates all
+ * three views together. On any failure path the borrowed buffer is returned to the pool before the exception
+ * propagates.
  */
 public final class DataPageV1Reader implements DataPageReader {
 
-    // TODO: when the V1 read path is implemented, call EncodingNormalizer.normalize()
-    // on the page encoding before constructing the DecodedPage so the "encoding is normalized"
-    // contract on DecodedPage.valuesEncoding() holds for V1 files too.
     @Override
-    public DecodedPage read(PageHeader header, ByteBuffer compressedPagePayload, Codec codec, ByteBufferPool pool) {
-        throw new UnsupportedOperationException(
-                "Data Page V1 read lands in a later change; only V2 pages are decoded today");
+    public DecodedPage read(
+            PageHeader header,
+            LevelMaxima maxLevels,
+            ByteBuffer compressedPagePayload,
+            Codec codec,
+            ByteBufferPool pool)
+            throws IOException {
+        DataPageHeader v1 = header.dataPageHeader()
+                .orElseThrow(() -> new IllegalArgumentException("PageHeader does not carry a DataPageHeader"));
+        PooledByteBuffer pooled = decompressPayload(header, compressedPagePayload, codec, pool);
+        try {
+            ByteBuffer decompressed = pooled.buffer();
+            decompressed.order(ByteOrder.LITTLE_ENDIAN);
+            ByteBuffer repLevels = readOptionalLevelSlice(decompressed, maxLevels.maxRepetitionLevel(), "repetition");
+            ByteBuffer defLevels = readOptionalLevelSlice(decompressed, maxLevels.maxDefinitionLevel(), "definition");
+            // After the slices consume their length-prefixed regions, the pooled buffer's position sits at the start
+            // of the values section. DecodedPage.values() returns that buffer, so callers see exactly the value bytes.
+            Encoding valuesEncoding = EncodingNormalizer.normalize(v1.encoding());
+            return new DecodedPage(v1.numValues(), valuesEncoding, repLevels, defLevels, pooled);
+        } catch (RuntimeException e) {
+            pooled.close();
+            throw e;
+        }
+    }
+
+    /**
+     * Decompresses the full page payload into a pooled buffer sized for {@link PageHeader#uncompressedPageSize()}. On
+     * any failure the borrowed buffer is returned to the pool before the exception leaves this method.
+     */
+    private static PooledByteBuffer decompressPayload(
+            PageHeader header, ByteBuffer compressedPagePayload, Codec codec, ByteBufferPool pool) throws IOException {
+        int uncompressedSize = header.uncompressedPageSize();
+        if (uncompressedSize < 0) {
+            throw new ParquetFormatException(
+                    "V1 page uncompressedPageSize must be non-negative, got " + uncompressedSize);
+        }
+        PooledByteBuffer pooled = pool.borrowDirect(uncompressedSize);
+        try {
+            ByteBuffer target = pooled.buffer();
+            target.clear();
+            target.limit(uncompressedSize);
+            ByteBuffer source = compressedPagePayload.duplicate().order(ByteOrder.LITTLE_ENDIAN);
+            codec.decompress(source, target);
+            target.flip();
+            return pooled;
+        } catch (IOException | RuntimeException e) {
+            pooled.close();
+            throw e;
+        }
+    }
+
+    /**
+     * Reads the next {@code [int32 LE length][bytes...]} pair when the column has a non-zero max level, returning an
+     * empty read-only buffer otherwise. The returned slice is a zero-copy view into {@code decompressed}.
+     */
+    private static ByteBuffer readOptionalLevelSlice(ByteBuffer decompressed, int maxLevel, String levelKind) {
+        if (maxLevel == 0) {
+            return emptyLittleEndianSlice();
+        }
+        int prefix = readLengthPrefix(decompressed, levelKind);
+        return sliceAndAdvance(decompressed, prefix, levelKind);
+    }
+
+    private static int readLengthPrefix(ByteBuffer decompressed, String levelKind) {
+        if (decompressed.remaining() < Integer.BYTES) {
+            throw new ParquetFormatException("V1 page truncated before " + levelKind
+                    + " level length prefix: remaining=" + decompressed.remaining() + " bytes, need 4");
+        }
+        int length = decompressed.getInt();
+        if (length < 0) {
+            throw new ParquetFormatException("V1 page " + levelKind + " level length prefix is negative: " + length);
+        }
+        return length;
+    }
+
+    /**
+     * Slices off the next {@code length} bytes of {@code decompressed} as a read-only little-endian view and advances
+     * the cursor past them. Throws when fewer than {@code length} bytes remain.
+     */
+    private static ByteBuffer sliceAndAdvance(ByteBuffer decompressed, int length, String levelKind) {
+        if (length > decompressed.remaining()) {
+            throw new ParquetFormatException("V1 page " + levelKind + " level length " + length
+                    + " exceeds remaining payload bytes " + decompressed.remaining());
+        }
+        if (length == 0) {
+            return emptyLittleEndianSlice();
+        }
+        ByteBuffer slice = decompressed.slice();
+        slice.limit(length);
+        slice.order(ByteOrder.LITTLE_ENDIAN);
+        decompressed.position(decompressed.position() + length);
+        return slice.asReadOnlyBuffer().order(ByteOrder.LITTLE_ENDIAN);
+    }
+
+    private static ByteBuffer emptyLittleEndianSlice() {
+        return ByteBuffer.allocate(0).order(ByteOrder.LITTLE_ENDIAN).asReadOnlyBuffer();
     }
 }

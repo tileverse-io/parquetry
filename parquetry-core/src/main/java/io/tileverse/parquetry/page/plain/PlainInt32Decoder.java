@@ -26,9 +26,13 @@ public final class PlainInt32Decoder implements PageDecoder<Integer> {
 
     private IntBuffer buffer;
 
+    // PLAIN encoding stores only non-null values; the page header's valueCount is the logical count
+    // (nulls included), not the count actually present in the buffer. The buffer's natural capacity
+    // already reflects what was written - tighter bounds would reject valid pages where every value
+    // is null. Underflow from over-consumption is caught by the buffer at next().
     @Override
     public void load(ByteBuffer page, int valueCount) {
-        this.buffer = page.order(ByteOrder.LITTLE_ENDIAN).asIntBuffer().limit(valueCount);
+        this.buffer = page.order(ByteOrder.LITTLE_ENDIAN).asIntBuffer();
     }
 
     @Override

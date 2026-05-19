@@ -24,6 +24,7 @@ import io.tileverse.parquetry.codec.Codec;
 import io.tileverse.parquetry.format.DataPageHeaderV2;
 import io.tileverse.parquetry.format.PageHeader;
 import io.tileverse.parquetry.format.enums.Encoding;
+import io.tileverse.parquetry.read.LevelMaximaResolver.LevelMaxima;
 
 import io.tileverse.io.ByteBufferPool;
 import io.tileverse.io.ByteBufferPool.PooledByteBuffer;
@@ -47,11 +48,20 @@ import io.tileverse.io.ByteBufferPool.PooledByteBuffer;
  * <p>Pooling contract: the rep- and def-level slices are zero-copy views into the caller's compressed buffer; the
  * decompressed value buffer is borrowed from {@link ByteBufferPool}. On the failure path the borrowed buffer is
  * returned to the pool before the exception propagates.
+ *
+ * <p>The {@code maxLevels} parameter is unused: V2 page headers stamp the level byte lengths explicitly. It is kept on
+ * the interface so {@link DataPageV1Reader}, which depends on the column's max levels to know whether each length
+ * prefix is present, can share the {@link DataPageReader#read} signature.
  */
 public final class DataPageV2Reader implements DataPageReader {
 
     @Override
-    public DecodedPage read(PageHeader header, ByteBuffer compressedPagePayload, Codec codec, ByteBufferPool pool)
+    public DecodedPage read(
+            PageHeader header,
+            LevelMaxima maxLevels,
+            ByteBuffer compressedPagePayload,
+            Codec codec,
+            ByteBufferPool pool)
             throws IOException {
         DataPageHeaderV2 v2 = header.dataPageHeaderV2()
                 .orElseThrow(() -> new IllegalArgumentException("PageHeader does not carry a DataPageHeaderV2"));

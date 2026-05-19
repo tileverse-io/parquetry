@@ -164,6 +164,6 @@ class DictionaryEvaluatorTest {
     }
 
     private static DictionaryLookup empty() {
-        return path -> Optional.empty();
+        return _ -> Optional.empty();
     }
 }

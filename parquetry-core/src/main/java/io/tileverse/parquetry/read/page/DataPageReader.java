@@ -20,6 +20,7 @@ import java.nio.ByteBuffer;
 
 import io.tileverse.parquetry.codec.Codec;
 import io.tileverse.parquetry.format.PageHeader;
+import io.tileverse.parquetry.read.LevelMaximaResolver.LevelMaxima;
 
 import io.tileverse.io.ByteBufferPool;
 
@@ -33,9 +34,9 @@ import io.tileverse.io.ByteBufferPool;
  * <p>Use {@link #forHeader(PageHeader)} to dispatch per page; a column chunk may mix V1 and V2 pages in principle (rare
  * but legal), so the dispatch is per-page, not per-chunk.
  *
- * <p>The {@code compressedPagePayload} buffer passed to {@link #read(PageHeader, ByteBuffer, Codec, ByteBufferPool)} is
- * a slice of the parent {@code FetchedColumnChunk}'s pooled compressed buffer; implementations must not retain it past
- * the call and must not close it.
+ * <p>The {@code compressedPagePayload} buffer passed to {@link #read(PageHeader, LevelMaxima, ByteBuffer, Codec,
+ * ByteBufferPool)} is a slice of the parent {@code FetchedColumnChunk}'s pooled compressed buffer; implementations must
+ * not retain it past the call and must not close it.
  */
 public sealed interface DataPageReader permits DataPageV1Reader, DataPageV2Reader {
 
@@ -43,6 +44,9 @@ public sealed interface DataPageReader permits DataPageV1Reader, DataPageV2Reade
      * Reads one data page.
      *
      * @param header the page header (caller has already verified it carries a data-page payload)
+     * @param maxLevels the column's max repetition and definition levels; required by V1 to know whether the payload
+     *     carries each level's length prefix. V2 ignores it because its level byte lengths come directly from the
+     *     header.
      * @param compressedPagePayload a read-positioned slice of the compressed column-chunk buffer covering exactly this
      *     page's bytes; implementations consume it locally and must not retain the reference
      * @param codec the column chunk's compression codec; used to decompress V2 value bytes and the entire V1 payload
@@ -51,7 +55,12 @@ public sealed interface DataPageReader permits DataPageV1Reader, DataPageV2Reade
      * @return a {@link DecodedPage} whose pooled value buffer the caller must close when advancing to the next page
      * @throws IOException if decompression fails
      */
-    DecodedPage read(PageHeader header, ByteBuffer compressedPagePayload, Codec codec, ByteBufferPool pool)
+    DecodedPage read(
+            PageHeader header,
+            LevelMaxima maxLevels,
+            ByteBuffer compressedPagePayload,
+            Codec codec,
+            ByteBufferPool pool)
             throws IOException;
 
     /**

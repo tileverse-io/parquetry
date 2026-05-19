@@ -26,9 +26,10 @@ public final class PlainInt64Decoder implements PageDecoder<Long> {
 
     private LongBuffer buffer;
 
+    // See PlainInt32Decoder.load() for the rationale on omitting .limit(valueCount).
     @Override
     public void load(ByteBuffer page, int valueCount) {
-        this.buffer = page.order(ByteOrder.LITTLE_ENDIAN).asLongBuffer().limit(valueCount);
+        this.buffer = page.order(ByteOrder.LITTLE_ENDIAN).asLongBuffer();
     }
 
     @Override

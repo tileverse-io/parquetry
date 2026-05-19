@@ -47,6 +47,9 @@ public final class PredicateNormalizer {
      * Throws {@link ParquetSchemaException} if {@code p} references a column not in {@code schema}, a group column, or
      * a value type incompatible with the column's primitive kind.
      */
+    // S7475 (bare _ in nested record patterns) is informational only - palantirJavaFormat 2.90 cannot
+    // parse the bare-underscore form Sonar suggests; see memory feedback-palantir-unnamed-pattern.
+    @SuppressWarnings("java:S7475")
     public static void validate(Predicate p, Schema schema) {
         switch (p) {
             case Predicate.Always _ -> {

@@ -28,21 +28,26 @@ import io.tileverse.parquetry.page.PageDecoder;
  */
 public final class PlainBooleanDecoder implements PageDecoder<Boolean> {
 
-    private int valueCount;
-    private int bitPosition;
     private BitSet bitset;
+    private int storedBitCount;
+    private int bitPosition;
 
+    // The valueCount argument is the page header's numValues (logical row count INCLUDING nulls);
+    // PLAIN BOOLEAN packs only non-null values, so the stored bit count is page.remaining()*8 and is
+    // <= valueCount. Tracking valueCount as the bound would reject legitimate all-null pages, same
+    // failure mode as the numeric Plain decoders (see commit 191b445).
     @Override
     public void load(ByteBuffer page, int valueCount) {
-        this.valueCount = valueCount;
-        this.bitPosition = 0;
         this.bitset = BitSet.valueOf(page);
+        this.storedBitCount = page.remaining() * Byte.SIZE;
+        this.bitPosition = 0;
     }
 
     @Override
     public Boolean next() {
-        if (bitPosition == valueCount) {
-            throw new IllegalStateException();
+        if (bitPosition >= storedBitCount) {
+            throw new IllegalStateException(
+                    "PlainBooleanDecoder exhausted: position " + bitPosition + " >= storedBitCount " + storedBitCount);
         }
         return bitset.get(bitPosition++);
     }

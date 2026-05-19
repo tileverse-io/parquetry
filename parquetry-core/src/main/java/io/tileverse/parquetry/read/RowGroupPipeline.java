@@ -246,9 +246,9 @@ public final class RowGroupPipeline<T> implements AutoCloseable {
     }
 
     private RowGroupReader newRowGroupReader(RowGroupSurvivor survivor) {
-        // TODO: once RowGroupReader gains a survivingRows parameter (the page-cursor work scheduled
-        // for a later change), pass survivor.survivingRows() here so the column-index narrowing is honored for
-        // partial row groups. Harmless today: RowGroupReader has no row-skipping path yet.
+        // Pending: when RowGroupReader gains a survivingRows parameter (currently the column-index tier produces
+        // narrowed row groups but the reader has no row-skipping path), pass survivor.survivingRows() here so
+        // the column-index narrowing is honored for partial row groups. Harmless today.
         if (columnReaderFactory != null) {
             return new RowGroupReader(
                     fileSchema, projectedSchema, survivor.rowGroup(), options, columnFetcher, columnReaderFactory);
@@ -282,7 +282,7 @@ public final class RowGroupPipeline<T> implements AutoCloseable {
                 if (queue.offer(item, 100, TimeUnit.MILLISECONDS)) {
                     return true;
                 }
-            } catch (InterruptedException e) {
+            } catch (InterruptedException _) {
                 Thread.currentThread().interrupt();
                 return false;
             }
@@ -305,7 +305,7 @@ public final class RowGroupPipeline<T> implements AutoCloseable {
         }
         try {
             t.join(PRODUCER_JOIN_TIMEOUT_MILLIS);
-        } catch (InterruptedException e) {
+        } catch (InterruptedException _) {
             Thread.currentThread().interrupt();
         }
     }

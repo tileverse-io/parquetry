@@ -195,15 +195,14 @@ public final class RealColumnFetcher implements ColumnFetcher {
             case FLOAT -> PrimitiveKind.FLOAT;
             case DOUBLE -> PrimitiveKind.DOUBLE;
             case BYTE_ARRAY -> PrimitiveKind.BYTE_ARRAY;
-            case FIXED_LEN_BYTE_ARRAY -> {
-                // FIXED_LEN_BYTE_ARRAY dictionaries are uncommon but legal; if we ever hit one we need typeLength from
-                // the schema. Throw a clear error rather than silently mis-decode, since the dictionary cache only ever
-                // sees the bytes from the page header's typeLength.
+            // FIXED_LEN_BYTE_ARRAY dictionaries are uncommon but legal; if we ever hit one we need typeLength from
+            // the schema. Throw a clear error rather than silently mis-decode, since the dictionary cache only ever
+            // sees the bytes from the page header's typeLength.
+            case FIXED_LEN_BYTE_ARRAY ->
                 throw new UnsupportedOperationException(
                         "FIXED_LEN_BYTE_ARRAY dictionary decoding not yet supported (column "
                                 + path.dot()
                                 + "); typeLength must be sourced from the schema leaf Field.Primitive");
-            }
         };
     }
 

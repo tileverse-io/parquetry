@@ -36,6 +36,7 @@ import io.tileverse.parquetry.page.DecoderFactory;
 import io.tileverse.parquetry.page.LevelDecoder;
 import io.tileverse.parquetry.page.PageDecoder;
 import io.tileverse.parquetry.page.dict.Dictionary;
+import io.tileverse.parquetry.read.LevelMaximaResolver.LevelMaxima;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Field;
 
@@ -65,6 +66,7 @@ public final class StreamingColumnReader implements ColumnReader {
     private final ColumnPath columnPath;
     private final int maxRepetitionLevel;
     private final int maxDefinitionLevel;
+    private final LevelMaxima maxLevels;
     private final Field.Primitive leaf;
     private final Codec codec;
     private final long totalValues;
@@ -113,6 +115,7 @@ public final class StreamingColumnReader implements ColumnReader {
         }
         this.maxRepetitionLevel = maxRepetitionLevel;
         this.maxDefinitionLevel = maxDefinitionLevel;
+        this.maxLevels = new LevelMaxima(maxRepetitionLevel, maxDefinitionLevel);
         this.leaf = Objects.requireNonNull(leaf, "leaf");
         this.dictionary = Objects.requireNonNull(dictionary, "dictionary");
         this.codec = CodecRegistry.lookup(Objects.requireNonNull(compressionCodec, "compressionCodec"));
@@ -219,7 +222,7 @@ public final class StreamingColumnReader implements ColumnReader {
      */
     private void advanceToNextPage() {
         releaseCurrentPage();
-        DecodedPage next = pageCursor.nextDataPage(codec, pool);
+        DecodedPage next = pageCursor.nextDataPage(maxLevels, codec, pool);
         if (next == null) {
             throw new ParquetFormatException("Column " + columnPath.dot() + " exhausted page stream after "
                     + valuesConsumedTotal + " values; expected " + totalValues);
@@ -284,7 +287,7 @@ public final class StreamingColumnReader implements ColumnReader {
          * Returns the next {@link DecodedPage} from the chunk's compressed bytes, or {@code null} when the cursor is
          * exhausted. Non-data pages (e.g. a misplaced dictionary or index page in the data-page region) are skipped.
          */
-        DecodedPage nextDataPage(Codec codec, ByteBufferPool pool) {
+        DecodedPage nextDataPage(LevelMaxima maxLevels, Codec codec, ByteBufferPool pool) {
             while (chunk.hasRemaining()) {
                 PageHeader header = readNextPageHeader();
                 int compressedSize = header.compressedPageSize();
@@ -295,7 +298,7 @@ public final class StreamingColumnReader implements ColumnReader {
                 ByteBuffer pagePayload = sliceAndAdvance(compressedSize);
                 if (header.type() == PageType.DATA_PAGE || header.type() == PageType.DATA_PAGE_V2) {
                     try {
-                        return DataPageReader.forHeader(header).read(header, pagePayload, codec, pool);
+                        return DataPageReader.forHeader(header).read(header, maxLevels, pagePayload, codec, pool);
                     } catch (IOException e) {
                         throw new UncheckedIOException("Failed to decode data page for column " + columnPath.dot(), e);
                     }

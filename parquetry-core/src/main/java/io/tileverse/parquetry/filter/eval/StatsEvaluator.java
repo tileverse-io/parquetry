@@ -308,7 +308,10 @@ public final class StatsEvaluator {
      * if equal, positive if {@code query > bound}. Returns 0 for type mismatches (caller already had its chance via the
      * schema validator).
      */
-    @SuppressWarnings("java:S3776") // dispatch table; cyclomatic complexity is inherent
+    // S3776: dispatch table; cyclomatic complexity is inherent.
+    // S7475: palantirJavaFormat 2.90 cannot parse bare _ in nested record patterns; see memory
+    // feedback-palantir-unnamed-pattern.
+    @SuppressWarnings({"java:S3776", "java:S7475"})
     private static int compare(PrimitiveKind kind, Value query, Value bound) {
         return switch (query) {
             case Value.BoolVal(boolean qv) when bound instanceof Value.BoolVal(boolean bv) -> Boolean.compare(qv, bv);

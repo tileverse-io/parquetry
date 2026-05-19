@@ -32,6 +32,7 @@ import io.tileverse.parquetry.format.PageHeader;
 import io.tileverse.parquetry.format.enums.CompressionCodec;
 import io.tileverse.parquetry.format.enums.Encoding;
 import io.tileverse.parquetry.format.enums.PageType;
+import io.tileverse.parquetry.read.LevelMaximaResolver.LevelMaxima;
 
 import io.tileverse.io.ByteBufferPool;
 
@@ -43,6 +44,9 @@ import io.tileverse.io.ByteBufferPool;
  * conformance tests.
  */
 class DataPageV2ReaderTest {
+
+    // V2 ignores the maxLevels argument (its level byte lengths come from the header). Pass a non-null sentinel.
+    private static final LevelMaxima IGNORED = new LevelMaxima(0, 0);
 
     private final DataPageV2Reader reader = new DataPageV2Reader();
     private final ByteBufferPool pool = new ByteBufferPool();
@@ -56,7 +60,7 @@ class DataPageV2ReaderTest {
         PageHeader header =
                 newV2Header(expected.length, /*repLen*/ 0, /*defLen*/ 0, payload.length, /*compressed*/ false);
 
-        try (DecodedPage page = reader.read(header, ByteBuffer.wrap(payload), uncompressed, pool)) {
+        try (DecodedPage page = reader.read(header, IGNORED, ByteBuffer.wrap(payload), uncompressed, pool)) {
             assertThat(page.valueCount()).isEqualTo(expected.length);
             assertThat(page.repLevelBytes().remaining())
                     .as("rep slice is empty when maxRep=0")
@@ -84,7 +88,7 @@ class DataPageV2ReaderTest {
         PageHeader header =
                 newV2Header(expected.length, repLevels.length, defLevels.length, payload.length, /*compressed*/ false);
 
-        try (DecodedPage page = reader.read(header, ByteBuffer.wrap(payload), uncompressed, pool)) {
+        try (DecodedPage page = reader.read(header, IGNORED, ByteBuffer.wrap(payload), uncompressed, pool)) {
             assertThat(toBytes(page.repLevelBytes())).containsExactly(repLevels);
             assertThat(toBytes(page.defLevelBytes())).containsExactly(defLevels);
 
@@ -107,7 +111,7 @@ class DataPageV2ReaderTest {
         PageHeader header =
                 newV2Header(expected.length, repLevels.length, defLevels.length, payload.length, /*compressed*/ true);
 
-        try (DecodedPage page = reader.read(header, ByteBuffer.wrap(payload), uncompressed, pool)) {
+        try (DecodedPage page = reader.read(header, IGNORED, ByteBuffer.wrap(payload), uncompressed, pool)) {
             assertThat(toBytes(page.repLevelBytes())).containsExactly(repLevels);
             assertThat(toBytes(page.defLevelBytes())).containsExactly(defLevels);
             int[] decoded = decodeInt32sLittleEndian(page.values(), expected.length);
@@ -139,7 +143,7 @@ class DataPageV2ReaderTest {
                         Optional.of(Boolean.FALSE),
                         Optional.empty())));
 
-        try (DecodedPage page = reader.read(header, ByteBuffer.wrap(valueBytes), uncompressed, pool)) {
+        try (DecodedPage page = reader.read(header, IGNORED, ByteBuffer.wrap(valueBytes), uncompressed, pool)) {
             assertThat(page.valuesEncoding()).isEqualTo(Encoding.RLE_DICTIONARY);
         }
         assertThat(outstandingBorrows(pool)).isZero();
@@ -149,7 +153,7 @@ class DataPageV2ReaderTest {
     void doubleCloseIsIdempotent() throws IOException {
         byte[] payload = encodeInt32sLittleEndian(new int[] {1});
         PageHeader header = newV2Header(1, 0, 0, payload.length, false);
-        DecodedPage page = reader.read(header, ByteBuffer.wrap(payload), uncompressed, pool);
+        DecodedPage page = reader.read(header, IGNORED, ByteBuffer.wrap(payload), uncompressed, pool);
         page.close();
         page.close();
         assertThat(outstandingBorrows(pool)).isZero();

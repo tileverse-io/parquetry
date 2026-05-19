@@ -48,6 +48,7 @@ class PredicateAdtTest {
     }
 
     @Test
+    @SuppressWarnings("java:S7475") // palantirJavaFormat 2.90 cannot parse bare _ in nested record patterns
     void patternMatchingExhaustive() {
         Predicate p = new Predicate.Eq(ColumnPath.of("year"), new Value.IntVal(2020));
         String description =

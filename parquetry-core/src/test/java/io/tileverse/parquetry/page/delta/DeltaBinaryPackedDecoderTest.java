@@ -27,7 +27,7 @@ import io.tileverse.parquetry.page.PageDecoder;
 class DeltaBinaryPackedDecoderTest {
 
     @Test
-    void roundTripSequentialInts() throws Exception {
+    void roundTripSequentialInts() {
         int[] values = new int[32];
         for (int i = 0; i < 32; i++) values[i] = 100 + i * 7;
         byte[] encoded = encodeInts(values, 32, 4); // 32 values, 4 miniblocks
@@ -40,7 +40,7 @@ class DeltaBinaryPackedDecoderTest {
     }
 
     @Test
-    void roundTripMixedDeltas() throws Exception {
+    void roundTripMixedDeltas() {
         // Mix of positive, negative deltas, and zero deltas (forces min_delta != 0)
         int[] values = {1000, 999, 998, 1100, 1100, 1100, 1050, 1051, 1052};
         // Pad to block size; use blockSize=16, miniblocksPerBlock=4
@@ -57,7 +57,7 @@ class DeltaBinaryPackedDecoderTest {
     }
 
     @Test
-    void int64RoundTrip() throws Exception {
+    void int64RoundTrip() {
         long[] values = new long[128];
         for (int i = 0; i < values.length; i++) values[i] = 1_000_000_000L + i * 13L;
         byte[] encoded = encodeLongs(values, 128, 4);

@@ -100,7 +100,9 @@ public final class RecordLevelEvaluator {
      * combinations; the surrounding evaluator treats that as equality, but with NULL filtered upstream the typical path
      * is well-typed.
      */
-    @SuppressWarnings("java:S3776")
+    // S7475 (bare _ in nested record patterns) is informational only - palantirJavaFormat 2.90 cannot
+    // parse the bare-underscore form Sonar suggests; see memory feedback-palantir-unnamed-pattern.
+    @SuppressWarnings({"java:S3776", "java:S7475"})
     private static int compare(Object actual, Value bound) {
         if (actual == null) {
             return -1; // any comparison vs null returns "less than", but the caller already short-circuited on null

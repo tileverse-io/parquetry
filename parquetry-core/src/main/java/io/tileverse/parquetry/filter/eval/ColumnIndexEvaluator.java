@@ -123,13 +123,12 @@ public final class ColumnIndexEvaluator {
         boolean anyApplied = false;
         for (Predicate child : children) {
             Optional<RowRanges> childRanges = matchRanges(child, cols, rowGroupRowCount);
-            if (childRanges.isEmpty()) {
-                continue; // child doesn't apply at this tier
-            }
-            anyApplied = true;
-            acc = acc.intersect(childRanges.get());
-            if (acc.isEmpty()) {
-                break; // short-circuit on empty intersection
+            if (childRanges.isPresent()) {
+                anyApplied = true;
+                acc = acc.intersect(childRanges.orElseThrow());
+                if (acc.isEmpty()) {
+                    break; // short-circuit on empty intersection
+                }
             }
         }
         return anyApplied ? Optional.of(acc) : Optional.empty();
@@ -164,7 +163,7 @@ public final class ColumnIndexEvaluator {
         }
         List<Range> surviving = new ArrayList<>();
         for (int i = 0; i < pageCount; i++) {
-            if (idx.nullPages().get(i)) {
+            if (Boolean.TRUE.equals(idx.nullPages().get(i))) {
                 continue; // all-null page can't satisfy a value comparison
             }
             Optional<Value> minVal = decode(stats.kind(), idx.minValues().get(i));
@@ -172,7 +171,7 @@ public final class ColumnIndexEvaluator {
             if (minVal.isEmpty() || maxVal.isEmpty()) {
                 return Optional.empty(); // unsupported type; bail to NotApplied
             }
-            if (matcher.matches(minVal.get(), maxVal.get())) {
+            if (matcher.matches(minVal.orElseThrow(), maxVal.orElseThrow())) {
                 surviving.add(pageRange(off.pageLocations(), i, rowGroupRowCount));
             }
         }
@@ -301,7 +300,9 @@ public final class ColumnIndexEvaluator {
         };
     }
 
-    @SuppressWarnings("java:S3776")
+    // S7475 (bare _ in nested record patterns) is informational only - palantirJavaFormat 2.90 cannot
+    // parse the bare-underscore form Sonar suggests; see memory feedback-palantir-unnamed-pattern.
+    @SuppressWarnings({"java:S3776", "java:S7475"})
     private static int compare(Value a, Value b) {
         return switch (a) {
             case Value.BoolVal(boolean av) when b instanceof Value.BoolVal(boolean bv) -> Boolean.compare(av, bv);

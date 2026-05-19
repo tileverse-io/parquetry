@@ -26,6 +26,8 @@ import io.tileverse.parquetry.schema.Schema;
  * <p>Stateless and shared as a singleton via {@link Materializer#defaultRecord()}; callers should reach for it through
  * that factory rather than constructing this class directly.
  */
+// Stateless dispatcher exposed through Materializer.defaultRecord(); singleton is the intended shape.
+@SuppressWarnings("java:S6548")
 final class DefaultMaterializer implements Materializer<ParquetRecord> {
 
     static final DefaultMaterializer INSTANCE = new DefaultMaterializer();
