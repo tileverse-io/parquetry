@@ -32,10 +32,10 @@ import java.util.Set;
  * <ul>
  *   <li>{@link #leafColumns()} - depth-first list of all primitive column paths.
  *   <li>{@link #find(ColumnPath)} - look up the field at a given path.
- *   <li>{@link #project(Set)} - produce a new Schema retaining only the requested columns.
+ *   <li>{@link #project(Set)} - produce a new ParquetSchema retaining only the requested columns.
  * </ul>
  */
-public record Schema(Field.Group root) {
+public record ParquetSchema(Field.Group root) {
 
     /**
      * Returns all leaf (primitive) column paths in depth-first order.
@@ -90,13 +90,62 @@ public record Schema(Field.Group root) {
     }
 
     /**
-     * Returns a new Schema containing only the leaf columns in {@code kept}.
+     * Returns a copy of this schema with the logical-type annotation overridden on each leaf listed in
+     * {@code overrides}. Leaves not in {@code overrides} are returned unchanged. Used by the GeoParquet 1.x metadata
+     * bridge at {@code ParquetDataset.open()} time to synthesize {@code Geometry} / {@code Geography} logical types on
+     * columns that the file's {@code "geo"} key-value metadata identifies as geometry / geography but whose Thrift
+     * {@code SchemaElement} carries no native logical-type annotation.
+     */
+    public ParquetSchema withLogicalTypes(
+            java.util.Map<ColumnPath, io.tileverse.parquetry.format.LogicalType> overrides) {
+        if (overrides.isEmpty()) {
+            return this;
+        }
+        return new ParquetSchema(applyLogicalTypes(root, new ArrayList<>(), overrides, true));
+    }
+
+    private static Field.Group applyLogicalTypes(
+            Field.Group group,
+            List<String> prefix,
+            java.util.Map<ColumnPath, io.tileverse.parquetry.format.LogicalType> overrides,
+            boolean isRoot) {
+        List<String> groupPath = new ArrayList<>(prefix);
+        if (!isRoot) {
+            groupPath.add(group.name());
+        }
+        List<Field> children = new ArrayList<>(group.children().size());
+        for (Field child : group.children()) {
+            switch (child) {
+                case Field.Primitive p -> {
+                    List<String> childPath = new ArrayList<>(groupPath);
+                    childPath.add(p.name());
+                    io.tileverse.parquetry.format.LogicalType override = overrides.get(new ColumnPath(childPath));
+                    if (override != null) {
+                        children.add(new Field.Primitive(
+                                p.name(),
+                                p.repetition(),
+                                p.kind(),
+                                p.typeLength(),
+                                Optional.of(override),
+                                p.fieldId()));
+                    } else {
+                        children.add(p);
+                    }
+                }
+                case Field.Group g -> children.add(applyLogicalTypes(g, groupPath, overrides, false));
+            }
+        }
+        return new Field.Group(group.name(), group.repetition(), children, group.logicalType(), group.fieldId());
+    }
+
+    /**
+     * Returns a new ParquetSchema containing only the leaf columns in {@code kept}.
      *
      * <p>Group nodes that become empty after filtering are dropped entirely.
      */
-    public Schema project(Set<ColumnPath> kept) {
+    public ParquetSchema project(Set<ColumnPath> kept) {
         Field.Group projectedRoot = projectGroup(root, new ArrayList<>(), kept, true);
-        return new Schema(projectedRoot);
+        return new ParquetSchema(projectedRoot);
     }
 
     private static Field.Group projectGroup(

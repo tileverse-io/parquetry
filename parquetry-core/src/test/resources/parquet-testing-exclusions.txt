@@ -23,13 +23,11 @@ incorrect_map_schema.parquet                        # intentionally malformed ma
 hadoop_lz4_compressed.parquet              # hadoop LZ4 framing (not LZ4_RAW)
 hadoop_lz4_compressed_larger.parquet       # hadoop LZ4 framing (not LZ4_RAW)
 
-# Brotli codec not yet wired into parquetry's CodecRegistry (future enhancement)
-large_string_map.brotli.parquet            # Brotli codec; future enhancement
-
 # parquet-avro (the oracle) cannot consume these; not a parquetry gap
 delta_encoding_required_column.parquet     # Avro schema parser rejects column name `c_customer_sk:`
 fixed_length_byte_array.parquet            # ParquetDecodingException from the oracle at block 0
 alltypes_tiny_pages.parquet                # ParquetDecodingException from the oracle at block -1
+large_string_map.brotli.parquet            # parquetry reads it (2 rows, verified manually); oracle (parquet-avro) trips on the bogus total_uncompressed_size = Integer.MAX_VALUE + 102 in the metadata
 map_no_value.parquet                       # Avro requires UTF8 map keys; this file uses int32 keys
 nested_maps.snappy.parquet                 # Avro requires UTF8 map keys; this file uses int32 keys for the inner map
 repeated_no_annotation.parquet             # parquet-avro can't read legacy repeated group without LIST annotation

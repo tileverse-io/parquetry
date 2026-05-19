@@ -36,7 +36,7 @@ class SchemaBuilderTest {
         Path file = TestFixtures.emptyIntColumn(tmp);
         FileMetaData footer = readFooter(file);
 
-        Schema schema = SchemaBuilder.build(footer.schema());
+        ParquetSchema schema = SchemaBuilder.build(footer.schema());
 
         assertThat(schema.root().children()).hasSize(1);
         Field idField = schema.root().children().get(0);
@@ -50,7 +50,7 @@ class SchemaBuilderTest {
         Path file = TestFixtures.flatIntSnappy(tmp);
         FileMetaData footer = readFooter(file);
 
-        Schema schema = SchemaBuilder.build(footer.schema());
+        ParquetSchema schema = SchemaBuilder.build(footer.schema());
 
         // 5 columns: int, long, float, double, boolean
         assertThat(schema.root().children()).hasSize(5);
@@ -62,7 +62,7 @@ class SchemaBuilderTest {
         Path file = TestFixtures.nestedList(tmp);
         FileMetaData footer = readFooter(file);
 
-        Schema schema = SchemaBuilder.build(footer.schema());
+        ParquetSchema schema = SchemaBuilder.build(footer.schema());
 
         // Avro array<int> -> Parquet list<int>: the total leaf count is exactly 1 (the int element).
         assertThat(schema.leafColumns()).hasSize(1);
@@ -73,7 +73,7 @@ class SchemaBuilderTest {
         Path file = TestFixtures.nestedMap(tmp);
         FileMetaData footer = readFooter(file);
 
-        Schema schema = SchemaBuilder.build(footer.schema());
+        ParquetSchema schema = SchemaBuilder.build(footer.schema());
 
         // map<string,int> -> 2 leaves: key (string) and value (int)
         assertThat(schema.leafColumns()).hasSize(2);

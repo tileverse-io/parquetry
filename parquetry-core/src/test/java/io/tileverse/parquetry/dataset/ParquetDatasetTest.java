@@ -54,7 +54,7 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.io.ByteBufferPool;
 
 /**
- * End-to-end coverage for the {@code Dataset} facade: footer caching, filter / projection wiring, the
+ * End-to-end coverage for the {@code ParquetDataset} facade: footer caching, filter / projection wiring, the
  * {@code ConcurrencyMode.AUTO} resolution, the cross-thread reuse contract, and the {@code MultiFileDataset} sealing
  * seam. Fixtures are written via {@code parquet-avro} (same family as {@code EndToEndV2ReadTest}) so the read path
  * exercises the production page-cursor stack end-to-end.
@@ -77,7 +77,7 @@ class DatasetTest {
         ByteBufferPool pool = new ByteBufferPool();
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            Dataset dataset = Dataset.open(reader);
+            ParquetDataset dataset = ParquetDataset.open(reader);
             ReadOptions options = ReadOptions.builder()
                     .concurrencyMode(mode)
                     .byteBufferPool(pool)
@@ -102,7 +102,7 @@ class DatasetTest {
         ByteBufferPool pool = new ByteBufferPool();
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            Dataset dataset = Dataset.open(reader);
+            ParquetDataset dataset = ParquetDataset.open(reader);
             ReadOptions options = ReadOptions.builder().byteBufferPool(pool).build();
 
             try (Stream<ParquetRecord> records = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
@@ -123,7 +123,7 @@ class DatasetTest {
         ByteBufferPool pool = new ByteBufferPool();
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            Dataset dataset = Dataset.open(reader);
+            ParquetDataset dataset = ParquetDataset.open(reader);
 
             // Schema, row-group view, and key/value metadata are stable across calls.
             assertThat(dataset.schema()).isSameAs(dataset.schema());
@@ -148,7 +148,7 @@ class DatasetTest {
 
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            Dataset dataset = Dataset.open(reader);
+            ParquetDataset dataset = ParquetDataset.open(reader);
 
             List<RowGroup> view = dataset.rowGroups();
             assertThat(view).hasSizeGreaterThan(1);
@@ -171,7 +171,7 @@ class DatasetTest {
         ByteBufferPool pool = new ByteBufferPool();
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            Dataset dataset = Dataset.open(reader);
+            ParquetDataset dataset = ParquetDataset.open(reader);
             ReadOptions options = ReadOptions.builder().byteBufferPool(pool).build();
             Predicate impossibleYear = Pred.col("year").eq(9999);
 
@@ -200,7 +200,7 @@ class DatasetTest {
         ByteBufferPool pool = new ByteBufferPool();
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            Dataset dataset = Dataset.open(reader);
+            ParquetDataset dataset = ParquetDataset.open(reader);
             ReadOptions options = ReadOptions.builder().byteBufferPool(pool).build();
             Predicate keepYear2022 = Pred.col("year").eq(2022);
 
@@ -228,7 +228,7 @@ class DatasetTest {
         ByteBufferPool pool = new ByteBufferPool();
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            Dataset dataset = Dataset.open(reader);
+            ParquetDataset dataset = ParquetDataset.open(reader);
             ReadOptions options = ReadOptions.builder().byteBufferPool(pool).build();
             Projection yearOnly = Projection.of(Set.of(YEAR));
 
@@ -253,7 +253,7 @@ class DatasetTest {
         ByteBufferPool pool = new ByteBufferPool();
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            Dataset dataset = Dataset.open(reader);
+            ParquetDataset dataset = ParquetDataset.open(reader);
             ReadOptions options = ReadOptions.builder().byteBufferPool(pool).build();
 
             int workers = 4;
@@ -296,11 +296,13 @@ class DatasetTest {
 
     @Test
     void multiFileDatasetHasNoImplementationsInM1() {
-        // The Dataset facade is sealed with permits FileDataset, MultiFileDataset. MultiFileDataset is intentionally
-        // empty initially (no concrete subtype), so the only Dataset shape an open() call can return is FileDataset.
-        Class<?>[] permitted = Dataset.class.getPermittedSubclasses();
+        // The ParquetDataset facade is sealed with permits FileDataset, MultiFileDataset. MultiFileDataset is
+        // intentionally
+        // empty initially (no concrete subtype), so the only ParquetDataset shape an open() call can return is
+        // FileDataset.
+        Class<?>[] permitted = ParquetDataset.class.getPermittedSubclasses();
         assertThat(permitted)
-                .as("Dataset must seal MultiFileDataset alongside FileDataset")
+                .as("ParquetDataset must seal MultiFileDataset alongside FileDataset")
                 .containsExactlyInAnyOrder(FileDataset.class, MultiFileDataset.class);
         assertThat(MultiFileDataset.class.getPermittedSubclasses())
                 .as("MultiFileDataset is non-sealed initially (sealed with zero permits is illegal Java)")
@@ -357,7 +359,8 @@ class DatasetTest {
         }
     }
 
-    private static List<RowDto> readAll(Dataset dataset, Predicate predicate, Projection projection, ReadOptions opts) {
+    private static List<RowDto> readAll(
+            ParquetDataset dataset, Predicate predicate, Projection projection, ReadOptions opts) {
         try (Stream<ParquetRecord> records = dataset.read(predicate, projection, opts)) {
             return records.map(DatasetTest::asRowDto).toList();
         }

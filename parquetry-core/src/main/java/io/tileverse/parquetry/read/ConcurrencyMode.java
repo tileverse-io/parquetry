@@ -19,8 +19,8 @@ package io.tileverse.parquetry.read;
  * Selects which concurrency optimizations the reader applies.
  *
  * <ul>
- *   <li>{@link #AUTO} - resolved at {@code Dataset.open()} time from the {@code RangeReader}'s locality hint: cloud
- *       readers get {@link #FULL}, local/in-memory readers get {@link #SYNC}.
+ *   <li>{@link #AUTO} - resolved at {@code ParquetDataset.open()} time from the {@code RangeReader}'s locality hint:
+ *       cloud readers get {@link #FULL}, local/in-memory readers get {@link #SYNC}.
  *   <li>{@link #SYNC} - single-threaded read. Best for local files and tiny datasets.
  *   <li>{@link #FAN_OUT_ONLY} - parallel column fetch within a row group, but row groups are processed sequentially.
  *   <li>{@link #PREFETCH_ONLY} - row group N+1 prefetched while the consumer iterates N; one virtual thread per column

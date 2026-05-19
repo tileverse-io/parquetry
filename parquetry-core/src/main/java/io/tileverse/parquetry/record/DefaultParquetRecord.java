@@ -23,8 +23,8 @@ import java.util.Optional;
 import io.tileverse.parquetry.materializer.RowAccessor;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Field;
+import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
-import io.tileverse.parquetry.schema.Schema;
 
 /**
  * Lazy, per-row {@link ParquetRecord} that adapts the column-keyed {@link RowAccessor} produced by the Dremel assembler
@@ -44,17 +44,17 @@ import io.tileverse.parquetry.schema.Schema;
  */
 final class DefaultParquetRecord implements ParquetRecord {
 
-    private final Schema schema;
+    private final ParquetSchema schema;
     private final RowAccessor row;
 
     /** Wraps the given row, exposing it through the {@link ParquetRecord} accessor surface. */
-    DefaultParquetRecord(Schema schema, RowAccessor row) {
+    DefaultParquetRecord(ParquetSchema schema, RowAccessor row) {
         this.schema = schema;
         this.row = row;
     }
 
     @Override
-    public Schema schema() {
+    public ParquetSchema schema() {
         return schema;
     }
 

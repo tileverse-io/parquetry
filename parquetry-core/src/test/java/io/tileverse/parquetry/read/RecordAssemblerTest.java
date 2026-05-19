@@ -33,15 +33,15 @@ import io.tileverse.parquetry.page.PlainBinaryDecoder;
 import io.tileverse.parquetry.page.PlainInt32Decoder;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Field;
+import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
-import io.tileverse.parquetry.schema.Schema;
 
 class RecordAssemblerTest {
 
     @Test
     void flatRequiredSchemaThreeRows() {
-        Schema schema = new Schema(new Field.Group(
+        ParquetSchema schema = new ParquetSchema(new Field.Group(
                 "root",
                 Repetition.REQUIRED,
                 List.of(
@@ -100,7 +100,7 @@ class RecordAssemblerTest {
 
     @Test
     void flatOptionalSchemaWithNull() {
-        Schema schema = new Schema(new Field.Group(
+        ParquetSchema schema = new ParquetSchema(new Field.Group(
                 "root",
                 Repetition.REQUIRED,
                 List.of(
@@ -171,14 +171,14 @@ class RecordAssemblerTest {
 
     @Test
     void legacyRepeatedGroupAssemblesIntoListOfStructs() {
-        // Schema: root { repeated group phones { required int32 number; } }
+        // ParquetSchema: root { repeated group phones { required int32 number; } }
         // Each row has 0..N phone entries. Three logical rows: [{number: 555}, {number: 666}], [], [{number: 777}].
         Field.Primitive numberField = new Field.Primitive(
                 "number", Repetition.REQUIRED, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
         Field.Group phonesGroup =
                 new Field.Group("phones", Repetition.REPEATED, List.of(numberField), Optional.empty(), -1);
-        Schema schema =
-                new Schema(new Field.Group("root", Repetition.REQUIRED, List.of(phonesGroup), Optional.empty(), -1));
+        ParquetSchema schema = new ParquetSchema(
+                new Field.Group("root", Repetition.REQUIRED, List.of(phonesGroup), Optional.empty(), -1));
 
         // Per Dremel for the number leaf: maxRep=1, maxDef=1 (REPEATED contributes +1 to def).
         //   row 0: (rep=0, def=1, val=555), (rep=1, def=1, val=666)
@@ -224,8 +224,8 @@ class RecordAssemblerTest {
 
     @Test
     void repeatedPrimitiveAssemblesIntoList() {
-        // Schema: root { repeated int32 tags; }  (legacy repeated primitive, no LIST annotation).
-        Schema schema = new Schema(new Field.Group(
+        // ParquetSchema: root { repeated int32 tags; }  (legacy repeated primitive, no LIST annotation).
+        ParquetSchema schema = new ParquetSchema(new Field.Group(
                 "root",
                 Repetition.REQUIRED,
                 List.of(new Field.Primitive(

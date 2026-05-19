@@ -32,8 +32,8 @@ import io.tileverse.parquetry.read.ValueBuilder.MapValueBuilder;
 import io.tileverse.parquetry.read.ValueBuilder.StructValueBuilder;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Field;
+import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.Repetition;
-import io.tileverse.parquetry.schema.Schema;
 
 /**
  * Dremel record assembler emitting one logical row at a time as a {@link RowAccessor}.
@@ -59,7 +59,7 @@ final class RecordAssembler {
     private final List<RootBuilder> roots;
     private final List<ColumnReader> allReaders;
 
-    RecordAssembler(Schema schema, List<ColumnReader> readers) {
+    RecordAssembler(ParquetSchema schema, List<ColumnReader> readers) {
         this.allReaders = List.copyOf(readers);
         Map<ColumnPath, ColumnReader> readersByPath = new HashMap<>();
         for (ColumnReader reader : readers) {
@@ -100,7 +100,7 @@ final class RecordAssembler {
      * int directly. Sub-records only exist inside list / map elements (handled by {@link StructValueBuilder} when built
      * from {@code buildAnnotatedList} / {@code buildLegacyRepeatedGroup}).
      */
-    private static List<RootBuilder> buildRoots(Schema schema, Map<ColumnPath, ColumnReader> readersByPath) {
+    private static List<RootBuilder> buildRoots(ParquetSchema schema, Map<ColumnPath, ColumnReader> readersByPath) {
         List<RootBuilder> built = new ArrayList<>();
         Context ctx = new Context(readersByPath, /*maxDef*/ 0, /*maxRep*/ 0);
         Field.Group root = schema.root();

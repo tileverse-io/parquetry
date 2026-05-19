@@ -50,9 +50,9 @@ import io.tileverse.parquetry.page.PlainInt32Decoder;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Field;
+import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
-import io.tileverse.parquetry.schema.Schema;
 
 import io.tileverse.io.ByteBufferPool;
 
@@ -75,7 +75,7 @@ class RowGroupPipelineTest {
 
     @Test
     void lazyStreamYieldsEveryRecordInRowGroupOrder() {
-        Schema schema = singleColumnSchema();
+        ParquetSchema schema = singleColumnSchema();
         List<RowGroupSurvivor> survivors = makeSurvivors(ROW_GROUPS);
         ByteBufferPool pool = freshPool();
 
@@ -100,7 +100,7 @@ class RowGroupPipelineTest {
 
     @Test
     void emptySurvivorsProducesZeroRecords() {
-        Schema schema = singleColumnSchema();
+        ParquetSchema schema = singleColumnSchema();
         ByteBufferPool pool = freshPool();
 
         RowGroupPipeline<ParquetRecord> pipeline = newPipeline(schema, List.of(), pool, /*prefetchWindow*/ 2);
@@ -116,7 +116,7 @@ class RowGroupPipelineTest {
 
     @Test
     void singleSurvivorDrainsCleanly() {
-        Schema schema = singleColumnSchema();
+        ParquetSchema schema = singleColumnSchema();
         ByteBufferPool pool = freshPool();
 
         RowGroupPipeline<ParquetRecord> pipeline = newPipeline(schema, makeSurvivors(1), pool, /*prefetchWindow*/ 2);
@@ -132,7 +132,7 @@ class RowGroupPipelineTest {
 
     @Test
     void earlyCloseShutsDownProducerAndReleasesBuffers() {
-        Schema schema = singleColumnSchema();
+        ParquetSchema schema = singleColumnSchema();
         ByteBufferPool pool = freshPool();
         RowGroupPipeline<ParquetRecord> pipeline = newPipeline(schema, makeSurvivors(ROW_GROUPS), pool, 2);
 
@@ -154,7 +154,7 @@ class RowGroupPipelineTest {
 
     @Test
     void prefetchWindowOneStaysAtMostOneRowGroupAhead() {
-        Schema schema = singleColumnSchema();
+        ParquetSchema schema = singleColumnSchema();
         ByteBufferPool pool = freshPool();
         AtomicInteger fetchCount = new AtomicInteger();
 
@@ -192,7 +192,7 @@ class RowGroupPipelineTest {
 
     @Test
     void producerFailurePropagatesAsUncheckedIOException() {
-        Schema schema = singleColumnSchema();
+        ParquetSchema schema = singleColumnSchema();
         ByteBufferPool pool = freshPool();
         AtomicInteger fetchCount = new AtomicInteger();
         ColumnFetcher delegate = borrowingFetcher(pool);
@@ -233,7 +233,7 @@ class RowGroupPipelineTest {
 
     @Test
     void prefetchWindowZeroIsSynchronousAndStillDrains() {
-        Schema schema = singleColumnSchema();
+        ParquetSchema schema = singleColumnSchema();
         ByteBufferPool pool = freshPool();
 
         RowGroupPipeline<ParquetRecord> pipeline = new RowGroupPipeline<>(
@@ -258,7 +258,7 @@ class RowGroupPipelineTest {
 
     @Test
     void doubleStreamCallThrows() {
-        Schema schema = singleColumnSchema();
+        ParquetSchema schema = singleColumnSchema();
         ByteBufferPool pool = freshPool();
         RowGroupPipeline<ParquetRecord> pipeline = newPipeline(schema, makeSurvivors(1), pool, 2);
 
@@ -270,7 +270,7 @@ class RowGroupPipelineTest {
 
     @Test
     void closeIsIdempotent() {
-        Schema schema = singleColumnSchema();
+        ParquetSchema schema = singleColumnSchema();
         ByteBufferPool pool = freshPool();
         RowGroupPipeline<ParquetRecord> pipeline = newPipeline(schema, makeSurvivors(1), pool, 2);
 
@@ -285,7 +285,7 @@ class RowGroupPipelineTest {
     // --- fixtures ---
 
     private RowGroupPipeline<ParquetRecord> newPipeline(
-            Schema schema, List<RowGroupSurvivor> survivors, ByteBufferPool pool, int prefetchWindow) {
+            ParquetSchema schema, List<RowGroupSurvivor> survivors, ByteBufferPool pool, int prefetchWindow) {
         return new RowGroupPipeline<>(
                 noopReader(),
                 schema,
@@ -305,8 +305,8 @@ class RowGroupPipelineTest {
                 .build();
     }
 
-    private static Schema singleColumnSchema() {
-        return new Schema(new Field.Group(
+    private static ParquetSchema singleColumnSchema() {
+        return new ParquetSchema(new Field.Group(
                 "root",
                 Repetition.REQUIRED,
                 List.of(new Field.Primitive(

@@ -22,8 +22,8 @@ import io.tileverse.storage.RangeReader;
  * stitch together at read time.
  *
  * <p>This initial version ships zero implementations and zero call sites: this is the public seam that future work
- * (partitioned datasets, Iceberg / Delta manifest handlers) will satisfy without forcing {@code Dataset.open} to grow
- * new overloads. The single-file path goes through {@link Dataset#open(RangeReader)} unchanged.
+ * (partitioned datasets, Iceberg / Delta manifest handlers) will satisfy without forcing {@code ParquetDataset.open} to
+ * grow new overloads. The single-file path goes through {@link ParquetDataset#open(RangeReader)} unchanged.
  */
 public interface FilesetReader {
 

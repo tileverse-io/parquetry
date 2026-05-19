@@ -34,9 +34,9 @@ import org.junit.jupiter.api.Test;
 import io.tileverse.parquetry.materializer.RowAccessor;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Field;
+import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
-import io.tileverse.parquetry.schema.Schema;
 
 /**
  * Verifies the typed accessors, lazy binary materialization, and type-mismatch diagnostics that
@@ -54,13 +54,13 @@ class DefaultParquetRecordTest {
 
     private static final byte[] BINARY_PAYLOAD = "hello".getBytes(StandardCharsets.UTF_8);
 
-    private Schema schema;
+    private ParquetSchema schema;
     private MapRowAccessor row;
     private DefaultParquetRecord parquetRecord;
 
     @BeforeEach
     void setUp() {
-        schema = new Schema(new Field.Group(
+        schema = new ParquetSchema(new Field.Group(
                 "root",
                 Repetition.REQUIRED,
                 List.of(

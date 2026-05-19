@@ -2,7 +2,7 @@
 
 Hadoop-free, Java-25, clean-room Apache Parquet library with native GeoParquet 2.0 support. Reads Parquet 1.x and 2.x files; writes Parquet 2.x.
 
-**Status:** the read-only core is feature-complete; bloom filters, GeoParquet 2.0 logical types, and observability are next.
+**Status:** read-only core is feature-complete (Parquet 1.x and 2.x, full Dremel decoding, four-tier filter pushdown, native GeoParquet 1.x and 2.0 reads via the JTS materializer). Bloom-filter pushdown, vectorized batch API, and the write path are under active development.
 
 ## Build
 
@@ -19,7 +19,7 @@ Generate an aggregated JaCoCo coverage report at `coverage-report/target/site/ja
 ## Usage
 
 ```java
-import io.tileverse.parquetry.dataset.Dataset;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.read.ReadOptions;
@@ -38,7 +38,7 @@ import static io.tileverse.parquetry.filter.Pred.col;
 Path file = Path.of("data.parquet");
 try (Storage storage = StorageFactory.open(file.getParent().toUri());
      RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-    Dataset dataset = Dataset.open(reader);
+    ParquetDataset dataset = ParquetDataset.open(reader);
     try (Stream<ParquetRecord> stream = dataset.read(
             col("year").gtEq(2020).and(col("country").eq("AR")),
             Projection.of(Set.of(ColumnPath.of("year"), ColumnPath.of("country"))),

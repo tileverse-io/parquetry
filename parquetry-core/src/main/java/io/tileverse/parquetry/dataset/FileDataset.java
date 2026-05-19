@@ -49,33 +49,33 @@ import io.tileverse.parquetry.read.RowGroupSurvivor;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Field;
-import io.tileverse.parquetry.schema.Schema;
+import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaBuilder;
 
 /**
- * Single-file {@link Dataset} implementation.
+ * Single-file {@link ParquetDataset} implementation.
  *
  * <p>{@link #open(RangeReader)} performs one footer read and caches the decoded {@link FileMetaData}, the parquetry
- * {@link Schema}, the collapsed key/value metadata map, and a public {@link RowGroup} view list. Every {@code read()}
- * call constructs its own {@link FilterPipeline}-derived row-group survivor list, a fresh {@link ColumnFetcher}, and a
- * single-use {@link RowGroupPipeline}; the footer is never re-read.
+ * {@link ParquetSchema}, the collapsed key/value metadata map, and a public {@link RowGroup} view list. Every
+ * {@code read()} call constructs its own {@link FilterPipeline}-derived row-group survivor list, a fresh
+ * {@link ColumnFetcher}, and a single-use {@link RowGroupPipeline}; the footer is never re-read.
  *
  * <p>Thread safety: the cached footer / schema / metadata are immutable; every {@code read()} call works only off its
- * own locally-allocated state, so concurrent {@code read()} calls on a shared {@code Dataset} cannot collide. The
- * underlying {@link RangeReader} is required to be thread-safe (this is part of the {@code RangeReader} contract).
+ * own locally-allocated state, so concurrent {@code read()} calls on a shared {@code ParquetDataset} cannot collide.
+ * The underlying {@link RangeReader} is required to be thread-safe (this is part of the {@code RangeReader} contract).
  */
-final class FileDataset implements Dataset {
+final class FileDataset implements ParquetDataset {
 
     private final RangeReader rangeReader;
     private final FileMetaData footer;
-    private final Schema fileSchema;
+    private final ParquetSchema fileSchema;
     private final Map<String, String> keyValueMetadata;
     private final List<RowGroup> rowGroupView;
 
     private FileDataset(
             RangeReader rangeReader,
             FileMetaData footer,
-            Schema fileSchema,
+            ParquetSchema fileSchema,
             Map<String, String> keyValueMetadata,
             List<RowGroup> rowGroupView) {
         this.rangeReader = rangeReader;
@@ -88,14 +88,18 @@ final class FileDataset implements Dataset {
     static FileDataset open(RangeReader reader) {
         Objects.requireNonNull(reader, "reader");
         FileMetaData footer = ParquetFormat.readFooter(reader);
-        Schema fileSchema = SchemaBuilder.build(footer.schema());
+        ParquetSchema rawSchema = SchemaBuilder.build(footer.schema());
         Map<String, String> kvMetadata = collapseKeyValueMetadata(footer.keyValueMetadata());
+        // GeoParquet 1.x files carry no native logical type on geometry columns; the bridge synthesizes the
+        // Geometry / Geography annotation from the file's "geo" key-value metadata so downstream code (e.g. the
+        // JtsMaterializer in parquetry-geo-jts) only needs to look at the logical type.
+        ParquetSchema fileSchema = GeoMetadataBridge.apply(rawSchema, kvMetadata);
         List<RowGroup> rgView = toRowGroupView(footer);
         return new FileDataset(reader, footer, fileSchema, kvMetadata, rgView);
     }
 
     @Override
-    public Schema schema() {
+    public ParquetSchema schema() {
         return fileSchema;
     }
 
@@ -124,7 +128,7 @@ final class FileDataset implements Dataset {
 
         ExplainPlan plan = runFilterPipeline(predicate, projection);
         List<RowGroupSurvivor> survivors = survivorsFor(plan);
-        Schema projectedSchema = plan.projectedSchema();
+        ParquetSchema projectedSchema = plan.projectedSchema();
         ReadOptions resolvedOptions = resolveConcurrencyMode(options);
 
         ColumnFetcher fetcher = ColumnFetcher.real(rangeReader, fileSchema, resolvedOptions.byteBufferPool());
@@ -215,11 +219,11 @@ final class FileDataset implements Dataset {
     // --- AUTO concurrency resolution ---
 
     /**
-     * {@link ConcurrencyMode#AUTO} resolves at {@code Dataset.read} time based on the {@code RangeReader}'s locality
-     * hint (cloud readers favour {@code FULL}, local readers favour {@code SYNC}). The storage module hasn't surfaced a
-     * locality hint yet, so it defaults to {@code FULL}: it is the safer choice for the cloud case (more parallelism)
-     * and adds only a fixed virtual-thread overhead for local files - both of which are still bounded by the row-group
-     * / column counts.
+     * {@link ConcurrencyMode#AUTO} resolves at {@code ParquetDataset.read} time based on the {@code RangeReader}'s
+     * locality hint (cloud readers favour {@code FULL}, local readers favour {@code SYNC}). The storage module hasn't
+     * surfaced a locality hint yet, so it defaults to {@code FULL}: it is the safer choice for the cloud case (more
+     * parallelism) and adds only a fixed virtual-thread overhead for local files - both of which are still bounded by
+     * the row-group / column counts.
      *
      * <p>Pending(spec 9.4): consume {@code RangeReader.localityHint()} once it lands; map IN_MEMORY/LOCAL to
      * {@code SYNC} and CLOUD to {@code FULL}.

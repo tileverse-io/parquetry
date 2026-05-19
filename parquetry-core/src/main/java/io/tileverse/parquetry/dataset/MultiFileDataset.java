@@ -18,13 +18,13 @@ package io.tileverse.parquetry.dataset;
 /**
  * Extension point for partitioned multi-file datasets (Hive-style directory layouts, Iceberg / Delta manifests).
  *
- * <p>This ships zero implementations: the interface exists to preserve the public sealing seam in {@link Dataset} so
- * the future multi-file spec can grow under here without breaking {@code permits} clauses. Until then, the only way to
- * land a Dataset implementation is {@link FileDataset}.
+ * <p>This ships zero implementations: the interface exists to preserve the public sealing seam in
+ * {@link ParquetDataset} so the future multi-file spec can grow under here without breaking {@code permits} clauses.
+ * Until then, the only way to land a ParquetDataset implementation is {@link FileDataset}.
  *
- * <p>{@code Dataset} is {@code sealed permits FileDataset, MultiFileDataset}, so this interface must carry either
- * {@code sealed} or {@code non-sealed}. Java rejects {@code sealed} with zero permitted subtypes, and it has no
+ * <p>{@code ParquetDataset} is {@code sealed permits FileDataset, MultiFileDataset}, so this interface must carry
+ * either {@code sealed} or {@code non-sealed}. Java rejects {@code sealed} with zero permitted subtypes, and it has no
  * concrete multi-file implementation to name; {@code non-sealed} is therefore the only valid declaration here. Future
  * future work that introduces a concrete multi-file type should tighten this back to {@code sealed permits X}.
  */
-public non-sealed interface MultiFileDataset extends Dataset {}
+public non-sealed interface MultiFileDataset extends ParquetDataset {}

@@ -31,15 +31,15 @@ import org.junit.jupiter.api.Test;
 import io.tileverse.parquetry.format.Statistics;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Field;
+import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
-import io.tileverse.parquetry.schema.Schema;
 
 class FilterPipelineTest {
 
     @Test
     void statsElimSkipsLaterTiers() {
-        Schema schema = flatSchema();
+        ParquetSchema schema = flatSchema();
         FilterPipeline.RowGroupInputs rg = inputs(
                 /* rows */ 1000,
                 statsOf("year", PrimitiveKind.INT32, intStats(2010, 2015, 0)),
@@ -57,7 +57,7 @@ class FilterPipelineTest {
 
     @Test
     void fullPassageWhenAllTiersPass() {
-        Schema schema = flatSchema();
+        ParquetSchema schema = flatSchema();
         FilterPipeline.RowGroupInputs rg = inputs(
                 /* rows */ 1000,
                 statsOf("year", PrimitiveKind.INT32, intStats(2010, 2030, 0)),
@@ -73,7 +73,7 @@ class FilterPipelineTest {
 
     @Test
     void allRowGroupsEvaluatedAndAggregated() {
-        Schema schema = flatSchema();
+        ParquetSchema schema = flatSchema();
         List<FilterPipeline.RowGroupInputs> rgs = List.of(
                 inputs(1000, statsOf("year", PrimitiveKind.INT32, intStats(2010, 2015, 0)), noDicts(), noPageIndex()),
                 inputs(1000, statsOf("year", PrimitiveKind.INT32, intStats(2018, 2022, 0)), noDicts(), noPageIndex()),
@@ -90,7 +90,7 @@ class FilterPipelineTest {
 
     @Test
     void asciiTableRendersHeaderAndOneRowPerRowGroup() {
-        Schema schema = flatSchema();
+        ParquetSchema schema = flatSchema();
         FilterPipeline.RowGroupInputs rg =
                 inputs(100, statsOf("year", PrimitiveKind.INT32, intStats(2010, 2015, 0)), noDicts(), noPageIndex());
         ExplainPlan plan =
@@ -101,7 +101,7 @@ class FilterPipelineTest {
 
     @Test
     void jsonRenderIncludesRowGroupsAndDecisions() {
-        Schema schema = flatSchema();
+        ParquetSchema schema = flatSchema();
         FilterPipeline.RowGroupInputs rg =
                 inputs(100, statsOf("year", PrimitiveKind.INT32, intStats(2010, 2015, 0)), noDicts(), noPageIndex());
         ExplainPlan plan =
@@ -154,10 +154,10 @@ class FilterPipelineTest {
                 ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(v).flip();
     }
 
-    private static Schema flatSchema() {
+    private static ParquetSchema flatSchema() {
         Field.Primitive year = new Field.Primitive(
                 "year", Repetition.OPTIONAL, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
         Field.Group root = new Field.Group("root", Repetition.REQUIRED, List.of(year), Optional.empty(), -1);
-        return new Schema(root);
+        return new ParquetSchema(root);
     }
 }

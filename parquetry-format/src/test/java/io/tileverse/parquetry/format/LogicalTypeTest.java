@@ -60,8 +60,8 @@ class LogicalTypeTest {
             new LogicalType.UuidType(),
             new LogicalType.Float16Type(),
             new LogicalType.VariantStub(),
-            new LogicalType.GeometryStub(),
-            new LogicalType.GeographyStub()
+            new LogicalType.Geometry(java.util.Optional.empty()),
+            new LogicalType.Geography(java.util.Optional.empty(), java.util.Optional.empty())
         };
         assertThat(all).hasSize(17);
     }

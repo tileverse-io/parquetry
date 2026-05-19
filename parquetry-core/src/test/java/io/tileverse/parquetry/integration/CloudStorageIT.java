@@ -43,7 +43,7 @@ import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
 import io.tileverse.storage.s3.S3StorageProvider;
 
-import io.tileverse.parquetry.dataset.Dataset;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.read.ReadOptions;
@@ -154,7 +154,7 @@ class CloudStorageIT {
         ReadOptions opts = ReadOptions.builder().byteBufferPool(pool).build();
         try (storage;
                 RangeReader reader = storage.openRangeReader(key)) {
-            Dataset dataset = Dataset.open(reader);
+            ParquetDataset dataset = ParquetDataset.open(reader);
             try (Stream<ParquetRecord> stream = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, opts)) {
                 return stream.map(CloudStorageIT::fooOf).toList();
             }

@@ -48,14 +48,14 @@ import io.tileverse.storage.RangeReader;
 import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
 
-import io.tileverse.parquetry.dataset.Dataset;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.read.ReadOptions;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Field;
-import io.tileverse.parquetry.schema.Schema;
+import io.tileverse.parquetry.schema.ParquetSchema;
 
 import io.tileverse.io.ByteBufferPool;
 
@@ -150,7 +150,7 @@ class ParquetTestingCorpusIT {
         if (actual.isEmpty()) {
             return;
         }
-        Schema schema = actual.get(0).schema();
+        ParquetSchema schema = actual.get(0).schema();
         List<ColumnPath> leaves = schema.leafColumns();
         for (int i = 0; i < actual.size(); i++) {
             assertRowMatchesOracle(fixtureName, i, leaves, schema, actual.get(i), expected.get(i));
@@ -161,7 +161,7 @@ class ParquetTestingCorpusIT {
             String fixtureName,
             int row,
             List<ColumnPath> leaves,
-            Schema schema,
+            ParquetSchema schema,
             ParquetRecord actual,
             GenericRecord expected) {
         for (ColumnPath col : leaves) {
@@ -170,7 +170,12 @@ class ParquetTestingCorpusIT {
     }
 
     private static void assertCellMatchesOracle(
-            String fixtureName, int row, ColumnPath col, Schema schema, ParquetRecord actual, GenericRecord expected) {
+            String fixtureName,
+            int row,
+            ColumnPath col,
+            ParquetSchema schema,
+            ParquetRecord actual,
+            GenericRecord expected) {
         Field.Primitive prim = primitiveAt(schema, col);
         Object oracleValue = oracleValueAt(expected, col);
         if (oracleValue == null) {
@@ -236,7 +241,7 @@ class ParquetTestingCorpusIT {
         }
     }
 
-    private static Field.Primitive primitiveAt(Schema schema, ColumnPath col) {
+    private static Field.Primitive primitiveAt(ParquetSchema schema, ColumnPath col) {
         Optional<Field> field = schema.find(col);
         return field.filter(Field.Primitive.class::isInstance)
                 .map(Field.Primitive.class::cast)
@@ -285,7 +290,7 @@ class ParquetTestingCorpusIT {
         try (Storage storage = StorageFactory.open(fixture.getParent().toUri());
                 RangeReader reader =
                         storage.openRangeReader(fixture.getFileName().toString())) {
-            Dataset dataset = Dataset.open(reader);
+            ParquetDataset dataset = ParquetDataset.open(reader);
             ReadOptions options = ReadOptions.builder().byteBufferPool(pool).build();
             try (Stream<ParquetRecord> records = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
                 return records.toList();

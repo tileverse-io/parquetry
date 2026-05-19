@@ -20,9 +20,9 @@ import java.util.List;
 
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Field;
+import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.ParquetSchemaException;
 import io.tileverse.parquetry.schema.PrimitiveKind;
-import io.tileverse.parquetry.schema.Schema;
 
 /**
  * Rewrites a {@link Predicate} into a canonical form expected by the filter pipeline. Applies three structural passes -
@@ -50,7 +50,7 @@ final class PredicateNormalizer {
     // S7475 (bare _ in nested record patterns) is informational only - palantirJavaFormat 2.90 cannot
     // parse the bare-underscore form Sonar suggests; see memory feedback-palantir-unnamed-pattern.
     @SuppressWarnings("java:S7475")
-    public static void validate(Predicate p, Schema schema) {
+    public static void validate(Predicate p, ParquetSchema schema) {
         switch (p) {
             case Predicate.Always _ -> {
                 /* no columns to check */
@@ -83,7 +83,7 @@ final class PredicateNormalizer {
     }
 
     /** Convenience: normalize then validate against the schema. Returns the normalized predicate. */
-    public static Predicate normalizeAndValidate(Predicate p, Schema schema) {
+    public static Predicate normalizeAndValidate(Predicate p, ParquetSchema schema) {
         Predicate normalized = normalize(p);
         validate(normalized, schema);
         return normalized;
@@ -191,12 +191,12 @@ final class PredicateNormalizer {
         return reduceConnective(flat, isAnd);
     }
 
-    private static void checkLeafColumn(ColumnPath path, Schema schema, Value v) {
+    private static void checkLeafColumn(ColumnPath path, ParquetSchema schema, Value v) {
         Field.Primitive prim = requirePrimitive(path, schema);
         requireCompatible(path, prim.kind(), v);
     }
 
-    private static Field.Primitive requirePrimitive(ColumnPath path, Schema schema) {
+    private static Field.Primitive requirePrimitive(ColumnPath path, ParquetSchema schema) {
         Field f = schema.find(path)
                 .orElseThrow(() ->
                         new ParquetSchemaException("Column " + path.dot() + " is not defined in the file schema"));

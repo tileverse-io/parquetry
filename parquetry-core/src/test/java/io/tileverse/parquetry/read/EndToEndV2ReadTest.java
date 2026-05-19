@@ -44,7 +44,7 @@ import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.schema.Schema;
+import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaBuilder;
 
 import io.tileverse.io.ByteBufferPool;
@@ -54,9 +54,9 @@ import io.tileverse.io.ByteBufferPool;
  * parquetry pipeline (DataPageV2Reader + StreamingColumnReader + RealColumnFetcher + RowGroupReader) and assert the
  * records round-trip exactly.
  *
- * <p>The {@code Dataset.open(...)} facade is wired later; until then, this test bootstraps the read pipeline manually
- * (read footer, build schema, wire ColumnFetcher.real, iterate row groups). The helper is documented as transitional
- * test infrastructure.
+ * <p>The {@code ParquetDataset.open(...)} facade is wired later; until then, this test bootstraps the read pipeline
+ * manually (read footer, build schema, wire ColumnFetcher.real, iterate row groups). The helper is documented as
+ * transitional test infrastructure.
  */
 class EndToEndV2ReadTest {
 
@@ -226,7 +226,7 @@ class EndToEndV2ReadTest {
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
             FileMetaData footer = ParquetFormat.readFooter(reader);
-            Schema schema = SchemaBuilder.build(footer.schema());
+            ParquetSchema schema = SchemaBuilder.build(footer.schema());
             ColumnFetcher fetcher = ColumnFetcher.real(reader, schema, pool);
             ReadOptions options = ReadOptions.builder()
                     .concurrencyMode(mode)

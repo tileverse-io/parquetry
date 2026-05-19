@@ -16,7 +16,9 @@
 package io.tileverse.parquetry.format.codec;
 
 import java.io.IOException;
+import java.util.Optional;
 
+import io.tileverse.parquetry.format.EdgeInterpolationAlgorithm;
 import io.tileverse.parquetry.format.LogicalType;
 
 /**
@@ -123,14 +125,8 @@ final class LogicalTypeDeserializer {
                 r.skipStruct();
                 yield new LogicalType.VariantStub();
             }
-            case 17 -> {
-                r.skipStruct();
-                yield new LogicalType.GeometryStub();
-            }
-            case 18 -> {
-                r.skipStruct();
-                yield new LogicalType.GeographyStub();
-            }
+            case 17 -> readGeometry(r);
+            case 18 -> readGeography(r);
             default -> {
                 r.skipStruct();
                 yield new LogicalType.UnknownType();
@@ -198,6 +194,52 @@ final class LogicalTypeDeserializer {
             }
         }
         return new LogicalType.Timestamp(isAdjustedToUTC, unit);
+    }
+
+    /** Reads {@code GeometryType}: crs (field 1, string, optional). */
+    private static LogicalType.Geometry readGeometry(CompactProtocolReader r) throws IOException {
+        Optional<String> crs = Optional.empty();
+        int lastFieldId = 0;
+        while (true) {
+            FieldHeader fh = r.readFieldHeader(lastFieldId);
+            if (fh.isStop()) break;
+            lastFieldId = fh.fieldId();
+            if (fh.fieldId() == 1) {
+                crs = Optional.of(r.readString());
+            } else {
+                r.skipField(fh.type());
+            }
+        }
+        return new LogicalType.Geometry(crs);
+    }
+
+    /**
+     * Reads {@code GeographyType}: crs (field 1, string, optional) and algorithm (field 2, i32 enum, optional). The
+     * Thrift Compact Protocol encodes enums as i32 values matching the enum's declaration order in
+     * {@code parquet.thrift}, so the value maps to {@link EdgeInterpolationAlgorithm#values()}.
+     */
+    private static LogicalType.Geography readGeography(CompactProtocolReader r) throws IOException {
+        Optional<String> crs = Optional.empty();
+        Optional<EdgeInterpolationAlgorithm> algorithm = Optional.empty();
+        int lastFieldId = 0;
+        while (true) {
+            FieldHeader fh = r.readFieldHeader(lastFieldId);
+            if (fh.isStop()) break;
+            lastFieldId = fh.fieldId();
+            switch (fh.fieldId()) {
+                case 1 -> crs = Optional.of(r.readString());
+                case 2 -> {
+                    int ordinal = r.readI32();
+                    EdgeInterpolationAlgorithm[] values = EdgeInterpolationAlgorithm.values();
+                    if (ordinal >= 0 && ordinal < values.length) {
+                        algorithm = Optional.of(values[ordinal]);
+                    }
+                    // Unknown enum ordinals are tolerated (forward-compat); algorithm stays empty.
+                }
+                default -> r.skipField(fh.type());
+            }
+        }
+        return new LogicalType.Geography(crs, algorithm);
     }
 
     /** Reads {@code IntType}: bitWidth (field 1, i8) and isSigned (field 2, bool). */

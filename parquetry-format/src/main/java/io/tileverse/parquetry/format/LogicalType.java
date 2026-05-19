@@ -15,15 +15,16 @@
  */
 package io.tileverse.parquetry.format;
 
+import java.util.Optional;
+
 /**
  * Parquet logical-type annotation (Thrift union {@code LogicalType}).
  *
  * <p>Sealed interface with one record per Thrift-union variant. Records that need no payload (e.g. {@link StringType})
  * are empty records to give every variant the same shape.
  *
- * <p>Variants {@link VariantStub}, {@link GeometryStub}, {@link GeographyStub} are stubs initially;
- * GeometryStub/GeographyStub gain CRS+algorithm fields later, and VariantStub gains the variant type carrier later.
- * They're declared here so the sealed-type list is final from the start.
+ * <p>Variant {@link VariantStub} is a stub initially; it gains the variant type carrier later. Declared here so the
+ * sealed-type list is final from the start.
  */
 public sealed interface LogicalType
         permits LogicalType.StringType,
@@ -41,8 +42,8 @@ public sealed interface LogicalType
                 LogicalType.UuidType,
                 LogicalType.Float16Type,
                 LogicalType.VariantStub,
-                LogicalType.GeometryStub,
-                LogicalType.GeographyStub {
+                LogicalType.Geometry,
+                LogicalType.Geography {
 
     enum TimeUnit {
         MILLIS,
@@ -78,10 +79,25 @@ public sealed interface LogicalType
 
     record IntType(byte bitWidth, boolean isSigned) implements LogicalType {}
 
-    // Stubs (filled in later)
-    record VariantStub() implements LogicalType {} // a future release will add VariantType
+    // Stub (filled in later)
+    record VariantStub() implements LogicalType {}
 
-    record GeometryStub() implements LogicalType {} // a future release will add Geometry(crs, algorithm)
+    /**
+     * GeoParquet 2.0 {@code GEOMETRY} logical type.
+     *
+     * @param crs PROJJSON document as a raw string when present; {@link Optional#empty()} means "use the GeoParquet
+     *     spec default" (typically OGC:CRS84). parquetry exposes the raw JSON so consumers can plug in their own
+     *     PROJJSON parser.
+     */
+    record Geometry(Optional<String> crs) implements LogicalType {}
 
-    record GeographyStub() implements LogicalType {} // a future release will add Geography(crs, algorithm)
+    /**
+     * GeoParquet 2.0 {@code GEOGRAPHY} logical type.
+     *
+     * @param crs PROJJSON document as a raw string when present; {@link Optional#empty()} means "use the GeoParquet
+     *     spec default".
+     * @param algorithm edge interpolation algorithm; {@link Optional#empty()} means "use the spec default"
+     *     ({@code SPHERICAL}).
+     */
+    record Geography(Optional<String> crs, Optional<EdgeInterpolationAlgorithm> algorithm) implements LogicalType {}
 }

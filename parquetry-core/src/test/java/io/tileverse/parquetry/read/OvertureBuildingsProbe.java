@@ -32,7 +32,7 @@ import io.tileverse.storage.RangeReader;
 import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
 
-import io.tileverse.parquetry.dataset.Dataset;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.dataset.RowGroup;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -41,7 +41,7 @@ import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
  * Probe test: opens a real Overture Maps buildings GeoParquet file (ZSTD, ~11M rows, nested schema with structs / lists
- * / maps) and reads through the first row group via parquetry's {@code Dataset.open(...)} facade.
+ * / maps) and reads through the first row group via parquetry's {@code ParquetDataset.open(...)} facade.
  *
  * <p>Gated on the absolute file path - skips silently when the volume is not mounted. Intended for manual local
  * verification of end-to-end Parquet reading against a non-trivial, production-grade file, not as a regression test.
@@ -69,7 +69,7 @@ class OvertureBuildingsProbe {
         Path file = Path.of(OVERTURE_FILE);
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            Dataset dataset = Dataset.open(reader);
+            ParquetDataset dataset = ParquetDataset.open(reader);
             int leafCount = dataset.schema().leafColumns().size();
             long totalRows =
                     dataset.rowGroups().stream().mapToLong(RowGroup::rowCount).sum();
@@ -132,7 +132,7 @@ class OvertureBuildingsProbe {
         Path file = Path.of(OVERTURE_FILE);
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            Dataset dataset = Dataset.open(reader);
+            ParquetDataset dataset = ParquetDataset.open(reader);
 
             System.out.println();
             System.out.println("=== Overture buildings probe ===");

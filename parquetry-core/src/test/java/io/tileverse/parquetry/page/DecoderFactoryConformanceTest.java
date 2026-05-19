@@ -51,9 +51,9 @@ import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.schema.Field;
+import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
-import io.tileverse.parquetry.schema.Schema;
 import io.tileverse.parquetry.schema.SchemaBuilder;
 
 /**
@@ -87,7 +87,7 @@ class DecoderFactoryConformanceTest {
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
 
             FileMetaData footer = ParquetFormat.readFooter(reader);
-            Schema schema = SchemaBuilder.build(footer.schema());
+            ParquetSchema schema = SchemaBuilder.build(footer.schema());
 
             for (RowGroup rg : footer.rowGroups()) {
                 int colIndex = 0;
@@ -245,10 +245,10 @@ class DecoderFactoryConformanceTest {
     /**
      * Resolves the {@link Field} at the given path within the schema.
      *
-     * <p>Uses a depth-first walk rather than {@link Schema#find} because the conformance fixtures have flat schemas;
-     * nested paths still work because we traverse groups.
+     * <p>Uses a depth-first walk rather than {@link ParquetSchema#find} because the conformance fixtures have flat
+     * schemas; nested paths still work because we traverse groups.
      */
-    private static Field findLeafField(Schema schema, List<String> pathParts) {
+    private static Field findLeafField(ParquetSchema schema, List<String> pathParts) {
         Field current = schema.root();
         for (String part : pathParts) {
             if (!(current instanceof Field.Group g)) {

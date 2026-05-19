@@ -26,7 +26,7 @@ import io.tileverse.parquetry.format.SchemaElement;
 
 /**
  * Converts the depth-first flat {@code List<SchemaElement>} from
- * {@link io.tileverse.parquetry.format.FileMetaData#schema()} into the nested {@link Schema} tree.
+ * {@link io.tileverse.parquetry.format.FileMetaData#schema()} into the nested {@link ParquetSchema} tree.
  *
  * <p>The Parquet Thrift wire format stores the schema as a pre-order traversal of the tree: the first element is always
  * the root group, followed by its children recursively. Group elements carry {@code numChildren > 0}; primitive (leaf)
@@ -41,23 +41,23 @@ public final class SchemaBuilder {
     private SchemaBuilder() {}
 
     /**
-     * Builds a {@link Schema} from the depth-first flattened schema element list.
+     * Builds a {@link ParquetSchema} from the depth-first flattened schema element list.
      *
      * @param elements the flat list from {@link io.tileverse.parquetry.format.FileMetaData#schema()}
      * @return the reconstructed schema tree
      * @throws IllegalArgumentException if {@code elements} is empty or the root is not a group
      */
-    public static Schema build(List<SchemaElement> elements) {
+    public static ParquetSchema build(List<SchemaElement> elements) {
         if (elements.isEmpty()) {
-            throw new IllegalArgumentException("Schema elements list is empty");
+            throw new IllegalArgumentException("ParquetSchema elements list is empty");
         }
         Cursor cursor = new Cursor(elements, 0);
         Field rootField = consumeNext(cursor);
         if (!(rootField instanceof Field.Group rootGroup)) {
-            throw new IllegalArgumentException(
-                    "Schema root must be a group, got: " + rootField.getClass().getSimpleName());
+            throw new IllegalArgumentException("ParquetSchema root must be a group, got: "
+                    + rootField.getClass().getSimpleName());
         }
-        return new Schema(rootGroup);
+        return new ParquetSchema(rootGroup);
     }
 
     /**

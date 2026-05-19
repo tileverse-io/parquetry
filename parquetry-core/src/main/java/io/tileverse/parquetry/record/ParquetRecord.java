@@ -19,7 +19,7 @@ import java.util.List;
 
 import io.tileverse.parquetry.materializer.RowAccessor;
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.schema.Schema;
+import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
  * A single row of a Parquet result set, addressed by {@link ColumnPath}.
@@ -36,7 +36,7 @@ import io.tileverse.parquetry.schema.Schema;
 public sealed interface ParquetRecord permits DefaultParquetRecord {
 
     /** The projected schema this record was assembled against (not the full file schema). */
-    Schema schema();
+    ParquetSchema schema();
 
     /**
      * Returns the raw boxed value at {@code col}: a boxed primitive, a read-only {@code ByteBuffer} for binary/INT96,
@@ -100,9 +100,9 @@ public sealed interface ParquetRecord permits DefaultParquetRecord {
 
     /**
      * Builds the canonical {@link ParquetRecord} view over an assembled {@link RowAccessor}. Used by built-in
-     * materializers; user code typically obtains records through {@code Dataset.read}.
+     * materializers; user code typically obtains records through {@code ParquetDataset.read}.
      */
-    static ParquetRecord of(Schema projectedSchema, RowAccessor row) {
+    static ParquetRecord of(ParquetSchema projectedSchema, RowAccessor row) {
         return new DefaultParquetRecord(projectedSchema, row);
     }
 }

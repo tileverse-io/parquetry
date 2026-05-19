@@ -17,7 +17,7 @@ package io.tileverse.parquetry.filter;
 
 import java.util.List;
 
-import io.tileverse.parquetry.schema.Schema;
+import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
  * The result of running {@code FilterPipeline} without actually reading column data: which row groups were eliminated,
@@ -33,8 +33,8 @@ import io.tileverse.parquetry.schema.Schema;
  * @param estimatedBytesRead 0 in the v1 explain (no per-page byte tracking yet)
  */
 public record ExplainPlan(
-        Schema fileSchema,
-        Schema projectedSchema,
+        ParquetSchema fileSchema,
+        ParquetSchema projectedSchema,
         Predicate originalPredicate,
         Predicate normalizedPredicate,
         List<RowGroupPlan> rowGroups,

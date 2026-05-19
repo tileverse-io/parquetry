@@ -24,7 +24,7 @@ import io.tileverse.parquetry.filter.PruningDecision;
 import io.tileverse.io.ByteBufferPool;
 
 /**
- * Tunables for a single {@code Dataset.read()} call.
+ * Tunables for a single {@code ParquetDataset.read()} call.
  *
  * <p>Filter toggles default to ON; turn them off to bypass a tier (useful for measuring effectiveness or working around
  * a known-bad statistic). Concurrency knobs default to {@link ConcurrencyMode#AUTO}, prefetch window 2, and an

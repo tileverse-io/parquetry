@@ -49,9 +49,9 @@ import io.tileverse.parquetry.page.PlainInt32Decoder;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Field;
+import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
-import io.tileverse.parquetry.schema.Schema;
 
 import io.tileverse.io.ByteBufferPool;
 
@@ -75,7 +75,7 @@ class RowGroupReaderTest {
 
     @Test
     void syncAndFanOutProduceIdenticalRecords() {
-        Schema schema = threeColumnSchema();
+        ParquetSchema schema = threeColumnSchema();
         RowGroup rowGroup = threeColumnRowGroup();
         ByteBufferPool pool = freshPool();
 
@@ -91,7 +91,7 @@ class RowGroupReaderTest {
 
     @Test
     void fanOutForksOneSubtaskPerProjectedColumn() {
-        Schema schema = threeColumnSchema();
+        ParquetSchema schema = threeColumnSchema();
         RowGroup rowGroup = threeColumnRowGroup();
         ByteBufferPool pool = freshPool();
         AtomicInteger fetchCount = new AtomicInteger();
@@ -115,7 +115,7 @@ class RowGroupReaderTest {
 
     @Test
     void streamCloseReturnsEveryBorrowedBuffer() {
-        Schema schema = threeColumnSchema();
+        ParquetSchema schema = threeColumnSchema();
         RowGroup rowGroup = threeColumnRowGroup();
         ByteBufferPool pool = freshPool();
 
@@ -137,7 +137,7 @@ class RowGroupReaderTest {
 
     @Test
     void earlyStreamCloseStillReleasesBuffers() {
-        Schema schema = threeColumnSchema();
+        ParquetSchema schema = threeColumnSchema();
         RowGroup rowGroup = threeColumnRowGroup();
         ByteBufferPool pool = freshPool();
 
@@ -160,7 +160,7 @@ class RowGroupReaderTest {
 
     @Test
     void fetchFailurePropagatesAndReleasesAlreadyBorrowedBuffers() {
-        Schema schema = threeColumnSchema();
+        ParquetSchema schema = threeColumnSchema();
         RowGroup rowGroup = threeColumnRowGroup();
         ByteBufferPool pool = freshPool();
         AtomicInteger fetchCount = new AtomicInteger();
@@ -195,8 +195,8 @@ class RowGroupReaderTest {
 
     // --- fixtures ---
 
-    private static Schema threeColumnSchema() {
-        return new Schema(new Field.Group(
+    private static ParquetSchema threeColumnSchema() {
+        return new ParquetSchema(new Field.Group(
                 "root",
                 Repetition.REQUIRED,
                 List.of(
@@ -383,7 +383,7 @@ class RowGroupReaderTest {
     }
 
     private static List<ParquetRecord> readAllWithMode(
-            Schema schema, RowGroup rowGroup, ByteBufferPool pool, ConcurrencyMode mode) {
+            ParquetSchema schema, RowGroup rowGroup, ByteBufferPool pool, ConcurrencyMode mode) {
         RowGroupReader reader = new RowGroupReader(
                 schema, schema, rowGroup, readOptions(pool, mode), borrowingFetcher(pool), fixedRowsFactory());
         List<ParquetRecord> collected = new ArrayList<>();

@@ -28,7 +28,7 @@ import io.tileverse.parquetry.format.LogicalType;
 
 class SchemaTest {
 
-    private static final Schema FLAT = new Schema(new Field.Group(
+    private static final ParquetSchema FLAT = new ParquetSchema(new Field.Group(
             "root",
             Repetition.REQUIRED,
             List.of(
@@ -70,7 +70,7 @@ class SchemaTest {
 
     @Test
     void projectionDropsUnreferencedColumns() {
-        Schema projected = FLAT.project(Set.of(ColumnPath.of("year"), ColumnPath.of("geometry")));
+        ParquetSchema projected = FLAT.project(Set.of(ColumnPath.of("year"), ColumnPath.of("geometry")));
         assertThat(projected.leafColumns()).containsExactly(ColumnPath.of("year"), ColumnPath.of("geometry"));
     }
 

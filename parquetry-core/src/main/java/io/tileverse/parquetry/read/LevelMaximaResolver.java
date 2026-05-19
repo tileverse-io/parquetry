@@ -20,7 +20,7 @@ import java.util.Optional;
 
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Field;
-import io.tileverse.parquetry.schema.Schema;
+import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
  * Computes max repetition and definition levels for a leaf column by walking the file schema.
@@ -41,7 +41,7 @@ final class LevelMaximaResolver {
      *
      * @throws IllegalArgumentException if {@code path} cannot be resolved against the schema
      */
-    public static LevelMaxima resolve(Schema fileSchema, ColumnPath path) {
+    public static LevelMaxima resolve(ParquetSchema fileSchema, ColumnPath path) {
         Objects.requireNonNull(fileSchema, "fileSchema");
         Objects.requireNonNull(path, "path");
         int maxRep = 0;
@@ -53,7 +53,7 @@ final class LevelMaximaResolver {
             }
             Field child = findChildByName(group, part)
                     .orElseThrow(() -> new IllegalArgumentException(
-                            "Schema missing child '" + part + "' along path " + path.dot()));
+                            "ParquetSchema missing child '" + part + "' along path " + path.dot()));
             switch (child.repetition()) {
                 case REQUIRED -> {
                     // No contribution.

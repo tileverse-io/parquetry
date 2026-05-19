@@ -21,7 +21,7 @@ import io.tileverse.storage.RangeReader;
 
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.schema.Schema;
+import io.tileverse.parquetry.schema.ParquetSchema;
 
 import io.tileverse.io.ByteBufferPool;
 
@@ -30,10 +30,10 @@ import io.tileverse.io.ByteBufferPool;
  *
  * <p>The interface is functional so {@code RowGroupReader} tests can substitute a stub that returns a pre-built
  * {@link FetchedColumnChunk} backed by an in-memory pooled buffer, without inventing a Parquet write path. The
- * production implementation, obtained via {@link #real(RangeReader, Schema, ByteBufferPool)}, performs the actual range
- * read against {@code RangeReader} and decodes the (small) dictionary page eagerly. Data pages stay compressed inside
- * the returned chunk's pooled buffer and are decoded lazily by the column reader as it walks pages - the streaming
- * memory contract described in the package documentation.
+ * production implementation, obtained via {@link #real(RangeReader, ParquetSchema, ByteBufferPool)}, performs the
+ * actual range read against {@code RangeReader} and decodes the (small) dictionary page eagerly. Data pages stay
+ * compressed inside the returned chunk's pooled buffer and are decoded lazily by the column reader as it walks pages -
+ * the streaming memory contract described in the package documentation.
  *
  * <h2>Lifecycle</h2>
  *
@@ -61,7 +61,7 @@ public interface ColumnFetcher {
      * leaf's max rep/def levels against {@code fileSchema}. Data pages remain compressed in the pooled buffer until the
      * column reader walks them.
      */
-    static ColumnFetcher real(RangeReader reader, Schema fileSchema, ByteBufferPool pool) {
+    static ColumnFetcher real(RangeReader reader, ParquetSchema fileSchema, ByteBufferPool pool) {
         return new RealColumnFetcher(reader, fileSchema, pool);
     }
 }

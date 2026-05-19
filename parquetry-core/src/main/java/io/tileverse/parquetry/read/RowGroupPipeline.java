@@ -29,7 +29,7 @@ import io.tileverse.storage.RangeReader;
 
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.schema.Field;
-import io.tileverse.parquetry.schema.Schema;
+import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
  * Bounded background pipeline that fetches row group {@code N + k} while the consumer iterates {@code N}.
@@ -73,8 +73,8 @@ public final class RowGroupPipeline<T> implements AutoCloseable {
     private static final long PRODUCER_JOIN_TIMEOUT_MILLIS = 5_000L;
 
     private final RangeReader reader;
-    private final Schema fileSchema;
-    private final Schema projectedSchema;
+    private final ParquetSchema fileSchema;
+    private final ParquetSchema projectedSchema;
     private final List<RowGroupSurvivor> survivors;
     private final ReadOptions options;
     private final ColumnFetcher columnFetcher;
@@ -97,8 +97,8 @@ public final class RowGroupPipeline<T> implements AutoCloseable {
      */
     public RowGroupPipeline(
             RangeReader reader,
-            Schema fileSchema,
-            Schema projectedSchema,
+            ParquetSchema fileSchema,
+            ParquetSchema projectedSchema,
             List<RowGroupSurvivor> survivors,
             ReadOptions options,
             ColumnFetcher columnFetcher,
@@ -115,8 +115,8 @@ public final class RowGroupPipeline<T> implements AutoCloseable {
     @SuppressWarnings("java:S107") // Test-only ctor; mirrors the public 7-arg ctor plus one factory hook.
     RowGroupPipeline(
             RangeReader reader,
-            Schema fileSchema,
-            Schema projectedSchema,
+            ParquetSchema fileSchema,
+            ParquetSchema projectedSchema,
             List<RowGroupSurvivor> survivors,
             ReadOptions options,
             ColumnFetcher columnFetcher,

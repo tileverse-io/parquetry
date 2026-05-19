@@ -16,7 +16,7 @@
 package io.tileverse.parquetry.format;
 
 /**
- * Schema-field repetition kind; mirror of {@code FieldRepetitionType} in {@code parquet.thrift}.
+ * Repetition kind of a schema field; mirror of {@code FieldRepetitionType} in {@code parquet.thrift}.
  *
  * <p>Carried by {@link SchemaElement#repetitionType()}. {@link #REQUIRED} fields are always present, {@link #OPTIONAL}
  * fields may be null, and {@link #REPEATED} fields encode the list-like (zero-or-more) shape that Parquet's repetition

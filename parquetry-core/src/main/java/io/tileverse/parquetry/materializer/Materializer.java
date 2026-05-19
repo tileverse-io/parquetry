@@ -16,7 +16,7 @@
 package io.tileverse.parquetry.materializer;
 
 import io.tileverse.parquetry.record.ParquetRecord;
-import io.tileverse.parquetry.schema.Schema;
+import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
  * Strategy that turns an assembled {@link RowAccessor} into the caller's preferred row type.
@@ -31,7 +31,7 @@ import io.tileverse.parquetry.schema.Schema;
 public interface Materializer<T> {
 
     /** Builds one value of {@code T} from a row already assembled against {@code projectedSchema}. */
-    T materialize(Schema projectedSchema, RowAccessor row);
+    T materialize(ParquetSchema projectedSchema, RowAccessor row);
 
     /** The canonical built-in: produces a lazy {@link ParquetRecord} backed directly by the row accessor. */
     static Materializer<ParquetRecord> defaultRecord() {

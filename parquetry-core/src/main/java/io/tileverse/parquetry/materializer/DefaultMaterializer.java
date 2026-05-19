@@ -16,7 +16,7 @@
 package io.tileverse.parquetry.materializer;
 
 import io.tileverse.parquetry.record.ParquetRecord;
-import io.tileverse.parquetry.schema.Schema;
+import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
  * Built-in {@link Materializer} that wraps each row in the canonical {@link ParquetRecord}.
@@ -33,7 +33,7 @@ final class DefaultMaterializer implements Materializer<ParquetRecord> {
     private DefaultMaterializer() {}
 
     @Override
-    public ParquetRecord materialize(Schema projectedSchema, RowAccessor row) {
+    public ParquetRecord materialize(ParquetSchema projectedSchema, RowAccessor row) {
         return ParquetRecord.of(projectedSchema, row);
     }
 }

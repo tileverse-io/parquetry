@@ -26,6 +26,7 @@
     <module>parquetry-core</module>
     <module>parquetry-encryption</module>
     <module>parquetry-variant</module>
+    <module>parquetry-geo-jts</module>
   </modules>
 
   <properties>
@@ -43,6 +44,7 @@
     <junit.version>5.11.3</junit.version>
     <assertj.version>3.26.3</assertj.version>
     <testcontainers.version>1.21.4</testcontainers.version>
+    <jts.version>1.20.0</jts.version>
     <parquet-avro.version>1.14.3</parquet-avro.version>
 
     <spotless.version>3.5.1</spotless.version>

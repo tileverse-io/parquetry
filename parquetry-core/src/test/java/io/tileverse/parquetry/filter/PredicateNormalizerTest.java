@@ -27,10 +27,10 @@ import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Field;
+import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.ParquetSchemaException;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
-import io.tileverse.parquetry.schema.Schema;
 
 class PredicateNormalizerTest {
 
@@ -150,14 +150,14 @@ class PredicateNormalizerTest {
 
     @Test
     void validateAcceptsCompatiblePredicate() {
-        Schema schema = flatSchema();
+        ParquetSchema schema = flatSchema();
         Predicate p = col("year").eq(2020).and(col("country").eq("AR"));
         PredicateNormalizer.validate(p, schema);
     }
 
     @Test
     void validateRejectsMissingColumn() {
-        Schema schema = flatSchema();
+        ParquetSchema schema = flatSchema();
         Predicate p = col("missing").eq(1);
         assertThatThrownBy(() -> PredicateNormalizer.validate(p, schema))
                 .isInstanceOf(ParquetSchemaException.class)
@@ -166,7 +166,7 @@ class PredicateNormalizerTest {
 
     @Test
     void validateRejectsTypeMismatch() {
-        Schema schema = flatSchema();
+        ParquetSchema schema = flatSchema();
         Predicate p = col("year").eq("not-an-int");
         assertThatThrownBy(() -> PredicateNormalizer.validate(p, schema))
                 .isInstanceOf(ParquetSchemaException.class)
@@ -175,7 +175,7 @@ class PredicateNormalizerTest {
 
     @Test
     void validateRejectsGroupReference() {
-        Schema schema = nestedSchema();
+        ParquetSchema schema = nestedSchema();
         Predicate p = col("addr").isNotNull();
         assertThatThrownBy(() -> PredicateNormalizer.validate(p, schema))
                 .isInstanceOf(ParquetSchemaException.class)
@@ -184,13 +184,13 @@ class PredicateNormalizerTest {
 
     @Test
     void validateAcceptsNestedColumnReference() {
-        Schema schema = nestedSchema();
+        ParquetSchema schema = nestedSchema();
         PredicateNormalizer.validate(col("addr", "city").eq("Buenos Aires"), schema);
     }
 
     @Test
     void validateRejectsBboxOnNonBinaryColumn() {
-        Schema schema = flatSchema();
+        ParquetSchema schema = flatSchema();
         Predicate p = col("year").intersects(Bbox.of2d(0, 0, 1, 1));
         assertThatThrownBy(() -> PredicateNormalizer.validate(p, schema))
                 .isInstanceOf(ParquetSchemaException.class)
@@ -199,24 +199,24 @@ class PredicateNormalizerTest {
 
     @Test
     void validateRejectsInWithIncompatibleValue() {
-        Schema schema = flatSchema();
+        ParquetSchema schema = flatSchema();
         Predicate.In bad =
                 new Predicate.In(ColumnPath.of("year"), List.of(new Value.IntVal(1), new Value.StringVal("oops")));
         assertThatThrownBy(() -> PredicateNormalizer.validate(bad, schema)).isInstanceOf(ParquetSchemaException.class);
     }
 
-    private static Schema flatSchema() {
+    private static ParquetSchema flatSchema() {
         Field.Primitive year = primitive("year", PrimitiveKind.INT32);
         Field.Primitive country = primitive("country", PrimitiveKind.BYTE_ARRAY);
         Field.Group root = new Field.Group("root", Repetition.REQUIRED, List.of(year, country), Optional.empty(), -1);
-        return new Schema(root);
+        return new ParquetSchema(root);
     }
 
-    private static Schema nestedSchema() {
+    private static ParquetSchema nestedSchema() {
         Field.Primitive city = primitive("city", PrimitiveKind.BYTE_ARRAY);
         Field.Group addr = new Field.Group("addr", Repetition.OPTIONAL, List.of(city), Optional.empty(), -1);
         Field.Group root = new Field.Group("root", Repetition.REQUIRED, List.of(addr), Optional.empty(), -1);
-        return new Schema(root);
+        return new ParquetSchema(root);
     }
 
     private static Field.Primitive primitive(String name, PrimitiveKind kind) {

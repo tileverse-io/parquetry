@@ -41,7 +41,7 @@ import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.materializer.RowAccessor;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Field;
-import io.tileverse.parquetry.schema.Schema;
+import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
  * Reads one Parquet row group end-to-end: fan out one compressed-chunk fetch per projected column, wire each result
@@ -67,7 +67,7 @@ import io.tileverse.parquetry.schema.Schema;
  *       chunks already fetched are closed before the {@link UncheckedIOException} propagates. {@code FULL} additionally
  *       enables row-group prefetch in the outer pipeline; here in the row-group reader the two modes are
  *       indistinguishable.
- *   <li>{@link ConcurrencyMode#AUTO} - {@code Dataset.open} is expected to resolve this to a concrete mode from
+ *   <li>{@link ConcurrencyMode#AUTO} - {@code ParquetDataset.open} is expected to resolve this to a concrete mode from
  *       {@code RangeReader.localityHint()}; if it reaches us we conservatively treat it as fan-out (the cloud-read
  *       default).
  * </ul>
@@ -83,8 +83,8 @@ import io.tileverse.parquetry.schema.Schema;
  */
 final class RowGroupReader implements AutoCloseable {
 
-    private final Schema fileSchema;
-    private final Schema projectedSchema;
+    private final ParquetSchema fileSchema;
+    private final ParquetSchema projectedSchema;
     private final RowGroup rowGroup;
     private final ReadOptions options;
     private final ColumnFetcher columnFetcher;
@@ -103,8 +103,8 @@ final class RowGroupReader implements AutoCloseable {
      */
     public RowGroupReader(
             RangeReader reader,
-            Schema fileSchema,
-            Schema projectedSchema,
+            ParquetSchema fileSchema,
+            ParquetSchema projectedSchema,
             RowGroup rowGroup,
             ReadOptions options,
             ColumnFetcher columnFetcher) {
@@ -125,8 +125,8 @@ final class RowGroupReader implements AutoCloseable {
      * return a fully positioned {@link ColumnReader} for the chunk's rows.
      */
     RowGroupReader(
-            Schema fileSchema,
-            Schema projectedSchema,
+            ParquetSchema fileSchema,
+            ParquetSchema projectedSchema,
             RowGroup rowGroup,
             ReadOptions options,
             ColumnFetcher columnFetcher,
@@ -252,7 +252,7 @@ final class RowGroupReader implements AutoCloseable {
     /**
      * Whether the given mode wants per-column virtual-thread fan-out inside a single row group. {@code PREFETCH_ONLY}
      * groups with {@code SYNC} here because its parallelism is row-group prefetch in the outer pipeline, not column
-     * fan-out inside one row group. {@code AUTO} should have been resolved by {@code Dataset.open} from the
+     * fan-out inside one row group. {@code AUTO} should have been resolved by {@code ParquetDataset.open} from the
      * {@code RangeReader} locality hint; if it leaks through to us we conservatively assume cloud (fan-out).
      */
     private static boolean fansOutColumns(ConcurrencyMode mode) {
@@ -440,9 +440,9 @@ final class RowGroupReader implements AutoCloseable {
 
         private final RecordAssembler assembler;
         private final Materializer<T> materializer;
-        private final Schema projectedSchema;
+        private final ParquetSchema projectedSchema;
 
-        AssemblerIterator(RecordAssembler assembler, Materializer<T> materializer, Schema projectedSchema) {
+        AssemblerIterator(RecordAssembler assembler, Materializer<T> materializer, ParquetSchema projectedSchema) {
             this.assembler = assembler;
             this.materializer = materializer;
             this.projectedSchema = projectedSchema;

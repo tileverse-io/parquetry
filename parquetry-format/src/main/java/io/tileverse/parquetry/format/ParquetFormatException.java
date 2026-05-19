@@ -22,7 +22,7 @@ import java.util.OptionalLong;
  * byte offset and the name of the field being parsed so operators can locate the corruption.
  *
  * <p>Unchecked because file-format errors typically surface mid-iteration through the {@code Stream<ParquetRecord>}
- * returned by {@code Dataset.read()}, where checked exceptions can't propagate without lossy wrapping.
+ * returned by {@code ParquetDataset.read()}, where checked exceptions can't propagate without lossy wrapping.
  */
 public class ParquetFormatException extends RuntimeException {
 

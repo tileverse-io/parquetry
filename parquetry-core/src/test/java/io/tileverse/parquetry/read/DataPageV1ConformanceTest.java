@@ -40,7 +40,7 @@ import io.tileverse.storage.RangeReader;
 import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
 
-import io.tileverse.parquetry.dataset.Dataset;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -50,7 +50,7 @@ import io.tileverse.io.ByteBufferPool;
 
 /**
  * V1 fixture conformance: reads each committed {@code parquet-avro 1.x} fixture under
- * {@code src/test/resources/v1-fixtures/} through the parquetry pipeline (Dataset.open -> RowGroupPipeline ->
+ * {@code src/test/resources/v1-fixtures/} through the parquetry pipeline (ParquetDataset.open -> RowGroupPipeline ->
  * DataPageV1Reader) and asserts every record matches the parquet-avro oracle reading the same bytes. Mirrors the
  * structure of {@link EndToEndV2ReadTest} but consumes pre-built fixtures so the test is deterministic across
  * parquet-avro version bumps.
@@ -164,7 +164,7 @@ class DataPageV1ConformanceTest {
         try (Storage storage = StorageFactory.open(fixture.getParent().toUri());
                 RangeReader reader =
                         storage.openRangeReader(fixture.getFileName().toString())) {
-            Dataset dataset = Dataset.open(reader);
+            ParquetDataset dataset = ParquetDataset.open(reader);
             ReadOptions options = ReadOptions.builder().byteBufferPool(pool).build();
             try (Stream<ParquetRecord> records = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
                 return records.toList();

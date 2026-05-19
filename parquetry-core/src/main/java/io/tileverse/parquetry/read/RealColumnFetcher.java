@@ -39,8 +39,8 @@ import io.tileverse.parquetry.page.Dictionary;
 import io.tileverse.parquetry.page.DictionaryDecoder;
 import io.tileverse.parquetry.read.LevelMaximaResolver.LevelMaxima;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
-import io.tileverse.parquetry.schema.Schema;
 
 import io.tileverse.io.ByteBufferPool;
 import io.tileverse.io.ByteBufferPool.PooledByteBuffer;
@@ -67,10 +67,10 @@ import io.tileverse.io.ByteBufferPool.PooledByteBuffer;
 final class RealColumnFetcher implements ColumnFetcher {
 
     private final RangeReader rangeReader;
-    private final Schema fileSchema;
+    private final ParquetSchema fileSchema;
     private final ByteBufferPool pool;
 
-    public RealColumnFetcher(RangeReader rangeReader, Schema fileSchema, ByteBufferPool pool) {
+    public RealColumnFetcher(RangeReader rangeReader, ParquetSchema fileSchema, ByteBufferPool pool) {
         this.rangeReader = Objects.requireNonNull(rangeReader, "rangeReader");
         this.fileSchema = Objects.requireNonNull(fileSchema, "fileSchema");
         this.pool = Objects.requireNonNull(pool, "pool");

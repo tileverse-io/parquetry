@@ -25,8 +25,8 @@ import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.Statistics;
 import io.tileverse.parquetry.page.Dictionary;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
-import io.tileverse.parquetry.schema.Schema;
 
 /**
  * The a-priori filter pipeline: given a normalized predicate and per-row-group lookups for stats, dictionaries, and
@@ -97,9 +97,12 @@ public final class FilterPipeline {
      * @param rowGroups one {@link RowGroupInputs} per row group in the file, in file order
      */
     public static ExplainPlan evaluate(
-            Schema fileSchema, Projection projection, Predicate originalPredicate, List<RowGroupInputs> rowGroups) {
+            ParquetSchema fileSchema,
+            Projection projection,
+            Predicate originalPredicate,
+            List<RowGroupInputs> rowGroups) {
         Predicate normalized = PredicateNormalizer.normalizeAndValidate(originalPredicate, fileSchema);
-        Schema projectedSchema = projectionOf(fileSchema, projection);
+        ParquetSchema projectedSchema = projectionOf(fileSchema, projection);
         List<RowGroupPlan> plans = new ArrayList<>(rowGroups.size());
         long rowsScanned = 0;
         for (int i = 0; i < rowGroups.size(); i++) {
@@ -152,7 +155,7 @@ public final class FilterPipeline {
         };
     }
 
-    private static Schema projectionOf(Schema fileSchema, Projection projection) {
+    private static ParquetSchema projectionOf(ParquetSchema fileSchema, Projection projection) {
         return switch (projection) {
             case Projection.All _ -> fileSchema;
             case Projection.Columns(var kept) -> fileSchema.project(kept);

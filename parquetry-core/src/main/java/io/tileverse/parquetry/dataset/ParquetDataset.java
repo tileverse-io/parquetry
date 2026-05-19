@@ -27,15 +27,15 @@ import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.read.ReadOptions;
 import io.tileverse.parquetry.record.ParquetRecord;
-import io.tileverse.parquetry.schema.Schema;
+import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
  * Public facade for reading a Parquet file (or, in a future release, a partitioned multi-file fileset).
  *
- * <p>A {@code Dataset} instance is the entry point to the parquetry read pipeline. It caches the file's footer and
- * schema once at {@link #open(RangeReader) open} time; every {@link #read read} call constructs fresh column readers,
- * filter pipeline state, and a single-use {@link io.tileverse.parquetry.read.RowGroupPipeline}, so a single
- * {@code Dataset} is safe for concurrent reads from multiple threads.
+ * <p>A {@code ParquetDataset} instance is the entry point to the parquetry read pipeline. It caches the file's footer
+ * and schema once at {@link #open(RangeReader) open} time; every {@link #read read} call constructs fresh column
+ * readers, filter pipeline state, and a single-use {@link io.tileverse.parquetry.read.RowGroupPipeline}, so a single
+ * {@code ParquetDataset} is safe for concurrent reads from multiple threads.
  *
  * <p>The default {@link #read()} overload reads every record through the canonical {@link ParquetRecord} materializer
  * with no predicate or projection. The expressive overloads expose predicate push-down (via the 5-tier filter
@@ -54,10 +54,10 @@ import io.tileverse.parquetry.schema.Schema;
  * module's internal API. Callers needing the unfiltered thrift footer can call
  * {@link io.tileverse.parquetry.format.ParquetFormat#readFooter ParquetFormat.readFooter} directly.
  */
-public sealed interface Dataset permits FileDataset, MultiFileDataset {
+public sealed interface ParquetDataset permits FileDataset, MultiFileDataset {
 
     /** Returns the file's schema as decoded at {@link #open(RangeReader) open} time. */
-    Schema schema();
+    ParquetSchema schema();
 
     /**
      * Returns the file-level key/value metadata, with duplicates collapsed (later keys win). Values absent in the
@@ -97,18 +97,18 @@ public sealed interface Dataset permits FileDataset, MultiFileDataset {
     ExplainPlan explain(Predicate predicate, Projection projection, ReadOptions options);
 
     /**
-     * Opens a {@code Dataset} over the file backed by {@code reader}. Reads the footer (one round trip) and decodes the
-     * schema; subsequent {@code read} calls reuse both.
+     * Opens a {@code ParquetDataset} over the file backed by {@code reader}. Reads the footer (one round trip) and
+     * decodes the schema; subsequent {@code read} calls reuse both.
      *
-     * <p>The returned {@code Dataset} does <em>not</em> own the {@code RangeReader} - the caller retains responsibility
-     * for closing it after the last {@code read(...)} stream has been closed. This matches the contract every other
-     * parquetry-core reader follows.
+     * <p>The returned {@code ParquetDataset} does <em>not</em> own the {@code RangeReader} - the caller retains
+     * responsibility for closing it after the last {@code read(...)} stream has been closed. This matches the contract
+     * every other parquetry-core reader follows.
      *
      * @throws io.tileverse.parquetry.format.ParquetFormatException if the bytes at the file's footer don't conform to
      *     the Parquet / Thrift spec (bad magic, encrypted file, invalid footer length, malformed metadata, etc.)
      * @throws java.io.UncheckedIOException if the underlying {@link RangeReader} fails to deliver the bytes
      */
-    static Dataset open(RangeReader reader) {
+    static ParquetDataset open(RangeReader reader) {
         return FileDataset.open(reader);
     }
 }

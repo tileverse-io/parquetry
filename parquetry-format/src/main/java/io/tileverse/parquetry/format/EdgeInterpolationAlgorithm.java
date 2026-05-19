@@ -16,8 +16,8 @@
 package io.tileverse.parquetry.format;
 
 /**
- * Edge interpolation algorithm for {@link GeographyType} columns; mirror of {@code EdgeInterpolationAlgorithm} in
- * {@code parquet.thrift}.
+ * Edge interpolation algorithm for {@link LogicalType.Geography} columns; mirror of {@code EdgeInterpolationAlgorithm}
+ * in {@code parquet.thrift}.
  *
  * <p>Selects how to interpolate a geodesic edge between two vertices. {@link #SPHERICAL} treats the Earth as a sphere;
  * the others are progressively more accurate ellipsoidal models.
