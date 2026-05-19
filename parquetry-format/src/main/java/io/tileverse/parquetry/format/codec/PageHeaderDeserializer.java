@@ -24,7 +24,7 @@ import io.tileverse.parquetry.format.DataPageHeaderV2;
 import io.tileverse.parquetry.format.DictionaryPageHeader;
 import io.tileverse.parquetry.format.IndexPageHeader;
 import io.tileverse.parquetry.format.PageHeader;
-import io.tileverse.parquetry.format.enums.PageType;
+import io.tileverse.parquetry.format.PageType;
 
 /**
  * Deserializer for the Thrift {@code PageHeader} struct.

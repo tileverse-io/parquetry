@@ -17,7 +17,7 @@ package io.tileverse.parquetry.codec;
 
 import java.lang.foreign.MemorySegment;
 
-import io.tileverse.parquetry.format.enums.CompressionCodec;
+import io.tileverse.parquetry.format.CompressionCodec;
 
 import io.airlift.compress.v3.lz4.Lz4Decompressor;
 

@@ -17,7 +17,5 @@ package io.tileverse.parquetry.format;
 
 import java.util.Optional;
 
-import io.tileverse.parquetry.format.enums.EdgeInterpolationAlgorithm;
-
 /** Stub. Real fields: crs (string), algorithm (EdgeInterpolationAlgorithm). */
 public record GeometryType(Optional<String> crs, Optional<EdgeInterpolationAlgorithm> algorithm) {}

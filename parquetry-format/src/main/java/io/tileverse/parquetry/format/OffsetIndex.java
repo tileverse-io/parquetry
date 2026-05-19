@@ -18,6 +18,17 @@ package io.tileverse.parquetry.format;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * Per-page byte offsets for one column chunk; mirror of {@code OffsetIndex} in {@code parquet.thrift}.
+ *
+ * <p>One {@link PageLocation} per data page, parallel to {@link ColumnIndex}. A reader can seek straight to a given
+ * page without walking page headers. Stored at {@link ColumnChunk#offsetIndexOffset()}.
+ *
+ * @param pageLocations {@link PageLocation} per data page, ordered by ascending {@link PageLocation#offset()}
+ * @param unencodedByteArrayDataBytes per-page unencoded/uncompressed byte size for {@code BYTE_ARRAY} columns; empty
+ *     when not recorded ({@code unencoded_byte_array_data_bytes} in the thrift schema)
+ * @see ParquetFormat#readOffsetIndex(io.tileverse.storage.RangeReader, long, int)
+ */
 public record OffsetIndex(List<PageLocation> pageLocations, Optional<List<Long>> unencodedByteArrayDataBytes) {
 
     public OffsetIndex {

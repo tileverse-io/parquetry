@@ -13,15 +13,33 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.format.enums;
+package io.tileverse.parquetry.format;
 
 /**
- * Logical page type discriminator. Not a Thrift enum on its own; derived from {@code PageHeader.type}. Reproduced here
- * for type-safety in our records.
+ * Deprecated Parquet "converted type" enum; superseded by {@link LogicalType} but still emitted by older writers, so
+ * readers must decode it for backward compatibility.
  */
-public enum PageType {
-    DATA_PAGE,
-    INDEX_PAGE,
-    DICTIONARY_PAGE,
-    DATA_PAGE_V2
+public enum ConvertedType {
+    UTF8,
+    MAP,
+    MAP_KEY_VALUE,
+    LIST,
+    ENUM,
+    DECIMAL,
+    DATE,
+    TIME_MILLIS,
+    TIME_MICROS,
+    TIMESTAMP_MILLIS,
+    TIMESTAMP_MICROS,
+    UINT_8,
+    UINT_16,
+    UINT_32,
+    UINT_64,
+    INT_8,
+    INT_16,
+    INT_32,
+    INT_64,
+    JSON,
+    BSON,
+    INTERVAL
 }

@@ -43,13 +43,13 @@ import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.DataPageHeader;
 import io.tileverse.parquetry.format.DataPageHeaderV2;
+import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.PageHeader;
+import io.tileverse.parquetry.format.PageType;
 import io.tileverse.parquetry.format.ParquetFormat;
+import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.RowGroup;
-import io.tileverse.parquetry.format.enums.Encoding;
-import io.tileverse.parquetry.format.enums.PageType;
-import io.tileverse.parquetry.format.enums.Type;
 import io.tileverse.parquetry.schema.Field;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
@@ -269,7 +269,7 @@ class DecoderFactoryConformanceTest {
         return current;
     }
 
-    private static PrimitiveKind primitiveKindOf(Type type) {
+    private static PrimitiveKind primitiveKindOf(PhysicalType type) {
         return switch (type) {
             case BOOLEAN -> PrimitiveKind.BOOLEAN;
             case INT32 -> PrimitiveKind.INT32;

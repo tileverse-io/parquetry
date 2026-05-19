@@ -40,10 +40,10 @@ import io.tileverse.storage.RangeReader;
 
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
+import io.tileverse.parquetry.format.CompressionCodec;
+import io.tileverse.parquetry.format.Encoding;
+import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.RowGroup;
-import io.tileverse.parquetry.format.enums.CompressionCodec;
-import io.tileverse.parquetry.format.enums.Encoding;
-import io.tileverse.parquetry.format.enums.Type;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.page.LevelDecoder;
 import io.tileverse.parquetry.page.PlainInt32Decoder;
@@ -330,7 +330,7 @@ class RowGroupPipelineTest {
      */
     private static RowGroup singleColumnRowGroup(int ordinal) {
         ColumnMetaData meta = new ColumnMetaData(
-                Type.INT32,
+                PhysicalType.INT32,
                 List.of(Encoding.PLAIN),
                 List.of("value"),
                 CompressionCodec.UNCOMPRESSED,

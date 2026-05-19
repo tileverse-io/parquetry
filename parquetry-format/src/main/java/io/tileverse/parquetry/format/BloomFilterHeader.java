@@ -15,6 +15,12 @@
  */
 package io.tileverse.parquetry.format;
 
-/** Stub. Real fields: numBytes (i32), algorithm, hash, compression. */
+/**
+ * Header that precedes a column chunk's bloom-filter bitset; mirror of {@code BloomFilterHeader} in
+ * {@code parquet.thrift}.
+ *
+ * <p>Located at {@link ColumnMetaData#bloomFilterOffset()} within the file. Empty placeholder; the real fields will be
+ * {@code numBytes}, {@code algorithm}, {@code hash}, and {@code compression}.
+ */
 @SuppressWarnings("java:S2094")
 public record BloomFilterHeader() {}

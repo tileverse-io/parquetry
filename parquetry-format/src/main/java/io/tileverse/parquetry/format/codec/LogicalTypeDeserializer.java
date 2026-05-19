@@ -17,7 +17,7 @@ package io.tileverse.parquetry.format.codec;
 
 import java.io.IOException;
 
-import io.tileverse.parquetry.format.logical.LogicalType;
+import io.tileverse.parquetry.format.LogicalType;
 
 /**
  * Deserializer for the Thrift {@code LogicalType} union.

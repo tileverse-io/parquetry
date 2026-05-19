@@ -26,11 +26,11 @@ import java.util.OptionalInt;
 
 import io.tileverse.parquetry.codec.Codec;
 import io.tileverse.parquetry.codec.CodecRegistry;
+import io.tileverse.parquetry.format.CompressionCodec;
 import io.tileverse.parquetry.format.PageHeader;
+import io.tileverse.parquetry.format.PageType;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.ParquetFormatException;
-import io.tileverse.parquetry.format.enums.CompressionCodec;
-import io.tileverse.parquetry.format.enums.PageType;
 import io.tileverse.parquetry.page.DecoderFactory;
 import io.tileverse.parquetry.page.Dictionary;
 import io.tileverse.parquetry.page.LevelDecoder;

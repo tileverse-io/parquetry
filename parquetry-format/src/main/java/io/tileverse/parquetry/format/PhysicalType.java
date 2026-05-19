@@ -13,15 +13,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.format.enums;
+package io.tileverse.parquetry.format;
 
-public enum CompressionCodec {
-    UNCOMPRESSED,
-    SNAPPY,
-    GZIP,
-    LZO,
-    BROTLI,
-    LZ4,
-    ZSTD,
-    LZ4_RAW
+/**
+ * On-disk storage type for a leaf column; mirror of {@code Type} in {@code parquet.thrift}.
+ *
+ * <p>The "physical" qualifier distinguishes this from {@link LogicalType}, which annotates a {@link PhysicalType} with
+ * higher-level semantics (date, decimal, UUID, geography, etc.). {@link #INT96} is deprecated and only emitted for
+ * legacy timestamp interop.
+ */
+public enum PhysicalType {
+    BOOLEAN,
+    INT32,
+    INT64,
+    INT96,
+    FLOAT,
+    DOUBLE,
+    BYTE_ARRAY,
+    FIXED_LEN_BYTE_ARRAY
 }

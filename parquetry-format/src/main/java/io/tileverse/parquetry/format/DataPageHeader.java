@@ -17,8 +17,21 @@ package io.tileverse.parquetry.format;
 
 import java.util.Optional;
 
-import io.tileverse.parquetry.format.enums.Encoding;
-
+/**
+ * V1 data page header; mirror of {@code DataPageHeader} in {@code parquet.thrift}.
+ *
+ * <p>Carried by {@link PageHeader#dataPageHeader()}. Declares the page's value count, the value-{@link Encoding} and
+ * the separate encodings used for definition and repetition levels (RLE/BIT_PACKED in practice), plus optional inline
+ * {@link Statistics}.
+ *
+ * @param numValues number of values in this page, including nulls
+ * @param encoding {@link Encoding} used for the value bytes of this page
+ * @param definitionLevelEncoding {@link Encoding} used for definition levels (typically {@code RLE} or
+ *     {@code BIT_PACKED})
+ * @param repetitionLevelEncoding {@link Encoding} used for repetition levels (typically {@code RLE} or
+ *     {@code BIT_PACKED})
+ * @param statistics optional inline {@link Statistics} for this page's values; empty when not written
+ */
 public record DataPageHeader(
         int numValues,
         Encoding encoding,

@@ -19,8 +19,29 @@ import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Optional;
 
-import io.tileverse.parquetry.format.enums.BoundaryOrder;
-
+/**
+ * Per-page min/max statistics for one column chunk; mirror of {@code ColumnIndex} in {@code parquet.thrift}.
+ *
+ * <p>One entry per data page, parallel to {@link OffsetIndex}. {@link #nullPages()} flags pages that contain only
+ * nulls; {@link #minValues()} and {@link #maxValues()} hold the typed bounds in physical encoding. When
+ * {@link #boundaryOrder()} is {@link BoundaryOrder#ASCENDING} or {@link BoundaryOrder#DESCENDING}, a reader can
+ * binary-search the bounds instead of scanning every page. Stored at {@link ColumnChunk#columnIndexOffset()}.
+ *
+ * @param nullPages per-page flags; {@code true} indicates the page contains only null values, so its min/max entries
+ *     are meaningless placeholders
+ * @param minValues per-page lower bound for non-null values, in the column's physical encoding ({@code min_values} in
+ *     the thrift schema)
+ * @param maxValues per-page upper bound for non-null values, in the column's physical encoding ({@code max_values} in
+ *     the thrift schema)
+ * @param boundaryOrder declares whether {@link #minValues()} and {@link #maxValues()} are both monotonically ordered
+ *     across pages, enabling binary search
+ * @param nullCounts per-page null value count; empty when the writer chose not to record null counts
+ * @param repetitionLevelHistograms repetition-level histograms for every page, concatenated in page order
+ *     ({@code repetition_level_histograms} in the thrift schema)
+ * @param definitionLevelHistograms definition-level histograms for every page, concatenated in page order
+ *     ({@code definition_level_histograms} in the thrift schema)
+ * @see ParquetFormat#readColumnIndex(io.tileverse.storage.RangeReader, long, int)
+ */
 public record ColumnIndex(
         List<Boolean> nullPages,
         List<ByteBuffer> minValues,

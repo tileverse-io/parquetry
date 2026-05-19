@@ -17,7 +17,7 @@ package io.tileverse.parquetry.codec;
 
 import java.lang.foreign.MemorySegment;
 
-import io.tileverse.parquetry.format.enums.CompressionCodec;
+import io.tileverse.parquetry.format.CompressionCodec;
 
 public final class UncompressedCodec implements Codec {
 

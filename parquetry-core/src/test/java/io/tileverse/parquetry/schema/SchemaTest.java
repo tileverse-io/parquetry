@@ -24,7 +24,7 @@ import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.format.logical.LogicalType;
+import io.tileverse.parquetry.format.LogicalType;
 
 class SchemaTest {
 

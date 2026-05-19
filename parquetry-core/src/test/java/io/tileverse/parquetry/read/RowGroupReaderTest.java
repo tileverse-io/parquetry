@@ -37,10 +37,10 @@ import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
+import io.tileverse.parquetry.format.CompressionCodec;
+import io.tileverse.parquetry.format.Encoding;
+import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.RowGroup;
-import io.tileverse.parquetry.format.enums.CompressionCodec;
-import io.tileverse.parquetry.format.enums.Encoding;
-import io.tileverse.parquetry.format.enums.Type;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.page.LevelDecoder;
 import io.tileverse.parquetry.page.PlainBinaryDecoder;
@@ -226,9 +226,9 @@ class RowGroupReaderTest {
     }
 
     private static RowGroup threeColumnRowGroup() {
-        ColumnMetaData yearMeta = primitiveMetadata(Type.INT32, List.of("year"), ROW_COUNT);
-        ColumnMetaData countryMeta = primitiveMetadata(Type.BYTE_ARRAY, List.of("country"), ROW_COUNT);
-        ColumnMetaData valueMeta = primitiveMetadata(Type.DOUBLE, List.of("value"), ROW_COUNT);
+        ColumnMetaData yearMeta = primitiveMetadata(PhysicalType.INT32, List.of("year"), ROW_COUNT);
+        ColumnMetaData countryMeta = primitiveMetadata(PhysicalType.BYTE_ARRAY, List.of("country"), ROW_COUNT);
+        ColumnMetaData valueMeta = primitiveMetadata(PhysicalType.DOUBLE, List.of("value"), ROW_COUNT);
         List<ColumnChunk> columns = List.of(
                 columnChunk(yearMeta, /*fileOffset*/ 0L),
                 columnChunk(countryMeta, /*fileOffset*/ 100L),
@@ -256,7 +256,7 @@ class RowGroupReaderTest {
                 /*encryptedColumnMetadata*/ Optional.empty());
     }
 
-    private static ColumnMetaData primitiveMetadata(Type type, List<String> pathInSchema, long numValues) {
+    private static ColumnMetaData primitiveMetadata(PhysicalType type, List<String> pathInSchema, long numValues) {
         return new ColumnMetaData(
                 type,
                 /*encodings*/ List.of(Encoding.PLAIN),

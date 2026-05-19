@@ -19,7 +19,7 @@ import java.io.IOException;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 
-import io.tileverse.parquetry.format.enums.CompressionCodec;
+import io.tileverse.parquetry.format.CompressionCodec;
 
 /**
  * Codec SPI for Parquet compression algorithms.

@@ -13,33 +13,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.format.enums;
+package io.tileverse.parquetry.format;
 
 /**
- * Deprecated Parquet "converted type" enum; superseded by {@link io.tileverse.parquetry.format.logical.LogicalType} but
- * still emitted by older writers and must be decoded for backward compatibility.
+ * Edge interpolation algorithm for {@link GeographyType} columns; mirror of {@code EdgeInterpolationAlgorithm} in
+ * {@code parquet.thrift}.
+ *
+ * <p>Selects how to interpolate a geodesic edge between two vertices. {@link #SPHERICAL} treats the Earth as a sphere;
+ * the others are progressively more accurate ellipsoidal models.
  */
-public enum ConvertedType {
-    UTF8,
-    MAP,
-    MAP_KEY_VALUE,
-    LIST,
-    ENUM,
-    DECIMAL,
-    DATE,
-    TIME_MILLIS,
-    TIME_MICROS,
-    TIMESTAMP_MILLIS,
-    TIMESTAMP_MICROS,
-    UINT_8,
-    UINT_16,
-    UINT_32,
-    UINT_64,
-    INT_8,
-    INT_16,
-    INT_32,
-    INT_64,
-    JSON,
-    BSON,
-    INTERVAL
+public enum EdgeInterpolationAlgorithm {
+    SPHERICAL,
+    VINCENTY,
+    THOMAS,
+    ANDOYER,
+    KARNEY
 }

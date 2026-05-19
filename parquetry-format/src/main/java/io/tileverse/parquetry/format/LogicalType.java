@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.format.logical;
+package io.tileverse.parquetry.format;
 
 /**
  * Parquet logical-type annotation (Thrift union {@code LogicalType}).

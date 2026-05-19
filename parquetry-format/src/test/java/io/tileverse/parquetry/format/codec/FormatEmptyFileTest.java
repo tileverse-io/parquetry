@@ -28,7 +28,7 @@ import io.tileverse.storage.StorageFactory;
 
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.ParquetFormat;
-import io.tileverse.parquetry.format.enums.Type;
+import io.tileverse.parquetry.format.PhysicalType;
 
 class FormatEmptyFileTest {
 
@@ -42,7 +42,7 @@ class FormatEmptyFileTest {
             assertThat(footer.version()).isPositive();
             assertThat(footer.numRows()).isZero();
             assertThat(footer.schema()).hasSizeGreaterThanOrEqualTo(2);
-            assertThat(footer.schema().get(1).type()).contains(Type.INT32);
+            assertThat(footer.schema().get(1).type()).contains(PhysicalType.INT32);
             assertThat(footer.schema().get(1).name()).isEqualTo("id");
             assertThat(footer.rowGroups()).isEmpty();
         }

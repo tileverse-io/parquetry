@@ -20,6 +20,25 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
 
+/**
+ * One horizontal row group within a Parquet file; mirror of {@code RowGroup} in {@code parquet.thrift}.
+ *
+ * <p>Groups together one {@link ColumnChunk} per leaf column for the same row range. {@link #fileOffset()} and
+ * {@link #totalCompressedSize()} let a reader fetch the whole row group with a single byte-range request when present;
+ * {@link #sortingColumns()} declares the order in which rows were written.
+ *
+ * @param columns one {@link ColumnChunk} per leaf column in this row group, in schema order
+ * @param totalByteSize total uncompressed byte size of every column chunk in this row group ({@code total_byte_size} in
+ *     the thrift schema)
+ * @param numRows number of rows in this row group ({@code num_rows} in the thrift schema)
+ * @param sortingColumns ordered list of columns the rows are sorted by; empty when the writer did not declare a sort
+ *     order
+ * @param fileOffset byte offset of the first page of this row group; unset when not recorded ({@code file_offset} in
+ *     the thrift schema)
+ * @param totalCompressedSize total compressed byte size of every column chunk in this row group; unset when not
+ *     recorded ({@code total_compressed_size} in the thrift schema)
+ * @param ordinal zero-based ordinal of this row group within the file; unset when not recorded
+ */
 public record RowGroup(
         List<ColumnChunk> columns,
         long totalByteSize,

@@ -13,12 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.format.enums;
+package io.tileverse.parquetry.format;
 
-public enum EdgeInterpolationAlgorithm {
-    SPHERICAL,
-    VINCENTY,
-    THOMAS,
-    ANDOYER,
-    KARNEY
+/**
+ * Logical page type discriminator. Not a Thrift enum on its own; derived from {@code PageHeader.type}. Reproduced here
+ * for type-safety in our records.
+ */
+public enum PageType {
+    DATA_PAGE,
+    INDEX_PAGE,
+    DICTIONARY_PAGE,
+    DATA_PAGE_V2
 }

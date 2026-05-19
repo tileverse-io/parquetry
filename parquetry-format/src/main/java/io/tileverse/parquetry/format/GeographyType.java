@@ -17,6 +17,14 @@ package io.tileverse.parquetry.format;
 
 import java.util.Optional;
 
-import io.tileverse.parquetry.format.enums.EdgeInterpolationAlgorithm;
-
+/**
+ * GeoParquet 2.0 logical-type marker for geography columns; mirror of {@code GeographyType} in {@code parquet.thrift}.
+ *
+ * <p>Carries the optional CRS identifier and the {@link EdgeInterpolationAlgorithm} used to interpret edges between
+ * vertices on the ellipsoid. Sibling of {@link GeometryType}, which uses planar (Cartesian) edges.
+ *
+ * @param crs custom geographic CRS identifier; empty implies the spec default of {@code OGC:CRS84} (WGS 84 lon/lat)
+ * @param algorithm edge-interpolation algorithm to use between vertices; empty implies the spec default of
+ *     {@link EdgeInterpolationAlgorithm#SPHERICAL}
+ */
 public record GeographyType(Optional<String> crs, Optional<EdgeInterpolationAlgorithm> algorithm) {}

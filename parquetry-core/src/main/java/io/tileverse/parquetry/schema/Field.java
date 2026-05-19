@@ -19,7 +19,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
 
-import io.tileverse.parquetry.format.logical.LogicalType;
+import io.tileverse.parquetry.format.LogicalType;
 
 /**
  * A node in a Parquet schema tree.

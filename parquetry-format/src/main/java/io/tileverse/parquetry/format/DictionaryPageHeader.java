@@ -17,6 +17,16 @@ package io.tileverse.parquetry.format;
 
 import java.util.Optional;
 
-import io.tileverse.parquetry.format.enums.Encoding;
-
+/**
+ * Header for the optional dictionary page of a column chunk; mirror of {@code DictionaryPageHeader} in
+ * {@code parquet.thrift}.
+ *
+ * <p>Located via {@link ColumnMetaData#dictionaryPageOffset()}. Declares the dictionary entry count, the
+ * {@link Encoding} used for the dictionary values (typically {@link Encoding#PLAIN}), and whether entries are sorted.
+ *
+ * @param numValues number of entries in this dictionary
+ * @param encoding {@link Encoding} of the dictionary values themselves (typically {@link Encoding#PLAIN})
+ * @param isSorted whether the dictionary entries are sorted in ascending order; empty when the writer did not record
+ *     this flag
+ */
 public record DictionaryPageHeader(int numValues, Encoding encoding, Optional<Boolean> isSorted) {}

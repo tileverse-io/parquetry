@@ -19,7 +19,7 @@ import java.io.IOException;
 import java.util.Optional;
 
 import io.tileverse.parquetry.format.DictionaryPageHeader;
-import io.tileverse.parquetry.format.enums.Encoding;
+import io.tileverse.parquetry.format.Encoding;
 
 /**
  * Deserializer for the Thrift {@code DictionaryPageHeader} struct.

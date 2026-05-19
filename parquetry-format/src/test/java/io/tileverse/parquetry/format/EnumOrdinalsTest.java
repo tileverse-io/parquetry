@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.format.enums;
+package io.tileverse.parquetry.format;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -23,14 +23,14 @@ class EnumOrdinalsTest {
 
     @Test
     void typeOrdinalsMatchThrift() {
-        assertThat(Type.BOOLEAN.ordinal()).isZero();
-        assertThat(Type.INT32.ordinal()).isEqualTo(1);
-        assertThat(Type.INT64.ordinal()).isEqualTo(2);
-        assertThat(Type.INT96.ordinal()).isEqualTo(3);
-        assertThat(Type.FLOAT.ordinal()).isEqualTo(4);
-        assertThat(Type.DOUBLE.ordinal()).isEqualTo(5);
-        assertThat(Type.BYTE_ARRAY.ordinal()).isEqualTo(6);
-        assertThat(Type.FIXED_LEN_BYTE_ARRAY.ordinal()).isEqualTo(7);
+        assertThat(PhysicalType.BOOLEAN.ordinal()).isZero();
+        assertThat(PhysicalType.INT32.ordinal()).isEqualTo(1);
+        assertThat(PhysicalType.INT64.ordinal()).isEqualTo(2);
+        assertThat(PhysicalType.INT96.ordinal()).isEqualTo(3);
+        assertThat(PhysicalType.FLOAT.ordinal()).isEqualTo(4);
+        assertThat(PhysicalType.DOUBLE.ordinal()).isEqualTo(5);
+        assertThat(PhysicalType.BYTE_ARRAY.ordinal()).isEqualTo(6);
+        assertThat(PhysicalType.FIXED_LEN_BYTE_ARRAY.ordinal()).isEqualTo(7);
     }
 
     @Test

@@ -19,18 +19,18 @@ import java.io.IOException;
 import java.util.Optional;
 import java.util.OptionalInt;
 
+import io.tileverse.parquetry.format.ConvertedType;
+import io.tileverse.parquetry.format.FieldRepetitionType;
+import io.tileverse.parquetry.format.LogicalType;
+import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.SchemaElement;
-import io.tileverse.parquetry.format.enums.ConvertedType;
-import io.tileverse.parquetry.format.enums.FieldRepetitionType;
-import io.tileverse.parquetry.format.enums.Type;
-import io.tileverse.parquetry.format.logical.LogicalType;
 
 /**
  * Deserializer for the Thrift {@code SchemaElement} struct.
  *
  * <pre>
  * struct SchemaElement {
- *   1: optional Type type
+ *   1: optional PhysicalType type
  *   2: optional i32 type_length
  *   3: optional FieldRepetitionType repetition_type
  *   4: required string name
@@ -48,7 +48,7 @@ final class SchemaElementDeserializer {
     private SchemaElementDeserializer() {}
 
     static SchemaElement read(CompactProtocolReader r) throws IOException {
-        Optional<Type> type = Optional.empty();
+        Optional<PhysicalType> type = Optional.empty();
         OptionalInt typeLength = OptionalInt.empty();
         Optional<FieldRepetitionType> repetitionType = Optional.empty();
         String name = "";
@@ -66,7 +66,7 @@ final class SchemaElementDeserializer {
             }
             lastFieldId = fh.fieldId();
             switch (fh.fieldId()) {
-                case 1 -> type = Optional.of(Type.values()[r.readI32()]);
+                case 1 -> type = Optional.of(PhysicalType.values()[r.readI32()]);
                 case 2 -> typeLength = OptionalInt.of(r.readI32());
                 case 3 -> repetitionType = Optional.of(FieldRepetitionType.values()[r.readI32()]);
                 case 4 -> name = r.readString();

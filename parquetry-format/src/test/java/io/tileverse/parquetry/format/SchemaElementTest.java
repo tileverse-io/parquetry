@@ -22,17 +22,12 @@ import java.util.OptionalInt;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.format.enums.Encoding;
-import io.tileverse.parquetry.format.enums.FieldRepetitionType;
-import io.tileverse.parquetry.format.enums.PageType;
-import io.tileverse.parquetry.format.enums.Type;
-
 class SchemaElementTest {
 
     @Test
     void leafElementCarriesPrimitiveType() {
         SchemaElement leaf = new SchemaElement(
-                Optional.of(Type.INT32),
+                Optional.of(PhysicalType.INT32),
                 OptionalInt.empty(),
                 Optional.of(FieldRepetitionType.OPTIONAL),
                 "year",
@@ -42,7 +37,7 @@ class SchemaElementTest {
                 OptionalInt.empty(),
                 Optional.empty(),
                 OptionalInt.of(7));
-        assertThat(leaf.type()).contains(Type.INT32);
+        assertThat(leaf.type()).contains(PhysicalType.INT32);
         assertThat(leaf.name()).isEqualTo("year");
         assertThat(leaf.fieldId()).hasValue(7);
     }

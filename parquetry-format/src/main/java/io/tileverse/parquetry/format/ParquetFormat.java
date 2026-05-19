@@ -15,7 +15,6 @@
  */
 package io.tileverse.parquetry.format;
 
-import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
@@ -27,7 +26,7 @@ import io.tileverse.storage.RangeReader;
 import io.tileverse.parquetry.format.codec.ParquetFormatDeserializer;
 
 /**
- * High-level facade for reading Parquet file metadata and page-level structures from a {@link RangeReader}.
+ * Reads Parquet file metadata and page-level structures from a {@link RangeReader}.
  *
  * <p>{@link #readFooter(RangeReader)} locates the {@code FileMetaData} Thrift struct at the end of a Parquet file and
  * decodes it. The page-level methods read the corresponding structures at offsets the caller has obtained from the
@@ -44,9 +43,9 @@ import io.tileverse.parquetry.format.codec.ParquetFormatDeserializer;
  *   [4-byte magic "PAR1"]
  * </pre>
  *
- * <p>For callers that already have the raw Thrift bytes in hand (e.g. slicing a {@code ByteBuffer} directly without
- * going through a {@code RangeReader}), use {@link ParquetFormatDeserializer} - the low-level decoder facade this class
- * delegates to.
+ * <p>If you already have the raw Thrift bytes in hand (e.g. by slicing a {@code ByteBuffer} from a custom transport),
+ * call {@link ParquetFormatDeserializer} directly. The methods here pull bytes off a {@code RangeReader} and then
+ * delegate to it.
  */
 public final class ParquetFormat {
 
@@ -119,7 +118,7 @@ public final class ParquetFormat {
      *     file size
      */
     public static FileMetaData readFooter(RangeReader reader) {
-        long size =
+        final long size =
                 reader.size().orElseThrow(() -> new ParquetFormatException("RangeReader cannot determine file size"));
         if (size < MIN_FILE_SIZE) {
             throw new ParquetFormatException("File too small to be a Parquet file: " + size + " bytes");
@@ -149,6 +148,38 @@ public final class ParquetFormat {
     }
 
     private static InputStream toInputStream(ByteBuffer buf) {
-        return new ByteArrayInputStream(buf.array(), buf.arrayOffset() + buf.position(), buf.remaining());
+        return new ByteBufferInputStream(buf);
+    }
+
+    private static final class ByteBufferInputStream extends InputStream {
+
+        private final ByteBuffer buffer;
+
+        ByteBufferInputStream(ByteBuffer buffer) {
+            this.buffer = buffer;
+        }
+
+        @Override
+        public int read() {
+            if (buffer.hasRemaining()) {
+                return buffer.get() & 0xff;
+            }
+            return -1;
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) {
+            if (buffer.hasRemaining()) {
+                int toRead = Math.min(len, buffer.remaining());
+                buffer.get(b, off, toRead);
+                return toRead;
+            }
+            return -1;
+        }
+
+        @Override
+        public int available() {
+            return buffer.remaining();
+        }
     }
 }

@@ -13,10 +13,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.format.enums;
+package io.tileverse.parquetry.format;
 
-public enum BoundaryOrder {
-    UNORDERED,
-    ASCENDING,
-    DESCENDING
+/**
+ * Compression codec applied to a column chunk's page payloads; mirror of {@code CompressionCodec} in
+ * {@code parquet.thrift}.
+ *
+ * <p>Selected via {@link ColumnMetaData#codec()}. {@link #LZO} and {@link #LZ4} are deprecated in favor of
+ * {@link #LZ4_RAW}.
+ */
+public enum CompressionCodec {
+    UNCOMPRESSED,
+    SNAPPY,
+    GZIP,
+    LZO,
+    BROTLI,
+    LZ4,
+    ZSTD,
+    LZ4_RAW
 }

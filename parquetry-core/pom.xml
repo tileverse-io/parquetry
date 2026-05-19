@@ -69,5 +69,31 @@
       <version>3.3.6</version>
       <scope>test</scope>
     </dependency>
+    <!--
+      Required by the parquet-testing corpus oracle (ParquetTestingCorpusIT): parquet-avro reads
+      hadoop_lz4_compressed* fixtures via lz4-java's LZ4Factory at runtime. Test-scope only.
+    -->
+    <dependency>
+      <groupId>org.lz4</groupId>
+      <artifactId>lz4-java</artifactId>
+      <version>1.8.0</version>
+      <scope>test</scope>
+    </dependency>
+    <!-- TestContainers + tileverse-storage S3 module: backing the CloudStorageIT against a LocalStack S3. -->
+    <dependency>
+      <groupId>io.tileverse.storage</groupId>
+      <artifactId>tileverse-storage-s3</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>localstack</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 </project>

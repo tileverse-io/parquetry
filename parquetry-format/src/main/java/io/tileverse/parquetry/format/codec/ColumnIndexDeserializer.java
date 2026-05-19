@@ -21,8 +21,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
+import io.tileverse.parquetry.format.BoundaryOrder;
 import io.tileverse.parquetry.format.ColumnIndex;
-import io.tileverse.parquetry.format.enums.BoundaryOrder;
 
 /**
  * Deserializer for the Thrift {@code ColumnIndex} struct.

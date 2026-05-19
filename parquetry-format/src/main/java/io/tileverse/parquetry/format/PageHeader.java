@@ -18,13 +18,13 @@ package io.tileverse.parquetry.format;
 import java.util.Optional;
 import java.util.OptionalInt;
 
-import io.tileverse.parquetry.format.enums.PageType;
-
 /**
  * Header prefix before every page in a column chunk.
  *
  * <p>The Thrift {@code PageHeader} struct carries optional nested headers for each page type; we keep the same shape
  * with one {@code Optional<XHeader>} per page type. Exactly one is present (cross-validated by {@link #type()}).
+ *
+ * @see ParquetFormat#readPageHeader(java.io.InputStream)
  */
 public record PageHeader(
         PageType type,

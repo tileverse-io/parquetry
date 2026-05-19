@@ -19,8 +19,8 @@ import java.io.IOException;
 import java.util.Optional;
 
 import io.tileverse.parquetry.format.DataPageHeader;
+import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.Statistics;
-import io.tileverse.parquetry.format.enums.Encoding;
 
 /**
  * Deserializer for the Thrift {@code DataPageHeader} struct.

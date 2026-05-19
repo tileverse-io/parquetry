@@ -28,10 +28,10 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.filter.RowRanges.Range;
+import io.tileverse.parquetry.format.BoundaryOrder;
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.PageLocation;
-import io.tileverse.parquetry.format.enums.BoundaryOrder;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 

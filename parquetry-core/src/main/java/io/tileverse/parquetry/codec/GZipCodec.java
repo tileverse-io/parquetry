@@ -21,7 +21,7 @@ import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.util.zip.GZIPInputStream;
 
-import io.tileverse.parquetry.format.enums.CompressionCodec;
+import io.tileverse.parquetry.format.CompressionCodec;
 
 /**
  * GZIP codec. {@link GZIPInputStream} is stream/byte-array based, so the compressed input is copied into a

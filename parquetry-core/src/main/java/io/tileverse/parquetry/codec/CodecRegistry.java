@@ -19,7 +19,7 @@ import java.util.EnumMap;
 import java.util.Map;
 import java.util.ServiceLoader;
 
-import io.tileverse.parquetry.format.enums.CompressionCodec;
+import io.tileverse.parquetry.format.CompressionCodec;
 
 public final class CodecRegistry {
 

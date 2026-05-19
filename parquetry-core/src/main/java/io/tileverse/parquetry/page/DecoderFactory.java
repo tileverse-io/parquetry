@@ -18,7 +18,7 @@ package io.tileverse.parquetry.page;
 import java.util.Optional;
 import java.util.OptionalInt;
 
-import io.tileverse.parquetry.format.enums.Encoding;
+import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 
 /**

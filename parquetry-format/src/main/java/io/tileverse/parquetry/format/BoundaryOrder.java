@@ -13,15 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.format.enums;
+package io.tileverse.parquetry.format;
 
-public enum Type {
-    BOOLEAN,
-    INT32,
-    INT64,
-    INT96,
-    FLOAT,
-    DOUBLE,
-    BYTE_ARRAY,
-    FIXED_LEN_BYTE_ARRAY
+/**
+ * Order of the per-page min/max values in a {@link ColumnIndex}; mirror of {@code BoundaryOrder} in
+ * {@code parquet.thrift}.
+ *
+ * <p>{@link #ASCENDING} or {@link #DESCENDING} lets a reader short-circuit page filtering with a binary search;
+ * {@link #UNORDERED} forces a linear scan of the per-page bounds.
+ */
+public enum BoundaryOrder {
+    UNORDERED,
+    ASCENDING,
+    DESCENDING
 }

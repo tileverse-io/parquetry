@@ -25,7 +25,7 @@ import java.util.OptionalInt;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.format.enums.Encoding;
+import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 
 /**

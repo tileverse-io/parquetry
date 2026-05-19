@@ -27,11 +27,11 @@ import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.codec.Codec;
 import io.tileverse.parquetry.codec.CodecRegistry;
+import io.tileverse.parquetry.format.CompressionCodec;
 import io.tileverse.parquetry.format.DataPageHeaderV2;
+import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.PageHeader;
-import io.tileverse.parquetry.format.enums.CompressionCodec;
-import io.tileverse.parquetry.format.enums.Encoding;
-import io.tileverse.parquetry.format.enums.PageType;
+import io.tileverse.parquetry.format.PageType;
 import io.tileverse.parquetry.read.LevelMaximaResolver.LevelMaxima;
 
 import io.tileverse.io.ByteBufferPool;

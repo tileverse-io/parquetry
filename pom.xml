@@ -42,7 +42,7 @@
 
     <junit.version>5.11.3</junit.version>
     <assertj.version>3.26.3</assertj.version>
-    <testcontainers.version>1.20.4</testcontainers.version>
+    <testcontainers.version>1.21.4</testcontainers.version>
     <parquet-avro.version>1.14.3</parquet-avro.version>
 
     <spotless.version>3.5.1</spotless.version>
@@ -88,6 +88,9 @@
           <configuration>
             <!-- @{argLine} lets jacoco:prepare-agent-integration inject its agent when the coverage profile is active -->
             <argLine>@{argLine} --enable-preview --enable-native-access=ALL-UNNAMED</argLine>
+            <!-- Aggregator modules (parent, BOMs, coverage-report) have no ITs; skip the IT phase there. -->
+            <failIfNoTests>false</failIfNoTests>
+            <failIfNoSpecifiedTests>false</failIfNoSpecifiedTests>
           </configuration>
         </plugin>
         <plugin>
@@ -206,6 +209,18 @@
         <groupId>org.codehaus.mojo</groupId>
         <artifactId>flatten-maven-plugin</artifactId>
       </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
+        <executions>
+          <execution>
+            <goals>
+              <goal>integration-test</goal>
+              <goal>verify</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
     </plugins>
   </build>
 
@@ -238,6 +253,9 @@
           <name>coverage</name>
         </property>
       </activation>
+      <modules>
+        <module>coverage-report</module>
+      </modules>
       <build>
         <plugins>
           <plugin>

@@ -19,6 +19,11 @@
         <version>${tileverse-storage.version}</version>
       </dependency>
       <dependency>
+        <groupId>io.tileverse.storage</groupId>
+        <artifactId>tileverse-storage-s3</artifactId>
+        <version>${tileverse-storage.version}</version>
+      </dependency>
+      <dependency>
         <groupId>tools.jackson.core</groupId>
         <artifactId>jackson-databind</artifactId>
         <version>${jackson.version}</version>

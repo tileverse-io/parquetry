@@ -15,6 +15,11 @@
  */
 package io.tileverse.parquetry.format;
 
-/** Stub. Real fields exist in newer parquet.thrift revisions; not used by current decoders. */
+/**
+ * Placeholder for the {@code IndexPageHeader} struct in {@code parquet.thrift}.
+ *
+ * <p>Reserved in the spec but currently empty; page-level indexing is delivered by {@link ColumnIndex} and
+ * {@link OffsetIndex} instead. Kept here so the {@link PageType#INDEX_PAGE} branch of {@link PageHeader} has a target.
+ */
 @SuppressWarnings("java:S2094")
 public record IndexPageHeader() {}

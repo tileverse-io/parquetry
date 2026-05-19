@@ -18,7 +18,7 @@ package io.tileverse.parquetry.read;
 import java.nio.ByteBuffer;
 import java.util.Objects;
 
-import io.tileverse.parquetry.format.enums.Encoding;
+import io.tileverse.parquetry.format.Encoding;
 
 import io.tileverse.io.ByteBufferPool.PooledByteBuffer;
 

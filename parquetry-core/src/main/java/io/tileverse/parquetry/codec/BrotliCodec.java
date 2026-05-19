@@ -23,7 +23,7 @@ import java.lang.foreign.ValueLayout;
 
 import org.brotli.dec.BrotliInputStream;
 
-import io.tileverse.parquetry.format.enums.CompressionCodec;
+import io.tileverse.parquetry.format.CompressionCodec;
 
 /**
  * Brotli codec. The {@code org.brotli:dec} library is stream/byte-array based, so the compressed input is copied into a

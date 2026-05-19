@@ -34,8 +34,8 @@ import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.PageHeader;
+import io.tileverse.parquetry.format.PageType;
 import io.tileverse.parquetry.format.ParquetFormat;
-import io.tileverse.parquetry.format.enums.PageType;
 
 /**
  * Conformance tests for PageHeader, ColumnIndex, and OffsetIndex reading.

@@ -17,9 +17,9 @@ package io.tileverse.parquetry.format.codec;
 
 import java.io.IOException;
 
+import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.EncodingStats;
-import io.tileverse.parquetry.format.enums.Encoding;
-import io.tileverse.parquetry.format.enums.PageType;
+import io.tileverse.parquetry.format.PageType;
 
 /**
  * Deserializer for the Thrift {@code PageEncodingStats} struct (our model calls it {@link EncodingStats}).

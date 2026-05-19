@@ -13,8 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.format.enums;
+package io.tileverse.parquetry.format;
 
+/**
+ * Value or level encoding applied within a page; mirror of {@code Encoding} in {@code parquet.thrift}.
+ *
+ * <p>Ordinal positions are load-bearing: Thrift wire values map by ordinal, so {@link #GROUP_VAR_INT} keeps its
+ * reserved slot at ordinal 1 and {@link #BIT_PACKED} (legacy) retains its position even though new files use
+ * {@link #RLE} for level encoding instead.
+ */
 public enum Encoding {
     PLAIN,
     GROUP_VAR_INT, // ordinal 1: reserved/unused in Parquet

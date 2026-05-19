@@ -20,9 +20,9 @@ import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
 
+import io.tileverse.parquetry.format.FieldRepetitionType;
+import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.SchemaElement;
-import io.tileverse.parquetry.format.enums.FieldRepetitionType;
-import io.tileverse.parquetry.format.enums.Type;
 
 /**
  * Converts the depth-first flat {@code List<SchemaElement>} from
@@ -90,7 +90,7 @@ public final class SchemaBuilder {
     }
 
     private static Field.Primitive consumePrimitive(SchemaElement element, Repetition repetition, int fieldId) {
-        Type type = element.type()
+        PhysicalType type = element.type()
                 .orElseThrow(() -> new IllegalStateException("Leaf SchemaElement missing type: " + element.name()));
         PrimitiveKind kind = mapKind(type);
         OptionalInt typeLength = element.typeLength();
@@ -106,7 +106,7 @@ public final class SchemaBuilder {
         };
     }
 
-    private static PrimitiveKind mapKind(Type type) {
+    private static PrimitiveKind mapKind(PhysicalType type) {
         return switch (type) {
             case BOOLEAN -> PrimitiveKind.BOOLEAN;
             case INT32 -> PrimitiveKind.INT32;

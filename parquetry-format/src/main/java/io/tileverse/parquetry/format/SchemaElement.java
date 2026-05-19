@@ -18,11 +18,6 @@ package io.tileverse.parquetry.format;
 import java.util.Optional;
 import java.util.OptionalInt;
 
-import io.tileverse.parquetry.format.enums.ConvertedType;
-import io.tileverse.parquetry.format.enums.FieldRepetitionType;
-import io.tileverse.parquetry.format.enums.Type;
-import io.tileverse.parquetry.format.logical.LogicalType;
-
 /**
  * One node in the {@link FileMetaData#schema()} list.
  *
@@ -31,7 +26,7 @@ import io.tileverse.parquetry.format.logical.LogicalType;
  * {@code numChildren=OptionalInt.empty()}.
  */
 public record SchemaElement(
-        Optional<Type> type,
+        Optional<PhysicalType> type,
         OptionalInt typeLength,
         Optional<FieldRepetitionType> repetitionType,
         String name,

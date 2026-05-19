@@ -31,10 +31,10 @@ import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.DictionaryPageHeader;
 import io.tileverse.parquetry.format.PageHeader;
+import io.tileverse.parquetry.format.PageType;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.ParquetFormatException;
-import io.tileverse.parquetry.format.enums.PageType;
-import io.tileverse.parquetry.format.enums.Type;
+import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.page.Dictionary;
 import io.tileverse.parquetry.page.DictionaryDecoder;
 import io.tileverse.parquetry.read.LevelMaximaResolver.LevelMaxima;
@@ -183,7 +183,7 @@ final class RealColumnFetcher implements ColumnFetcher {
         }
     }
 
-    private static PrimitiveKind primitiveKindOf(Type type, ColumnPath path) {
+    private static PrimitiveKind primitiveKindOf(PhysicalType type, ColumnPath path) {
         return switch (type) {
             case BOOLEAN -> PrimitiveKind.BOOLEAN;
             case INT32 -> PrimitiveKind.INT32;

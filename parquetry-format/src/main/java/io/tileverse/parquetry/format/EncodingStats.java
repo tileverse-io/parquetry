@@ -15,7 +15,15 @@
  */
 package io.tileverse.parquetry.format;
 
-import io.tileverse.parquetry.format.enums.Encoding;
-import io.tileverse.parquetry.format.enums.PageType;
-
+/**
+ * Per-({@link PageType}, {@link Encoding}) page count for a column chunk; mirror of {@code PageEncodingStats} in
+ * {@code parquet.thrift}.
+ *
+ * <p>Carried by {@link ColumnMetaData#encodingStats()}; lets a reader know how many pages of each kind use each
+ * encoding without scanning every page header.
+ *
+ * @param pageType {@link PageType} (data, dictionary, etc.) being counted
+ * @param encoding {@link Encoding} being counted
+ * @param count number of pages in the column chunk of this {@code pageType} that use this {@code encoding}
+ */
 public record EncodingStats(PageType pageType, Encoding encoding, int count) {}

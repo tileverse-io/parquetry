@@ -19,8 +19,8 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 
 import io.tileverse.parquetry.codec.Codec;
+import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.PageHeader;
-import io.tileverse.parquetry.format.enums.Encoding;
 import io.tileverse.parquetry.read.LevelMaximaResolver.LevelMaxima;
 
 import io.tileverse.io.ByteBufferPool;

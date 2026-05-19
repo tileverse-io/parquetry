@@ -21,6 +21,29 @@ import java.util.Optional;
 
 import io.tileverse.parquetry.format.crypto.EncryptionAlgorithm;
 
+/**
+ * File-level metadata for a Parquet file; mirror of {@code FileMetaData} in {@code parquet.thrift}.
+ *
+ * <p>Stored in the file footer and read first when opening a file. Declares the format version, the
+ * {@link SchemaElement} list (a depth-first flattening of the schema tree), {@link #numRows()} across the whole file,
+ * and the {@link RowGroup} list pointing at the column data. Optional fields hold file-level key/value metadata, the
+ * writer identifier, per-column {@link ColumnOrder} hints, and encryption metadata for files with a plaintext footer.
+ *
+ * @param version Parquet file-format version; writers should use {@code 1} for compatibility with existing readers
+ * @param schema flat list of {@link SchemaElement}s in depth-first pre-order, encoding the schema tree
+ * @param numRows total number of rows across every row group ({@code num_rows} in the thrift schema)
+ * @param rowGroups {@link RowGroup} list pointing at this file's column data ({@code row_groups} in the thrift schema)
+ * @param keyValueMetadata optional file-level key/value metadata; empty list when none was written
+ * @param createdBy writer identifier of the form {@code "<Application> version <App Version> (build <Hash>)"}; empty
+ *     when not recorded ({@code created_by} in the thrift schema)
+ * @param columnOrders per-column sort-order hint for {@code min_value}/{@code max_value} comparisons; empty when not
+ *     written ({@code column_orders} in the thrift schema)
+ * @param encryptionAlgorithm encryption algorithm used; only set for files with a plaintext footer, empty otherwise
+ *     ({@code encryption_algorithm} in the thrift schema)
+ * @param footerSigningKeyMetadata retrieval metadata for the key used to sign the footer; empty when the footer is not
+ *     signed ({@code footer_signing_key_metadata} in the thrift schema)
+ * @see ParquetFormat#readFooter(io.tileverse.storage.RangeReader)
+ */
 public record FileMetaData(
         int version,
         List<SchemaElement> schema,

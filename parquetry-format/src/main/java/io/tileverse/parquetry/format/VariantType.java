@@ -15,6 +15,11 @@
  */
 package io.tileverse.parquetry.format;
 
-/** Stub. Real fields: see VariantShredding.md. */
+/**
+ * Logical-type marker for Parquet Variant columns; mirror of {@code VariantType} in {@code parquet.thrift}.
+ *
+ * <p>Empty placeholder; variant shredding metadata will be added. Referenced from {@link LogicalType} as the
+ * {@code VariantStub} variant.
+ */
 @SuppressWarnings("java:S2094")
 public record VariantType() {}

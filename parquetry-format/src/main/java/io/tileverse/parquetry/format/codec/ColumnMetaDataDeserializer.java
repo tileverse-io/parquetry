@@ -22,20 +22,20 @@ import java.util.Optional;
 import java.util.OptionalLong;
 
 import io.tileverse.parquetry.format.ColumnMetaData;
+import io.tileverse.parquetry.format.CompressionCodec;
+import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.EncodingStats;
 import io.tileverse.parquetry.format.KeyValue;
+import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.SizeStatistics;
 import io.tileverse.parquetry.format.Statistics;
-import io.tileverse.parquetry.format.enums.CompressionCodec;
-import io.tileverse.parquetry.format.enums.Encoding;
-import io.tileverse.parquetry.format.enums.Type;
 
 /**
  * Deserializer for the Thrift {@code ColumnMetaData} struct.
  *
  * <pre>
  * struct ColumnMetaData {
- *   1: required Type type
+ *   1: required PhysicalType type
  *   2: required list&lt;Encoding&gt; encodings
  *   3: required list&lt;string&gt; path_in_schema
  *   4: required CompressionCodec codec
@@ -59,7 +59,7 @@ final class ColumnMetaDataDeserializer {
     private ColumnMetaDataDeserializer() {}
 
     static ColumnMetaData read(CompactProtocolReader r) throws IOException {
-        Type type = Type.BOOLEAN;
+        PhysicalType type = PhysicalType.BOOLEAN;
         List<Encoding> encodings = new ArrayList<>();
         List<String> pathInSchema = new ArrayList<>();
         CompressionCodec codec = CompressionCodec.UNCOMPRESSED;
@@ -83,7 +83,7 @@ final class ColumnMetaDataDeserializer {
             }
             lastFieldId = fh.fieldId();
             switch (fh.fieldId()) {
-                case 1 -> type = Type.values()[r.readI32()];
+                case 1 -> type = PhysicalType.values()[r.readI32()];
                 case 2 -> encodings = readEncodingList(r);
                 case 3 -> pathInSchema = readStringList(r);
                 case 4 -> codec = CompressionCodec.values()[r.readI32()];

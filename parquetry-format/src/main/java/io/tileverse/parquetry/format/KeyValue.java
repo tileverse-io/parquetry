@@ -17,4 +17,13 @@ package io.tileverse.parquetry.format;
 
 import java.util.Optional;
 
+/**
+ * One entry in a key/value metadata list; mirror of {@code KeyValue} in {@code parquet.thrift}.
+ *
+ * <p>Used both at the file level ({@link FileMetaData#keyValueMetadata()}) and at the column-chunk level
+ * ({@link ColumnMetaData#keyValueMetadata()}). The value is optional, mirroring the Thrift {@code optional string}.
+ *
+ * @param key required metadata key
+ * @param value associated value; empty when the key was written without one
+ */
 public record KeyValue(String key, Optional<String> value) {}
