@@ -17,5 +17,6 @@
     <module>parquetry-arrow</module>
     <module>parquetry-geo-jts</module>
     <module>parquetry-tileverse-storage</module>
+    <module>parquetry-geotools</module>
   </modules>
 </project>
