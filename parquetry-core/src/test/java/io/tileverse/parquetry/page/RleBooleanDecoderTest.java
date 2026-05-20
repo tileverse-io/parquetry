@@ -76,4 +76,29 @@ class RleBooleanDecoderTest {
             assertThat(decoder.next()).isTrue();
         }
     }
+
+    @Test
+    void bulkDecodeFromMixedRuns() {
+        // Build RLE-bit-packed for booleans (bitWidth=1).
+        // Run 1: RLE of 5 trues  -> varint header (5 << 1) | 0 = 10; RLE value byte 0x01.
+        // Run 2: bit-packed group of 8 (1 group) -> header (1 << 1) | 1 = 3; packed byte 0b11110000 (alternating).
+        ByteBuffer page = ByteBuffer.allocate(8).order(LITTLE_ENDIAN);
+        page.putInt(4); // length prefix (4 bytes of RLE payload)
+        page.put((byte) 10);
+        page.put((byte) 0x01);
+        page.put((byte) 3);
+        page.put((byte) 0b11110000);
+        page.flip();
+
+        PageDecoder<Boolean> decoder = new RleBooleanDecoder();
+        decoder.load(page, 13);
+
+        boolean[] dst = new boolean[13];
+        decoder.decodeBooleans(13, dst, 0);
+
+        assertThat(dst)
+                .containsExactly(
+                        true, true, true, true, true, // RLE run of 5 trues
+                        false, false, false, false, true, true, true, true); // bit-packed LSB-first
+    }
 }

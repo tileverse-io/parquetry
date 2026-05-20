@@ -36,6 +36,11 @@ final class PlainFloatDecoder implements PageDecoder<Float> {
     }
 
     @Override
+    public void decodeFloats(int n, float[] dst, int offset) {
+        buffer.get(dst, offset, n);
+    }
+
+    @Override
     public void skip(int n) {
         buffer.position(buffer.position() + n);
     }

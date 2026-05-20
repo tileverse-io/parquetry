@@ -106,4 +106,52 @@ class DeltaByteArrayDecoderTest {
         byte[] buf = slice.toArray(JAVA_BYTE);
         assertThat(new String(buf, StandardCharsets.UTF_8)).isEqualTo("hello");
     }
+
+    @Test
+    void bulkDecodeBinaryFillsArray() throws Exception {
+        String[] values = {"car", "carpet", "carry"};
+        int[] prefixLens = {0, 3, 3};
+        String[] suffixes = {"car", "pet", "ry"};
+
+        int blockSize = 4;
+        int miniblocksPerBlock = 2;
+
+        int[] paddedPrefix = new int[blockSize];
+        System.arraycopy(prefixLens, 0, paddedPrefix, 0, prefixLens.length);
+        for (int i = prefixLens.length; i < paddedPrefix.length; i++) {
+            paddedPrefix[i] = prefixLens[prefixLens.length - 1];
+        }
+
+        int[] suffixLens = new int[blockSize];
+        for (int i = 0; i < suffixes.length; i++) {
+            suffixLens[i] = suffixes[i].length();
+        }
+        for (int i = suffixes.length; i < suffixLens.length; i++) {
+            suffixLens[i] = suffixes[suffixes.length - 1].length();
+        }
+
+        byte[] prefixBytes =
+                DeltaBinaryPackedDecoderTest.encodeInts(paddedPrefix, blockSize, miniblocksPerBlock, values.length);
+        byte[] suffixLenBytes =
+                DeltaBinaryPackedDecoderTest.encodeInts(suffixLens, blockSize, miniblocksPerBlock, values.length);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        out.write(prefixBytes);
+        out.write(suffixLenBytes);
+        for (String suffix : suffixes) {
+            out.write(suffix.getBytes(StandardCharsets.UTF_8));
+        }
+        byte[] page = out.toByteArray();
+
+        PageDecoder<MemorySegment> decoder = new DeltaByteArrayDecoder();
+        decoder.load(ByteBuffer.wrap(page), values.length);
+
+        MemorySegment[] dst = new MemorySegment[values.length];
+        decoder.decodeBinary(values.length, dst, 0);
+
+        for (int i = 0; i < values.length; i++) {
+            byte[] buf = dst[i].toArray(JAVA_BYTE);
+            assertThat(new String(buf, StandardCharsets.UTF_8)).as("value " + i).isEqualTo(values[i]);
+        }
+    }
 }

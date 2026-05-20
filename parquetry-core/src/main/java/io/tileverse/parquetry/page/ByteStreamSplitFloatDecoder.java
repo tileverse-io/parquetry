@@ -63,6 +63,13 @@ final class ByteStreamSplitFloatDecoder implements PageDecoder<Float> {
     }
 
     @Override
+    public void decodeFloats(int n, float[] dst, int offset) {
+        for (int i = 0; i < n; i++) {
+            dst[offset + i] = next();
+        }
+    }
+
+    @Override
     public void skip(int n) {
         cursor += n;
     }

@@ -47,6 +47,20 @@ class ByteStreamSplitFloatDecoderTest {
         assertThat(decoder.next()).isEqualTo(5f);
     }
 
+    @Test
+    void bulkDecodeFloatsFillsArray() {
+        float[] values = {1.5f, -2.25f, 3.14159f, 0f};
+        byte[] encoded = encode(values);
+
+        PageDecoder<Float> decoder = new ByteStreamSplitFloatDecoder();
+        decoder.load(ByteBuffer.wrap(encoded), values.length);
+
+        float[] dst = new float[values.length];
+        decoder.decodeFloats(values.length, dst, 0);
+
+        assertThat(dst).containsExactly(values);
+    }
+
     static byte[] encode(float[] values) {
         int n = values.length;
         byte[] out = new byte[n * 4];

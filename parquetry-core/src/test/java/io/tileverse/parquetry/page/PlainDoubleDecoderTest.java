@@ -73,4 +73,25 @@ class PlainDoubleDecoderTest {
         assertThat(decoder.next()).isEqualTo(Double.POSITIVE_INFINITY);
         assertThat(decoder.next()).isEqualTo(Double.NEGATIVE_INFINITY);
     }
+
+    @Test
+    void bulkDecodeFillsArray() {
+        ByteBuffer page = ByteBuffer.allocate(32).order(LITTLE_ENDIAN);
+        page.putDouble(1.0);
+        page.putDouble(2.5);
+        page.putDouble(Double.POSITIVE_INFINITY);
+        page.putDouble(Double.NaN);
+        page.flip();
+
+        PageDecoder<Double> decoder = new PlainDoubleDecoder();
+        decoder.load(page, 4);
+
+        double[] dst = new double[4];
+        decoder.decodeDoubles(4, dst, 0);
+
+        assertThat(dst[0]).isEqualTo(1.0);
+        assertThat(dst[1]).isEqualTo(2.5);
+        assertThat(dst[2]).isEqualTo(Double.POSITIVE_INFINITY);
+        assertThat(Double.isNaN(dst[3])).isTrue();
+    }
 }

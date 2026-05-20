@@ -75,4 +75,43 @@ class PlainInt32DecoderTest {
         decoder.skip(1);
         assertThat(decoder.next()).isEqualTo(4);
     }
+
+    @Test
+    void bulkDecodeFillsArray() {
+        ByteBuffer page = ByteBuffer.allocate(16).order(LITTLE_ENDIAN);
+        page.putInt(10);
+        page.putInt(20);
+        page.putInt(30);
+        page.putInt(40);
+        page.flip();
+
+        PageDecoder<Integer> decoder = new PlainInt32Decoder();
+        decoder.load(page, 4);
+
+        int[] dst = new int[5];
+        dst[0] = -1; // sentinel - must be left alone
+        decoder.decodeInts(4, dst, 1);
+
+        assertThat(dst).containsExactly(-1, 10, 20, 30, 40);
+    }
+
+    @Test
+    void bulkDecodeAfterPartialNext() {
+        ByteBuffer page = ByteBuffer.allocate(16).order(LITTLE_ENDIAN);
+        page.putInt(10);
+        page.putInt(20);
+        page.putInt(30);
+        page.putInt(40);
+        page.flip();
+
+        PageDecoder<Integer> decoder = new PlainInt32Decoder();
+        decoder.load(page, 4);
+
+        assertThat(decoder.next()).isEqualTo(10);
+
+        int[] dst = new int[3];
+        decoder.decodeInts(3, dst, 0);
+
+        assertThat(dst).containsExactly(20, 30, 40);
+    }
 }

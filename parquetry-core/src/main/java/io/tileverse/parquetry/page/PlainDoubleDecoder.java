@@ -36,6 +36,11 @@ public final class PlainDoubleDecoder implements PageDecoder<Double> {
     }
 
     @Override
+    public void decodeDoubles(int n, double[] dst, int offset) {
+        buffer.get(dst, offset, n);
+    }
+
+    @Override
     public void skip(int n) {
         buffer.position(buffer.position() + n);
     }

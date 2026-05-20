@@ -103,6 +103,17 @@ public final class LevelDecoder {
         }
     }
 
+    /**
+     * Decodes the next {@code n} level values into {@code dst} starting at {@code offset}. Used by the batch driver to
+     * fill a column vector's rep/def stream in one call. Equivalent to {@code n} successive {@link #next()} calls but
+     * exposes the bulk shape the batch path needs without forcing the row API to change.
+     */
+    public void decode(int n, int[] dst, int offset) {
+        for (int i = 0; i < n; i++) {
+            dst[offset + i] = next();
+        }
+    }
+
     private void readNextRunHeader() {
         long header = readVarint();
         if ((header & 1L) == 1L) {

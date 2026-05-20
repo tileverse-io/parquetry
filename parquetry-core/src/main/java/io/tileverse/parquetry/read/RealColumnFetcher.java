@@ -19,6 +19,7 @@ import static java.nio.ByteOrder.LITTLE_ENDIAN;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.util.Objects;
 import java.util.Optional;
@@ -179,8 +180,8 @@ final class RealColumnFetcher implements ColumnFetcher {
             ByteBuffer dst = scratch.buffer();
             dst.clear();
             dst.limit(uncompressedSize);
-            codec.decompress(compressedPayload, dst);
-            dst.flip();
+            codec.decompress(MemorySegment.ofBuffer(compressedPayload), MemorySegment.ofBuffer(dst));
+            dst.rewind();
             return DictionaryDecoder.read(dst, kind, dictHeader.numValues(), typeLength);
         }
     }

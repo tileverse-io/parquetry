@@ -112,4 +112,24 @@ class PlainFixedLenBinaryDecoderTest {
         assertThat(decoder.next().byteSize()).isZero();
         assertThat(decoder.next().byteSize()).isZero();
     }
+
+    @Test
+    void bulkDecodeFillsFixedLenSegments() {
+        // 3 values of fixed length 4 bytes each.
+        ByteBuffer page = ByteBuffer.allocate(12);
+        page.put("AAAA".getBytes());
+        page.put("BBBB".getBytes());
+        page.put("CCCC".getBytes());
+        page.flip();
+
+        PageDecoder<MemorySegment> decoder = new PlainFixedLenBinaryDecoder(4);
+        decoder.load(page, 3);
+
+        MemorySegment[] dst = new MemorySegment[3];
+        decoder.decodeBinary(3, dst, 0);
+
+        assertThat(dst[0].toArray(JAVA_BYTE)).isEqualTo("AAAA".getBytes());
+        assertThat(dst[1].toArray(JAVA_BYTE)).isEqualTo("BBBB".getBytes());
+        assertThat(dst[2].toArray(JAVA_BYTE)).isEqualTo("CCCC".getBytes());
+    }
 }

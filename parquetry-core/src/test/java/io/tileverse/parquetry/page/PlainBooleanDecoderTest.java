@@ -117,4 +117,24 @@ class PlainBooleanDecoderTest {
             assertThat(decoder.next()).isTrue();
         }
     }
+
+    @Test
+    void bulkDecodeMixedBits() {
+        // 13 booleans = at least 2 bytes; pattern 1010 1010 1 0101 010 (LSB-first per Parquet PLAIN BOOLEAN).
+        ByteBuffer page = ByteBuffer.allocate(2);
+        page.put((byte) 0b01010101);
+        page.put((byte) 0b00010101);
+        page.flip();
+
+        PageDecoder<Boolean> decoder = new PlainBooleanDecoder();
+        decoder.load(page, 13);
+
+        boolean[] dst = new boolean[13];
+        decoder.decodeBooleans(13, dst, 0);
+
+        assertThat(dst)
+                .containsExactly(
+                        true, false, true, false, true, false, true, false, // byte 0 LSB-first
+                        true, false, true, false, true); // byte 1 LSB-first, first 5 bits
+    }
 }

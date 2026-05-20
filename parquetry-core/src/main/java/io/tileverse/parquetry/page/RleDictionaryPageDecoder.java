@@ -15,6 +15,7 @@
  */
 package io.tileverse.parquetry.page;
 
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 
 /**
@@ -57,5 +58,47 @@ public final class RleDictionaryPageDecoder<T> implements PageDecoder<T> {
     @Override
     public void skip(int n) {
         indexDecoder.skip(n);
+    }
+
+    @Override
+    public void decodeInts(int n, int[] dst, int offset) {
+        for (int i = 0; i < n; i++) {
+            dst[offset + i] = (Integer) next();
+        }
+    }
+
+    @Override
+    public void decodeLongs(int n, long[] dst, int offset) {
+        for (int i = 0; i < n; i++) {
+            dst[offset + i] = (Long) next();
+        }
+    }
+
+    @Override
+    public void decodeFloats(int n, float[] dst, int offset) {
+        for (int i = 0; i < n; i++) {
+            dst[offset + i] = (Float) next();
+        }
+    }
+
+    @Override
+    public void decodeDoubles(int n, double[] dst, int offset) {
+        for (int i = 0; i < n; i++) {
+            dst[offset + i] = (Double) next();
+        }
+    }
+
+    @Override
+    public void decodeBooleans(int n, boolean[] dst, int offset) {
+        for (int i = 0; i < n; i++) {
+            dst[offset + i] = (Boolean) next();
+        }
+    }
+
+    @Override
+    public void decodeBinary(int n, MemorySegment[] dst, int offset) {
+        for (int i = 0; i < n; i++) {
+            dst[offset + i] = (MemorySegment) next();
+        }
     }
 }

@@ -47,6 +47,20 @@ class ByteStreamSplitDoubleDecoderTest {
         assertThat(decoder.next()).isEqualTo(5.0);
     }
 
+    @Test
+    void bulkDecodeDoublesFillsArray() {
+        double[] values = {1.5, -2.25, 3.141592653589793, 0.0};
+        byte[] encoded = encode(values);
+
+        PageDecoder<Double> decoder = new ByteStreamSplitDoubleDecoder();
+        decoder.load(ByteBuffer.wrap(encoded), values.length);
+
+        double[] dst = new double[values.length];
+        decoder.decodeDoubles(values.length, dst, 0);
+
+        assertThat(dst).containsExactly(values);
+    }
+
     static byte[] encode(double[] values) {
         int n = values.length;
         byte[] out = new byte[n * 8];

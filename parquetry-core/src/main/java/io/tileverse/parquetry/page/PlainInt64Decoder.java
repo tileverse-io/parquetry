@@ -36,6 +36,11 @@ final class PlainInt64Decoder implements PageDecoder<Long> {
     }
 
     @Override
+    public void decodeLongs(int n, long[] dst, int offset) {
+        buffer.get(dst, offset, n);
+    }
+
+    @Override
     public void skip(int n) {
         buffer.position(buffer.position() + n);
     }

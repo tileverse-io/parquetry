@@ -57,4 +57,23 @@ class PlainInt64DecoderTest {
 
         assertThat(decoder.next()).isEqualTo(300L);
     }
+
+    @Test
+    void bulkDecodeFillsArray() {
+        ByteBuffer page = ByteBuffer.allocate(32).order(LITTLE_ENDIAN);
+        page.putLong(100L);
+        page.putLong(200L);
+        page.putLong(300L);
+        page.putLong(400L);
+        page.flip();
+
+        PageDecoder<Long> decoder = new PlainInt64Decoder();
+        decoder.load(page, 4);
+
+        long[] dst = new long[5];
+        dst[0] = -1L;
+        decoder.decodeLongs(4, dst, 1);
+
+        assertThat(dst).containsExactly(-1L, 100L, 200L, 300L, 400L);
+    }
 }

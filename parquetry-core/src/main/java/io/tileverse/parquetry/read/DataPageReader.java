@@ -16,14 +16,13 @@
 package io.tileverse.parquetry.read;
 
 import java.io.IOException;
+import java.lang.foreign.Arena;
 import java.nio.ByteBuffer;
 
 import io.tileverse.parquetry.codec.Codec;
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.PageHeader;
 import io.tileverse.parquetry.read.LevelMaximaResolver.LevelMaxima;
-
-import io.tileverse.io.ByteBufferPool;
 
 /**
  * Owns the difference between Data Page V1 and V2 on-disk shapes (see the package documentation).
@@ -36,8 +35,8 @@ import io.tileverse.io.ByteBufferPool;
  * but legal), so the dispatch is per-page, not per-chunk.
  *
  * <p>The {@code compressedPagePayload} buffer passed to {@link #read(PageHeader, LevelMaxima, ByteBuffer, Codec,
- * ByteBufferPool)} is a slice of the parent {@code FetchedColumnChunk}'s pooled compressed buffer; implementations must
- * not retain it past the call and must not close it.
+ * Arena)} is a slice of the parent {@code FetchedColumnChunk}'s pooled compressed buffer; implementations must not
+ * retain it past the call and must not close it.
  */
 sealed interface DataPageReader permits DataPageV1Reader, DataPageV2Reader {
 
@@ -51,17 +50,14 @@ sealed interface DataPageReader permits DataPageV1Reader, DataPageV2Reader {
      * @param compressedPagePayload a read-positioned slice of the compressed column-chunk buffer covering exactly this
      *     page's bytes; implementations consume it locally and must not retain the reference
      * @param codec the column chunk's compression codec; used to decompress V2 value bytes and the entire V1 payload
-     * @param pool the byte-buffer pool to borrow the decompressed value buffer from; the returned {@link DecodedPage}
-     *     owns that pooled buffer and is responsible for releasing it via {@link DecodedPage#close()}
-     * @return a {@link DecodedPage} whose pooled value buffer the caller must close when advancing to the next page
+     * @param pageArena the Arena to allocate the decompressed value bytes from; the caller owns the Arena's lifecycle
+     *     and must close it when the page is no longer needed (typically by closing the returned {@link DecodedPage})
+     * @return a {@link DecodedPage} backed by {@code pageArena}-allocated segments; the caller must close it when
+     *     advancing to the next page
      * @throws IOException if decompression fails
      */
     DecodedPage read(
-            PageHeader header,
-            LevelMaxima maxLevels,
-            ByteBuffer compressedPagePayload,
-            Codec codec,
-            ByteBufferPool pool)
+            PageHeader header, LevelMaxima maxLevels, ByteBuffer compressedPagePayload, Codec codec, Arena pageArena)
             throws IOException;
 
     /**

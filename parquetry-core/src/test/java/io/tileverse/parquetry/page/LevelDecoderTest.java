@@ -99,4 +99,21 @@ class LevelDecoderTest {
         d.skip(5);
         assertThat(d.next()).isEqualTo(7); // 6th value, still in run
     }
+
+    @Test
+    void bulkDecodeFillsArrayFromMultipleRuns() {
+        // Build a level stream with: RLE run of 3 zeros, bit-packed run of 8 ones, RLE run of 2 zeros.
+        // bitWidth = 1 for a single-level def stream (column max def = 1).
+        LevelDecoder decoder = new LevelDecoder(1);
+        // bit-width-1 levels: RLE run header = (3 << 1) | 0 = 6 (varint single byte). RLE value byte = 0.
+        // Bit-packed run header = (1 << 1) | 1 = 3 (varint single byte) for groups=1 (8 values).
+        // Bit-packed body: 0b11111111 = 0xff.
+        // Trailing RLE run: header = (2 << 1) | 0 = 4 (varint single byte). RLE value byte = 0.
+        decoder.load(ByteBuffer.wrap(new byte[] {6, 0, 3, (byte) 0xff, 4, 0}));
+
+        int[] dst = new int[13];
+        decoder.decode(13, dst, 0);
+
+        assertThat(dst).containsExactly(0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0);
+    }
 }

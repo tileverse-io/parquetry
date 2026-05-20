@@ -20,6 +20,8 @@ import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.util.Objects;
 import java.util.Optional;
@@ -41,26 +43,25 @@ import io.tileverse.parquetry.read.LevelMaximaResolver.LevelMaxima;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Field;
 
-import io.tileverse.io.ByteBufferPool;
-
 /**
  * Lazy, page-at-a-time {@link ColumnReader} backed by a {@code FetchedColumnChunk}'s compressed buffer.
  *
  * <p>The reader walks the compressed column chunk one page at a time: read the next {@link PageHeader}, slice off the
  * page's compressed bytes, hand them to a {@link DataPageReader} that produces a {@link DecodedPage}, build the
  * per-page {@link LevelDecoder}s and {@link PageDecoder}, and yield values to the assembler row by row. When the page
- * exhausts, the previous {@link DecodedPage} is closed (returning its pooled decompressed-values buffer to the pool)
- * before the next page is loaded. This is the streaming memory contract described in the package documentation: per
- * active row group, resident bytes is bounded by {@code Sigma_columns (compressed chunk bytes) + Sigma_columns (one
- * decompressed page worth)}.
+ * exhausts, the previous {@link DecodedPage} is closed (closing its {@link Arena} and releasing the native memory for
+ * that page's decompressed bytes) before the next page is loaded. This is the streaming memory contract documented in
+ * the package documentation: per active row group, resident bytes is bounded by {@code Sigma_columns (compressed chunk
+ * bytes) + Sigma_columns (one decompressed page worth)}.
  *
  * <p>Dictionary pages are <em>not</em> walked by this reader; the {@code RealColumnFetcher} decodes the dictionary
  * eagerly during the column-chunk fetch and skips past it when computing the start position of the compressed buffer
  * slice handed in here. The constructor therefore receives only the data-page region.
  *
  * <p>The wrapped {@code FetchedColumnChunk}'s compressed buffer is owned by the {@code RowGroupReader}; this reader
- * neither retains nor closes it. The only resource the reader owns is the current page's {@link DecodedPage}, released
- * either when advancing to the next page or by {@link #close()}.
+ * neither retains nor closes it. The reader owns one {@link Arena} per active page, allocated freshly with
+ * {@link Arena#ofConfined()} when advancing. Closing the previous page's {@link DecodedPage} closes that Arena,
+ * releasing native memory before the next Arena is opened.
  */
 final class StreamingColumnReader implements ColumnReader {
 
@@ -71,7 +72,6 @@ final class StreamingColumnReader implements ColumnReader {
     private final Field.Primitive leaf;
     private final Codec codec;
     private final long totalValues;
-    private final ByteBufferPool pool;
     private final Optional<Dictionary<?>> dictionary;
     private final PageCursor pageCursor;
     private final int repBitWidth;
@@ -91,7 +91,7 @@ final class StreamingColumnReader implements ColumnReader {
     private Object currentValue;
     private boolean closed;
 
-    @SuppressWarnings("java:S107") // 9 params is intentional: ColumnReader is the consumer-facing
+    @SuppressWarnings("java:S107") // 8 params is intentional: ColumnReader is the consumer-facing
     // type and we want zero hidden state; bundling into a config record would obscure the
     // construction-site contract that paired RealColumnFetcher already enforces.
     public StreamingColumnReader(
@@ -102,8 +102,7 @@ final class StreamingColumnReader implements ColumnReader {
             ByteBuffer compressedChunkBytes,
             Optional<Dictionary<?>> dictionary,
             CompressionCodec compressionCodec,
-            long totalValues,
-            ByteBufferPool pool) {
+            long totalValues) {
         this.columnPath = Objects.requireNonNull(columnPath, "columnPath");
         if (maxRepetitionLevel < 0) {
             throw new IllegalArgumentException("maxRepetitionLevel must be >= 0, got " + maxRepetitionLevel);
@@ -121,7 +120,6 @@ final class StreamingColumnReader implements ColumnReader {
         this.dictionary = Objects.requireNonNull(dictionary, "dictionary");
         this.codec = CodecRegistry.lookup(Objects.requireNonNull(compressionCodec, "compressionCodec"));
         this.totalValues = totalValues;
-        this.pool = Objects.requireNonNull(pool, "pool");
         this.pageCursor =
                 new PageCursor(Objects.requireNonNull(compressedChunkBytes, "compressedChunkBytes"), columnPath);
         this.repBitWidth = LevelDecoder.computeBitWidth(maxRepetitionLevel);
@@ -220,11 +218,29 @@ final class StreamingColumnReader implements ColumnReader {
      * intervening non-data pages (e.g. an unexpected dictionary page in the data-page region); if the cursor exhausts
      * without yielding a data page while {@code valuesConsumedTotal &lt; totalValues}, that is a format error and a
      * {@link ParquetFormatException} is thrown.
+     *
+     * <p>One {@link Arena#ofConfined()} is allocated per page. The Arena is passed to the page reader and is owned by
+     * the resulting {@link DecodedPage}; closing the page closes the Arena.
+     *
+     * <p>Transition note: the value decoder receives a heap-backed {@link ByteBuffer} copy of the Arena-allocated value
+     * bytes. Binary decoders (e.g. {@code PlainBinaryDecoder}) return {@link MemorySegment} views of their buffer that
+     * are stored in assembled rows. In the row API, those rows outlive the page Arena (they are collected into a list
+     * while the stream is still open, then accessed after the stream closes). A heap copy ensures the decoder's buffer
+     * - and any views derived from it - remain valid after the Arena is closed. a later row-on-batch reimplementation
+     * will let the Arena pass through from the batch driver and this copy will no longer be needed.
      */
     private void advanceToNextPage() {
         releaseCurrentPage();
-        DecodedPage next = pageCursor.nextDataPage(maxLevels, codec, pool);
+        Arena arena = Arena.ofConfined();
+        DecodedPage next;
+        try {
+            next = pageCursor.nextDataPage(maxLevels, codec, arena);
+        } catch (RuntimeException | IOException e) {
+            arena.close();
+            throw (e instanceof RuntimeException re) ? re : new UncheckedIOException((IOException) e);
+        }
         if (next == null) {
+            arena.close();
             throw new MalformedFileException("Column " + columnPath.dot() + " exhausted page stream after "
                     + valuesConsumedTotal + " values; expected " + totalValues);
         }
@@ -232,7 +248,7 @@ final class StreamingColumnReader implements ColumnReader {
             repetitionDecoder = buildLevelDecoder(repBitWidth, next.repLevelBytes());
             definitionDecoder = buildLevelDecoder(defBitWidth, next.defLevelBytes());
             valueDecoder = DecoderFactory.decoderFor(next.valuesEncoding(), leaf.kind(), typeLength(leaf), dictionary);
-            valueDecoder.load(next.values(), next.valueCount());
+            valueDecoder.load(heapCopyOf(next.valueBytes()), next.valueCount());
         } catch (RuntimeException e) {
             next.close();
             throw e;
@@ -240,6 +256,21 @@ final class StreamingColumnReader implements ColumnReader {
         currentPage = next;
         valuesInCurrentPage = next.valueCount();
         valuesConsumedInCurrentPage = 0;
+    }
+
+    /**
+     * Copies the contents of an Arena-allocated {@link MemorySegment} into a fresh heap {@link ByteBuffer} in
+     * little-endian order. The returned buffer is positioned at zero and ready to read. Heap backing ensures any
+     * {@link MemorySegment} slices produced by a decoder from this buffer remain valid after the Arena closes.
+     * Transition artifact for the row API path; a later row-on-batch reimplementation will remove this copy by passing
+     * the Arena through from the batch driver.
+     */
+    private static ByteBuffer heapCopyOf(MemorySegment segment) {
+        int size = (int) segment.byteSize();
+        ByteBuffer heap = ByteBuffer.allocate(size).order(LITTLE_ENDIAN);
+        MemorySegment.copy(segment, 0, MemorySegment.ofBuffer(heap), 0, size);
+        heap.rewind();
+        return heap;
     }
 
     private void releaseCurrentPage() {
@@ -257,9 +288,17 @@ final class StreamingColumnReader implements ColumnReader {
         }
     }
 
-    private static LevelDecoder buildLevelDecoder(int bitWidth, ByteBuffer bytes) {
+    /**
+     * Builds a level decoder for the given bit width and level bytes. When {@code bytes} is {@link MemorySegment#NULL}
+     * (column with max level == 0), an empty ByteBuffer is passed; the decoder's {@link LevelDecoder#next()} returns 0
+     * without reading from the buffer when bit width is 0.
+     */
+    private static LevelDecoder buildLevelDecoder(int bitWidth, MemorySegment bytes) {
         LevelDecoder decoder = new LevelDecoder(bitWidth);
-        decoder.load(bytes.duplicate());
+        ByteBuffer buf = (bytes == MemorySegment.NULL)
+                ? ByteBuffer.allocate(0).order(LITTLE_ENDIAN)
+                : bytes.asByteBuffer().order(LITTLE_ENDIAN);
+        decoder.load(buf);
         return decoder;
     }
 
@@ -288,7 +327,7 @@ final class StreamingColumnReader implements ColumnReader {
          * Returns the next {@link DecodedPage} from the chunk's compressed bytes, or {@code null} when the cursor is
          * exhausted. Non-data pages (e.g. a misplaced dictionary or index page in the data-page region) are skipped.
          */
-        DecodedPage nextDataPage(LevelMaxima maxLevels, Codec codec, ByteBufferPool pool) {
+        DecodedPage nextDataPage(LevelMaxima maxLevels, Codec codec, Arena pageArena) throws IOException {
             while (chunk.hasRemaining()) {
                 PageHeader header = readNextPageHeader();
                 int compressedSize = header.compressedPageSize();
@@ -298,11 +337,7 @@ final class StreamingColumnReader implements ColumnReader {
                 }
                 ByteBuffer pagePayload = sliceAndAdvance(compressedSize);
                 if (header.type() == PageType.DATA_PAGE || header.type() == PageType.DATA_PAGE_V2) {
-                    try {
-                        return DataPageReader.forHeader(header).read(header, maxLevels, pagePayload, codec, pool);
-                    } catch (IOException e) {
-                        throw new UncheckedIOException("Failed to decode data page for column " + columnPath.dot(), e);
-                    }
+                    return DataPageReader.forHeader(header).read(header, maxLevels, pagePayload, codec, pageArena);
                 }
                 // Skip any leftover dictionary/index pages quietly; their payload bytes were already advanced past.
             }

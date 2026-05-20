@@ -19,6 +19,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -154,70 +156,86 @@ class DecoderFactoryConformanceTest {
         // We keep a separate offset tracker so we can extract compressed page bytes after
         // each header.
         int pos = 0;
-        while (pos < chunkBuf.limit()) {
-            // Wrap remaining bytes as an InputStream for the Thrift compact reader.
-            byte[] chunkBytes = chunkBuf.array();
-            int arrayOffset = chunkBuf.arrayOffset() + pos;
-            int remaining = chunkBuf.limit() - pos;
+        try (Arena arena = Arena.ofConfined()) {
+            while (pos < chunkBuf.limit()) {
+                // Wrap remaining bytes as an InputStream for the Thrift compact reader.
+                byte[] chunkBytes = chunkBuf.array();
+                int arrayOffset = chunkBuf.arrayOffset() + pos;
+                int remaining = chunkBuf.limit() - pos;
 
-            InputStream headerStream = new ByteArrayInputStream(chunkBytes, arrayOffset, remaining);
-            int beforeHeaderRead = headerStream.available();
-            PageHeader header = ParquetFormat.readPageHeader(headerStream);
-            int headerLen = beforeHeaderRead - headerStream.available();
-            pos += headerLen;
+                InputStream headerStream = new ByteArrayInputStream(chunkBytes, arrayOffset, remaining);
+                int beforeHeaderRead = headerStream.available();
+                PageHeader header = ParquetFormat.readPageHeader(headerStream);
+                int headerLen = beforeHeaderRead - headerStream.available();
+                pos += headerLen;
 
-            int compressedSize = header.compressedPageSize();
-            int uncompressedSize = header.uncompressedPageSize();
+                int compressedSize = header.compressedPageSize();
+                int uncompressedSize = header.uncompressedPageSize();
 
-            // Slice the compressed payload from the chunk buffer.
-            ByteBuffer compressedPayload = ByteBuffer.wrap(chunkBytes, chunkBuf.arrayOffset() + pos, compressedSize);
-            pos += compressedSize;
+                // Slice the compressed payload from the chunk buffer.
+                ByteBuffer compressedPayload =
+                        ByteBuffer.wrap(chunkBytes, chunkBuf.arrayOffset() + pos, compressedSize);
+                pos += compressedSize;
 
-            PageType type = header.type();
-            if (type == PageType.DICTIONARY_PAGE) {
-                // Decompress the full dictionary page.
-                ByteBuffer dictPage = codec.decompress(compressedPayload, uncompressedSize);
-                int dictValueCount = header.dictionaryPageHeader()
-                        .orElseThrow(
-                                () -> new IllegalStateException("DICTIONARY_PAGE missing header for " + debugLabel))
-                        .numValues();
-                Dictionary<?> dict = DictionaryDecoder.read(dictPage, kind, dictValueCount, typeLength);
-                currentDict = Optional.of(dict);
+                PageType type = header.type();
+                if (type == PageType.DICTIONARY_PAGE) {
+                    // Decompress the full dictionary page.
+                    MemorySegment dictPageSeg = arena.allocate(uncompressedSize);
+                    codec.decompress(MemorySegment.ofBuffer(compressedPayload), dictPageSeg);
+                    ByteBuffer dictPage = dictPageSeg.asByteBuffer().asReadOnlyBuffer();
+                    dictPage.position(0);
+                    dictPage.limit(uncompressedSize);
+                    int dictValueCount = header.dictionaryPageHeader()
+                            .orElseThrow(
+                                    () -> new IllegalStateException("DICTIONARY_PAGE missing header for " + debugLabel))
+                            .numValues();
+                    Dictionary<?> dict = DictionaryDecoder.read(dictPage, kind, dictValueCount, typeLength);
+                    currentDict = Optional.of(dict);
 
-            } else if (type == PageType.DATA_PAGE) {
-                // V1 data page.
-                DataPageHeader dpHeader = header.dataPageHeader()
-                        .orElseThrow(() -> new IllegalStateException("DATA_PAGE missing header for " + debugLabel));
-                int numValues = dpHeader.numValues();
-                Encoding encoding = dpHeader.encoding();
+                } else if (type == PageType.DATA_PAGE) {
+                    // V1 data page.
+                    DataPageHeader dpHeader = header.dataPageHeader()
+                            .orElseThrow(() -> new IllegalStateException("DATA_PAGE missing header for " + debugLabel));
+                    int numValues = dpHeader.numValues();
+                    Encoding encoding = dpHeader.encoding();
 
-                // Decompress the full page.
-                ByteBuffer pageBuf = codec.decompress(compressedPayload, uncompressedSize);
+                    // Decompress the full page.
+                    MemorySegment pageSeg = arena.allocate(uncompressedSize);
+                    codec.decompress(MemorySegment.ofBuffer(compressedPayload), pageSeg);
+                    ByteBuffer pageBuf = pageSeg.asByteBuffer().asReadOnlyBuffer();
+                    pageBuf.position(0);
+                    pageBuf.limit(uncompressedSize);
 
-                // Parquet spec: for REQUIRED columns (max_rep=0, max_def=0) the level streams
-                // are completely absent - no bytes, no length prefix. The value bytes start at
-                // offset 0 of the decompressed page payload.
-                // We only get here for REQUIRED columns (non-REQUIRED are skipped above), so
-                // we pass the full decompressed payload directly to the value decoder.
-                ByteBuffer valuePayload = pageBuf.slice();
-                decodePageValues(encoding, kind, typeLength, currentDict, valuePayload, numValues, values);
+                    // Parquet spec: for REQUIRED columns (max_rep=0, max_def=0) the level streams
+                    // are completely absent - no bytes, no length prefix. The value bytes start at
+                    // offset 0 of the decompressed page payload.
+                    // We only get here for REQUIRED columns (non-REQUIRED are skipped above), so
+                    // we pass the full decompressed payload directly to the value decoder.
+                    ByteBuffer valuePayload = pageBuf.slice();
+                    decodePageValues(encoding, kind, typeLength, currentDict, valuePayload, numValues, values);
 
-            } else if (type == PageType.DATA_PAGE_V2) {
-                // V2 data page: level bytes are uncompressed and precede the value section.
-                DataPageHeaderV2 dpv2Header = header.dataPageHeaderV2()
-                        .orElseThrow(() -> new IllegalStateException("DATA_PAGE_V2 missing header for " + debugLabel));
-                int numValues = dpv2Header.numValues();
-                Encoding encoding = dpv2Header.encoding();
-                int repLevelBytes = dpv2Header.repetitionLevelsByteLength();
-                int defLevelBytes = dpv2Header.definitionLevelsByteLength();
+                } else if (type == PageType.DATA_PAGE_V2) {
+                    // V2 data page: level bytes are uncompressed and precede the value section.
+                    DataPageHeaderV2 dpv2Header = header.dataPageHeaderV2()
+                            .orElseThrow(
+                                    () -> new IllegalStateException("DATA_PAGE_V2 missing header for " + debugLabel));
+                    int numValues = dpv2Header.numValues();
+                    Encoding encoding = dpv2Header.encoding();
+                    int repLevelBytes = dpv2Header.repetitionLevelsByteLength();
+                    int defLevelBytes = dpv2Header.definitionLevelsByteLength();
 
-                // Decompress the whole page payload, then skip the level sections.
-                ByteBuffer pageBuf = codec.decompress(compressedPayload, uncompressedSize);
-                pageBuf.position(pageBuf.position() + repLevelBytes + defLevelBytes);
-                ByteBuffer valuePayload = pageBuf.slice();
-                decodePageValues(encoding, kind, typeLength, currentDict, valuePayload, numValues, values);
+                    // Decompress the whole page payload, then skip the level sections.
+                    MemorySegment pageSeg = arena.allocate(uncompressedSize);
+                    codec.decompress(MemorySegment.ofBuffer(compressedPayload), pageSeg);
+                    ByteBuffer pageBuf = pageSeg.asByteBuffer().asReadOnlyBuffer();
+                    pageBuf.position(0);
+                    pageBuf.limit(uncompressedSize);
+                    pageBuf.position(pageBuf.position() + repLevelBytes + defLevelBytes);
+                    ByteBuffer valuePayload = pageBuf.slice();
+                    decodePageValues(encoding, kind, typeLength, currentDict, valuePayload, numValues, values);
+                }
+                // INDEX_PAGE and other types are skipped silently.
             }
-            // INDEX_PAGE and other types are skipped silently.
         }
         return values;
     }

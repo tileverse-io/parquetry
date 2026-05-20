@@ -97,4 +97,24 @@ class PlainInt96DecoderTest {
         MemorySegment result = decoder.next();
         assertThat(result.toArray(JAVA_BYTE)).isEqualTo(kept);
     }
+
+    @Test
+    void bulkDecodeFillsInt96Segments() {
+        // 3 values of 12 bytes each.
+        ByteBuffer page = ByteBuffer.allocate(36);
+        page.put("AAAAAAAAAAAA".getBytes());
+        page.put("BBBBBBBBBBBB".getBytes());
+        page.put("CCCCCCCCCCCC".getBytes());
+        page.flip();
+
+        PageDecoder<MemorySegment> decoder = new PlainInt96Decoder();
+        decoder.load(page, 3);
+
+        MemorySegment[] dst = new MemorySegment[3];
+        decoder.decodeBinary(3, dst, 0);
+
+        assertThat(dst[0].toArray(JAVA_BYTE)).isEqualTo("AAAAAAAAAAAA".getBytes());
+        assertThat(dst[1].toArray(JAVA_BYTE)).isEqualTo("BBBBBBBBBBBB".getBytes());
+        assertThat(dst[2].toArray(JAVA_BYTE)).isEqualTo("CCCCCCCCCCCC".getBytes());
+    }
 }

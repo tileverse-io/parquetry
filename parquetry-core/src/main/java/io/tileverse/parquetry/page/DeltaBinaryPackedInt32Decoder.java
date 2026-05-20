@@ -38,6 +38,13 @@ final class DeltaBinaryPackedInt32Decoder implements PageDecoder<Integer> {
     }
 
     @Override
+    public void decodeInts(int n, int[] dst, int offset) {
+        for (int i = 0; i < n; i++) {
+            dst[offset + i] = (int) delegate.next();
+        }
+    }
+
+    @Override
     public void skip(int n) {
         delegate.skip(n);
     }

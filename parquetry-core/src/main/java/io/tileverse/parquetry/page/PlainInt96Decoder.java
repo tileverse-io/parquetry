@@ -43,6 +43,13 @@ final class PlainInt96Decoder implements PageDecoder<MemorySegment> {
     }
 
     @Override
+    public void decodeBinary(int n, MemorySegment[] dst, int offset) {
+        for (int i = 0; i < n; i++) {
+            dst[offset + i] = next();
+        }
+    }
+
+    @Override
     public void skip(int n) {
         buffer.position(buffer.position() + n * INT96_BYTES);
     }

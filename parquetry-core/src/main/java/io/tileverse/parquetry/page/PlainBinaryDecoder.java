@@ -44,6 +44,13 @@ public final class PlainBinaryDecoder implements PageDecoder<MemorySegment> {
     }
 
     @Override
+    public void decodeBinary(int n, MemorySegment[] dst, int offset) {
+        for (int i = 0; i < n; i++) {
+            dst[offset + i] = next();
+        }
+    }
+
+    @Override
     public void skip(int n) {
         for (int i = 0; i < n; i++) {
             int length = buffer.getInt();

@@ -47,6 +47,13 @@ final class PlainBooleanDecoder implements PageDecoder<Boolean> {
     }
 
     @Override
+    public void decodeBooleans(int n, boolean[] dst, int offset) {
+        for (int i = 0; i < n; i++) {
+            dst[offset + i] = next();
+        }
+    }
+
+    @Override
     public void skip(int n) {
         bitPosition += n;
     }

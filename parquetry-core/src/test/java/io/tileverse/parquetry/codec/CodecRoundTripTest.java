@@ -15,9 +15,12 @@
  */
 package io.tileverse.parquetry.codec;
 
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.ByteArrayOutputStream;
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.Random;
@@ -63,8 +66,11 @@ class CodecRoundTripTest {
         int compressedLen = compressor.compress(original, 0, original.length, compressed, 0, compressed.length);
 
         Codec codec = CodecRegistry.lookup(CompressionCodec.SNAPPY);
-        ByteBuffer out = codec.decompress(ByteBuffer.wrap(compressed, 0, compressedLen), original.length);
-        assertRemainingEquals(out, original);
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment out = arena.allocate(original.length);
+            codec.decompress(MemorySegment.ofBuffer(ByteBuffer.wrap(compressed, 0, compressedLen)), out);
+            assertThat(out.toArray(JAVA_BYTE)).isEqualTo(original);
+        }
     }
 
     @ParameterizedTest(name = "zstd/{0}")
@@ -75,8 +81,11 @@ class CodecRoundTripTest {
         int compressedLen = compressor.compress(original, 0, original.length, compressed, 0, compressed.length);
 
         Codec codec = CodecRegistry.lookup(CompressionCodec.ZSTD);
-        ByteBuffer out = codec.decompress(ByteBuffer.wrap(compressed, 0, compressedLen), original.length);
-        assertRemainingEquals(out, original);
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment out = arena.allocate(original.length);
+            codec.decompress(MemorySegment.ofBuffer(ByteBuffer.wrap(compressed, 0, compressedLen)), out);
+            assertThat(out.toArray(JAVA_BYTE)).isEqualTo(original);
+        }
     }
 
     @ParameterizedTest(name = "lz4raw/{0}")
@@ -87,8 +96,11 @@ class CodecRoundTripTest {
         int compressedLen = compressor.compress(original, 0, original.length, compressed, 0, compressed.length);
 
         Codec codec = CodecRegistry.lookup(CompressionCodec.LZ4_RAW);
-        ByteBuffer out = codec.decompress(ByteBuffer.wrap(compressed, 0, compressedLen), original.length);
-        assertRemainingEquals(out, original);
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment out = arena.allocate(original.length);
+            codec.decompress(MemorySegment.ofBuffer(ByteBuffer.wrap(compressed, 0, compressedLen)), out);
+            assertThat(out.toArray(JAVA_BYTE)).isEqualTo(original);
+        }
     }
 
     @ParameterizedTest(name = "gzip/{0}")
@@ -101,8 +113,11 @@ class CodecRoundTripTest {
         byte[] compressed = bos.toByteArray();
 
         Codec codec = CodecRegistry.lookup(CompressionCodec.GZIP);
-        ByteBuffer out = codec.decompress(ByteBuffer.wrap(compressed), original.length);
-        assertRemainingEquals(out, original);
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment out = arena.allocate(original.length);
+            codec.decompress(MemorySegment.ofBuffer(ByteBuffer.wrap(compressed)), out);
+            assertThat(out.toArray(JAVA_BYTE)).isEqualTo(original);
+        }
     }
 
     /**
@@ -119,8 +134,11 @@ class CodecRoundTripTest {
         byte[] expected = "hello world".getBytes();
 
         Codec codec = CodecRegistry.lookup(CompressionCodec.BROTLI);
-        ByteBuffer out = codec.decompress(ByteBuffer.wrap(compressed), expected.length);
-        assertRemainingEquals(out, expected);
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment out = arena.allocate(expected.length);
+            codec.decompress(MemorySegment.ofBuffer(ByteBuffer.wrap(compressed)), out);
+            assertThat(out.toArray(JAVA_BYTE)).isEqualTo(expected);
+        }
     }
 
     private static byte[] fillBytes(int length, byte value) {
@@ -141,11 +159,5 @@ class CodecRoundTripTest {
         byte[] result = new byte[length];
         new Random(seed).nextBytes(result);
         return result;
-    }
-
-    private static void assertRemainingEquals(ByteBuffer out, byte[] expected) {
-        byte[] decoded = new byte[out.remaining()];
-        out.get(decoded);
-        assertThat(decoded).isEqualTo(expected);
     }
 }

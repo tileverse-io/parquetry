@@ -18,6 +18,8 @@ package io.tileverse.parquetry.read;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 
 import java.io.IOException;
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 
 import io.tileverse.parquetry.codec.Codec;
@@ -26,9 +28,6 @@ import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.PageHeader;
 import io.tileverse.parquetry.read.LevelMaximaResolver.LevelMaxima;
-
-import io.tileverse.io.ByteBufferPool;
-import io.tileverse.io.ByteBufferPool.PooledByteBuffer;
 
 /**
  * Reads a Parquet 1.x Data Page V1.
@@ -45,84 +44,65 @@ import io.tileverse.io.ByteBufferPool.PooledByteBuffer;
  * itself only carries the total compressed and uncompressed sizes, so the reader needs the column's max repetition and
  * definition levels (passed in via {@link LevelMaxima}) to know whether each length prefix is present.
  *
- * <p>Pooling contract: one pooled buffer is borrowed for the full decompressed payload. The returned
- * {@link DecodedPage}'s {@code valueBuffer} owns that single pool ticket; the rep- and def-level slices are zero-copy
- * read-only views into the same pooled buffer. Closing the {@link DecodedPage} returns the ticket and invalidates all
- * three views together. On any failure path the borrowed buffer is returned to the pool before the exception
- * propagates.
+ * <p>Arena contract: the full decompressed payload is allocated from the caller-supplied {@link Arena}. The rep- and
+ * def-level segments are read-only slices of that allocation; the values segment begins after the level sections. All
+ * three segments share the Arena's lifetime. The caller (not this reader) is responsible for closing the Arena.
  */
 final class DataPageV1Reader implements DataPageReader {
 
     @Override
     public DecodedPage read(
-            PageHeader header,
-            LevelMaxima maxLevels,
-            ByteBuffer compressedPagePayload,
-            Codec codec,
-            ByteBufferPool pool)
+            PageHeader header, LevelMaxima maxLevels, ByteBuffer compressedPagePayload, Codec codec, Arena pageArena)
             throws IOException {
         DataPageHeader v1 = header.dataPageHeader()
                 .orElseThrow(() -> new IllegalArgumentException("PageHeader does not carry a DataPageHeader"));
-        PooledByteBuffer pooled = decompressPayload(header, compressedPagePayload, codec, pool);
-        try {
-            ByteBuffer decompressed = pooled.buffer();
-            decompressed.order(LITTLE_ENDIAN);
-            ByteBuffer repLevels = readOptionalLevelSlice(decompressed, maxLevels.maxRepetitionLevel(), "repetition");
-            ByteBuffer defLevels = readOptionalLevelSlice(decompressed, maxLevels.maxDefinitionLevel(), "definition");
-            // After the slices consume their length-prefixed regions, the pooled buffer's position sits at the start
-            // of the values section. DecodedPage.values() returns that buffer, so callers see exactly the value bytes.
-            Encoding valuesEncoding = DataPageReader.normalizeEncoding(v1.encoding());
-            return new DecodedPage(v1.numValues(), valuesEncoding, repLevels, defLevels, pooled);
-        } catch (RuntimeException e) {
-            pooled.close();
-            throw e;
-        }
+        MemorySegment payload = decompressPayload(header, compressedPagePayload, codec, pageArena);
+        // Walk the decompressed payload with a ByteBuffer cursor for the length-prefix reads.
+        ByteBuffer cursor = payload.asByteBuffer().order(LITTLE_ENDIAN);
+        MemorySegment repLevels = readOptionalLevelSlice(payload, cursor, maxLevels.maxRepetitionLevel(), "repetition");
+        MemorySegment defLevels = readOptionalLevelSlice(payload, cursor, maxLevels.maxDefinitionLevel(), "definition");
+        // After the level slices are consumed, the cursor position is the start of the values section.
+        MemorySegment valueBytes = payload.asSlice(cursor.position()).asReadOnly();
+        Encoding valuesEncoding = DataPageReader.normalizeEncoding(v1.encoding());
+        return new DecodedPage(v1.numValues(), valuesEncoding, repLevels, defLevels, valueBytes, pageArena);
     }
 
     /**
-     * Decompresses the full page payload into a pooled buffer sized for {@link PageHeader#uncompressedPageSize()}. On
-     * any failure the borrowed buffer is returned to the pool before the exception leaves this method.
+     * Decompresses the full page payload into an Arena-allocated segment sized for
+     * {@link PageHeader#uncompressedPageSize()}.
      */
-    private static PooledByteBuffer decompressPayload(
-            PageHeader header, ByteBuffer compressedPagePayload, Codec codec, ByteBufferPool pool) throws IOException {
+    private static MemorySegment decompressPayload(
+            PageHeader header, ByteBuffer compressedPagePayload, Codec codec, Arena pageArena) throws IOException {
         int uncompressedSize = header.uncompressedPageSize();
         if (uncompressedSize < 0) {
             throw new MalformedFileException(
                     "V1 page uncompressedPageSize must be non-negative, got " + uncompressedSize);
         }
-        PooledByteBuffer pooled = pool.borrowDirect(uncompressedSize);
-        try {
-            ByteBuffer target = pooled.buffer();
-            target.clear();
-            target.limit(uncompressedSize);
-            ByteBuffer source = compressedPagePayload.duplicate().order(LITTLE_ENDIAN);
-            codec.decompress(source, target);
-            target.flip();
-            return pooled;
-        } catch (IOException | RuntimeException e) {
-            pooled.close();
-            throw e;
-        }
+        MemorySegment payload = pageArena.allocate(uncompressedSize);
+        MemorySegment compressedSource = MemorySegment.ofBuffer(compressedPagePayload.duplicate());
+        codec.decompress(compressedSource, payload);
+        return payload;
     }
 
     /**
-     * Reads the next {@code [int32 LE length][bytes...]} pair when the column has a non-zero max level, returning an
-     * empty read-only buffer otherwise. The returned slice is a zero-copy view into {@code decompressed}.
+     * Reads the next {@code [int32 LE length][bytes...]} pair when the column has a non-zero max level, returning
+     * {@link MemorySegment#NULL} otherwise. The returned slice is a read-only view into {@code payload}.
      */
-    private static ByteBuffer readOptionalLevelSlice(ByteBuffer decompressed, int maxLevel, String levelKind) {
+    private static MemorySegment readOptionalLevelSlice(
+            MemorySegment payload, ByteBuffer cursor, int maxLevel, String levelKind) {
         if (maxLevel == 0) {
-            return emptyLittleEndianSlice();
+            return MemorySegment.NULL;
         }
-        int prefix = readLengthPrefix(decompressed, levelKind);
-        return sliceAndAdvance(decompressed, prefix, levelKind);
+        int prefix = readLengthPrefix(cursor, levelKind);
+        return sliceAndAdvance(payload, cursor, prefix, levelKind);
     }
 
-    private static int readLengthPrefix(ByteBuffer decompressed, String levelKind) {
-        if (decompressed.remaining() < Integer.BYTES) {
+    private static int readLengthPrefix(ByteBuffer cursor, String levelKind) {
+        if (cursor.remaining() < Integer.BYTES) {
             throw new MalformedFileException("V1 page truncated before " + levelKind
-                    + " level length prefix: remaining=" + decompressed.remaining() + " bytes, need 4");
+                    + " level length prefix: remaining=" + cursor.remaining() + " bytes, need 4");
         }
-        int length = decompressed.getInt();
+        int length = cursor.getInt();
         if (length < 0) {
             throw new MalformedFileException("V1 page " + levelKind + " level length prefix is negative: " + length);
         }
@@ -130,25 +110,21 @@ final class DataPageV1Reader implements DataPageReader {
     }
 
     /**
-     * Slices off the next {@code length} bytes of {@code decompressed} as a read-only little-endian view and advances
-     * the cursor past them. Throws when fewer than {@code length} bytes remain.
+     * Returns a read-only slice of the next {@code length} bytes of {@code payload} starting at the cursor's current
+     * position, then advances the cursor past them. Returns {@link MemorySegment#NULL} when {@code length == 0}.
      */
-    private static ByteBuffer sliceAndAdvance(ByteBuffer decompressed, int length, String levelKind) {
-        if (length > decompressed.remaining()) {
+    private static MemorySegment sliceAndAdvance(
+            MemorySegment payload, ByteBuffer cursor, int length, String levelKind) {
+        if (length > cursor.remaining()) {
             throw new MalformedFileException("V1 page " + levelKind + " level length " + length
-                    + " exceeds remaining payload bytes " + decompressed.remaining());
+                    + " exceeds remaining payload bytes " + cursor.remaining());
         }
         if (length == 0) {
-            return emptyLittleEndianSlice();
+            return MemorySegment.NULL;
         }
-        ByteBuffer slice = decompressed.slice();
-        slice.limit(length);
-        slice.order(LITTLE_ENDIAN);
-        decompressed.position(decompressed.position() + length);
-        return slice.asReadOnlyBuffer().order(LITTLE_ENDIAN);
-    }
-
-    private static ByteBuffer emptyLittleEndianSlice() {
-        return ByteBuffer.allocate(0).order(LITTLE_ENDIAN).asReadOnlyBuffer();
+        int offset = cursor.position();
+        MemorySegment slice = payload.asSlice(offset, length).asReadOnly();
+        cursor.position(offset + length);
+        return slice;
     }
 }

@@ -95,4 +95,38 @@ class DictionaryDecoderTest {
         assertThat(floatDict.get(1)).isEqualTo(2.5f);
         assertThat(floatDict.kind()).isEqualTo(PrimitiveKind.FLOAT);
     }
+
+    /**
+     * Verify that bulk decodeFloats on an RleDictionaryPageDecoder with a decoded dictionary matches successive next()
+     * calls.
+     */
+    @Test
+    void decodedDictionaryBulkDecodeFloats() {
+        // Three FLOAT values: 1.5f, 2.5f, 3.5f in little-endian IEEE 754
+        ByteBuffer dictPage = ByteBuffer.allocate(12).order(LITTLE_ENDIAN);
+        dictPage.putFloat(1.5f);
+        dictPage.putFloat(2.5f);
+        dictPage.putFloat(3.5f);
+        dictPage.flip();
+
+        Dictionary<?> dict = DictionaryDecoder.read(dictPage, PrimitiveKind.FLOAT, 3, OptionalInt.empty());
+
+        // Indexes [0, 1, 2, 0, 1, 2] encoded at bitWidth=2.
+        // byte 0: 0x24, byte 1: 0x09 (same bit pattern as RleDictionaryPageDecoderTest)
+        ByteBuffer indexPage = ByteBuffer.wrap(new byte[] {
+            2, // bit width
+            3, // RLE header: bit-packed, 1 group of 8
+            (byte) 0x24, // byte 0 of packed indexes
+            (byte) 0x09 // byte 1 of packed indexes
+        });
+
+        @SuppressWarnings("unchecked")
+        PageDecoder<Float> decoder = new RleDictionaryPageDecoder<>((Dictionary<Float>) dict);
+        decoder.load(indexPage, 6);
+
+        float[] dst = new float[6];
+        decoder.decodeFloats(6, dst, 0);
+
+        assertThat(dst).containsExactly(1.5f, 2.5f, 3.5f, 1.5f, 2.5f, 3.5f);
+    }
 }

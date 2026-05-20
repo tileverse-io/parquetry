@@ -17,8 +17,12 @@ package io.tileverse.parquetry.read;
 
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.nio.ByteBuffer;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -34,8 +38,6 @@ import io.tileverse.parquetry.format.PageHeader;
 import io.tileverse.parquetry.format.PageType;
 import io.tileverse.parquetry.read.LevelMaximaResolver.LevelMaxima;
 
-import io.tileverse.io.ByteBufferPool;
-
 /**
  * Unit tests for {@link DataPageV2Reader} that exercise the V2 layout (uncompressed level prefix +
  * optionally-compressed values section) using synthetic payloads constructed in-memory. Codec compression is not
@@ -49,7 +51,6 @@ class DataPageV2ReaderTest {
     private static final LevelMaxima IGNORED = new LevelMaxima(0, 0);
 
     private final DataPageV2Reader reader = new DataPageV2Reader();
-    private final ByteBufferPool pool = new ByteBufferPool();
     private final Codec uncompressed = CodecRegistry.lookup(CompressionCodec.UNCOMPRESSED);
 
     @Test
@@ -60,21 +61,22 @@ class DataPageV2ReaderTest {
         PageHeader header =
                 newV2Header(expected.length, /*repLen*/ 0, /*defLen*/ 0, payload.length, /*compressed*/ false);
 
-        try (DecodedPage page = reader.read(header, IGNORED, ByteBuffer.wrap(payload), uncompressed, pool)) {
+        // DecodedPage owns the Arena; closing it closes the Arena.
+        try (DecodedPage page =
+                reader.read(header, IGNORED, ByteBuffer.wrap(payload), uncompressed, Arena.ofConfined())) {
             assertThat(page.valueCount()).isEqualTo(expected.length);
-            assertThat(page.repLevelBytes().remaining())
-                    .as("rep slice is empty when maxRep=0")
-                    .isZero();
-            assertThat(page.defLevelBytes().remaining())
-                    .as("def slice is empty when maxDef=0")
-                    .isZero();
+            assertThat(page.repLevelBytes())
+                    .as("rep segment is NULL when repLen=0")
+                    .isEqualTo(MemorySegment.NULL);
+            assertThat(page.defLevelBytes())
+                    .as("def segment is NULL when defLen=0")
+                    .isEqualTo(MemorySegment.NULL);
             assertThat(page.valuesEncoding()).isEqualTo(Encoding.PLAIN);
 
-            ByteBuffer values = page.values();
-            int[] decoded = decodeInt32sLittleEndian(values, expected.length);
+            int[] decoded =
+                    decodeInt32sLittleEndian(page.valueBytes().asByteBuffer().order(LITTLE_ENDIAN), expected.length);
             assertThat(decoded).containsExactly(expected);
         }
-        assertThat(outstandingBorrows(pool)).isZero();
     }
 
     @Test
@@ -88,14 +90,15 @@ class DataPageV2ReaderTest {
         PageHeader header =
                 newV2Header(expected.length, repLevels.length, defLevels.length, payload.length, /*compressed*/ false);
 
-        try (DecodedPage page = reader.read(header, IGNORED, ByteBuffer.wrap(payload), uncompressed, pool)) {
+        try (DecodedPage page =
+                reader.read(header, IGNORED, ByteBuffer.wrap(payload), uncompressed, Arena.ofConfined())) {
             assertThat(toBytes(page.repLevelBytes())).containsExactly(repLevels);
             assertThat(toBytes(page.defLevelBytes())).containsExactly(defLevels);
 
-            int[] decoded = decodeInt32sLittleEndian(page.values(), expected.length);
+            int[] decoded =
+                    decodeInt32sLittleEndian(page.valueBytes().asByteBuffer().order(LITTLE_ENDIAN), expected.length);
             assertThat(decoded).containsExactly(expected);
         }
-        assertThat(outstandingBorrows(pool)).isZero();
     }
 
     @Test
@@ -111,13 +114,14 @@ class DataPageV2ReaderTest {
         PageHeader header =
                 newV2Header(expected.length, repLevels.length, defLevels.length, payload.length, /*compressed*/ true);
 
-        try (DecodedPage page = reader.read(header, IGNORED, ByteBuffer.wrap(payload), uncompressed, pool)) {
+        try (DecodedPage page =
+                reader.read(header, IGNORED, ByteBuffer.wrap(payload), uncompressed, Arena.ofConfined())) {
             assertThat(toBytes(page.repLevelBytes())).containsExactly(repLevels);
             assertThat(toBytes(page.defLevelBytes())).containsExactly(defLevels);
-            int[] decoded = decodeInt32sLittleEndian(page.values(), expected.length);
+            int[] decoded =
+                    decodeInt32sLittleEndian(page.valueBytes().asByteBuffer().order(LITTLE_ENDIAN), expected.length);
             assertThat(decoded).containsExactly(expected);
         }
-        assertThat(outstandingBorrows(pool)).isZero();
     }
 
     @Test
@@ -143,20 +147,21 @@ class DataPageV2ReaderTest {
                         /*isCompressed*/ false,
                         Optional.empty())));
 
-        try (DecodedPage page = reader.read(header, IGNORED, ByteBuffer.wrap(valueBytes), uncompressed, pool)) {
+        try (DecodedPage page =
+                reader.read(header, IGNORED, ByteBuffer.wrap(valueBytes), uncompressed, Arena.ofConfined())) {
             assertThat(page.valuesEncoding()).isEqualTo(Encoding.RLE_DICTIONARY);
         }
-        assertThat(outstandingBorrows(pool)).isZero();
     }
 
     @Test
-    void doubleCloseIsIdempotent() throws IOException {
+    void closeReleasesArena() throws IOException {
         byte[] payload = encodeInt32sLittleEndian(new int[] {1});
         PageHeader header = newV2Header(1, 0, 0, payload.length, false);
-        DecodedPage page = reader.read(header, IGNORED, ByteBuffer.wrap(payload), uncompressed, pool);
+        Arena arena = Arena.ofConfined();
+        DecodedPage page = reader.read(header, IGNORED, ByteBuffer.wrap(payload), uncompressed, arena);
         page.close();
-        page.close();
-        assertThat(outstandingBorrows(pool)).isZero();
+        // After close, the Arena is closed; any further allocation attempt must throw.
+        assertThatThrownBy(() -> arena.allocate(1)).isInstanceOf(IllegalStateException.class);
     }
 
     // --- fixture builders ---
@@ -212,15 +217,7 @@ class DataPageV2ReaderTest {
         return out;
     }
 
-    private static byte[] toBytes(ByteBuffer buf) {
-        ByteBuffer dup = buf.duplicate();
-        byte[] bytes = new byte[dup.remaining()];
-        dup.get(bytes);
-        return bytes;
-    }
-
-    private static long outstandingBorrows(ByteBufferPool pool) {
-        ByteBufferPool.PoolStatistics stats = pool.getStatistics();
-        return (stats.created() + stats.reused()) - (stats.returned() + stats.discarded());
+    private static byte[] toBytes(MemorySegment segment) {
+        return segment.toArray(ValueLayout.JAVA_BYTE);
     }
 }

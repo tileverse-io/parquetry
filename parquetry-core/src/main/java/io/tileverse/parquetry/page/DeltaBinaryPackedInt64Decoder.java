@@ -38,6 +38,13 @@ final class DeltaBinaryPackedInt64Decoder implements PageDecoder<Long> {
     }
 
     @Override
+    public void decodeLongs(int n, long[] dst, int offset) {
+        for (int i = 0; i < n; i++) {
+            dst[offset + i] = delegate.next();
+        }
+    }
+
+    @Override
     public void skip(int n) {
         delegate.skip(n);
     }

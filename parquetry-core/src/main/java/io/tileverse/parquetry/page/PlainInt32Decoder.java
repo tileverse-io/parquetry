@@ -36,6 +36,11 @@ public final class PlainInt32Decoder implements PageDecoder<Integer> {
     }
 
     @Override
+    public void decodeInts(int n, int[] dst, int offset) {
+        buffer.get(dst, offset, n);
+    }
+
+    @Override
     public void skip(int n) {
         buffer.position(buffer.position() + n);
     }

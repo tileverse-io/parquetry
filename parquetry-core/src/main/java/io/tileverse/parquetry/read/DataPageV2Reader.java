@@ -18,6 +18,8 @@ package io.tileverse.parquetry.read;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 
 import java.io.IOException;
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 
 import io.tileverse.parquetry.codec.Codec;
@@ -26,9 +28,6 @@ import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.PageHeader;
 import io.tileverse.parquetry.read.LevelMaximaResolver.LevelMaxima;
-
-import io.tileverse.io.ByteBufferPool;
-import io.tileverse.io.ByteBufferPool.PooledByteBuffer;
 
 /**
  * Reads a Parquet 2.0 Data Page V2.
@@ -46,9 +45,10 @@ import io.tileverse.io.ByteBufferPool.PooledByteBuffer;
  * the {@code is_compressed} flag (default {@code true} per the Thrift schema) controls whether to invoke the codec or
  * copy the bytes verbatim.
  *
- * <p>Pooling contract: the rep- and def-level slices are zero-copy views into the caller's compressed buffer; the
- * decompressed value buffer is borrowed from {@link ByteBufferPool}. On the failure path the borrowed buffer is
- * returned to the pool before the exception propagates.
+ * <p>Arena contract: the decompressed value bytes are allocated from the caller-supplied {@link Arena}. The rep- and
+ * def-level segments are read-only slices of the caller's compressed buffer (zero-copy), but they are wrapped as
+ * read-only {@link MemorySegment} views. {@link MemorySegment#NULL} is used for absent level regions (when the
+ * corresponding byte length from the header is zero). The caller owns the Arena's lifecycle.
  *
  * <p>The {@code maxLevels} parameter is unused: V2 page headers stamp the level byte lengths explicitly. It is kept on
  * the interface so {@link DataPageV1Reader}, which depends on the column's max levels to know whether each length
@@ -58,11 +58,7 @@ final class DataPageV2Reader implements DataPageReader {
 
     @Override
     public DecodedPage read(
-            PageHeader header,
-            LevelMaxima maxLevels,
-            ByteBuffer compressedPagePayload,
-            Codec codec,
-            ByteBufferPool pool)
+            PageHeader header, LevelMaxima maxLevels, ByteBuffer compressedPagePayload, Codec codec, Arena pageArena)
             throws IOException {
         DataPageHeaderV2 v2 = header.dataPageHeaderV2()
                 .orElseThrow(() -> new IllegalArgumentException("PageHeader does not carry a DataPageHeaderV2"));
@@ -76,49 +72,39 @@ final class DataPageV2Reader implements DataPageReader {
         int valuesUncompressedSize = computeValuesUncompressedSize(header, repLen, defLen);
 
         ByteBuffer cursor = compressedPagePayload.duplicate().order(LITTLE_ENDIAN);
-        ByteBuffer repLevels = sliceAndAdvance(cursor, repLen);
-        ByteBuffer defLevels = sliceAndAdvance(cursor, defLen);
+        MemorySegment repLevels = sliceAndAdvance(cursor, repLen);
+        MemorySegment defLevels = sliceAndAdvance(cursor, defLen);
 
         Encoding valuesEncoding = DataPageReader.normalizeEncoding(v2.encoding());
         boolean compressed = v2.isCompressed();
-        PooledByteBuffer valuesPooled = decodeValues(cursor, codec, pool, valuesUncompressedSize, compressed);
-        return new DecodedPage(v2.numValues(), valuesEncoding, repLevels, defLevels, valuesPooled);
+        MemorySegment valueBytes = decodeValues(cursor, codec, pageArena, valuesUncompressedSize, compressed);
+        return new DecodedPage(v2.numValues(), valuesEncoding, repLevels, defLevels, valueBytes, pageArena);
     }
 
     /**
-     * Decompresses (or copies, when {@code !compressed}) the remaining bytes of {@code cursor} into a freshly borrowed
-     * pooled buffer of size {@code uncompressedSize}. On any failure the borrowed buffer is returned to the pool before
-     * the exception leaves this method, preserving the the package documentation lifecycle invariant.
+     * Decompresses (or copies, when {@code !compressed}) the remaining bytes of {@code cursor} into an Arena-allocated
+     * segment of size {@code uncompressedSize}.
      */
-    private static PooledByteBuffer decodeValues(
-            ByteBuffer cursor, Codec codec, ByteBufferPool pool, int uncompressedSize, boolean compressed)
+    private static MemorySegment decodeValues(
+            ByteBuffer cursor, Codec codec, Arena pageArena, int uncompressedSize, boolean compressed)
             throws IOException {
-        PooledByteBuffer pooled = pool.borrowDirect(uncompressedSize);
-        try {
-            ByteBuffer target = pooled.buffer();
-            target.clear();
-            target.limit(uncompressedSize);
-            if (compressed) {
-                codec.decompress(cursor, target);
-            } else {
-                copyBytes(cursor, target, uncompressedSize);
-            }
-            target.flip();
-            return pooled;
-        } catch (IOException | RuntimeException e) {
-            pooled.close();
-            throw e;
+        MemorySegment valueBytes = pageArena.allocate(uncompressedSize);
+        if (compressed) {
+            MemorySegment compressedSource = MemorySegment.ofBuffer(cursor.duplicate());
+            codec.decompress(compressedSource, valueBytes);
+        } else {
+            copyBytes(cursor, valueBytes, uncompressedSize);
         }
+        return valueBytes;
     }
 
     /**
      * Copies exactly {@code length} bytes from {@code src} into {@code dst} when the V2 header marks the page values as
      * uncompressed. Avoids the codec round-trip for the {@code is_compressed=false} path.
      */
-    private static void copyBytes(ByteBuffer src, ByteBuffer dst, int length) {
-        ByteBuffer slice = src.slice();
-        slice.limit(length);
-        dst.put(slice);
+    private static void copyBytes(ByteBuffer src, MemorySegment dst, int length) {
+        ByteBuffer slice = src.slice().limit(length).asReadOnlyBuffer();
+        dst.copyFrom(MemorySegment.ofBuffer(slice));
         src.position(src.position() + length);
     }
 
@@ -137,18 +123,15 @@ final class DataPageV2Reader implements DataPageReader {
     }
 
     /**
-     * Returns a read-only zero-copy slice of the next {@code len} bytes of {@code cursor} and advances the cursor past
-     * them. Returns an empty read-only buffer when {@code len == 0} so callers always receive a non-null buffer with
-     * little-endian byte order.
+     * Returns a read-only zero-copy {@link MemorySegment} view of the next {@code len} bytes of {@code cursor} and
+     * advances the cursor past them. Returns {@link MemorySegment#NULL} when {@code len == 0}.
      */
-    private static ByteBuffer sliceAndAdvance(ByteBuffer cursor, int len) {
+    private static MemorySegment sliceAndAdvance(ByteBuffer cursor, int len) {
         if (len == 0) {
-            return ByteBuffer.allocate(0).order(LITTLE_ENDIAN).asReadOnlyBuffer();
+            return MemorySegment.NULL;
         }
-        ByteBuffer slice = cursor.slice();
-        slice.limit(len);
-        slice.order(LITTLE_ENDIAN);
+        ByteBuffer slice = cursor.slice().limit(len).order(LITTLE_ENDIAN).asReadOnlyBuffer();
         cursor.position(cursor.position() + len);
-        return slice.asReadOnlyBuffer().order(LITTLE_ENDIAN);
+        return MemorySegment.ofBuffer(slice);
     }
 }

@@ -17,7 +17,6 @@ package io.tileverse.parquetry.codec;
 
 import java.io.IOException;
 import java.lang.foreign.MemorySegment;
-import java.nio.ByteBuffer;
 
 import io.tileverse.parquetry.format.CompressionCodec;
 
@@ -27,9 +26,8 @@ import io.tileverse.parquetry.format.CompressionCodec;
  * <p>Implementations are discovered via {@link java.util.ServiceLoader}. Each implementation declares which
  * {@link CompressionCodec} it handles; the {@link CodecRegistry} looks them up by enum at read time.
  *
- * <p>The primary entry point takes a pair of {@link MemorySegment}s so the engine can hand zero-copy views of native
- * memory (e.g. a pooled output region or a slice of a column-chunk buffer). The {@link ByteBuffer} overloads are thin
- * convenience wrappers that delegate to the {@code MemorySegment} entry point.
+ * <p>The entry point takes a pair of {@link MemorySegment}s so the engine can hand zero-copy views of native memory
+ * (e.g. a pooled output region or a slice of a column-chunk buffer).
  */
 public interface Codec {
 
@@ -41,30 +39,4 @@ public interface Codec {
      * as large as the expected uncompressed payload. Returns the number of bytes written.
      */
     int decompress(MemorySegment compressed, MemorySegment output) throws IOException;
-
-    /**
-     * Convenience overload that wraps the two buffers as memory segments and advances each buffer's position past the
-     * bytes consumed / written. The {@code compressed} buffer's position advances by its full {@code remaining()}; the
-     * {@code output} buffer's position advances by the number of bytes written.
-     */
-    default int decompress(ByteBuffer compressed, ByteBuffer output) throws IOException {
-        int inLength = compressed.remaining();
-        MemorySegment in = MemorySegment.ofBuffer(compressed);
-        MemorySegment out = MemorySegment.ofBuffer(output);
-        int written = decompress(in, out);
-        compressed.position(compressed.position() + inLength);
-        output.position(output.position() + written);
-        return written;
-    }
-
-    /**
-     * Convenience overload that allocates a heap output buffer of {@code uncompressedLength} bytes, decompresses into
-     * it, flips it, and returns it.
-     */
-    default ByteBuffer decompress(ByteBuffer compressed, int uncompressedLength) throws IOException {
-        ByteBuffer output = ByteBuffer.allocate(uncompressedLength);
-        decompress(compressed, output);
-        output.flip();
-        return output;
-    }
 }

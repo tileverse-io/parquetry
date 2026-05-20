@@ -67,6 +67,42 @@ class DeltaBinaryPackedDecoderTest {
         }
     }
 
+    @Test
+    void bulkDecodeIntsFillsArray() {
+        int[] values = {100, 107, 114, 121, 128};
+        // Pad to block size 8 with the last value
+        int[] padded = new int[8];
+        System.arraycopy(values, 0, padded, 0, values.length);
+        for (int i = values.length; i < padded.length; i++) padded[i] = values[values.length - 1];
+        byte[] encoded = encodeInts(padded, 8, 2, values.length);
+
+        PageDecoder<Integer> decoder = new DeltaBinaryPackedInt32Decoder();
+        decoder.load(ByteBuffer.wrap(encoded), values.length);
+
+        int[] dst = new int[values.length];
+        decoder.decodeInts(values.length, dst, 0);
+
+        assertThat(dst).containsExactly(values);
+    }
+
+    @Test
+    void bulkDecodeLongsFillsArray() {
+        long[] values = {1_000_000_000L, 1_000_000_013L, 1_000_000_026L, 1_000_000_039L};
+        // Pad to block size 4 with the last value
+        long[] padded = new long[4];
+        System.arraycopy(values, 0, padded, 0, values.length);
+        for (int i = values.length; i < padded.length; i++) padded[i] = values[values.length - 1];
+        byte[] encoded = encodeLongs(padded, 4, 2, values.length);
+
+        PageDecoder<Long> decoder = new DeltaBinaryPackedInt64Decoder();
+        decoder.load(ByteBuffer.wrap(encoded), values.length);
+
+        long[] dst = new long[values.length];
+        decoder.decodeLongs(values.length, dst, 0);
+
+        assertThat(dst).containsExactly(values);
+    }
+
     /**
      * Encode int values into DELTA_BINARY_PACKED. The values array length must be a multiple of blockSize. Produces a
      * single complete page suitable for the decoder.

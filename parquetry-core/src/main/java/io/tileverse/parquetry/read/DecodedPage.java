@@ -15,71 +15,57 @@
  */
 package io.tileverse.parquetry.read;
 
-import java.nio.ByteBuffer;
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
 import java.util.Objects;
 
 import io.tileverse.parquetry.format.Encoding;
 
-import io.tileverse.io.ByteBufferPool.PooledByteBuffer;
-
 /**
  * The uniform {@code (repLevels, defLevels, values)} triple produced by a {@link DataPageReader} for one data page.
  *
- * <p>Buffer-ownership asymmetry (intentional, see the package documentation):
+ * <p>All three byte regions are {@link MemorySegment} views allocated from {@link #pageArena()}. The Arena is owned by
+ * this record; {@link #close()} closes it, deterministically releasing native memory for all three segments at once.
  *
- * <ul>
- *   <li>{@link #repLevelBytes()} and {@link #defLevelBytes()} are <strong>zero-copy read-only slices</strong> of the
- *       parent compressed column-chunk buffer. They are <em>not</em> pooled and must not be closed independently; their
- *       lifetime is bound to the parent {@code FetchedColumnChunk}'s pooled buffer (which {@code RowGroupReader}
- *       closes). Either buffer is an empty read-only buffer when the column's corresponding max level is zero.
- *   <li>{@link #valueBuffer()} is a {@link PooledByteBuffer} holding the <em>decompressed</em> value bytes for this
- *       page. Closing the {@code DecodedPage} returns that buffer to the pool. The column reader closes the previous
- *       page's {@code DecodedPage} before borrowing the next, so steady-state allocation is one decompressed-page-sized
- *       pooled buffer per column.
- * </ul>
+ * <p>Empty rep/def regions (column with {@code maxLevel == 0}) are represented as {@link MemorySegment#NULL}, not as
+ * zero-length allocated segments, to avoid unnecessary Arena allocation.
  *
  * <p>{@link #valuesEncoding()} is already normalized: {@link Encoding#PLAIN_DICTIONARY} from Parquet 1.x writers is
- * collapsed to {@link Encoding#RLE_DICTIONARY} (see {@link DataPageReader}).
+ * collapsed to {@link Encoding#RLE_DICTIONARY} (see {@link DataPageReader}). Dictionary <em>pages</em> still use
+ * {@link Encoding#PLAIN} and are not affected.
  *
  * @param valueCount values yielded by this page (matches the page header's {@code numValues})
  * @param valuesEncoding the value encoding to drive {@code DecoderFactory.decoderFor(...)}; already normalized
- * @param repLevelBytes read-only zero-copy slice of the rep-level bytes; empty when the column has {@code maxRep == 0}
- * @param defLevelBytes read-only zero-copy slice of the def-level bytes; empty when the column has {@code maxDef == 0}
- * @param valueBuffer pooled buffer holding the decompressed value bytes; closing this {@code DecodedPage} returns it to
- *     the pool
+ * @param repLevelBytes Arena-allocated segment of rep-level bytes; {@link MemorySegment#NULL} when the column has
+ *     {@code maxRep == 0}
+ * @param defLevelBytes Arena-allocated segment of def-level bytes; {@link MemorySegment#NULL} when the column has
+ *     {@code maxDef == 0}
+ * @param valueBytes Arena-allocated segment holding the decompressed value bytes
+ * @param pageArena the Arena owning all three segments; closing this {@code DecodedPage} closes the Arena
  */
 record DecodedPage(
         int valueCount,
         Encoding valuesEncoding,
-        ByteBuffer repLevelBytes,
-        ByteBuffer defLevelBytes,
-        PooledByteBuffer valueBuffer)
+        MemorySegment repLevelBytes,
+        MemorySegment defLevelBytes,
+        MemorySegment valueBytes,
+        Arena pageArena)
         implements AutoCloseable {
 
     public DecodedPage {
         Objects.requireNonNull(valuesEncoding, "valuesEncoding");
         Objects.requireNonNull(repLevelBytes, "repLevelBytes");
         Objects.requireNonNull(defLevelBytes, "defLevelBytes");
-        Objects.requireNonNull(valueBuffer, "valueBuffer");
+        Objects.requireNonNull(valueBytes, "valueBytes");
+        Objects.requireNonNull(pageArena, "pageArena");
         if (valueCount < 0) {
             throw new IllegalArgumentException("valueCount must be >= 0, got " + valueCount);
         }
     }
 
-    /**
-     * Returns the decompressed value bytes, ready to read. Equivalent to {@code valueBuffer().buffer()}; provided as a
-     * convenience for decoders that expect a {@link ByteBuffer} directly.
-     */
-    public ByteBuffer values() {
-        return valueBuffer.buffer();
-    }
-
-    /**
-     * Returns the pooled value buffer to the pool. Closing is idempotent (the underlying {@code PooledByteBuffer.close}
-     * is). The level slices are <strong>not</strong> released here - they belong to the parent column-chunk buffer.
-     */
+    /** Closes the page Arena, deterministically releasing all native memory for the rep/def/value segments together. */
     @Override
     public void close() {
-        valueBuffer.close();
+        pageArena.close();
     }
 }

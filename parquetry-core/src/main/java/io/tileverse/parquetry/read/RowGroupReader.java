@@ -116,7 +116,7 @@ final class RowGroupReader implements AutoCloseable {
                 Objects.requireNonNull(rowGroup, "rowGroup"),
                 options,
                 Objects.requireNonNull(columnFetcher, "columnFetcher"),
-                defaultColumnReaderFactory(options));
+                defaultColumnReaderFactory());
     }
 
     /**
@@ -355,12 +355,11 @@ final class RowGroupReader implements AutoCloseable {
 
     /**
      * Production column-reader factory: wraps each {@link FetchedColumnChunk} in a {@link StreamingColumnReader} that
-     * walks the chunk's compressed bytes page by page using the {@code DataPageReader} sealed abstraction. The reader
-     * borrows one decompressed-page-sized pooled buffer from {@code options.byteBufferPool()} per page and returns it
-     * when advancing.
+     * walks the chunk's compressed bytes page by page using the {@code DataPageReader} sealed abstraction. Each page
+     * allocates one {@link java.lang.foreign.Arena} for its decompressed bytes; the Arena is released when the reader
+     * advances to the next page.
      */
-    private static BiFunction<FetchedColumnChunk, Field.Primitive, ColumnReader> defaultColumnReaderFactory(
-            ReadOptions options) {
+    private static BiFunction<FetchedColumnChunk, Field.Primitive, ColumnReader> defaultColumnReaderFactory() {
         return (chunk, leaf) -> new StreamingColumnReader(
                 chunk.path(),
                 chunk.maxRepetitionLevel(),
@@ -369,8 +368,7 @@ final class RowGroupReader implements AutoCloseable {
                 chunk.compressedBuffer().buffer(),
                 chunk.dictionary(),
                 chunk.metadata().codec(),
-                chunk.metadata().numValues(),
-                options.byteBufferPool());
+                chunk.metadata().numValues());
     }
 
     // --- stream plumbing ---

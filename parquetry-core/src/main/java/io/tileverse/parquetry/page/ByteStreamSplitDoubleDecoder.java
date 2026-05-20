@@ -63,6 +63,13 @@ final class ByteStreamSplitDoubleDecoder implements PageDecoder<Double> {
     }
 
     @Override
+    public void decodeDoubles(int n, double[] dst, int offset) {
+        for (int i = 0; i < n; i++) {
+            dst[offset + i] = next();
+        }
+    }
+
+    @Override
     public void skip(int n) {
         cursor += n;
     }

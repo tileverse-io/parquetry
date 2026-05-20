@@ -89,4 +89,39 @@ class DeltaLengthByteArrayDecoderTest {
             assertThat(new String(buf, StandardCharsets.UTF_8)).isEqualTo(values[i]);
         }
     }
+
+    @Test
+    void bulkDecodeBinaryFillsArray() throws Exception {
+        String[] values = {"hi", "world", "parquetry"};
+
+        int[] lengths = {values[0].length(), values[1].length(), values[2].length()};
+
+        int blockSize = 4;
+        int miniblocksPerBlock = 2;
+        int[] paddedLengths = new int[blockSize];
+        System.arraycopy(lengths, 0, paddedLengths, 0, lengths.length);
+        for (int i = lengths.length; i < paddedLengths.length; i++) {
+            paddedLengths[i] = lengths[lengths.length - 1];
+        }
+        byte[] lengthsBytes =
+                DeltaBinaryPackedDecoderTest.encodeInts(paddedLengths, blockSize, miniblocksPerBlock, values.length);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        out.write(lengthsBytes);
+        for (String v : values) {
+            out.write(v.getBytes(StandardCharsets.UTF_8));
+        }
+        byte[] page = out.toByteArray();
+
+        PageDecoder<MemorySegment> decoder = new DeltaLengthByteArrayDecoder();
+        decoder.load(ByteBuffer.wrap(page), values.length);
+
+        MemorySegment[] dst = new MemorySegment[values.length];
+        decoder.decodeBinary(values.length, dst, 0);
+
+        for (int i = 0; i < values.length; i++) {
+            byte[] buf = dst[i].toArray(JAVA_BYTE);
+            assertThat(new String(buf, StandardCharsets.UTF_8)).as("value " + i).isEqualTo(values[i]);
+        }
+    }
 }

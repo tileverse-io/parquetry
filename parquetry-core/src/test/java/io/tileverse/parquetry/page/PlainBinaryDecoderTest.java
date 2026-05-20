@@ -95,4 +95,26 @@ class PlainBinaryDecoderTest {
         MemorySegment result = decoder.next();
         assertThat(result.toArray(JAVA_BYTE)).isEqualTo(kept);
     }
+
+    @Test
+    void bulkDecodeFillsArrayOfSegments() {
+        ByteBuffer page = ByteBuffer.allocate(64).order(LITTLE_ENDIAN);
+        page.putInt(3);
+        page.put("foo".getBytes());
+        page.putInt(2);
+        page.put("hi".getBytes());
+        page.putInt(5);
+        page.put("hello".getBytes());
+        page.flip();
+
+        PageDecoder<MemorySegment> decoder = new PlainBinaryDecoder();
+        decoder.load(page, 3);
+
+        MemorySegment[] dst = new MemorySegment[3];
+        decoder.decodeBinary(3, dst, 0);
+
+        assertThat(dst[0].toArray(JAVA_BYTE)).isEqualTo("foo".getBytes());
+        assertThat(dst[1].toArray(JAVA_BYTE)).isEqualTo("hi".getBytes());
+        assertThat(dst[2].toArray(JAVA_BYTE)).isEqualTo("hello".getBytes());
+    }
 }
