@@ -22,8 +22,10 @@ import java.nio.ByteBuffer;
 import java.util.BitSet;
 
 import io.tileverse.parquetry.format.Encoding;
+import io.tileverse.parquetry.page.Dictionary;
 import io.tileverse.parquetry.page.PageDecoder;
 import io.tileverse.parquetry.page.PlainInt64Decoder;
+import io.tileverse.parquetry.page.RleDictionaryPageDecoder;
 
 public final class LongVector implements ColumnVector {
 
@@ -32,6 +34,7 @@ public final class LongVector implements ColumnVector {
     private MemorySegment rawPage;
     private Encoding encoding;
     private long[] values;
+    private Dictionary<?> dictionary;
 
     private LongVector(MemorySegment rawPage, Encoding encoding, int size, BitSet validity) {
         this.rawPage = rawPage;
@@ -43,6 +46,17 @@ public final class LongVector implements ColumnVector {
     /** Builds a raw (lazy) LongVector backed by {@code page}. */
     public static LongVector raw(MemorySegment page, Encoding encoding, int size, BitSet validity) {
         return new LongVector(page, encoding, size, validity);
+    }
+
+    /**
+     * Builds a raw (lazy) LongVector backed by {@code page} with an optional dictionary for dictionary-encoded columns.
+     * {@code dictionary} may be {@code null} for non-dictionary encodings.
+     */
+    public static LongVector raw(
+            MemorySegment page, Encoding encoding, int size, BitSet validity, Dictionary<?> dictionary) {
+        LongVector vec = new LongVector(page, encoding, size, validity);
+        vec.dictionary = dictionary;
+        return vec;
     }
 
     /** Builds an already-materialized LongVector. Used when tests or upstream code already has the long[]. */
@@ -79,6 +93,7 @@ public final class LongVector implements ColumnVector {
         values = dst;
         rawPage = null;
         encoding = null;
+        dictionary = null;
     }
 
     @Override
@@ -102,12 +117,15 @@ public final class LongVector implements ColumnVector {
         return values;
     }
 
-    private static PageDecoder<?> decoderFor(Encoding encoding) {
+    private PageDecoder<?> decoderFor(Encoding encoding) {
         return switch (encoding) {
             case PLAIN -> new PlainInt64Decoder();
-            case RLE_DICTIONARY, PLAIN_DICTIONARY ->
-                throw new UnsupportedOperationException(
-                        "Dictionary-encoded LongVector requires the chunk's Dictionary; wired by BatchColumnReader.");
+            case RLE_DICTIONARY, PLAIN_DICTIONARY -> {
+                if (dictionary == null) {
+                    throw new IllegalStateException("Dictionary-encoded LongVector but no dictionary supplied");
+                }
+                yield new RleDictionaryPageDecoder<>(dictionary);
+            }
             default ->
                 throw new UnsupportedOperationException(
                         "LongVector materialize not yet wired for encoding " + encoding);

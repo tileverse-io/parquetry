@@ -86,16 +86,16 @@ public sealed interface ParquetRecord permits DefaultParquetRecord {
     /**
      * Returns the repeated values at {@code col} as a list of sub-records.
      *
-     * <p>Not yet implemented: the Dremel assembler currently emits flat rows only; nested list materialization lands
-     * with the row-group reader.
+     * <p>Not yet implemented: the Dremel assembler currently emits flat rows only; nested list materialization is a
+     * follow-up.
      */
     List<ParquetRecord> getList(ColumnPath col);
 
     /**
      * Returns the struct at {@code col} as a sub-record.
      *
-     * <p>Not yet implemented: the Dremel assembler currently emits flat rows only; nested struct materialization lands
-     * with the row-group reader.
+     * <p>Not yet implemented: the Dremel assembler currently emits flat rows only; nested struct materialization is a
+     * follow-up.
      */
     ParquetRecord getStruct(ColumnPath col);
 

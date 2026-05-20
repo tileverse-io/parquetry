@@ -21,10 +21,10 @@ import java.nio.ByteBuffer;
 /**
  * Lazily materializes column values from one decompressed data-page payload.
  *
- * <p>Two access modes coexist: per-value {@link #next()} (used by the legacy row-API path until the row-on-batch
- * reimplementation lands) and primitive-specialized bulk {@code decode...} methods (used by the batch driver). Concrete
- * decoders override the bulk method matching their value kind. The default implementations delegate to {@link #next()}
- * so an unconverted decoder is correct, just not bulk-optimized.
+ * <p>Two access modes coexist: per-value {@link #next()} (used by the legacy row-API path) and primitive-specialized
+ * bulk {@code decode...} methods (used by the batch driver). Concrete decoders override the bulk method matching their
+ * value kind. The default implementations delegate to {@link #next()} so an unconverted decoder is correct, just not
+ * bulk-optimized.
  *
  * <p>{@link #skip(int)} advances the cursor without producing values. Thread-confined; one decoder per column reader
  * per page.

@@ -173,6 +173,6 @@ final class DefaultParquetRecord implements ParquetRecord {
 
     private static UnsupportedOperationException nestedNotYetSupported(ColumnPath col) {
         return new UnsupportedOperationException(
-                "repeated/nested columns land with RowGroupReader (column: " + col.dot() + ")");
+                "repeated/nested columns are not yet supported by the row-API path (column: " + col.dot() + ")");
     }
 }

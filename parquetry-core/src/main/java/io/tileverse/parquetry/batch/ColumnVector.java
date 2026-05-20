@@ -23,8 +23,8 @@ import java.util.BitSet;
  * the typed carrier (primitive arrays for primitives, {@code MemorySegment[]} for binary). Columns the consumer never
  * reads stay raw and are freed at batch close.
  *
- * <p>{@link #materializeSurvivors(BitSet)} is the hook for the future vectorized row-level predicate evaluator (Idea
- * B). It decodes only the rows whose bit is set; this version ships the entry but no caller uses it yet.
+ * <p>{@link #materializeSurvivors(BitSet)} is the hook for the future vectorized row-level predicate evaluator. It
+ * decodes only the rows whose bit is set; no production caller uses it yet.
  *
  * @see ParquetRecordBatch
  */
@@ -55,8 +55,8 @@ public sealed interface ColumnVector
 
     /**
      * Decodes only the rows whose bit is set in {@code survivors}. Idempotent; a later call with a wider survivor set
-     * re-decodes the newly-included rows. This reserves the entry for a future {@code VectorPredicateEvaluator}; no
-     * production code calls it yet.
+     * re-decodes the newly-included rows. Reserved for a future {@code VectorPredicateEvaluator}; no production code
+     * calls it yet.
      */
     void materializeSurvivors(BitSet survivors);
 }

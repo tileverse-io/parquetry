@@ -98,8 +98,8 @@ final class RowGroupReader implements AutoCloseable {
     /**
      * Builds a row-group reader backed by real I/O.
      *
-     * <p>The {@code reader} parameter is held for parity with the later wiring (where the {@code ColumnFetcher.real}
-     * factory consumes it); this layer does not perform direct {@code RangeReader} reads outside the fetcher.
+     * <p>The {@code reader} parameter is held for parity with future wiring where the {@code ColumnFetcher.real}
+     * factory consumes it; this constructor does not perform direct {@code RangeReader} reads outside the fetcher.
      */
     public RowGroupReader(
             RangeReader reader,
@@ -121,8 +121,8 @@ final class RowGroupReader implements AutoCloseable {
 
     /**
      * Test-friendly constructor that lets callers supply a column-reader factory directly, bypassing the page-cursor
-     * work that is wired later. The factory receives the fetched compressed chunk plus the file-schema leaf and must
-     * return a fully positioned {@link ColumnReader} for the chunk's rows.
+     * the production page-cursor path. The factory receives the fetched compressed chunk plus the file-schema leaf and
+     * must return a fully positioned {@link ColumnReader} for the chunk's rows.
      */
     RowGroupReader(
             ParquetSchema fileSchema,

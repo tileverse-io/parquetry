@@ -23,8 +23,10 @@ import java.util.BitSet;
 
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.page.DeltaByteArrayDecoder;
+import io.tileverse.parquetry.page.Dictionary;
 import io.tileverse.parquetry.page.PageDecoder;
 import io.tileverse.parquetry.page.PlainFixedLenBinaryDecoder;
+import io.tileverse.parquetry.page.RleDictionaryPageDecoder;
 
 /**
  * Column vector for FIXED_LEN_BYTE_ARRAY values.
@@ -40,6 +42,7 @@ public final class FixedLenBinaryVector implements ColumnVector {
     private MemorySegment rawPage;
     private Encoding encoding;
     private MemorySegment[] values;
+    private Dictionary<?> dictionary;
 
     private FixedLenBinaryVector(MemorySegment rawPage, Encoding encoding, int size, int byteWidth, BitSet validity) {
         this.rawPage = rawPage;
@@ -53,6 +56,17 @@ public final class FixedLenBinaryVector implements ColumnVector {
     public static FixedLenBinaryVector raw(
             MemorySegment page, Encoding encoding, int size, int byteWidth, BitSet validity) {
         return new FixedLenBinaryVector(page, encoding, size, byteWidth, validity);
+    }
+
+    /**
+     * Builds a raw (lazy) FixedLenBinaryVector backed by the given page bytes with an optional dictionary for
+     * dictionary-encoded columns. {@code dictionary} may be {@code null} for non-dictionary encodings.
+     */
+    public static FixedLenBinaryVector raw(
+            MemorySegment page, Encoding encoding, int size, int byteWidth, BitSet validity, Dictionary<?> dictionary) {
+        FixedLenBinaryVector vec = new FixedLenBinaryVector(page, encoding, size, byteWidth, validity);
+        vec.dictionary = dictionary;
+        return vec;
     }
 
     /** Builds an already-materialized FixedLenBinaryVector. */
@@ -94,6 +108,7 @@ public final class FixedLenBinaryVector implements ColumnVector {
         values = dst;
         rawPage = null;
         encoding = null;
+        dictionary = null;
     }
 
     @Override
@@ -121,9 +136,13 @@ public final class FixedLenBinaryVector implements ColumnVector {
         return switch (encoding) {
             case PLAIN -> new PlainFixedLenBinaryDecoder(byteWidth);
             case DELTA_BYTE_ARRAY -> new DeltaByteArrayDecoder();
-            case RLE_DICTIONARY, PLAIN_DICTIONARY ->
-                throw new UnsupportedOperationException(
-                        "Dictionary-encoded FixedLenBinaryVector requires the chunk's Dictionary; wired by BatchColumnReader.");
+            case RLE_DICTIONARY, PLAIN_DICTIONARY -> {
+                if (dictionary == null) {
+                    throw new IllegalStateException(
+                            "Dictionary-encoded FixedLenBinaryVector but no dictionary supplied");
+                }
+                yield new RleDictionaryPageDecoder<>(dictionary);
+            }
             default ->
                 throw new UnsupportedOperationException(
                         "FixedLenBinaryVector materialize not yet wired for encoding " + encoding);

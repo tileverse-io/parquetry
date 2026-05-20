@@ -109,8 +109,8 @@ public final class RowGroupPipeline<T> implements AutoCloseable {
     /**
      * Test-friendly constructor mirroring {@link RowGroupReader}'s package-private hook: when
      * {@code columnReaderFactory} is non-null, each per-row-group {@link RowGroupReader} is built with that factory
-     * instead of the production page-cursor factory (wired later). Tests use this to drive record flow end-to-end with
-     * synthetic page bytes; production callers use the public constructor.
+     * instead of the production page-cursor factory. Tests use this to drive record flow end-to-end with synthetic page
+     * bytes; production callers use the public constructor.
      */
     @SuppressWarnings("java:S107") // Test-only ctor; mirrors the public 7-arg ctor plus one factory hook.
     RowGroupPipeline(

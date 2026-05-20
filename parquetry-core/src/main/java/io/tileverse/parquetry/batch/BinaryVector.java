@@ -24,8 +24,10 @@ import java.util.BitSet;
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.page.DeltaByteArrayDecoder;
 import io.tileverse.parquetry.page.DeltaLengthByteArrayDecoder;
+import io.tileverse.parquetry.page.Dictionary;
 import io.tileverse.parquetry.page.PageDecoder;
 import io.tileverse.parquetry.page.PlainBinaryDecoder;
+import io.tileverse.parquetry.page.RleDictionaryPageDecoder;
 
 /**
  * Column vector for BYTE_ARRAY (variable-length binary) values.
@@ -40,6 +42,7 @@ public final class BinaryVector implements ColumnVector {
     private MemorySegment rawPage;
     private Encoding encoding;
     private MemorySegment[] values;
+    private Dictionary<?> dictionary;
 
     private BinaryVector(MemorySegment rawPage, Encoding encoding, int size, BitSet validity) {
         this.rawPage = rawPage;
@@ -51,6 +54,17 @@ public final class BinaryVector implements ColumnVector {
     /** Builds a raw (lazy) BinaryVector backed by the given page bytes. */
     public static BinaryVector raw(MemorySegment page, Encoding encoding, int size, BitSet validity) {
         return new BinaryVector(page, encoding, size, validity);
+    }
+
+    /**
+     * Builds a raw (lazy) BinaryVector backed by the given page bytes with an optional dictionary for
+     * dictionary-encoded columns. {@code dictionary} may be {@code null} for non-dictionary encodings.
+     */
+    public static BinaryVector raw(
+            MemorySegment page, Encoding encoding, int size, BitSet validity, Dictionary<?> dictionary) {
+        BinaryVector vec = new BinaryVector(page, encoding, size, validity);
+        vec.dictionary = dictionary;
+        return vec;
     }
 
     /** Builds an already-materialized BinaryVector. Used when callers already have the segments. */
@@ -87,6 +101,7 @@ public final class BinaryVector implements ColumnVector {
         values = dst;
         rawPage = null;
         encoding = null;
+        dictionary = null;
     }
 
     @Override
@@ -110,14 +125,17 @@ public final class BinaryVector implements ColumnVector {
         return values;
     }
 
-    private static PageDecoder<?> decoderFor(Encoding encoding) {
+    private PageDecoder<?> decoderFor(Encoding encoding) {
         return switch (encoding) {
             case PLAIN -> new PlainBinaryDecoder();
             case DELTA_BYTE_ARRAY -> new DeltaByteArrayDecoder();
             case DELTA_LENGTH_BYTE_ARRAY -> new DeltaLengthByteArrayDecoder();
-            case RLE_DICTIONARY, PLAIN_DICTIONARY ->
-                throw new UnsupportedOperationException(
-                        "Dictionary-encoded BinaryVector requires the chunk's Dictionary; wired by BatchColumnReader.");
+            case RLE_DICTIONARY, PLAIN_DICTIONARY -> {
+                if (dictionary == null) {
+                    throw new IllegalStateException("Dictionary-encoded BinaryVector but no dictionary supplied");
+                }
+                yield new RleDictionaryPageDecoder<>(dictionary);
+            }
             default ->
                 throw new UnsupportedOperationException(
                         "BinaryVector materialize not yet wired for encoding " + encoding);

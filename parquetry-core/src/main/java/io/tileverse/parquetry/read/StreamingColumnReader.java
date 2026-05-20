@@ -18,7 +18,6 @@ package io.tileverse.parquetry.read;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
@@ -31,10 +30,6 @@ import io.tileverse.parquetry.codec.Codec;
 import io.tileverse.parquetry.codec.CodecRegistry;
 import io.tileverse.parquetry.format.CompressionCodec;
 import io.tileverse.parquetry.format.MalformedFileException;
-import io.tileverse.parquetry.format.PageHeader;
-import io.tileverse.parquetry.format.PageType;
-import io.tileverse.parquetry.format.ParquetFormat;
-import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.page.DecoderFactory;
 import io.tileverse.parquetry.page.Dictionary;
 import io.tileverse.parquetry.page.LevelDecoder;
@@ -226,8 +221,8 @@ final class StreamingColumnReader implements ColumnReader {
      * bytes. Binary decoders (e.g. {@code PlainBinaryDecoder}) return {@link MemorySegment} views of their buffer that
      * are stored in assembled rows. In the row API, those rows outlive the page Arena (they are collected into a list
      * while the stream is still open, then accessed after the stream closes). A heap copy ensures the decoder's buffer
-     * - and any views derived from it - remain valid after the Arena is closed. a later row-on-batch reimplementation
-     * will let the Arena pass through from the batch driver and this copy will no longer be needed.
+     * - and any views derived from it - remain valid after the Arena is closed. Once the row API reads directly from
+     * materialized vectors this copy will no longer be needed.
      */
     private void advanceToNextPage() {
         releaseCurrentPage();
@@ -262,8 +257,8 @@ final class StreamingColumnReader implements ColumnReader {
      * Copies the contents of an Arena-allocated {@link MemorySegment} into a fresh heap {@link ByteBuffer} in
      * little-endian order. The returned buffer is positioned at zero and ready to read. Heap backing ensures any
      * {@link MemorySegment} slices produced by a decoder from this buffer remain valid after the Arena closes.
-     * Transition artifact for the row API path; a later row-on-batch reimplementation will remove this copy by passing
-     * the Arena through from the batch driver.
+     * Transition artifact while the row API still calls next(); will be removed once the row API reads directly from
+     * materialized vectors.
      */
     private static ByteBuffer heapCopyOf(MemorySegment segment) {
         int size = (int) segment.byteSize();
@@ -304,119 +299,5 @@ final class StreamingColumnReader implements ColumnReader {
 
     private static OptionalInt typeLength(Field.Primitive leaf) {
         return leaf.typeLength();
-    }
-
-    // --- page cursor (compressed chunk walker) ---
-
-    /**
-     * Walks the chunk's compressed byte buffer, yielding one decompressed {@link DecodedPage} per call. The cursor
-     * tracks position inside an underlying {@link ByteBuffer} (duplicated from the caller's buffer so the original
-     * position is never mutated) and dispatches header reads through {@link Format#readPageHeader(InputStream)}.
-     */
-    private static final class PageCursor {
-
-        private final ByteBuffer chunk;
-        private final ColumnPath columnPath;
-
-        PageCursor(ByteBuffer chunk, ColumnPath columnPath) {
-            this.chunk = chunk.duplicate().order(LITTLE_ENDIAN);
-            this.columnPath = columnPath;
-        }
-
-        /**
-         * Returns the next {@link DecodedPage} from the chunk's compressed bytes, or {@code null} when the cursor is
-         * exhausted. Non-data pages (e.g. a misplaced dictionary or index page in the data-page region) are skipped.
-         */
-        DecodedPage nextDataPage(LevelMaxima maxLevels, Codec codec, Arena pageArena) throws IOException {
-            while (chunk.hasRemaining()) {
-                PageHeader header = readNextPageHeader();
-                int compressedSize = header.compressedPageSize();
-                if (compressedSize < 0) {
-                    throw new MalformedFileException(
-                            "Negative compressedPageSize " + compressedSize + " for column " + columnPath.dot());
-                }
-                ByteBuffer pagePayload = sliceAndAdvance(compressedSize);
-                if (header.type() == PageType.DATA_PAGE || header.type() == PageType.DATA_PAGE_V2) {
-                    return DataPageReader.forHeader(header).read(header, maxLevels, pagePayload, codec, pageArena);
-                }
-                // Skip any leftover dictionary/index pages quietly; their payload bytes were already advanced past.
-            }
-            return null;
-        }
-
-        /**
-         * Reads the next {@link PageHeader} from the cursor by wrapping the remaining buffer as an {@link InputStream}
-         * and advancing the buffer's position by exactly the number of header bytes consumed. Throws
-         * {@link ParquetFormatException} on premature end-of-stream or Thrift decode failure.
-         */
-        private PageHeader readNextPageHeader() {
-            ByteBufferInputStream stream = new ByteBufferInputStream(chunk);
-            int startPos = chunk.position();
-            try {
-                PageHeader header = ParquetFormat.readPageHeader(stream);
-                int consumed = chunk.position() - startPos;
-                if (consumed <= 0) {
-                    throw new MalformedFileException("Page header read advanced the cursor by " + consumed
-                            + " bytes for column " + columnPath.dot());
-                }
-                return header;
-            } catch (ParquetFormatException e) {
-                throw e.withContext("Failed to read page header for column " + columnPath.dot(), -1L, "PageHeader");
-            }
-        }
-
-        /**
-         * Returns a read-only zero-copy slice of the next {@code length} bytes of the cursor and advances past them.
-         * Throws {@link ParquetFormatException} when the cursor does not have that many bytes left.
-         */
-        private ByteBuffer sliceAndAdvance(int length) {
-            if (chunk.remaining() < length) {
-                throw new MalformedFileException("Column " + columnPath.dot() + " page payload of " + length
-                        + " bytes overruns chunk (remaining=" + chunk.remaining() + ")");
-            }
-            ByteBuffer slice = chunk.slice();
-            slice.limit(length);
-            slice.order(LITTLE_ENDIAN);
-            chunk.position(chunk.position() + length);
-            return slice.asReadOnlyBuffer().order(LITTLE_ENDIAN);
-        }
-    }
-
-    /**
-     * Minimal {@link InputStream} adapter over a {@link ByteBuffer}, used to feed
-     * {@link Format#readPageHeader(InputStream)} from either a heap-backed or direct compressed chunk buffer without
-     * allocating an intermediate {@code byte[]}. The adapter advances the underlying buffer's position as it reads, so
-     * the caller can resume slicing from the buffer right after the header consumes its bytes.
-     */
-    private static final class ByteBufferInputStream extends InputStream {
-
-        private final ByteBuffer buffer;
-
-        ByteBufferInputStream(ByteBuffer buffer) {
-            this.buffer = buffer;
-        }
-
-        @Override
-        public int read() {
-            if (!buffer.hasRemaining()) {
-                return -1;
-            }
-            return buffer.get() & 0xff;
-        }
-
-        @Override
-        public int read(byte[] b, int off, int len) {
-            if (!buffer.hasRemaining()) {
-                return -1;
-            }
-            int toRead = Math.min(len, buffer.remaining());
-            buffer.get(b, off, toRead);
-            return toRead;
-        }
-
-        @Override
-        public int available() {
-            return buffer.remaining();
-        }
     }
 }

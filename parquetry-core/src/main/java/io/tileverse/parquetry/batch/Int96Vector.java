@@ -22,8 +22,10 @@ import java.nio.ByteBuffer;
 import java.util.BitSet;
 
 import io.tileverse.parquetry.format.Encoding;
+import io.tileverse.parquetry.page.Dictionary;
 import io.tileverse.parquetry.page.PageDecoder;
 import io.tileverse.parquetry.page.PlainInt96Decoder;
+import io.tileverse.parquetry.page.RleDictionaryPageDecoder;
 
 /**
  * Column vector for INT96 (deprecated 12-byte timestamp) values.
@@ -40,6 +42,7 @@ public final class Int96Vector implements ColumnVector {
     private MemorySegment rawPage;
     private Encoding encoding;
     private MemorySegment[] values;
+    private Dictionary<?> dictionary;
 
     private Int96Vector(MemorySegment rawPage, Encoding encoding, int size, BitSet validity) {
         this.rawPage = rawPage;
@@ -51,6 +54,17 @@ public final class Int96Vector implements ColumnVector {
     /** Builds a raw (lazy) Int96Vector backed by the given page bytes. */
     public static Int96Vector raw(MemorySegment page, Encoding encoding, int size, BitSet validity) {
         return new Int96Vector(page, encoding, size, validity);
+    }
+
+    /**
+     * Builds a raw (lazy) Int96Vector backed by the given page bytes with an optional dictionary for dictionary-encoded
+     * columns. {@code dictionary} may be {@code null} for non-dictionary encodings.
+     */
+    public static Int96Vector raw(
+            MemorySegment page, Encoding encoding, int size, BitSet validity, Dictionary<?> dictionary) {
+        Int96Vector vec = new Int96Vector(page, encoding, size, validity);
+        vec.dictionary = dictionary;
+        return vec;
     }
 
     /** Builds an already-materialized Int96Vector. */
@@ -87,6 +101,7 @@ public final class Int96Vector implements ColumnVector {
         values = dst;
         rawPage = null;
         encoding = null;
+        dictionary = null;
     }
 
     @Override
@@ -110,9 +125,15 @@ public final class Int96Vector implements ColumnVector {
         return values;
     }
 
-    private static PageDecoder<?> decoderFor(Encoding encoding) {
+    private PageDecoder<?> decoderFor(Encoding encoding) {
         return switch (encoding) {
             case PLAIN -> new PlainInt96Decoder();
+            case RLE_DICTIONARY, PLAIN_DICTIONARY -> {
+                if (dictionary == null) {
+                    throw new IllegalStateException("Dictionary-encoded Int96Vector but no dictionary supplied");
+                }
+                yield new RleDictionaryPageDecoder<>(dictionary);
+            }
             default ->
                 throw new UnsupportedOperationException(
                         "Int96Vector materialize not yet wired for encoding " + encoding);

@@ -23,8 +23,10 @@ import java.util.BitSet;
 
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.page.ByteStreamSplitDoubleDecoder;
+import io.tileverse.parquetry.page.Dictionary;
 import io.tileverse.parquetry.page.PageDecoder;
 import io.tileverse.parquetry.page.PlainDoubleDecoder;
+import io.tileverse.parquetry.page.RleDictionaryPageDecoder;
 
 public final class DoubleVector implements ColumnVector {
 
@@ -33,6 +35,7 @@ public final class DoubleVector implements ColumnVector {
     private MemorySegment rawPage;
     private Encoding encoding;
     private double[] values;
+    private Dictionary<?> dictionary;
 
     private DoubleVector(MemorySegment rawPage, Encoding encoding, int size, BitSet validity) {
         this.rawPage = rawPage;
@@ -44,6 +47,17 @@ public final class DoubleVector implements ColumnVector {
     /** Builds a raw (lazy) DoubleVector backed by {@code page}. */
     public static DoubleVector raw(MemorySegment page, Encoding encoding, int size, BitSet validity) {
         return new DoubleVector(page, encoding, size, validity);
+    }
+
+    /**
+     * Builds a raw (lazy) DoubleVector backed by {@code page} with an optional dictionary for dictionary-encoded
+     * columns. {@code dictionary} may be {@code null} for non-dictionary encodings.
+     */
+    public static DoubleVector raw(
+            MemorySegment page, Encoding encoding, int size, BitSet validity, Dictionary<?> dictionary) {
+        DoubleVector vec = new DoubleVector(page, encoding, size, validity);
+        vec.dictionary = dictionary;
+        return vec;
     }
 
     /** Builds an already-materialized DoubleVector. Used when tests or upstream code already has the double[]. */
@@ -80,6 +94,7 @@ public final class DoubleVector implements ColumnVector {
         values = dst;
         rawPage = null;
         encoding = null;
+        dictionary = null;
     }
 
     @Override
@@ -103,13 +118,16 @@ public final class DoubleVector implements ColumnVector {
         return values;
     }
 
-    private static PageDecoder<?> decoderFor(Encoding encoding) {
+    private PageDecoder<?> decoderFor(Encoding encoding) {
         return switch (encoding) {
             case PLAIN -> new PlainDoubleDecoder();
             case BYTE_STREAM_SPLIT -> new ByteStreamSplitDoubleDecoder();
-            case RLE_DICTIONARY, PLAIN_DICTIONARY ->
-                throw new UnsupportedOperationException(
-                        "Dictionary-encoded DoubleVector requires the chunk's Dictionary; wired by BatchColumnReader.");
+            case RLE_DICTIONARY, PLAIN_DICTIONARY -> {
+                if (dictionary == null) {
+                    throw new IllegalStateException("Dictionary-encoded DoubleVector but no dictionary supplied");
+                }
+                yield new RleDictionaryPageDecoder<>(dictionary);
+            }
             default ->
                 throw new UnsupportedOperationException(
                         "DoubleVector materialize not yet wired for encoding " + encoding);

@@ -1,0 +1,122 @@
+/*
+ * Copyright (c) 2026 Tileverse.io
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.tileverse.parquetry.batch;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.lang.foreign.Arena;
+import java.util.BitSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.OptionalInt;
+
+import org.junit.jupiter.api.Test;
+
+import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.Field;
+import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.PrimitiveKind;
+import io.tileverse.parquetry.schema.Repetition;
+
+class ParquetRecordBatchTest {
+
+    @Test
+    void closeReleasesArena() {
+        Arena arena = Arena.ofConfined();
+        arena.allocate(8);
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), Map.of(), 0, arena);
+
+        batch.close();
+
+        // Arena is closed: a subsequent allocate must throw.
+        assertThatThrownBy(() -> arena.allocate(8)).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void doubleCloseIsNoOp() {
+        Arena arena = Arena.ofConfined();
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), Map.of(), 0, arena);
+        batch.close();
+        batch.close();
+        // If close() is idempotent the arena must be closed after the first call and remain closed.
+        assertThatThrownBy(() -> arena.allocate(8)).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void columnsAccessorReturnsLookup() {
+        Arena arena = Arena.ofConfined();
+        ColumnPath aPath = ColumnPath.of("a");
+        BitSet validity = new BitSet(2);
+        validity.set(0, 2);
+        Map<ColumnPath, ColumnVector> cols = Map.of(aPath, IntVector.materialized(new int[] {1, 2}, validity));
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), cols, 2, arena);
+
+        assertThat(batch.columns()).containsKey(aPath);
+        assertThat(batch.rowCount()).isEqualTo(2);
+
+        batch.close();
+    }
+
+    @Test
+    void materializeThrowsUntilAdapterIsWired() {
+        Arena arena = Arena.ofConfined();
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), Map.of(), 1, arena);
+
+        assertThatThrownBy(() -> batch.materialize(0))
+                .isInstanceOf(UnsupportedOperationException.class)
+                .hasMessageContaining("BatchBackedParquetRecord adapter not yet wired");
+
+        batch.close();
+    }
+
+    @Test
+    void materializeRangeChecksRowIndex() {
+        Arena arena = Arena.ofConfined();
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), Map.of(), 2, arena);
+
+        assertThatThrownBy(() -> batch.materialize(-1)).isInstanceOf(IndexOutOfBoundsException.class);
+        assertThatThrownBy(() -> batch.materialize(2)).isInstanceOf(IndexOutOfBoundsException.class);
+
+        batch.close();
+    }
+
+    @Test
+    void negativeRowCountRejected() {
+        Arena arena = Arena.ofConfined();
+        ParquetSchema schema = minimalSchema();
+        Map<ColumnPath, ColumnVector> cols = Map.of();
+        assertThatThrownBy(() -> new DefaultParquetRecordBatch(schema, cols, -1, arena))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("rowCount must be >= 0");
+        arena.close();
+    }
+
+    /**
+     * Returns a minimal one-column schema sufficient for tests that don't exercise schema content. Uses the same
+     * construction pattern as RowGroupPipelineTest.singleColumnSchema().
+     */
+    private static ParquetSchema minimalSchema() {
+        return new ParquetSchema(new Field.Group(
+                "root",
+                Repetition.REQUIRED,
+                List.of(new Field.Primitive(
+                        "value", Repetition.REQUIRED, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1)),
+                Optional.empty(),
+                -1));
+    }
+}

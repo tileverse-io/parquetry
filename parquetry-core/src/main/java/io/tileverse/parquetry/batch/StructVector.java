@@ -21,34 +21,20 @@ import java.util.Objects;
 
 import io.tileverse.parquetry.schema.ColumnPath;
 
-public final class StructVector implements ColumnVector {
+/**
+ * A column vector carrying nested struct rows. Each row is a named map of child vectors keyed by their relative column
+ * path. The {@code validity} bitmap marks which rows are non-null structs; children may still be null at their own
+ * level.
+ *
+ * <p>The {@code children} map is copied on construction to guarantee immutability of the record's state.
+ */
+public record StructVector(Map<ColumnPath, ColumnVector> children, BitSet validity, int size) implements ColumnVector {
 
-    private final Map<ColumnPath, ColumnVector> children;
-    private final BitSet validity;
-    private final int size;
-
-    /**
-     * Constructs a StructVector from child columns.
-     *
-     * @param children map of child column paths to their vectors
-     * @param validity row-level validity bitmap; a true bit means row i is a non-null struct (children may still be
-     *     null)
-     * @param size number of rows
-     */
-    public StructVector(Map<ColumnPath, ColumnVector> children, BitSet validity, int size) {
-        this.children = Map.copyOf(Objects.requireNonNull(children, "children"));
-        this.validity = Objects.requireNonNull(validity, "validity");
-        this.size = size;
-    }
-
-    @Override
-    public int size() {
-        return size;
-    }
-
-    @Override
-    public BitSet validity() {
-        return validity;
+    /** Compact canonical constructor: validates inputs and defensively copies the children map. */
+    public StructVector {
+        Objects.requireNonNull(children, "children");
+        Objects.requireNonNull(validity, "validity");
+        children = Map.copyOf(children);
     }
 
     @Override
@@ -64,10 +50,5 @@ public final class StructVector implements ColumnVector {
     @Override
     public void materializeSurvivors(BitSet survivors) {
         children.values().forEach(c -> c.materializeSurvivors(survivors));
-    }
-
-    /** Returns the map of child column paths to their vectors. */
-    public Map<ColumnPath, ColumnVector> children() {
-        return children;
     }
 }

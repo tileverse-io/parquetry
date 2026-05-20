@@ -41,7 +41,8 @@ class SplitBlockBloomFilterTest {
     @Test
     void rejectsBitsetNotMultipleOf32Bytes() {
         ByteBuffer odd = ByteBuffer.allocate(31);
-        assertThatThrownBy(() -> new SplitBlockBloomFilter(MemorySegment.ofBuffer(odd)))
+        MemorySegment segment = MemorySegment.ofBuffer(odd);
+        assertThatThrownBy(() -> new SplitBlockBloomFilter(segment))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("multiple of 32");
     }
