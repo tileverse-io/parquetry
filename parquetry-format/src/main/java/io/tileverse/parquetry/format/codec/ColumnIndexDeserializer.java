@@ -16,7 +16,7 @@
 package io.tileverse.parquetry.format.codec;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -45,8 +45,8 @@ final class ColumnIndexDeserializer {
 
     static ColumnIndex read(CompactProtocolReader r) throws IOException {
         List<Boolean> nullPages = new ArrayList<>();
-        List<ByteBuffer> minValues = new ArrayList<>();
-        List<ByteBuffer> maxValues = new ArrayList<>();
+        List<MemorySegment> minValues = new ArrayList<>();
+        List<MemorySegment> maxValues = new ArrayList<>();
         BoundaryOrder boundaryOrder = BoundaryOrder.UNORDERED;
         Optional<List<Long>> nullCounts = Optional.empty();
         Optional<List<Long>> repetitionLevelHistograms = Optional.empty();
@@ -92,9 +92,9 @@ final class ColumnIndexDeserializer {
         return result;
     }
 
-    private static List<ByteBuffer> readBinaryList(CompactProtocolReader r) throws IOException {
+    private static List<MemorySegment> readBinaryList(CompactProtocolReader r) throws IOException {
         CompactProtocolReader.ListHeader lh = r.readListHeader();
-        List<ByteBuffer> result = new ArrayList<>(lh.size());
+        List<MemorySegment> result = new ArrayList<>(lh.size());
         for (int i = 0; i < lh.size(); i++) {
             result.add(r.readBinary());
         }

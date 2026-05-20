@@ -16,10 +16,11 @@
 package io.tileverse.parquetry.filter;
 
 import static io.tileverse.parquetry.filter.Pred.col;
+import static java.lang.foreign.ValueLayout.JAVA_INT_UNALIGNED;
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
+import java.lang.foreign.MemorySegment;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -141,14 +142,15 @@ class FilterPipelineTest {
     private static Statistics intStats(int min, int max, long nullCount) {
         return Statistics.builder()
                 .nullCount(OptionalLong.of(nullCount))
-                .maxValue(Optional.of(encodeInt(max)))
-                .minValue(Optional.of(encodeInt(min)))
+                .maxValue(encodeInt(max))
+                .minValue(encodeInt(min))
                 .build();
     }
 
-    private static ByteBuffer encodeInt(int v) {
-        return (ByteBuffer)
-                ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(v).flip();
+    private static MemorySegment encodeInt(int v) {
+        MemorySegment segment = MemorySegment.ofArray(new byte[4]);
+        segment.set(JAVA_INT_UNALIGNED.withOrder(LITTLE_ENDIAN), 0, v);
+        return segment.asReadOnly();
     }
 
     private static ParquetSchema flatSchema() {

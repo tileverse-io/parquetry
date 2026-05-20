@@ -15,11 +15,11 @@
  */
 package io.tileverse.parquetry.read;
 
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.util.Optional;
 import java.util.OptionalInt;
 
@@ -182,7 +182,7 @@ class DataPageV2ReaderTest {
     }
 
     private static byte[] encodeInt32sLittleEndian(int[] values) {
-        ByteBuffer buf = ByteBuffer.allocate(values.length * 4).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer buf = ByteBuffer.allocate(values.length * 4).order(LITTLE_ENDIAN);
         for (int v : values) {
             buf.putInt(v);
         }
@@ -190,7 +190,7 @@ class DataPageV2ReaderTest {
     }
 
     private static int[] decodeInt32sLittleEndian(ByteBuffer buf, int count) {
-        ByteBuffer view = buf.duplicate().order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer view = buf.duplicate().order(LITTLE_ENDIAN);
         int[] out = new int[count];
         for (int i = 0; i < count; i++) {
             out[i] = view.getInt();

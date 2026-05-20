@@ -15,11 +15,13 @@
  */
 package io.tileverse.parquetry.read;
 
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.ByteArrayOutputStream;
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
@@ -203,11 +205,11 @@ class MapValueBuilderTest {
             out.write((bytes.length >> 24) & 0xff);
             out.write(bytes, 0, bytes.length);
         }
-        return ByteBuffer.wrap(out.toByteArray()).order(ByteOrder.LITTLE_ENDIAN);
+        return ByteBuffer.wrap(out.toByteArray()).order(LITTLE_ENDIAN);
     }
 
     private static PlainInt32Decoder plainInt32Decoder(int[] values) {
-        ByteBuffer page = ByteBuffer.allocate(values.length * 4).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer page = ByteBuffer.allocate(values.length * 4).order(LITTLE_ENDIAN);
         for (int v : values) {
             page.putInt(v);
         }
@@ -224,10 +226,8 @@ class MapValueBuilderTest {
     }
 
     private static String asString(Object value) {
-        if (value instanceof ByteBuffer bb) {
-            byte[] bytes = new byte[bb.remaining()];
-            bb.duplicate().get(bytes);
-            return new String(bytes, StandardCharsets.UTF_8);
+        if (value instanceof MemorySegment seg) {
+            return new String(seg.toArray(JAVA_BYTE), StandardCharsets.UTF_8);
         }
         return value.toString();
     }

@@ -15,10 +15,12 @@
  */
 package io.tileverse.parquetry.page;
 
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 
 import org.junit.jupiter.api.Test;
@@ -33,7 +35,7 @@ class PlainBinaryDecoderTest {
 
         // Total: 3 entries * 4-byte prefix + 0+2+6 payload = 12 + 8 = 20 bytes
         int totalSize = 3 * 4 + empty.length + hi.length + world.length;
-        ByteBuffer page = ByteBuffer.allocate(totalSize).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer page = ByteBuffer.allocate(totalSize).order(LITTLE_ENDIAN);
         page.putInt(empty.length);
         page.put(empty);
         page.putInt(hi.length);
@@ -42,31 +44,31 @@ class PlainBinaryDecoderTest {
         page.put(world);
         page.flip();
 
-        PageDecoder<ByteBuffer> decoder = new PlainBinaryDecoder();
+        PageDecoder<MemorySegment> decoder = new PlainBinaryDecoder();
         decoder.load(page, 3);
 
-        ByteBuffer resultEmpty = decoder.next();
-        assertThat(resultEmpty.remaining()).isZero();
+        MemorySegment resultEmpty = decoder.next();
+        assertThat(resultEmpty.byteSize()).isZero();
 
-        ByteBuffer resultHi = decoder.next();
-        assertThat(resultHi.remaining()).isEqualTo(2);
-        assertThat(resultHi).isEqualTo(ByteBuffer.wrap(hi));
+        MemorySegment resultHi = decoder.next();
+        assertThat(resultHi.byteSize()).isEqualTo(2);
+        assertThat(resultHi.toArray(JAVA_BYTE)).isEqualTo(hi);
 
-        ByteBuffer resultWorld = decoder.next();
-        assertThat(resultWorld.remaining()).isEqualTo(6);
-        assertThat(resultWorld).isEqualTo(ByteBuffer.wrap(world));
+        MemorySegment resultWorld = decoder.next();
+        assertThat(resultWorld.byteSize()).isEqualTo(6);
+        assertThat(resultWorld.toArray(JAVA_BYTE)).isEqualTo(world);
     }
 
     @Test
     void slicesAreReadOnly() {
-        ByteBuffer page = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer page = ByteBuffer.allocate(4).order(LITTLE_ENDIAN);
         page.putInt(0); // empty entry
         page.flip();
 
-        PageDecoder<ByteBuffer> decoder = new PlainBinaryDecoder();
+        PageDecoder<MemorySegment> decoder = new PlainBinaryDecoder();
         decoder.load(page, 1);
 
-        ByteBuffer slice = decoder.next();
+        MemorySegment slice = decoder.next();
         assertThat(slice.isReadOnly()).isTrue();
     }
 
@@ -77,7 +79,7 @@ class PlainBinaryDecoderTest {
         byte[] kept = "kept".getBytes(StandardCharsets.UTF_8);
 
         int totalSize = 3 * 4 + skipped1.length + skipped2.length + kept.length;
-        ByteBuffer page = ByteBuffer.allocate(totalSize).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer page = ByteBuffer.allocate(totalSize).order(LITTLE_ENDIAN);
         page.putInt(skipped1.length);
         page.put(skipped1);
         page.putInt(skipped2.length);
@@ -86,11 +88,11 @@ class PlainBinaryDecoderTest {
         page.put(kept);
         page.flip();
 
-        PageDecoder<ByteBuffer> decoder = new PlainBinaryDecoder();
+        PageDecoder<MemorySegment> decoder = new PlainBinaryDecoder();
         decoder.load(page, 3);
         decoder.skip(2);
 
-        ByteBuffer result = decoder.next();
-        assertThat(result).isEqualTo(ByteBuffer.wrap(kept));
+        MemorySegment result = decoder.next();
+        assertThat(result.toArray(JAVA_BYTE)).isEqualTo(kept);
     }
 }

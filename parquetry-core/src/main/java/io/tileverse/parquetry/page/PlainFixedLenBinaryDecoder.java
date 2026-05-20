@@ -15,16 +15,18 @@
  */
 package io.tileverse.parquetry.page;
 
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 
 /**
  * PLAIN decoder for FIXED_LEN_BYTE_ARRAY: exactly N bytes per value, where N comes from the column schema's
  * {@code typeLength} field.
  *
- * <p>Each value is returned as a read-only {@link ByteBuffer} slice backed by the original page buffer (zero-copy). The
- * slice's {@code remaining()} equals {@code length}.
+ * <p>Each value is returned as a read-only {@link MemorySegment} view backed by the original page bytes (zero-copy).
+ * The segment's {@code byteSize()} equals {@code length}, and its index-based access makes it safe to share across
+ * readers.
  */
-final class PlainFixedLenBinaryDecoder implements PageDecoder<ByteBuffer> {
+final class PlainFixedLenBinaryDecoder implements PageDecoder<MemorySegment> {
 
     private final int length;
     private ByteBuffer buffer;
@@ -43,10 +45,10 @@ final class PlainFixedLenBinaryDecoder implements PageDecoder<ByteBuffer> {
     }
 
     @Override
-    public ByteBuffer next() {
-        ByteBuffer slice = buffer.slice().limit(length).asReadOnlyBuffer();
+    public MemorySegment next() {
+        ByteBuffer slice = buffer.slice().limit(length);
         buffer.position(buffer.position() + length);
-        return slice;
+        return MemorySegment.ofBuffer(slice).asReadOnly();
     }
 
     @Override

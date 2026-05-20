@@ -16,7 +16,7 @@
 package io.tileverse.parquetry.format.codec;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
@@ -55,7 +55,7 @@ final class ColumnChunkDeserializer {
         OptionalLong columnIndexOffset = OptionalLong.empty();
         OptionalInt columnIndexLength = OptionalInt.empty();
         Optional<ColumnCryptoMetaData> cryptoMetadata = Optional.empty();
-        Optional<ByteBuffer> encryptedColumnMetadata = Optional.empty();
+        MemorySegment encryptedColumnMetadata = MemorySegment.NULL;
         int lastFieldId = 0;
         while (true) {
             FieldHeader fh = r.readFieldHeader(lastFieldId);
@@ -73,7 +73,7 @@ final class ColumnChunkDeserializer {
                 case 7 -> columnIndexLength = OptionalInt.of(r.readI32());
                 // Fields 8 and 9 are crypto metadata - skipped
                 case 8 -> r.skipField(fh.type());
-                case 9 -> encryptedColumnMetadata = Optional.of(r.readBinary());
+                case 9 -> encryptedColumnMetadata = r.readBinary();
                 default -> r.skipField(fh.type());
             }
         }

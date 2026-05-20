@@ -15,6 +15,7 @@
  */
 package io.tileverse.parquetry.page;
 
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 
 /**
@@ -31,10 +32,10 @@ import java.nio.ByteBuffer;
  * <p>Reconstruction: {@code V[i] = V[i-1][0..P[i]] + S[i]}. The first prefix length must be zero; each subsequent value
  * reuses a leading slice of the previous value and appends the suffix bytes from the page.
  *
- * <p>Returned {@link ByteBuffer} values are wrapped over fresh byte[] copies (read-only) so they remain stable across
- * subsequent {@link #next()} calls.
+ * <p>Each returned value is a read-only {@link MemorySegment} over a fresh {@code byte[]} so the materialized values
+ * remain stable across subsequent {@link #next()} calls (and across the page buffer's recycle into the pool).
  */
-final class DeltaByteArrayDecoder implements PageDecoder<ByteBuffer> {
+final class DeltaByteArrayDecoder implements PageDecoder<MemorySegment> {
 
     private int[] prefixLengths;
     private int[] suffixLengths;
@@ -57,7 +58,7 @@ final class DeltaByteArrayDecoder implements PageDecoder<ByteBuffer> {
     }
 
     @Override
-    public ByteBuffer next() {
+    public MemorySegment next() {
         int prefixLen = prefixLengths[cursor];
         int suffixLen = suffixLengths[cursor];
         cursor++;
@@ -70,7 +71,7 @@ final class DeltaByteArrayDecoder implements PageDecoder<ByteBuffer> {
             suffixBytes.get(value, prefixLen, suffixLen);
         }
         previousValue = value;
-        return ByteBuffer.wrap(value).asReadOnlyBuffer();
+        return MemorySegment.ofArray(value).asReadOnly();
     }
 
     @Override

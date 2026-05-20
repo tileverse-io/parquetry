@@ -15,7 +15,10 @@
  */
 package io.tileverse.parquetry.geo.jts;
 
-import java.nio.ByteBuffer;
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
+
+import java.io.IOException;
+import java.lang.foreign.MemorySegment;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -25,6 +28,7 @@ import java.util.OptionalInt;
 import java.util.Set;
 
 import org.locationtech.jts.geom.Geometry;
+import org.locationtech.jts.io.InStream;
 import org.locationtech.jts.io.ParseException;
 import org.locationtech.jts.io.WKBReader;
 
@@ -43,8 +47,8 @@ import io.tileverse.parquetry.schema.geo.projjson.Identifier;
  *
  * <p>Each row is returned as a {@code Map<ColumnPath, Object>}: the entries for columns tagged with
  * {@link LogicalType.Geometry} or {@link LogicalType.Geography} are JTS {@link Geometry} objects; entries for every
- * other column pass through the values the row accessor provides (boxed primitives, {@link java.nio.ByteBuffer} for
- * binary, {@link java.util.List} / {@link java.util.Map} for repeated / map columns).
+ * other column pass through the values the row accessor provides (boxed primitives, {@link MemorySegment} for binary,
+ * {@link java.util.List} / {@link java.util.Map} for repeated / map columns).
  *
  * <p>Uniform across GeoParquet 1.x and 2.0: parquetry-format's {@code SchemaBuilder} folds the {@code "geo"} JSON into
  * the schema at footer-read time on 1.x files, so the materializer only needs to inspect the schema's leaf annotations
@@ -103,7 +107,7 @@ public final class JtsMaterializer implements Materializer<Map<ColumnPath, Objec
         for (Map.Entry<ColumnPath, Object> entry : values.entrySet()) {
             ColumnPath path = entry.getKey();
             Object value = entry.getValue();
-            if (geoColumns.contains(path) && value instanceof ByteBuffer wkb) {
+            if (geoColumns.contains(path) && value instanceof MemorySegment wkb) {
                 out.put(path, decodeWkb(path, wkb));
             } else {
                 out.put(path, value);
@@ -112,14 +116,11 @@ public final class JtsMaterializer implements Materializer<Map<ColumnPath, Objec
         return out;
     }
 
-    private Geometry decodeWkb(ColumnPath path, ByteBuffer wkb) {
-        ByteBuffer view = wkb.duplicate();
-        byte[] bytes = new byte[view.remaining()];
-        view.get(bytes);
+    private Geometry decodeWkb(ColumnPath path, MemorySegment wkb) {
         Geometry geometry;
         try {
-            geometry = wkbReader.read(bytes);
-        } catch (ParseException e) {
+            geometry = wkbReader.read(new SegmentInStream(wkb));
+        } catch (ParseException | IOException e) {
             throw new IllegalStateException("Failed to decode WKB geometry: " + e.getMessage(), e);
         }
         Integer srid = sridByColumn.get(path);
@@ -127,6 +128,35 @@ public final class JtsMaterializer implements Materializer<Map<ColumnPath, Objec
             geometry.setSRID(srid);
         }
         return geometry;
+    }
+
+    /**
+     * JTS {@link InStream} adapter that streams bytes out of a read-only {@link MemorySegment} using its own offset
+     * cursor. The segment is shared safely across callers because position state lives on the adapter, not on the
+     * segment itself.
+     */
+    private static final class SegmentInStream implements InStream {
+
+        private final MemorySegment segment;
+        private final long size;
+        private long offset;
+
+        SegmentInStream(MemorySegment segment) {
+            this.segment = segment;
+            this.size = segment.byteSize();
+        }
+
+        @Override
+        public int read(byte[] dst) {
+            long remaining = size - offset;
+            if (remaining == 0) {
+                return -1;
+            }
+            int n = (int) Math.min(remaining, dst.length);
+            MemorySegment.copy(segment, JAVA_BYTE, offset, dst, 0, n);
+            offset += n;
+            return n;
+        }
     }
 
     /**

@@ -15,7 +15,7 @@
  */
 package io.tileverse.parquetry.filter;
 
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -100,10 +100,10 @@ public final class Pred {
         }
 
         public Predicate eq(byte[] v) {
-            return new Predicate.Eq(path, new Value.BinaryVal(ByteBuffer.wrap(v)));
+            return new Predicate.Eq(path, new Value.BinaryVal(MemorySegment.ofArray(v)));
         }
 
-        public Predicate eq(ByteBuffer v) {
+        public Predicate eq(MemorySegment v) {
             return new Predicate.Eq(path, new Value.BinaryVal(v));
         }
 

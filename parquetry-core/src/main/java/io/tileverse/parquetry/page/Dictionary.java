@@ -15,7 +15,7 @@
  */
 package io.tileverse.parquetry.page;
 
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 import java.nio.DoubleBuffer;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
@@ -31,7 +31,8 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
  * <p>One variant per Parquet primitive kind. Fixed-width primitive variants hold a read-only primitive buffer
  * ({@link IntBuffer}, {@link LongBuffer}, etc.) so dictionary lookups are unboxed and the dictionary owns a single
  * contiguous heap allocation. The boolean variant uses a {@link BitSet}. Binary variants (BYTE_ARRAY,
- * FIXED_LEN_BYTE_ARRAY, INT96) hold a {@code List} of owned heap {@link ByteBuffer}s.
+ * FIXED_LEN_BYTE_ARRAY, INT96) hold a {@code List} of owned, read-only {@link MemorySegment}s so repeat lookups never
+ * share a mutable cursor.
  */
 public sealed interface Dictionary<T>
         permits Dictionary.BooleanDict,
@@ -134,9 +135,9 @@ public sealed interface Dictionary<T>
         }
     }
 
-    record BinaryDict(List<ByteBuffer> values) implements Dictionary<ByteBuffer> {
+    record BinaryDict(List<MemorySegment> values) implements Dictionary<MemorySegment> {
         public BinaryDict {
-            values = values.stream().map(ByteBuffer::asReadOnlyBuffer).toList();
+            values = freezeSegments(values);
         }
 
         @Override
@@ -150,14 +151,14 @@ public sealed interface Dictionary<T>
         }
 
         @Override
-        public ByteBuffer get(int index) {
+        public MemorySegment get(int index) {
             return values.get(index);
         }
     }
 
-    record FixedLenBinaryDict(List<ByteBuffer> values, int typeLength) implements Dictionary<ByteBuffer> {
+    record FixedLenBinaryDict(List<MemorySegment> values, int typeLength) implements Dictionary<MemorySegment> {
         public FixedLenBinaryDict {
-            values = values.stream().map(ByteBuffer::asReadOnlyBuffer).toList();
+            values = freezeSegments(values);
         }
 
         @Override
@@ -171,14 +172,14 @@ public sealed interface Dictionary<T>
         }
 
         @Override
-        public ByteBuffer get(int index) {
+        public MemorySegment get(int index) {
             return values.get(index);
         }
     }
 
-    record Int96Dict(List<ByteBuffer> values) implements Dictionary<ByteBuffer> {
+    record Int96Dict(List<MemorySegment> values) implements Dictionary<MemorySegment> {
         public Int96Dict {
-            values = values.stream().map(ByteBuffer::asReadOnlyBuffer).toList();
+            values = freezeSegments(values);
         }
 
         @Override
@@ -192,8 +193,16 @@ public sealed interface Dictionary<T>
         }
 
         @Override
-        public ByteBuffer get(int index) {
+        public MemorySegment get(int index) {
             return values.get(index);
         }
+    }
+
+    private static List<MemorySegment> freezeSegments(List<MemorySegment> values) {
+        return values.stream().map(Dictionary::asReadOnly).toList();
+    }
+
+    private static MemorySegment asReadOnly(MemorySegment segment) {
+        return segment.isReadOnly() ? segment : segment.asReadOnly();
     }
 }

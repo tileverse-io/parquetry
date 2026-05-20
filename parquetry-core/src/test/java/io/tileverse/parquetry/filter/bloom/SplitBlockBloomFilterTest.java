@@ -15,11 +15,12 @@
  */
 package io.tileverse.parquetry.filter.bloom;
 
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 
 import org.junit.jupiter.api.Test;
 
@@ -40,7 +41,7 @@ class SplitBlockBloomFilterTest {
     @Test
     void rejectsBitsetNotMultipleOf32Bytes() {
         ByteBuffer odd = ByteBuffer.allocate(31);
-        assertThatThrownBy(() -> new SplitBlockBloomFilter(odd))
+        assertThatThrownBy(() -> new SplitBlockBloomFilter(MemorySegment.ofBuffer(odd)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("multiple of 32");
     }
@@ -56,7 +57,7 @@ class SplitBlockBloomFilterTest {
         for (long h : inserted) {
             referenceInsert(bitset, h);
         }
-        SplitBlockBloomFilter sbbf = new SplitBlockBloomFilter(bitset.duplicate());
+        SplitBlockBloomFilter sbbf = new SplitBlockBloomFilter(MemorySegment.ofBuffer(bitset.duplicate()));
 
         for (long h : inserted) {
             assertThat(sbbf.mightContain(h))
@@ -86,7 +87,7 @@ class SplitBlockBloomFilterTest {
         for (int i = 0; i < 100; i++) {
             referenceInsert(bitset, mix(i + 1));
         }
-        SplitBlockBloomFilter sbbf = new SplitBlockBloomFilter(bitset.duplicate());
+        SplitBlockBloomFilter sbbf = new SplitBlockBloomFilter(MemorySegment.ofBuffer(bitset.duplicate()));
 
         for (int i = 0; i < 100; i++) {
             assertThat(sbbf.mightContain(mix(i + 1)))
@@ -161,7 +162,7 @@ class SplitBlockBloomFilterTest {
     @Test
     void byteSizeMatchesBitsetLength() {
         ByteBuffer bitset = newEmptyBitset(4);
-        SplitBlockBloomFilter sbbf = new SplitBlockBloomFilter(bitset);
+        SplitBlockBloomFilter sbbf = new SplitBlockBloomFilter(MemorySegment.ofBuffer(bitset));
         assertThat(sbbf.byteSize()).isEqualTo(4 * BYTES_PER_BLOCK);
     }
 
@@ -169,7 +170,7 @@ class SplitBlockBloomFilterTest {
     private static SplitBlockBloomFilter bloomWith(long hash) {
         ByteBuffer bitset = newEmptyBitset(1);
         referenceInsert(bitset, hash);
-        return new SplitBlockBloomFilter(bitset.duplicate());
+        return new SplitBlockBloomFilter(MemorySegment.ofBuffer(bitset));
     }
 
     /** Plain replica of parquet-format's SBBF {@code filter_insert} pseudocode; no buffer tricks. */
@@ -178,7 +179,7 @@ class SplitBlockBloomFilterTest {
         long top = (hash >>> 32) & 0xffff_ffffL;
         int blockIndex = (int) ((top * numBlocks) >>> 32);
         int key = (int) hash;
-        ByteBuffer le = bitset.duplicate().order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer le = bitset.duplicate().order(LITTLE_ENDIAN);
         int blockByteOffset = blockIndex * BYTES_PER_BLOCK;
         for (int i = 0; i < 8; i++) {
             int wordOffset = blockByteOffset + i * 4;
@@ -189,7 +190,7 @@ class SplitBlockBloomFilterTest {
     }
 
     private static ByteBuffer newEmptyBitset(int blocks) {
-        return ByteBuffer.allocate(blocks * BYTES_PER_BLOCK).order(ByteOrder.LITTLE_ENDIAN);
+        return ByteBuffer.allocate(blocks * BYTES_PER_BLOCK).order(LITTLE_ENDIAN);
     }
 
     /**

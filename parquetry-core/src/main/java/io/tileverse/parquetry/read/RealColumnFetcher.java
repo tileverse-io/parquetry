@@ -15,10 +15,11 @@
  */
 package io.tileverse.parquetry.read;
 
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -100,7 +101,7 @@ final class RealColumnFetcher implements ColumnFetcher {
             chunkBuffer.limit(chunkLen);
             rangeReader.readRange(chunkStart, chunkLen, chunkBuffer);
             chunkBuffer.flip();
-            chunkBuffer.order(ByteOrder.LITTLE_ENDIAN);
+            chunkBuffer.order(LITTLE_ENDIAN);
 
             Optional<Dictionary<?>> dictionary = maybeDecodeDictionary(chunkBuffer, meta, path);
             LevelMaxima maxima = LevelMaximaResolver.resolve(fileSchema, path);
@@ -223,9 +224,9 @@ final class RealColumnFetcher implements ColumnFetcher {
     private static ByteBuffer sliceAndAdvance(ByteBuffer buffer, int length) {
         ByteBuffer slice = buffer.slice();
         slice.limit(length);
-        slice.order(ByteOrder.LITTLE_ENDIAN);
+        slice.order(LITTLE_ENDIAN);
         buffer.position(buffer.position() + length);
-        return slice.asReadOnlyBuffer().order(ByteOrder.LITTLE_ENDIAN);
+        return slice.asReadOnlyBuffer().order(LITTLE_ENDIAN);
     }
 
     /**

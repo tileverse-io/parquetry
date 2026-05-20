@@ -15,12 +15,13 @@
  */
 package io.tileverse.parquetry.filter.spatial;
 
+import static java.lang.foreign.ValueLayout.JAVA_DOUBLE_UNALIGNED;
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static java.util.Optional.empty;
 import static java.util.Optional.of;
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
+import java.lang.foreign.MemorySegment;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -214,8 +215,8 @@ class SpatialBoundsSourceTest {
 
     private static ColumnMetaData doubleStatsMeta(String name, double min, double max) {
         Statistics stats = Statistics.builder()
-                .minValue(of(littleEndianDouble(min)))
-                .maxValue(of(littleEndianDouble(max)))
+                .minValue(littleEndianDouble(min))
+                .maxValue(littleEndianDouble(max))
                 .build();
         return ColumnMetaData.builder()
                 .type(PhysicalType.DOUBLE)
@@ -230,10 +231,10 @@ class SpatialBoundsSourceTest {
                 .build();
     }
 
-    private static ByteBuffer littleEndianDouble(double value) {
-        ByteBuffer buf = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN);
-        buf.putDouble(value).flip();
-        return buf;
+    private static MemorySegment littleEndianDouble(double value) {
+        MemorySegment segment = MemorySegment.ofArray(new byte[8]);
+        segment.set(JAVA_DOUBLE_UNALIGNED.withOrder(LITTLE_ENDIAN), 0, value);
+        return segment.asReadOnly();
     }
 
     private static ParquetSchema schemaWithGeometry() {

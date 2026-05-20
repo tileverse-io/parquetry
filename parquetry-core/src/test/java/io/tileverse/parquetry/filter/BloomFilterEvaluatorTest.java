@@ -16,10 +16,11 @@
 package io.tileverse.parquetry.filter;
 
 import static io.tileverse.parquetry.filter.Pred.col;
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -270,10 +271,10 @@ class BloomFilterEvaluatorTest {
         FilterPipeline.BloomFilterLookup blooms =
                 single("blob", PrimitiveKind.BYTE_ARRAY, bloomOver(SplitBlockBloomFilter.hashBytes(bytes)));
         // Present binary -> NotApplied (might match).
-        assertThat(BloomFilterEvaluator.evaluate(Pred.col("blob").eq(ByteBuffer.wrap(bytes)), blooms))
+        assertThat(BloomFilterEvaluator.evaluate(Pred.col("blob").eq(bytes), blooms))
                 .isInstanceOf(PruningDecision.NotApplied.class);
         // Absent binary -> Eliminated.
-        assertThat(BloomFilterEvaluator.evaluate(Pred.col("blob").eq(ByteBuffer.wrap("not-here".getBytes())), blooms))
+        assertThat(BloomFilterEvaluator.evaluate(Pred.col("blob").eq("not-here".getBytes()), blooms))
                 .isInstanceOf(PruningDecision.Eliminated.class);
     }
 
@@ -282,10 +283,9 @@ class BloomFilterEvaluatorTest {
         byte[] bytes = {1, 2, 3, 4};
         FilterPipeline.BloomFilterLookup blooms =
                 single("fixed", PrimitiveKind.FIXED_LEN_BYTE_ARRAY, bloomOver(SplitBlockBloomFilter.hashBytes(bytes)));
-        assertThat(BloomFilterEvaluator.evaluate(Pred.col("fixed").eq(ByteBuffer.wrap(bytes)), blooms))
+        assertThat(BloomFilterEvaluator.evaluate(Pred.col("fixed").eq(bytes), blooms))
                 .isInstanceOf(PruningDecision.NotApplied.class);
-        assertThat(BloomFilterEvaluator.evaluate(
-                        Pred.col("fixed").eq(ByteBuffer.wrap(new byte[] {9, 9, 9, 9})), blooms))
+        assertThat(BloomFilterEvaluator.evaluate(Pred.col("fixed").eq(new byte[] {9, 9, 9, 9}), blooms))
                 .isInstanceOf(PruningDecision.Eliminated.class);
     }
 
@@ -294,7 +294,7 @@ class BloomFilterEvaluatorTest {
         // BinaryVal predicate against a numeric column - no matching hash; degrade gracefully.
         FilterPipeline.BloomFilterLookup blooms =
                 single("year", PrimitiveKind.INT32, bloomOver(SplitBlockBloomFilter.hashInt32(2020)));
-        assertThat(BloomFilterEvaluator.evaluate(Pred.col("year").eq(ByteBuffer.wrap(new byte[] {1, 2})), blooms))
+        assertThat(BloomFilterEvaluator.evaluate(Pred.col("year").eq(new byte[] {1, 2}), blooms))
                 .isInstanceOf(PruningDecision.NotApplied.class);
     }
 
@@ -361,11 +361,11 @@ class BloomFilterEvaluatorTest {
      * dragging the file format into play.
      */
     private static SplitBlockBloomFilter bloomOver(long... hashes) {
-        ByteBuffer bitset = ByteBuffer.allocate(BYTES_PER_BLOCK).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer bitset = ByteBuffer.allocate(BYTES_PER_BLOCK).order(LITTLE_ENDIAN);
         for (long h : hashes) {
             referenceInsert(bitset, h);
         }
-        return new SplitBlockBloomFilter(bitset.duplicate());
+        return new SplitBlockBloomFilter(MemorySegment.ofBuffer(bitset));
     }
 
     private static void referenceInsert(ByteBuffer bitset, long hash) {
@@ -373,7 +373,7 @@ class BloomFilterEvaluatorTest {
         long top = (hash >>> 32) & 0xffff_ffffL;
         int blockIndex = (int) ((top * numBlocks) >>> 32);
         int key = (int) hash;
-        ByteBuffer le = bitset.duplicate().order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer le = bitset.duplicate().order(LITTLE_ENDIAN);
         int blockByteOffset = blockIndex * BYTES_PER_BLOCK;
         for (int i = 0; i < 8; i++) {
             int wordOffset = blockByteOffset + i * 4;

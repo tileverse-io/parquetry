@@ -15,9 +15,11 @@
  */
 package io.tileverse.parquetry.page;
 
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.ByteArrayOutputStream;
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
@@ -50,13 +52,12 @@ class DeltaLengthByteArrayDecoderTest {
         }
         byte[] page = out.toByteArray();
 
-        PageDecoder<ByteBuffer> decoder = new DeltaLengthByteArrayDecoder();
+        PageDecoder<MemorySegment> decoder = new DeltaLengthByteArrayDecoder();
         decoder.load(ByteBuffer.wrap(page), values.length);
 
         for (String expected : values) {
-            ByteBuffer slice = decoder.next();
-            byte[] buf = new byte[slice.remaining()];
-            slice.get(buf);
+            MemorySegment slice = decoder.next();
+            byte[] buf = slice.toArray(JAVA_BYTE);
             assertThat(new String(buf, StandardCharsets.UTF_8)).isEqualTo(expected);
         }
     }
@@ -77,15 +78,14 @@ class DeltaLengthByteArrayDecoderTest {
             out.write(v.getBytes(StandardCharsets.UTF_8));
         }
 
-        PageDecoder<ByteBuffer> decoder = new DeltaLengthByteArrayDecoder();
+        PageDecoder<MemorySegment> decoder = new DeltaLengthByteArrayDecoder();
         decoder.load(ByteBuffer.wrap(out.toByteArray()), values.length);
 
         // Skip first two, then read the last two
         decoder.skip(2);
         for (int i = 2; i < values.length; i++) {
-            ByteBuffer slice = decoder.next();
-            byte[] buf = new byte[slice.remaining()];
-            slice.get(buf);
+            MemorySegment slice = decoder.next();
+            byte[] buf = slice.toArray(JAVA_BYTE);
             assertThat(new String(buf, StandardCharsets.UTF_8)).isEqualTo(values[i]);
         }
     }

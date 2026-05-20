@@ -15,10 +15,10 @@
  */
 package io.tileverse.parquetry.page;
 
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 
 import org.junit.jupiter.api.Test;
 
@@ -26,7 +26,7 @@ class PlainInt64DecoderTest {
 
     @Test
     void decodesFourLittleEndianLongs() {
-        ByteBuffer page = ByteBuffer.allocate(32).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer page = ByteBuffer.allocate(32).order(LITTLE_ENDIAN);
         page.putLong(0L);
         page.putLong(-1L);
         page.putLong(Long.MAX_VALUE);
@@ -44,7 +44,7 @@ class PlainInt64DecoderTest {
 
     @Test
     void skipAdvancesByEightBytes() {
-        ByteBuffer page = ByteBuffer.allocate(32).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer page = ByteBuffer.allocate(32).order(LITTLE_ENDIAN);
         page.putLong(100L);
         page.putLong(200L);
         page.putLong(300L);

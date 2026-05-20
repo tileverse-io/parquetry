@@ -15,7 +15,7 @@
  */
 package io.tileverse.parquetry.filter;
 
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
@@ -46,9 +46,9 @@ public sealed interface Value
 
     record DoubleVal(double value) implements Value {}
 
-    record BinaryVal(ByteBuffer value) implements Value {
+    record BinaryVal(MemorySegment value) implements Value {
         public BinaryVal {
-            value = value.asReadOnlyBuffer();
+            value = value.isReadOnly() ? value : value.asReadOnly();
         }
     }
 

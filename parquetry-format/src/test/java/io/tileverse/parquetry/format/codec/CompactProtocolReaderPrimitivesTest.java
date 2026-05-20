@@ -15,10 +15,11 @@
  */
 package io.tileverse.parquetry.format.codec;
 
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.ByteArrayInputStream;
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 
 import org.junit.jupiter.api.Test;
@@ -47,16 +48,16 @@ class CompactProtocolReaderPrimitivesTest {
     @Test
     void readBinary_emptyAndNonEmpty() throws Exception {
         CompactProtocolReader emptyReader = new CompactProtocolReader(new ByteArrayInputStream(new byte[] {0x00}));
-        ByteBuffer empty = emptyReader.readBinary();
-        assertThat(empty.remaining()).isZero();
+        MemorySegment empty = emptyReader.readBinary();
+        assertThat(empty.byteSize()).isZero();
         assertThat(empty.isReadOnly()).isTrue();
 
         CompactProtocolReader helloReader =
                 new CompactProtocolReader(new ByteArrayInputStream(new byte[] {0x05, 'h', 'e', 'l', 'l', 'o'}));
-        ByteBuffer hello = helloReader.readBinary();
+        MemorySegment hello = helloReader.readBinary();
         assertThat(hello.isReadOnly()).isTrue();
-        ByteBuffer expected = ByteBuffer.wrap("hello".getBytes(StandardCharsets.UTF_8));
-        assertThat(hello).isEqualTo(expected);
+        byte[] expected = "hello".getBytes(StandardCharsets.UTF_8);
+        assertThat(hello.toArray(JAVA_BYTE)).isEqualTo(expected);
     }
 
     @Test

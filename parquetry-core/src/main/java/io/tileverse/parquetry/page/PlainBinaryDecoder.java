@@ -15,30 +15,32 @@
  */
 package io.tileverse.parquetry.page;
 
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
+
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 
 /**
  * PLAIN decoder for BYTE_ARRAY: a 4-byte little-endian length prefix followed by that many bytes per value.
  *
- * <p>Each value is returned as a read-only {@link ByteBuffer} slice backed by the original page buffer (zero-copy). The
- * slice's {@code remaining()} equals the byte array length.
+ * <p>Each value is returned as a read-only {@link MemorySegment} that views the original page bytes (zero-copy) but has
+ * its own immutable bounds, so consumers can read it concurrently without position-sharing hazards.
  */
-public final class PlainBinaryDecoder implements PageDecoder<ByteBuffer> {
+public final class PlainBinaryDecoder implements PageDecoder<MemorySegment> {
 
     private ByteBuffer buffer;
 
     @Override
     public void load(ByteBuffer page, int valueCount) {
-        this.buffer = page.order(ByteOrder.LITTLE_ENDIAN);
+        this.buffer = page.order(LITTLE_ENDIAN);
     }
 
     @Override
-    public ByteBuffer next() {
+    public MemorySegment next() {
         int length = buffer.getInt();
-        ByteBuffer slice = buffer.slice().limit(length).asReadOnlyBuffer();
+        ByteBuffer slice = buffer.slice().limit(length);
         buffer.position(buffer.position() + length);
-        return slice;
+        return MemorySegment.ofBuffer(slice).asReadOnly();
     }
 
     @Override

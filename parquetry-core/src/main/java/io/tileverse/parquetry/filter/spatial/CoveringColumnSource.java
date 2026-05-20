@@ -15,8 +15,12 @@
  */
 package io.tileverse.parquetry.filter.spatial;
 
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
+import static java.lang.foreign.ValueLayout.JAVA_DOUBLE_UNALIGNED;
+import static java.lang.foreign.ValueLayout.JAVA_FLOAT_UNALIGNED;
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
+
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -186,11 +190,15 @@ final class CoveringColumnSource implements SpatialBoundsSource {
         if (m == null) {
             return OptionalDouble.empty();
         }
-        return m.statistics()
-                .flatMap(Statistics::minValue)
-                .or(() -> m.statistics().flatMap(Statistics::min))
-                .map(b -> decodeDouble(axis.kind(), b))
-                .orElse(OptionalDouble.empty());
+        Optional<Statistics> stats = m.statistics();
+        if (stats.isEmpty()) {
+            return OptionalDouble.empty();
+        }
+        MemorySegment chosen = preferLatest(stats.get().minValue(), stats.get().min());
+        if (chosen == MemorySegment.NULL) {
+            return OptionalDouble.empty();
+        }
+        return decodeDouble(axis.kind(), chosen);
     }
 
     private static OptionalDouble statsMax(Map<ColumnPath, ColumnMetaData> byPath, AxisRef axis) {
@@ -198,26 +206,37 @@ final class CoveringColumnSource implements SpatialBoundsSource {
         if (m == null) {
             return OptionalDouble.empty();
         }
-        return m.statistics()
-                .flatMap(Statistics::maxValue)
-                .or(() -> m.statistics().flatMap(Statistics::max))
-                .map(b -> decodeDouble(axis.kind(), b))
-                .orElse(OptionalDouble.empty());
+        Optional<Statistics> stats = m.statistics();
+        if (stats.isEmpty()) {
+            return OptionalDouble.empty();
+        }
+        MemorySegment chosen = preferLatest(stats.get().maxValue(), stats.get().max());
+        if (chosen == MemorySegment.NULL) {
+            return OptionalDouble.empty();
+        }
+        return decodeDouble(axis.kind(), chosen);
+    }
+
+    private static MemorySegment preferLatest(MemorySegment latest, MemorySegment legacy) {
+        return latest != MemorySegment.NULL ? latest : legacy;
     }
 
     /**
      * Decodes a Parquet PLAIN-encoded min/max value as a {@code double}. The Parquet spec writes FLOAT / DOUBLE
-     * little-endian; other kinds (and short / malformed buffers) surface as empty so the row group's bbox stays unknown
-     * rather than wrong.
+     * little-endian; other kinds (and short / malformed payloads) surface as empty so the row group's bbox stays
+     * unknown rather than wrong.
      */
-    private static OptionalDouble decodeDouble(PrimitiveKind kind, ByteBuffer raw) {
-        ByteBuffer buf = raw.duplicate().order(ByteOrder.LITTLE_ENDIAN);
+    private static OptionalDouble decodeDouble(PrimitiveKind kind, MemorySegment raw) {
+        long size = raw.byteSize();
         return switch (kind) {
-            case DOUBLE -> buf.remaining() >= 8 ? OptionalDouble.of(buf.getDouble()) : OptionalDouble.empty();
-            case FLOAT -> buf.remaining() >= 4 ? OptionalDouble.of(buf.getFloat()) : OptionalDouble.empty();
+            case DOUBLE -> size >= 8 ? OptionalDouble.of(raw.get(LE_DOUBLE, 0)) : OptionalDouble.empty();
+            case FLOAT -> size >= 4 ? OptionalDouble.of(raw.get(LE_FLOAT, 0)) : OptionalDouble.empty();
             default -> OptionalDouble.empty();
         };
     }
+
+    private static final ValueLayout.OfFloat LE_FLOAT = JAVA_FLOAT_UNALIGNED.withOrder(LITTLE_ENDIAN);
+    private static final ValueLayout.OfDouble LE_DOUBLE = JAVA_DOUBLE_UNALIGNED.withOrder(LITTLE_ENDIAN);
 
     /** See {@link NativeStatsSource} for the same union policy and rationale. */
     private static Map<ColumnPath, BoundingBox> unionAcrossRowGroups(

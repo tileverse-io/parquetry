@@ -15,7 +15,7 @@
  */
 package io.tileverse.parquetry.format;
 
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 import java.util.List;
 import java.util.Optional;
 
@@ -44,8 +44,8 @@ import java.util.Optional;
  */
 public record ColumnIndex(
         List<Boolean> nullPages,
-        List<ByteBuffer> minValues,
-        List<ByteBuffer> maxValues,
+        List<MemorySegment> minValues,
+        List<MemorySegment> maxValues,
         BoundaryOrder boundaryOrder,
         Optional<List<Long>> nullCounts,
         Optional<List<Long>> repetitionLevelHistograms,
@@ -53,10 +53,18 @@ public record ColumnIndex(
 
     public ColumnIndex {
         nullPages = List.copyOf(nullPages);
-        minValues = minValues.stream().map(ByteBuffer::asReadOnlyBuffer).toList();
-        maxValues = maxValues.stream().map(ByteBuffer::asReadOnlyBuffer).toList();
+        minValues = freezeBoundsList(minValues);
+        maxValues = freezeBoundsList(maxValues);
         nullCounts = nullCounts.map(List::copyOf);
         repetitionLevelHistograms = repetitionLevelHistograms.map(List::copyOf);
         definitionLevelHistograms = definitionLevelHistograms.map(List::copyOf);
+    }
+
+    private static List<MemorySegment> freezeBoundsList(List<MemorySegment> bounds) {
+        return bounds.stream().map(ColumnIndex::asReadOnly).toList();
+    }
+
+    private static MemorySegment asReadOnly(MemorySegment segment) {
+        return segment.isReadOnly() ? segment : segment.asReadOnly();
     }
 }

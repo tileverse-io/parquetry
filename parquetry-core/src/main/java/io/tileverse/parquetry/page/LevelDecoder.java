@@ -15,8 +15,9 @@
  */
 package io.tileverse.parquetry.page;
 
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
+
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 
 /**
  * Decodes Parquet repetition and definition level streams.
@@ -71,7 +72,7 @@ public final class LevelDecoder {
      * right slice.
      */
     public void load(ByteBuffer bytes) {
-        this.buffer = bytes.order(ByteOrder.LITTLE_ENDIAN);
+        this.buffer = bytes.order(LITTLE_ENDIAN);
         this.remainingInRun = 0;
         this.bitPackedBuffer = 0L;
         this.bitsInBuffer = 0;

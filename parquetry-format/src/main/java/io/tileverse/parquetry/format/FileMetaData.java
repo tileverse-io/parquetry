@@ -15,7 +15,7 @@
  */
 package io.tileverse.parquetry.format;
 
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 import java.util.List;
 import java.util.Optional;
 
@@ -42,8 +42,8 @@ import lombok.Builder;
  *     written ({@code column_orders} in the thrift schema)
  * @param encryptionAlgorithm encryption algorithm used; only set for files with a plaintext footer, empty otherwise
  *     ({@code encryption_algorithm} in the thrift schema)
- * @param footerSigningKeyMetadata retrieval metadata for the key used to sign the footer; empty when the footer is not
- *     signed ({@code footer_signing_key_metadata} in the thrift schema)
+ * @param footerSigningKeyMetadata retrieval metadata for the key used to sign the footer; {@link MemorySegment#NULL}
+ *     when the footer is not signed ({@code footer_signing_key_metadata} in the thrift schema)
  * @see ParquetFormat#readFooter(io.tileverse.storage.RangeReader)
  */
 // S2789: constructor null-tolerates Optional to support the @Builder pattern.
@@ -58,7 +58,7 @@ public record FileMetaData(
         Optional<String> createdBy,
         Optional<List<ColumnOrder>> columnOrders,
         Optional<EncryptionAlgorithm> encryptionAlgorithm,
-        Optional<ByteBuffer> footerSigningKeyMetadata) {
+        MemorySegment footerSigningKeyMetadata) {
 
     public FileMetaData {
         schema = schema == null ? List.of() : List.copyOf(schema);
@@ -67,8 +67,13 @@ public record FileMetaData(
         createdBy = createdBy == null ? Optional.empty() : createdBy;
         columnOrders = columnOrders == null ? Optional.empty() : columnOrders.map(List::copyOf);
         encryptionAlgorithm = encryptionAlgorithm == null ? Optional.empty() : encryptionAlgorithm;
-        footerSigningKeyMetadata = footerSigningKeyMetadata == null
-                ? Optional.empty()
-                : footerSigningKeyMetadata.map(ByteBuffer::asReadOnlyBuffer);
+        footerSigningKeyMetadata = readOnlyOrAbsent(footerSigningKeyMetadata);
+    }
+
+    private static MemorySegment readOnlyOrAbsent(MemorySegment segment) {
+        if (segment == null) {
+            return MemorySegment.NULL;
+        }
+        return segment.isReadOnly() ? segment : segment.asReadOnly();
     }
 }

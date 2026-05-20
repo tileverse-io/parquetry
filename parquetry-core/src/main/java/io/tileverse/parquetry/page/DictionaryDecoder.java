@@ -15,8 +15,11 @@
  */
 package io.tileverse.parquetry.page;
 
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
+
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.DoubleBuffer;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
@@ -78,29 +81,26 @@ public final class DictionaryDecoder {
     }
 
     private static Dictionary.IntDict readInts(ByteBuffer page, int n) {
-        IntBuffer view =
-                page.duplicate().order(ByteOrder.LITTLE_ENDIAN).asIntBuffer().limit(n);
+        IntBuffer view = page.duplicate().order(LITTLE_ENDIAN).asIntBuffer().limit(n);
         IntBuffer owned = IntBuffer.allocate(n).put(view).flip().asReadOnlyBuffer();
         return new Dictionary.IntDict(owned);
     }
 
     private static Dictionary.LongDict readLongs(ByteBuffer page, int n) {
-        LongBuffer view =
-                page.duplicate().order(ByteOrder.LITTLE_ENDIAN).asLongBuffer().limit(n);
+        LongBuffer view = page.duplicate().order(LITTLE_ENDIAN).asLongBuffer().limit(n);
         LongBuffer owned = LongBuffer.allocate(n).put(view).flip().asReadOnlyBuffer();
         return new Dictionary.LongDict(owned);
     }
 
     private static Dictionary.FloatDict readFloats(ByteBuffer page, int n) {
-        FloatBuffer view =
-                page.duplicate().order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer().limit(n);
+        FloatBuffer view = page.duplicate().order(LITTLE_ENDIAN).asFloatBuffer().limit(n);
         FloatBuffer owned = FloatBuffer.allocate(n).put(view).flip().asReadOnlyBuffer();
         return new Dictionary.FloatDict(owned);
     }
 
     private static Dictionary.DoubleDict readDoubles(ByteBuffer page, int n) {
         DoubleBuffer view =
-                page.duplicate().order(ByteOrder.LITTLE_ENDIAN).asDoubleBuffer().limit(n);
+                page.duplicate().order(LITTLE_ENDIAN).asDoubleBuffer().limit(n);
         DoubleBuffer owned = DoubleBuffer.allocate(n).put(view).flip().asReadOnlyBuffer();
         return new Dictionary.DoubleDict(owned);
     }
@@ -108,9 +108,9 @@ public final class DictionaryDecoder {
     private static Dictionary.Int96Dict readInt96s(ByteBuffer page, int n) {
         PlainInt96Decoder decoder = new PlainInt96Decoder();
         decoder.load(page, n);
-        List<ByteBuffer> values = new ArrayList<>(n);
+        List<MemorySegment> values = new ArrayList<>(n);
         for (int i = 0; i < n; i++) {
-            values.add(copyToOwnedBuffer(decoder.next()));
+            values.add(copyToOwnedSegment(decoder.next()));
         }
         return new Dictionary.Int96Dict(values);
     }
@@ -118,9 +118,9 @@ public final class DictionaryDecoder {
     private static Dictionary.BinaryDict readBinary(ByteBuffer page, int n) {
         PlainBinaryDecoder decoder = new PlainBinaryDecoder();
         decoder.load(page, n);
-        List<ByteBuffer> values = new ArrayList<>(n);
+        List<MemorySegment> values = new ArrayList<>(n);
         for (int i = 0; i < n; i++) {
-            values.add(copyToOwnedBuffer(decoder.next()));
+            values.add(copyToOwnedSegment(decoder.next()));
         }
         return new Dictionary.BinaryDict(values);
     }
@@ -128,24 +128,21 @@ public final class DictionaryDecoder {
     private static Dictionary.FixedLenBinaryDict readFixedLenBinary(ByteBuffer page, int n, int length) {
         PlainFixedLenBinaryDecoder decoder = new PlainFixedLenBinaryDecoder(length);
         decoder.load(page, n);
-        List<ByteBuffer> values = new ArrayList<>(n);
+        List<MemorySegment> values = new ArrayList<>(n);
         for (int i = 0; i < n; i++) {
-            values.add(copyToOwnedBuffer(decoder.next()));
+            values.add(copyToOwnedSegment(decoder.next()));
         }
         return new Dictionary.FixedLenBinaryDict(values, length);
     }
 
     /**
-     * Copies the bytes of {@code source} into a freshly-allocated heap buffer and returns a read-only view. The
-     * {@code PlainBinaryDecoder} family returns zero-copy slices of the source page; dictionaries outlive that page
+     * Copies the bytes of {@code source} into a freshly-allocated heap {@link MemorySegment} and returns it read-only.
+     * The {@code PlainBinaryDecoder} family returns zero-copy views of the source page; dictionaries outlive that page
      * (the dictionary-page scratch buffer is returned to the pool right after decode), so dictionary values must own
      * their bytes to avoid dangling references into recycled pool memory.
      */
-    private static ByteBuffer copyToOwnedBuffer(ByteBuffer source) {
-        ByteBuffer view = source.duplicate();
-        ByteBuffer copy = ByteBuffer.allocate(view.remaining());
-        copy.put(view);
-        copy.flip();
-        return copy.asReadOnlyBuffer();
+    private static MemorySegment copyToOwnedSegment(MemorySegment source) {
+        byte[] copy = source.toArray(JAVA_BYTE);
+        return MemorySegment.ofArray(copy).asReadOnly();
     }
 }

@@ -15,12 +15,12 @@
  */
 package io.tileverse.parquetry.read;
 
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 
 import org.junit.jupiter.api.Test;
 
@@ -36,7 +36,7 @@ class BasicColumnReaderTest {
     void requiredColumnPassesValuesDirectly() {
         // maxRep=0, maxDef=0: no level streams consulted; yield values in order.
         PlainInt32Decoder values = new PlainInt32Decoder();
-        ByteBuffer page = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer page = ByteBuffer.allocate(12).order(LITTLE_ENDIAN);
         page.putInt(10);
         page.putInt(20);
         page.putInt(30);
@@ -73,7 +73,7 @@ class BasicColumnReaderTest {
     @Test
     void requiredColumnThrowsWhenExhausted() {
         PlainInt32Decoder values = new PlainInt32Decoder();
-        ByteBuffer page = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer page = ByteBuffer.allocate(4).order(LITTLE_ENDIAN);
         page.putInt(42);
         page.flip();
         values.load(page, 1);
@@ -96,7 +96,7 @@ class BasicColumnReaderTest {
         // Def levels: [1, 0, 1] -- bit-packed at bitWidth=1.
         // Only 2 values decoded because the middle row has def=0.
         PlainInt32Decoder values = new PlainInt32Decoder();
-        ByteBuffer valuePage = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer valuePage = ByteBuffer.allocate(8).order(LITTLE_ENDIAN);
         valuePage.putInt(10);
         valuePage.putInt(20);
         valuePage.flip();
@@ -146,7 +146,7 @@ class BasicColumnReaderTest {
         // Def levels: [1, 1, 1] -- all non-null.
         // Values: [5, 6, 7].
         PlainInt32Decoder values = new PlainInt32Decoder();
-        ByteBuffer valuePage = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer valuePage = ByteBuffer.allocate(12).order(LITTLE_ENDIAN);
         valuePage.putInt(5);
         valuePage.putInt(6);
         valuePage.putInt(7);
@@ -194,7 +194,7 @@ class BasicColumnReaderTest {
     void consumeWithoutPriorAccessAdvancesRow() {
         // Consuming without reading levels/values should still advance the row counter.
         PlainInt32Decoder values = new PlainInt32Decoder();
-        ByteBuffer page = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer page = ByteBuffer.allocate(8).order(LITTLE_ENDIAN);
         page.putInt(100);
         page.putInt(200);
         page.flip();

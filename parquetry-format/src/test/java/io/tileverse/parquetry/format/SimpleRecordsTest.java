@@ -17,6 +17,7 @@ package io.tileverse.parquetry.format;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.lang.foreign.MemorySegment;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
@@ -28,7 +29,7 @@ class SimpleRecordsTest {
     @Test
     void statisticsFieldsAreAllOptional() {
         Statistics s = Statistics.builder().build();
-        assertThat(s.maxValue()).isEmpty();
+        assertThat(s.maxValue()).isSameAs(MemorySegment.NULL);
         assertThat(s.nullCount()).isEmpty();
     }
 

@@ -15,8 +15,15 @@
  */
 package io.tileverse.parquetry.filter;
 
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
+import static java.lang.foreign.ValueLayout.JAVA_DOUBLE_UNALIGNED;
+import static java.lang.foreign.ValueLayout.JAVA_FLOAT_UNALIGNED;
+import static java.lang.foreign.ValueLayout.JAVA_INT_UNALIGNED;
+import static java.lang.foreign.ValueLayout.JAVA_LONG_UNALIGNED;
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
+
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -283,18 +290,23 @@ final class ColumnIndexEvaluator {
     }
 
     /** Decodes a Parquet PLAIN-encoded min/max value into a typed {@link Value}. */
-    private static Optional<Value> decode(PrimitiveKind kind, ByteBuffer raw) {
-        ByteBuffer buf = raw.duplicate().order(ByteOrder.LITTLE_ENDIAN);
+    private static Optional<Value> decode(PrimitiveKind kind, MemorySegment raw) {
+        long size = raw.byteSize();
         return switch (kind) {
-            case BOOLEAN -> buf.remaining() >= 1 ? Optional.of(new Value.BoolVal(buf.get() != 0)) : Optional.empty();
-            case INT32 -> buf.remaining() >= 4 ? Optional.of(new Value.IntVal(buf.getInt())) : Optional.empty();
-            case INT64 -> buf.remaining() >= 8 ? Optional.of(new Value.LongVal(buf.getLong())) : Optional.empty();
-            case FLOAT -> buf.remaining() >= 4 ? Optional.of(new Value.FloatVal(buf.getFloat())) : Optional.empty();
-            case DOUBLE -> buf.remaining() >= 8 ? Optional.of(new Value.DoubleVal(buf.getDouble())) : Optional.empty();
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> Optional.of(new Value.BinaryVal(buf));
+            case BOOLEAN -> size >= 1 ? Optional.of(new Value.BoolVal(raw.get(JAVA_BYTE, 0) != 0)) : Optional.empty();
+            case INT32 -> size >= 4 ? Optional.of(new Value.IntVal(raw.get(LE_INT, 0))) : Optional.empty();
+            case INT64 -> size >= 8 ? Optional.of(new Value.LongVal(raw.get(LE_LONG, 0))) : Optional.empty();
+            case FLOAT -> size >= 4 ? Optional.of(new Value.FloatVal(raw.get(LE_FLOAT, 0))) : Optional.empty();
+            case DOUBLE -> size >= 8 ? Optional.of(new Value.DoubleVal(raw.get(LE_DOUBLE, 0))) : Optional.empty();
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> Optional.of(new Value.BinaryVal(raw));
             case INT96 -> Optional.empty();
         };
     }
+
+    private static final ValueLayout.OfInt LE_INT = JAVA_INT_UNALIGNED.withOrder(LITTLE_ENDIAN);
+    private static final ValueLayout.OfLong LE_LONG = JAVA_LONG_UNALIGNED.withOrder(LITTLE_ENDIAN);
+    private static final ValueLayout.OfFloat LE_FLOAT = JAVA_FLOAT_UNALIGNED.withOrder(LITTLE_ENDIAN);
+    private static final ValueLayout.OfDouble LE_DOUBLE = JAVA_DOUBLE_UNALIGNED.withOrder(LITTLE_ENDIAN);
 
     // S7475 (bare _ in nested record patterns) is informational only - palantirJavaFormat 2.90 cannot
     // parse the bare-underscore form Sonar suggests; see memory feedback-palantir-unnamed-pattern.
@@ -307,10 +319,10 @@ final class ColumnIndexEvaluator {
             case Value.FloatVal(float av) when b instanceof Value.FloatVal(float bv) -> Float.compare(av, bv);
             case Value.DoubleVal(double av) when b instanceof Value.DoubleVal(double bv) -> Double.compare(av, bv);
             case Value.StringVal(String av)
-            when b instanceof Value.BinaryVal(ByteBuffer bv) ->
-                compareBytes(ByteBuffer.wrap(av.getBytes(StandardCharsets.UTF_8)), bv);
-            case Value.BinaryVal(ByteBuffer av)
-            when b instanceof Value.BinaryVal(ByteBuffer bv) -> compareBytes(av, bv);
+            when b instanceof Value.BinaryVal(MemorySegment bv) ->
+                compareBytes(MemorySegment.ofArray(av.getBytes(StandardCharsets.UTF_8)), bv);
+            case Value.BinaryVal(MemorySegment av)
+            when b instanceof Value.BinaryVal(MemorySegment bv) -> compareBytes(av, bv);
             case Value.DateVal(java.time.LocalDate av)
             when b instanceof Value.IntVal(int bv) -> Integer.compare((int) av.toEpochDay(), bv);
             case Value.TimestampVal(java.time.LocalDateTime av, boolean _)
@@ -320,19 +332,17 @@ final class ColumnIndexEvaluator {
         };
     }
 
-    private static int compareBytes(ByteBuffer a, ByteBuffer b) {
-        ByteBuffer ad = a.duplicate();
-        ByteBuffer bd = b.duplicate();
-        int aLen = ad.remaining();
-        int bLen = bd.remaining();
-        int common = Math.min(aLen, bLen);
-        for (int i = 0; i < common; i++) {
-            int diff = (ad.get(ad.position() + i) & 0xff) - (bd.get(bd.position() + i) & 0xff);
+    private static int compareBytes(MemorySegment a, MemorySegment b) {
+        long aLen = a.byteSize();
+        long bLen = b.byteSize();
+        long common = Math.min(aLen, bLen);
+        for (long i = 0; i < common; i++) {
+            int diff = (a.get(JAVA_BYTE, i) & 0xff) - (b.get(JAVA_BYTE, i) & 0xff);
             if (diff != 0) {
                 return diff;
             }
         }
-        return Integer.compare(aLen, bLen);
+        return Long.compare(aLen, bLen);
     }
 
     @FunctionalInterface

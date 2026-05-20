@@ -15,8 +15,10 @@
  */
 package io.tileverse.parquetry.page;
 
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 
 import org.junit.jupiter.api.Test;
@@ -43,20 +45,20 @@ class PlainInt96DecoderTest {
         page.put(value2);
         page.flip();
 
-        PageDecoder<ByteBuffer> decoder = new PlainInt96Decoder();
+        PageDecoder<MemorySegment> decoder = new PlainInt96Decoder();
         decoder.load(page, 3);
 
-        ByteBuffer result0 = decoder.next();
-        assertThat(result0.remaining()).isEqualTo(INT96_BYTES);
-        assertThat(result0).isEqualTo(ByteBuffer.wrap(value0));
+        MemorySegment result0 = decoder.next();
+        assertThat(result0.byteSize()).isEqualTo(INT96_BYTES);
+        assertThat(result0.toArray(JAVA_BYTE)).isEqualTo(value0);
 
-        ByteBuffer result1 = decoder.next();
-        assertThat(result1.remaining()).isEqualTo(INT96_BYTES);
-        assertThat(result1).isEqualTo(ByteBuffer.wrap(value1));
+        MemorySegment result1 = decoder.next();
+        assertThat(result1.byteSize()).isEqualTo(INT96_BYTES);
+        assertThat(result1.toArray(JAVA_BYTE)).isEqualTo(value1);
 
-        ByteBuffer result2 = decoder.next();
-        assertThat(result2.remaining()).isEqualTo(INT96_BYTES);
-        assertThat(result2).isEqualTo(ByteBuffer.wrap(value2));
+        MemorySegment result2 = decoder.next();
+        assertThat(result2.byteSize()).isEqualTo(INT96_BYTES);
+        assertThat(result2.toArray(JAVA_BYTE)).isEqualTo(value2);
     }
 
     @Test
@@ -66,10 +68,10 @@ class PlainInt96DecoderTest {
         page.put(new byte[INT96_BYTES]);
         page.flip();
 
-        PageDecoder<ByteBuffer> decoder = new PlainInt96Decoder();
+        PageDecoder<MemorySegment> decoder = new PlainInt96Decoder();
         decoder.load(page, 1);
 
-        ByteBuffer slice = decoder.next();
+        MemorySegment slice = decoder.next();
         assertThat(slice.isReadOnly()).isTrue();
     }
 
@@ -88,11 +90,11 @@ class PlainInt96DecoderTest {
         page.put(kept);
         page.flip();
 
-        PageDecoder<ByteBuffer> decoder = new PlainInt96Decoder();
+        PageDecoder<MemorySegment> decoder = new PlainInt96Decoder();
         decoder.load(page, 3);
         decoder.skip(2);
 
-        ByteBuffer result = decoder.next();
-        assertThat(result).isEqualTo(ByteBuffer.wrap(kept));
+        MemorySegment result = decoder.next();
+        assertThat(result.toArray(JAVA_BYTE)).isEqualTo(kept);
     }
 }

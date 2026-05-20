@@ -28,8 +28,8 @@ import io.tileverse.parquetry.schema.ColumnPath;
  *   <li>{@link #currentDefinitionLevel()} indicating null-ness and the level at which an optional ancestor became null.
  *       Equal to {@link #maxDefinitionLevel()} means the non-null value is materialized in {@link #currentValue()};
  *       less means null at some level.
- *   <li>{@link #currentValue()} the boxed primitive (or read-only ByteBuffer for binary), valid only when def level ==
- *       max def level.
+ *   <li>{@link #currentValue()} the boxed primitive (or read-only {@link java.lang.foreign.MemorySegment} for binary),
+ *       valid only when def level == max def level.
  * </ul>
  *
  * <p>Lifecycle: positioned BEFORE the first row. Call {@link #hasNext()} to check whether the reader has more rows,
@@ -55,7 +55,7 @@ interface ColumnReader extends AutoCloseable {
 
     /**
      * The current row's value. Returns null if {@code currentDefinitionLevel() < maxDefinitionLevel()}. For binary
-     * types returns a read-only {@code ByteBuffer}; for INT96 a read-only 12-byte buffer.
+     * types returns a read-only {@link java.lang.foreign.MemorySegment}; for INT96 a read-only 12-byte segment.
      */
     Object currentValue();
 

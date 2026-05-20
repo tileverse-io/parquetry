@@ -17,7 +17,7 @@ package io.tileverse.parquetry.geo.jts;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -52,7 +52,7 @@ class JtsMaterializerTest {
         ParquetSchema schema = schemaWithGeometryAt("geometry", new LogicalType.Geometry(Optional.empty()));
         GeometryFactory gf = new GeometryFactory();
         Point pt = gf.createPoint(new Coordinate(1.5, 2.5));
-        ByteBuffer wkb = ByteBuffer.wrap(new WKBWriter().write(pt));
+        MemorySegment wkb = MemorySegment.ofArray(new WKBWriter().write(pt)).asReadOnly();
 
         JtsMaterializer materializer = new JtsMaterializer(schema);
         assertThat(materializer.geometryColumns()).containsExactly(GEOM);
@@ -69,7 +69,7 @@ class JtsMaterializerTest {
         ParquetSchema schema = schemaWithGeometryAt("geometry", null);
         GeometryFactory gf = new GeometryFactory();
         Point pt = gf.createPoint(new Coordinate(0.0, 0.0));
-        ByteBuffer wkb = ByteBuffer.wrap(new WKBWriter().write(pt));
+        MemorySegment wkb = MemorySegment.ofArray(new WKBWriter().write(pt)).asReadOnly();
 
         JtsMaterializer materializer = new JtsMaterializer(schema);
         assertThat(materializer.geometryColumns()).isEmpty();
@@ -84,7 +84,7 @@ class JtsMaterializerTest {
                 schemaWithGeometryAt("geometry", new LogicalType.Geography(Optional.empty(), Optional.empty()));
         GeometryFactory gf = new GeometryFactory();
         Point pt = gf.createPoint(new Coordinate(-71.0589, 42.3601));
-        ByteBuffer wkb = ByteBuffer.wrap(new WKBWriter().write(pt));
+        MemorySegment wkb = MemorySegment.ofArray(new WKBWriter().write(pt)).asReadOnly();
 
         JtsMaterializer materializer = new JtsMaterializer(schema);
         assertThat(materializer.geometryColumns()).containsExactly(GEOM);
@@ -107,7 +107,7 @@ class JtsMaterializerTest {
         ParquetSchema schema = schemaWithGeometryAt("geometry", new LogicalType.Geometry(Optional.of(epsg3857)));
         GeometryFactory gf = new GeometryFactory();
         Point pt = gf.createPoint(new Coordinate(0.0, 0.0));
-        ByteBuffer wkb = ByteBuffer.wrap(new WKBWriter().write(pt));
+        MemorySegment wkb = MemorySegment.ofArray(new WKBWriter().write(pt)).asReadOnly();
 
         JtsMaterializer materializer = new JtsMaterializer(schema);
         assertThat(materializer.sridFor(GEOM))
@@ -128,7 +128,7 @@ class JtsMaterializerTest {
         ParquetSchema schema = schemaWithGeometryAt("geometry", new LogicalType.Geometry(Optional.empty()));
         GeometryFactory gf = new GeometryFactory();
         Point pt = gf.createPoint(new Coordinate(0.0, 0.0));
-        ByteBuffer wkb = ByteBuffer.wrap(new WKBWriter().write(pt));
+        MemorySegment wkb = MemorySegment.ofArray(new WKBWriter().write(pt)).asReadOnly();
 
         JtsMaterializer materializer = new JtsMaterializer(schema);
         assertThat(materializer.sridFor(GEOM))

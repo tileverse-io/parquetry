@@ -15,13 +15,13 @@
  */
 package io.tileverse.parquetry.read;
 
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
@@ -382,7 +382,7 @@ class RowGroupPipelineTest {
             for (int i = 0; i < ROWS_PER_GROUP; i++) {
                 values[i] = ordinal * 100 + i;
             }
-            ByteBuffer page = ByteBuffer.allocate(values.length * 4).order(ByteOrder.LITTLE_ENDIAN);
+            ByteBuffer page = ByteBuffer.allocate(values.length * 4).order(LITTLE_ENDIAN);
             for (int v : values) {
                 page.putInt(v);
             }

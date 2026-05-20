@@ -18,7 +18,7 @@ package io.tileverse.parquetry.format.codec;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 
 import io.tileverse.parquetry.format.MalformedFileException;
@@ -61,14 +61,23 @@ final class CompactProtocolReader {
         return Double.longBitsToDouble(bits);
     }
 
-    public ByteBuffer readBinary() throws IOException {
+    /**
+     * Reads a Thrift binary value as an immutable {@link MemorySegment}.
+     *
+     * <p>The returned segment is a read-only heap view over a freshly allocated {@code byte[]} that no other code
+     * shares, so the buffer can flow freely into records and decoders without defensive copies. Index-based access
+     * ensures concurrent readers never trample each other.
+     */
+    public MemorySegment readBinary() throws IOException {
         int len = (int) readVarLong();
         byte[] bytes = readN(len);
-        return ByteBuffer.wrap(bytes).asReadOnlyBuffer();
+        return MemorySegment.ofArray(bytes).asReadOnly();
     }
 
     public String readString() throws IOException {
-        return StandardCharsets.UTF_8.decode(readBinary()).toString();
+        int len = (int) readVarLong();
+        byte[] bytes = readN(len);
+        return new String(bytes, StandardCharsets.UTF_8);
     }
 
     public boolean readBool() throws IOException {

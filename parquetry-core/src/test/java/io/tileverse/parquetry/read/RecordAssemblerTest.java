@@ -15,11 +15,13 @@
  */
 package io.tileverse.parquetry.read;
 
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.ByteArrayOutputStream;
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
@@ -62,12 +64,12 @@ class RecordAssemblerTest {
                 Optional.empty(),
                 -1));
 
-        ByteBuffer idPage = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer idPage = ByteBuffer.allocate(12).order(LITTLE_ENDIAN);
         idPage.putInt(1).putInt(2).putInt(3).flip();
         PlainInt32Decoder idDecoder = new PlainInt32Decoder();
         idDecoder.load(idPage, 3);
 
-        ByteBuffer namePage = ByteBuffer.allocate(64).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer namePage = ByteBuffer.allocate(64).order(LITTLE_ENDIAN);
         for (String s : new String[] {"alice", "bob", "carol"}) {
             byte[] b = s.getBytes(StandardCharsets.UTF_8);
             namePage.putInt(b.length);
@@ -90,9 +92,8 @@ class RecordAssemblerTest {
             assertThat(assembler.hasNext()).isTrue();
             RowAccessor row = assembler.next();
             assertThat(row.get(ColumnPath.of("id"))).isEqualTo(expectedIds[i]);
-            ByteBuffer nameBuf = (ByteBuffer) row.get(ColumnPath.of("name"));
-            byte[] nameBytes = new byte[nameBuf.remaining()];
-            nameBuf.get(nameBytes);
+            MemorySegment nameBuf = (MemorySegment) row.get(ColumnPath.of("name"));
+            byte[] nameBytes = nameBuf.toArray(JAVA_BYTE);
             assertThat(new String(nameBytes, StandardCharsets.UTF_8)).isEqualTo(expectedNames[i]);
         }
         assertThat(assembler.hasNext()).isFalse();
@@ -121,13 +122,13 @@ class RecordAssemblerTest {
                 Optional.empty(),
                 -1));
 
-        ByteBuffer idPage = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer idPage = ByteBuffer.allocate(12).order(LITTLE_ENDIAN);
         idPage.putInt(1).putInt(2).putInt(3).flip();
         PlainInt32Decoder idDecoder = new PlainInt32Decoder();
         idDecoder.load(idPage, 3);
 
         // Only 2 non-null values; the second row (id=2) has nickname=null (def=0).
-        ByteBuffer nicknamePage = ByteBuffer.allocate(64).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer nicknamePage = ByteBuffer.allocate(64).order(LITTLE_ENDIAN);
         for (String s : new String[] {"alice", "carol"}) {
             byte[] b = s.getBytes(StandardCharsets.UTF_8);
             nicknamePage.putInt(b.length);
@@ -150,9 +151,8 @@ class RecordAssemblerTest {
 
         RowAccessor r0 = assembler.next();
         assertThat(r0.get(ColumnPath.of("id"))).isEqualTo(1);
-        ByteBuffer name0 = (ByteBuffer) r0.get(ColumnPath.of("nickname"));
-        byte[] name0Bytes = new byte[name0.remaining()];
-        name0.get(name0Bytes);
+        MemorySegment name0 = (MemorySegment) r0.get(ColumnPath.of("nickname"));
+        byte[] name0Bytes = name0.toArray(JAVA_BYTE);
         assertThat(new String(name0Bytes, StandardCharsets.UTF_8)).isEqualTo("alice");
 
         RowAccessor r1 = assembler.next();
@@ -161,9 +161,8 @@ class RecordAssemblerTest {
 
         RowAccessor r2 = assembler.next();
         assertThat(r2.get(ColumnPath.of("id"))).isEqualTo(3);
-        ByteBuffer name2 = (ByteBuffer) r2.get(ColumnPath.of("nickname"));
-        byte[] name2Bytes = new byte[name2.remaining()];
-        name2.get(name2Bytes);
+        MemorySegment name2 = (MemorySegment) r2.get(ColumnPath.of("nickname"));
+        byte[] name2Bytes = name2.toArray(JAVA_BYTE);
         assertThat(new String(name2Bytes, StandardCharsets.UTF_8)).isEqualTo("carol");
 
         assertThat(assembler.hasNext()).isFalse();
@@ -185,7 +184,7 @@ class RecordAssemblerTest {
         //   row 1: (rep=0, def=0)   -- empty list placeholder
         //   row 2: (rep=0, def=1, val=777)
         // Values present where def==maxDef: [555, 666, 777].
-        ByteBuffer page = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer page = ByteBuffer.allocate(12).order(LITTLE_ENDIAN);
         page.putInt(555).putInt(666).putInt(777).flip();
         PlainInt32Decoder dec = new PlainInt32Decoder();
         dec.load(page, 3);
@@ -239,7 +238,7 @@ class RecordAssemblerTest {
         //   row 2: (rep=0, def=1, val=30)
         // Stored values come only from def == maxDef triples: [10, 20, 30].
         PlainInt32Decoder dec = new PlainInt32Decoder();
-        ByteBuffer page = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer page = ByteBuffer.allocate(12).order(LITTLE_ENDIAN);
         page.putInt(10).putInt(20).putInt(30).flip();
         dec.load(page, 3);
 

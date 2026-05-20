@@ -15,19 +15,20 @@
  */
 package io.tileverse.parquetry.page;
 
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 
 /**
  * DELTA_LENGTH_BYTE_ARRAY page decoder.
  *
  * <p>Per parquet-format Encodings.md: lengths are encoded with DELTA_BINARY_PACKED int32, followed by the concatenated
- * payload bytes. Each {@link #next()} yields a read-only ByteBuffer slice of the payload.
+ * payload bytes. Each {@link #next()} yields a read-only {@link MemorySegment} view of the payload.
  *
  * <p>The length stream is decoded first (consuming bytes from the page buffer via DELTA_BINARY_PACKED's lazy block
  * reads). After all lengths are read, the buffer's position sits at the start of the concatenated payload, ready to
  * slice.
  */
-final class DeltaLengthByteArrayDecoder implements PageDecoder<ByteBuffer> {
+final class DeltaLengthByteArrayDecoder implements PageDecoder<MemorySegment> {
 
     private int[] lengths;
     private int cursor;
@@ -54,12 +55,11 @@ final class DeltaLengthByteArrayDecoder implements PageDecoder<ByteBuffer> {
     }
 
     @Override
-    public ByteBuffer next() {
+    public MemorySegment next() {
         int len = lengths[cursor++];
-        int start = payload.position();
-        ByteBuffer slice = payload.slice().limit(len).asReadOnlyBuffer();
-        payload.position(start + len);
-        return slice;
+        ByteBuffer slice = payload.slice().limit(len);
+        payload.position(payload.position() + len);
+        return MemorySegment.ofBuffer(slice).asReadOnly();
     }
 
     @Override

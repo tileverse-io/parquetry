@@ -15,9 +15,11 @@
  */
 package io.tileverse.parquetry.page;
 
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
@@ -37,12 +39,12 @@ class PlainFixedLenBinaryDecoderTest {
         page.put(ccc);
         page.flip();
 
-        PageDecoder<ByteBuffer> decoder = new PlainFixedLenBinaryDecoder(5);
+        PageDecoder<MemorySegment> decoder = new PlainFixedLenBinaryDecoder(5);
         decoder.load(page, 3);
 
-        assertThat(decoder.next()).isEqualTo(ByteBuffer.wrap(aaa));
-        assertThat(decoder.next()).isEqualTo(ByteBuffer.wrap(bbb));
-        assertThat(decoder.next()).isEqualTo(ByteBuffer.wrap(ccc));
+        assertThat(decoder.next().toArray(JAVA_BYTE)).isEqualTo(aaa);
+        assertThat(decoder.next().toArray(JAVA_BYTE)).isEqualTo(bbb);
+        assertThat(decoder.next().toArray(JAVA_BYTE)).isEqualTo(ccc);
     }
 
     @Test
@@ -51,10 +53,10 @@ class PlainFixedLenBinaryDecoderTest {
         page.put("hello".getBytes(StandardCharsets.UTF_8));
         page.flip();
 
-        PageDecoder<ByteBuffer> decoder = new PlainFixedLenBinaryDecoder(5);
+        PageDecoder<MemorySegment> decoder = new PlainFixedLenBinaryDecoder(5);
         decoder.load(page, 1);
 
-        ByteBuffer slice = decoder.next();
+        MemorySegment slice = decoder.next();
         assertThat(slice.isReadOnly()).isTrue();
     }
 
@@ -64,11 +66,11 @@ class PlainFixedLenBinaryDecoderTest {
         page.put("0123456789".getBytes(StandardCharsets.UTF_8));
         page.flip();
 
-        PageDecoder<ByteBuffer> decoder = new PlainFixedLenBinaryDecoder(5);
+        PageDecoder<MemorySegment> decoder = new PlainFixedLenBinaryDecoder(5);
         decoder.load(page, 2);
 
-        assertThat(decoder.next().remaining()).isEqualTo(5);
-        assertThat(decoder.next().remaining()).isEqualTo(5);
+        assertThat(decoder.next().byteSize()).isEqualTo(5);
+        assertThat(decoder.next().byteSize()).isEqualTo(5);
     }
 
     @Test
@@ -83,11 +85,11 @@ class PlainFixedLenBinaryDecoderTest {
         page.put(third);
         page.flip();
 
-        PageDecoder<ByteBuffer> decoder = new PlainFixedLenBinaryDecoder(5);
+        PageDecoder<MemorySegment> decoder = new PlainFixedLenBinaryDecoder(5);
         decoder.load(page, 3);
         decoder.skip(2);
 
-        assertThat(decoder.next()).isEqualTo(ByteBuffer.wrap(third));
+        assertThat(decoder.next().toArray(JAVA_BYTE)).isEqualTo(third);
     }
 
     @Test
@@ -103,11 +105,11 @@ class PlainFixedLenBinaryDecoderTest {
         ByteBuffer page = ByteBuffer.allocate(0);
         page.flip();
 
-        PageDecoder<ByteBuffer> decoder = new PlainFixedLenBinaryDecoder(0);
+        PageDecoder<MemorySegment> decoder = new PlainFixedLenBinaryDecoder(0);
         decoder.load(page, 3);
 
-        assertThat(decoder.next().remaining()).isZero();
-        assertThat(decoder.next().remaining()).isZero();
-        assertThat(decoder.next().remaining()).isZero();
+        assertThat(decoder.next().byteSize()).isZero();
+        assertThat(decoder.next().byteSize()).isZero();
+        assertThat(decoder.next().byteSize()).isZero();
     }
 }

@@ -15,13 +15,13 @@
  */
 package io.tileverse.parquetry.read;
 
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -314,7 +314,7 @@ class RowGroupReaderTest {
     }
 
     private static ColumnReader intReader(ColumnPath path, int[] values) {
-        ByteBuffer page = ByteBuffer.allocate(values.length * 4).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer page = ByteBuffer.allocate(values.length * 4).order(LITTLE_ENDIAN);
         for (int v : values) {
             page.putInt(v);
         }
@@ -329,7 +329,7 @@ class RowGroupReaderTest {
         for (String s : values) {
             capacity += 4 + s.getBytes(StandardCharsets.UTF_8).length;
         }
-        ByteBuffer page = ByteBuffer.allocate(capacity).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer page = ByteBuffer.allocate(capacity).order(LITTLE_ENDIAN);
         for (String s : values) {
             byte[] bytes = s.getBytes(StandardCharsets.UTF_8);
             page.putInt(bytes.length);
@@ -342,7 +342,7 @@ class RowGroupReaderTest {
     }
 
     private static ColumnReader doubleReader(ColumnPath path, double[] values) {
-        ByteBuffer page = ByteBuffer.allocate(values.length * 8).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer page = ByteBuffer.allocate(values.length * 8).order(LITTLE_ENDIAN);
         for (double v : values) {
             page.putDouble(v);
         }

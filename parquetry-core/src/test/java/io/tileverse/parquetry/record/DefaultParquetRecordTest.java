@@ -18,7 +18,7 @@ package io.tileverse.parquetry.record;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -80,7 +80,7 @@ class DefaultParquetRecordTest {
         row.put(LONG_COL, Long.valueOf(7_000_000_000L));
         row.put(FLOAT_COL, Float.valueOf(1.5f));
         row.put(DOUBLE_COL, Double.valueOf(3.25));
-        row.put(BINARY_COL, ByteBuffer.wrap(BINARY_PAYLOAD).asReadOnlyBuffer());
+        row.put(BINARY_COL, MemorySegment.ofArray(BINARY_PAYLOAD).asReadOnly());
         row.put(NULL_COL, null);
 
         parquetRecord = new DefaultParquetRecord(schema, row);
@@ -101,10 +101,10 @@ class DefaultParquetRecordTest {
     }
 
     @Test
-    void getReturnsTheRawBoxedValueOrByteBuffer() {
+    void getReturnsTheRawBoxedValueOrMemorySegment() {
         assertThat(parquetRecord.get(INT_COL)).isEqualTo(42);
         Object raw = parquetRecord.get(BINARY_COL);
-        assertThat(raw).isInstanceOf(ByteBuffer.class);
+        assertThat(raw).isInstanceOf(MemorySegment.class);
     }
 
     @Test

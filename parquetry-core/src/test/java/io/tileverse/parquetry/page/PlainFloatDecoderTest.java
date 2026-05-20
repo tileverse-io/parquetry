@@ -15,10 +15,10 @@
  */
 package io.tileverse.parquetry.page;
 
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 
 import org.junit.jupiter.api.Test;
 
@@ -26,7 +26,7 @@ class PlainFloatDecoderTest {
 
     @Test
     void decodesFourLittleEndianFloats() {
-        ByteBuffer page = ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer page = ByteBuffer.allocate(16).order(LITTLE_ENDIAN);
         page.putFloat(0.0f);
         page.putFloat(-1.5f);
         page.putFloat(Float.MAX_VALUE);
@@ -44,7 +44,7 @@ class PlainFloatDecoderTest {
 
     @Test
     void skipAdvancesByFourBytes() {
-        ByteBuffer page = ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer page = ByteBuffer.allocate(16).order(LITTLE_ENDIAN);
         page.putFloat(1.1f);
         page.putFloat(2.2f);
         page.putFloat(3.3f);
@@ -60,7 +60,7 @@ class PlainFloatDecoderTest {
 
     @Test
     void decodesSpecialFloatValues() {
-        ByteBuffer page = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer page = ByteBuffer.allocate(12).order(LITTLE_ENDIAN);
         page.putFloat(Float.NaN);
         page.putFloat(Float.POSITIVE_INFINITY);
         page.putFloat(Float.NEGATIVE_INFINITY);

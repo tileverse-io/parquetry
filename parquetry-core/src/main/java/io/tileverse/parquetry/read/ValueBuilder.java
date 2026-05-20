@@ -30,9 +30,9 @@ import io.tileverse.parquetry.schema.ColumnPath;
  * <p>The {@link RecordAssembler} builds a {@code ValueBuilder} tree at construction (one root builder per top-level
  * projected column) and then calls {@link #read()} once per row to drive the assembly. Builders consume one or more
  * {@code (repLevel, defLevel, value)} triples from the {@link ColumnReader}s they wrap, returning whatever Java shape
- * the Parquet schema demands: a boxed primitive or read-only {@code ByteBuffer} for a leaf, an {@link List} for a
- * {@code LIST}-annotated or legacy repeated group, a {@link Map} for a {@code MAP}-annotated group, or a nested
- * {@link RowAccessor} for a non-repeated struct.
+ * the Parquet schema demands: a boxed primitive or read-only {@link java.lang.foreign.MemorySegment} for a leaf, an
+ * {@link List} for a {@code LIST}-annotated or legacy repeated group, a {@link Map} for a {@code MAP}-annotated group,
+ * or a nested {@link RowAccessor} for a non-repeated struct.
  *
  * <h2>Contract</h2>
  *
@@ -68,8 +68,8 @@ sealed interface ValueBuilder
 
     /**
      * Reads one value from a single non-repeated {@link ColumnReader}. Returns the boxed primitive (or read-only
-     * {@code ByteBuffer} for binary / INT96) at {@code maxDef}, or {@code null} when the leaf or any optional ancestor
-     * is null.
+     * {@link java.lang.foreign.MemorySegment} for binary / INT96) at {@code maxDef}, or {@code null} when the leaf or
+     * any optional ancestor is null.
      */
     final class LeafValueBuilder implements ValueBuilder {
 

@@ -15,8 +15,12 @@
  */
 package io.tileverse.parquetry.filter.bloom;
 
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
+import static java.lang.foreign.ValueLayout.JAVA_INT_UNALIGNED;
+import static java.lang.foreign.ValueLayout.JAVA_LONG_UNALIGNED;
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
+
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.util.Objects;
 
 import io.airlift.compress.v3.xxhash.XxHash64Hasher;
@@ -45,9 +49,10 @@ import io.airlift.compress.v3.xxhash.XxHash64Hasher;
  *
  * <h2>Thread safety</h2>
  *
- * <p>Instances are immutable once constructed (no insert side). The probe loop in {@link #mightContain(long)} only
- * reads from the underlying {@link ByteBuffer}; concurrent calls are safe as long as the supplied buffer isn't being
- * mutated externally. The buffer is wrapped once at construction with {@link ByteOrder#LITTLE_ENDIAN}.
+ * <p>Instances are immutable once constructed (no insert side). The probe loop in {@link #mightContain(long)} reads the
+ * bitset through a {@link MemorySegment#asReadOnly() read-only} {@link MemorySegment}, so concurrent calls are safe and
+ * the segment's contents cannot be mutated via this instance. Callers remain responsible for not mutating any heap or
+ * native memory backing the segment after handing it over.
  */
 public final class SplitBlockBloomFilter {
 
@@ -65,25 +70,32 @@ public final class SplitBlockBloomFilter {
         0x47b6137b, 0x44974d91, 0x8824ad5b, 0xa2b7289d, 0x705495c7, 0x2df1424b, 0x9efc4947, 0x5c6bfb31
     };
 
-    private final ByteBuffer bitset;
+    /** Little-endian 32-bit unaligned read layout, used for all probe-loop word reads. */
+    private static final ValueLayout.OfInt INT_LE = JAVA_INT_UNALIGNED.withOrder(LITTLE_ENDIAN);
+
+    /** Little-endian 64-bit unaligned write layout, used to encode INT64 / DOUBLE values for hashing. */
+    private static final ValueLayout.OfLong LONG_LE = JAVA_LONG_UNALIGNED.withOrder(LITTLE_ENDIAN);
+
+    private final MemorySegment bitset;
     private final int numBlocks;
 
     /**
      * Wraps an already-loaded bitset.
      *
-     * @param bitset the raw {@code numBytes}-byte bitset that follows the {@code BloomFilterHeader}; must have length a
-     *     positive multiple of {@value #BYTES_PER_BLOCK}. The buffer's byte order is overridden to little-endian to
-     *     match the on-disk layout regardless of the caller's setting.
+     * @param bitset the raw {@code numBytes}-byte bitset that follows the {@code BloomFilterHeader}; must have
+     *     {@link MemorySegment#byteSize() byteSize} a positive multiple of {@value #BYTES_PER_BLOCK}. The segment is
+     *     stored as a {@link MemorySegment#asReadOnly() read-only} view so this instance cannot mutate its contents;
+     *     reads use a little-endian layout regardless of platform byte order.
      */
-    public SplitBlockBloomFilter(ByteBuffer bitset) {
+    public SplitBlockBloomFilter(MemorySegment bitset) {
         Objects.requireNonNull(bitset, "bitset");
-        int length = bitset.remaining();
+        long length = bitset.byteSize();
         if (length <= 0 || length % BYTES_PER_BLOCK != 0) {
             throw new IllegalArgumentException(
                     "Bloom filter bitset length must be a positive multiple of " + BYTES_PER_BLOCK + ", got " + length);
         }
-        this.bitset = bitset.slice().order(ByteOrder.LITTLE_ENDIAN);
-        this.numBlocks = length / BYTES_PER_BLOCK;
+        this.bitset = bitset.asReadOnly();
+        this.numBlocks = (int) (length / BYTES_PER_BLOCK);
     }
 
     /** Bitset byte length; matches {@code BloomFilterHeader.numBytes()}. */
@@ -103,7 +115,7 @@ public final class SplitBlockBloomFilter {
         int blockByteOffset = wordBase * 4;
         for (int i = 0; i < BITS_PER_BLOCK_WORD; i++) {
             int wordOffset = blockByteOffset + i * 4;
-            int word = bitset.getInt(wordOffset);
+            int word = bitset.get(INT_LE, wordOffset);
             int probe = 1 << probeBit(key, i);
             if ((word & probe) == 0) {
                 return false;
@@ -148,14 +160,14 @@ public final class SplitBlockBloomFilter {
     /** xxHash64 of {@code value} encoded as 4 little-endian bytes; matches Parquet's plain-encoding hash for INT32. */
     public static long hashInt32(int value) {
         byte[] bytes = new byte[4];
-        ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).putInt(value);
+        MemorySegment.ofArray(bytes).set(INT_LE, 0, value);
         return XxHash64Hasher.hash(bytes);
     }
 
     /** xxHash64 of {@code value} encoded as 8 little-endian bytes; matches Parquet's plain-encoding hash for INT64. */
     public static long hashInt64(long value) {
         byte[] bytes = new byte[8];
-        ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).putLong(value);
+        MemorySegment.ofArray(bytes).set(LONG_LE, 0, value);
         return XxHash64Hasher.hash(bytes);
     }
 

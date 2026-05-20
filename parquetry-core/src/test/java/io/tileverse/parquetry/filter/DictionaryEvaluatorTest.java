@@ -18,7 +18,7 @@ package io.tileverse.parquetry.filter;
 import static io.tileverse.parquetry.filter.Pred.col;
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 import java.nio.IntBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
@@ -120,8 +120,8 @@ class DictionaryEvaluatorTest {
     @Test
     void stringEqAgainstBinaryDictMatches() {
         Dictionary.BinaryDict dict = new Dictionary.BinaryDict(List.of(
-                ByteBuffer.wrap("apple".getBytes(StandardCharsets.UTF_8)),
-                ByteBuffer.wrap("banana".getBytes(StandardCharsets.UTF_8))));
+                MemorySegment.ofArray("apple".getBytes(StandardCharsets.UTF_8)),
+                MemorySegment.ofArray("banana".getBytes(StandardCharsets.UTF_8))));
         FilterPipeline.DictionaryLookup dicts = single("fruit", dict);
         Predicate p = col("fruit").eq("apple");
         assertThat(DictionaryEvaluator.evaluate(p, dicts)).isInstanceOf(PruningDecision.NotApplied.class);
@@ -130,8 +130,8 @@ class DictionaryEvaluatorTest {
     @Test
     void stringEqAgainstBinaryDictNoMatchIsEliminated() {
         Dictionary.BinaryDict dict = new Dictionary.BinaryDict(List.of(
-                ByteBuffer.wrap("apple".getBytes(StandardCharsets.UTF_8)),
-                ByteBuffer.wrap("banana".getBytes(StandardCharsets.UTF_8))));
+                MemorySegment.ofArray("apple".getBytes(StandardCharsets.UTF_8)),
+                MemorySegment.ofArray("banana".getBytes(StandardCharsets.UTF_8))));
         FilterPipeline.DictionaryLookup dicts = single("fruit", dict);
         Predicate p = col("fruit").eq("kiwi");
         assertThat(DictionaryEvaluator.evaluate(p, dicts)).isInstanceOf(PruningDecision.Eliminated.class);

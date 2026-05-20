@@ -15,12 +15,12 @@
  */
 package io.tileverse.parquetry.format.codec;
 
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.ByteArrayInputStream;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.file.Path;
 import java.util.stream.Stream;
 
@@ -117,8 +117,7 @@ class FooterConformanceTest {
             raf.seek(size - 8);
             byte[] tail = new byte[8];
             raf.readFully(tail);
-            int footerLen =
-                    ByteBuffer.wrap(tail, 0, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
+            int footerLen = ByteBuffer.wrap(tail, 0, 4).order(LITTLE_ENDIAN).getInt();
             byte[] footer = new byte[footerLen];
             raf.seek(size - 8 - footerLen);
             raf.readFully(footer);

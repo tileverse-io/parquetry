@@ -15,12 +15,12 @@
  */
 package io.tileverse.parquetry.filter.bloom;
 
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
@@ -133,7 +133,7 @@ class BloomFilterReaderTest {
         int bitsetBytes = numBlocks * BYTES_PER_BLOCK;
         byte[] header = synthesizeHeader(bitsetBytes);
         byte[] bitset = new byte[bitsetBytes];
-        ByteBuffer view = ByteBuffer.wrap(bitset).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer view = ByteBuffer.wrap(bitset).order(LITTLE_ENDIAN);
         for (long h : insertHashes) {
             referenceInsert(view, h, numBlocks);
         }

@@ -15,10 +15,12 @@
  */
 package io.tileverse.parquetry.conformance;
 
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -268,6 +270,7 @@ class ParquetTestingCorpusIT {
         return switch (value) {
             case Utf8 u -> u.getBytes();
             case ByteBuffer bb -> bytesOf(bb);
+            case MemorySegment seg -> seg.toArray(JAVA_BYTE);
             case byte[] b -> b;
             case GenericData.Fixed f -> f.bytes();
             case CharSequence cs -> cs.toString().getBytes(StandardCharsets.UTF_8);

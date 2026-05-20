@@ -15,7 +15,7 @@
  */
 package io.tileverse.parquetry.format;
 
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
@@ -41,8 +41,8 @@ import lombok.Builder;
  * @param columnIndexOffset file offset of this chunk's {@link ColumnIndex}; unset when no column index was written
  * @param columnIndexLength byte size of this chunk's {@link ColumnIndex}; unset when no column index was written
  * @param cryptoMetadata crypto metadata describing how this chunk is encrypted; empty when the chunk is not encrypted
- * @param encryptedColumnMetadata serialized, encrypted {@link ColumnMetaData} bytes; empty when {@link #metaData()} is
- *     present in cleartext
+ * @param encryptedColumnMetadata serialized, encrypted {@link ColumnMetaData} bytes; {@link MemorySegment#NULL} when
+ *     {@link #metaData()} is present in cleartext
  */
 // S2789: constructor null-tolerates Optional to support the @Builder pattern.
 @SuppressWarnings("java:S2789")
@@ -56,7 +56,7 @@ public record ColumnChunk(
         OptionalLong columnIndexOffset,
         OptionalInt columnIndexLength,
         Optional<ColumnCryptoMetaData> cryptoMetadata,
-        Optional<ByteBuffer> encryptedColumnMetadata) {
+        MemorySegment encryptedColumnMetadata) {
 
     public ColumnChunk {
         filePath = filePath == null ? Optional.empty() : filePath;
@@ -66,8 +66,13 @@ public record ColumnChunk(
         columnIndexOffset = columnIndexOffset == null ? OptionalLong.empty() : columnIndexOffset;
         columnIndexLength = columnIndexLength == null ? OptionalInt.empty() : columnIndexLength;
         cryptoMetadata = cryptoMetadata == null ? Optional.empty() : cryptoMetadata;
-        encryptedColumnMetadata = encryptedColumnMetadata == null
-                ? Optional.empty()
-                : encryptedColumnMetadata.map(ByteBuffer::asReadOnlyBuffer);
+        encryptedColumnMetadata = readOnlyOrAbsent(encryptedColumnMetadata);
+    }
+
+    private static MemorySegment readOnlyOrAbsent(MemorySegment segment) {
+        if (segment == null) {
+            return MemorySegment.NULL;
+        }
+        return segment.isReadOnly() ? segment : segment.asReadOnly();
     }
 }

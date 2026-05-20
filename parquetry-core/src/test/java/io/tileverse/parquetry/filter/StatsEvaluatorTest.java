@@ -16,10 +16,12 @@
 package io.tileverse.parquetry.filter;
 
 import static io.tileverse.parquetry.filter.Pred.col;
+import static java.lang.foreign.ValueLayout.JAVA_DOUBLE_UNALIGNED;
+import static java.lang.foreign.ValueLayout.JAVA_INT_UNALIGNED;
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
+import java.lang.foreign.MemorySegment;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -242,36 +244,36 @@ class StatsEvaluatorTest {
     private static Statistics intStats(int min, int max, long nullCount) {
         return Statistics.builder()
                 .nullCount(OptionalLong.of(nullCount))
-                .maxValue(Optional.of(encodeInt(max)))
-                .minValue(Optional.of(encodeInt(min)))
+                .maxValue(encodeInt(max))
+                .minValue(encodeInt(min))
                 .build();
     }
 
     private static Statistics doubleStats(double min, double max, long nullCount) {
         return Statistics.builder()
                 .nullCount(OptionalLong.of(nullCount))
-                .maxValue(Optional.of(encodeDouble(max)))
-                .minValue(Optional.of(encodeDouble(min)))
+                .maxValue(encodeDouble(max))
+                .minValue(encodeDouble(min))
                 .build();
     }
 
     private static Statistics binaryStats(String min, String max, long nullCount) {
         return Statistics.builder()
                 .nullCount(OptionalLong.of(nullCount))
-                .maxValue(Optional.of(ByteBuffer.wrap(max.getBytes(java.nio.charset.StandardCharsets.UTF_8))))
-                .minValue(Optional.of(ByteBuffer.wrap(min.getBytes(java.nio.charset.StandardCharsets.UTF_8))))
+                .maxValue(MemorySegment.ofArray(max.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+                .minValue(MemorySegment.ofArray(min.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
                 .build();
     }
 
-    private static ByteBuffer encodeInt(int v) {
-        return (ByteBuffer)
-                ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(v).flip();
+    private static MemorySegment encodeInt(int v) {
+        MemorySegment segment = MemorySegment.ofArray(new byte[4]);
+        segment.set(JAVA_INT_UNALIGNED.withOrder(LITTLE_ENDIAN), 0, v);
+        return segment.asReadOnly();
     }
 
-    private static ByteBuffer encodeDouble(double v) {
-        return (ByteBuffer) ByteBuffer.allocate(8)
-                .order(ByteOrder.LITTLE_ENDIAN)
-                .putDouble(v)
-                .flip();
+    private static MemorySegment encodeDouble(double v) {
+        MemorySegment segment = MemorySegment.ofArray(new byte[8]);
+        segment.set(JAVA_DOUBLE_UNALIGNED.withOrder(LITTLE_ENDIAN), 0, v);
+        return segment.asReadOnly();
     }
 }

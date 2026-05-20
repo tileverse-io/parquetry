@@ -39,8 +39,9 @@ public sealed interface ParquetRecord permits DefaultParquetRecord {
     ParquetSchema schema();
 
     /**
-     * Returns the raw boxed value at {@code col}: a boxed primitive, a read-only {@code ByteBuffer} for binary/INT96,
-     * or {@code null} when the leaf was null or absent from the projection.
+     * Returns the raw boxed value at {@code col}: a boxed primitive, a read-only
+     * {@link java.lang.foreign.MemorySegment} for binary/INT96, or {@code null} when the leaf was null or absent from
+     * the projection.
      */
     Object get(ColumnPath col);
 

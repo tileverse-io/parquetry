@@ -15,9 +15,10 @@
  */
 package io.tileverse.parquetry.read;
 
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 
 import io.tileverse.parquetry.codec.Codec;
 import io.tileverse.parquetry.format.DataPageHeaderV2;
@@ -74,7 +75,7 @@ final class DataPageV2Reader implements DataPageReader {
         }
         int valuesUncompressedSize = computeValuesUncompressedSize(header, repLen, defLen);
 
-        ByteBuffer cursor = compressedPagePayload.duplicate().order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer cursor = compressedPagePayload.duplicate().order(LITTLE_ENDIAN);
         ByteBuffer repLevels = sliceAndAdvance(cursor, repLen);
         ByteBuffer defLevels = sliceAndAdvance(cursor, defLen);
 
@@ -142,12 +143,12 @@ final class DataPageV2Reader implements DataPageReader {
      */
     private static ByteBuffer sliceAndAdvance(ByteBuffer cursor, int len) {
         if (len == 0) {
-            return ByteBuffer.allocate(0).order(ByteOrder.LITTLE_ENDIAN).asReadOnlyBuffer();
+            return ByteBuffer.allocate(0).order(LITTLE_ENDIAN).asReadOnlyBuffer();
         }
         ByteBuffer slice = cursor.slice();
         slice.limit(len);
-        slice.order(ByteOrder.LITTLE_ENDIAN);
+        slice.order(LITTLE_ENDIAN);
         cursor.position(cursor.position() + len);
-        return slice.asReadOnlyBuffer().order(ByteOrder.LITTLE_ENDIAN);
+        return slice.asReadOnlyBuffer().order(LITTLE_ENDIAN);
     }
 }

@@ -15,15 +15,16 @@
  */
 package io.tileverse.parquetry.page;
 
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 
 /**
  * PLAIN decoder for INT96: twelve bytes, little-endian per value.
  *
  * <p>INT96 is a deprecated legacy timestamp type used by some older Parquet writers. Each value is returned as a
- * read-only {@link ByteBuffer} slice of twelve bytes backed by the original page buffer (zero-copy).
+ * read-only twelve-byte {@link MemorySegment} view of the page bytes (zero-copy).
  */
-final class PlainInt96Decoder implements PageDecoder<ByteBuffer> {
+final class PlainInt96Decoder implements PageDecoder<MemorySegment> {
 
     private static final int INT96_BYTES = 12;
 
@@ -35,10 +36,10 @@ final class PlainInt96Decoder implements PageDecoder<ByteBuffer> {
     }
 
     @Override
-    public ByteBuffer next() {
-        ByteBuffer slice = buffer.slice().limit(INT96_BYTES).asReadOnlyBuffer();
+    public MemorySegment next() {
+        ByteBuffer slice = buffer.slice().limit(INT96_BYTES);
         buffer.position(buffer.position() + INT96_BYTES);
-        return slice;
+        return MemorySegment.ofBuffer(slice).asReadOnly();
     }
 
     @Override

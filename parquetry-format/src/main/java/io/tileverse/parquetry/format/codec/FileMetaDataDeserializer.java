@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.format.codec;
 
 import java.io.IOException;
+import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -83,7 +84,7 @@ final class FileMetaDataDeserializer {
                 createdBy,
                 columnOrders,
                 Optional.empty(),
-                Optional.empty());
+                MemorySegment.NULL);
     }
 
     private static List<SchemaElement> readSchemaList(CompactProtocolReader r) throws IOException {

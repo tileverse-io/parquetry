@@ -15,7 +15,9 @@
  */
 package io.tileverse.parquetry.record;
 
-import java.nio.ByteBuffer;
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
+
+import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
@@ -33,13 +35,13 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
  * <p>Instances are short-lived: one per row, owned by the iterator. Both the schema and row accessor are stored by
  * reference; the record never copies them.
  *
- * <p>Binary values arrive from {@link RowAccessor} as read-only {@link ByteBuffer}s. {@link #getBinary(ColumnPath)} and
- * its UTF-8 / WKB siblings materialize a fresh {@code byte[]} every time so callers can mutate the returned array
- * without affecting the underlying page buffer.
+ * <p>Binary values arrive from {@link RowAccessor} as read-only {@link MemorySegment}s. {@link #getBinary(ColumnPath)}
+ * and its UTF-8 / WKB siblings materialize a fresh {@code byte[]} every time so callers can mutate the returned array
+ * without affecting the underlying page bytes.
  *
  * <p>Typed primitive and binary accessors require that the leaf value be non-null. Callers must guard with
  * {@link #isNull(ColumnPath)} first; otherwise typed accessors throw {@link NullPointerException} (auto-unboxing for
- * primitive returns, or dereference of the underlying {@link ByteBuffer} for binary returns). Only
+ * primitive returns, or dereference of the underlying {@link MemorySegment} for binary returns). Only
  * {@link #get(ColumnPath)} returns {@code null} for null leaves.
  */
 final class DefaultParquetRecord implements ParquetRecord {
@@ -134,11 +136,8 @@ final class DefaultParquetRecord implements ParquetRecord {
     }
 
     private byte[] copyBytes(ColumnPath col) {
-        ByteBuffer source = (ByteBuffer) row.get(col);
-        ByteBuffer view = source.duplicate();
-        byte[] out = new byte[view.remaining()];
-        view.get(out);
-        return out;
+        MemorySegment source = (MemorySegment) row.get(col);
+        return source.toArray(JAVA_BYTE);
     }
 
     private void requireKind(ColumnPath col, PrimitiveKind expected, String accessor) {

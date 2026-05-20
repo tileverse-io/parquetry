@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.filter.bloom;
 
 import java.io.InputStream;
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 
 import io.tileverse.storage.RangeReader;
@@ -89,12 +90,12 @@ public final class BloomFilterReader {
             ByteBuffer bitset = probe.duplicate();
             bitset.position(probe.position() + headerByteLength);
             bitset.limit(probe.position() + headerByteLength + header.numBytes());
-            return new SplitBlockBloomFilter(bitset);
+            return new SplitBlockBloomFilter(asReadOnlySegment(bitset));
         }
         long bitsetStart = offset + headerByteLength;
         ByteBuffer bitset = reader.readRange(bitsetStart, header.numBytes());
         bitset.flip();
-        return new SplitBlockBloomFilter(bitset);
+        return new SplitBlockBloomFilter(asReadOnlySegment(bitset));
     }
 
     /**
@@ -117,7 +118,17 @@ public final class BloomFilterReader {
         ByteBuffer bitset = chunk.duplicate();
         bitset.position(bitsetStart);
         bitset.limit(bitsetStart + header.numBytes());
-        return new SplitBlockBloomFilter(bitset);
+        return new SplitBlockBloomFilter(asReadOnlySegment(bitset));
+    }
+
+    /**
+     * Wraps {@code bitset}'s active region (between its current position and limit) as a read-only
+     * {@link MemorySegment} view, suitable for {@link SplitBlockBloomFilter}'s constructor.
+     * {@link MemorySegment#ofBuffer} already respects the buffer's position / limit, so callers don't need a fresh
+     * slice.
+     */
+    private static MemorySegment asReadOnlySegment(ByteBuffer bitset) {
+        return MemorySegment.ofBuffer(bitset).asReadOnly();
     }
 
     private static BloomFilterHeader readHeader(ByteBuffer chunk) {

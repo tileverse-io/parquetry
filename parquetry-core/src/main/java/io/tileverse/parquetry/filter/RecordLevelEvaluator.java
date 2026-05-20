@@ -15,7 +15,9 @@
  */
 package io.tileverse.parquetry.filter;
 
-import java.nio.ByteBuffer;
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
+
+import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -39,8 +41,8 @@ final class RecordLevelEvaluator {
 
     /**
      * Accessor for a single assembled record's column values, as seen by the record-level filter evaluator. The boxed
-     * return is one of: Boolean / Integer / Long / Float / Double / String / java.nio.ByteBuffer (for binary) /
-     * java.time.LocalDate / java.time.LocalDateTime, or {@code null} when the column is NULL for this row.
+     * return is one of: Boolean / Integer / Long / Float / Double / String / {@link MemorySegment} (for binary / INT96)
+     * / java.time.LocalDate / java.time.LocalDateTime, or {@code null} when the column is NULL for this row.
      */
     @FunctionalInterface
     interface RecordAccessor {
@@ -124,9 +126,9 @@ final class RecordLevelEvaluator {
             case Value.DoubleVal(double bv) when actual instanceof Double av -> Double.compare(av, bv);
             case Value.StringVal(String bv) when actual instanceof String av -> av.compareTo(bv);
             case Value.StringVal(String bv)
-            when actual instanceof ByteBuffer av ->
-                compareBytes(av, ByteBuffer.wrap(bv.getBytes(StandardCharsets.UTF_8)));
-            case Value.BinaryVal(ByteBuffer bv) when actual instanceof ByteBuffer av -> compareBytes(av, bv);
+            when actual instanceof MemorySegment av ->
+                compareBytes(av, MemorySegment.ofArray(bv.getBytes(StandardCharsets.UTF_8)));
+            case Value.BinaryVal(MemorySegment bv) when actual instanceof MemorySegment av -> compareBytes(av, bv);
             case Value.DateVal(LocalDate bv) when actual instanceof LocalDate av -> av.compareTo(bv);
             case Value.DateVal(LocalDate bv)
             when actual instanceof Integer av -> Integer.compare(av, (int) bv.toEpochDay());
@@ -136,18 +138,16 @@ final class RecordLevelEvaluator {
         };
     }
 
-    private static int compareBytes(ByteBuffer a, ByteBuffer b) {
-        ByteBuffer ad = a.duplicate();
-        ByteBuffer bd = b.duplicate();
-        int aLen = ad.remaining();
-        int bLen = bd.remaining();
-        int common = Math.min(aLen, bLen);
-        for (int i = 0; i < common; i++) {
-            int diff = (ad.get(ad.position() + i) & 0xff) - (bd.get(bd.position() + i) & 0xff);
+    private static int compareBytes(MemorySegment a, MemorySegment b) {
+        long aLen = a.byteSize();
+        long bLen = b.byteSize();
+        long common = Math.min(aLen, bLen);
+        for (long i = 0; i < common; i++) {
+            int diff = (a.get(JAVA_BYTE, i) & 0xff) - (b.get(JAVA_BYTE, i) & 0xff);
             if (diff != 0) {
                 return diff;
             }
         }
-        return Integer.compare(aLen, bLen);
+        return Long.compare(aLen, bLen);
     }
 }

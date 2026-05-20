@@ -15,10 +15,11 @@
  */
 package io.tileverse.parquetry.format;
 
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
+
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.util.Arrays;
 
 import io.tileverse.storage.RangeReader;
@@ -125,7 +126,7 @@ public final class ParquetFormat {
         }
         ByteBuffer tail = reader.readRange(size - 8, 8);
         tail.flip();
-        tail.order(ByteOrder.LITTLE_ENDIAN);
+        tail.order(LITTLE_ENDIAN);
         int footerLen = tail.getInt();
         byte[] magic = new byte[4];
         tail.get(magic);

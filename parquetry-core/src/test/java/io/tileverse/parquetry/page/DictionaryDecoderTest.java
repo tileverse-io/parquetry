@@ -15,10 +15,11 @@
  */
 package io.tileverse.parquetry.page;
 
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.OptionalInt;
 
@@ -31,7 +32,7 @@ class DictionaryDecoderTest {
     @Test
     void readIntDictionary() {
         // Three INT32 values: 100, 200, 300 in little-endian
-        ByteBuffer page = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer page = ByteBuffer.allocate(12).order(LITTLE_ENDIAN);
         page.putInt(100);
         page.putInt(200);
         page.putInt(300);
@@ -57,7 +58,7 @@ class DictionaryDecoderTest {
         byte[] baz = "baz".getBytes(StandardCharsets.UTF_8);
         int totalSize = 3 * 4 + foo.length + bar.length + baz.length;
 
-        ByteBuffer page = ByteBuffer.allocate(totalSize).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer page = ByteBuffer.allocate(totalSize).order(LITTLE_ENDIAN);
         page.putInt(foo.length);
         page.put(foo);
         page.putInt(bar.length);
@@ -71,16 +72,16 @@ class DictionaryDecoderTest {
         assertThat(dict).isInstanceOf(Dictionary.BinaryDict.class);
         Dictionary.BinaryDict binaryDict = (Dictionary.BinaryDict) dict;
         assertThat(binaryDict.size()).isEqualTo(3);
-        assertThat(binaryDict.get(0)).isEqualTo(ByteBuffer.wrap(foo));
-        assertThat(binaryDict.get(1)).isEqualTo(ByteBuffer.wrap(bar));
-        assertThat(binaryDict.get(2)).isEqualTo(ByteBuffer.wrap(baz));
+        assertThat(binaryDict.get(0).toArray(JAVA_BYTE)).isEqualTo(foo);
+        assertThat(binaryDict.get(1).toArray(JAVA_BYTE)).isEqualTo(bar);
+        assertThat(binaryDict.get(2).toArray(JAVA_BYTE)).isEqualTo(baz);
         assertThat(binaryDict.kind()).isEqualTo(PrimitiveKind.BYTE_ARRAY);
     }
 
     @Test
     void readFloatDictionary() {
         // Two FLOAT values: 1.5f, 2.5f in little-endian IEEE 754
-        ByteBuffer page = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer page = ByteBuffer.allocate(8).order(LITTLE_ENDIAN);
         page.putFloat(1.5f);
         page.putFloat(2.5f);
         page.flip();

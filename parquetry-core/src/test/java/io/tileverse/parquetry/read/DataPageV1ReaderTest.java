@@ -15,12 +15,12 @@
  */
 package io.tileverse.parquetry.read;
 
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.util.Optional;
 import java.util.OptionalInt;
 
@@ -183,7 +183,7 @@ class DataPageV1ReaderTest {
     void rejectsLevelLengthExceedingRemainingBytes() {
         int payloadBytes = 8;
         byte[] payload = new byte[payloadBytes];
-        ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN).putInt(payloadBytes); // claim too many rep bytes
+        ByteBuffer.wrap(payload).order(LITTLE_ENDIAN).putInt(payloadBytes); // claim too many rep bytes
         PageHeader header = newV1Header(0, payload.length, Encoding.PLAIN);
         ByteBuffer wrapped = ByteBuffer.wrap(payload);
         LevelMaxima levels = new LevelMaxima(1, 0);
@@ -222,7 +222,7 @@ class DataPageV1ReaderTest {
         int repPrefix = repLevels.map(b -> 4 + b.length).orElse(0);
         int defPrefix = defLevels.map(b -> 4 + b.length).orElse(0);
         ByteBuffer buf =
-                ByteBuffer.allocate(repPrefix + defPrefix + values.length).order(ByteOrder.LITTLE_ENDIAN);
+                ByteBuffer.allocate(repPrefix + defPrefix + values.length).order(LITTLE_ENDIAN);
         repLevels.ifPresent(bytes -> {
             buf.putInt(bytes.length);
             buf.put(bytes);
@@ -245,14 +245,11 @@ class DataPageV1ReaderTest {
     }
 
     private static byte[] leInt(int value) {
-        return ByteBuffer.allocate(4)
-                .order(ByteOrder.LITTLE_ENDIAN)
-                .putInt(value)
-                .array();
+        return ByteBuffer.allocate(4).order(LITTLE_ENDIAN).putInt(value).array();
     }
 
     private static byte[] encodeInt32sLittleEndian(int[] values) {
-        ByteBuffer buf = ByteBuffer.allocate(values.length * 4).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer buf = ByteBuffer.allocate(values.length * 4).order(LITTLE_ENDIAN);
         for (int v : values) {
             buf.putInt(v);
         }
@@ -260,7 +257,7 @@ class DataPageV1ReaderTest {
     }
 
     private static int[] decodeInt32sLittleEndian(ByteBuffer buf, int count) {
-        ByteBuffer view = buf.duplicate().order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer view = buf.duplicate().order(LITTLE_ENDIAN);
         int[] out = new int[count];
         for (int i = 0; i < count; i++) {
             out[i] = view.getInt();

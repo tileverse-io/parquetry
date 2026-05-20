@@ -15,7 +15,9 @@
  */
 package io.tileverse.parquetry.filter;
 
-import java.nio.ByteBuffer;
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
+
+import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
@@ -136,9 +138,10 @@ final class DictionaryEvaluator {
             case Value.FloatVal(float qv) when dictValue instanceof Float dv -> Float.compare(qv, dv) == 0;
             case Value.DoubleVal(double qv) when dictValue instanceof Double dv -> Double.compare(qv, dv) == 0;
             case Value.StringVal(String qv)
-            when dictValue instanceof ByteBuffer dv ->
-                compareBytes(ByteBuffer.wrap(qv.getBytes(StandardCharsets.UTF_8)), dv) == 0;
-            case Value.BinaryVal(ByteBuffer qv) when dictValue instanceof ByteBuffer dv -> compareBytes(qv, dv) == 0;
+            when dictValue instanceof MemorySegment dv ->
+                compareBytes(MemorySegment.ofArray(qv.getBytes(StandardCharsets.UTF_8)), dv) == 0;
+            case Value.BinaryVal(MemorySegment qv)
+            when dictValue instanceof MemorySegment dv -> compareBytes(qv, dv) == 0;
             case Value.DateVal(java.time.LocalDate qv)
             when dictValue instanceof Integer dv -> (int) qv.toEpochDay() == dv;
             case Value.TimestampVal(java.time.LocalDateTime qv, boolean _)
@@ -157,9 +160,9 @@ final class DictionaryEvaluator {
             case Value.FloatVal(float qv) when dictValue instanceof Float dv -> Float.compare(dv, qv);
             case Value.DoubleVal(double qv) when dictValue instanceof Double dv -> Double.compare(dv, qv);
             case Value.StringVal(String qv)
-            when dictValue instanceof ByteBuffer dv ->
-                compareBytes(dv, ByteBuffer.wrap(qv.getBytes(StandardCharsets.UTF_8)));
-            case Value.BinaryVal(ByteBuffer qv) when dictValue instanceof ByteBuffer dv -> compareBytes(dv, qv);
+            when dictValue instanceof MemorySegment dv ->
+                compareBytes(dv, MemorySegment.ofArray(qv.getBytes(StandardCharsets.UTF_8)));
+            case Value.BinaryVal(MemorySegment qv) when dictValue instanceof MemorySegment dv -> compareBytes(dv, qv);
             case Value.DateVal(java.time.LocalDate qv)
             when dictValue instanceof Integer dv -> Integer.compare(dv, (int) qv.toEpochDay());
             case Value.TimestampVal(java.time.LocalDateTime qv, boolean _)
@@ -169,18 +172,16 @@ final class DictionaryEvaluator {
     }
 
     /** Lexicographic unsigned byte comparison, matching Parquet's default binary ColumnOrder. */
-    private static int compareBytes(ByteBuffer a, ByteBuffer b) {
-        ByteBuffer ad = a.duplicate();
-        ByteBuffer bd = b.duplicate();
-        int aLen = ad.remaining();
-        int bLen = bd.remaining();
-        int common = Math.min(aLen, bLen);
-        for (int i = 0; i < common; i++) {
-            int diff = (ad.get(ad.position() + i) & 0xff) - (bd.get(bd.position() + i) & 0xff);
+    private static int compareBytes(MemorySegment a, MemorySegment b) {
+        long aLen = a.byteSize();
+        long bLen = b.byteSize();
+        long common = Math.min(aLen, bLen);
+        for (long i = 0; i < common; i++) {
+            int diff = (a.get(JAVA_BYTE, i) & 0xff) - (b.get(JAVA_BYTE, i) & 0xff);
             if (diff != 0) {
                 return diff;
             }
         }
-        return Integer.compare(aLen, bLen);
+        return Long.compare(aLen, bLen);
     }
 }

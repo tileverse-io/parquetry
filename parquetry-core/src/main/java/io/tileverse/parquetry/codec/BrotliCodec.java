@@ -15,11 +15,12 @@
  */
 package io.tileverse.parquetry.codec;
 
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
+
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
 
 import org.brotli.dec.BrotliInputStream;
 
@@ -39,7 +40,7 @@ public final class BrotliCodec implements Codec {
 
     @Override
     public int decompress(MemorySegment compressed, MemorySegment output) throws IOException {
-        byte[] in = compressed.toArray(ValueLayout.JAVA_BYTE);
+        byte[] in = compressed.toArray(JAVA_BYTE);
         try (BrotliInputStream br = new BrotliInputStream(new ByteArrayInputStream(in))) {
             return streamToSegment(br, output);
         }
@@ -53,7 +54,7 @@ public final class BrotliCodec implements Codec {
             if (n < 0) {
                 break;
             }
-            MemorySegment.copy(buf, 0, output, ValueLayout.JAVA_BYTE, written, n);
+            MemorySegment.copy(buf, 0, output, JAVA_BYTE, written, n);
             written += n;
         }
         return written;

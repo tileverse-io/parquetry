@@ -15,10 +15,10 @@
  */
 package io.tileverse.parquetry.page;
 
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 
 import org.junit.jupiter.api.Test;
 
@@ -29,7 +29,7 @@ class RleBooleanDecoderTest {
         // RLE run length 10 of value 1 (true), bitWidth=1
         // Body: [varint(10<<1=20)=0x14] [1 byte value: 0x01]
         // Total body: 2 bytes
-        ByteBuffer page = ByteBuffer.allocate(6).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer page = ByteBuffer.allocate(6).order(LITTLE_ENDIAN);
         page.putInt(2); // length prefix
         page.put((byte) 0x14); // RLE header
         page.put((byte) 0x01); // value
@@ -46,7 +46,7 @@ class RleBooleanDecoderTest {
     void decodesBitPackedAlternating() {
         // 8 values [F,T,F,T,F,T,F,T] = bits 0,1,0,1,0,1,0,1 packed LSB-first in 1 byte = 0xAA
         // Header: groups=1, low bit set -> (1<<1)|1 = 3 = 0x03; then 1 byte 0xAA
-        ByteBuffer page = ByteBuffer.allocate(6).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer page = ByteBuffer.allocate(6).order(LITTLE_ENDIAN);
         page.putInt(2); // length prefix
         page.put((byte) 0x03); // bit-packed header
         page.put((byte) 0xAA); // 8 packed booleans
@@ -63,7 +63,7 @@ class RleBooleanDecoderTest {
     @Test
     void skipAdvancesPastValues() {
         // RLE run of 20 trues, length prefix 2, header 0x28 (20<<1), value 1
-        ByteBuffer page = ByteBuffer.allocate(6).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer page = ByteBuffer.allocate(6).order(LITTLE_ENDIAN);
         page.putInt(2);
         page.put((byte) 0x28);
         page.put((byte) 0x01);

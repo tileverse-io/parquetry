@@ -15,18 +15,25 @@
  */
 package io.tileverse.parquetry.format.crypto;
 
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 import java.util.Optional;
 
 /**
  * Stub. Real fields: encryptionAlgorithm, keyMetadata.
  *
  * @param encryptionAlgorithm encryption algorithm used by the file; empty for the stub
- * @param keyMetadata key retrieval metadata bytes; empty for the stub
+ * @param keyMetadata key retrieval metadata bytes; {@link MemorySegment#NULL} for the stub or when unset
  */
-public record FileCryptoMetaData(Optional<EncryptionAlgorithm> encryptionAlgorithm, Optional<ByteBuffer> keyMetadata) {
+public record FileCryptoMetaData(Optional<EncryptionAlgorithm> encryptionAlgorithm, MemorySegment keyMetadata) {
 
     public FileCryptoMetaData {
-        keyMetadata = keyMetadata.map(ByteBuffer::asReadOnlyBuffer);
+        keyMetadata = readOnlyOrAbsent(keyMetadata);
+    }
+
+    private static MemorySegment readOnlyOrAbsent(MemorySegment segment) {
+        if (segment == null) {
+            return MemorySegment.NULL;
+        }
+        return segment.isReadOnly() ? segment : segment.asReadOnly();
     }
 }

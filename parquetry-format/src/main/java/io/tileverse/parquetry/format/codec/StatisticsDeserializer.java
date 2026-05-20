@@ -16,8 +16,7 @@
 package io.tileverse.parquetry.format.codec;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.util.Optional;
+import java.lang.foreign.MemorySegment;
 import java.util.OptionalLong;
 
 import io.tileverse.parquetry.format.Statistics;
@@ -43,12 +42,12 @@ final class StatisticsDeserializer {
     private StatisticsDeserializer() {}
 
     static Statistics read(CompactProtocolReader r) throws IOException {
-        Optional<ByteBuffer> max = Optional.empty();
-        Optional<ByteBuffer> min = Optional.empty();
+        MemorySegment max = MemorySegment.NULL;
+        MemorySegment min = MemorySegment.NULL;
         OptionalLong nullCount = OptionalLong.empty();
         OptionalLong distinctCount = OptionalLong.empty();
-        Optional<ByteBuffer> maxValue = Optional.empty();
-        Optional<ByteBuffer> minValue = Optional.empty();
+        MemorySegment maxValue = MemorySegment.NULL;
+        MemorySegment minValue = MemorySegment.NULL;
         boolean isMaxValueExact = false;
         boolean isMinValueExact = false;
         int lastFieldId = 0;
@@ -59,12 +58,12 @@ final class StatisticsDeserializer {
             }
             lastFieldId = fh.fieldId();
             switch (fh.fieldId()) {
-                case 1 -> max = Optional.of(r.readBinary());
-                case 2 -> min = Optional.of(r.readBinary());
+                case 1 -> max = r.readBinary();
+                case 2 -> min = r.readBinary();
                 case 3 -> nullCount = OptionalLong.of(r.readI64());
                 case 4 -> distinctCount = OptionalLong.of(r.readI64());
-                case 5 -> maxValue = Optional.of(r.readBinary());
-                case 6 -> minValue = Optional.of(r.readBinary());
+                case 5 -> maxValue = r.readBinary();
+                case 6 -> minValue = r.readBinary();
                 case 7 -> isMaxValueExact = fh.type() == CompactType.BOOLEAN_TRUE;
                 case 8 -> isMinValueExact = fh.type() == CompactType.BOOLEAN_TRUE;
                 default -> r.skipField(fh.type());

@@ -15,10 +15,11 @@
  */
 package io.tileverse.parquetry.codec;
 
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
+
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
 import java.util.zip.GZIPInputStream;
 
 import io.tileverse.parquetry.format.CompressionCodec;
@@ -37,7 +38,7 @@ public final class GZipCodec implements Codec {
 
     @Override
     public int decompress(MemorySegment compressed, MemorySegment output) throws IOException {
-        byte[] in = compressed.toArray(ValueLayout.JAVA_BYTE);
+        byte[] in = compressed.toArray(JAVA_BYTE);
         try (GZIPInputStream gz = new GZIPInputStream(new ByteArrayInputStream(in))) {
             return streamToSegment(gz, output);
         }
@@ -51,7 +52,7 @@ public final class GZipCodec implements Codec {
             if (n < 0) {
                 break;
             }
-            MemorySegment.copy(buf, 0, output, ValueLayout.JAVA_BYTE, written, n);
+            MemorySegment.copy(buf, 0, output, JAVA_BYTE, written, n);
             written += n;
         }
         return written;

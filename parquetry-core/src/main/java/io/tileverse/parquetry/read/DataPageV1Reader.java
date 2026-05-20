@@ -15,9 +15,10 @@
  */
 package io.tileverse.parquetry.read;
 
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 
 import io.tileverse.parquetry.codec.Codec;
 import io.tileverse.parquetry.format.DataPageHeader;
@@ -65,7 +66,7 @@ final class DataPageV1Reader implements DataPageReader {
         PooledByteBuffer pooled = decompressPayload(header, compressedPagePayload, codec, pool);
         try {
             ByteBuffer decompressed = pooled.buffer();
-            decompressed.order(ByteOrder.LITTLE_ENDIAN);
+            decompressed.order(LITTLE_ENDIAN);
             ByteBuffer repLevels = readOptionalLevelSlice(decompressed, maxLevels.maxRepetitionLevel(), "repetition");
             ByteBuffer defLevels = readOptionalLevelSlice(decompressed, maxLevels.maxDefinitionLevel(), "definition");
             // After the slices consume their length-prefixed regions, the pooled buffer's position sits at the start
@@ -94,7 +95,7 @@ final class DataPageV1Reader implements DataPageReader {
             ByteBuffer target = pooled.buffer();
             target.clear();
             target.limit(uncompressedSize);
-            ByteBuffer source = compressedPagePayload.duplicate().order(ByteOrder.LITTLE_ENDIAN);
+            ByteBuffer source = compressedPagePayload.duplicate().order(LITTLE_ENDIAN);
             codec.decompress(source, target);
             target.flip();
             return pooled;
@@ -142,12 +143,12 @@ final class DataPageV1Reader implements DataPageReader {
         }
         ByteBuffer slice = decompressed.slice();
         slice.limit(length);
-        slice.order(ByteOrder.LITTLE_ENDIAN);
+        slice.order(LITTLE_ENDIAN);
         decompressed.position(decompressed.position() + length);
-        return slice.asReadOnlyBuffer().order(ByteOrder.LITTLE_ENDIAN);
+        return slice.asReadOnlyBuffer().order(LITTLE_ENDIAN);
     }
 
     private static ByteBuffer emptyLittleEndianSlice() {
-        return ByteBuffer.allocate(0).order(ByteOrder.LITTLE_ENDIAN).asReadOnlyBuffer();
+        return ByteBuffer.allocate(0).order(LITTLE_ENDIAN).asReadOnlyBuffer();
     }
 }

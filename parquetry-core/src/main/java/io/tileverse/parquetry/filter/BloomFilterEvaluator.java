@@ -15,6 +15,9 @@
  */
 package io.tileverse.parquetry.filter;
 
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
+
+import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
@@ -151,9 +154,9 @@ final class BloomFilterEvaluator {
             case Value.StringVal(String qv)
             when kind == PrimitiveKind.BYTE_ARRAY ->
                 OptionalLong.of(SplitBlockBloomFilter.hashBytes(qv.getBytes(StandardCharsets.UTF_8)));
-            case Value.BinaryVal(java.nio.ByteBuffer qv)
+            case Value.BinaryVal(MemorySegment qv)
             when kind == PrimitiveKind.BYTE_ARRAY || kind == PrimitiveKind.FIXED_LEN_BYTE_ARRAY ->
-                OptionalLong.of(hashByteBuffer(qv));
+                OptionalLong.of(hashSegment(qv));
             case Value.DateVal(java.time.LocalDate qv)
             when kind == PrimitiveKind.INT32 -> OptionalLong.of(SplitBlockBloomFilter.hashInt32((int) qv.toEpochDay()));
             case Value.TimestampVal(java.time.LocalDateTime qv, boolean _)
@@ -163,11 +166,9 @@ final class BloomFilterEvaluator {
         };
     }
 
-    /** Hashes the buffer's remaining bytes without disturbing its position. */
-    private static long hashByteBuffer(java.nio.ByteBuffer buf) {
-        java.nio.ByteBuffer view = buf.duplicate();
-        byte[] bytes = new byte[view.remaining()];
-        view.get(bytes);
+    /** Hashes a segment's bytes by extracting them into a primitive array (no position disturbance to worry about). */
+    private static long hashSegment(MemorySegment segment) {
+        byte[] bytes = segment.toArray(JAVA_BYTE);
         return SplitBlockBloomFilter.hashBytes(bytes);
     }
 }

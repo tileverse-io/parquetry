@@ -15,11 +15,12 @@
  */
 package io.tileverse.parquetry.read;
 
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -279,7 +280,7 @@ final class StreamingColumnReader implements ColumnReader {
         private final ColumnPath columnPath;
 
         PageCursor(ByteBuffer chunk, ColumnPath columnPath) {
-            this.chunk = chunk.duplicate().order(ByteOrder.LITTLE_ENDIAN);
+            this.chunk = chunk.duplicate().order(LITTLE_ENDIAN);
             this.columnPath = columnPath;
         }
 
@@ -340,9 +341,9 @@ final class StreamingColumnReader implements ColumnReader {
             }
             ByteBuffer slice = chunk.slice();
             slice.limit(length);
-            slice.order(ByteOrder.LITTLE_ENDIAN);
+            slice.order(LITTLE_ENDIAN);
             chunk.position(chunk.position() + length);
-            return slice.asReadOnlyBuffer().order(ByteOrder.LITTLE_ENDIAN);
+            return slice.asReadOnlyBuffer().order(LITTLE_ENDIAN);
         }
     }
 

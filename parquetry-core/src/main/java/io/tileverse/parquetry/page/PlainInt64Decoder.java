@@ -15,8 +15,9 @@
  */
 package io.tileverse.parquetry.page;
 
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
+
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.LongBuffer;
 
 /** PLAIN decoder for INT64: eight bytes, little-endian per value. */
@@ -26,7 +27,7 @@ final class PlainInt64Decoder implements PageDecoder<Long> {
 
     @Override
     public void load(ByteBuffer page, int valueCount) {
-        this.buffer = page.order(ByteOrder.LITTLE_ENDIAN).asLongBuffer();
+        this.buffer = page.order(LITTLE_ENDIAN).asLongBuffer();
     }
 
     @Override

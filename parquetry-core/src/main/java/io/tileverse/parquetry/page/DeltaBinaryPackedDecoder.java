@@ -15,8 +15,9 @@
  */
 package io.tileverse.parquetry.page;
 
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
+
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 
 /**
  * Shared DELTA_BINARY_PACKED decode engine. Works on {@code long} internally; INT32 and INT64 decoders delegate here.
@@ -51,7 +52,7 @@ final class DeltaBinaryPackedDecoder {
     private int valuesEmitted;
 
     void load(ByteBuffer page) {
-        this.buffer = page.order(ByteOrder.LITTLE_ENDIAN);
+        this.buffer = page.order(LITTLE_ENDIAN);
         this.blockSize = (int) readVarint();
         this.miniblocksPerBlock = (int) readVarint();
         this.valuesPerMiniblock = blockSize / miniblocksPerBlock;

@@ -73,8 +73,8 @@ class PredicateAdtTest {
 
     @Test
     void binaryValueIsReadOnly() {
-        java.nio.ByteBuffer buf = java.nio.ByteBuffer.wrap(new byte[] {1, 2, 3});
-        Value.BinaryVal v = new Value.BinaryVal(buf);
+        java.lang.foreign.MemorySegment seg = java.lang.foreign.MemorySegment.ofArray(new byte[] {1, 2, 3});
+        Value.BinaryVal v = new Value.BinaryVal(seg);
         assertThat(v.value().isReadOnly()).isTrue();
     }
 

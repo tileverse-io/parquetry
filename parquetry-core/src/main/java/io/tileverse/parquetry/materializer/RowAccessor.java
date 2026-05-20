@@ -23,8 +23,8 @@ import io.tileverse.parquetry.schema.ColumnPath;
  * Read access to an assembled row's leaf values, keyed by column path.
  *
  * <p>Values are boxed primitives ({@code Integer}, {@code Long}, {@code Float}, {@code Double}, {@code Boolean}) or a
- * read-only {@code ByteBuffer} for binary/INT96 columns. A {@code null} entry means the leaf was null at some ancestor
- * or at the leaf itself.
+ * read-only {@link java.lang.foreign.MemorySegment} for binary/INT96 columns. A {@code null} entry means the leaf was
+ * null at some ancestor or at the leaf itself.
  *
  * <p>Group-valued columns are not represented directly. Whether a group is null vs. having all-null children is
  * preserved by {@link #isGroupNull(ColumnPath)}.
