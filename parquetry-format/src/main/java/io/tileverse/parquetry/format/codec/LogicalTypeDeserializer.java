@@ -18,10 +18,18 @@ package io.tileverse.parquetry.format.codec;
 import java.io.IOException;
 import java.util.Optional;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import io.tileverse.parquetry.format.EdgeInterpolationAlgorithm;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.UnknownVariantException;
+import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
+import io.tileverse.parquetry.schema.geo.projjson.ProjJsonModule;
+
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Deserializer for the Thrift {@code LogicalType} union.
@@ -52,6 +60,18 @@ import io.tileverse.parquetry.format.UnknownVariantException;
  * </pre>
  */
 final class LogicalTypeDeserializer {
+
+    private static final Logger LOG = LoggerFactory.getLogger(LogicalTypeDeserializer.class);
+
+    /**
+     * Cached mapper for eager PROJJSON parsing. Wired with the parquetry {@link ProjJsonModule}; instantiation is the
+     * only allocation and the mapper itself is thread-safe to reuse for
+     * {@link tools.jackson.databind.ObjectMapper#readValue} calls (per Jackson 3 contract). Per
+     * [[feedback-jackson-module-no-spi]] the module is registered explicitly here rather than via
+     * {@code findAndRegisterModules()} so this never reaches mappers parquetry does not own.
+     */
+    private static final JsonMapper CRS_MAPPER =
+            JsonMapper.builder().addModule(new ProjJsonModule()).build();
 
     private LogicalTypeDeserializer() {}
 
@@ -206,9 +226,12 @@ final class LogicalTypeDeserializer {
         return new LogicalType.Timestamp(isAdjustedToUTC, unit);
     }
 
-    /** Reads {@code GeometryType}: crs (field 1, string, optional). */
+    /**
+     * Reads {@code GeometryType}: crs (field 1, string, optional). The raw PROJJSON string is parsed eagerly into the
+     * typed {@link CoordinateReferenceSystem} ADT via {@link #parseCrs}.
+     */
     private static LogicalType.Geometry readGeometry(CompactProtocolReader r) throws IOException {
-        Optional<String> crs = Optional.empty();
+        Optional<CoordinateReferenceSystem> crs = Optional.empty();
         int lastFieldId = 0;
         while (true) {
             FieldHeader fh = r.readFieldHeader(lastFieldId);
@@ -217,7 +240,7 @@ final class LogicalTypeDeserializer {
             }
             lastFieldId = fh.fieldId();
             if (fh.fieldId() == 1) {
-                crs = Optional.of(r.readString());
+                crs = parseCrs(r.readString());
             } else {
                 r.skipField(fh.type());
             }
@@ -231,7 +254,7 @@ final class LogicalTypeDeserializer {
      * {@link EdgeInterpolationAlgorithm#valueOf(int)}; unknown codes are tolerated for forward-compat.
      */
     private static LogicalType.Geography readGeography(CompactProtocolReader r) throws IOException {
-        Optional<String> crs = Optional.empty();
+        Optional<CoordinateReferenceSystem> crs = Optional.empty();
         Optional<EdgeInterpolationAlgorithm> algorithm = Optional.empty();
         int lastFieldId = 0;
         while (true) {
@@ -241,7 +264,7 @@ final class LogicalTypeDeserializer {
             }
             lastFieldId = fh.fieldId();
             switch (fh.fieldId()) {
-                case 1 -> crs = Optional.of(r.readString());
+                case 1 -> crs = parseCrs(r.readString());
                 case 2 -> {
                     int code = r.readI32();
                     try {
@@ -255,6 +278,24 @@ final class LogicalTypeDeserializer {
             }
         }
         return new LogicalType.Geography(crs, algorithm);
+    }
+
+    /**
+     * Parses a PROJJSON string from the Thrift wire into the typed {@link CoordinateReferenceSystem} ADT. A blank or
+     * malformed PROJJSON value degrades to {@link Optional#empty()} with a WARN log entry; the column stays readable
+     * and the consumer falls back to the GeoParquet spec default (typically OGC:CRS84).
+     */
+    private static Optional<CoordinateReferenceSystem> parseCrs(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(CRS_MAPPER.readValue(raw, CoordinateReferenceSystem.class));
+        } catch (JacksonException e) {
+            LOG.warn(
+                    "Malformed PROJJSON on Geometry/Geography logical type; treating CRS as empty: {}", e.getMessage());
+            return Optional.empty();
+        }
     }
 
     /** Reads {@code IntType}: bitWidth (field 1, i8) and isSigned (field 2, bool). */

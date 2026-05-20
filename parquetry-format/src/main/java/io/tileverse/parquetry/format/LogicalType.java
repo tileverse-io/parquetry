@@ -17,6 +17,8 @@ package io.tileverse.parquetry.format;
 
 import java.util.Optional;
 
+import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
+
 /**
  * Parquet logical-type annotation (Thrift union {@code LogicalType}).
  *
@@ -136,19 +138,21 @@ public sealed interface LogicalType
     /**
      * GeoParquet 2.0 {@code GEOMETRY} logical type.
      *
-     * @param crs PROJJSON document as a raw string when present; {@link Optional#empty()} means "use the GeoParquet
-     *     spec default" (typically OGC:CRS84). parquetry exposes the raw JSON so consumers can plug in their own
-     *     PROJJSON parser.
+     * @param crs typed PROJJSON coordinate reference system when present; {@link Optional#empty()} means "use the
+     *     GeoParquet spec default" (typically OGC:CRS84). PROJJSON is parsed eagerly at footer-read time;
+     *     {@link CoordinateReferenceSystem.Unknown} surfaces any {@code type} discriminator not yet modeled, and a
+     *     malformed PROJJSON string degrades to {@link Optional#empty()} so the column is still readable.
      */
-    record Geometry(Optional<String> crs) implements LogicalType {}
+    record Geometry(Optional<CoordinateReferenceSystem> crs) implements LogicalType {}
 
     /**
      * GeoParquet 2.0 {@code GEOGRAPHY} logical type.
      *
-     * @param crs PROJJSON document as a raw string when present; {@link Optional#empty()} means "use the GeoParquet
-     *     spec default".
+     * @param crs typed PROJJSON coordinate reference system when present; {@link Optional#empty()} means "use the
+     *     GeoParquet spec default".
      * @param algorithm edge interpolation algorithm; {@link Optional#empty()} means "use the spec default"
      *     ({@code SPHERICAL}).
      */
-    record Geography(Optional<String> crs, Optional<EdgeInterpolationAlgorithm> algorithm) implements LogicalType {}
+    record Geography(Optional<CoordinateReferenceSystem> crs, Optional<EdgeInterpolationAlgorithm> algorithm)
+            implements LogicalType {}
 }

@@ -345,7 +345,8 @@ class RowGroupPipelineTest {
                 /*encodingStats*/ List.of(),
                 /*bloomFilterOffset*/ OptionalLong.empty(),
                 /*bloomFilterLength*/ OptionalLong.empty(),
-                /*sizeStatistics*/ Optional.empty());
+                /*sizeStatistics*/ Optional.empty(),
+                /*geospatialStatistics*/ Optional.empty());
         ColumnChunk chunk = new ColumnChunk(
                 /*filePath*/ Optional.empty(),
                 /*fileOffset*/ ordinal * 1000L,

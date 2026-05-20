@@ -22,6 +22,7 @@ import io.tileverse.storage.RangeReader;
 
 import io.tileverse.parquetry.format.BloomFilterHeader;
 import io.tileverse.parquetry.format.MalformedFileException;
+import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.format.UnsupportedFeatureException;
 import io.tileverse.parquetry.format.codec.ParquetFormatDeserializer;
 

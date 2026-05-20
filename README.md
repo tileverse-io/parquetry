@@ -2,7 +2,7 @@
 
 Hadoop-free, Java-25, clean-room Apache Parquet library with native GeoParquet 2.0 support. Reads Parquet 1.x and 2.x files; writes Parquet 2.x.
 
-**Status:** read-only core is feature-complete (Parquet 1.x and 2.x, full Dremel decoding, four-tier filter pushdown, native GeoParquet 1.x and 2.0 reads via the JTS materializer). Bloom-filter pushdown, vectorized batch API, and the write path are under active development.
+**Status:** read-only core for Parquet 1.x and 2.x, full Dremel decoding, four-tier filter pushdown (stats, dictionary, column-index, bloom, record-level), native GeoParquet 1.x and 2.0 reads via the JTS materializer. Typed PROJJSON and GeoParquetMetadata models ship as part of the format layer (`io.tileverse.parquetry.schema.geo.*`). The vectorized batch API and the write path are not yet implemented.
 
 ## Build
 

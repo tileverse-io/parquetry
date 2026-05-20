@@ -36,12 +36,6 @@
       <groupId>org.brotli</groupId>
       <artifactId>dec</artifactId>
     </dependency>
-    <!-- GeoParquet 1.x "geo" key-value metadata parser (GeoMetadataBridge). -->
-    <dependency>
-      <groupId>tools.jackson.core</groupId>
-      <artifactId>jackson-databind</artifactId>
-    </dependency>
-
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>

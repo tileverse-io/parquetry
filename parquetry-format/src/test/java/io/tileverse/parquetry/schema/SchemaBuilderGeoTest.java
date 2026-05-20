@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.dataset;
+package io.tileverse.parquetry.schema;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -25,13 +25,15 @@ import java.util.OptionalInt;
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.format.LogicalType;
-import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.schema.Field;
-import io.tileverse.parquetry.schema.ParquetSchema;
-import io.tileverse.parquetry.schema.PrimitiveKind;
-import io.tileverse.parquetry.schema.Repetition;
+import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
+import io.tileverse.parquetry.schema.geo.projjson.GeographicCRS;
 
-class GeoMetadataBridgeTest {
+/**
+ * Covers {@link SchemaBuilder#synthesizeGeoLogicalTypes} - the GeoParquet 1.x "geo" key-value metadata fold-in path.
+ * Cases mirror the contract: planar/default edges become Geometry, spherical edges become Geography, missing or
+ * malformed metadata leaves the schema untouched, and a native annotation on the column always wins over the JSON.
+ */
+class SchemaBuilderGeoTest {
 
     private static final ParquetSchema GEO_SCHEMA = new ParquetSchema(new Field.Group(
             "root",
@@ -51,14 +53,18 @@ class GeoMetadataBridgeTest {
 
     @Test
     void missingGeoMetadataLeavesSchemaUnchanged() {
-        ParquetSchema out = GeoMetadataBridge.apply(GEO_SCHEMA, Map.of());
-        assertThat(out).isSameAs(GEO_SCHEMA);
+        ParquetSchema out = SchemaBuilder.synthesizeGeoLogicalTypes(GEO_SCHEMA, Map.of());
+        assertThat(out)
+                .as("no 'geo' KV entry should leave the schema reference equal")
+                .isSameAs(GEO_SCHEMA);
     }
 
     @Test
     void malformedGeoJsonLogsAndReturnsSchemaUnchanged() {
-        ParquetSchema out = GeoMetadataBridge.apply(GEO_SCHEMA, Map.of("geo", "{not json"));
-        assertThat(out).isSameAs(GEO_SCHEMA);
+        ParquetSchema out = SchemaBuilder.synthesizeGeoLogicalTypes(GEO_SCHEMA, Map.of("geo", "{not json"));
+        assertThat(out)
+                .as("malformed 'geo' JSON must degrade gracefully rather than throw")
+                .isSameAs(GEO_SCHEMA);
     }
 
     @Test
@@ -75,12 +81,16 @@ class GeoMetadataBridgeTest {
                   }
                 }
                 """;
-        ParquetSchema out = GeoMetadataBridge.apply(GEO_SCHEMA, Map.of("geo", geo));
+        ParquetSchema out = SchemaBuilder.synthesizeGeoLogicalTypes(GEO_SCHEMA, Map.of("geo", geo));
         Field.Primitive leaf =
                 (Field.Primitive) out.find(ColumnPath.of("geometry")).orElseThrow();
-        assertThat(leaf.logicalType()).containsInstanceOf(LogicalType.Geometry.class);
+        assertThat(leaf.logicalType())
+                .as("default / planar 'geo' column should synthesize Geometry")
+                .containsInstanceOf(LogicalType.Geometry.class);
         LogicalType.Geometry geom = (LogicalType.Geometry) leaf.logicalType().orElseThrow();
-        assertThat(geom.crs()).isEmpty(); // absent crs surfaces as Optional.empty (spec default)
+        assertThat(geom.crs())
+                .as("absent 'crs' surfaces as Optional.empty (consumer falls back to spec default OGC:CRS84)")
+                .isEmpty();
     }
 
     @Test
@@ -96,13 +106,23 @@ class GeoMetadataBridgeTest {
                   }
                 }
                 """;
-        ParquetSchema out = GeoMetadataBridge.apply(GEO_SCHEMA, Map.of("geo", geo));
+        ParquetSchema out = SchemaBuilder.synthesizeGeoLogicalTypes(GEO_SCHEMA, Map.of("geo", geo));
         Field.Primitive leaf =
                 (Field.Primitive) out.find(ColumnPath.of("geometry")).orElseThrow();
-        assertThat(leaf.logicalType()).containsInstanceOf(LogicalType.Geography.class);
+        assertThat(leaf.logicalType())
+                .as("'edges: spherical' should synthesize Geography")
+                .containsInstanceOf(LogicalType.Geography.class);
         LogicalType.Geography geog = (LogicalType.Geography) leaf.logicalType().orElseThrow();
-        assertThat(geog.crs()).isPresent();
-        assertThat(geog.crs().orElseThrow()).contains("WGS 84");
+        assertThat(geog.crs())
+                .as("inline PROJJSON should be parsed eagerly into the typed CRS ADT")
+                .isPresent();
+        CoordinateReferenceSystem crs = geog.crs().orElseThrow();
+        assertThat(crs)
+                .as("WGS 84 PROJJSON should land as a GeographicCRS record")
+                .isInstanceOf(GeographicCRS.class);
+        assertThat(crs.name())
+                .as("CRS name should round-trip through the typed parse")
+                .contains("WGS 84");
     }
 
     @Test
@@ -114,41 +134,44 @@ class GeoMetadataBridgeTest {
                   }
                 }
                 """;
-        ParquetSchema out = GeoMetadataBridge.apply(GEO_SCHEMA, Map.of("geo", geo));
+        ParquetSchema out = SchemaBuilder.synthesizeGeoLogicalTypes(GEO_SCHEMA, Map.of("geo", geo));
         Field.Primitive geometry =
                 (Field.Primitive) out.find(ColumnPath.of("geometry")).orElseThrow();
-        assertThat(geometry.logicalType()).isEmpty();
+        assertThat(geometry.logicalType())
+                .as("an unknown column in 'geo' should not annotate any actual leaf")
+                .isEmpty();
     }
 
     @Test
     void nativeGeometryAnnotationWinsOverGeoMetadata() {
-        // 2.0 file: schema arrives with the native Geometry logical type already set on the geometry column.
-        LogicalType.Geometry nativeType = new LogicalType.Geometry(Optional.of("{\"name\":\"EPSG:3857\"}"));
-        ParquetSchema schemaWithNative = nativeGeometrySchema(nativeType);
+        LogicalType.Geometry nativeType = new LogicalType.Geometry(Optional.<CoordinateReferenceSystem>of(
+                new GeographicCRS(Optional.of("EPSG:3857"), Optional.empty(), Optional.empty(), Optional.empty())));
+        ParquetSchema schemaWithNative = schemaWithAnnotation(nativeType);
 
         String geo = """
                 {
                   "columns": {
                     "geometry": {
                       "encoding": "WKB",
-                      "crs": {"name":"WGS 84"}
+                      "crs": {"type":"GeographicCRS","name":"WGS 84"}
                     }
                   }
                 }
                 """;
-        ParquetSchema out = GeoMetadataBridge.apply(schemaWithNative, Map.of("geo", geo));
+        ParquetSchema out = SchemaBuilder.synthesizeGeoLogicalTypes(schemaWithNative, Map.of("geo", geo));
         Field.Primitive leaf =
                 (Field.Primitive) out.find(ColumnPath.of("geometry")).orElseThrow();
-        // Native CRS preserved verbatim; the divergent "geo" KV did not overwrite it.
-        assertThat(leaf.logicalType()).contains(nativeType);
+        assertThat(leaf.logicalType())
+                .as("native Geometry annotation must be preserved even when 'geo' KV would synthesize a different CRS")
+                .contains(nativeType);
     }
 
     @Test
     void nativeGeographyAnnotationWinsOverGeoMetadata() {
         LogicalType.Geography nativeType = new LogicalType.Geography(Optional.empty(), Optional.empty());
-        ParquetSchema schemaWithNative = nativeGeographySchema(nativeType);
+        ParquetSchema schemaWithNative = schemaWithAnnotation(nativeType);
 
-        // "geo" KV says Geometry (planar) - disagrees with native Geography. Native still wins.
+        // "geo" KV would synthesize Geometry (planar) - disagrees with native Geography. Native still wins.
         String geo = """
                 {
                   "columns": {
@@ -156,19 +179,20 @@ class GeoMetadataBridgeTest {
                   }
                 }
                 """;
-        ParquetSchema out = GeoMetadataBridge.apply(schemaWithNative, Map.of("geo", geo));
+        ParquetSchema out = SchemaBuilder.synthesizeGeoLogicalTypes(schemaWithNative, Map.of("geo", geo));
         Field.Primitive leaf =
                 (Field.Primitive) out.find(ColumnPath.of("geometry")).orElseThrow();
-        assertThat(leaf.logicalType()).contains(nativeType);
+        assertThat(leaf.logicalType())
+                .as("native Geography wins even when 'geo' KV would have synthesized Geometry")
+                .contains(nativeType);
     }
 
     @Test
     void nativeAnnotationAgreesWithGeoMetadataAndIsKeptUnchanged() {
         LogicalType.Geometry nativeType = new LogicalType.Geometry(Optional.empty());
-        ParquetSchema schemaWithNative = nativeGeometrySchema(nativeType);
+        ParquetSchema schemaWithNative = schemaWithAnnotation(nativeType);
 
-        // "geo" KV would have produced the same Geometry(Optional.empty()) - no warning expected at runtime, native
-        // path is taken silently. We only assert the resulting schema; warning behavior is observed via log level.
+        // "geo" KV would also produce Geometry(Optional.empty()): silent agreement path.
         String geo = """
                 {
                   "columns": {
@@ -176,20 +200,12 @@ class GeoMetadataBridgeTest {
                   }
                 }
                 """;
-        ParquetSchema out = GeoMetadataBridge.apply(schemaWithNative, Map.of("geo", geo));
+        ParquetSchema out = SchemaBuilder.synthesizeGeoLogicalTypes(schemaWithNative, Map.of("geo", geo));
         Field.Primitive leaf =
                 (Field.Primitive) out.find(ColumnPath.of("geometry")).orElseThrow();
-        assertThat(leaf.logicalType()).contains(nativeType);
-    }
-
-    // --- helpers ---
-
-    private static ParquetSchema nativeGeometrySchema(LogicalType.Geometry annotation) {
-        return schemaWithAnnotation(annotation);
-    }
-
-    private static ParquetSchema nativeGeographySchema(LogicalType.Geography annotation) {
-        return schemaWithAnnotation(annotation);
+        assertThat(leaf.logicalType())
+                .as("agreeing native + 'geo' KV should leave the native annotation unchanged")
+                .contains(nativeType);
     }
 
     private static ParquetSchema schemaWithAnnotation(LogicalType annotation) {

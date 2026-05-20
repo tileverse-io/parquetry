@@ -25,6 +25,7 @@ import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.CompressionCodec;
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.EncodingStats;
+import io.tileverse.parquetry.format.GeospatialStatistics;
 import io.tileverse.parquetry.format.KeyValue;
 import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.SizeStatistics;
@@ -51,6 +52,7 @@ import io.tileverse.parquetry.format.Statistics;
  *   14: optional i64 bloom_filter_offset
  *   15: optional i32 bloom_filter_length
  *   16: optional SizeStatistics size_statistics
+ *   17: optional GeospatialStatistics geospatial_statistics
  * }
  * </pre>
  */
@@ -75,6 +77,7 @@ final class ColumnMetaDataDeserializer {
         OptionalLong bloomFilterOffset = OptionalLong.empty();
         OptionalLong bloomFilterLength = OptionalLong.empty();
         Optional<SizeStatistics> sizeStatistics = Optional.empty();
+        Optional<GeospatialStatistics> geospatialStatistics = Optional.empty();
         int lastFieldId = 0;
         while (true) {
             FieldHeader fh = r.readFieldHeader(lastFieldId);
@@ -99,6 +102,7 @@ final class ColumnMetaDataDeserializer {
                 case 14 -> bloomFilterOffset = OptionalLong.of(r.readI64());
                 case 15 -> bloomFilterLength = OptionalLong.of(r.readI32());
                 case 16 -> sizeStatistics = Optional.of(SizeStatisticsDeserializer.read(r));
+                case 17 -> geospatialStatistics = Optional.of(GeospatialStatisticsDeserializer.read(r));
                 default -> r.skipField(fh.type());
             }
         }
@@ -118,7 +122,8 @@ final class ColumnMetaDataDeserializer {
                 encodingStats,
                 bloomFilterOffset,
                 bloomFilterLength,
-                sizeStatistics);
+                sizeStatistics,
+                geospatialStatistics);
     }
 
     private static List<Encoding> readEncodingList(CompactProtocolReader r) throws IOException {

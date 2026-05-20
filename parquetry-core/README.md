@@ -1,37 +1,36 @@
 # parquetry-core
 
-The schema model, codecs, page decoders, filter pushdown, and row-API `ParquetDataset` facade. This is the module most consumers actually depend on.
+Page decoders, codecs, filter pushdown, the Dremel walker, and the row-API `ParquetDataset` facade. This is the module most consumers actually depend on. The schema model and wire records live in `parquetry-format` (one JAR upstream).
 
 ## What it does
 
-- Builds a sealed-record schema tree from the format-module's flat `SchemaElement` stream (`schema/`).
 - Resolves data-page bytes from a `RangeReader` and threads them through per-column streaming decoders (`read/`).
 - Implements the four-tier filter pushdown: stats, dictionary, column-index, record-level (`filter/`).
 - Implements the Dremel walker for repeated / list / map / nested-struct columns (`read/RecordAssembler`, `read/ValueBuilder`).
-- Hooks the GeoParquet 1.x metadata bridge that synthesizes `Geometry` / `Geography` logical types on WKB columns at `ParquetDataset.open()` (`dataset/GeoMetadataBridge`).
 - Exposes the `Materializer<T>` SPI for callers that want a custom row shape (Apache Arrow, GeoTools features, custom records).
+- Resolves the file schema via `SchemaBuilder.build(elements, keyValueMetadata)` at `ParquetDataset.open()`. On GeoParquet 1.x files, the two-argument overload folds the `"geo"` JSON into the schema by synthesizing `Geometry` / `Geography` logical types on the matching WKB columns. Native (2.0) annotations always win.
 
 ## Where it fits
 
 ```
-        parquetry-format records                tileverse-storage RangeReader
-                  \                                       /
-                   v                                     v
-                  +------------------------------------------+
-                  | parquetry-core                           |  <- you are here
-                  |   schema   filter   page   codec   read  |
-                  |              dataset/ParquetDataset             |
-                  +------------------------------------------+
-                                    |
-                  +-----------------+-----------------+
-                  v                 v                 v
-              row API          materializer SPI    GeoMetadataBridge
-              Stream<           Stream<T> via         (1.x "geo" KV)
-              ParquetRecord>    Materializer<T>            |
-                                    |                      v
-                                    v                  Geometry / Geography
-                            parquetry-geo-jts          logical types
-                            (JtsMaterializer)
+        parquetry-format records + schema/* + schema.geo.*    tileverse-storage RangeReader
+                              \                                       /
+                               v                                     v
+                              +------------------------------------------+
+                              | parquetry-core                           |  <- you are here
+                              |   filter   page   codec   read   record  |
+                              |              dataset/ParquetDataset      |
+                              +------------------------------------------+
+                                                |
+                                       +--------+--------+
+                                       v                 v
+                                   row API          materializer SPI
+                                   Stream<           Stream<T> via
+                                   ParquetRecord>    Materializer<T>
+                                                          |
+                                                          v
+                                                  parquetry-geo-jts
+                                                  (JtsMaterializer)
 ```
 
 ## Public API surface
@@ -51,14 +50,13 @@ try (Storage storage = StorageFactory.open(file.getParent().toUri());
 }
 ```
 
-Eight public packages: `dataset`, `filter`, `materializer`, `page` (only `PageDecoder` + `LevelDecoder`), `read` (only `ReadOptions` + `ConcurrencyMode` + `PruningDecision` + `DecryptionKeyRetriever`), `record`, `schema`, `codec` (only `Codec` + `CodecRegistry`). Everything else is package-private.
+Public packages: `dataset`, `filter`, `materializer`, `page` (only `PageDecoder` + `LevelDecoder`), `read` (only `ReadOptions` + `ConcurrencyMode` + `PruningDecision` + `DecryptionKeyRetriever`), `record`, `codec` (only `Codec` + `CodecRegistry`). Everything else is package-private. The `schema` and `schema.geo.*` packages are public API but they ship in `parquetry-format`.
 
 ## Dependencies
 
-- `parquetry-format` (provides the Thrift records and the `ParquetFormat` facade).
-- `io.airlift:aircompressor-v3` (Snappy / Zstd / Lz4Raw decompression + future bloom-filter xxHash64).
+- `parquetry-format` (provides the Thrift records, the `ParquetFormat` facade, the schema model, the typed PROJJSON / GeoParquetMetadata ADTs, and `SchemaBuilder` which folds `"geo"` JSON into the schema at footer-read time).
+- `io.airlift:aircompressor-v3` (Snappy / Zstd / Lz4Raw decompression + bloom-filter xxHash64).
 - `org.brotli:dec` (Brotli decompression).
-- `tools.jackson.core:jackson-databind` (Jackson 3) - only for the GeoMetadataBridge's `"geo"` JSON parse.
 - `io.tileverse.storage:tileverse-storage-core` (transitively via parquetry-format).
 
 No `parquet-*`, `hadoop-*`, `libthrift`, or `avro` at compile or runtime.

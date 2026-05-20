@@ -130,6 +130,11 @@
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-enforcer-plugin</artifactId>
+          <version>3.5.0</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-surefire-plugin</artifactId>
           <version>3.5.2</version>
           <configuration>
@@ -374,6 +379,45 @@
   </build>
 
   <profiles>
+    <profile>
+      <!--
+        Satisfies the enforcer dependencyConvergence rule: no transitive dependency on the non-test classpath
+        may resolve two different versions for the same GAV. Overrides go in this profile's dependencyManagement
+        so they're only paid when convergence is actually being checked. Active by default; opt out with
+        -DskipDependencyConvergence.
+      -->
+      <id>dependencyConvergence</id>
+      <activation>
+        <activeByDefault>false</activeByDefault>
+        <property>
+          <name>!skipDependencyConvergence</name>
+        </property>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-enforcer-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>enforce-dependency-convergence</id>
+                <goals>
+                  <goal>enforce</goal>
+                </goals>
+                <configuration>
+                  <rules>
+                    <dependencyConvergence>
+                      <excludedScopes>test</excludedScopes>
+                    </dependencyConvergence>
+                  </rules>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+
     <profile>
       <id>qa</id>
       <build>

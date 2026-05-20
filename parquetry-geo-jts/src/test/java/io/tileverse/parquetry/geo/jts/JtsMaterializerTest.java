@@ -37,6 +37,10 @@ import io.tileverse.parquetry.schema.Field;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
+import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
+import io.tileverse.parquetry.schema.geo.projjson.GeographicCRS;
+import io.tileverse.parquetry.schema.geo.projjson.Identifier;
+import io.tileverse.parquetry.schema.geo.projjson.ProjectedCRS;
 
 class JtsMaterializerTest {
 
@@ -90,6 +94,66 @@ class JtsMaterializerTest {
         Point decoded = (Point) out.get(GEOM);
         assertThat(decoded.getX()).isEqualTo(-71.0589);
         assertThat(decoded.getY()).isEqualTo(42.3601);
+    }
+
+    @Test
+    void decodedGeometryCarriesEpsgSridDerivedFromTypedCrs() {
+        CoordinateReferenceSystem epsg3857 = new ProjectedCRS(
+                Optional.of("WGS 84 / Pseudo-Mercator"),
+                Optional.of(new Identifier("EPSG", "3857", Optional.empty(), Optional.empty())),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty());
+        ParquetSchema schema = schemaWithGeometryAt("geometry", new LogicalType.Geometry(Optional.of(epsg3857)));
+        GeometryFactory gf = new GeometryFactory();
+        Point pt = gf.createPoint(new Coordinate(0.0, 0.0));
+        ByteBuffer wkb = ByteBuffer.wrap(new WKBWriter().write(pt));
+
+        JtsMaterializer materializer = new JtsMaterializer(schema);
+        assertThat(materializer.sridFor(GEOM))
+                .as("EPSG:3857 should be discovered at construction time and exposed via sridFor")
+                .hasValue(3857);
+
+        Map<ColumnPath, Object> out = materializer.materialize(schema, rowOf(Map.of(GEOM, wkb)));
+        Geometry decoded = (Geometry) out.get(GEOM);
+        assertThat(decoded.getSRID())
+                .as("decoded geometry should carry the EPSG SRID derived from its typed CRS")
+                .isEqualTo(3857);
+    }
+
+    @Test
+    void absentCrsLeavesJtsDefaultSrid() {
+        // Optional.empty() on the typed CRS means "use the GeoParquet spec default" (OGC:CRS84); the materializer
+        // intentionally does not assume 4326 - consumers that want 4326 stamp it themselves.
+        ParquetSchema schema = schemaWithGeometryAt("geometry", new LogicalType.Geometry(Optional.empty()));
+        GeometryFactory gf = new GeometryFactory();
+        Point pt = gf.createPoint(new Coordinate(0.0, 0.0));
+        ByteBuffer wkb = ByteBuffer.wrap(new WKBWriter().write(pt));
+
+        JtsMaterializer materializer = new JtsMaterializer(schema);
+        assertThat(materializer.sridFor(GEOM))
+                .as("absent CRS should surface as empty rather than guessing 4326")
+                .isEmpty();
+
+        Map<ColumnPath, Object> out = materializer.materialize(schema, rowOf(Map.of(GEOM, wkb)));
+        Geometry decoded = (Geometry) out.get(GEOM);
+        assertThat(decoded.getSRID())
+                .as("absent CRS should leave JTS's default SRID (0)")
+                .isZero();
+    }
+
+    @Test
+    void crsWithoutEpsgIdentifierLeavesSridUnset() {
+        // GeographicCRS without an id() - i.e. an inline PROJJSON definition with no authority block. The materializer
+        // should not invent an SRID from the name alone.
+        CoordinateReferenceSystem nameOnly =
+                new GeographicCRS(Optional.of("Some Local CRS"), Optional.empty(), Optional.empty(), Optional.empty());
+        ParquetSchema schema = schemaWithGeometryAt("geometry", new LogicalType.Geometry(Optional.of(nameOnly)));
+
+        JtsMaterializer materializer = new JtsMaterializer(schema);
+        assertThat(materializer.sridFor(GEOM))
+                .as("CRS without an Identifier should not yield an SRID")
+                .isEmpty();
     }
 
     // --- helpers ---

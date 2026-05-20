@@ -273,7 +273,8 @@ class RowGroupReaderTest {
                 /*encodingStats*/ List.of(),
                 /*bloomFilterOffset*/ OptionalLong.empty(),
                 /*bloomFilterLength*/ OptionalLong.empty(),
-                /*sizeStatistics*/ Optional.empty());
+                /*sizeStatistics*/ Optional.empty(),
+                /*geospatialStatistics*/ Optional.empty());
     }
 
     // --- expected row values ---

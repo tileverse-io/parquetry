@@ -49,6 +49,9 @@ import java.util.OptionalLong;
  * @param bloomFilterLength byte length of this column's bloom filter including header; unset when no bloom filter was
  *     written ({@code bloom_filter_length} in the thrift schema)
  * @param sizeStatistics optional {@link SizeStatistics} for memory estimation and filter pushdown
+ * @param geospatialStatistics optional {@link GeospatialStatistics} for GEOMETRY and GEOGRAPHY columns; carries
+ *     bounding-box and observed-WKB-type metadata used by spatial pruning ({@code geospatial_statistics} in the thrift
+ *     schema)
  */
 public record ColumnMetaData(
         PhysicalType type,
@@ -66,7 +69,8 @@ public record ColumnMetaData(
         List<EncodingStats> encodingStats,
         OptionalLong bloomFilterOffset,
         OptionalLong bloomFilterLength,
-        Optional<SizeStatistics> sizeStatistics) {
+        Optional<SizeStatistics> sizeStatistics,
+        Optional<GeospatialStatistics> geospatialStatistics) {
 
     public ColumnMetaData {
         encodings = List.copyOf(encodings);

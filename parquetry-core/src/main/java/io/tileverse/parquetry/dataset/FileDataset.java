@@ -92,12 +92,11 @@ final class FileDataset implements ParquetDataset {
     static FileDataset open(RangeReader reader) {
         Objects.requireNonNull(reader, "reader");
         FileMetaData footer = ParquetFormat.readFooter(reader);
-        ParquetSchema rawSchema = SchemaBuilder.build(footer.schema());
         Map<String, String> kvMetadata = collapseKeyValueMetadata(footer.keyValueMetadata());
-        // GeoParquet 1.x files carry no native logical type on geometry columns; the bridge synthesizes the
-        // Geometry / Geography annotation from the file's "geo" key-value metadata so downstream code (e.g. the
-        // JtsMaterializer in parquetry-geo-jts) only needs to look at the logical type.
-        ParquetSchema fileSchema = GeoMetadataBridge.apply(rawSchema, kvMetadata);
+        // The two-arg SchemaBuilder.build folds GeoParquet 1.x's "geo" key-value metadata into the schema, synthesizing
+        // a native Geometry / Geography logical-type annotation on WKB columns that lack one. Downstream code (e.g.
+        // the JtsMaterializer in parquetry-geo-jts) sees a single shape regardless of file version.
+        ParquetSchema fileSchema = SchemaBuilder.build(footer.schema(), kvMetadata);
         List<RowGroup> rgView = toRowGroupView(footer);
         return new FileDataset(reader, footer, fileSchema, kvMetadata, rgView);
     }

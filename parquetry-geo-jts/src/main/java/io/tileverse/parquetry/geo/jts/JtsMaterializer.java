@@ -17,20 +17,26 @@ package io.tileverse.parquetry.geo.jts;
 
 import java.nio.ByteBuffer;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.io.ParseException;
 import org.locationtech.jts.io.WKBReader;
 
+import io.tileverse.parquetry.format.EdgeInterpolationAlgorithm;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.materializer.RowAccessor;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Field;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
+import io.tileverse.parquetry.schema.geo.projjson.Identifier;
 
 /**
  * Materializer that surfaces geometry-tagged columns as {@link Geometry} instances decoded from WKB.
@@ -40,9 +46,16 @@ import io.tileverse.parquetry.schema.ParquetSchema;
  * other column pass through the values the row accessor provides (boxed primitives, {@link java.nio.ByteBuffer} for
  * binary, {@link java.util.List} / {@link java.util.Map} for repeated / map columns).
  *
- * <p>Uniform across GeoParquet 1.x and 2.0: parquetry-core's {@code GeoMetadataBridge} synthesizes the Geometry /
- * Geography logical type on 1.x files at {@code ParquetDataset.open()}, so the materializer only needs to inspect the
- * schema's leaf annotations to know which columns to decode.
+ * <p>Uniform across GeoParquet 1.x and 2.0: parquetry-format's {@code SchemaBuilder} folds the {@code "geo"} JSON into
+ * the schema at footer-read time on 1.x files, so the materializer only needs to inspect the schema's leaf annotations
+ * to know which columns to decode.
+ *
+ * <p>SRID handling: the typed {@link CoordinateReferenceSystem} on the leaf's logical-type annotation is consulted at
+ * construction time; when it has an {@code EPSG} {@link Identifier}, the decoded {@link Geometry} carries that SRID via
+ * {@link Geometry#setSRID(int)}. Columns with no CRS, or with a CRS whose {@link Identifier#epsgCode()} is empty (e.g.
+ * an inline PROJJSON document without an EPSG entry, or {@code OGC:CRS84}), keep JTS's default SRID (0). The spec maps
+ * {@code Optional.empty()} CRS on a Geometry leaf to the GeoParquet default (OGC:CRS84); consumers that need
+ * {@code 4326} for that case set it themselves on top of this materializer's output.
  *
  * <p>This class is thread-confined: a single {@code WKBReader} instance is reused per materializer instance. Pass one
  * materializer per reader thread.
@@ -51,15 +64,18 @@ public final class JtsMaterializer implements Materializer<Map<ColumnPath, Objec
 
     private final WKBReader wkbReader;
     private final Set<ColumnPath> geoColumns;
+    private final Map<ColumnPath, Integer> sridByColumn;
 
     /**
      * Creates a materializer that decodes the geometry / geography columns of {@code projectedSchema}. The materializer
-     * caches the set of geo column paths so each {@link #materialize(ParquetSchema, RowAccessor)} call only does map
-     * lookups, not schema walks.
+     * caches the set of geo column paths and any resolvable EPSG SRIDs so each {@link #materialize(ParquetSchema,
+     * RowAccessor)} call only does map lookups, not schema walks.
      */
     public JtsMaterializer(ParquetSchema projectedSchema) {
         this.wkbReader = new WKBReader();
-        this.geoColumns = collectGeoColumns(projectedSchema);
+        Map<ColumnPath, Integer> sridScratch = new LinkedHashMap<>();
+        this.geoColumns = collectGeoColumns(projectedSchema, sridScratch);
+        this.sridByColumn = Map.copyOf(sridScratch);
     }
 
     /**
@@ -70,6 +86,16 @@ public final class JtsMaterializer implements Materializer<Map<ColumnPath, Objec
         return Set.copyOf(geoColumns);
     }
 
+    /**
+     * Returns the EPSG SRID this materializer will stamp on geometries decoded from {@code path}, when one is
+     * resolvable from the column's typed CRS. {@link OptionalInt#empty()} means either the column is not a geo column,
+     * its CRS is absent (spec-default OGC:CRS84), or its {@link Identifier} did not yield an EPSG code.
+     */
+    public OptionalInt sridFor(ColumnPath path) {
+        Integer srid = sridByColumn.get(path);
+        return srid == null ? OptionalInt.empty() : OptionalInt.of(srid);
+    }
+
     @Override
     public Map<ColumnPath, Object> materialize(ParquetSchema projectedSchema, RowAccessor row) {
         Map<ColumnPath, Object> values = row.values();
@@ -78,7 +104,7 @@ public final class JtsMaterializer implements Materializer<Map<ColumnPath, Objec
             ColumnPath path = entry.getKey();
             Object value = entry.getValue();
             if (geoColumns.contains(path) && value instanceof ByteBuffer wkb) {
-                out.put(path, decodeWkb(wkb));
+                out.put(path, decodeWkb(path, wkb));
             } else {
                 out.put(path, value);
             }
@@ -86,18 +112,29 @@ public final class JtsMaterializer implements Materializer<Map<ColumnPath, Objec
         return out;
     }
 
-    private Geometry decodeWkb(ByteBuffer wkb) {
+    private Geometry decodeWkb(ColumnPath path, ByteBuffer wkb) {
         ByteBuffer view = wkb.duplicate();
         byte[] bytes = new byte[view.remaining()];
         view.get(bytes);
+        Geometry geometry;
         try {
-            return wkbReader.read(bytes);
+            geometry = wkbReader.read(bytes);
         } catch (ParseException e) {
             throw new IllegalStateException("Failed to decode WKB geometry: " + e.getMessage(), e);
         }
+        Integer srid = sridByColumn.get(path);
+        if (srid != null) {
+            geometry.setSRID(srid);
+        }
+        return geometry;
     }
 
-    private static Set<ColumnPath> collectGeoColumns(ParquetSchema schema) {
+    /**
+     * Walks {@code schema}'s leaves to find columns annotated with Geometry / Geography. For each such column,
+     * additionally records the resolvable EPSG SRID into {@code sridSink} so {@link #materialize} can stamp it on the
+     * decoded geometry without re-traversing the schema.
+     */
+    private static Set<ColumnPath> collectGeoColumns(ParquetSchema schema, Map<ColumnPath, Integer> sridSink) {
         Set<ColumnPath> out = new LinkedHashSet<>();
         for (ColumnPath leaf : schema.leafColumns()) {
             schema.find(leaf)
@@ -105,12 +142,40 @@ public final class JtsMaterializer implements Materializer<Map<ColumnPath, Objec
                     .map(Field.Primitive.class::cast)
                     .flatMap(Field.Primitive::logicalType)
                     .filter(JtsMaterializer::isGeo)
-                    .ifPresent(_ -> out.add(leaf));
+                    .ifPresent(lt -> {
+                        out.add(leaf);
+                        epsgSridFor(lt).ifPresent(srid -> sridSink.put(leaf, srid));
+                    });
         }
         return out;
     }
 
     private static boolean isGeo(LogicalType lt) {
         return lt instanceof LogicalType.Geometry || lt instanceof LogicalType.Geography;
+    }
+
+    /**
+     * Extracts the EPSG SRID from a Geometry / Geography logical type's typed CRS, if present. Surfaces empty when the
+     * CRS is absent (spec-default), the CRS has no {@link Identifier}, or the identifier is not an EPSG one.
+     */
+    private static OptionalInt epsgSridFor(LogicalType lt) {
+        return crsOf(lt)
+                .flatMap(CoordinateReferenceSystem::id)
+                .map(Identifier::epsgCode)
+                .orElse(OptionalInt.empty());
+    }
+
+    // S7475 (drop the unused type from the unnamed pattern) is informational only - palantirJavaFormat 2.90 cannot
+    // parse
+    // the bare-underscore form Sonar suggests; see memory feedback-palantir-unnamed-pattern.
+    @SuppressWarnings("java:S7475")
+    private static Optional<CoordinateReferenceSystem> crsOf(LogicalType lt) {
+        return switch (lt) {
+            case LogicalType.Geometry(Optional<CoordinateReferenceSystem> crs) -> crs;
+            case LogicalType.Geography(
+                    Optional<CoordinateReferenceSystem> crs,
+                    Optional<EdgeInterpolationAlgorithm> _) -> crs;
+            default -> Optional.empty();
+        };
     }
 }
