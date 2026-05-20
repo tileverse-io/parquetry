@@ -26,7 +26,7 @@ import java.nio.ByteBuffer;
  * RLE payload that follows. We strip the prefix in {@link #load} and delegate to a {@link LevelDecoder} for the actual
  * encoded run handling.
  */
-final class RleBooleanDecoder implements PageDecoder<Boolean> {
+public final class RleBooleanDecoder implements PageDecoder<Boolean> {
 
     private final LevelDecoder delegate = new LevelDecoder(1);
 

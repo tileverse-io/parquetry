@@ -35,7 +35,7 @@ import java.nio.ByteBuffer;
  * <p>Each returned value is a read-only {@link MemorySegment} over a fresh {@code byte[]} so the materialized values
  * remain stable across subsequent {@link #next()} calls (and across the page buffer's recycle into the pool).
  */
-final class DeltaByteArrayDecoder implements PageDecoder<MemorySegment> {
+public final class DeltaByteArrayDecoder implements PageDecoder<MemorySegment> {
 
     private int[] prefixLengths;
     private int[] suffixLengths;

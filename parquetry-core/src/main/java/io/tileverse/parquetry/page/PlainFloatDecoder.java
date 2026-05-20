@@ -21,7 +21,7 @@ import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 
 /** PLAIN decoder for FLOAT: four bytes, little-endian IEEE 754 per value. */
-final class PlainFloatDecoder implements PageDecoder<Float> {
+public final class PlainFloatDecoder implements PageDecoder<Float> {
 
     private FloatBuffer buffer;
 

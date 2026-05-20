@@ -35,7 +35,7 @@ import java.nio.ByteBuffer;
  *
  * <p>Bytes are assembled little-endian into the IEEE 754 bit pattern.
  */
-final class ByteStreamSplitDoubleDecoder implements PageDecoder<Double> {
+public final class ByteStreamSplitDoubleDecoder implements PageDecoder<Double> {
 
     private static final int BYTES_PER_VALUE = 8;
     private byte[] streams;

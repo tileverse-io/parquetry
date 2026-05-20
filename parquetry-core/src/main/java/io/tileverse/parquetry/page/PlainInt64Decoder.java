@@ -21,7 +21,7 @@ import java.nio.ByteBuffer;
 import java.nio.LongBuffer;
 
 /** PLAIN decoder for INT64: eight bytes, little-endian per value. */
-final class PlainInt64Decoder implements PageDecoder<Long> {
+public final class PlainInt64Decoder implements PageDecoder<Long> {
 
     private LongBuffer buffer;
 

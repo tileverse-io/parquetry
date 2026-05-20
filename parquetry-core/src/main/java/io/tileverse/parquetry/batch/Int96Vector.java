@@ -1,0 +1,125 @@
+/*
+ * Copyright (c) 2026 Tileverse.io
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.tileverse.parquetry.batch;
+
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
+
+import java.lang.foreign.MemorySegment;
+import java.nio.ByteBuffer;
+import java.util.BitSet;
+
+import io.tileverse.parquetry.format.Encoding;
+import io.tileverse.parquetry.page.PageDecoder;
+import io.tileverse.parquetry.page.PlainInt96Decoder;
+
+/**
+ * Column vector for INT96 (deprecated 12-byte timestamp) values.
+ *
+ * <p>Each element of the materialized {@code MemorySegment[]} is a 12-byte read-only view into the page bytes. Lifetime
+ * is bound to the batch's Arena.
+ *
+ * <p>INT96 only ever appears with PLAIN encoding in practice (no dictionary support in the spec).
+ */
+public final class Int96Vector implements ColumnVector {
+
+    private final int size;
+    private final BitSet validity;
+    private MemorySegment rawPage;
+    private Encoding encoding;
+    private MemorySegment[] values;
+
+    private Int96Vector(MemorySegment rawPage, Encoding encoding, int size, BitSet validity) {
+        this.rawPage = rawPage;
+        this.encoding = encoding;
+        this.size = size;
+        this.validity = validity;
+    }
+
+    /** Builds a raw (lazy) Int96Vector backed by the given page bytes. */
+    public static Int96Vector raw(MemorySegment page, Encoding encoding, int size, BitSet validity) {
+        return new Int96Vector(page, encoding, size, validity);
+    }
+
+    /** Builds an already-materialized Int96Vector. */
+    public static Int96Vector materialized(MemorySegment[] values, BitSet validity) {
+        Int96Vector vec = new Int96Vector(null, null, values.length, validity);
+        vec.values = values;
+        return vec;
+    }
+
+    @Override
+    public int size() {
+        return size;
+    }
+
+    @Override
+    public BitSet validity() {
+        return validity;
+    }
+
+    @Override
+    public boolean isMaterialized() {
+        return values != null;
+    }
+
+    @Override
+    public void materialize() {
+        if (values != null) {
+            return;
+        }
+        MemorySegment[] dst = new MemorySegment[size];
+        PageDecoder<?> decoder = decoderFor(encoding);
+        decoder.load(asByteBuffer(rawPage), size);
+        decoder.decodeBinary(size, dst, 0);
+        values = dst;
+        rawPage = null;
+        encoding = null;
+    }
+
+    @Override
+    public void materializeSurvivors(BitSet survivors) {
+        materialize();
+    }
+
+    /** Returns the segment at row {@code row}; triggers full materialization if needed. */
+    public MemorySegment get(int row) {
+        if (values == null) {
+            materialize();
+        }
+        return values[row];
+    }
+
+    /** Bulk accessor; triggers materialization if needed. */
+    public MemorySegment[] asArray() {
+        if (values == null) {
+            materialize();
+        }
+        return values;
+    }
+
+    private static PageDecoder<?> decoderFor(Encoding encoding) {
+        return switch (encoding) {
+            case PLAIN -> new PlainInt96Decoder();
+            default ->
+                throw new UnsupportedOperationException(
+                        "Int96Vector materialize not yet wired for encoding " + encoding);
+        };
+    }
+
+    private static ByteBuffer asByteBuffer(MemorySegment segment) {
+        return segment.asByteBuffer().order(LITTLE_ENDIAN);
+    }
+}

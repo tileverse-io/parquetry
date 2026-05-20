@@ -26,7 +26,7 @@ import java.nio.ByteBuffer;
  * The segment's {@code byteSize()} equals {@code length}, and its index-based access makes it safe to share across
  * readers.
  */
-final class PlainFixedLenBinaryDecoder implements PageDecoder<MemorySegment> {
+public final class PlainFixedLenBinaryDecoder implements PageDecoder<MemorySegment> {
 
     private final int length;
     private ByteBuffer buffer;

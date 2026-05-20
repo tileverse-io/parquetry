@@ -28,7 +28,7 @@ import java.nio.ByteBuffer;
  * reads). After all lengths are read, the buffer's position sits at the start of the concatenated payload, ready to
  * slice.
  */
-final class DeltaLengthByteArrayDecoder implements PageDecoder<MemorySegment> {
+public final class DeltaLengthByteArrayDecoder implements PageDecoder<MemorySegment> {
 
     private int[] lengths;
     private int cursor;

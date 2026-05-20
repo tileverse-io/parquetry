@@ -24,7 +24,7 @@ import java.util.BitSet;
  * <p>Bit 0 of byte 0 is value 0, bit 1 of byte 0 is value 1, etc. The decoder maintains an internal bit cursor and does
  * not advance the underlying buffer's position on each call, keeping it simple and allocation-free.
  */
-final class PlainBooleanDecoder implements PageDecoder<Boolean> {
+public final class PlainBooleanDecoder implements PageDecoder<Boolean> {
 
     private BitSet bitset;
     private int storedBitCount;

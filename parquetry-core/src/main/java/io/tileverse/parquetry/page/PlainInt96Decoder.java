@@ -24,7 +24,7 @@ import java.nio.ByteBuffer;
  * <p>INT96 is a deprecated legacy timestamp type used by some older Parquet writers. Each value is returned as a
  * read-only twelve-byte {@link MemorySegment} view of the page bytes (zero-copy).
  */
-final class PlainInt96Decoder implements PageDecoder<MemorySegment> {
+public final class PlainInt96Decoder implements PageDecoder<MemorySegment> {
 
     private static final int INT96_BYTES = 12;
 
