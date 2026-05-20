@@ -21,9 +21,33 @@ package io.tileverse.parquetry.format;
  *
  * <p>{@link #ASCENDING} or {@link #DESCENDING} lets a reader short-circuit page filtering with a binary search;
  * {@link #UNORDERED} forces a linear scan of the per-page bounds.
+ *
+ * <p>Each variant carries its Thrift wire code in {@link #value()}; resolve incoming i32 codes via
+ * {@link #valueOf(int)}.
  */
 public enum BoundaryOrder {
-    UNORDERED,
-    ASCENDING,
-    DESCENDING
+    UNORDERED(0),
+    ASCENDING(1),
+    DESCENDING(2);
+
+    private final int value;
+
+    BoundaryOrder(int value) {
+        this.value = value;
+    }
+
+    /** Thrift wire code for this variant, matching the value defined in {@code parquet.thrift}. */
+    public int value() {
+        return value;
+    }
+
+    /** @throws UnknownVariantException if no defined variant carries that code */
+    public static BoundaryOrder valueOf(int code) {
+        return switch (code) {
+            case 0 -> UNORDERED;
+            case 1 -> ASCENDING;
+            case 2 -> DESCENDING;
+            default -> throw new UnknownVariantException("Unknown BoundaryOrder wire code: " + code);
+        };
+    }
 }

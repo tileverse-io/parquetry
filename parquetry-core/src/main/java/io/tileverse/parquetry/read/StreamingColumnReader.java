@@ -27,6 +27,7 @@ import java.util.OptionalInt;
 import io.tileverse.parquetry.codec.Codec;
 import io.tileverse.parquetry.codec.CodecRegistry;
 import io.tileverse.parquetry.format.CompressionCodec;
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.PageHeader;
 import io.tileverse.parquetry.format.PageType;
 import io.tileverse.parquetry.format.ParquetFormat;
@@ -223,7 +224,7 @@ final class StreamingColumnReader implements ColumnReader {
         releaseCurrentPage();
         DecodedPage next = pageCursor.nextDataPage(maxLevels, codec, pool);
         if (next == null) {
-            throw new ParquetFormatException("Column " + columnPath.dot() + " exhausted page stream after "
+            throw new MalformedFileException("Column " + columnPath.dot() + " exhausted page stream after "
                     + valuesConsumedTotal + " values; expected " + totalValues);
         }
         try {
@@ -291,7 +292,7 @@ final class StreamingColumnReader implements ColumnReader {
                 PageHeader header = readNextPageHeader();
                 int compressedSize = header.compressedPageSize();
                 if (compressedSize < 0) {
-                    throw new ParquetFormatException(
+                    throw new MalformedFileException(
                             "Negative compressedPageSize " + compressedSize + " for column " + columnPath.dot());
                 }
                 ByteBuffer pagePayload = sliceAndAdvance(compressedSize);
@@ -319,13 +320,12 @@ final class StreamingColumnReader implements ColumnReader {
                 PageHeader header = ParquetFormat.readPageHeader(stream);
                 int consumed = chunk.position() - startPos;
                 if (consumed <= 0) {
-                    throw new ParquetFormatException("Page header read advanced the cursor by " + consumed
+                    throw new MalformedFileException("Page header read advanced the cursor by " + consumed
                             + " bytes for column " + columnPath.dot());
                 }
                 return header;
             } catch (ParquetFormatException e) {
-                throw new ParquetFormatException(
-                        "Failed to read page header for column " + columnPath.dot(), -1L, "PageHeader", e);
+                throw e.withContext("Failed to read page header for column " + columnPath.dot(), -1L, "PageHeader");
             }
         }
 
@@ -335,7 +335,7 @@ final class StreamingColumnReader implements ColumnReader {
          */
         private ByteBuffer sliceAndAdvance(int length) {
             if (chunk.remaining() < length) {
-                throw new ParquetFormatException("Column " + columnPath.dot() + " page payload of " + length
+                throw new MalformedFileException("Column " + columnPath.dot() + " page payload of " + length
                         + " bytes overruns chunk (remaining=" + chunk.remaining() + ")");
             }
             ByteBuffer slice = chunk.slice();

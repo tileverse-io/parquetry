@@ -23,10 +23,26 @@ import java.util.OptionalLong;
  *
  * <p>Unchecked because file-format errors typically surface mid-iteration through the {@code Stream<ParquetRecord>}
  * returned by {@code ParquetDataset.read()}, where checked exceptions can't propagate without lossy wrapping.
+ *
+ * <h2>Subclass hierarchy</h2>
+ *
+ * <p>The leaf throw sites use one of four concrete subtypes so library consumers can write precise catches:
+ *
+ * <ul>
+ *   <li>{@link NotAParquetFileException} - bad magic / file too small; the bytes aren't a Parquet file at all.
+ *   <li>{@link UnsupportedFeatureException} - known Parquet feature parquetry doesn't read yet (e.g. encrypted files
+ *       pending the parquetry-encryption module).
+ *   <li>{@link UnknownVariantException} - a Thrift enum wire code or union field id parquetry doesn't recognize; the
+ *       file may be using a newer Parquet spec than this version models. Suitable for forward-compat tolerant catches.
+ *   <li>{@link MalformedFileException} - structurally broken Parquet (truncated, missing required Thrift field, bad
+ *       compact-protocol bytes).
+ * </ul>
+ *
+ * <p>Wrap sites that re-throw with added context use {@link #withContext(String)} (or its 3-arg sibling) to preserve
+ * the concrete subclass, so a {@code catch (MalformedFileException)} at any level still fires.
  */
+@SuppressWarnings("serial")
 public class ParquetFormatException extends RuntimeException {
-
-    private static final long serialVersionUID = 1L;
 
     private static final long NO_OFFSET = -1L;
 
@@ -63,6 +79,26 @@ public class ParquetFormatException extends RuntimeException {
     /** The name of the field being parsed when the error occurred, or {@code null} if not known. */
     public String field() {
         return field;
+    }
+
+    /**
+     * Returns a new exception of the same concrete subclass, with {@code prefix} as the wrapper message and
+     * {@code this} as the cause. Lets wrap-and-rethrow sites add context without flattening the leaf type to plain
+     * {@code ParquetFormatException} - so {@code catch (MalformedFileException e)} continues to fire at outer
+     * boundaries.
+     *
+     * <p>Subclasses override to return their own concrete type.
+     */
+    public ParquetFormatException withContext(String prefix) {
+        return new ParquetFormatException(prefix, this);
+    }
+
+    /**
+     * Same as {@link #withContext(String)} but also attaches a byte offset and field name to the wrapper. Used by
+     * page-level wrap sites that know which structural field they were decoding when the inner failure surfaced.
+     */
+    public ParquetFormatException withContext(String prefix, long byteOffset, String field) {
+        return new ParquetFormatException(prefix, byteOffset, field, this);
     }
 
     private static String formatMessage(String message, long offset, String field) {

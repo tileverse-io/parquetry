@@ -11,6 +11,11 @@
   <description>Hadoop-free Java 25 Parquet reader+writer.</description>
   <url>https://tileverse.io</url>
 
+  <organization>
+    <name>Tileverse.io</name>
+    <url>https://tileverse.io</url>
+  </organization>
+
   <licenses>
     <license>
       <name>Apache License, Version 2.0</name>
@@ -18,6 +23,15 @@
       <distribution>repo</distribution>
     </license>
   </licenses>
+
+  <developers>
+    <developer>
+      <name>Gabriel Roldan</name>
+      <email>groldan@multivers.io</email>
+      <organization>Multiversio LLC</organization>
+      <organizationUrl>https://multivers.io</organizationUrl>
+    </developer>
+  </developers>
 
   <modules>
     <module>parquetry-dependencies</module>
@@ -29,8 +43,34 @@
     <module>parquetry-geo-jts</module>
   </modules>
 
+  <scm>
+    <connection>scm:git:https://github.com/tileverse-io/parquetry.git</connection>
+    <developerConnection>scm:git:git@github.com:tileverse-io/parquetry.git</developerConnection>
+    <tag>HEAD</tag>
+    <url>https://github.com/tileverse-io/parquetry</url>
+  </scm>
+
+  <issueManagement>
+    <system>GitHub Issues</system>
+    <url>https://github.com/tileverse-io/parquetry/issues</url>
+  </issueManagement>
+
+  <distributionManagement>
+    <repository>
+      <id>central</id>
+      <url>https://central.sonatype.com/api/v1/publisher/deployments/upload</url>
+    </repository>
+    <snapshotRepository>
+      <id>central</id>
+      <url>https://central.sonatype.com/repository/maven-snapshots/</url>
+    </snapshotRepository>
+  </distributionManagement>
+
   <properties>
     <revision>1.0-SNAPSHOT</revision>
+
+    <!-- GPG signing is off by default; the release pipeline flips it to false. -->
+    <gpg.skip>true</gpg.skip>
     <maven.compiler.source>25</maven.compiler.source>
     <maven.compiler.target>25</maven.compiler.target>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -54,6 +94,20 @@
     <!-- JaCoCo argLine property (overridden by jacoco:prepare-agent when coverage profile is active) -->
     <argLine/>
   </properties>
+
+  <repositories>
+    <repository>
+      <releases>
+        <enabled>false</enabled>
+      </releases>
+      <snapshots>
+        <enabled>true</enabled>
+      </snapshots>
+      <id>central-portal-snapshots</id>
+      <name>Central Portal Snapshots</name>
+      <url>https://central.sonatype.com/repository/maven-snapshots/</url>
+    </repository>
+  </repositories>
 
   <build>
     <pluginManagement>
@@ -200,6 +254,26 @@
             </execution>
           </executions>
         </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-source-plugin</artifactId>
+          <version>3.3.1</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-javadoc-plugin</artifactId>
+          <version>3.11.2</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-gpg-plugin</artifactId>
+          <version>3.2.8</version>
+        </plugin>
+        <plugin>
+          <groupId>org.sonatype.central</groupId>
+          <artifactId>central-publishing-maven-plugin</artifactId>
+          <version>0.10.0</version>
+        </plugin>
       </plugins>
     </pluginManagement>
     <plugins>
@@ -220,6 +294,79 @@
               <goal>integration-test</goal>
               <goal>verify</goal>
             </goals>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-source-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>attach-sources</id>
+            <goals>
+              <goal>jar-no-fork</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-javadoc-plugin</artifactId>
+        <configuration>
+          <!-- Tolerate missing javadoc on builders and internal classes; report real javadoc errors. -->
+          <doclint>all,-missing</doclint>
+          <!-- BOM modules have no real javadoc links to resolve; skip auto-detection to keep the build offline-friendly. -->
+          <detectLinks>false</detectLinks>
+          <detectOfflineLinks>false</detectOfflineLinks>
+          <!-- parquetry compiles against Java 25 with preview features (see maven-compiler-plugin). -->
+          <release>25</release>
+          <additionalJOptions>
+            <additionalJOption>--enable-preview</additionalJOption>
+          </additionalJOptions>
+        </configuration>
+        <executions>
+          <execution>
+            <id>attach-javadocs</id>
+            <goals>
+              <goal>jar</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <!-- Central Portal Publishing -->
+        <groupId>org.sonatype.central</groupId>
+        <artifactId>central-publishing-maven-plugin</artifactId>
+        <extensions>true</extensions>
+        <configuration>
+          <publishingServerId>central</publishingServerId>
+          <deploymentName>Parquetry</deploymentName>
+          <autoPublish>true</autoPublish>
+          <waitUntil>published</waitUntil>
+          <waitMaxTime>3600</waitMaxTime>
+          <excludeArtifacts>
+            <excludeArtifact>parquetry-coverage-report</excludeArtifact>
+          </excludeArtifacts>
+        </configuration>
+      </plugin>
+      <plugin>
+        <!-- GPG Signing (only when publishing) -->
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-gpg-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>sign-artifacts</id>
+            <goals>
+              <goal>sign</goal>
+            </goals>
+            <phase>verify</phase>
+            <configuration>
+              <skip>${gpg.skip}</skip>
+              <gpgArguments>
+                <arg>--pinentry-mode</arg>
+                <arg>loopback</arg>
+              </gpgArguments>
+            </configuration>
           </execution>
         </executions>
       </plugin>

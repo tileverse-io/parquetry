@@ -62,7 +62,7 @@ final class ColumnIndexDeserializer {
                 case 1 -> nullPages = readBoolList(r);
                 case 2 -> minValues = readBinaryList(r);
                 case 3 -> maxValues = readBinaryList(r);
-                case 4 -> boundaryOrder = BoundaryOrder.values()[r.readI32()];
+                case 4 -> boundaryOrder = BoundaryOrder.valueOf(r.readI32());
                 case 5 -> nullCounts = Optional.of(readLongList(r));
                 case 6 -> repetitionLevelHistograms = Optional.of(readLongList(r));
                 case 7 -> definitionLevelHistograms = Optional.of(readLongList(r));

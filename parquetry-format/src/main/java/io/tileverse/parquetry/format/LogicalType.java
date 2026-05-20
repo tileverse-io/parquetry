@@ -45,10 +45,61 @@ public sealed interface LogicalType
                 LogicalType.Geometry,
                 LogicalType.Geography {
 
+    /**
+     * Sub-second precision for {@link Time} and {@link Timestamp}; mirror of the {@code TimeUnit} union in
+     * {@code parquet.thrift}.
+     *
+     * <p>The Thrift schema models this as a one-of-N union of empty structs:
+     *
+     * <pre>
+     * union TimeUnit {
+     *   1: MilliSeconds MILLIS
+     *   2: MicroSeconds MICROS
+     *   3: NanoSeconds NANOS
+     * }
+     * </pre>
+     *
+     * <p>{@code TimeUnit} is structurally a Thrift <em>union</em>, not a Thrift enum: each variant is identified on the
+     * wire by its Thrift compact-protocol <em>field id</em> (delta-encoded inside the union struct's field header), not
+     * by an assigned i32 enum value. Each Java constant therefore carries its field id in {@link #fieldId()};
+     * deserializers resolve incoming ids via {@link #valueOf(int)}.
+     *
+     * <p>Unlike {@link EdgeInterpolationAlgorithm}, this lookup is fail-fast on unknown ids: silently defaulting to
+     * {@link #MILLIS} when a future Parquet writer emits a new variant (e.g. picoseconds) would yield timestamps wrong
+     * by many orders of magnitude. Throwing surfaces the unknown variant at the deserialize boundary where the caller
+     * can decide to fail the read or skip the column.
+     */
     enum TimeUnit {
-        MILLIS,
-        MICROS,
-        NANOS
+        MILLIS(1),
+        MICROS(2),
+        NANOS(3);
+
+        private final int fieldId;
+
+        TimeUnit(int fieldId) {
+            this.fieldId = fieldId;
+        }
+
+        /** Thrift compact-protocol field id of this variant within the {@code TimeUnit} union. */
+        public int fieldId() {
+            return fieldId;
+        }
+
+        /**
+         * Returns the variant whose {@link #fieldId()} equals {@code fieldId}. Compiles to a {@code tableswitch}
+         * bytecode (O(1) lookup, no allocations).
+         *
+         * @throws UnknownVariantException if no defined variant carries that field id - see the enum javadoc on why
+         *     this lookup is intentionally fail-fast rather than forward-compat-tolerant.
+         */
+        public static TimeUnit valueOf(int fieldId) {
+            return switch (fieldId) {
+                case 1 -> MILLIS;
+                case 2 -> MICROS;
+                case 3 -> NANOS;
+                default -> throw new UnknownVariantException("Unknown TimeUnit field id: " + fieldId);
+            };
+        }
     }
 
     record StringType() implements LogicalType {}

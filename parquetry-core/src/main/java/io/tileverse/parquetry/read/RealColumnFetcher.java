@@ -30,6 +30,7 @@ import io.tileverse.parquetry.codec.CodecRegistry;
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.DictionaryPageHeader;
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.PageHeader;
 import io.tileverse.parquetry.format.PageType;
 import io.tileverse.parquetry.format.ParquetFormat;
@@ -87,7 +88,7 @@ final class RealColumnFetcher implements ColumnFetcher {
         long chunkStart = computeChunkStart(meta);
         long chunkSize = meta.totalCompressedSize();
         if (chunkSize < 0 || chunkSize > Integer.MAX_VALUE) {
-            throw new ParquetFormatException(
+            throw new MalformedFileException(
                     "Column chunk for " + path.dot() + " has an unsupported totalCompressedSize " + chunkSize);
         }
         int chunkLen = (int) chunkSize;
@@ -139,13 +140,13 @@ final class RealColumnFetcher implements ColumnFetcher {
                         + " declares dictionaryPageOffset but its first page is not a dictionary page (type="
                         + header.type() + ")"));
         if (header.type() != PageType.DICTIONARY_PAGE) {
-            throw new ParquetFormatException(
+            throw new MalformedFileException(
                     "Column " + path.dot() + " dictionary page header has unexpected type " + header.type());
         }
         int compressedSize = header.compressedPageSize();
         int uncompressedSize = header.uncompressedPageSize();
         if (chunkBuffer.remaining() < compressedSize) {
-            throw new ParquetFormatException("Column " + path.dot()
+            throw new MalformedFileException("Column " + path.dot()
                     + " dictionary page compressed payload (" + compressedSize
                     + ") overruns the chunk buffer (remaining=" + chunkBuffer.remaining() + ")");
         }
@@ -153,7 +154,7 @@ final class RealColumnFetcher implements ColumnFetcher {
         Dictionary<?> dictionary = decodeDictionary(meta, path, dictHeader, compressedPayload, uncompressedSize);
         // Guard against a malformed header that claims zero bytes consumed; if that ever happened it would loop later.
         if (chunkBuffer.position() == headerStartPosition) {
-            throw new ParquetFormatException("Column " + path.dot() + " dictionary page advanced zero bytes");
+            throw new MalformedFileException("Column " + path.dot() + " dictionary page advanced zero bytes");
         }
         return Optional.of(dictionary);
     }
@@ -211,8 +212,7 @@ final class RealColumnFetcher implements ColumnFetcher {
         try {
             return ParquetFormat.readPageHeader(new ByteBufferInputStream(buffer));
         } catch (ParquetFormatException e) {
-            throw new ParquetFormatException(
-                    "Failed to read dictionary page header for column " + path.dot(), -1L, "PageHeader", e);
+            throw e.withContext("Failed to read dictionary page header for column " + path.dot(), -1L, "PageHeader");
         }
     }
 

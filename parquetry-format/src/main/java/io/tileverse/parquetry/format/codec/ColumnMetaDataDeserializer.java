@@ -83,10 +83,10 @@ final class ColumnMetaDataDeserializer {
             }
             lastFieldId = fh.fieldId();
             switch (fh.fieldId()) {
-                case 1 -> type = PhysicalType.values()[r.readI32()];
+                case 1 -> type = PhysicalType.valueOf(r.readI32());
                 case 2 -> encodings = readEncodingList(r);
                 case 3 -> pathInSchema = readStringList(r);
-                case 4 -> codec = CompressionCodec.values()[r.readI32()];
+                case 4 -> codec = CompressionCodec.valueOf(r.readI32());
                 case 5 -> numValues = r.readI64();
                 case 6 -> totalUncompressedSize = r.readI64();
                 case 7 -> totalCompressedSize = r.readI64();
@@ -125,7 +125,7 @@ final class ColumnMetaDataDeserializer {
         CompactProtocolReader.ListHeader lh = r.readListHeader();
         List<Encoding> result = new ArrayList<>(lh.size());
         for (int i = 0; i < lh.size(); i++) {
-            result.add(Encoding.values()[r.readI32()]);
+            result.add(Encoding.valueOf(r.readI32()));
         }
         return result;
     }

@@ -22,13 +22,105 @@ package io.tileverse.parquetry.format;
  * <p>Located at {@link ColumnMetaData#bloomFilterOffset()} within the file. The header is Thrift-compact-encoded; the
  * bitset follows immediately after it and spans exactly {@link #numBytes()} bytes.
  *
+ * <p>The three trailing fields ({@link Algorithm}, {@link HashStrategy}, {@link Compression}) each mirror a Thrift
+ * union of empty structs. Every defined variant carries no payload, so parquetry surfaces them as nested enums.
+ *
  * @param numBytes size of the bitset in bytes (always a multiple of 32 in a valid Parquet file)
- * @param algorithm bit-setting algorithm; currently only {@link BloomFilterAlgorithm#SPLIT_BLOCK} is defined
- * @param hash hash function applied to plain-encoded values; currently only {@link BloomFilterHashStrategy#XXHASH}
- * @param compression compression applied to the bitset; currently only {@link BloomFilterCompression#UNCOMPRESSED}
+ * @param algorithm bit-setting algorithm; currently only {@link Algorithm#SPLIT_BLOCK} is defined
+ * @param hash hash function applied to plain-encoded values; currently only {@link HashStrategy#XXHASH}
+ * @param compression compression applied to the bitset; currently only {@link Compression#UNCOMPRESSED}
  */
-public record BloomFilterHeader(
-        int numBytes,
-        BloomFilterAlgorithm algorithm,
-        BloomFilterHashStrategy hash,
-        BloomFilterCompression compression) {}
+public record BloomFilterHeader(int numBytes, Algorithm algorithm, HashStrategy hash, Compression compression) {
+
+    /**
+     * The algorithm used to set bits in a Parquet bloom filter. Mirror of the {@code BloomFilterAlgorithm} Thrift union
+     * (a one-variant union of empty structs at time of writing).
+     *
+     * <p>Each variant carries its Thrift compact-protocol {@link #fieldId() field id} within the union struct.
+     * Deserializers resolve incoming ids via {@link #valueOf(int)}, which fails fast on unknown variants so a future
+     * spec extension can't be silently misinterpreted as {@link #SPLIT_BLOCK}.
+     */
+    public enum Algorithm {
+        /** Block-based bloom filter (a.k.a. SBBF). The only algorithm defined by the Parquet format. */
+        SPLIT_BLOCK(1);
+
+        private final int fieldId;
+
+        Algorithm(int fieldId) {
+            this.fieldId = fieldId;
+        }
+
+        /** Thrift compact-protocol field id of this variant within the {@code BloomFilterAlgorithm} union. */
+        public int fieldId() {
+            return fieldId;
+        }
+
+        /** @throws UnknownVariantException if no defined variant carries that field id */
+        public static Algorithm valueOf(int fieldId) {
+            return switch (fieldId) {
+                case 1 -> SPLIT_BLOCK;
+                default -> throw new UnknownVariantException("Unknown BloomFilterAlgorithm field id: " + fieldId);
+            };
+        }
+    }
+
+    /**
+     * The hash function used by a Parquet bloom filter. Mirror of the {@code BloomFilterHash} Thrift union (a
+     * one-variant union of empty structs at time of writing).
+     *
+     * <p>See {@link Algorithm} for the wire-id rationale.
+     */
+    public enum HashStrategy {
+        /** xxHash64 with seed 0, applied to the plain-encoded bytes of the column value. */
+        XXHASH(1);
+
+        private final int fieldId;
+
+        HashStrategy(int fieldId) {
+            this.fieldId = fieldId;
+        }
+
+        /** Thrift compact-protocol field id of this variant within the {@code BloomFilterHash} union. */
+        public int fieldId() {
+            return fieldId;
+        }
+
+        /** @throws UnknownVariantException if no defined variant carries that field id */
+        public static HashStrategy valueOf(int fieldId) {
+            return switch (fieldId) {
+                case 1 -> XXHASH;
+                default -> throw new UnknownVariantException("Unknown BloomFilterHash field id: " + fieldId);
+            };
+        }
+    }
+
+    /**
+     * Compression applied to a Parquet bloom filter's bitset. Mirror of the {@code BloomFilterCompression} Thrift union
+     * (a one-variant union of empty structs at time of writing).
+     *
+     * <p>See {@link Algorithm} for the wire-id rationale.
+     */
+    public enum Compression {
+        /** No compression; the bitset bytes follow the header verbatim. */
+        UNCOMPRESSED(1);
+
+        private final int fieldId;
+
+        Compression(int fieldId) {
+            this.fieldId = fieldId;
+        }
+
+        /** Thrift compact-protocol field id of this variant within the {@code BloomFilterCompression} union. */
+        public int fieldId() {
+            return fieldId;
+        }
+
+        /** @throws UnknownVariantException if no defined variant carries that field id */
+        public static Compression valueOf(int fieldId) {
+            return switch (fieldId) {
+                case 1 -> UNCOMPRESSED;
+                default -> throw new UnknownVariantException("Unknown BloomFilterCompression field id: " + fieldId);
+            };
+        }
+    }
+}

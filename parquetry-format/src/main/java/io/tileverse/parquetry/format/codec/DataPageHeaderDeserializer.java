@@ -54,9 +54,9 @@ final class DataPageHeaderDeserializer {
             lastFieldId = fh.fieldId();
             switch (fh.fieldId()) {
                 case 1 -> numValues = r.readI32();
-                case 2 -> encoding = Encoding.values()[r.readI32()];
-                case 3 -> definitionLevelEncoding = Encoding.values()[r.readI32()];
-                case 4 -> repetitionLevelEncoding = Encoding.values()[r.readI32()];
+                case 2 -> encoding = Encoding.valueOf(r.readI32());
+                case 3 -> definitionLevelEncoding = Encoding.valueOf(r.readI32());
+                case 4 -> repetitionLevelEncoding = Encoding.valueOf(r.readI32());
                 case 5 -> statistics = Optional.of(StatisticsDeserializer.read(r));
                 default -> r.skipField(fh.type());
             }

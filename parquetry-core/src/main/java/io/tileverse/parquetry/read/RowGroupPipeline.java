@@ -362,10 +362,8 @@ public final class RowGroupPipeline<T> implements AutoCloseable {
      * Internal marker thrown by the producer loop when it discovers cancellation has happened while it was blocked on a
      * queue put. Never escapes the pipeline.
      */
+    @SuppressWarnings("serial")
     private static final class PipelineCancelledException extends RuntimeException {
-
-        private static final long serialVersionUID = 1L;
-
         @Override
         public synchronized Throwable fillInStackTrace() {
             return this;

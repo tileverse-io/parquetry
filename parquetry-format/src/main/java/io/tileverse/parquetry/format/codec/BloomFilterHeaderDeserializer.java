@@ -17,11 +17,8 @@ package io.tileverse.parquetry.format.codec;
 
 import java.io.IOException;
 
-import io.tileverse.parquetry.format.BloomFilterAlgorithm;
-import io.tileverse.parquetry.format.BloomFilterCompression;
-import io.tileverse.parquetry.format.BloomFilterHashStrategy;
 import io.tileverse.parquetry.format.BloomFilterHeader;
-import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.format.MalformedFileException;
 
 /**
  * Deserializer for the Thrift {@code BloomFilterHeader} struct.
@@ -45,13 +42,15 @@ final class BloomFilterHeaderDeserializer {
 
     static BloomFilterHeader read(CompactProtocolReader r) throws IOException {
         int numBytes = -1;
-        BloomFilterAlgorithm algorithm = null;
-        BloomFilterHashStrategy hash = null;
-        BloomFilterCompression compression = null;
+        BloomFilterHeader.Algorithm algorithm = null;
+        BloomFilterHeader.HashStrategy hash = null;
+        BloomFilterHeader.Compression compression = null;
         int lastFieldId = 0;
         while (true) {
             FieldHeader fh = r.readFieldHeader(lastFieldId);
-            if (fh.isStop()) break;
+            if (fh.isStop()) {
+                break;
+            }
             lastFieldId = fh.fieldId();
             switch (fh.fieldId()) {
                 case 1 -> numBytes = r.readI32();
@@ -71,7 +70,7 @@ final class BloomFilterHeaderDeserializer {
     /** Validates {@code numBytes} (i32 field 1). Required and must be non-negative per the Parquet spec. */
     private static int requireNumBytes(int numBytes) {
         if (numBytes < 0) {
-            throw new ParquetFormatException("BloomFilterHeader missing required field numBytes");
+            throw new MalformedFileException("BloomFilterHeader missing required field numBytes");
         }
         return numBytes;
     }
@@ -79,46 +78,32 @@ final class BloomFilterHeaderDeserializer {
     /** Validates that the union-typed required field {@code fieldName} was present in the encoded header. */
     private static <T> T requireField(T value, String fieldName) {
         if (value == null) {
-            throw new ParquetFormatException("BloomFilterHeader missing required field " + fieldName);
+            throw new MalformedFileException("BloomFilterHeader missing required field " + fieldName);
         }
         return value;
     }
 
     /**
-     * Reads the one-of-N {@code BloomFilterAlgorithm} union. Field 1 is the only defined variant ({@code BLOCK} a.k.a.
-     * split-block bloom filter); any other variant fails fast to keep readers honest about new algorithms.
+     * Reads the one-of-N {@code BloomFilterAlgorithm} union. Unknown variants propagate from
+     * {@link BloomFilterHeader.Algorithm#valueOf(int)} as {@code UnknownVariantException}, so a future spec extension
+     * can't be silently misinterpreted.
      */
-    private static BloomFilterAlgorithm readAlgorithm(CompactProtocolReader r) throws IOException {
-        int variantId = readSingleUnionVariantId(r);
-        if (variantId == 1) {
-            return BloomFilterAlgorithm.SPLIT_BLOCK;
-        }
-        throw new ParquetFormatException("Unknown BloomFilterAlgorithm variant id: " + variantId);
+    private static BloomFilterHeader.Algorithm readAlgorithm(CompactProtocolReader r) throws IOException {
+        return BloomFilterHeader.Algorithm.valueOf(readSingleUnionVariantId(r));
+    }
+
+    /** Reads the one-of-N {@code BloomFilterHash} union. See {@link #readAlgorithm} for the rejection policy. */
+    private static BloomFilterHeader.HashStrategy readHash(CompactProtocolReader r) throws IOException {
+        return BloomFilterHeader.HashStrategy.valueOf(readSingleUnionVariantId(r));
     }
 
     /**
-     * Reads the one-of-N {@code BloomFilterHash} union. Field 1 is the only defined variant ({@code XXHASH}); any other
-     * variant fails fast.
+     * Reads the one-of-N {@code BloomFilterCompression} union. A compressed bitset would need codec wiring before it
+     * can be evaluated; unknown variants fail fast (via {@code UnknownVariantException}) so we never silently treat
+     * them as {@code UNCOMPRESSED}.
      */
-    private static BloomFilterHashStrategy readHash(CompactProtocolReader r) throws IOException {
-        int variantId = readSingleUnionVariantId(r);
-        if (variantId == 1) {
-            return BloomFilterHashStrategy.XXHASH;
-        }
-        throw new ParquetFormatException("Unknown BloomFilterHash variant id: " + variantId);
-    }
-
-    /**
-     * Reads the one-of-N {@code BloomFilterCompression} union. Field 1 is the only defined variant
-     * ({@code UNCOMPRESSED}); any other variant fails fast - a compressed bitset would need codec wiring before it can
-     * be evaluated.
-     */
-    private static BloomFilterCompression readCompression(CompactProtocolReader r) throws IOException {
-        int variantId = readSingleUnionVariantId(r);
-        if (variantId == 1) {
-            return BloomFilterCompression.UNCOMPRESSED;
-        }
-        throw new ParquetFormatException("Unknown BloomFilterCompression variant id: " + variantId);
+    private static BloomFilterHeader.Compression readCompression(CompactProtocolReader r) throws IOException {
+        return BloomFilterHeader.Compression.valueOf(readSingleUnionVariantId(r));
     }
 
     /**
@@ -128,7 +113,7 @@ final class BloomFilterHeaderDeserializer {
     private static int readSingleUnionVariantId(CompactProtocolReader r) throws IOException {
         FieldHeader fh = r.readFieldHeader(0);
         if (fh.isStop()) {
-            throw new ParquetFormatException("Bloom-filter union struct has no variant set");
+            throw new MalformedFileException("Bloom-filter union struct has no variant set");
         }
         int variantId = fh.fieldId();
         r.skipStruct();

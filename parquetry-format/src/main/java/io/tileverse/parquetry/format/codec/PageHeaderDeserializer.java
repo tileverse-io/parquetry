@@ -63,7 +63,7 @@ final class PageHeaderDeserializer {
             }
             lastFieldId = fh.fieldId();
             switch (fh.fieldId()) {
-                case 1 -> type = PageType.values()[r.readI32()];
+                case 1 -> type = PageType.valueOf(r.readI32());
                 case 2 -> uncompressedPageSize = r.readI32();
                 case 3 -> compressedPageSize = r.readI32();
                 case 4 -> crc = OptionalInt.of(r.readI32());

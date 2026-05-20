@@ -26,9 +26,8 @@ package io.tileverse.parquetry.schema;
  * all other callers let it propagate. See the package documentation for the full rationale on unchecked exceptions
  * across the parquetry API.
  */
+@SuppressWarnings("serial")
 public class ParquetSchemaException extends RuntimeException {
-
-    private static final long serialVersionUID = 1L;
 
     public ParquetSchemaException(String message) {
         super(message);

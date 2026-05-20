@@ -48,8 +48,8 @@ final class EncodingStatsDeserializer {
             }
             lastFieldId = fh.fieldId();
             switch (fh.fieldId()) {
-                case 1 -> pageType = PageType.values()[r.readI32()];
-                case 2 -> encoding = Encoding.values()[r.readI32()];
+                case 1 -> pageType = PageType.valueOf(r.readI32());
+                case 2 -> encoding = Encoding.valueOf(r.readI32());
                 case 3 -> count = r.readI32();
                 default -> r.skipField(fh.type());
             }

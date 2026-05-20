@@ -235,7 +235,9 @@ final class FileDataset implements ParquetDataset {
      * NotApplied for that column instead of aborting the read.
      */
     private Optional<ColumnBloom> loadBloom(BloomChunkLocator locator) {
-        if (locator == null) return Optional.empty();
+        if (locator == null) {
+            return Optional.empty();
+        }
         try {
             SplitBlockBloomFilter bloom = locator.length() > 0
                     ? BloomFilterReader.read(rangeReader, locator.offset(), locator.length())

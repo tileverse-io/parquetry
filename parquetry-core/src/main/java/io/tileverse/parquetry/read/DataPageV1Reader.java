@@ -22,8 +22,8 @@ import java.nio.ByteOrder;
 import io.tileverse.parquetry.codec.Codec;
 import io.tileverse.parquetry.format.DataPageHeader;
 import io.tileverse.parquetry.format.Encoding;
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.PageHeader;
-import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.read.LevelMaximaResolver.LevelMaxima;
 
 import io.tileverse.io.ByteBufferPool;
@@ -86,7 +86,7 @@ final class DataPageV1Reader implements DataPageReader {
             PageHeader header, ByteBuffer compressedPagePayload, Codec codec, ByteBufferPool pool) throws IOException {
         int uncompressedSize = header.uncompressedPageSize();
         if (uncompressedSize < 0) {
-            throw new ParquetFormatException(
+            throw new MalformedFileException(
                     "V1 page uncompressedPageSize must be non-negative, got " + uncompressedSize);
         }
         PooledByteBuffer pooled = pool.borrowDirect(uncompressedSize);
@@ -118,12 +118,12 @@ final class DataPageV1Reader implements DataPageReader {
 
     private static int readLengthPrefix(ByteBuffer decompressed, String levelKind) {
         if (decompressed.remaining() < Integer.BYTES) {
-            throw new ParquetFormatException("V1 page truncated before " + levelKind
+            throw new MalformedFileException("V1 page truncated before " + levelKind
                     + " level length prefix: remaining=" + decompressed.remaining() + " bytes, need 4");
         }
         int length = decompressed.getInt();
         if (length < 0) {
-            throw new ParquetFormatException("V1 page " + levelKind + " level length prefix is negative: " + length);
+            throw new MalformedFileException("V1 page " + levelKind + " level length prefix is negative: " + length);
         }
         return length;
     }
@@ -134,7 +134,7 @@ final class DataPageV1Reader implements DataPageReader {
      */
     private static ByteBuffer sliceAndAdvance(ByteBuffer decompressed, int length, String levelKind) {
         if (length > decompressed.remaining()) {
-            throw new ParquetFormatException("V1 page " + levelKind + " level length " + length
+            throw new MalformedFileException("V1 page " + levelKind + " level length " + length
                     + " exceeds remaining payload bytes " + decompressed.remaining());
         }
         if (length == 0) {

@@ -38,9 +38,21 @@ public enum CompactType {
     }
 
     public static CompactType of(int code) {
-        for (CompactType t : values()) {
-            if (t.code == code) return t;
-        }
-        throw new IllegalArgumentException("Unknown CompactType code: " + code);
+        return switch (code) {
+            case 0 -> STOP;
+            case 1 -> BOOLEAN_TRUE;
+            case 2 -> BOOLEAN_FALSE;
+            case 3 -> BYTE;
+            case 4 -> I16;
+            case 5 -> I32;
+            case 6 -> I64;
+            case 7 -> DOUBLE;
+            case 8 -> BINARY;
+            case 9 -> LIST;
+            case 10 -> SET;
+            case 11 -> MAP;
+            case 12 -> STRUCT;
+            default -> throw new IllegalArgumentException("Unknown CompactType code: " + code);
+        };
     }
 }

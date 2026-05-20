@@ -49,7 +49,9 @@ final class ColumnOrderDeserializer {
         // Consume the STOP of the union struct
         while (true) {
             FieldHeader extra = r.readFieldHeader(fh.fieldId());
-            if (extra.isStop()) break;
+            if (extra.isStop()) {
+                break;
+            }
             r.skipField(extra.type());
         }
         return new ColumnOrder.TypeDefined();

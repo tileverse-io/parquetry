@@ -20,11 +20,9 @@ import java.nio.ByteBuffer;
 
 import io.tileverse.storage.RangeReader;
 
-import io.tileverse.parquetry.format.BloomFilterAlgorithm;
-import io.tileverse.parquetry.format.BloomFilterCompression;
-import io.tileverse.parquetry.format.BloomFilterHashStrategy;
 import io.tileverse.parquetry.format.BloomFilterHeader;
-import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.format.MalformedFileException;
+import io.tileverse.parquetry.format.UnsupportedFeatureException;
 import io.tileverse.parquetry.format.codec.ParquetFormatDeserializer;
 
 /**
@@ -65,7 +63,7 @@ public final class BloomFilterReader {
      */
     public static SplitBlockBloomFilter read(RangeReader reader, long offset, int length) {
         if (length <= 0) {
-            throw new ParquetFormatException("Invalid bloom filter length: " + length);
+            throw new MalformedFileException("Invalid bloom filter length: " + length);
         }
         ByteBuffer buf = reader.readRange(offset, length);
         buf.flip();
@@ -112,7 +110,7 @@ public final class BloomFilterReader {
         int headerByteLength = cursor.position() - chunk.position();
         int bitsetStart = chunk.position() + headerByteLength;
         if (chunk.limit() - bitsetStart < header.numBytes()) {
-            throw new ParquetFormatException("Bloom filter bitset truncated: header declared " + header.numBytes()
+            throw new MalformedFileException("Bloom filter bitset truncated: header declared " + header.numBytes()
                     + " bytes but " + (chunk.limit() - bitsetStart) + " remain in the chunk");
         }
         ByteBuffer bitset = chunk.duplicate();
@@ -131,14 +129,14 @@ public final class BloomFilterReader {
      * without new decoder code, so refuse explicitly instead of silently treating it as the supported combo.
      */
     private static void rejectUnsupported(BloomFilterHeader header) {
-        if (header.algorithm() != BloomFilterAlgorithm.SPLIT_BLOCK) {
-            throw new ParquetFormatException("Unsupported bloom-filter algorithm: " + header.algorithm());
+        if (header.algorithm() != BloomFilterHeader.Algorithm.SPLIT_BLOCK) {
+            throw new UnsupportedFeatureException("Unsupported bloom-filter algorithm: " + header.algorithm());
         }
-        if (header.hash() != BloomFilterHashStrategy.XXHASH) {
-            throw new ParquetFormatException("Unsupported bloom-filter hash strategy: " + header.hash());
+        if (header.hash() != BloomFilterHeader.HashStrategy.XXHASH) {
+            throw new UnsupportedFeatureException("Unsupported bloom-filter hash strategy: " + header.hash());
         }
-        if (header.compression() != BloomFilterCompression.UNCOMPRESSED) {
-            throw new ParquetFormatException("Unsupported bloom-filter compression: " + header.compression());
+        if (header.compression() != BloomFilterHeader.Compression.UNCOMPRESSED) {
+            throw new UnsupportedFeatureException("Unsupported bloom-filter compression: " + header.compression());
         }
     }
 
@@ -162,7 +160,9 @@ public final class BloomFilterReader {
 
         @Override
         public int read(byte[] b, int off, int len) {
-            if (!buffer.hasRemaining()) return -1;
+            if (!buffer.hasRemaining()) {
+                return -1;
+            }
             int toRead = Math.min(len, buffer.remaining());
             buffer.get(b, off, toRead);
             return toRead;

@@ -20,6 +20,8 @@ import java.util.Optional;
 
 import io.tileverse.parquetry.format.EdgeInterpolationAlgorithm;
 import io.tileverse.parquetry.format.LogicalType;
+import io.tileverse.parquetry.format.MalformedFileException;
+import io.tileverse.parquetry.format.UnknownVariantException;
 
 /**
  * Deserializer for the Thrift {@code LogicalType} union.
@@ -68,7 +70,9 @@ final class LogicalTypeDeserializer {
             r.skipField(stop.type());
             while (true) {
                 FieldHeader extra = r.readFieldHeader(stop.fieldId());
-                if (extra.isStop()) break;
+                if (extra.isStop()) {
+                    break;
+                }
                 r.skipField(extra.type());
             }
         }
@@ -149,7 +153,9 @@ final class LogicalTypeDeserializer {
         int lastFieldId = 0;
         while (true) {
             FieldHeader fh = r.readFieldHeader(lastFieldId);
-            if (fh.isStop()) break;
+            if (fh.isStop()) {
+                break;
+            }
             lastFieldId = fh.fieldId();
             switch (fh.fieldId()) {
                 case 1 -> scale = r.readI32();
@@ -167,7 +173,9 @@ final class LogicalTypeDeserializer {
         int lastFieldId = 0;
         while (true) {
             FieldHeader fh = r.readFieldHeader(lastFieldId);
-            if (fh.isStop()) break;
+            if (fh.isStop()) {
+                break;
+            }
             lastFieldId = fh.fieldId();
             switch (fh.fieldId()) {
                 case 1 -> isAdjustedToUTC = fh.type() == CompactType.BOOLEAN_TRUE;
@@ -185,7 +193,9 @@ final class LogicalTypeDeserializer {
         int lastFieldId = 0;
         while (true) {
             FieldHeader fh = r.readFieldHeader(lastFieldId);
-            if (fh.isStop()) break;
+            if (fh.isStop()) {
+                break;
+            }
             lastFieldId = fh.fieldId();
             switch (fh.fieldId()) {
                 case 1 -> isAdjustedToUTC = fh.type() == CompactType.BOOLEAN_TRUE;
@@ -202,7 +212,9 @@ final class LogicalTypeDeserializer {
         int lastFieldId = 0;
         while (true) {
             FieldHeader fh = r.readFieldHeader(lastFieldId);
-            if (fh.isStop()) break;
+            if (fh.isStop()) {
+                break;
+            }
             lastFieldId = fh.fieldId();
             if (fh.fieldId() == 1) {
                 crs = Optional.of(r.readString());
@@ -215,8 +227,8 @@ final class LogicalTypeDeserializer {
 
     /**
      * Reads {@code GeographyType}: crs (field 1, string, optional) and algorithm (field 2, i32 enum, optional). The
-     * Thrift Compact Protocol encodes enums as i32 values matching the enum's declaration order in
-     * {@code parquet.thrift}, so the value maps to {@link EdgeInterpolationAlgorithm#values()}.
+     * Thrift Compact Protocol encodes enums as i32 wire codes that map to {@link EdgeInterpolationAlgorithm} via
+     * {@link EdgeInterpolationAlgorithm#valueOf(int)}; unknown codes are tolerated for forward-compat.
      */
     private static LogicalType.Geography readGeography(CompactProtocolReader r) throws IOException {
         Optional<String> crs = Optional.empty();
@@ -224,17 +236,20 @@ final class LogicalTypeDeserializer {
         int lastFieldId = 0;
         while (true) {
             FieldHeader fh = r.readFieldHeader(lastFieldId);
-            if (fh.isStop()) break;
+            if (fh.isStop()) {
+                break;
+            }
             lastFieldId = fh.fieldId();
             switch (fh.fieldId()) {
                 case 1 -> crs = Optional.of(r.readString());
                 case 2 -> {
-                    int ordinal = r.readI32();
-                    EdgeInterpolationAlgorithm[] values = EdgeInterpolationAlgorithm.values();
-                    if (ordinal >= 0 && ordinal < values.length) {
-                        algorithm = Optional.of(values[ordinal]);
+                    int code = r.readI32();
+                    try {
+                        algorithm = Optional.of(EdgeInterpolationAlgorithm.valueOf(code));
+                    } catch (UnknownVariantException _) {
+                        // Unknown wire codes are tolerated (forward-compat for newer Parquet algorithms); algorithm
+                        // stays empty so the consumer falls back to the spec default.
                     }
-                    // Unknown enum ordinals are tolerated (forward-compat); algorithm stays empty.
                 }
                 default -> r.skipField(fh.type());
             }
@@ -249,7 +264,9 @@ final class LogicalTypeDeserializer {
         int lastFieldId = 0;
         while (true) {
             FieldHeader fh = r.readFieldHeader(lastFieldId);
-            if (fh.isStop()) break;
+            if (fh.isStop()) {
+                break;
+            }
             lastFieldId = fh.fieldId();
             switch (fh.fieldId()) {
                 case 1 -> bitWidth = (byte) r.readI32();
@@ -270,30 +287,24 @@ final class LogicalTypeDeserializer {
      *   3: NanoSeconds NANOS
      * }
      * </pre>
+     *
+     * <p>Resolved via {@link LogicalType.TimeUnit#valueOf(int)}, which is intentionally fail-fast on unknown wire codes
+     * - see the {@code TimeUnit} javadoc for the reasoning. An empty union (no variant set) is also rejected since the
+     * Parquet schema requires {@code TimeUnit} to carry a payload wherever it appears.
      */
     private static LogicalType.TimeUnit readTimeUnit(CompactProtocolReader r) throws IOException {
         FieldHeader fh = r.readFieldHeader(0);
         if (fh.isStop()) {
-            return LogicalType.TimeUnit.MILLIS;
+            throw new MalformedFileException("TimeUnit union has no variant set");
         }
-        LogicalType.TimeUnit unit =
-                switch (fh.fieldId()) {
-                    case 1 -> LogicalType.TimeUnit.MILLIS;
-                    case 2 -> LogicalType.TimeUnit.MICROS;
-                    case 3 -> LogicalType.TimeUnit.NANOS;
-                    default -> LogicalType.TimeUnit.MILLIS;
-                };
-        // Skip the empty-struct payload of the chosen TimeUnit variant
+        LogicalType.TimeUnit unit = LogicalType.TimeUnit.valueOf(fh.fieldId());
+        // Skip the empty-struct payload of the chosen TimeUnit variant.
         r.skipStruct();
-        // Consume the STOP of the TimeUnit union struct
+        // Consume the STOP of the TimeUnit union struct, tolerating forward-compat extra fields.
         FieldHeader stop = r.readFieldHeader(fh.fieldId());
-        if (!stop.isStop()) {
+        while (!stop.isStop()) {
             r.skipField(stop.type());
-            while (true) {
-                FieldHeader extra = r.readFieldHeader(stop.fieldId());
-                if (extra.isStop()) break;
-                r.skipField(extra.type());
-            }
+            stop = r.readFieldHeader(stop.fieldId());
         }
         return unit;
     }

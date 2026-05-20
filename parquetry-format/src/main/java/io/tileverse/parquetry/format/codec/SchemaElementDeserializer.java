@@ -66,12 +66,12 @@ final class SchemaElementDeserializer {
             }
             lastFieldId = fh.fieldId();
             switch (fh.fieldId()) {
-                case 1 -> type = Optional.of(PhysicalType.values()[r.readI32()]);
+                case 1 -> type = Optional.of(PhysicalType.valueOf(r.readI32()));
                 case 2 -> typeLength = OptionalInt.of(r.readI32());
-                case 3 -> repetitionType = Optional.of(FieldRepetitionType.values()[r.readI32()]);
+                case 3 -> repetitionType = Optional.of(FieldRepetitionType.valueOf(r.readI32()));
                 case 4 -> name = r.readString();
                 case 5 -> numChildren = OptionalInt.of(r.readI32());
-                case 6 -> convertedType = Optional.of(ConvertedType.values()[r.readI32()]);
+                case 6 -> convertedType = Optional.of(ConvertedType.valueOf(r.readI32()));
                 case 7 -> scale = OptionalInt.of(r.readI32());
                 case 8 -> precision = OptionalInt.of(r.readI32());
                 case 9 -> fieldId = OptionalInt.of(r.readI32());

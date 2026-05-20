@@ -23,9 +23,6 @@ import java.io.ByteArrayOutputStream;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.format.BloomFilterAlgorithm;
-import io.tileverse.parquetry.format.BloomFilterCompression;
-import io.tileverse.parquetry.format.BloomFilterHashStrategy;
 import io.tileverse.parquetry.format.BloomFilterHeader;
 import io.tileverse.parquetry.format.ParquetFormatException;
 
@@ -41,9 +38,9 @@ class BloomFilterHeaderDeserializerTest {
         byte[] bytes = synthesizeHeader(1024, 1, 1, 1);
         BloomFilterHeader header = ParquetFormatDeserializer.readBloomFilterHeader(new ByteArrayInputStream(bytes));
         assertThat(header.numBytes()).isEqualTo(1024);
-        assertThat(header.algorithm()).isEqualTo(BloomFilterAlgorithm.SPLIT_BLOCK);
-        assertThat(header.hash()).isEqualTo(BloomFilterHashStrategy.XXHASH);
-        assertThat(header.compression()).isEqualTo(BloomFilterCompression.UNCOMPRESSED);
+        assertThat(header.algorithm()).isEqualTo(BloomFilterHeader.Algorithm.SPLIT_BLOCK);
+        assertThat(header.hash()).isEqualTo(BloomFilterHeader.HashStrategy.XXHASH);
+        assertThat(header.compression()).isEqualTo(BloomFilterHeader.Compression.UNCOMPRESSED);
     }
 
     @Test

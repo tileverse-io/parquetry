@@ -26,6 +26,7 @@ import java.util.OptionalInt;
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.format.Encoding;
+import io.tileverse.parquetry.format.UnknownVariantException;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 
 /**
@@ -216,10 +217,13 @@ class DecoderFactoryTest {
     }
 
     @Test
-    void groupVarInt_throws() {
-        assertThatThrownBy(() -> decoderFor(Encoding.GROUP_VAR_INT, PrimitiveKind.INT32))
-                .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessageContaining("GROUP_VAR_INT");
+    void unknownEncodingWireCodeRejectedAtDeserialize() {
+        // GROUP_VAR_INT (wire code 1) was previously a placeholder in the enum so DecoderFactory could reject it. Now
+        // that Encoding.valueOf(int) throws on unknown codes, the rejection happens one layer earlier - inside the
+        // page-header deserializer - and DecoderFactory only ever sees defined variants.
+        assertThatThrownBy(() -> Encoding.valueOf(1))
+                .isInstanceOf(UnknownVariantException.class)
+                .hasMessageContaining("Unknown Encoding");
     }
 
     // ---- helper ----

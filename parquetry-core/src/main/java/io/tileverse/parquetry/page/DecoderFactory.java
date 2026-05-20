@@ -65,8 +65,6 @@ public final class DecoderFactory {
             case BIT_PACKED ->
                 throw new UnsupportedOperationException(
                         "Legacy BIT_PACKED encoding is not supported; use RLE-Bit-Packed hybrid (Parquet 2.x).");
-            case GROUP_VAR_INT ->
-                throw new UnsupportedOperationException("GROUP_VAR_INT encoding is reserved and unused in Parquet.");
         };
     }
 

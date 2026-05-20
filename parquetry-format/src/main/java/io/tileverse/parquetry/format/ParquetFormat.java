@@ -119,9 +119,9 @@ public final class ParquetFormat {
      */
     public static FileMetaData readFooter(RangeReader reader) {
         final long size =
-                reader.size().orElseThrow(() -> new ParquetFormatException("RangeReader cannot determine file size"));
+                reader.size().orElseThrow(() -> new MalformedFileException("RangeReader cannot determine file size"));
         if (size < MIN_FILE_SIZE) {
-            throw new ParquetFormatException("File too small to be a Parquet file: " + size + " bytes");
+            throw new NotAParquetFileException("File too small to be a Parquet file: " + size + " bytes");
         }
         ByteBuffer tail = reader.readRange(size - 8, 8);
         tail.flip();
@@ -130,17 +130,17 @@ public final class ParquetFormat {
         byte[] magic = new byte[4];
         tail.get(magic);
         if (Arrays.equals(magic, MAGIC_ENCRYPTED)) {
-            throw new ParquetFormatException("Encrypted file (PARE magic); requires parquetry-encryption module");
+            throw new UnsupportedFeatureException("Encrypted file (PARE magic); requires parquetry-encryption module");
         }
         if (!Arrays.equals(magic, MAGIC)) {
-            throw new ParquetFormatException("Not a Parquet file (bad magic): " + new String(magic));
+            throw new NotAParquetFileException("Not a Parquet file (bad magic): " + new String(magic));
         }
         if (footerLen <= 0) {
-            throw new ParquetFormatException("Invalid footer length: " + footerLen);
+            throw new MalformedFileException("Invalid footer length: " + footerLen);
         }
         long footerStart = size - 8 - footerLen;
         if (footerStart < 0) {
-            throw new ParquetFormatException("Footer length " + footerLen + " extends before start of file");
+            throw new MalformedFileException("Footer length " + footerLen + " extends before start of file");
         }
         ByteBuffer footerBytes = reader.readRange(footerStart, footerLen);
         footerBytes.flip();

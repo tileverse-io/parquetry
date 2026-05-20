@@ -21,7 +21,7 @@ import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
-import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.format.MalformedFileException;
 
 /**
  * Hand-rolled Thrift Compact Protocol decoder per <a
@@ -94,7 +94,7 @@ final class CompactProtocolReader {
             }
             shift += 7;
             if (shift > 70) {
-                throw new ParquetFormatException("varint too long");
+                throw new MalformedFileException("varint too long");
             }
         }
     }
@@ -177,7 +177,9 @@ final class CompactProtocolReader {
         int lastFieldId = 0;
         while (true) {
             FieldHeader header = readFieldHeader(lastFieldId);
-            if (header.isStop()) return;
+            if (header.isStop()) {
+                return;
+            }
             skipField(header.type());
             lastFieldId = header.fieldId();
         }
@@ -204,8 +206,8 @@ final class CompactProtocolReader {
                 }
             }
             case STRUCT -> skipStruct();
-            case MAP -> throw new ParquetFormatException("MAP not used in parquet.thrift");
-            case STOP -> throw new ParquetFormatException("unexpected STOP in skipField");
+            case MAP -> throw new MalformedFileException("MAP not used in parquet.thrift");
+            case STOP -> throw new MalformedFileException("unexpected STOP in skipField");
         }
     }
 }

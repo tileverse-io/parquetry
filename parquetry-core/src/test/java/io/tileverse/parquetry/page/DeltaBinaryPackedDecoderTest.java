@@ -110,7 +110,9 @@ class DeltaBinaryPackedDecoderTest {
             long minDelta = Long.MAX_VALUE;
             for (int i = 0; i < deltas.length; i++) {
                 deltas[i] = values[blockStart + i] - previous;
-                if (deltas[i] < minDelta) minDelta = deltas[i];
+                if (deltas[i] < minDelta) {
+                    minDelta = deltas[i];
+                }
                 previous = values[blockStart + i];
             }
             // Adjusted deltas (non-negative)
@@ -122,7 +124,9 @@ class DeltaBinaryPackedDecoderTest {
                     int idx = mb * valuesPerMiniblock + i;
                     if (idx < deltas.length) {
                         adjusted[idx] = deltas[idx] - minDelta;
-                        if (adjusted[idx] > max) max = adjusted[idx];
+                        if (adjusted[idx] > max) {
+                            max = adjusted[idx];
+                        }
                     }
                 }
                 widths[mb] = (max == 0) ? 0 : 64 - Long.numberOfLeadingZeros(max);
@@ -136,7 +140,9 @@ class DeltaBinaryPackedDecoderTest {
             // Write bit-packed adjusted deltas per miniblock
             for (int mb = 0; mb < miniblocksPerBlock; mb++) {
                 int width = widths[mb];
-                if (width == 0) continue;
+                if (width == 0) {
+                    continue;
+                }
                 long buf = 0L;
                 int bits = 0;
                 long mask = (width == 64) ? -1L : ((1L << width) - 1L);

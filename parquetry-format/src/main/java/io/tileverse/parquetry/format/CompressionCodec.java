@@ -21,14 +21,43 @@ package io.tileverse.parquetry.format;
  *
  * <p>Selected via {@link ColumnMetaData#codec()}. {@link #LZO} and {@link #LZ4} are deprecated in favor of
  * {@link #LZ4_RAW}.
+ *
+ * <p>Each variant carries its Thrift wire code in {@link #value()}; resolve incoming i32 codes via
+ * {@link #valueOf(int)}.
  */
 public enum CompressionCodec {
-    UNCOMPRESSED,
-    SNAPPY,
-    GZIP,
-    LZO,
-    BROTLI,
-    LZ4,
-    ZSTD,
-    LZ4_RAW
+    UNCOMPRESSED(0),
+    SNAPPY(1),
+    GZIP(2),
+    LZO(3),
+    BROTLI(4),
+    LZ4(5),
+    ZSTD(6),
+    LZ4_RAW(7);
+
+    private final int value;
+
+    CompressionCodec(int value) {
+        this.value = value;
+    }
+
+    /** Thrift wire code for this variant, matching the value defined in {@code parquet.thrift}. */
+    public int value() {
+        return value;
+    }
+
+    /** @throws UnknownVariantException if no defined variant carries that code */
+    public static CompressionCodec valueOf(int code) {
+        return switch (code) {
+            case 0 -> UNCOMPRESSED;
+            case 1 -> SNAPPY;
+            case 2 -> GZIP;
+            case 3 -> LZO;
+            case 4 -> BROTLI;
+            case 5 -> LZ4;
+            case 6 -> ZSTD;
+            case 7 -> LZ4_RAW;
+            default -> throw new UnknownVariantException("Unknown CompressionCodec wire code: " + code);
+        };
+    }
 }

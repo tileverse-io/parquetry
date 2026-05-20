@@ -22,8 +22,8 @@ import java.nio.ByteOrder;
 import io.tileverse.parquetry.codec.Codec;
 import io.tileverse.parquetry.format.DataPageHeaderV2;
 import io.tileverse.parquetry.format.Encoding;
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.PageHeader;
-import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.read.LevelMaximaResolver.LevelMaxima;
 
 import io.tileverse.io.ByteBufferPool;
@@ -69,7 +69,7 @@ final class DataPageV2Reader implements DataPageReader {
         int repLen = v2.repetitionLevelsByteLength();
         int defLen = v2.definitionLevelsByteLength();
         if (repLen < 0 || defLen < 0) {
-            throw new ParquetFormatException(
+            throw new MalformedFileException(
                     "V2 level byte lengths must be non-negative: repLen=" + repLen + ", defLen=" + defLen);
         }
         int valuesUncompressedSize = computeValuesUncompressedSize(header, repLen, defLen);
@@ -129,7 +129,7 @@ final class DataPageV2Reader implements DataPageReader {
         int total = header.uncompressedPageSize();
         int values = total - repLen - defLen;
         if (values < 0) {
-            throw new ParquetFormatException("V2 page has level byte lengths (" + repLen + " + " + defLen
+            throw new MalformedFileException("V2 page has level byte lengths (" + repLen + " + " + defLen
                     + ") larger than uncompressedPageSize (" + total + ")");
         }
         return values;
