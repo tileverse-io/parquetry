@@ -18,7 +18,12 @@ package io.tileverse.parquetry.format.crypto;
 import java.nio.ByteBuffer;
 import java.util.Optional;
 
-/** Stub. Real fields: encryptionAlgorithm, keyMetadata. */
+/**
+ * Stub. Real fields: encryptionAlgorithm, keyMetadata.
+ *
+ * @param encryptionAlgorithm encryption algorithm used by the file; empty for the stub
+ * @param keyMetadata key retrieval metadata bytes; empty for the stub
+ */
 public record FileCryptoMetaData(Optional<EncryptionAlgorithm> encryptionAlgorithm, Optional<ByteBuffer> keyMetadata) {
 
     public FileCryptoMetaData {

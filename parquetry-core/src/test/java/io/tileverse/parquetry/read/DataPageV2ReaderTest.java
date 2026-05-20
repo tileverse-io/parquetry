@@ -140,7 +140,7 @@ class DataPageV2ReaderTest {
                         Encoding.PLAIN_DICTIONARY,
                         /*defLevelsByteLength*/ 0,
                         /*repLevelsByteLength*/ 0,
-                        Optional.of(Boolean.FALSE),
+                        /*isCompressed*/ false,
                         Optional.empty())));
 
         try (DecodedPage page = reader.read(header, IGNORED, ByteBuffer.wrap(valueBytes), uncompressed, pool)) {
@@ -177,7 +177,7 @@ class DataPageV2ReaderTest {
                         Encoding.PLAIN,
                         /*defLevelsByteLength*/ defLen,
                         /*repLevelsByteLength*/ repLen,
-                        Optional.of(compressed),
+                        compressed,
                         Optional.empty())));
     }
 

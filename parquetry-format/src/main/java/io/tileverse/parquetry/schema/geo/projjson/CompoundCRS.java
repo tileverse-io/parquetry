@@ -23,6 +23,10 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 /**
  * A coordinate reference system composed of independent sub-CRSes. The canonical case is a horizontal CRS combined with
  * a vertical CRS, e.g. WGS 84 (lat/lon) + EGM2008 height.
+ *
+ * @param name human-readable CRS name; empty when not recorded
+ * @param id registry {@link Identifier}; empty when the CRS is defined inline only
+ * @param components the ordered list of sub-CRSes; PROJJSON convention puts the horizontal CRS first
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record CompoundCRS(Optional<String> name, Optional<Identifier> id, List<CoordinateReferenceSystem> components)

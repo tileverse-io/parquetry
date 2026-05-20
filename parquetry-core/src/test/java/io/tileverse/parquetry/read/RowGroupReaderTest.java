@@ -233,48 +233,33 @@ class RowGroupReaderTest {
                 columnChunk(yearMeta, /*fileOffset*/ 0L),
                 columnChunk(countryMeta, /*fileOffset*/ 100L),
                 columnChunk(valueMeta, /*fileOffset*/ 200L));
-        return new RowGroup(
-                columns,
-                /*totalByteSize*/ 300L,
-                /*numRows*/ ROW_COUNT,
-                /*sortingColumns*/ Optional.empty(),
-                /*fileOffset*/ OptionalLong.of(0L),
-                /*totalCompressedSize*/ OptionalLong.of(300L),
-                /*ordinal*/ OptionalInt.empty());
+        return RowGroup.builder()
+                .columns(columns)
+                .totalByteSize(300L)
+                .numRows(ROW_COUNT)
+                .fileOffset(OptionalLong.of(0L))
+                .totalCompressedSize(OptionalLong.of(300L))
+                .build();
     }
 
     private static ColumnChunk columnChunk(ColumnMetaData meta, long fileOffset) {
-        return new ColumnChunk(
-                /*filePath*/ Optional.empty(),
-                fileOffset,
-                Optional.of(meta),
-                /*offsetIndexOffset*/ OptionalLong.empty(),
-                /*offsetIndexLength*/ OptionalInt.empty(),
-                /*columnIndexOffset*/ OptionalLong.empty(),
-                /*columnIndexLength*/ OptionalInt.empty(),
-                /*cryptoMetadata*/ Optional.empty(),
-                /*encryptedColumnMetadata*/ Optional.empty());
+        return ColumnChunk.builder()
+                .fileOffset(fileOffset)
+                .metaData(Optional.of(meta))
+                .build();
     }
 
     private static ColumnMetaData primitiveMetadata(PhysicalType type, List<String> pathInSchema, long numValues) {
-        return new ColumnMetaData(
-                type,
-                /*encodings*/ List.of(Encoding.PLAIN),
-                pathInSchema,
-                CompressionCodec.UNCOMPRESSED,
-                numValues,
-                /*totalUncompressedSize*/ 100L,
-                /*totalCompressedSize*/ 100L,
-                /*keyValueMetadata*/ List.of(),
-                /*dataPageOffset*/ 0L,
-                /*indexPageOffset*/ OptionalLong.empty(),
-                /*dictionaryPageOffset*/ OptionalLong.empty(),
-                /*statistics*/ Optional.empty(),
-                /*encodingStats*/ List.of(),
-                /*bloomFilterOffset*/ OptionalLong.empty(),
-                /*bloomFilterLength*/ OptionalLong.empty(),
-                /*sizeStatistics*/ Optional.empty(),
-                /*geospatialStatistics*/ Optional.empty());
+        return ColumnMetaData.builder()
+                .type(type)
+                .encodings(List.of(Encoding.PLAIN))
+                .pathInSchema(pathInSchema)
+                .codec(CompressionCodec.UNCOMPRESSED)
+                .numValues(numValues)
+                .totalUncompressedSize(100L)
+                .totalCompressedSize(100L)
+                .dataPageOffset(0L)
+                .build();
     }
 
     // --- expected row values ---

@@ -19,6 +19,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 
 import io.tileverse.parquetry.format.SizeStatistics;
 
@@ -38,7 +39,7 @@ final class SizeStatisticsDeserializer {
     private SizeStatisticsDeserializer() {}
 
     static SizeStatistics read(CompactProtocolReader r) throws IOException {
-        Optional<Long> unencodedByteArrayDataBytes = Optional.empty();
+        OptionalLong unencodedByteArrayDataBytes = OptionalLong.empty();
         Optional<List<Long>> repetitionLevelHistogram = Optional.empty();
         Optional<List<Long>> definitionLevelHistogram = Optional.empty();
         int lastFieldId = 0;
@@ -49,7 +50,7 @@ final class SizeStatisticsDeserializer {
             }
             lastFieldId = fh.fieldId();
             switch (fh.fieldId()) {
-                case 1 -> unencodedByteArrayDataBytes = Optional.of(r.readI64());
+                case 1 -> unencodedByteArrayDataBytes = OptionalLong.of(r.readI64());
                 case 2 -> repetitionLevelHistogram = Optional.of(readI64List(r));
                 case 3 -> definitionLevelHistogram = Optional.of(readI64List(r));
                 default -> r.skipField(fh.type());

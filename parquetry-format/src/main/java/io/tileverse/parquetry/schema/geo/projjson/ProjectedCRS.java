@@ -23,6 +23,13 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 /**
  * A planar (easting/northing) coordinate reference system derived from a {@link #baseCrs()} via a {@link Conversion}.
  * The most common example in real data is the Web Mercator family (EPSG:3857) and the UTM zones.
+ *
+ * @param name human-readable CRS name (e.g. {@code "WGS 84 / Pseudo-Mercator"}); empty when not recorded
+ * @param id registry {@link Identifier} (typically {@code EPSG:<code>}); empty when the CRS is inline only
+ * @param baseCrs the source CRS the {@link #conversion} maps from (typically a {@link GeographicCRS})
+ * @param conversion projection method + parameters that turn {@link #baseCrs} coordinates into this CRS's planar
+ *     coordinates
+ * @param coordinateSystem easting / northing axis definitions
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record ProjectedCRS(

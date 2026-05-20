@@ -329,42 +329,28 @@ class RowGroupPipelineTest {
      * page stream.
      */
     private static RowGroup singleColumnRowGroup(int ordinal) {
-        ColumnMetaData meta = new ColumnMetaData(
-                PhysicalType.INT32,
-                List.of(Encoding.PLAIN),
-                List.of("value"),
-                CompressionCodec.UNCOMPRESSED,
-                /*numValues*/ ROWS_PER_GROUP,
-                /*totalUncompressedSize*/ ROWS_PER_GROUP * 4L,
-                /*totalCompressedSize*/ ROWS_PER_GROUP * 4L,
-                /*keyValueMetadata*/ List.of(),
-                /*dataPageOffset*/ ordinal * 1000L,
-                /*indexPageOffset*/ OptionalLong.empty(),
-                /*dictionaryPageOffset*/ OptionalLong.empty(),
-                /*statistics*/ Optional.empty(),
-                /*encodingStats*/ List.of(),
-                /*bloomFilterOffset*/ OptionalLong.empty(),
-                /*bloomFilterLength*/ OptionalLong.empty(),
-                /*sizeStatistics*/ Optional.empty(),
-                /*geospatialStatistics*/ Optional.empty());
-        ColumnChunk chunk = new ColumnChunk(
-                /*filePath*/ Optional.empty(),
-                /*fileOffset*/ ordinal * 1000L,
-                Optional.of(meta),
-                OptionalLong.empty(),
-                OptionalInt.empty(),
-                OptionalLong.empty(),
-                OptionalInt.empty(),
-                Optional.empty(),
-                Optional.empty());
-        return new RowGroup(
-                List.of(chunk),
-                /*totalByteSize*/ ROWS_PER_GROUP * 4L,
-                /*numRows*/ ROWS_PER_GROUP,
-                /*sortingColumns*/ Optional.empty(),
-                /*fileOffset*/ OptionalLong.of(ordinal * 1000L),
-                /*totalCompressedSize*/ OptionalLong.of(ROWS_PER_GROUP * 4L),
-                /*ordinal*/ OptionalInt.of(ordinal));
+        ColumnMetaData meta = ColumnMetaData.builder()
+                .type(PhysicalType.INT32)
+                .encodings(List.of(Encoding.PLAIN))
+                .pathInSchema(List.of("value"))
+                .codec(CompressionCodec.UNCOMPRESSED)
+                .numValues(ROWS_PER_GROUP)
+                .totalUncompressedSize(ROWS_PER_GROUP * 4L)
+                .totalCompressedSize(ROWS_PER_GROUP * 4L)
+                .dataPageOffset(ordinal * 1000L)
+                .build();
+        ColumnChunk chunk = ColumnChunk.builder()
+                .fileOffset(ordinal * 1000L)
+                .metaData(Optional.of(meta))
+                .build();
+        return RowGroup.builder()
+                .columns(List.of(chunk))
+                .totalByteSize(ROWS_PER_GROUP * 4L)
+                .numRows(ROWS_PER_GROUP)
+                .fileOffset(OptionalLong.of(ordinal * 1000L))
+                .totalCompressedSize(OptionalLong.of(ROWS_PER_GROUP * 4L))
+                .ordinal(OptionalInt.of(ordinal))
+                .build();
     }
 
     // --- column-fetcher stubs ---

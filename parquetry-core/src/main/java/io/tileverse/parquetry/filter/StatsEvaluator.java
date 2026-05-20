@@ -19,6 +19,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 
 import io.tileverse.parquetry.format.Statistics;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -226,11 +227,11 @@ final class StatsEvaluator {
     }
 
     private static PruningDecision evalIsNull(ColumnPath col, FilterPipeline.ColumnStatsLookup cols, long rowCount) {
-        Optional<Long> nullCountOpt = lookupNullCount(col, cols);
+        OptionalLong nullCountOpt = lookupNullCount(col, cols);
         if (nullCountOpt.isEmpty()) {
             return new PruningDecision.NotApplied(TIER, OP_IS_NULL + col.dot() + ": nullCount missing");
         }
-        long nullCount = nullCountOpt.get();
+        long nullCount = nullCountOpt.getAsLong();
         if (nullCount == 0) {
             return new PruningDecision.Eliminated(TIER, OP_IS_NULL + col.dot() + ": no nulls");
         }
@@ -241,11 +242,11 @@ final class StatsEvaluator {
     }
 
     private static PruningDecision evalIsNotNull(ColumnPath col, FilterPipeline.ColumnStatsLookup cols, long rowCount) {
-        Optional<Long> nullCountOpt = lookupNullCount(col, cols);
+        OptionalLong nullCountOpt = lookupNullCount(col, cols);
         if (nullCountOpt.isEmpty()) {
             return new PruningDecision.NotApplied(TIER, OP_IS_NOT_NULL + col.dot() + ": nullCount missing");
         }
-        long nullCount = nullCountOpt.get();
+        long nullCount = nullCountOpt.getAsLong();
         if (nullCount == rowCount) {
             return new PruningDecision.Eliminated(TIER, OP_IS_NOT_NULL + col.dot() + ": all rows null");
         }
@@ -255,8 +256,9 @@ final class StatsEvaluator {
         return new PruningDecision.NotApplied(TIER, OP_IS_NOT_NULL + col.dot() + ": some nulls");
     }
 
-    private static Optional<Long> lookupNullCount(ColumnPath col, FilterPipeline.ColumnStatsLookup cols) {
-        return cols.get(col).flatMap(cs -> cs.statistics().nullCount());
+    private static OptionalLong lookupNullCount(ColumnPath col, FilterPipeline.ColumnStatsLookup cols) {
+        Optional<FilterPipeline.ColumnStats> stats = cols.get(col);
+        return stats.isPresent() ? stats.get().statistics().nullCount() : OptionalLong.empty();
     }
 
     /**

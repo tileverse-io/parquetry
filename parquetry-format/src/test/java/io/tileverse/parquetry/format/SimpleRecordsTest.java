@@ -19,6 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 
 import org.junit.jupiter.api.Test;
 
@@ -26,11 +27,7 @@ class SimpleRecordsTest {
 
     @Test
     void statisticsFieldsAreAllOptional() {
-        Statistics s = new Statistics(
-                Optional.empty(), Optional.empty(),
-                Optional.empty(), Optional.empty(),
-                Optional.empty(), Optional.empty(),
-                Optional.empty(), Optional.empty());
+        Statistics s = Statistics.builder().build();
         assertThat(s.maxValue()).isEmpty();
         assertThat(s.nullCount()).isEmpty();
     }
@@ -38,8 +35,8 @@ class SimpleRecordsTest {
     @Test
     void sizeStatisticsHoldsReferencedFields() {
         SizeStatistics ss = new SizeStatistics(
-                Optional.of(1024L), Optional.of(List.of(10L, 20L, 30L)), Optional.of(List.of(0L, 0L, 5L)));
-        assertThat(ss.unencodedByteArrayDataBytes()).contains(1024L);
+                OptionalLong.of(1024L), Optional.of(List.of(10L, 20L, 30L)), Optional.of(List.of(0L, 0L, 5L)));
+        assertThat(ss.unencodedByteArrayDataBytes()).hasValue(1024L);
         assertThat(ss.repetitionLevelHistogram()).map(List::size).contains(3);
     }
 

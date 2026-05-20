@@ -22,6 +22,13 @@ import java.util.Optional;
  * Per-row-group output of {@code FilterPipeline}: the index within the file, the row count, the ordered list of
  * per-tier {@link PruningDecision}s (one per tier that was applied), the final {@link RowGroupOutcome}, and the
  * surviving {@link RowRanges} when the outcome is {@link RowGroupOutcome#PARTIAL}.
+ *
+ * @param index zero-based ordinal of this row group within the file's row-group list
+ * @param rowCount total rows in this row group (independent of which ones survive pruning)
+ * @param tiers ordered per-tier decisions, in the order the pipeline applied them; defensively copied
+ * @param outcome the final pipeline decision (eliminated, partial, full) after running every applicable tier
+ * @param survivingRows the rows that survive when {@link #outcome} is {@link RowGroupOutcome#PARTIAL}; empty for
+ *     {@link RowGroupOutcome#ELIMINATED} and {@link RowGroupOutcome#FULL}
  */
 public record RowGroupPlan(
         int index,

@@ -15,6 +15,13 @@
  */
 package io.tileverse.parquetry.format.codec;
 
+/**
+ * One Thrift Compact Protocol field header: the absolute field id and its wire type. Produced by
+ * {@link CompactProtocolReader#readFieldHeader(int)}.
+ *
+ * @param fieldId absolute field id (the reader resolves the delta encoding before constructing this record)
+ * @param type wire type from the field header's low nibble; {@link CompactType#STOP} terminates the enclosing struct
+ */
 public record FieldHeader(short fieldId, CompactType type) {
     public boolean isStop() {
         return type == CompactType.STOP;

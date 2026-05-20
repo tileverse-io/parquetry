@@ -22,6 +22,8 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
  * column's bounding box per row, enabling row-group-level spatial pruning without native
  * {@link io.tileverse.parquetry.format.GeospatialStatistics}. Currently the spec only defines the {@link #bbox()}
  * covering kind.
+ *
+ * @param bbox per-row bbox sidecar columns; the spec mandates this when {@code covering} is present
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record Covering(BboxCovering bbox) {}

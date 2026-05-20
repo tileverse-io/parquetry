@@ -20,6 +20,8 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
 
+import lombok.Builder;
+
 /**
  * One horizontal row group within a Parquet file; mirror of {@code RowGroup} in {@code parquet.thrift}.
  *
@@ -39,6 +41,9 @@ import java.util.OptionalLong;
  *     recorded ({@code total_compressed_size} in the thrift schema)
  * @param ordinal zero-based ordinal of this row group within the file; unset when not recorded
  */
+// S2789: constructor null-tolerates Optional to support the @Builder pattern.
+@SuppressWarnings("java:S2789")
+@Builder
 public record RowGroup(
         List<ColumnChunk> columns,
         long totalByteSize,
@@ -49,9 +54,20 @@ public record RowGroup(
         OptionalInt ordinal) {
 
     public RowGroup {
-        columns = List.copyOf(columns);
-        sortingColumns = sortingColumns.map(List::copyOf);
+        columns = columns == null ? List.of() : List.copyOf(columns);
+        sortingColumns = sortingColumns == null ? Optional.empty() : sortingColumns.map(List::copyOf);
+        fileOffset = fileOffset == null ? OptionalLong.empty() : fileOffset;
+        totalCompressedSize = totalCompressedSize == null ? OptionalLong.empty() : totalCompressedSize;
+        ordinal = ordinal == null ? OptionalInt.empty() : ordinal;
     }
 
+    /**
+     * One entry in {@link RowGroup#sortingColumns()}: the index of a sorted column plus the sort direction and
+     * null-handling.
+     *
+     * @param columnIdx zero-based index of the sorted column within the row group's column-chunk list
+     * @param descending {@code true} when the column is sorted in descending order; {@code false} for ascending
+     * @param nullsFirst {@code true} when null values are placed before non-null values; {@code false} when after
+     */
     public record SortingColumn(int columnIdx, boolean descending, boolean nullsFirst) {}
 }

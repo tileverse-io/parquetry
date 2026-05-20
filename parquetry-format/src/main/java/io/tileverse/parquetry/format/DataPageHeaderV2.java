@@ -34,8 +34,8 @@ import java.util.Optional;
  *     ({@code definition_levels_byte_length} in the thrift schema)
  * @param repetitionLevelsByteLength byte length of the uncompressed repetition-levels section
  *     ({@code repetition_levels_byte_length} in the thrift schema)
- * @param isCompressed whether the value section is compressed with the column chunk's {@link CompressionCodec}; empty
- *     defaults to {@code true} per the thrift schema
+ * @param isCompressed whether the value section is compressed with the column chunk's {@link CompressionCodec}; the
+ *     thrift schema defaults to {@code true} when the field is absent on the wire
  * @param statistics optional inline {@link Statistics} for this page's values; empty when not written
  */
 public record DataPageHeaderV2(
@@ -45,5 +45,5 @@ public record DataPageHeaderV2(
         Encoding encoding,
         int definitionLevelsByteLength,
         int repetitionLevelsByteLength,
-        Optional<Boolean> isCompressed,
+        boolean isCompressed,
         Optional<Statistics> statistics) {}

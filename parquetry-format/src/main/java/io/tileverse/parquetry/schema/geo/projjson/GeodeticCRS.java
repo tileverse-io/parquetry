@@ -24,6 +24,11 @@ import com.fasterxml.jackson.annotation.JsonProperty;
  * A geocentric (X/Y/Z) coordinate reference system anchored on a {@link GeodeticReferenceFrame}. Distinct from
  * {@link GeographicCRS} in that its axes are Cartesian rather than lat/lon. PROJ uses {@code GeodeticCRS} for the base
  * CRS of certain projections (e.g. some EPSG operation methods that operate on X/Y/Z rather than latitude / longitude).
+ *
+ * @param name human-readable CRS name; empty when the writer did not record one
+ * @param id registry {@link Identifier}; empty when the CRS is defined inline only
+ * @param datum {@link GeodeticReferenceFrame} the X/Y/Z values are referenced to
+ * @param coordinateSystem Cartesian axis definitions (typically X / Y / Z in metres)
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record GeodeticCRS(

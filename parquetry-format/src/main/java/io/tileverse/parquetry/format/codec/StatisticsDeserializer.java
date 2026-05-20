@@ -18,6 +18,7 @@ package io.tileverse.parquetry.format.codec;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Optional;
+import java.util.OptionalLong;
 
 import io.tileverse.parquetry.format.Statistics;
 
@@ -44,12 +45,12 @@ final class StatisticsDeserializer {
     static Statistics read(CompactProtocolReader r) throws IOException {
         Optional<ByteBuffer> max = Optional.empty();
         Optional<ByteBuffer> min = Optional.empty();
-        Optional<Long> nullCount = Optional.empty();
-        Optional<Long> distinctCount = Optional.empty();
+        OptionalLong nullCount = OptionalLong.empty();
+        OptionalLong distinctCount = OptionalLong.empty();
         Optional<ByteBuffer> maxValue = Optional.empty();
         Optional<ByteBuffer> minValue = Optional.empty();
-        Optional<Boolean> isMaxValueExact = Optional.empty();
-        Optional<Boolean> isMinValueExact = Optional.empty();
+        boolean isMaxValueExact = false;
+        boolean isMinValueExact = false;
         int lastFieldId = 0;
         while (true) {
             FieldHeader fh = r.readFieldHeader(lastFieldId);
@@ -60,12 +61,12 @@ final class StatisticsDeserializer {
             switch (fh.fieldId()) {
                 case 1 -> max = Optional.of(r.readBinary());
                 case 2 -> min = Optional.of(r.readBinary());
-                case 3 -> nullCount = Optional.of(r.readI64());
-                case 4 -> distinctCount = Optional.of(r.readI64());
+                case 3 -> nullCount = OptionalLong.of(r.readI64());
+                case 4 -> distinctCount = OptionalLong.of(r.readI64());
                 case 5 -> maxValue = Optional.of(r.readBinary());
                 case 6 -> minValue = Optional.of(r.readBinary());
-                case 7 -> isMaxValueExact = Optional.of(fh.type() == CompactType.BOOLEAN_TRUE);
-                case 8 -> isMinValueExact = Optional.of(fh.type() == CompactType.BOOLEAN_TRUE);
+                case 7 -> isMaxValueExact = fh.type() == CompactType.BOOLEAN_TRUE;
+                case 8 -> isMinValueExact = fh.type() == CompactType.BOOLEAN_TRUE;
                 default -> r.skipField(fh.type());
             }
         }

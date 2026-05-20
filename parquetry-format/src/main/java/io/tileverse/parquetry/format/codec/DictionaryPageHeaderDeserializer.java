@@ -16,7 +16,6 @@
 package io.tileverse.parquetry.format.codec;
 
 import java.io.IOException;
-import java.util.Optional;
 
 import io.tileverse.parquetry.format.DictionaryPageHeader;
 import io.tileverse.parquetry.format.Encoding;
@@ -39,7 +38,7 @@ final class DictionaryPageHeaderDeserializer {
     static DictionaryPageHeader read(CompactProtocolReader r) throws IOException {
         int numValues = 0;
         Encoding encoding = Encoding.PLAIN;
-        Optional<Boolean> isSorted = Optional.empty();
+        boolean isSorted = false;
         int lastFieldId = 0;
         while (true) {
             FieldHeader fh = r.readFieldHeader(lastFieldId);
@@ -50,7 +49,7 @@ final class DictionaryPageHeaderDeserializer {
             switch (fh.fieldId()) {
                 case 1 -> numValues = r.readI32();
                 case 2 -> encoding = Encoding.valueOf(r.readI32());
-                case 3 -> isSorted = Optional.of(fh.type() == CompactType.BOOLEAN_TRUE);
+                case 3 -> isSorted = fh.type() == CompactType.BOOLEAN_TRUE;
                 default -> r.skipField(fh.type());
             }
         }

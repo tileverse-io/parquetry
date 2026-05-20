@@ -78,7 +78,14 @@ final class LevelMaximaResolver {
         return Optional.empty();
     }
 
-    /** Resolved max-rep / max-def pair for a single leaf column. */
+    /**
+     * Resolved max-rep / max-def pair for a single leaf column.
+     *
+     * @param maxRepetitionLevel maximum repetition level along the path from root to the leaf; {@code 0} for
+     *     non-repeated columns
+     * @param maxDefinitionLevel maximum definition level along the path; counts the number of optional / nullable
+     *     ancestors plus the leaf itself if it is optional
+     */
     public record LevelMaxima(int maxRepetitionLevel, int maxDefinitionLevel) {
         public LevelMaxima {
             if (maxRepetitionLevel < 0) {

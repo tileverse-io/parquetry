@@ -147,7 +147,13 @@ final class CompactProtocolReader {
         return new FieldHeader(fieldId, CompactType.of(typeCode));
     }
 
-    /** Size and element type for a Thrift list or set. */
+    /**
+     * Size and element type for a Thrift list or set.
+     *
+     * @param size element count (already decoded; absorbs the long-form varint when the header's 4-bit count was
+     *     {@code 0xf})
+     * @param elementType wire type shared by every element in the list / set
+     */
     public record ListHeader(int size, CompactType elementType) {}
 
     /**

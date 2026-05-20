@@ -15,8 +15,6 @@
  */
 package io.tileverse.parquetry.format;
 
-import java.util.Optional;
-
 /**
  * Header for the optional dictionary page of a column chunk; mirror of {@code DictionaryPageHeader} in
  * {@code parquet.thrift}.
@@ -26,7 +24,8 @@ import java.util.Optional;
  *
  * @param numValues number of entries in this dictionary
  * @param encoding {@link Encoding} of the dictionary values themselves (typically {@link Encoding#PLAIN})
- * @param isSorted whether the dictionary entries are sorted in ascending order; empty when the writer did not record
- *     this flag
+ * @param isSorted whether the dictionary entries are sorted in ascending order; defaults to {@code false} when the
+ *     writer did not record the flag (the conservative choice - consumers that rely on sorted order should look at the
+ *     dictionary bytes themselves)
  */
-public record DictionaryPageHeader(int numValues, Encoding encoding, Optional<Boolean> isSorted) {}
+public record DictionaryPageHeader(int numValues, Encoding encoding, boolean isSorted) {}

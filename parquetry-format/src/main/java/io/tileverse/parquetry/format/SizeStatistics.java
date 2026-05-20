@@ -17,6 +17,7 @@ package io.tileverse.parquetry.format;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 
 /**
  * Optional per-column-chunk size statistics; mirror of {@code SizeStatistics} in {@code parquet.thrift}.
@@ -32,13 +33,19 @@ import java.util.Optional;
  * @param definitionLevelHistogram count of values observed at each definition level, indexed by level; empty when not
  *     recorded ({@code definition_level_histogram} in the thrift schema)
  */
+// S2789: constructor null-tolerates Optional to support the @Builder pattern.
+@SuppressWarnings("java:S2789")
 public record SizeStatistics(
-        Optional<Long> unencodedByteArrayDataBytes,
+        OptionalLong unencodedByteArrayDataBytes,
         Optional<List<Long>> repetitionLevelHistogram,
         Optional<List<Long>> definitionLevelHistogram) {
 
     public SizeStatistics {
-        repetitionLevelHistogram = repetitionLevelHistogram.map(List::copyOf);
-        definitionLevelHistogram = definitionLevelHistogram.map(List::copyOf);
+        unencodedByteArrayDataBytes =
+                unencodedByteArrayDataBytes == null ? OptionalLong.empty() : unencodedByteArrayDataBytes;
+        repetitionLevelHistogram =
+                repetitionLevelHistogram == null ? Optional.empty() : repetitionLevelHistogram.map(List::copyOf);
+        definitionLevelHistogram =
+                definitionLevelHistogram == null ? Optional.empty() : definitionLevelHistogram.map(List::copyOf);
     }
 }

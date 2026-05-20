@@ -26,6 +26,12 @@ import com.fasterxml.jackson.annotation.JsonProperty;
  *
  * <p>Exactly one of {@code semi_minor_axis} or {@code inverse_flattening} is canonically provided; the schema permits
  * both for redundancy. {@code semi_major_axis} is always present on a valid PROJJSON ellipsoid.
+ *
+ * @param name human-readable ellipsoid name (e.g. {@code "WGS 84"}); empty when not recorded
+ * @param semiMajorAxis equatorial radius in metres; required by the PROJJSON schema
+ * @param semiMinorAxis polar radius in metres; empty when the writer only recorded {@link #inverseFlattening}
+ * @param inverseFlattening reciprocal of the flattening; empty when the writer only recorded {@link #semiMinorAxis}
+ * @param id registry {@link Identifier} (typically an EPSG ellipsoid code); empty when defined inline only
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record Ellipsoid(

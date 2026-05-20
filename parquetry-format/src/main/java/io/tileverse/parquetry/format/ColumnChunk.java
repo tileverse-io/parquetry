@@ -22,6 +22,8 @@ import java.util.OptionalLong;
 
 import io.tileverse.parquetry.format.crypto.ColumnCryptoMetaData;
 
+import lombok.Builder;
+
 /**
  * Pointer to one column's bytes within a {@link RowGroup}; mirror of {@code ColumnChunk} in {@code parquet.thrift}.
  *
@@ -42,6 +44,9 @@ import io.tileverse.parquetry.format.crypto.ColumnCryptoMetaData;
  * @param encryptedColumnMetadata serialized, encrypted {@link ColumnMetaData} bytes; empty when {@link #metaData()} is
  *     present in cleartext
  */
+// S2789: constructor null-tolerates Optional to support the @Builder pattern.
+@SuppressWarnings("java:S2789")
+@Builder
 public record ColumnChunk(
         Optional<String> filePath,
         long fileOffset,
@@ -54,6 +59,15 @@ public record ColumnChunk(
         Optional<ByteBuffer> encryptedColumnMetadata) {
 
     public ColumnChunk {
-        encryptedColumnMetadata = encryptedColumnMetadata.map(ByteBuffer::asReadOnlyBuffer);
+        filePath = filePath == null ? Optional.empty() : filePath;
+        metaData = metaData == null ? Optional.empty() : metaData;
+        offsetIndexOffset = offsetIndexOffset == null ? OptionalLong.empty() : offsetIndexOffset;
+        offsetIndexLength = offsetIndexLength == null ? OptionalInt.empty() : offsetIndexLength;
+        columnIndexOffset = columnIndexOffset == null ? OptionalLong.empty() : columnIndexOffset;
+        columnIndexLength = columnIndexLength == null ? OptionalInt.empty() : columnIndexLength;
+        cryptoMetadata = cryptoMetadata == null ? Optional.empty() : cryptoMetadata;
+        encryptedColumnMetadata = encryptedColumnMetadata == null
+                ? Optional.empty()
+                : encryptedColumnMetadata.map(ByteBuffer::asReadOnlyBuffer);
     }
 }

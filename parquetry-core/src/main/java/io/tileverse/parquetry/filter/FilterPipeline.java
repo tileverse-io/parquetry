@@ -41,6 +41,14 @@ public final class FilterPipeline {
     /**
      * Per-row-group inputs the pipeline needs to evaluate the a-priori tiers. Any lookup may return empty entries for a
      * given column, in which case the corresponding tier degrades to {@link PruningDecision.NotApplied}.
+     *
+     * @param rowCount total rows in the row group; surfaces in {@link RowGroupPlan#rowCount()} and lets the stats tier
+     *     check counts like null-count vs row-count
+     * @param stats lookup for the STATS tier (per-column min/max + null/distinct counts)
+     * @param dictionaries lookup for the DICTIONARY tier; returns the loaded dictionary page when one was written
+     * @param pageIndexes lookup for the COLUMN_INDEX tier (per-page min/max + offsets)
+     * @param blooms lookup for the BLOOM_FILTER tier; returns the column's loaded split-block bloom filter when one was
+     *     written
      */
     public record RowGroupInputs(
             long rowCount,

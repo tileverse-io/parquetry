@@ -23,6 +23,7 @@ import java.nio.ByteOrder;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 
 import org.junit.jupiter.api.Test;
 
@@ -155,15 +156,8 @@ class StatsEvaluatorTest {
 
     @Test
     void missingMinMaxYieldsNotApplied() {
-        Statistics noBounds = new Statistics(
-                Optional.empty(),
-                Optional.empty(),
-                Optional.of(0L),
-                Optional.empty(),
-                Optional.empty(),
-                Optional.empty(),
-                Optional.empty(),
-                Optional.empty());
+        Statistics noBounds =
+                Statistics.builder().nullCount(OptionalLong.of(0L)).build();
         FilterPipeline.ColumnStatsLookup cols = single("year", PrimitiveKind.INT32, noBounds);
         PruningDecision d = StatsEvaluator.evaluate(col("year").eq(2020), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
@@ -246,39 +240,27 @@ class StatsEvaluatorTest {
     }
 
     private static Statistics intStats(int min, int max, long nullCount) {
-        return new Statistics(
-                Optional.empty(),
-                Optional.empty(),
-                Optional.of(nullCount),
-                Optional.empty(),
-                Optional.of(encodeInt(max)),
-                Optional.of(encodeInt(min)),
-                Optional.empty(),
-                Optional.empty());
+        return Statistics.builder()
+                .nullCount(OptionalLong.of(nullCount))
+                .maxValue(Optional.of(encodeInt(max)))
+                .minValue(Optional.of(encodeInt(min)))
+                .build();
     }
 
     private static Statistics doubleStats(double min, double max, long nullCount) {
-        return new Statistics(
-                Optional.empty(),
-                Optional.empty(),
-                Optional.of(nullCount),
-                Optional.empty(),
-                Optional.of(encodeDouble(max)),
-                Optional.of(encodeDouble(min)),
-                Optional.empty(),
-                Optional.empty());
+        return Statistics.builder()
+                .nullCount(OptionalLong.of(nullCount))
+                .maxValue(Optional.of(encodeDouble(max)))
+                .minValue(Optional.of(encodeDouble(min)))
+                .build();
     }
 
     private static Statistics binaryStats(String min, String max, long nullCount) {
-        return new Statistics(
-                Optional.empty(),
-                Optional.empty(),
-                Optional.of(nullCount),
-                Optional.empty(),
-                Optional.of(ByteBuffer.wrap(max.getBytes(java.nio.charset.StandardCharsets.UTF_8))),
-                Optional.of(ByteBuffer.wrap(min.getBytes(java.nio.charset.StandardCharsets.UTF_8))),
-                Optional.empty(),
-                Optional.empty());
+        return Statistics.builder()
+                .nullCount(OptionalLong.of(nullCount))
+                .maxValue(Optional.of(ByteBuffer.wrap(max.getBytes(java.nio.charset.StandardCharsets.UTF_8))))
+                .minValue(Optional.of(ByteBuffer.wrap(min.getBytes(java.nio.charset.StandardCharsets.UTF_8))))
+                .build();
     }
 
     private static ByteBuffer encodeInt(int v) {

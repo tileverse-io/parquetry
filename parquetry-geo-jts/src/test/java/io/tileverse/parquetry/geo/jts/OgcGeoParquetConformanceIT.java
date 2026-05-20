@@ -39,8 +39,11 @@ import io.tileverse.storage.StorageFactory;
 import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.read.ReadOptions;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.Field;
+import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 /**
  * Conformance suite against the {@code opengeospatial/geoparquet} {@code test_data/} fixtures. For each
@@ -109,15 +112,38 @@ class OgcGeoParquetConformanceIT {
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
             ParquetDataset dataset = ParquetDataset.open(reader);
+            assertGeoMetadataParses(dataset, geometry);
             JtsMaterializer materializer = new JtsMaterializer(dataset.schema());
             assertThat(materializer.geometryColumns())
-                    .as("Geometry column must be tagged after GeoMetadataBridge runs")
+                    .as("SchemaBuilder must synthesize the Geometry annotation on the WKB geometry column")
                     .contains(geometry);
             try (Stream<Map<ColumnPath, Object>> rows =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, materializer, ReadOptions.DEFAULTS)) {
                 return rows.map(r -> (Geometry) r.get(geometry)).toList();
             }
         }
+    }
+
+    /**
+     * Verifies the OGC fixtures land in the typed GeoParquet metadata model and that the schema crossing the format ->
+     * core boundary already carries the synthesized native logical-type annotation.
+     */
+    private static void assertGeoMetadataParses(ParquetDataset dataset, ColumnPath geometry) {
+        String geoJson = dataset.keyValueMetadata().get("geo");
+        assertThat(geoJson)
+                .as("OGC fixtures must carry a 'geo' key-value metadata entry")
+                .isNotNull();
+        GeoParquetMetadata geo = GeoParquetMetadata.parse(geoJson);
+        assertThat(geo)
+                .as("OGC fixtures advertise GeoParquet 1.1; parse must dispatch to the V1_1 record permit")
+                .isInstanceOf(GeoParquetMetadata.V1_1.class);
+        assertThat(geo.primaryColumn()).isEqualTo("geometry");
+        assertThat(geo.columns()).containsKey("geometry");
+
+        Field.Primitive leaf = (Field.Primitive) dataset.schema().find(geometry).orElseThrow();
+        assertThat(leaf.logicalType())
+                .as("SchemaBuilder must fold the 'geo' JSON into a LogicalType.Geometry annotation on the WKB column")
+                .hasValueSatisfying(lt -> assertThat(lt).isInstanceOf(LogicalType.Geometry.class));
     }
 
     private static List<String> readExpectedWkt(Path csv) throws IOException {

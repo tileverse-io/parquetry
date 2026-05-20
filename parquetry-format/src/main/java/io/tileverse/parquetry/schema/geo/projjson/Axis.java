@@ -29,6 +29,12 @@ import tools.jackson.databind.JsonNode;
  * <p>The PROJJSON schema permits {@code unit} to be either a plain string (e.g. {@code "degree"}, {@code "metre"}) or a
  * structured unit object. Both shapes are preserved as raw {@link JsonNode}; {@link #unitName()} returns the simple
  * string form when one is available.
+ *
+ * @param name human-readable axis name (e.g. {@code "Geodetic latitude"}); empty when not recorded
+ * @param abbreviation short axis label (e.g. {@code "Lat"}, {@code "E"}); empty when not recorded
+ * @param direction PROJJSON axis-direction enum value (e.g. {@code "north"}, {@code "east"}, {@code "up"}); empty when
+ *     not recorded
+ * @param unit unit definition; preserved as a {@link JsonNode} because PROJJSON allows string or object shapes
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record Axis(

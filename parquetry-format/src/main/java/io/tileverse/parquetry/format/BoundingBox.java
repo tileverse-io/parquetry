@@ -17,6 +17,8 @@ package io.tileverse.parquetry.format;
 
 import java.util.OptionalDouble;
 
+import lombok.Builder;
+
 /**
  * Geospatial bounding box; mirror of {@code BoundingBox} in {@code parquet.thrift}.
  *
@@ -40,6 +42,7 @@ import java.util.OptionalDouble;
  * @param mmin minimum M coordinate, when the column carries measure values
  * @param mmax maximum M coordinate, when the column carries measure values
  */
+@Builder
 public record BoundingBox(
         double xmin,
         double xmax,
@@ -49,6 +52,13 @@ public record BoundingBox(
         OptionalDouble zmax,
         OptionalDouble mmin,
         OptionalDouble mmax) {
+
+    public BoundingBox {
+        zmin = zmin == null ? OptionalDouble.empty() : zmin;
+        zmax = zmax == null ? OptionalDouble.empty() : zmax;
+        mmin = mmin == null ? OptionalDouble.empty() : mmin;
+        mmax = mmax == null ? OptionalDouble.empty() : mmax;
+    }
 
     /**
      * Returns {@code true} when this box wraps the antimeridian (i.e. {@code xmin > xmax}). See the class-level note on

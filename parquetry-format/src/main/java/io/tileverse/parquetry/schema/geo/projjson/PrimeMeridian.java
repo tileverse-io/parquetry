@@ -24,6 +24,11 @@ import tools.jackson.databind.JsonNode;
 /**
  * A PROJJSON prime meridian: the reference longitude (Greenwich by default). The {@code unit} field can be either a
  * plain string or a structured unit object per the PROJJSON schema; both are preserved as a raw {@link JsonNode}.
+ *
+ * @param name human-readable meridian name (e.g. {@code "Greenwich"}); empty when not recorded
+ * @param longitude angular offset from Greenwich in the units of {@link #unit}
+ * @param unit angular unit definition (string or structured object); empty defaults to degree
+ * @param id registry {@link Identifier} (typically an EPSG prime meridian code); empty when defined inline only
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record PrimeMeridian(

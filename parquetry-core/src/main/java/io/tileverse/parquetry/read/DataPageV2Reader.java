@@ -79,7 +79,7 @@ final class DataPageV2Reader implements DataPageReader {
         ByteBuffer defLevels = sliceAndAdvance(cursor, defLen);
 
         Encoding valuesEncoding = DataPageReader.normalizeEncoding(v2.encoding());
-        boolean compressed = v2.isCompressed().orElse(Boolean.TRUE);
+        boolean compressed = v2.isCompressed();
         PooledByteBuffer valuesPooled = decodeValues(cursor, codec, pool, valuesUncompressedSize, compressed);
         return new DecodedPage(v2.numValues(), valuesEncoding, repLevels, defLevels, valuesPooled);
     }

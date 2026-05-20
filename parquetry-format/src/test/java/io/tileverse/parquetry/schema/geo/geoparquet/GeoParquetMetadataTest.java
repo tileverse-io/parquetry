@@ -18,10 +18,9 @@ package io.tileverse.parquetry.schema.geo.geoparquet;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.util.List;
-
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.geo.projjson.GeographicCRS;
 
@@ -57,7 +56,13 @@ class GeoParquetMetadataTest {
         GeoColumn col = meta.columns().get("geometry");
         assertThat(col.geometryTypes()).containsExactly("Polygon", "MultiPolygon");
         assertThat(col.encoding()).contains("WKB");
-        assertThat(col.bbox()).contains(List.of(-180.0, -90.0, 180.0, 90.0));
+        BoundingBox bbox = col.bbox().orElseThrow();
+        assertThat(bbox.xmin())
+                .as("bbox JSON [xmin, ymin, xmax, ymax] should permute into BoundingBox flat-double order")
+                .isEqualTo(-180.0);
+        assertThat(bbox.ymin()).isEqualTo(-90.0);
+        assertThat(bbox.xmax()).isEqualTo(180.0);
+        assertThat(bbox.ymax()).isEqualTo(90.0);
         assertThat(col.covering()).as("GeoParquet 1.0 has no covering").isEmpty();
     }
 

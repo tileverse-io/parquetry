@@ -19,6 +19,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
 
+import lombok.Builder;
+
 /**
  * Per-column-chunk metadata; mirror of {@code ColumnMetaData} in {@code parquet.thrift}.
  *
@@ -53,6 +55,9 @@ import java.util.OptionalLong;
  *     bounding-box and observed-WKB-type metadata used by spatial pruning ({@code geospatial_statistics} in the thrift
  *     schema)
  */
+// S2789: constructor null-tolerates Optional to support the @Builder pattern.
+@SuppressWarnings("java:S2789")
+@Builder
 public record ColumnMetaData(
         PhysicalType type,
         List<Encoding> encodings,
@@ -73,9 +78,16 @@ public record ColumnMetaData(
         Optional<GeospatialStatistics> geospatialStatistics) {
 
     public ColumnMetaData {
-        encodings = List.copyOf(encodings);
-        pathInSchema = List.copyOf(pathInSchema);
-        keyValueMetadata = List.copyOf(keyValueMetadata);
-        encodingStats = List.copyOf(encodingStats);
+        encodings = encodings == null ? List.of() : List.copyOf(encodings);
+        pathInSchema = pathInSchema == null ? List.of() : List.copyOf(pathInSchema);
+        keyValueMetadata = keyValueMetadata == null ? List.of() : List.copyOf(keyValueMetadata);
+        indexPageOffset = indexPageOffset == null ? OptionalLong.empty() : indexPageOffset;
+        dictionaryPageOffset = dictionaryPageOffset == null ? OptionalLong.empty() : dictionaryPageOffset;
+        statistics = statistics == null ? Optional.empty() : statistics;
+        encodingStats = encodingStats == null ? List.of() : List.copyOf(encodingStats);
+        bloomFilterOffset = bloomFilterOffset == null ? OptionalLong.empty() : bloomFilterOffset;
+        bloomFilterLength = bloomFilterLength == null ? OptionalLong.empty() : bloomFilterLength;
+        sizeStatistics = sizeStatistics == null ? Optional.empty() : sizeStatistics;
+        geospatialStatistics = geospatialStatistics == null ? Optional.empty() : geospatialStatistics;
     }
 }

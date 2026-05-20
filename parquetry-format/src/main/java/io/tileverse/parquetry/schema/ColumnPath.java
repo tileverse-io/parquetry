@@ -22,6 +22,9 @@ import java.util.List;
  *
  * <p>The root group is not included in the path; the first element is the direct child of root. For a flat schema with
  * column "year", the path is simply {@code ColumnPath.of("year")}.
+ *
+ * @param parts ordered list of name segments from root child down to the target leaf; defensively copied on
+ *     construction
  */
 public record ColumnPath(List<String> parts) {
 

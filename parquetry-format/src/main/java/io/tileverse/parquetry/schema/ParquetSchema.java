@@ -34,6 +34,9 @@ import java.util.Set;
  *   <li>{@link #find(ColumnPath)} - look up the field at a given path.
  *   <li>{@link #project(Set)} - produce a new ParquetSchema retaining only the requested columns.
  * </ul>
+ *
+ * @param root the anonymous root group; its name does not appear in any {@link ColumnPath} and its children are the
+ *     top-level columns of the schema
  */
 public record ParquetSchema(Field.Group root) {
 

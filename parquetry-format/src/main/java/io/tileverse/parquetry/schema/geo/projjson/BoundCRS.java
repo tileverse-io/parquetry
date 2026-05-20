@@ -23,6 +23,12 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 /**
  * A CRS paired with a {@link Transformation} to a reference CRS. PROJ emits {@code BoundCRS} when transforming a
  * dataset from a regional CRS to WGS 84 without altering the source CRS definition itself.
+ *
+ * @param name human-readable CRS name; empty when not recorded
+ * @param id registry {@link Identifier}; empty when the CRS is defined inline only
+ * @param sourceCrs the CRS the data is in (the "bound" CRS)
+ * @param targetCrs the CRS the {@link #transformation} maps the source data to
+ * @param transformation the operation that takes {@link #sourceCrs} coordinates to {@link #targetCrs} coordinates
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record BoundCRS(

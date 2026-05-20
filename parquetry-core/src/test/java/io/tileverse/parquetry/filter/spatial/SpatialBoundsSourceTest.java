@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.filter.spatial;
 
 import static java.util.Optional.empty;
+import static java.util.Optional.of;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.ByteBuffer;
@@ -23,9 +24,7 @@ import java.nio.ByteOrder;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.OptionalDouble;
 import java.util.OptionalInt;
-import java.util.OptionalLong;
 
 import org.junit.jupiter.api.Test;
 
@@ -94,7 +93,7 @@ class SpatialBoundsSourceTest {
         FileMetaData footer = footer(coveringRowGroup(0, 1, 2, 3), coveringRowGroup(10, 20, 30, 40));
         GeoParquetMetadata geo = geoWithCoveringAndFileBbox();
 
-        SpatialBoundsSource source = SpatialBoundsSource.of(footer, schema, Optional.of(geo));
+        SpatialBoundsSource source = SpatialBoundsSource.of(footer, schema, of(geo));
         assertThat(source)
                 .as("covering should outrank file-level geo JSON bbox")
                 .isInstanceOf(CoveringColumnSource.class);
@@ -111,7 +110,7 @@ class SpatialBoundsSourceTest {
     void geoJsonFileBboxUsedWhenNeitherNativeNorCoveringPresent() {
         FileMetaData footer = footer(noStatsRowGroup());
         GeoParquetMetadata geo = geoWithFileBboxOnly();
-        SpatialBoundsSource source = SpatialBoundsSource.of(footer, schemaWithGeometry(), Optional.of(geo));
+        SpatialBoundsSource source = SpatialBoundsSource.of(footer, schemaWithGeometry(), of(geo));
         assertThat(source)
                 .as("file-level geo JSON bbox is the last real tier")
                 .isInstanceOf(GeoJsonFileBoundsSource.class);
@@ -160,31 +159,22 @@ class SpatialBoundsSourceTest {
     // --- helpers ---
 
     private static BoundingBox bbox(double xmin, double xmax, double ymin, double ymax) {
-        return new BoundingBox(
-                xmin,
-                xmax,
-                ymin,
-                ymax,
-                OptionalDouble.empty(),
-                OptionalDouble.empty(),
-                OptionalDouble.empty(),
-                OptionalDouble.empty());
+        return BoundingBox.builder().xmin(xmin).xmax(xmax).ymin(ymin).ymax(ymax).build();
     }
 
     private static FileMetaData footer(RowGroup... rowGroups) {
-        return new FileMetaData(
-                1, List.of(), /*numRows*/ 0L, List.of(rowGroups), List.of(), empty(), empty(), empty(), empty());
+        return FileMetaData.builder().version(1).rowGroups(List.of(rowGroups)).build();
     }
 
     /** Row group with one geometry column that carries no native stats and no covering. Triggers EmptyBoundsSource. */
     private static RowGroup noStatsRowGroup() {
-        ColumnMetaData meta = geometryMeta(empty());
-        return rowGroup(List.of(columnChunk(meta)));
+        return rowGroup(List.of(columnChunk(geometryMeta(empty()))));
     }
 
     private static RowGroup geometryRowGroupWithNative(BoundingBox bbox) {
-        ColumnMetaData meta = geometryMeta(Optional.of(new GeospatialStatistics(Optional.of(bbox), empty())));
-        return rowGroup(List.of(columnChunk(meta)));
+        GeospatialStatistics nativeStats =
+                GeospatialStatistics.builder().bbox(of(bbox)).build();
+        return rowGroup(List.of(columnChunk(geometryMeta(of(nativeStats)))));
     }
 
     /**
@@ -201,75 +191,49 @@ class SpatialBoundsSourceTest {
     }
 
     private static RowGroup rowGroup(List<ColumnChunk> chunks) {
-        return new RowGroup(
-                chunks,
-                /*totalByteSize*/ 0L,
-                /*numRows*/ 0L,
-                /*sortingColumns*/ empty(),
-                /*fileOffset*/ OptionalLong.empty(),
-                /*totalCompressedSize*/ OptionalLong.empty(),
-                /*ordinal*/ OptionalInt.empty());
+        return RowGroup.builder().columns(chunks).build();
     }
 
     private static ColumnChunk columnChunk(ColumnMetaData meta) {
-        return new ColumnChunk(
-                empty(),
-                /*fileOffset*/ 0L,
-                Optional.of(meta),
-                OptionalLong.empty(),
-                OptionalInt.empty(),
-                OptionalLong.empty(),
-                OptionalInt.empty(),
-                empty(),
-                empty());
+        return ColumnChunk.builder().metaData(of(meta)).build();
     }
 
     private static ColumnMetaData geometryMeta(Optional<GeospatialStatistics> geospatial) {
-        return new ColumnMetaData(
-                PhysicalType.BYTE_ARRAY,
-                List.of(Encoding.PLAIN),
-                List.of("geometry"),
-                CompressionCodec.UNCOMPRESSED,
-                /*numValues*/ 1L,
-                /*totalUncompressedSize*/ 1L,
-                /*totalCompressedSize*/ 1L,
-                List.of(),
-                /*dataPageOffset*/ 0L,
-                OptionalLong.empty(),
-                OptionalLong.empty(),
-                empty(),
-                List.of(),
-                OptionalLong.empty(),
-                OptionalLong.empty(),
-                empty(),
-                geospatial);
+        return ColumnMetaData.builder()
+                .type(PhysicalType.BYTE_ARRAY)
+                .encodings(List.of(Encoding.PLAIN))
+                .pathInSchema(List.of("geometry"))
+                .codec(CompressionCodec.UNCOMPRESSED)
+                .numValues(1L)
+                .totalUncompressedSize(1L)
+                .totalCompressedSize(1L)
+                .dataPageOffset(0L)
+                .geospatialStatistics(geospatial)
+                .build();
     }
 
     private static ColumnMetaData doubleStatsMeta(String name, double min, double max) {
-        ByteBuffer minBuf = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN);
-        minBuf.putDouble(min).flip();
-        ByteBuffer maxBuf = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN);
-        maxBuf.putDouble(max).flip();
-        Statistics stats = new Statistics(
-                empty(), empty(), empty(), empty(), Optional.of(maxBuf), Optional.of(minBuf), empty(), empty());
-        return new ColumnMetaData(
-                PhysicalType.DOUBLE,
-                List.of(Encoding.PLAIN),
-                List.of(name),
-                CompressionCodec.UNCOMPRESSED,
-                1L,
-                8L,
-                8L,
-                List.of(),
-                0L,
-                OptionalLong.empty(),
-                OptionalLong.empty(),
-                Optional.of(stats),
-                List.of(),
-                OptionalLong.empty(),
-                OptionalLong.empty(),
-                empty(),
-                empty());
+        Statistics stats = Statistics.builder()
+                .minValue(of(littleEndianDouble(min)))
+                .maxValue(of(littleEndianDouble(max)))
+                .build();
+        return ColumnMetaData.builder()
+                .type(PhysicalType.DOUBLE)
+                .encodings(List.of(Encoding.PLAIN))
+                .pathInSchema(List.of(name))
+                .codec(CompressionCodec.UNCOMPRESSED)
+                .numValues(1L)
+                .totalUncompressedSize(8L)
+                .totalCompressedSize(8L)
+                .dataPageOffset(0L)
+                .statistics(of(stats))
+                .build();
+    }
+
+    private static ByteBuffer littleEndianDouble(double value) {
+        ByteBuffer buf = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN);
+        buf.putDouble(value).flip();
+        return buf;
     }
 
     private static ParquetSchema schemaWithGeometry() {
@@ -296,35 +260,28 @@ class SpatialBoundsSourceTest {
 
     private static GeoParquetMetadata geoWithCoveringAndFileBbox() {
         // Both a covering AND a file-level bbox; covering should win.
-        BboxCovering covering = new BboxCovering(
+        BboxCovering bboxCovering = new BboxCovering(
                 ColumnPath.of("xmin"),
                 ColumnPath.of("xmax"),
                 ColumnPath.of("ymin"),
                 ColumnPath.of("ymax"),
                 empty(),
                 empty());
-        GeoColumn col = new GeoColumn(
-                Optional.of("WKB"),
-                List.of("Polygon"),
-                empty(),
-                empty(),
-                empty(),
-                Optional.of(List.of(-180.0, -90.0, 180.0, 90.0)),
-                OptionalDouble.empty(),
-                Optional.of(new Covering(covering)));
+        GeoColumn col = GeoColumn.builder()
+                .encoding(of("WKB"))
+                .geometryTypes(List.of("Polygon"))
+                .bbox(of(bbox(-180, 180, -90, 90)))
+                .covering(of(new Covering(bboxCovering)))
+                .build();
         return new GeoParquetMetadata.V1_1("1.1.0", "geometry", Map.of("geometry", col));
     }
 
     private static GeoParquetMetadata geoWithFileBboxOnly() {
-        GeoColumn col = new GeoColumn(
-                Optional.of("WKB"),
-                List.of("Polygon"),
-                empty(),
-                empty(),
-                empty(),
-                Optional.of(List.of(-10.0, -5.0, 10.0, 5.0)),
-                OptionalDouble.empty(),
-                empty());
+        GeoColumn col = GeoColumn.builder()
+                .encoding(of("WKB"))
+                .geometryTypes(List.of("Polygon"))
+                .bbox(of(bbox(-10, 10, -5, 5)))
+                .build();
         return new GeoParquetMetadata.V1_0("1.0.0", "geometry", Map.of("geometry", col));
     }
 }

@@ -23,6 +23,11 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 /**
  * A PROJJSON geodetic reference frame (datum): the ellipsoid and prime meridian that anchor a {@link GeographicCRS} or
  * {@link GeodeticCRS} to the Earth.
+ *
+ * @param name human-readable datum name (e.g. {@code "World Geodetic System 1984"}); empty when not recorded
+ * @param ellipsoid the {@link Ellipsoid} the datum uses; required by the PROJJSON schema
+ * @param primeMeridian zero-longitude reference; empty defaults to Greenwich
+ * @param id registry {@link Identifier} (typically an EPSG datum code); empty when defined inline only
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record GeodeticReferenceFrame(

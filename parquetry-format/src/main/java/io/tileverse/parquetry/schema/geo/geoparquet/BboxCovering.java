@@ -30,6 +30,13 @@ import io.tileverse.parquetry.schema.ColumnPath;
  * <p>Example: a covering group named {@code "bbox"} with {@code xmin}, {@code ymin}, {@code xmax}, {@code ymax} leaves
  * is encoded as four {@code ["bbox", "xmin"]} / {@code ["bbox", "ymin"]} / {@code ["bbox", "xmax"]} / {@code ["bbox",
  * "ymax"]} paths.
+ *
+ * @param xmin path to the numeric column carrying the per-row xmin
+ * @param xmax path to the numeric column carrying the per-row xmax
+ * @param ymin path to the numeric column carrying the per-row ymin
+ * @param ymax path to the numeric column carrying the per-row ymax
+ * @param zmin optional path to the per-row zmin column when the geometry carries Z
+ * @param zmax optional path to the per-row zmax column when the geometry carries Z
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record BboxCovering(

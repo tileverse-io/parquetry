@@ -23,6 +23,11 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 /**
  * A latitude/longitude coordinate reference system anchored on a {@link GeodeticReferenceFrame}. The dominant case for
  * GeoParquet: OGC:CRS84 (and its EPSG sibling, EPSG:4326) are both {@code GeographicCRS}.
+ *
+ * @param name human-readable CRS name (e.g. {@code "WGS 84"}); empty when the writer did not record one
+ * @param id registry {@link Identifier} (typically {@code EPSG:4326}); empty when the CRS is defined inline only
+ * @param datum {@link GeodeticReferenceFrame} the lat/lon values are referenced to; empty when only the name is given
+ * @param coordinateSystem axis definitions (order, units, direction); empty when defaulted
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record GeographicCRS(

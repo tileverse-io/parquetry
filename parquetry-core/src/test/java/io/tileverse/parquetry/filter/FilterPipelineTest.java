@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.OptionalLong;
 
 import org.junit.jupiter.api.Test;
 
@@ -138,15 +139,11 @@ class FilterPipelineTest {
     }
 
     private static Statistics intStats(int min, int max, long nullCount) {
-        return new Statistics(
-                Optional.empty(),
-                Optional.empty(),
-                Optional.of(nullCount),
-                Optional.empty(),
-                Optional.of(encodeInt(max)),
-                Optional.of(encodeInt(min)),
-                Optional.empty(),
-                Optional.empty());
+        return Statistics.builder()
+                .nullCount(OptionalLong.of(nullCount))
+                .maxValue(Optional.of(encodeInt(max)))
+                .minValue(Optional.of(encodeInt(min)))
+                .build();
     }
 
     private static ByteBuffer encodeInt(int v) {

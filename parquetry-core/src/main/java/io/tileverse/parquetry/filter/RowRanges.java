@@ -22,10 +22,17 @@ import java.util.List;
  * A disjoint, sorted set of inclusive row index ranges within a single row group. Produced by the
  * {@code ColumnIndex}/{@code OffsetIndex} tier and refined by the bloom-filter tier; consumed by the record-level tier
  * to decide which rows to materialize.
+ *
+ * @param ranges disjoint sorted intervals; defensively copied on construction
  */
 public record RowRanges(List<Range> ranges) {
 
-    /** Inclusive {@code [first, last]} row interval relative to the start of the row group. */
+    /**
+     * Inclusive {@code [first, last]} row interval relative to the start of the row group.
+     *
+     * @param first first row index covered (inclusive, zero-based within the row group)
+     * @param last last row index covered (inclusive); must satisfy {@code last >= first}
+     */
     public record Range(long first, long last) {
         public Range {
             if (last < first) {

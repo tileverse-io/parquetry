@@ -21,6 +21,8 @@ import java.util.Optional;
 
 import io.tileverse.parquetry.format.crypto.EncryptionAlgorithm;
 
+import lombok.Builder;
+
 /**
  * File-level metadata for a Parquet file; mirror of {@code FileMetaData} in {@code parquet.thrift}.
  *
@@ -44,6 +46,9 @@ import io.tileverse.parquetry.format.crypto.EncryptionAlgorithm;
  *     signed ({@code footer_signing_key_metadata} in the thrift schema)
  * @see ParquetFormat#readFooter(io.tileverse.storage.RangeReader)
  */
+// S2789: constructor null-tolerates Optional to support the @Builder pattern.
+@SuppressWarnings("java:S2789")
+@Builder
 public record FileMetaData(
         int version,
         List<SchemaElement> schema,
@@ -56,10 +61,14 @@ public record FileMetaData(
         Optional<ByteBuffer> footerSigningKeyMetadata) {
 
     public FileMetaData {
-        schema = List.copyOf(schema);
-        rowGroups = List.copyOf(rowGroups);
-        keyValueMetadata = List.copyOf(keyValueMetadata);
-        columnOrders = columnOrders.map(List::copyOf);
-        footerSigningKeyMetadata = footerSigningKeyMetadata.map(ByteBuffer::asReadOnlyBuffer);
+        schema = schema == null ? List.of() : List.copyOf(schema);
+        rowGroups = rowGroups == null ? List.of() : List.copyOf(rowGroups);
+        keyValueMetadata = keyValueMetadata == null ? List.of() : List.copyOf(keyValueMetadata);
+        createdBy = createdBy == null ? Optional.empty() : createdBy;
+        columnOrders = columnOrders == null ? Optional.empty() : columnOrders.map(List::copyOf);
+        encryptionAlgorithm = encryptionAlgorithm == null ? Optional.empty() : encryptionAlgorithm;
+        footerSigningKeyMetadata = footerSigningKeyMetadata == null
+                ? Optional.empty()
+                : footerSigningKeyMetadata.map(ByteBuffer::asReadOnlyBuffer);
     }
 }

@@ -23,6 +23,10 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 /**
  * A PROJJSON coordinate system: the ordered set of {@link Axis}es a CRS uses. {@link #subtype()} carries the schema's
  * coordinate-system subtype identifier (commonly {@code "ellipsoidal"}, {@code "Cartesian"}, or {@code "vertical"}).
+ *
+ * @param subtype coordinate-system family ({@code "ellipsoidal"}, {@code "Cartesian"}, {@code "vertical"}, ...); empty
+ *     when not recorded
+ * @param axes ordered axis definitions; the position in this list defines the coordinate order in stored geometries
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record CoordinateSystem(Optional<String> subtype, List<Axis> axes) {

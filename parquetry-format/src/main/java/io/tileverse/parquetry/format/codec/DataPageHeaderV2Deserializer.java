@@ -49,7 +49,9 @@ final class DataPageHeaderV2Deserializer {
         Encoding encoding = Encoding.PLAIN;
         int definitionLevelsByteLength = 0;
         int repetitionLevelsByteLength = 0;
-        Optional<Boolean> isCompressed = Optional.empty();
+        // Thrift schema says is_compressed defaults to true; the absent / present-but-true / present-but-false cases
+        // collapse into a single boolean because the consumer only needs to know whether to decompress.
+        boolean isCompressed = true;
         Optional<Statistics> statistics = Optional.empty();
         int lastFieldId = 0;
         while (true) {
@@ -65,7 +67,7 @@ final class DataPageHeaderV2Deserializer {
                 case 4 -> encoding = Encoding.valueOf(r.readI32());
                 case 5 -> definitionLevelsByteLength = r.readI32();
                 case 6 -> repetitionLevelsByteLength = r.readI32();
-                case 7 -> isCompressed = Optional.of(fh.type() == CompactType.BOOLEAN_TRUE);
+                case 7 -> isCompressed = fh.type() == CompactType.BOOLEAN_TRUE;
                 case 8 -> statistics = Optional.of(StatisticsDeserializer.read(r));
                 default -> r.skipField(fh.type());
             }

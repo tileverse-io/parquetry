@@ -18,6 +18,8 @@ package io.tileverse.parquetry.format;
 import java.util.List;
 import java.util.Optional;
 
+import lombok.Builder;
+
 /**
  * Geospatial column statistics; mirror of {@code GeospatialStatistics} in {@code parquet.thrift}.
  *
@@ -31,9 +33,13 @@ import java.util.Optional;
  *     GeometryCollection; +1000 for Z, +2000 for M, +3000 for ZM). The set is kept as raw integers so future WKB
  *     extensions read through without source changes; semantic uniqueness is the writer's responsibility
  */
+// S2789: constructor null-tolerates Optional to support the @Builder pattern.
+@SuppressWarnings("java:S2789")
+@Builder
 public record GeospatialStatistics(Optional<BoundingBox> bbox, Optional<List<Integer>> geospatialTypes) {
 
     public GeospatialStatistics {
-        geospatialTypes = geospatialTypes.map(List::copyOf);
+        bbox = bbox == null ? Optional.empty() : bbox;
+        geospatialTypes = geospatialTypes == null ? Optional.empty() : geospatialTypes.map(List::copyOf);
     }
 }

@@ -80,6 +80,7 @@
     <opentelemetry.version>1.46.0</opentelemetry.version>
     <aircompressor.version>3.6</aircompressor.version>
     <brotli-dec.version>0.1.2</brotli-dec.version>
+    <lombok.version>1.18.46</lombok.version>
 
     <junit.version>5.11.3</junit.version>
     <assertj.version>3.26.3</assertj.version>
@@ -126,6 +127,13 @@
             <compilerArgs>
               <arg>--enable-preview</arg>
             </compilerArgs>
+            <annotationProcessorPaths>
+              <path>
+                <groupId>org.projectlombok</groupId>
+                <artifactId>lombok</artifactId>
+                <version>${lombok.version}</version>
+              </path>
+            </annotationProcessorPaths>
           </configuration>
         </plugin>
         <plugin>

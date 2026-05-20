@@ -27,6 +27,10 @@ import com.fasterxml.jackson.annotation.JsonProperty;
  * <p>The {@code datum} is currently retained as a raw {@link Object} because the PROJJSON {@code VerticalDatum} type is
  * not modeled here; it surfaces as a generic node so callers that need it can inspect it. Future work can promote this
  * to a typed record if a parquetry-side consumer requires it.
+ *
+ * @param name human-readable CRS name (e.g. {@code "EGM2008 height"}); empty when not recorded
+ * @param id registry {@link Identifier}; empty when the CRS is defined inline only
+ * @param coordinateSystem the elevation axis definition (direction up / down, unit)
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record VerticalCRS(

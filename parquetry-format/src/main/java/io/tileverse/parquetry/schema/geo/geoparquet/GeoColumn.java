@@ -22,7 +22,11 @@ import java.util.OptionalDouble;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
+
+import lombok.Builder;
+import tools.jackson.databind.annotation.JsonDeserialize;
 
 /**
  * Per-column geometry metadata inside the GeoParquet {@code "geo"} key. Fields are independently optional across spec
@@ -44,11 +48,14 @@ import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
  *     (OGC:CRS84 for GeoParquet 1.x, the native annotation's default for 2.0)
  * @param edges {@code "planar"} or {@code "spherical"} (1.x); {@link Optional#empty()} for planar default
  * @param orientation winding order, e.g. {@code "counterclockwise"} (1.1+)
- * @param bbox file-level bounding box; 4 doubles ({@code [xmin, ymin, xmax, ymax]}) or 6 ({@code [xmin, ymin, zmin,
- *     xmax, ymax, zmax]})
+ * @param bbox file-level bounding box, parsed from the GeoParquet corner-pair JSON array (4 or 6 doubles) into the
+ *     typed {@link BoundingBox} record; {@link Optional#empty()} when absent or malformed
  * @param epoch coordinate epoch as a decimal year (1.1+); used by time-varying CRSes
  * @param covering 1.1+ covering metadata pointing at sidecar bbox columns for spatial pruning
  */
+// S2789: constructor null-tolerates Optional to support the @Builder pattern.
+@SuppressWarnings("java:S2789")
+@Builder
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record GeoColumn(
         Optional<String> encoding,
@@ -56,12 +63,21 @@ public record GeoColumn(
         Optional<CoordinateReferenceSystem> crs,
         Optional<String> edges,
         Optional<String> orientation,
-        Optional<List<Double>> bbox,
+
+        @JsonDeserialize(contentUsing = BboxDeserializer.class)
+        Optional<BoundingBox> bbox,
+
         OptionalDouble epoch,
         Optional<Covering> covering) {
 
     public GeoColumn {
+        encoding = encoding == null ? Optional.empty() : encoding;
         geometryTypes = geometryTypes == null ? List.of() : List.copyOf(geometryTypes);
-        bbox = bbox.map(List::copyOf);
+        crs = crs == null ? Optional.empty() : crs;
+        edges = edges == null ? Optional.empty() : edges;
+        orientation = orientation == null ? Optional.empty() : orientation;
+        bbox = bbox == null ? Optional.empty() : bbox;
+        epoch = epoch == null ? OptionalDouble.empty() : epoch;
+        covering = covering == null ? Optional.empty() : covering;
     }
 }
