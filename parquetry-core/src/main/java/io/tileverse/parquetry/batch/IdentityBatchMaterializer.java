@@ -19,11 +19,11 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 
 // Singleton is intentional: this is the identity materializer exposed via ParquetRecordBatch.defaultBatch().
 @SuppressWarnings("java:S6548")
-final class DefaultBatchMaterializer implements BatchMaterializer<ParquetRecordBatch> {
+final class IdentityBatchMaterializer implements BatchMaterializer<ParquetRecordBatch> {
 
-    static final DefaultBatchMaterializer INSTANCE = new DefaultBatchMaterializer();
+    static final IdentityBatchMaterializer INSTANCE = new IdentityBatchMaterializer();
 
-    private DefaultBatchMaterializer() {}
+    private IdentityBatchMaterializer() {}
 
     @Override
     public ParquetRecordBatch materialize(ParquetSchema projectedSchema, ParquetRecordBatch batch) {

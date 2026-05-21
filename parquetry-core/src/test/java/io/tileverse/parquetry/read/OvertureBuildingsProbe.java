@@ -28,10 +28,14 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
 
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
+
 import io.tileverse.storage.RangeReader;
 import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
 
+import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.dataset.RowGroup;
 import io.tileverse.parquetry.filter.Predicate;
@@ -43,28 +47,23 @@ import io.tileverse.parquetry.schema.ColumnPath;
  * Probe test: opens a real Overture Maps buildings GeoParquet file (ZSTD, ~11M rows, nested schema with structs / lists
  * / maps) and reads through the first row group via parquetry's {@code ParquetDataset.open(...)} facade.
  *
- * <p>Gated on the absolute file path - skips silently when the volume is not mounted. Intended for manual local
- * verification of end-to-end Parquet reading against a non-trivial, production-grade file, not as a regression test.
+ * <p>Gated by the {@code PARQUETRY_OVERTURE_PROBE} environment variable - skipped unless explicitly enabled. Intended
+ * for manual local verification of end-to-end Parquet reading against a non-trivial, production-grade file, not as a
+ * regression test in CI. Requires the absolute file path below to resolve to a readable file.
  */
+@EnabledIfEnvironmentVariable(named = "PARQUETRY_OVERTURE_PROBE", matches = "true")
 class OvertureBuildingsProbe {
 
     private static final String OVERTURE_FILE = "/Volumes/geodata/geoparquet/overturemaps/2025-02-19.0/"
             + "theme=buildings/type=building/part-00017-bc5e53eb-b1f2-4193-9ba4-84e6c7ca7995-c000.zstd.parquet";
 
-    static boolean fileAvailable() {
-        return Files.exists(Path.of(OVERTURE_FILE));
-    }
-
-    void main() throws Exception {
-        opensAndReadsFirstRowGroup();
-        readsFullSchema();
-    }
-
     /**
-     * Regression check: read every row with {@link Projection#ALL} (no flat-only workaround). Asserts the row count and
-     * inspects a sample row to confirm the repeated / map columns ({@code sources}, {@code names.common}) come back as
-     * the expected {@link java.util.List} / {@link java.util.Map} shapes.
+     * Full-schema regression check via the row API: read every row with {@link Projection#ALL} (no flat-only
+     * workaround). Asserts the row count and inspects a sample row to confirm the repeated / map columns
+     * ({@code sources}, {@code names.common}) come back as the expected {@link java.util.List} / {@link java.util.Map}
+     * shapes.
      */
+    @Test
     void readsFullSchema() throws Exception {
         Path file = Path.of(OVERTURE_FILE);
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
@@ -128,6 +127,61 @@ class OvertureBuildingsProbe {
         }
     }
 
+    /**
+     * Full-schema regression check via the batch API. Asserts the summed batch row count matches the dataset's total
+     * row count and spot-checks the first emitted batch's row 0 for the same {@code sources} List shape that
+     * {@link #readsFullSchema} verifies on the row API.
+     */
+    @Test
+    void readsFullSchemaViaBatchApi() throws Exception {
+        Path file = Path.of(OVERTURE_FILE);
+        try (Storage storage = StorageFactory.open(file.getParent().toUri());
+                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
+            ParquetDataset dataset = ParquetDataset.open(reader);
+            long totalRows =
+                    dataset.rowGroups().stream().mapToLong(RowGroup::rowCount).sum();
+            System.out.println();
+            System.out.println("=== Overture buildings probe :: full schema via batch API ===");
+            System.out.println("Rows across " + dataset.rowGroups().size() + " row groups: " + totalRows);
+
+            ReadOptions opts =
+                    ReadOptions.builder().concurrencyMode(ConcurrencyMode.FULL).build();
+            ColumnPath sourcesPath = ColumnPath.of("sources");
+            long[] counted = {0L};
+            boolean[] sampleChecked = {false};
+            long start = System.nanoTime();
+            try (Stream<ParquetRecordBatch> batches =
+                    dataset.readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, opts)) {
+                batches.forEach(batch -> {
+                    try (ParquetRecordBatch owned = batch) {
+                        int rowCount = owned.rowCount();
+                        if (!sampleChecked[0] && rowCount > 0) {
+                            ParquetRecord sample = owned.materialize(0);
+                            Object sourcesValue = sample.get(sourcesPath);
+                            System.out.println("Sample row[0] sources: "
+                                    + (sourcesValue == null
+                                            ? "(null)"
+                                            : sourcesValue.getClass().getSimpleName() + " of size "
+                                                    + ((java.util.Collection<?>) sourcesValue).size()));
+                            assertThat(sourcesValue)
+                                    .as("sources column must be a non-empty List of structs (batch API)")
+                                    .isInstanceOf(java.util.List.class);
+                            sampleChecked[0] = true;
+                        }
+                        counted[0] += rowCount;
+                    }
+                });
+            }
+            long ms = (System.nanoTime() - start) / 1_000_000L;
+            System.out.println(String.format(
+                    "Full-schema batch iterate: %s rows in %d ms (%.1fk rows/sec)",
+                    counted[0], ms, (counted[0] / (ms / 1000.0)) / 1000.0));
+
+            assertThat(counted[0]).as("full-schema batch read row count").isEqualTo(totalRows);
+        }
+    }
+
+    @Test
     void opensAndReadsFirstRowGroup() throws Exception {
         Path file = Path.of(OVERTURE_FILE);
         try (Storage storage = StorageFactory.open(file.getParent().toUri());

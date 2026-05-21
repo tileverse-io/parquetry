@@ -94,14 +94,30 @@ public final class BinaryVector implements ColumnVector {
         if (values != null) {
             return;
         }
+        int nonNullCount = validity.cardinality();
         MemorySegment[] dst = new MemorySegment[size];
-        PageDecoder<?> decoder = decoderFor(encoding);
-        decoder.load(asByteBuffer(rawPage), size);
-        decoder.decodeBinary(size, dst, 0);
+        if (nonNullCount > 0) {
+            PageDecoder<?> decoder = decoderFor(encoding);
+            decoder.load(asByteBuffer(rawPage), nonNullCount);
+            if (nonNullCount == size) {
+                decoder.decodeBinary(size, dst, 0);
+            } else {
+                MemorySegment[] dense = new MemorySegment[nonNullCount];
+                decoder.decodeBinary(nonNullCount, dense, 0);
+                spread(dense, dst);
+            }
+        }
         values = dst;
         rawPage = null;
         encoding = null;
         dictionary = null;
+    }
+
+    private void spread(MemorySegment[] dense, MemorySegment[] dst) {
+        int denseIndex = 0;
+        for (int i = validity.nextSetBit(0); i >= 0; i = validity.nextSetBit(i + 1)) {
+            dst[i] = dense[denseIndex++];
+        }
     }
 
     @Override

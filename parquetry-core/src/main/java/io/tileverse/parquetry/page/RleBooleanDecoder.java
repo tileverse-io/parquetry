@@ -41,7 +41,7 @@ public final class RleBooleanDecoder implements PageDecoder<Boolean> {
 
     @Override
     public Boolean next() {
-        return delegate.next() != 0;
+        return delegate.nextValue() != 0;
     }
 
     @Override

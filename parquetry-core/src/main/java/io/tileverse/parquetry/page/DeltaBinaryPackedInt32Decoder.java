@@ -23,7 +23,7 @@ import java.nio.ByteBuffer;
  * <p>Delegates all decoding to {@link DeltaBinaryPackedDecoder} and narrows the {@code long} result to {@code int} on
  * each call to {@link #next()}.
  */
-final class DeltaBinaryPackedInt32Decoder implements PageDecoder<Integer> {
+public final class DeltaBinaryPackedInt32Decoder implements PageDecoder<Integer> {
 
     private final DeltaBinaryPackedDecoder delegate = new DeltaBinaryPackedDecoder();
 

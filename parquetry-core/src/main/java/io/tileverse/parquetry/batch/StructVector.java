@@ -17,9 +17,10 @@ package io.tileverse.parquetry.batch;
 
 import java.util.BitSet;
 import java.util.Map;
-import java.util.Objects;
 
 import io.tileverse.parquetry.schema.ColumnPath;
+
+import lombok.NonNull;
 
 /**
  * A column vector carrying nested struct rows. Each row is a named map of child vectors keyed by their relative column
@@ -28,12 +29,13 @@ import io.tileverse.parquetry.schema.ColumnPath;
  *
  * <p>The {@code children} map is copied on construction to guarantee immutability of the record's state.
  */
-public record StructVector(Map<ColumnPath, ColumnVector> children, BitSet validity, int size) implements ColumnVector {
+public record StructVector(
+        @NonNull Map<ColumnPath, ColumnVector> children,
+        @NonNull BitSet validity,
+        int size) implements ColumnVector {
 
     /** Compact canonical constructor: validates inputs and defensively copies the children map. */
     public StructVector {
-        Objects.requireNonNull(children, "children");
-        Objects.requireNonNull(validity, "validity");
         children = Map.copyOf(children);
     }
 

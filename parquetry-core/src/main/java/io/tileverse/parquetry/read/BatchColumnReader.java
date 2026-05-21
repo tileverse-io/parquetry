@@ -23,7 +23,6 @@ import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.util.BitSet;
-import java.util.Objects;
 import java.util.Optional;
 
 import io.tileverse.parquetry.batch.BinaryVector;
@@ -44,6 +43,8 @@ import io.tileverse.parquetry.page.LevelDecoder;
 import io.tileverse.parquetry.read.LevelMaximaResolver.LevelMaxima;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Field;
+
+import lombok.NonNull;
 
 /**
  * Per-column reader for the batch API. Fills one {@link ColumnVector} per call to {@link #readBatch(int)} from a
@@ -91,17 +92,13 @@ final class BatchColumnReader {
      * Constructs a {@code BatchColumnReader} from a pre-fetched column chunk.
      *
      * <p>{@code leaf} is required separately because {@link FetchedColumnChunk} does not carry the schema leaf; the
-     * caller resolves it from the file schema before constructing the reader (the same shape {@link RowGroupReader}
-     * uses when wiring a {@link StreamingColumnReader}).
+     * caller resolves it from the file schema before constructing the reader.
      *
      * @param chunk the fetched, compressed column chunk to read
      * @param leaf the file-schema leaf for this column; used to determine the primitive kind and optional type length
      * @param arena unused; kept for API compatibility with existing tests. The reader allocates its own Arena per page.
      */
-    BatchColumnReader(FetchedColumnChunk chunk, Field.Primitive leaf, Arena arena) {
-        Objects.requireNonNull(chunk, "chunk");
-        Objects.requireNonNull(leaf, "leaf");
-        Objects.requireNonNull(arena, "arena");
+    BatchColumnReader(@NonNull FetchedColumnChunk chunk, @NonNull Field.Primitive leaf, @NonNull Arena arena) {
         this.columnPath = chunk.path();
         this.leaf = leaf;
         this.maxLevels = new LevelMaxima(chunk.maxRepetitionLevel(), chunk.maxDefinitionLevel());

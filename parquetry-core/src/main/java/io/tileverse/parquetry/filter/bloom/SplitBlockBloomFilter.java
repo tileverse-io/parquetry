@@ -21,9 +21,9 @@ import static java.nio.ByteOrder.LITTLE_ENDIAN;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
-import java.util.Objects;
 
 import io.airlift.compress.v3.xxhash.XxHash64Hasher;
+import lombok.NonNull;
 
 /**
  * Read-only Parquet split-block bloom filter (SBBF), implementing the {@code filter_check} side of the algorithm
@@ -87,8 +87,7 @@ public final class SplitBlockBloomFilter {
      *     stored as a {@link MemorySegment#asReadOnly() read-only} view so this instance cannot mutate its contents;
      *     reads use a little-endian layout regardless of platform byte order.
      */
-    public SplitBlockBloomFilter(MemorySegment bitset) {
-        Objects.requireNonNull(bitset, "bitset");
+    public SplitBlockBloomFilter(@NonNull MemorySegment bitset) {
         long length = bitset.byteSize();
         if (length <= 0 || length % BYTES_PER_BLOCK != 0) {
             throw new IllegalArgumentException(

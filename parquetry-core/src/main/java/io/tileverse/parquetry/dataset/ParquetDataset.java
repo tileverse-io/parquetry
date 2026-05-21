@@ -19,8 +19,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
+import com.google.errorprone.annotations.MustBeClosed;
+
 import io.tileverse.storage.RangeReader;
 
+import io.tileverse.parquetry.batch.BatchMaterializer;
+import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.filter.ExplainPlan;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -30,7 +34,7 @@ import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
- * Public facade for reading a Parquet file (or, in a future release, a partitioned multi-file fileset).
+ * Public facade for reading a Parquet file (or, in a future release, a partitioned multi-file dataset).
  *
  * <p>A {@code ParquetDataset} instance is the entry point to the parquetry read pipeline. It caches the file's footer
  * and schema once at {@link #open(RangeReader) open} time; every {@link #read read} call constructs fresh column
@@ -74,6 +78,7 @@ public sealed interface ParquetDataset permits FileDataset, MultiFileDataset {
      * <p>Equivalent to {@code read(Predicate.ALWAYS_TRUE, Projection.ALL, Materializer.defaultRecord(),
      * ReadOptions.DEFAULTS)}.
      */
+    @MustBeClosed
     default Stream<ParquetRecord> read() {
         return read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS);
     }
@@ -82,13 +87,43 @@ public sealed interface ParquetDataset permits FileDataset, MultiFileDataset {
      * Reads records matching {@code predicate}, projecting to {@code projection}, with caller-supplied {@code options}.
      * Records surface as {@link ParquetRecord} via the default materializer.
      */
+    @MustBeClosed
     Stream<ParquetRecord> read(Predicate predicate, Projection projection, ReadOptions options);
 
     /**
      * Generic-typed overload: same as {@link #read(Predicate, Projection, ReadOptions)} but materializes each row to
      * {@code T} via the supplied {@link Materializer}.
      */
+    @MustBeClosed
     <T> Stream<T> read(Predicate predicate, Projection projection, Materializer<T> materializer, ReadOptions options);
+
+    /**
+     * Reads every row group as a stream of {@link ParquetRecordBatch}, applying no predicate or projection. Equivalent
+     * to {@code readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)}.
+     *
+     * <p>Each emitted batch is bounded by the natural page row count (or by {@link ReadOptions#batchSize()} when set)
+     * and owns its own {@link java.lang.foreign.Arena}. Callers must close every batch they consume; the recommended
+     * pattern is to drain the stream inside a try-with-resources.
+     */
+    @MustBeClosed
+    default Stream<ParquetRecordBatch> readBatches() {
+        return readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS);
+    }
+
+    /**
+     * Reads batches matching {@code predicate}, projecting to {@code projection}, with caller-supplied {@code options}.
+     * Batches surface as raw {@link ParquetRecordBatch} (the default identity materializer).
+     */
+    @MustBeClosed
+    Stream<ParquetRecordBatch> readBatches(Predicate predicate, Projection projection, ReadOptions options);
+
+    /**
+     * Generic-typed overload: same as {@link #readBatches(Predicate, Projection, ReadOptions)} but materializes each
+     * batch to {@code T} via the supplied {@link BatchMaterializer}.
+     */
+    @MustBeClosed
+    <T> Stream<T> readBatches(
+            Predicate predicate, Projection projection, BatchMaterializer<T> materializer, ReadOptions options);
 
     /**
      * Runs the filter pipeline without reading any column data; returns the {@link ExplainPlan} describing per-tier

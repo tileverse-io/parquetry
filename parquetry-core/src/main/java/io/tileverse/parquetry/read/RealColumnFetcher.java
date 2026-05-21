@@ -21,7 +21,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
 
@@ -47,6 +46,7 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
 
 import io.tileverse.io.ByteBufferPool;
 import io.tileverse.io.ByteBufferPool.PooledByteBuffer;
+import lombok.NonNull;
 
 /**
  * Production {@link ColumnFetcher} backed by a {@link RangeReader} and a {@link ByteBufferPool}.
@@ -73,16 +73,15 @@ final class RealColumnFetcher implements ColumnFetcher {
     private final ParquetSchema fileSchema;
     private final ByteBufferPool pool;
 
-    public RealColumnFetcher(RangeReader rangeReader, ParquetSchema fileSchema, ByteBufferPool pool) {
-        this.rangeReader = Objects.requireNonNull(rangeReader, "rangeReader");
-        this.fileSchema = Objects.requireNonNull(fileSchema, "fileSchema");
-        this.pool = Objects.requireNonNull(pool, "pool");
+    public RealColumnFetcher(
+            @NonNull RangeReader rangeReader, @NonNull ParquetSchema fileSchema, @NonNull ByteBufferPool pool) {
+        this.rangeReader = rangeReader;
+        this.fileSchema = fileSchema;
+        this.pool = pool;
     }
 
     @Override
-    public FetchedColumnChunk fetch(ColumnChunk chunk, ColumnPath path) throws IOException {
-        Objects.requireNonNull(chunk, "chunk");
-        Objects.requireNonNull(path, "path");
+    public FetchedColumnChunk fetch(@NonNull ColumnChunk chunk, @NonNull ColumnPath path) throws IOException {
         ColumnMetaData meta = chunk.metaData()
                 .orElseThrow(() ->
                         new ParquetFormatException("ColumnChunk for " + path.dot() + " is missing inline metaData"));

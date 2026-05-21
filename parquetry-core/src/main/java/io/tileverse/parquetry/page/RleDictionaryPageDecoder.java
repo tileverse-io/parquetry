@@ -51,7 +51,7 @@ public final class RleDictionaryPageDecoder<T> implements PageDecoder<T> {
 
     @Override
     public T next() {
-        int index = indexDecoder.next();
+        int index = indexDecoder.nextValue();
         return dictionary.get(index);
     }
 

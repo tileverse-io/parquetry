@@ -17,11 +17,13 @@ package io.tileverse.parquetry.batch;
 
 import java.lang.foreign.Arena;
 import java.util.Map;
-import java.util.Objects;
 
+import io.tileverse.parquetry.record.BatchBackedParquetRecord;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
+
+import lombok.NonNull;
 
 public final class DefaultParquetRecordBatch implements ParquetRecordBatch {
 
@@ -32,14 +34,19 @@ public final class DefaultParquetRecordBatch implements ParquetRecordBatch {
     private boolean closed;
 
     public DefaultParquetRecordBatch(
-            ParquetSchema projectedSchema, Map<ColumnPath, ColumnVector> columns, int rowCount, Arena arena) {
-        this.projectedSchema = Objects.requireNonNull(projectedSchema, "projectedSchema");
-        this.columns = Map.copyOf(Objects.requireNonNull(columns, "columns"));
+            @NonNull ParquetSchema projectedSchema,
+            @NonNull Map<ColumnPath, ColumnVector> columns,
+            int rowCount,
+            @NonNull Arena arena) {
+
         if (rowCount < 0) {
             throw new IllegalArgumentException("rowCount must be >= 0, got " + rowCount);
         }
+
+        this.projectedSchema = projectedSchema;
+        this.columns = Map.copyOf(columns);
         this.rowCount = rowCount;
-        this.arena = Objects.requireNonNull(arena, "arena");
+        this.arena = arena;
     }
 
     @Override
@@ -62,9 +69,7 @@ public final class DefaultParquetRecordBatch implements ParquetRecordBatch {
         if (rowIndex < 0 || rowIndex >= rowCount) {
             throw new IndexOutOfBoundsException("rowIndex " + rowIndex + " out of bounds [0, " + rowCount + ")");
         }
-        // The BatchBackedParquetRecord adapter is not yet wired; the batch is enumerable via columns().
-        throw new UnsupportedOperationException(
-                "BatchBackedParquetRecord adapter not yet wired; use columns() to access vectors directly.");
+        return new BatchBackedParquetRecord(this, rowIndex);
     }
 
     @Override

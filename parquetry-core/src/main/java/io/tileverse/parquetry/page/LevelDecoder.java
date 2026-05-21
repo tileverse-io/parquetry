@@ -78,8 +78,32 @@ public final class LevelDecoder {
         this.bitsInBuffer = 0;
     }
 
-    /** Yield the next level value. */
-    public int next() {
+    /** Skip {@code n} values without materializing them. */
+    public void skip(int n) {
+        if (bitWidth == 0) {
+            return;
+        }
+        for (int i = 0; i < n; i++) {
+            nextValue();
+        }
+    }
+
+    /**
+     * Decodes the next {@code n} level values into {@code dst} starting at {@code offset}. The batch driver uses this
+     * to fill a column vector's rep/def stream in one call.
+     */
+    public void decode(int n, int[] dst, int offset) {
+        for (int i = 0; i < n; i++) {
+            dst[offset + i] = nextValue();
+        }
+    }
+
+    /**
+     * Pulls the next level value from the underlying RLE/bit-packed stream. Internal driver for {@link #decode},
+     * {@link #skip}, and the package-local page decoders that yield one value at a time; not part of the public
+     * surface.
+     */
+    int nextValue() {
         if (bitWidth == 0) {
             return 0;
         }
@@ -91,27 +115,6 @@ public final class LevelDecoder {
             return rleValue;
         }
         return readBitPackedValue();
-    }
-
-    /** Skip {@code n} values without materializing them. */
-    public void skip(int n) {
-        if (bitWidth == 0) {
-            return;
-        }
-        for (int i = 0; i < n; i++) {
-            next();
-        }
-    }
-
-    /**
-     * Decodes the next {@code n} level values into {@code dst} starting at {@code offset}. Used by the batch driver to
-     * fill a column vector's rep/def stream in one call. Equivalent to {@code n} successive {@link #next()} calls but
-     * exposes the bulk shape the batch path needs without forcing the row API to change.
-     */
-    public void decode(int n, int[] dst, int offset) {
-        for (int i = 0; i < n; i++) {
-            dst[offset + i] = next();
-        }
     }
 
     private void readNextRunHeader() {

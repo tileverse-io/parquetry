@@ -15,7 +15,6 @@
  */
 package io.tileverse.parquetry.read;
 
-import java.util.Objects;
 import java.util.Optional;
 
 import io.tileverse.parquetry.format.ColumnMetaData;
@@ -23,19 +22,20 @@ import io.tileverse.parquetry.page.Dictionary;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 import io.tileverse.io.ByteBufferPool.PooledByteBuffer;
+import lombok.NonNull;
 
 /**
  * One column chunk's compressed bytes fetched into a pooled buffer plus the metadata needed to walk it page by page.
  *
- * <p>This is the unit produced by {@link ColumnFetcher} and consumed by {@code RowGroupReader}. The
+ * <p>This is the unit produced by {@link ColumnFetcher} and consumed by the per-row-group readers. The
  * {@code compressedBuffer} holds the entire column chunk (dictionary page if present + all data pages) still
  * compressed. The dictionary - small, shared across data pages - is decoded eagerly during the fetch and held here;
  * data pages are decoded lazily by the column reader, one at a time, so a multi-page chunk never resides whole in
  * decompressed form. This is the streaming memory contract described in the package documentation.
  *
  * <p>The chunk is {@link AutoCloseable}: closing it returns the borrowed compressed buffer to the pool. Closing is
- * idempotent (the underlying {@code PooledByteBuffer.close()} is). {@code RowGroupReader} owns the lifecycle and
- * guarantees a single close per chunk along every success, exhaustion, and exception path.
+ * idempotent (the underlying {@code PooledByteBuffer.close()} is). The owning row-group reader is expected to call
+ * close exactly once per chunk along every success, exhaustion, and exception path.
  *
  * @param path the leaf column path this chunk belongs to (file schema path)
  * @param metadata the on-disk {@link ColumnMetaData} for the chunk
@@ -46,19 +46,15 @@ import io.tileverse.io.ByteBufferPool.PooledByteBuffer;
  * @param dictionary the decoded dictionary page if the column chunk has one; otherwise empty
  */
 record FetchedColumnChunk(
-        ColumnPath path,
-        ColumnMetaData metadata,
+        @NonNull ColumnPath path,
+        @NonNull ColumnMetaData metadata,
         int maxRepetitionLevel,
         int maxDefinitionLevel,
-        PooledByteBuffer compressedBuffer,
-        Optional<Dictionary<?>> dictionary)
+        @NonNull PooledByteBuffer compressedBuffer,
+        @NonNull Optional<Dictionary<?>> dictionary)
         implements AutoCloseable {
 
     public FetchedColumnChunk {
-        Objects.requireNonNull(path, "path");
-        Objects.requireNonNull(metadata, "metadata");
-        Objects.requireNonNull(compressedBuffer, "compressedBuffer");
-        Objects.requireNonNull(dictionary, "dictionary");
         if (maxRepetitionLevel < 0) {
             throw new IllegalArgumentException("maxRepetitionLevel must be >= 0, got " + maxRepetitionLevel);
         }

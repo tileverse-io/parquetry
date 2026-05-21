@@ -22,6 +22,7 @@ import java.nio.ByteBuffer;
 import java.util.BitSet;
 
 import io.tileverse.parquetry.format.Encoding;
+import io.tileverse.parquetry.page.DeltaBinaryPackedInt64Decoder;
 import io.tileverse.parquetry.page.Dictionary;
 import io.tileverse.parquetry.page.PageDecoder;
 import io.tileverse.parquetry.page.PlainInt64Decoder;
@@ -86,14 +87,30 @@ public final class LongVector implements ColumnVector {
         if (values != null) {
             return;
         }
+        int nonNullCount = validity.cardinality();
         long[] dst = new long[size];
-        PageDecoder<?> decoder = decoderFor(encoding);
-        decoder.load(asByteBuffer(rawPage), size);
-        decoder.decodeLongs(size, dst, 0);
+        if (nonNullCount > 0) {
+            PageDecoder<?> decoder = decoderFor(encoding);
+            decoder.load(asByteBuffer(rawPage), nonNullCount);
+            if (nonNullCount == size) {
+                decoder.decodeLongs(size, dst, 0);
+            } else {
+                long[] dense = new long[nonNullCount];
+                decoder.decodeLongs(nonNullCount, dense, 0);
+                spread(dense, dst);
+            }
+        }
         values = dst;
         rawPage = null;
         encoding = null;
         dictionary = null;
+    }
+
+    private void spread(long[] dense, long[] dst) {
+        int denseIndex = 0;
+        for (int i = validity.nextSetBit(0); i >= 0; i = validity.nextSetBit(i + 1)) {
+            dst[i] = dense[denseIndex++];
+        }
     }
 
     @Override
@@ -120,6 +137,7 @@ public final class LongVector implements ColumnVector {
     private PageDecoder<?> decoderFor(Encoding encoding) {
         return switch (encoding) {
             case PLAIN -> new PlainInt64Decoder();
+            case DELTA_BINARY_PACKED -> new DeltaBinaryPackedInt64Decoder();
             case RLE_DICTIONARY, PLAIN_DICTIONARY -> {
                 if (dictionary == null) {
                     throw new IllegalStateException("Dictionary-encoded LongVector but no dictionary supplied");

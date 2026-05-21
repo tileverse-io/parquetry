@@ -17,6 +17,8 @@ package io.tileverse.parquetry.read;
 
 import java.io.IOException;
 
+import com.google.errorprone.annotations.MustBeClosed;
+
 import io.tileverse.storage.RangeReader;
 
 import io.tileverse.parquetry.format.ColumnChunk;
@@ -28,12 +30,12 @@ import io.tileverse.io.ByteBufferPool;
 /**
  * Fetches one column chunk's compressed bytes into a pooled buffer and decodes its dictionary if present.
  *
- * <p>The interface is functional so {@code RowGroupReader} tests can substitute a stub that returns a pre-built
- * {@link FetchedColumnChunk} backed by an in-memory pooled buffer, without inventing a Parquet write path. The
- * production implementation, obtained via {@link #real(RangeReader, ParquetSchema, ByteBufferPool)}, performs the
- * actual range read against {@code RangeReader} and decodes the (small) dictionary page eagerly. Data pages stay
- * compressed inside the returned chunk's pooled buffer and are decoded lazily by the column reader as it walks pages -
- * the streaming memory contract described in the package documentation.
+ * <p>The interface is functional so tests can substitute a stub that returns a pre-built {@link FetchedColumnChunk}
+ * backed by an in-memory pooled buffer, without inventing a Parquet write path. The production implementation, obtained
+ * via {@link #real(RangeReader, ParquetSchema, ByteBufferPool)}, performs the actual range read against
+ * {@code RangeReader} and decodes the (small) dictionary page eagerly. Data pages stay compressed inside the returned
+ * chunk's pooled buffer and are decoded lazily by the column reader as it walks pages - the streaming memory contract
+ * described in the package documentation.
  *
  * <h2>Lifecycle</h2>
  *
@@ -52,6 +54,7 @@ public interface ColumnFetcher {
      * @return a {@link FetchedColumnChunk} whose {@code compressedBuffer} the caller must close
      * @throws IOException if the underlying range read fails or the chunk metadata is malformed
      */
+    @MustBeClosed
     FetchedColumnChunk fetch(ColumnChunk chunk, ColumnPath path) throws IOException;
 
     /**

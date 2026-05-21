@@ -20,12 +20,13 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Stream;
 
 import io.tileverse.storage.RangeReader;
 
+import io.tileverse.parquetry.batch.BatchMaterializer;
+import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.filter.ExplainPlan;
 import io.tileverse.parquetry.filter.FilterPipeline;
 import io.tileverse.parquetry.filter.FilterPipeline.BloomFilterLookup;
@@ -45,6 +46,7 @@ import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.KeyValue;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.materializer.Materializer;
+import io.tileverse.parquetry.read.BatchRowGroupPipeline;
 import io.tileverse.parquetry.read.ColumnFetcher;
 import io.tileverse.parquetry.read.ConcurrencyMode;
 import io.tileverse.parquetry.read.ReadOptions;
@@ -55,6 +57,8 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Field;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaBuilder;
+
+import lombok.NonNull;
 
 /**
  * Single-file {@link ParquetDataset} implementation.
@@ -89,8 +93,7 @@ final class FileDataset implements ParquetDataset {
         this.rowGroupView = rowGroupView;
     }
 
-    static FileDataset open(RangeReader reader) {
-        Objects.requireNonNull(reader, "reader");
+    static FileDataset open(@NonNull RangeReader reader) {
         FileMetaData footer = ParquetFormat.readFooter(reader);
         Map<String, String> kvMetadata = collapseKeyValueMetadata(footer.keyValueMetadata());
         // The two-arg SchemaBuilder.build folds GeoParquet 1.x's "geo" key-value metadata into the schema, synthesizing
@@ -123,11 +126,10 @@ final class FileDataset implements ParquetDataset {
 
     @Override
     public <T> Stream<T> read(
-            Predicate predicate, Projection projection, Materializer<T> materializer, ReadOptions options) {
-        Objects.requireNonNull(predicate, "predicate");
-        Objects.requireNonNull(projection, "projection");
-        Objects.requireNonNull(materializer, "materializer");
-        Objects.requireNonNull(options, "options");
+            @NonNull Predicate predicate,
+            @NonNull Projection projection,
+            @NonNull Materializer<T> materializer,
+            @NonNull ReadOptions options) {
 
         ExplainPlan plan = runFilterPipeline(predicate, projection, options);
         List<RowGroupSurvivor> survivors = survivorsFor(plan);
@@ -141,10 +143,32 @@ final class FileDataset implements ParquetDataset {
     }
 
     @Override
-    public ExplainPlan explain(Predicate predicate, Projection projection, ReadOptions options) {
-        Objects.requireNonNull(predicate, "predicate");
-        Objects.requireNonNull(projection, "projection");
-        Objects.requireNonNull(options, "options");
+    public Stream<ParquetRecordBatch> readBatches(Predicate predicate, Projection projection, ReadOptions options) {
+        return readBatches(predicate, projection, BatchMaterializer.defaultBatch(), options);
+    }
+
+    @Override
+    public <T> Stream<T> readBatches(
+            @NonNull Predicate predicate,
+            @NonNull Projection projection,
+            @NonNull BatchMaterializer<T> materializer,
+            @NonNull ReadOptions options) {
+
+        ExplainPlan plan = runFilterPipeline(predicate, projection, options);
+        List<RowGroupSurvivor> survivors = survivorsFor(plan);
+        ParquetSchema projectedSchema = plan.projectedSchema();
+        ReadOptions resolvedOptions = resolveConcurrencyMode(options);
+
+        ColumnFetcher fetcher = ColumnFetcher.real(rangeReader, fileSchema, resolvedOptions.byteBufferPool());
+        @SuppressWarnings("resource")
+        BatchRowGroupPipeline pipeline = new BatchRowGroupPipeline(
+                rangeReader, fileSchema, projectedSchema, survivors, resolvedOptions, fetcher);
+        return pipeline.stream().map(batch -> materializer.materialize(projectedSchema, batch));
+    }
+
+    @Override
+    public ExplainPlan explain(
+            @NonNull Predicate predicate, @NonNull Projection projection, @NonNull ReadOptions options) {
         return runFilterPipeline(predicate, projection, options);
     }
 
@@ -335,7 +359,8 @@ final class FileDataset implements ParquetDataset {
                 options.maxConcurrency(),
                 options.pruningDecisionListener(),
                 options.decryptionKeyRetriever(),
-                options.byteBufferPool());
+                options.byteBufferPool(),
+                options.batchSize());
     }
 
     // --- one-time-at-open helpers ---

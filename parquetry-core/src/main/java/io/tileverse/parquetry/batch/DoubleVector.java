@@ -87,14 +87,30 @@ public final class DoubleVector implements ColumnVector {
         if (values != null) {
             return;
         }
+        int nonNullCount = validity.cardinality();
         double[] dst = new double[size];
-        PageDecoder<?> decoder = decoderFor(encoding);
-        decoder.load(asByteBuffer(rawPage), size);
-        decoder.decodeDoubles(size, dst, 0);
+        if (nonNullCount > 0) {
+            PageDecoder<?> decoder = decoderFor(encoding);
+            decoder.load(asByteBuffer(rawPage), nonNullCount);
+            if (nonNullCount == size) {
+                decoder.decodeDoubles(size, dst, 0);
+            } else {
+                double[] dense = new double[nonNullCount];
+                decoder.decodeDoubles(nonNullCount, dense, 0);
+                spread(dense, dst);
+            }
+        }
         values = dst;
         rawPage = null;
         encoding = null;
         dictionary = null;
+    }
+
+    private void spread(double[] dense, double[] dst) {
+        int denseIndex = 0;
+        for (int i = validity.nextSetBit(0); i >= 0; i = validity.nextSetBit(i + 1)) {
+            dst[i] = dense[denseIndex++];
+        }
     }
 
     @Override

@@ -50,6 +50,7 @@ import io.tileverse.storage.RangeReader;
 import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
 
+import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -100,6 +101,23 @@ class ParquetTestingCorpusIT {
                 .as("%s row count must match parquet-avro oracle", fixtureName)
                 .hasSameSizeAs(expected);
         assertRowsMatchOracle(fixtureName, actual, expected);
+        assertThat(outstandingBorrows(pool))
+                .as("pooled buffers must drain after %s", fixtureName)
+                .isZero();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("conformanceFixtures")
+    void readBatchesMatchesOracleRowCount(String fixtureName) throws Exception {
+        Path fixture = DATA_DIR.resolve(fixtureName);
+        long expectedRows = readAllViaParquetAvro(fixture).size();
+
+        ByteBufferPool pool = new ByteBufferPool();
+        long actualRows = totalRowsViaBatchApi(fixture, pool);
+
+        assertThat(actualRows)
+                .as("%s batch row count must match parquet-avro oracle", fixtureName)
+                .isEqualTo(expectedRows);
         assertThat(outstandingBorrows(pool))
                 .as("pooled buffers must drain after %s", fixtureName)
                 .isZero();
@@ -299,6 +317,25 @@ class ParquetTestingCorpusIT {
                 return records.toList();
             }
         }
+    }
+
+    private static long totalRowsViaBatchApi(Path fixture, ByteBufferPool pool) throws IOException {
+        long[] total = {0L};
+        try (Storage storage = StorageFactory.open(fixture.getParent().toUri());
+                RangeReader reader =
+                        storage.openRangeReader(fixture.getFileName().toString())) {
+            ParquetDataset dataset = ParquetDataset.open(reader);
+            ReadOptions options = ReadOptions.builder().byteBufferPool(pool).build();
+            try (Stream<ParquetRecordBatch> batches =
+                    dataset.readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
+                batches.forEach(batch -> {
+                    try (ParquetRecordBatch owned = batch) {
+                        total[0] += owned.rowCount();
+                    }
+                });
+            }
+        }
+        return total[0];
     }
 
     private static List<GenericRecord> readAllViaParquetAvro(Path fixture) throws IOException {

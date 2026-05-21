@@ -28,6 +28,6 @@ public interface BatchMaterializer<T> {
     T materialize(ParquetSchema projectedSchema, ParquetRecordBatch batch);
 
     static BatchMaterializer<ParquetRecordBatch> defaultBatch() {
-        return DefaultBatchMaterializer.INSTANCE;
+        return IdentityBatchMaterializer.INSTANCE;
     }
 }

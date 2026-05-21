@@ -20,8 +20,9 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.OptionalInt;
+
+import com.google.errorprone.annotations.MustBeClosed;
 
 import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
@@ -29,6 +30,8 @@ import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Field;
 import io.tileverse.parquetry.schema.ParquetSchema;
+
+import lombok.NonNull;
 
 /**
  * Per-row-group driver that emits {@link ParquetRecordBatch} instances.
@@ -59,14 +62,12 @@ public final class BatchRowGroupReader implements AutoCloseable {
     private Map<ColumnPath, BatchColumnReader> columnReaders;
 
     public BatchRowGroupReader(
-            List<FetchedColumnChunk> chunks,
-            ParquetSchema projectedSchema,
-            ParquetSchema fileSchema,
-            OptionalInt batchSizeCap) {
-        Objects.requireNonNull(chunks, "chunks");
-        this.projectedSchema = Objects.requireNonNull(projectedSchema, "projectedSchema");
-        this.batchSizeCap = Objects.requireNonNull(batchSizeCap, "batchSizeCap");
-        Objects.requireNonNull(fileSchema, "fileSchema");
+            @NonNull List<FetchedColumnChunk> chunks,
+            @NonNull ParquetSchema projectedSchema,
+            @NonNull ParquetSchema fileSchema,
+            @NonNull OptionalInt batchSizeCap) {
+        this.projectedSchema = projectedSchema;
+        this.batchSizeCap = batchSizeCap;
         this.projectedLeaves = resolveProjectedLeaves(chunks, fileSchema);
     }
 
@@ -99,6 +100,7 @@ public final class BatchRowGroupReader implements AutoCloseable {
      *
      * @throws IllegalStateException if called when {@link #hasMore()} returns false
      */
+    @MustBeClosed
     public ParquetRecordBatch nextBatch() {
         if (!hasMore()) {
             throw new IllegalStateException("No more rows to read");

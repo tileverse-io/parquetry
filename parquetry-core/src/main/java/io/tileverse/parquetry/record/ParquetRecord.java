@@ -24,16 +24,18 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 /**
  * A single row of a Parquet result set, addressed by {@link ColumnPath}.
  *
- * <p>The sealed hierarchy intentionally exposes only one implementation: {@link DefaultParquetRecord}. Callers that
- * want a different in-memory shape register a custom {@code Materializer<T>} on the read pipeline rather than
- * implementing this interface directly.
+ * <p>The sealed hierarchy has two production implementations: {@link DefaultParquetRecord}, which adapts the
+ * column-keyed {@code RowAccessor} produced by the Dremel assembler, and {@link BatchBackedParquetRecord} (with its
+ * {@link BatchBackedSubRecord} sub-record view), which adapts one row of a
+ * {@link io.tileverse.parquetry.batch.ParquetRecordBatch}. Callers that want a different in-memory shape register a
+ * custom {@code Materializer<T>} on the read pipeline rather than implementing this interface directly.
  *
  * <p>Typed accessors fail fast with {@link IllegalArgumentException} when the requested Java type does not match the
  * column's physical {@code PrimitiveKind}. This is treated as a programming error: predicates and projections are
  * validated against the schema at read setup, so a type mismatch at access time means the caller picked the wrong
  * accessor for the column.
  */
-public sealed interface ParquetRecord permits DefaultParquetRecord {
+public sealed interface ParquetRecord permits DefaultParquetRecord, BatchBackedParquetRecord, BatchBackedSubRecord {
 
     /** The projected schema this record was assembled against (not the full file schema). */
     ParquetSchema schema();
@@ -86,16 +88,16 @@ public sealed interface ParquetRecord permits DefaultParquetRecord {
     /**
      * Returns the repeated values at {@code col} as a list of sub-records.
      *
-     * <p>Not yet implemented: the Dremel assembler currently emits flat rows only; nested list materialization is a
-     * follow-up.
+     * <p>Supported by {@link BatchBackedParquetRecord}. The {@link DefaultParquetRecord} adapter over the legacy
+     * row-API path does not yet implement this and throws {@link UnsupportedOperationException}.
      */
     List<ParquetRecord> getList(ColumnPath col);
 
     /**
      * Returns the struct at {@code col} as a sub-record.
      *
-     * <p>Not yet implemented: the Dremel assembler currently emits flat rows only; nested struct materialization is a
-     * follow-up.
+     * <p>Supported by {@link BatchBackedParquetRecord}. The {@link DefaultParquetRecord} adapter over the legacy
+     * row-API path does not yet implement this and throws {@link UnsupportedOperationException}.
      */
     ParquetRecord getStruct(ColumnPath col);
 

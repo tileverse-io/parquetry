@@ -17,9 +17,10 @@ package io.tileverse.parquetry.read;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
-import java.util.Objects;
 
 import io.tileverse.parquetry.format.Encoding;
+
+import lombok.NonNull;
 
 /**
  * The uniform {@code (repLevels, defLevels, values)} triple produced by a {@link DataPageReader} for one data page.
@@ -45,19 +46,14 @@ import io.tileverse.parquetry.format.Encoding;
  */
 record DecodedPage(
         int valueCount,
-        Encoding valuesEncoding,
-        MemorySegment repLevelBytes,
-        MemorySegment defLevelBytes,
-        MemorySegment valueBytes,
-        Arena pageArena)
+        @NonNull Encoding valuesEncoding,
+        @NonNull MemorySegment repLevelBytes,
+        @NonNull MemorySegment defLevelBytes,
+        @NonNull MemorySegment valueBytes,
+        @NonNull Arena pageArena)
         implements AutoCloseable {
 
     public DecodedPage {
-        Objects.requireNonNull(valuesEncoding, "valuesEncoding");
-        Objects.requireNonNull(repLevelBytes, "repLevelBytes");
-        Objects.requireNonNull(defLevelBytes, "defLevelBytes");
-        Objects.requireNonNull(valueBytes, "valueBytes");
-        Objects.requireNonNull(pageArena, "pageArena");
         if (valueCount < 0) {
             throw new IllegalArgumentException("valueCount must be >= 0, got " + valueCount);
         }

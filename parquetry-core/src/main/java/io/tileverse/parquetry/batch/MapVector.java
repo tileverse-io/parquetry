@@ -16,7 +16,8 @@
 package io.tileverse.parquetry.batch;
 
 import java.util.BitSet;
-import java.util.Objects;
+
+import lombok.NonNull;
 
 public final class MapVector implements ColumnVector {
 
@@ -37,11 +38,12 @@ public final class MapVector implements ColumnVector {
      * @param size number of rows
      * @throws IllegalArgumentException if offsets.length != size + 1
      */
-    public MapVector(int[] offsets, ColumnVector keys, ColumnVector values, BitSet validity, int size) {
-        Objects.requireNonNull(offsets, "offsets");
-        Objects.requireNonNull(keys, "keys");
-        Objects.requireNonNull(values, "values");
-        Objects.requireNonNull(validity, "validity");
+    public MapVector(
+            @NonNull int[] offsets,
+            @NonNull ColumnVector keys,
+            @NonNull ColumnVector values,
+            @NonNull BitSet validity,
+            int size) {
         if (offsets.length != size + 1) {
             throw new IllegalArgumentException(
                     "offsets length must be size + 1; got offsets.length=" + offsets.length + ", size=" + size);

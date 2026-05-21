@@ -38,25 +38,22 @@ import io.tileverse.storage.RangeReader;
 import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
 
-import io.tileverse.parquetry.format.FileMetaData;
+import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.format.ParquetFormat;
-import io.tileverse.parquetry.format.RowGroup;
-import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.schema.ParquetSchema;
-import io.tileverse.parquetry.schema.SchemaBuilder;
 
 import io.tileverse.io.ByteBufferPool;
 
 /**
  * End-to-end integration test: write a small Parquet 2.0 file via {@code parquet-avro}, then read it back through the
- * parquetry pipeline (DataPageV2Reader + StreamingColumnReader + RealColumnFetcher + RowGroupReader) and assert the
- * records round-trip exactly.
+ * parquetry pipeline (DataPageV2Reader + BatchColumnReader + BatchRowGroupReader behind the row-API adapter) and assert
+ * the records round-trip exactly.
  *
- * <p>The {@code ParquetDataset.open(...)} facade is wired later; until then, this test bootstraps the read pipeline
- * manually (read footer, build schema, wire ColumnFetcher.real, iterate row groups). The helper is documented as
- * transitional test infrastructure.
+ * <p>Reads go through {@link ParquetDataset#open(RangeReader)} so this test exercises the same code path that
+ * production callers use.
  */
 class EndToEndV2ReadTest {
 
@@ -219,26 +216,20 @@ class EndToEndV2ReadTest {
         return rowIndex * 10;
     }
 
-    // --- bootstrap helper (test infrastructure) ---
+    // --- read helper ---
 
     private static List<ParquetRecord> readAllRecords(Path file, ByteBufferPool pool, ConcurrencyMode mode)
             throws IOException {
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            FileMetaData footer = ParquetFormat.readFooter(reader);
-            ParquetSchema schema = SchemaBuilder.build(footer.schema());
-            ColumnFetcher fetcher = ColumnFetcher.real(reader, schema, pool);
+            ParquetDataset dataset = ParquetDataset.open(reader);
             ReadOptions options = ReadOptions.builder()
                     .concurrencyMode(mode)
                     .byteBufferPool(pool)
                     .build();
-
             List<ParquetRecord> collected = new ArrayList<>();
-            for (RowGroup rg : footer.rowGroups()) {
-                try (RowGroupReader rgReader = new RowGroupReader(reader, schema, schema, rg, options, fetcher);
-                        Stream<ParquetRecord> stream = rgReader.read(Materializer.defaultRecord())) {
-                    stream.forEach(collected::add);
-                }
+            try (Stream<ParquetRecord> stream = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
+                stream.forEach(collected::add);
             }
             return collected;
         }

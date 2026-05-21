@@ -15,19 +15,19 @@
  */
 package io.tileverse.parquetry.read;
 
-import java.util.Objects;
 import java.util.Optional;
 
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Field;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
+import lombok.NonNull;
+
 /**
  * Computes max repetition and definition levels for a leaf column by walking the file schema.
  *
- * <p>Used by both {@link RowGroupReader} (when wiring column readers for projected columns) and by
- * {@link RealColumnFetcher} (when packaging a {@code FetchedColumnChunk}). Both code paths agreed on a single formula
- * before this helper was extracted; centralizing the walk avoids drift between the two.
+ * <p>Used by {@link RealColumnFetcher} when packaging a {@code FetchedColumnChunk}; centralizing the walk keeps the
+ * level math in one place.
  *
  * <p>Definition-level rule: each OPTIONAL or REPEATED ancestor (including the leaf) contributes one. Repetition-level
  * rule: each REPEATED ancestor contributes one. REQUIRED nodes contribute neither.
@@ -41,9 +41,7 @@ final class LevelMaximaResolver {
      *
      * @throws IllegalArgumentException if {@code path} cannot be resolved against the schema
      */
-    public static LevelMaxima resolve(ParquetSchema fileSchema, ColumnPath path) {
-        Objects.requireNonNull(fileSchema, "fileSchema");
-        Objects.requireNonNull(path, "path");
+    public static LevelMaxima resolve(@NonNull ParquetSchema fileSchema, @NonNull ColumnPath path) {
         int maxRep = 0;
         int maxDef = 0;
         Field current = fileSchema.root();

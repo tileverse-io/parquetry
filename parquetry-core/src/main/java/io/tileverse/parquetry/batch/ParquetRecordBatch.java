@@ -38,8 +38,9 @@ public sealed interface ParquetRecordBatch extends AutoCloseable permits Default
     Map<ColumnPath, ColumnVector> columns();
 
     /**
-     * Adapts row {@code rowIndex} of this batch to a single {@link ParquetRecord}. Throws
-     * {@link UnsupportedOperationException} until the {@code BatchBackedParquetRecord} adapter is wired.
+     * Adapts row {@code rowIndex} of this batch to a single {@link ParquetRecord}. The returned record is a view: it
+     * holds a reference to this batch and reads through to the vectors on each accessor call. The view remains valid as
+     * long as the producing batch (and its underlying page Arenas) does.
      */
     ParquetRecord materialize(int rowIndex);
 

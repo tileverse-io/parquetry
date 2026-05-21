@@ -39,8 +39,10 @@ class LevelDecoderTest {
     void bitWidthZeroAlwaysReturnsZero() {
         LevelDecoder d = new LevelDecoder(0);
         d.load(ByteBuffer.wrap(new byte[0]));
-        for (int i = 0; i < 100; i++) {
-            assertThat(d.next()).isZero();
+        int[] dst = new int[100];
+        d.decode(100, dst, 0);
+        for (int value : dst) {
+            assertThat(value).isZero();
         }
     }
 
@@ -51,9 +53,9 @@ class LevelDecoderTest {
         byte[] bytes = {0x06, 0x05};
         LevelDecoder d = new LevelDecoder(3);
         d.load(ByteBuffer.wrap(bytes));
-        assertThat(d.next()).isEqualTo(5);
-        assertThat(d.next()).isEqualTo(5);
-        assertThat(d.next()).isEqualTo(5);
+        int[] dst = new int[3];
+        d.decode(3, dst, 0);
+        assertThat(dst).containsExactly(5, 5, 5);
     }
 
     @Test
@@ -61,15 +63,13 @@ class LevelDecoderTest {
         // bit-packed: groups=1 (8 values), bitWidth=3 -> 3 bytes after header.
         // Header = (groups=1) << 1 | 1 = 3 (0x03)
         // Values [0..7] at bitWidth=3, packed LSB-first:
-        //   byte 0: val0=000, val1=001, bits[0..5] of val2=01 -> 0b01_001_000 = 0x48... wait
-        // Let's trace carefully (LSB first per Parquet spec):
         //   val0=0 (000), bits 0-2
         //   val1=1 (001), bits 3-5
         //   val2=2 (010), bits 6-7 carry 2 bits (10), then bit 0 of next byte
         //   byte 0 = bits[0..7] = 000|001|10 = 0b10_001_000 = 0x88
         //   val2 still needs 1 more bit (0), val3=3 (011) bits 1-3, val4=4 (100) bits 4-6,
         //   val5=5 (101) bit 7 (first bit)
-        //   byte 1 = 0 | 011_0 | 100_0 ... let me be precise:
+        //   byte 1:
         //     bit 0: remainder of val2 = bit2 = 0
         //     bits 1-3: val3=3 = 011
         //     bits 4-6: val4=4 = 100
@@ -85,9 +85,9 @@ class LevelDecoderTest {
         byte[] bytes = {0x03, (byte) 0x88, (byte) 0xC6, (byte) 0xFA};
         LevelDecoder d = new LevelDecoder(3);
         d.load(ByteBuffer.wrap(bytes));
-        for (int expected = 0; expected < 8; expected++) {
-            assertThat(d.next()).as("value at index " + expected).isEqualTo(expected);
-        }
+        int[] dst = new int[8];
+        d.decode(8, dst, 0);
+        assertThat(dst).containsExactly(0, 1, 2, 3, 4, 5, 6, 7);
     }
 
     @Test
@@ -97,7 +97,9 @@ class LevelDecoderTest {
         LevelDecoder d = new LevelDecoder(3);
         d.load(ByteBuffer.wrap(bytes));
         d.skip(5);
-        assertThat(d.next()).isEqualTo(7); // 6th value, still in run
+        int[] dst = new int[1];
+        d.decode(1, dst, 0);
+        assertThat(dst[0]).as("6th value, still in run").isEqualTo(7);
     }
 
     @Test

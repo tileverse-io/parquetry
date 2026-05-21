@@ -27,6 +27,7 @@ import java.util.OptionalInt;
 
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Field;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -73,13 +74,18 @@ class ParquetRecordBatchTest {
     }
 
     @Test
-    void materializeThrowsUntilAdapterIsWired() {
+    void materializeReturnsBatchBackedRecord() {
         Arena arena = Arena.ofConfined();
-        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), Map.of(), 1, arena);
+        ColumnPath aPath = ColumnPath.of("value");
+        BitSet validity = new BitSet(1);
+        validity.set(0);
+        Map<ColumnPath, ColumnVector> cols = Map.of(aPath, IntVector.materialized(new int[] {42}, validity));
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), cols, 1, arena);
 
-        assertThatThrownBy(() -> batch.materialize(0))
-                .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessageContaining("BatchBackedParquetRecord adapter not yet wired");
+        ParquetRecord row = batch.materialize(0);
+        assertThat(row).isNotNull();
+        assertThat(row.schema()).isEqualTo(batch.projectedSchema());
+        assertThat(row.getInt(aPath)).isEqualTo(42);
 
         batch.close();
     }

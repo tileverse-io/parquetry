@@ -15,11 +15,12 @@
  */
 package io.tileverse.parquetry.read;
 
-import java.util.Objects;
 import java.util.Optional;
 
 import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.format.RowGroup;
+
+import lombok.NonNull;
 
 /**
  * One row group that the filter pipeline has cleared for reading, optionally narrowed to a set of row ranges.
@@ -36,15 +37,11 @@ import io.tileverse.parquetry.format.RowGroup;
  * @param rowGroup the on-disk row group, including the per-column chunk metadata
  * @param survivingRows the surviving row ranges within the row group, or empty for "read all rows"
  */
-public record RowGroupSurvivor(RowGroup rowGroup, Optional<RowRanges> survivingRows) {
-
-    public RowGroupSurvivor {
-        Objects.requireNonNull(rowGroup, "rowGroup");
-        Objects.requireNonNull(survivingRows, "survivingRows");
-    }
+public record RowGroupSurvivor(
+        @NonNull RowGroup rowGroup, @NonNull Optional<RowRanges> survivingRows) {
 
     /** Convenience for callers that have no row-range narrowing to apply. */
-    public static RowGroupSurvivor full(RowGroup rowGroup) {
+    public static RowGroupSurvivor full(@NonNull RowGroup rowGroup) {
         return new RowGroupSurvivor(rowGroup, Optional.empty());
     }
 }

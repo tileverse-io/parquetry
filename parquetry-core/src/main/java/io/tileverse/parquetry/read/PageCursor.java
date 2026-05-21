@@ -39,8 +39,7 @@ import io.tileverse.parquetry.schema.ColumnPath;
  * Non-data pages (e.g. a misplaced dictionary or index page) are skipped silently; {@link #nextDataPage} returns
  * {@code null} when the buffer is exhausted.
  *
- * <p>Extracted from the private inner class of {@link StreamingColumnReader} so that {@link BatchColumnReader} can
- * share the same page-fetching loop without duplicating the logic.
+ * <p>Shared by every column reader that walks a chunk page by page.
  */
 final class PageCursor {
 

@@ -73,13 +73,29 @@ public final class BooleanVector implements ColumnVector {
         if (values != null) {
             return;
         }
+        int nonNullCount = validity.cardinality();
         boolean[] dst = new boolean[size];
-        PageDecoder<?> decoder = decoderFor(encoding);
-        decoder.load(asByteBuffer(rawPage), size);
-        decoder.decodeBooleans(size, dst, 0);
+        if (nonNullCount > 0) {
+            PageDecoder<?> decoder = decoderFor(encoding);
+            decoder.load(asByteBuffer(rawPage), nonNullCount);
+            if (nonNullCount == size) {
+                decoder.decodeBooleans(size, dst, 0);
+            } else {
+                boolean[] dense = new boolean[nonNullCount];
+                decoder.decodeBooleans(nonNullCount, dense, 0);
+                spread(dense, dst);
+            }
+        }
         values = dst;
         rawPage = null;
         encoding = null;
+    }
+
+    private void spread(boolean[] dense, boolean[] dst) {
+        int denseIndex = 0;
+        for (int i = validity.nextSetBit(0); i >= 0; i = validity.nextSetBit(i + 1)) {
+            dst[i] = dense[denseIndex++];
+        }
     }
 
     @Override

@@ -15,13 +15,14 @@
  */
 package io.tileverse.parquetry.read;
 
-import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.function.Consumer;
 
 import io.tileverse.parquetry.filter.PruningDecision;
 
 import io.tileverse.io.ByteBufferPool;
+import lombok.NonNull;
 
 /**
  * Tunables for a single {@code ParquetDataset.read()} call.
@@ -46,6 +47,8 @@ import io.tileverse.io.ByteBufferPool;
  * @param pruningDecisionListener called once per per-row-group tier outcome; never {@code null} (defaults to no-op)
  * @param decryptionKeyRetriever supplied by the encryption module; empty when the file isn't encrypted
  * @param byteBufferPool source of pooled buffers for column-chunk fetch and per-page decompression
+ * @param batchSize maximum row count per emitted batch on the {@code readBatches(...)} path; empty means each batch is
+ *     bounded only by the natural page row count
  */
 public record ReadOptions(
         boolean useStatsFilter,
@@ -53,23 +56,23 @@ public record ReadOptions(
         boolean useColumnIndexFilter,
         boolean useBloomFilter,
         boolean useRecordLevelFilter,
-        ConcurrencyMode concurrencyMode,
+        @NonNull ConcurrencyMode concurrencyMode,
         int prefetchWindow,
         int maxConcurrency,
-        Consumer<PruningDecision> pruningDecisionListener,
-        Optional<DecryptionKeyRetriever> decryptionKeyRetriever,
-        ByteBufferPool byteBufferPool) {
+        @NonNull Consumer<PruningDecision> pruningDecisionListener,
+        @NonNull Optional<DecryptionKeyRetriever> decryptionKeyRetriever,
+        @NonNull ByteBufferPool byteBufferPool,
+        @NonNull OptionalInt batchSize) {
 
     public ReadOptions {
-        Objects.requireNonNull(concurrencyMode, "concurrencyMode");
-        Objects.requireNonNull(pruningDecisionListener, "pruningDecisionListener");
-        Objects.requireNonNull(decryptionKeyRetriever, "decryptionKeyRetriever");
-        Objects.requireNonNull(byteBufferPool, "byteBufferPool");
         if (prefetchWindow < 0) {
             throw new IllegalArgumentException("prefetchWindow must be >= 0, got " + prefetchWindow);
         }
         if (maxConcurrency < 0) {
             throw new IllegalArgumentException("maxConcurrency must be >= 0, got " + maxConcurrency);
+        }
+        if (batchSize.isPresent() && batchSize.getAsInt() <= 0) {
+            throw new IllegalArgumentException("batchSize must be > 0 when present, got " + batchSize.getAsInt());
         }
     }
 
@@ -97,6 +100,7 @@ public record ReadOptions(
         private Consumer<PruningDecision> pruningDecisionListener = _ -> {};
         private Optional<DecryptionKeyRetriever> decryptionKeyRetriever = Optional.empty();
         private ByteBufferPool byteBufferPool = ByteBufferPool.getDefault();
+        private OptionalInt batchSize = OptionalInt.empty();
 
         private Builder() {}
 
@@ -125,8 +129,8 @@ public record ReadOptions(
             return this;
         }
 
-        public Builder concurrencyMode(ConcurrencyMode v) {
-            this.concurrencyMode = Objects.requireNonNull(v, "concurrencyMode");
+        public Builder concurrencyMode(@NonNull ConcurrencyMode v) {
+            this.concurrencyMode = v;
             return this;
         }
 
@@ -140,8 +144,8 @@ public record ReadOptions(
             return this;
         }
 
-        public Builder pruningDecisionListener(Consumer<PruningDecision> v) {
-            this.pruningDecisionListener = Objects.requireNonNull(v, "pruningDecisionListener");
+        public Builder pruningDecisionListener(@NonNull Consumer<PruningDecision> v) {
+            this.pruningDecisionListener = v;
             return this;
         }
 
@@ -150,8 +154,21 @@ public record ReadOptions(
             return this;
         }
 
-        public Builder byteBufferPool(ByteBufferPool v) {
-            this.byteBufferPool = Objects.requireNonNull(v, "byteBufferPool");
+        public Builder byteBufferPool(@NonNull ByteBufferPool v) {
+            this.byteBufferPool = v;
+            return this;
+        }
+
+        /**
+         * Caps the row count of every emitted batch on the {@code readBatches(...)} path. Pass a positive integer to
+         * enable; the default leaves batches bounded only by the natural page row count. Has no effect on the row-API
+         * {@code read(...)} path - that path flattens batches into rows regardless.
+         */
+        public Builder batchSize(int maxRows) {
+            if (maxRows <= 0) {
+                throw new IllegalArgumentException("batchSize must be > 0, got " + maxRows);
+            }
+            this.batchSize = OptionalInt.of(maxRows);
             return this;
         }
 
@@ -167,7 +184,8 @@ public record ReadOptions(
                     maxConcurrency,
                     pruningDecisionListener,
                     decryptionKeyRetriever,
-                    byteBufferPool);
+                    byteBufferPool,
+                    batchSize);
         }
     }
 }

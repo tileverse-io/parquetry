@@ -17,11 +17,12 @@ package io.tileverse.parquetry.read;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.OptionalInt;
 import java.util.Spliterator;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -32,23 +33,30 @@ import java.util.function.Consumer;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
+import com.google.errorprone.annotations.MustBeClosed;
+
 import io.tileverse.storage.RangeReader;
 
+import io.tileverse.parquetry.batch.BinaryVector;
 import io.tileverse.parquetry.batch.ColumnVector;
+import io.tileverse.parquetry.batch.FixedLenBinaryVector;
+import io.tileverse.parquetry.batch.Int96Vector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
+import lombok.NonNull;
+
 /**
  * Bounded background pipeline that emits {@link ParquetRecordBatch} instances from a virtual-thread producer.
  *
- * <p>Parallels {@link RowGroupPipeline} in structure, replacing the per-row-group {@code RowGroupReader} with a
- * {@link BatchRowGroupReader}. The producer iterates each surviving row group, fetches the projected column chunks,
- * drains {@link BatchRowGroupReader#nextBatch()} into a bounded {@link LinkedBlockingQueue}, and then closes the reader
- * once the row group is exhausted. Backpressure is automatic: the producer blocks on the queue once
- * {@code prefetchWindow} batches are waiting.
+ * <p>The producer iterates each surviving row group, fetches the projected column chunks, drains
+ * {@link BatchRowGroupReader#nextBatch()} into a bounded {@link LinkedBlockingQueue}, and then closes the reader once
+ * the row group is exhausted. Backpressure is automatic: the producer blocks on the queue once {@code prefetchWindow}
+ * batches are waiting. {@link RowGroupPipeline} is a thin flat-map adapter on top of this pipeline that surfaces
+ * records one at a time for the row API.
  *
  * <p>Memory contract: at most {@code prefetchWindow} batches resident in the queue at once, plus the batch currently
  * being read by the consumer. The producer materializes all column vectors on the producer thread before enqueueing
@@ -66,9 +74,9 @@ import io.tileverse.parquetry.schema.ParquetSchema;
  *
  * <h2>Batch size</h2>
  *
- * <p>The {@code batchSizeCap} passed to {@link BatchRowGroupReader} defaults to {@link OptionalInt#empty()} - meaning
- * natural page-boundary-sized batches. A future enhancement will wire the cap from {@link ReadOptions} once that field
- * lands.
+ * <p>The {@code batchSizeCap} passed to {@link BatchRowGroupReader} comes from {@link ReadOptions#batchSize()}: empty
+ * means each batch is bounded only by the natural page row count; a positive value caps every emitted batch at that row
+ * count, splitting a page across multiple batches when needed.
  */
 public final class BatchRowGroupPipeline implements AutoCloseable {
 
@@ -79,6 +87,7 @@ public final class BatchRowGroupPipeline implements AutoCloseable {
     private final ParquetSchema projectedSchema;
     private final List<RowGroupSurvivor> survivors;
     private final ColumnFetcher columnFetcher;
+    private final OptionalInt batchSizeCap;
 
     private final LinkedBlockingQueue<BatchPipelineItem> queue;
     private final AtomicInteger state;
@@ -95,18 +104,17 @@ public final class BatchRowGroupPipeline implements AutoCloseable {
      * {@link #stream()}.
      */
     public BatchRowGroupPipeline(
-            RangeReader reader,
-            ParquetSchema fileSchema,
-            ParquetSchema projectedSchema,
-            List<RowGroupSurvivor> survivors,
-            ReadOptions options,
-            ColumnFetcher columnFetcher) {
-        Objects.requireNonNull(reader, "reader"); // Parameter validation; field is unused
-        this.fileSchema = Objects.requireNonNull(fileSchema, "fileSchema");
-        this.projectedSchema = Objects.requireNonNull(projectedSchema, "projectedSchema");
-        this.survivors = List.copyOf(Objects.requireNonNull(survivors, "survivors"));
-        Objects.requireNonNull(options, "options");
-        this.columnFetcher = Objects.requireNonNull(columnFetcher, "columnFetcher");
+            @NonNull RangeReader reader, // parameter validation; field is unused
+            @NonNull ParquetSchema fileSchema,
+            @NonNull ParquetSchema projectedSchema,
+            @NonNull List<RowGroupSurvivor> survivors,
+            @NonNull ReadOptions options,
+            @NonNull ColumnFetcher columnFetcher) {
+        this.fileSchema = fileSchema;
+        this.projectedSchema = projectedSchema;
+        this.survivors = List.copyOf(survivors);
+        this.columnFetcher = columnFetcher;
+        this.batchSizeCap = options.batchSize();
         this.queue = new LinkedBlockingQueue<>(queueCapacity(options.prefetchWindow()));
         this.state = new AtomicInteger(STATE_IDLE);
     }
@@ -117,6 +125,7 @@ public final class BatchRowGroupPipeline implements AutoCloseable {
      *
      * <p>The pipeline is single-use: calling {@code stream()} more than once throws {@link IllegalStateException}.
      */
+    @MustBeClosed
     public Stream<ParquetRecordBatch> stream() {
         if (started) {
             throw new IllegalStateException("BatchRowGroupPipeline is single-use; stream() already called");
@@ -211,7 +220,7 @@ public final class BatchRowGroupPipeline implements AutoCloseable {
             return false;
         }
         try (BatchRowGroupReader rgReader =
-                new BatchRowGroupReader(chunks, projectedSchema, fileSchema, OptionalInt.empty())) {
+                new BatchRowGroupReader(chunks, projectedSchema, fileSchema, batchSizeCap)) {
             while (rgReader.hasMore()) {
                 if (state.get() == STATE_CANCELLED) {
                     return false;
@@ -230,37 +239,85 @@ public final class BatchRowGroupPipeline implements AutoCloseable {
             // rgReader.close() (try-with-resources) already cleaned up column readers; propagate failure.
             putItem(new BatchFailure(e));
             return false;
+        } finally {
+            // Return every chunk's borrowed compressed buffer to the pool. Chunks are owned by the pipeline once
+            // fetched (BatchRowGroupReader does not take ownership), so the producer must close them whether the
+            // row group exhausted cleanly, cancellation arrived, or a failure was pushed mid-batch.
+            closeAllChunks(chunks);
         }
         return true;
     }
 
+    private static void closeAllChunks(List<FetchedColumnChunk> chunks) {
+        for (FetchedColumnChunk chunk : chunks) {
+            try {
+                chunk.close();
+            } catch (RuntimeException _) {
+                // best-effort close on producer-thread exit; pool stats will surface any chronic leak
+            }
+        }
+    }
+
     /**
-     * Materializes all vectors in {@code batch} on the calling thread, then closes the batch's own Arena. After this
-     * call, the batch's vectors are heap-backed and the batch can safely be handed to a different thread.
+     * Materializes all vectors in {@code batch} on the calling thread, copies any binary segments off the per-page
+     * Arena onto the heap, then closes the batch's own Arena. After this call, the batch's vectors hold heap-backed
+     * storage exclusively and the batch can safely be handed to a different thread.
      *
-     * <p>This is required because {@link BatchColumnReader} creates per-page Arenas via
-     * {@link java.lang.foreign.Arena#ofConfined()}, which binds the Arena's memory segments to the creating thread.
-     * Without eager materialization, the consumer thread would trigger a {@link java.lang.foreign.WrongThreadException}
-     * on first access. Once materialized, vectors hold heap arrays only - no Arena dependency. The batch's own Arena
-     * (from {@link BatchRowGroupReader#nextBatch()}) is also confined, so we close it here rather than delegating to
-     * the consumer thread.
+     * <p>{@link BatchColumnReader} creates per-page Arenas via {@link java.lang.foreign.Arena#ofConfined()}, which
+     * binds memory segments to the creating thread. Primitive vectors copy values into heap primitive arrays during
+     * {@link ColumnVector#materialize()}, so they are heap-backed after that single call. Binary kinds (BYTE_ARRAY,
+     * FIXED_LEN_BYTE_ARRAY, INT96) instead expose {@code MemorySegment[]} views into the page bytes; those views
+     * inherit the Arena's confinement and lifetime, so they must be eagerly copied to heap segments here. The batch's
+     * own Arena is also confined and is closed on this thread; {@code batch.close()} on the consumer becomes a no-op.
      */
     private static void materializeAndSeal(ParquetRecordBatch batch) {
         try {
             for (ColumnVector vec : batch.columns().values()) {
                 vec.materialize();
+                sealBinarySegmentsOnHeap(vec);
             }
         } finally {
-            // Close the batch's confined Arena on this thread. The batch is now "sealed": all vectors are
-            // heap-backed, and batch.close() on the consumer will be a safe no-op.
             batch.close();
         }
     }
 
     /**
+     * Replaces every {@link MemorySegment} entry in a binary-kind vector with a fresh heap-backed segment carrying the
+     * same bytes. Primitive vectors and group vectors are left untouched (their {@code materialize()} already produced
+     * heap-backed primitive arrays / child vectors).
+     */
+    private static void sealBinarySegmentsOnHeap(ColumnVector vec) {
+        if (vec instanceof BinaryVector binary) {
+            copySegmentsToHeap(binary.asArray());
+            return;
+        }
+        if (vec instanceof FixedLenBinaryVector fixed) {
+            copySegmentsToHeap(fixed.asArray());
+            return;
+        }
+        if (vec instanceof Int96Vector int96) {
+            copySegmentsToHeap(int96.asArray());
+        }
+    }
+
+    /**
+     * In-place rewrite of each {@link MemorySegment} slot to a heap-backed segment carrying the same bytes. Null slots
+     * (validity bit clear) stay null. Heap segments survive Arena close and are thread-agnostic.
+     */
+    private static void copySegmentsToHeap(MemorySegment[] segments) {
+        for (int i = 0; i < segments.length; i++) {
+            MemorySegment src = segments[i];
+            if (src == null) {
+                continue;
+            }
+            byte[] copy = src.toArray(ValueLayout.JAVA_BYTE);
+            segments[i] = MemorySegment.ofArray(copy).asReadOnly();
+        }
+    }
+
+    /**
      * Resolves the projected schema's leaf columns against the row group's column chunks, then fetches each chunk via
-     * the {@link ColumnFetcher}. Mirrors {@link RowGroupReader#resolveProjectedColumns()} and
-     * {@link RowGroupReader#fetchSequentially}.
+     * the {@link ColumnFetcher}.
      */
     private List<FetchedColumnChunk> fetchProjectedColumns(RowGroupSurvivor survivor) {
         io.tileverse.parquetry.format.RowGroup rowGroup = survivor.rowGroup();
@@ -437,13 +494,12 @@ public final class BatchRowGroupPipeline implements AutoCloseable {
         private ParquetRecordBatch activeBatch;
         private boolean exhausted;
 
-        BatchRecordSpliterator(LinkedBlockingQueue<BatchPipelineItem> queue) {
-            this.queue = Objects.requireNonNull(queue, "queue");
+        BatchRecordSpliterator(@NonNull LinkedBlockingQueue<BatchPipelineItem> queue) {
+            this.queue = queue;
         }
 
         @Override
-        public boolean tryAdvance(Consumer<? super ParquetRecordBatch> action) {
-            Objects.requireNonNull(action, "action");
+        public boolean tryAdvance(@NonNull Consumer<? super ParquetRecordBatch> action) {
             if (exhausted) {
                 return false;
             }
