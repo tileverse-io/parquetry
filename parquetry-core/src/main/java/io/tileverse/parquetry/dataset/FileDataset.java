@@ -46,11 +46,9 @@ import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.KeyValue;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.materializer.Materializer;
-import io.tileverse.parquetry.read.BatchRowGroupPipeline;
+import io.tileverse.parquetry.read.BatchPipeline;
 import io.tileverse.parquetry.read.ColumnFetcher;
-import io.tileverse.parquetry.read.ConcurrencyMode;
 import io.tileverse.parquetry.read.ReadOptions;
-import io.tileverse.parquetry.read.RowGroupPipeline;
 import io.tileverse.parquetry.read.RowGroupSurvivor;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -66,7 +64,7 @@ import lombok.NonNull;
  * <p>{@link #open(RangeReader)} performs one footer read and caches the decoded {@link FileMetaData}, the parquetry
  * {@link ParquetSchema}, the collapsed key/value metadata map, and a public {@link RowGroup} view list. Every
  * {@code read()} call constructs its own {@link FilterPipeline}-derived row-group survivor list, a fresh
- * {@link ColumnFetcher}, and a single-use {@link RowGroupPipeline}; the footer is never re-read.
+ * {@link ColumnFetcher}, and a single-use {@link BatchPipeline} stream; the footer is never re-read.
  *
  * <p>Thread safety: the cached footer / schema / metadata are immutable; every {@code read()} call works only off its
  * own locally-allocated state, so concurrent {@code read()} calls on a shared {@code ParquetDataset} cannot collide.
@@ -134,12 +132,9 @@ final class FileDataset implements ParquetDataset {
         ExplainPlan plan = runFilterPipeline(predicate, projection, options);
         List<RowGroupSurvivor> survivors = survivorsFor(plan);
         ParquetSchema projectedSchema = plan.projectedSchema();
-        ReadOptions resolvedOptions = resolveConcurrencyMode(options);
 
-        ColumnFetcher fetcher = ColumnFetcher.real(rangeReader, fileSchema, resolvedOptions.byteBufferPool());
-        RowGroupPipeline<T> pipeline = new RowGroupPipeline<>(
-                rangeReader, fileSchema, projectedSchema, survivors, resolvedOptions, fetcher, materializer);
-        return pipeline.stream();
+        ColumnFetcher fetcher = ColumnFetcher.real(rangeReader, fileSchema, options.byteBufferPool());
+        return BatchPipeline.rows(fileSchema, projectedSchema, survivors, fetcher, options.batchSize(), materializer);
     }
 
     @Override
@@ -157,13 +152,11 @@ final class FileDataset implements ParquetDataset {
         ExplainPlan plan = runFilterPipeline(predicate, projection, options);
         List<RowGroupSurvivor> survivors = survivorsFor(plan);
         ParquetSchema projectedSchema = plan.projectedSchema();
-        ReadOptions resolvedOptions = resolveConcurrencyMode(options);
 
-        ColumnFetcher fetcher = ColumnFetcher.real(rangeReader, fileSchema, resolvedOptions.byteBufferPool());
-        @SuppressWarnings("resource")
-        BatchRowGroupPipeline pipeline = new BatchRowGroupPipeline(
-                rangeReader, fileSchema, projectedSchema, survivors, resolvedOptions, fetcher);
-        return pipeline.stream().map(batch -> materializer.materialize(projectedSchema, batch));
+        ColumnFetcher fetcher = ColumnFetcher.real(rangeReader, fileSchema, options.byteBufferPool());
+        Stream<ParquetRecordBatch> batches =
+                BatchPipeline.batches(fileSchema, projectedSchema, survivors, fetcher, options.batchSize());
+        return batches.map(batch -> materializer.materialize(projectedSchema, batch));
     }
 
     @Override
@@ -330,37 +323,6 @@ final class FileDataset implements ParquetDataset {
             }
         }
         return survivors;
-    }
-
-    // --- AUTO concurrency resolution ---
-
-    /**
-     * {@link ConcurrencyMode#AUTO} resolves at {@code ParquetDataset.read} time based on the {@code RangeReader}'s
-     * locality hint (cloud readers favour {@code FULL}, local readers favour {@code SYNC}). The storage module hasn't
-     * surfaced a locality hint yet, so it defaults to {@code FULL}: it is the safer choice for the cloud case (more
-     * parallelism) and adds only a fixed virtual-thread overhead for local files - both of which are still bounded by
-     * the row-group / column counts.
-     *
-     * <p>Pending(spec 9.4): consume {@code RangeReader.localityHint()} once it lands; map IN_MEMORY/LOCAL to
-     * {@code SYNC} and CLOUD to {@code FULL}.
-     */
-    private static ReadOptions resolveConcurrencyMode(ReadOptions options) {
-        if (options.concurrencyMode() != ConcurrencyMode.AUTO) {
-            return options;
-        }
-        return new ReadOptions(
-                options.useStatsFilter(),
-                options.useDictionaryFilter(),
-                options.useColumnIndexFilter(),
-                options.useBloomFilter(),
-                options.useRecordLevelFilter(),
-                ConcurrencyMode.FULL,
-                options.prefetchWindow(),
-                options.maxConcurrency(),
-                options.pruningDecisionListener(),
-                options.decryptionKeyRetriever(),
-                options.byteBufferPool(),
-                options.batchSize());
     }
 
     // --- one-time-at-open helpers ---

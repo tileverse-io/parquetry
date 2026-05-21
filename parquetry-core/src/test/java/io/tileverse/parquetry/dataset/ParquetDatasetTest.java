@@ -34,8 +34,6 @@ import org.apache.parquet.hadoop.metadata.CompressionCodecName;
 import org.apache.parquet.io.LocalOutputFile;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.EnumSource;
 
 import io.tileverse.storage.RangeReader;
 import io.tileverse.storage.Storage;
@@ -46,7 +44,6 @@ import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.RowGroupOutcome;
-import io.tileverse.parquetry.read.ConcurrencyMode;
 import io.tileverse.parquetry.read.ReadOptions;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -55,9 +52,9 @@ import io.tileverse.io.ByteBufferPool;
 
 /**
  * End-to-end coverage for the {@code ParquetDataset} facade: footer caching, filter / projection wiring, the
- * {@code ConcurrencyMode.AUTO} resolution, the cross-thread reuse contract, and the {@code MultiFileDataset} sealing
- * seam. Fixtures are written via {@code parquet-avro} (same family as {@code EndToEndV2ReadTest}) so the read path
- * exercises the production page-cursor stack end-to-end.
+ * cross-thread reuse contract, and the {@code MultiFileDataset} sealing seam. Fixtures are written via
+ * {@code parquet-avro} (same family as {@code EndToEndV2ReadTest}) so the read path exercises the production
+ * page-cursor stack end-to-end.
  */
 class DatasetTest {
 
@@ -65,12 +62,9 @@ class DatasetTest {
     private static final ColumnPath COUNTRY = ColumnPath.of("country");
     private static final ColumnPath VALUE = ColumnPath.of("value");
 
-    @ParameterizedTest
-    @EnumSource(
-            value = ConcurrencyMode.class,
-            names = {"SYNC", "PREFETCH_ONLY", "FAN_OUT_ONLY"})
-    void readsEveryRecordAcrossConcurrencyModes(ConcurrencyMode mode, @TempDir Path tmp) throws Exception {
-        Path file = tmp.resolve("dataset-modes.parquet");
+    @Test
+    void readsEveryRecordEndToEnd(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("dataset-end-to-end.parquet");
         List<RowDto> expected = generateRows(120);
         writeParquetFile(file, expected, CompressionCodecName.SNAPPY, 16L * 1024 * 1024);
 
@@ -78,10 +72,7 @@ class DatasetTest {
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
             ParquetDataset dataset = ParquetDataset.open(reader);
-            ReadOptions options = ReadOptions.builder()
-                    .concurrencyMode(mode)
-                    .byteBufferPool(pool)
-                    .build();
+            ReadOptions options = ReadOptions.builder().byteBufferPool(pool).build();
 
             List<RowDto> actual = readAll(dataset, Predicate.ALWAYS_TRUE, Projection.ALL, options);
 

@@ -84,19 +84,6 @@ class ListVectorTest {
                 .hasMessageContaining("offsets length must be size + 1");
     }
 
-    @Test
-    void materializeCascadesToChild() {
-        IntVector child = IntVector.materialized(new int[] {1, 2, 3}, allValid(3));
-        BitSet rootValidity = new BitSet(1);
-        rootValidity.set(0);
-        ListVector vec = new ListVector(new int[] {0, 3}, child, rootValidity, 1);
-
-        // child is already materialized via IntVector.materialized() factory
-        assertThat(vec.isMaterialized()).isTrue();
-        vec.materialize(); // idempotent
-        assertThat(vec.isMaterialized()).isTrue();
-    }
-
     private static BitSet allValid(int n) {
         BitSet b = new BitSet(n);
         b.set(0, n);

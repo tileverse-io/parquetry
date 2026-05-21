@@ -20,7 +20,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.lang.foreign.Arena;
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
 import java.util.BitSet;
@@ -68,23 +67,21 @@ class BatchColumnReaderTest {
         FetchedColumnChunk chunk = singlePageInt32Chunk(values, /*maxDef*/ 0);
         Field.Primitive leaf = requiredInt32Leaf();
 
-        try (Arena arena = Arena.ofConfined()) {
-            BatchColumnReader reader = new BatchColumnReader(chunk, leaf, arena);
+        BatchColumnReader reader = new BatchColumnReader(chunk, leaf);
 
-            assertThat(reader.hasMore()).isTrue();
+        assertThat(reader.hasMore()).isTrue();
 
-            ColumnVector vec = reader.readBatch(10);
-            assertThat(vec).isInstanceOf(IntVector.class);
-            assertThat(vec.size()).isEqualTo(4);
+        ColumnVector vec = reader.readBatch(10);
+        assertThat(vec).isInstanceOf(IntVector.class);
+        assertThat(vec.size()).isEqualTo(4);
 
-            BitSet validity = vec.validity();
-            assertThat(validity.cardinality()).isEqualTo(4);
+        BitSet validity = vec.validity();
+        assertThat(validity.cardinality()).isEqualTo(4);
 
-            IntVector intVec = (IntVector) vec;
-            assertThat(intVec.asArray()).containsExactly(10, 20, 30, 40);
+        IntVector intVec = (IntVector) vec;
+        assertThat(intVec.asArray()).containsExactly(10, 20, 30, 40);
 
-            assertThat(reader.hasMore()).isFalse();
-        }
+        assertThat(reader.hasMore()).isFalse();
     }
 
     // --- test 2: two-page chunk, batch stops at page boundary ---
@@ -96,24 +93,22 @@ class BatchColumnReaderTest {
         FetchedColumnChunk chunk = twoPageInt32Chunk(page1, page2);
         Field.Primitive leaf = requiredInt32Leaf();
 
-        try (Arena arena = Arena.ofConfined()) {
-            BatchColumnReader reader = new BatchColumnReader(chunk, leaf, arena);
+        BatchColumnReader reader = new BatchColumnReader(chunk, leaf);
 
-            // Ask for 7 rows - should only get 4 (page 1 has only 4)
-            ColumnVector vec1 = reader.readBatch(7);
-            assertThat(vec1.size()).isEqualTo(4);
-            assertThat(((IntVector) vec1).asArray()).containsExactly(1, 2, 3, 4);
+        // Ask for 7 rows - should only get 4 (page 1 has only 4)
+        ColumnVector vec1 = reader.readBatch(7);
+        assertThat(vec1.size()).isEqualTo(4);
+        assertThat(((IntVector) vec1).asArray()).containsExactly(1, 2, 3, 4);
 
-            // Still has more (page 2 is pending)
-            assertThat(reader.hasMore()).isTrue();
+        // Still has more (page 2 is pending)
+        assertThat(reader.hasMore()).isTrue();
 
-            // Ask for 7 again - gets all 6 from page 2
-            ColumnVector vec2 = reader.readBatch(7);
-            assertThat(vec2.size()).isEqualTo(6);
-            assertThat(((IntVector) vec2).asArray()).containsExactly(5, 6, 7, 8, 9, 10);
+        // Ask for 7 again - gets all 6 from page 2
+        ColumnVector vec2 = reader.readBatch(7);
+        assertThat(vec2.size()).isEqualTo(6);
+        assertThat(((IntVector) vec2).asArray()).containsExactly(5, 6, 7, 8, 9, 10);
 
-            assertThat(reader.hasMore()).isFalse();
-        }
+        assertThat(reader.hasMore()).isFalse();
     }
 
     // --- test 3: nullable column produces validity bitmap ---
@@ -129,19 +124,17 @@ class BatchColumnReaderTest {
         FetchedColumnChunk chunk = singlePageNullableChunk(nonNullValues, defLevelBytes, /*numValues*/ 5);
         Field.Primitive leaf = optionalInt32Leaf();
 
-        try (Arena arena = Arena.ofConfined()) {
-            BatchColumnReader reader = new BatchColumnReader(chunk, leaf, arena);
-            ColumnVector vec = reader.readBatch(10);
+        BatchColumnReader reader = new BatchColumnReader(chunk, leaf);
+        ColumnVector vec = reader.readBatch(10);
 
-            assertThat(vec.size()).isEqualTo(5);
-            BitSet validity = vec.validity();
-            // Rows 0, 2, 4 are non-null.
-            assertThat(validity.get(0)).isTrue();
-            assertThat(validity.get(1)).isFalse();
-            assertThat(validity.get(2)).isTrue();
-            assertThat(validity.get(3)).isFalse();
-            assertThat(validity.get(4)).isTrue();
-        }
+        assertThat(vec.size()).isEqualTo(5);
+        BitSet validity = vec.validity();
+        // Rows 0, 2, 4 are non-null.
+        assertThat(validity.get(0)).isTrue();
+        assertThat(validity.get(1)).isFalse();
+        assertThat(validity.get(2)).isTrue();
+        assertThat(validity.get(3)).isFalse();
+        assertThat(validity.get(4)).isTrue();
     }
 
     // --- test 4: hasMore false after all pages consumed ---
@@ -153,15 +146,13 @@ class BatchColumnReaderTest {
         FetchedColumnChunk chunk = twoPageInt32Chunk(page1, page2);
         Field.Primitive leaf = requiredInt32Leaf();
 
-        try (Arena arena = Arena.ofConfined()) {
-            BatchColumnReader reader = new BatchColumnReader(chunk, leaf, arena);
+        BatchColumnReader reader = new BatchColumnReader(chunk, leaf);
 
-            assertThat(reader.hasMore()).isTrue();
-            reader.readBatch(10); // drains page 1
-            assertThat(reader.hasMore()).isTrue();
-            reader.readBatch(10); // drains page 2
-            assertThat(reader.hasMore()).isFalse();
-        }
+        assertThat(reader.hasMore()).isTrue();
+        reader.readBatch(10); // drains page 1
+        assertThat(reader.hasMore()).isTrue();
+        reader.readBatch(10); // drains page 2
+        assertThat(reader.hasMore()).isFalse();
     }
 
     // --- test 5: dictionary-encoded column resolves indices through the dictionary ---
@@ -172,16 +163,14 @@ class BatchColumnReaderTest {
         // Expected materialized output: 100, 200, 300, 200, 100.
         FetchedColumnChunk chunk = dictionaryEncodedInt32Chunk(new int[] {100, 200, 300}, new int[] {0, 1, 2, 1, 0});
 
-        try (Arena arena = Arena.ofConfined()) {
-            BatchColumnReader reader = new BatchColumnReader(chunk, requiredInt32Leaf(), arena);
+        BatchColumnReader reader = new BatchColumnReader(chunk, requiredInt32Leaf());
 
-            ColumnVector vec = reader.readBatch(10);
-            assertThat(vec).isInstanceOf(IntVector.class);
-            assertThat(vec.size()).isEqualTo(5);
-            assertThat(((IntVector) vec).asArray()).containsExactly(100, 200, 300, 200, 100);
+        ColumnVector vec = reader.readBatch(10);
+        assertThat(vec).isInstanceOf(IntVector.class);
+        assertThat(vec.size()).isEqualTo(5);
+        assertThat(((IntVector) vec).asArray()).containsExactly(100, 200, 300, 200, 100);
 
-            assertThat(reader.hasMore()).isFalse();
-        }
+        assertThat(reader.hasMore()).isFalse();
     }
 
     // --- fixture helpers ---

@@ -38,19 +38,4 @@ public record StructVector(
     public StructVector {
         children = Map.copyOf(children);
     }
-
-    @Override
-    public boolean isMaterialized() {
-        return children.values().stream().allMatch(ColumnVector::isMaterialized);
-    }
-
-    @Override
-    public void materialize() {
-        children.values().forEach(ColumnVector::materialize);
-    }
-
-    @Override
-    public void materializeSurvivors(BitSet survivors) {
-        children.values().forEach(c -> c.materializeSurvivors(survivors));
-    }
 }

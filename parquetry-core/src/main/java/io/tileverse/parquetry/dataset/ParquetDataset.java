@@ -38,8 +38,8 @@ import io.tileverse.parquetry.schema.ParquetSchema;
  *
  * <p>A {@code ParquetDataset} instance is the entry point to the parquetry read pipeline. It caches the file's footer
  * and schema once at {@link #open(RangeReader) open} time; every {@link #read read} call constructs fresh column
- * readers, filter pipeline state, and a single-use {@link io.tileverse.parquetry.read.RowGroupPipeline}, so a single
- * {@code ParquetDataset} is safe for concurrent reads from multiple threads.
+ * readers, filter pipeline state, and a single-use {@link io.tileverse.parquetry.read.BatchPipeline} stream, so a
+ * single {@code ParquetDataset} is safe for concurrent reads from multiple threads.
  *
  * <p>The default {@link #read()} overload reads every record through the canonical {@link ParquetRecord} materializer
  * with no predicate or projection. The expressive overloads expose predicate push-down (via the 5-tier filter
@@ -47,9 +47,9 @@ import io.tileverse.parquetry.schema.ParquetSchema;
  *
  * <h2>Streams are closeable</h2>
  *
- * <p>Every {@code read(...)} variant returns a {@link Stream} whose {@link Stream#close()} hook cascades to the
- * underlying {@code RowGroupPipeline}, returning pooled buffers and joining the producer thread. Callers <em>must</em>
- * use try-with-resources; leaking the stream leaks pooled buffers and a virtual thread.
+ * <p>Every {@code read(...)} variant returns a {@link Stream} whose {@link Stream#close()} hook releases any in-flight
+ * row-group resources (pooled column-chunk buffers, page Arenas held by the current row group's column readers).
+ * Callers <em>must</em> use try-with-resources; leaking the stream leaks pooled buffers.
  *
  * <h2>RowGroup view</h2>
  *

@@ -18,13 +18,10 @@ package io.tileverse.parquetry.batch;
 import java.util.BitSet;
 
 /**
- * One column's worth of values for a {@link ParquetRecordBatch}. Two-state ADT: a freshly produced vector holds the
- * decompressed page bytes in a raw {@code MemorySegment} (no decode work done); {@link #materialize()} transitions to
- * the typed carrier (primitive arrays for primitives, {@code MemorySegment[]} for binary). Columns the consumer never
- * reads stay raw and are freed at batch close.
- *
- * <p>{@link #materializeSurvivors(BitSet)} is the hook for the future vectorized row-level predicate evaluator. It
- * decodes only the rows whose bit is set; no production caller uses it yet.
+ * One column's worth of values for a {@link ParquetRecordBatch}. Vectors are always-materialized: the typed payload
+ * (primitive arrays for primitives, {@code MemorySegment[]} for binary kinds) is set at construction. Per-page decode
+ * happens once in {@code BatchColumnReader.loadNextPage}; each {@code readBatch} call slices the decoded page state
+ * into a fresh vector.
  *
  * @see ParquetRecordBatch
  */
@@ -46,17 +43,4 @@ public sealed interface ColumnVector
 
     /** Validity mask: bit i is set iff row i is non-null. */
     BitSet validity();
-
-    /** Returns true once {@link #materialize()} has populated the typed carrier. */
-    boolean isMaterialized();
-
-    /** Forces the raw -> materialized transition. Idempotent. */
-    void materialize();
-
-    /**
-     * Decodes only the rows whose bit is set in {@code survivors}. Idempotent; a later call with a wider survivor set
-     * re-decodes the newly-included rows. Reserved for a future {@code VectorPredicateEvaluator}; no production code
-     * calls it yet.
-     */
-    void materializeSurvivors(BitSet survivors);
 }

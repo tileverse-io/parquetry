@@ -17,6 +17,7 @@ package io.tileverse.parquetry.read;
 
 import java.lang.foreign.Arena;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -39,18 +40,18 @@ import lombok.NonNull;
  * <p>Owns one {@link BatchColumnReader} per projected leaf. Each {@link #nextBatch()} call:
  *
  * <ol>
- *   <li>Computes the batch row count as {@code min(rowsRemainingInCurrentPage across all columns, batchSizeCap)}.
- *   <li>Asks each column reader for a vector at that row count.
- *   <li>Allocates a {@link Arena#ofConfined() confined Arena} as the batch's token resource and wraps everything in a
- *       {@link DefaultParquetRecordBatch} that owns that Arena.
+ *   <li>Computes the batch's logical row count as {@code min(logicalRowsRemainingInCurrentPage across all columns,
+ *       batchSizeCap)}.
+ *   <li>For each column derives the per-leaf value count covering that logical-row range and asks the reader for a
+ *       vector at that value count, capturing the matching slice of the rep-level stream.
+ *   <li>Feeds the per-leaf vectors and rep-level slices to {@link NestedVectorAssembler#assembleNested(ParquetSchema,
+ *       Map, Map, int)} which produces {@link io.tileverse.parquetry.batch.ListVector} /
+ *       {@link io.tileverse.parquetry.batch.MapVector} / {@link io.tileverse.parquetry.batch.StructVector} wrappers at
+ *       the LIST / MAP / STRUCT group paths.
  * </ol>
  *
- * <p>Page memory lifecycle: each column reader creates its own confined Arena per page (in
- * {@link BatchColumnReader#loadNextPage}). That Arena is closed when the reader advances past the page. Callers must
- * not hold references to vectors from a batch after the next page is loaded in any column. When {@code batchSizeCap}
- * splits a single page across multiple batches, the page Arena stays open until all rows in that page are consumed.
- *
- * <p>Currently handles the FLAT-schema case. Nested-shape vector assembly (LIST / MAP / STRUCT) is a follow-up.
+ * <p>Vectors are heap-backed at construction (see {@link BatchColumnReader#readBatch}), so the batch carries no Arena
+ * state across thread boundaries.
  */
 public final class BatchRowGroupReader implements AutoCloseable {
 
@@ -88,15 +89,14 @@ public final class BatchRowGroupReader implements AutoCloseable {
     }
 
     /**
-     * Builds and returns the next batch. The batch is backed by a fresh {@link Arena#ofConfined() confined Arena} that
-     * is closed when the batch is closed. Page memory is managed per-column-reader (see class javadoc) and is
-     * invalidated when the reader advances to the next page, not when the batch closes.
-     *
-     * <p>After collecting per-leaf flat vectors, this method calls
-     * {@link NestedVectorAssembler#wrapStructGroups(ParquetSchema, Map, int)} to wrap child leaf vectors under any
-     * non-repeated, non-LIST/MAP group nodes in the projected schema into
-     * {@link io.tileverse.parquetry.batch.StructVector} carriers. LIST and MAP wrapping requires exposing the per-leaf
-     * rep-level stream from {@link BatchColumnReader} and is deferred to a follow-up task.
+     * Builds and returns the next batch. The row count is the minimum of
+     * {@link BatchColumnReader#logicalRowsRemainingInCurrentPage()} across all columns (further capped by
+     * {@code batchSizeCap} if present). Each column reader emits a vector at the corresponding leaf-value count; those
+     * vectors and their rep-level slices feed {@link NestedVectorAssembler#assembleNested} which produces
+     * {@link io.tileverse.parquetry.batch.ListVector} / {@link io.tileverse.parquetry.batch.MapVector} /
+     * {@link io.tileverse.parquetry.batch.StructVector} wrappers at LIST / MAP / STRUCT group paths. Leaf vectors
+     * descended from a LIST or MAP group are removed from the top-level columns map because they are sized at element
+     * granularity, not logical-row granularity.
      *
      * @throws IllegalStateException if called when {@link #hasMore()} returns false
      */
@@ -107,14 +107,12 @@ public final class BatchRowGroupReader implements AutoCloseable {
         }
         Arena batchArena = Arena.ofConfined();
         try {
-            if (columnReaders == null) {
-                // Pass batchArena for API compatibility; readers allocate page bytes into their own per-page Arenas.
-                columnReaders = buildColumnReaders(batchArena);
-            }
+            ensureColumnReadersBuilt();
             int batchRows = computeBatchRows();
-            Map<ColumnPath, ColumnVector> leafVectors = readVectors(batchRows);
+            Map<ColumnPath, int[]> repLevelsByLeaf = new HashMap<>();
+            Map<ColumnPath, ColumnVector> leafVectors = readVectors(batchRows, repLevelsByLeaf);
             Map<ColumnPath, ColumnVector> vectors =
-                    NestedVectorAssembler.wrapStructGroups(projectedSchema, leafVectors, batchRows);
+                    NestedVectorAssembler.assembleNested(projectedSchema, leafVectors, repLevelsByLeaf, batchRows);
             return new DefaultParquetRecordBatch(projectedSchema, vectors, batchRows, batchArena);
         } catch (RuntimeException e) {
             batchArena.close();
@@ -154,27 +152,29 @@ public final class BatchRowGroupReader implements AutoCloseable {
 
     // --- column reader construction ---
 
-    private Map<ColumnPath, BatchColumnReader> buildColumnReaders(Arena arena) {
+    private void ensureColumnReadersBuilt() {
+        if (columnReaders != null) {
+            return;
+        }
         Map<ColumnPath, BatchColumnReader> readers = new HashMap<>();
         for (ProjectedLeaf leaf : projectedLeaves) {
-            readers.put(leaf.path(), new BatchColumnReader(leaf.chunk(), leaf.leaf(), arena));
+            readers.put(leaf.path(), new BatchColumnReader(leaf.chunk(), leaf.leaf()));
         }
-        return readers;
+        columnReaders = readers;
     }
 
     // --- batch row count computation ---
 
     /**
-     * Computes the row count for the next batch as the minimum of {@code rowsRemainingInCurrentPage()} across all
-     * columns, further capped by {@code batchSizeCap} if present.
-     *
-     * <p>Taking the minimum across columns keeps all readers on the same page boundary: after this batch is consumed,
-     * every column will have exhausted its current page simultaneously and be ready to advance.
+     * Computes the logical row count for the next batch as the minimum of
+     * {@link BatchColumnReader#logicalRowsRemainingInCurrentPage()} across all columns, further capped by
+     * {@code batchSizeCap} if present. For repeated columns the leaf-value count exceeds the logical-row count by the
+     * number of list / map elements within each row, so the driver reasons in logical rows rather than leaf values.
      */
     private int computeBatchRows() {
         int min = Integer.MAX_VALUE;
         for (BatchColumnReader reader : columnReaders.values()) {
-            min = Math.min(min, reader.rowsRemainingInCurrentPage());
+            min = Math.min(min, reader.logicalRowsRemainingInCurrentPage());
         }
         if (batchSizeCap.isPresent()) {
             min = Math.min(min, batchSizeCap.getAsInt());
@@ -184,10 +184,24 @@ public final class BatchRowGroupReader implements AutoCloseable {
 
     // --- vector reads ---
 
-    private Map<ColumnPath, ColumnVector> readVectors(int batchRows) {
+    /**
+     * Asks each column reader for a vector covering {@code batchLogicalRows} logical rows. For repeated columns the
+     * actual leaf-value count is derived via {@link BatchColumnReader#valuesForLogicalRows(int)} and the matching slice
+     * of the rep-level stream is copied into {@code repLevelsByLeafOut} before the reader advances.
+     */
+    private Map<ColumnPath, ColumnVector> readVectors(int batchLogicalRows, Map<ColumnPath, int[]> repLevelsByLeafOut) {
         Map<ColumnPath, ColumnVector> vectors = new HashMap<>();
         for (Map.Entry<ColumnPath, BatchColumnReader> entry : columnReaders.entrySet()) {
-            vectors.put(entry.getKey(), entry.getValue().readBatch(batchRows));
+            BatchColumnReader reader = entry.getValue();
+            int valuesThisBatch = reader.valuesForLogicalRows(batchLogicalRows);
+            int[] pageRepLevels = reader.currentPageRepLevels();
+            if (pageRepLevels != null) {
+                int start = reader.valuesConsumedInCurrentPage();
+                int[] repLevelsForBatch = Arrays.copyOfRange(pageRepLevels, start, start + valuesThisBatch);
+                repLevelsByLeafOut.put(entry.getKey(), repLevelsForBatch);
+            }
+            ColumnVector vec = reader.readBatch(valuesThisBatch);
+            vectors.put(entry.getKey(), vec);
         }
         return vectors;
     }

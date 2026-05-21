@@ -28,22 +28,23 @@ import lombok.NonNull;
  * Tunables for a single {@code ParquetDataset.read()} call.
  *
  * <p>Filter toggles default to ON; turn them off to bypass a tier (useful for measuring effectiveness or working around
- * a known-bad statistic). Concurrency knobs default to {@link ConcurrencyMode#AUTO}, prefetch window 2, and an
- * unbounded virtual-thread pool capped by {@code maxConcurrency}. The {@code pruningDecisionListener} receives one
- * {@link PruningDecision} per (row group, tier) pair as the pipeline runs - the same vocabulary as {@code ExplainPlan}.
+ * a known-bad statistic). The {@code pruningDecisionListener} receives one {@link PruningDecision} per (row group,
+ * tier) pair as the pipeline runs - the same vocabulary as {@code ExplainPlan}.
  *
  * <p>The {@code byteBufferPool} backs every column-chunk fetch and every per-page decompression buffer; defaults to
  * {@link ByteBufferPool#getDefault()}. See the package documentation for the streaming memory contract that motivates
  * the pool.
+ *
+ * <p>Reads execute synchronously on the caller's thread. Callers that want parallelism issue concurrent
+ * {@code read(...)} calls against the dataset (which is thread-safe), or wrap the returned
+ * {@link java.util.stream.Stream} themselves. Prefetching of column-chunk bytes is the {@code RangeReader} caching
+ * layer's responsibility, not the reader's.
  *
  * @param useStatsFilter run the STATS tier
  * @param useDictionaryFilter run the DICTIONARY tier
  * @param useColumnIndexFilter run the COLUMN_INDEX tier
  * @param useBloomFilter run the BLOOM_FILTER tier (when loaded)
  * @param useRecordLevelFilter run the RECORD_LEVEL tier inline during record assembly
- * @param concurrencyMode selects fan-out / prefetch strategies
- * @param prefetchWindow number of row groups to prefetch ahead of the consumer; 0 disables; default 2
- * @param maxConcurrency upper bound on virtual threads spawned per {@code read()} call; 0 means unbounded
  * @param pruningDecisionListener called once per per-row-group tier outcome; never {@code null} (defaults to no-op)
  * @param decryptionKeyRetriever supplied by the encryption module; empty when the file isn't encrypted
  * @param byteBufferPool source of pooled buffers for column-chunk fetch and per-page decompression
@@ -56,30 +57,18 @@ public record ReadOptions(
         boolean useColumnIndexFilter,
         boolean useBloomFilter,
         boolean useRecordLevelFilter,
-        @NonNull ConcurrencyMode concurrencyMode,
-        int prefetchWindow,
-        int maxConcurrency,
         @NonNull Consumer<PruningDecision> pruningDecisionListener,
         @NonNull Optional<DecryptionKeyRetriever> decryptionKeyRetriever,
         @NonNull ByteBufferPool byteBufferPool,
         @NonNull OptionalInt batchSize) {
 
     public ReadOptions {
-        if (prefetchWindow < 0) {
-            throw new IllegalArgumentException("prefetchWindow must be >= 0, got " + prefetchWindow);
-        }
-        if (maxConcurrency < 0) {
-            throw new IllegalArgumentException("maxConcurrency must be >= 0, got " + maxConcurrency);
-        }
         if (batchSize.isPresent() && batchSize.getAsInt() <= 0) {
             throw new IllegalArgumentException("batchSize must be > 0 when present, got " + batchSize.getAsInt());
         }
     }
 
-    /**
-     * Sensible defaults: all tiers on, AUTO concurrency, prefetch=2, unbounded threads, no listener, no decryption,
-     * shared {@link ByteBufferPool#getDefault() default pool}.
-     */
+    /** Sensible defaults: all tiers on, no listener, no decryption, shared {@link ByteBufferPool#getDefault()}. */
     public static final ReadOptions DEFAULTS = builder().build();
 
     public static Builder builder() {
@@ -94,9 +83,6 @@ public record ReadOptions(
         private boolean useColumnIndexFilter = true;
         private boolean useBloomFilter = true;
         private boolean useRecordLevelFilter = true;
-        private ConcurrencyMode concurrencyMode = ConcurrencyMode.AUTO;
-        private int prefetchWindow = 2;
-        private int maxConcurrency;
         private Consumer<PruningDecision> pruningDecisionListener = _ -> {};
         private Optional<DecryptionKeyRetriever> decryptionKeyRetriever = Optional.empty();
         private ByteBufferPool byteBufferPool = ByteBufferPool.getDefault();
@@ -126,21 +112,6 @@ public record ReadOptions(
 
         public Builder useRecordLevelFilter(boolean v) {
             this.useRecordLevelFilter = v;
-            return this;
-        }
-
-        public Builder concurrencyMode(@NonNull ConcurrencyMode v) {
-            this.concurrencyMode = v;
-            return this;
-        }
-
-        public Builder prefetchWindow(int v) {
-            this.prefetchWindow = v;
-            return this;
-        }
-
-        public Builder maxConcurrency(int v) {
-            this.maxConcurrency = v;
             return this;
         }
 
@@ -179,9 +150,6 @@ public record ReadOptions(
                     useColumnIndexFilter,
                     useBloomFilter,
                     useRecordLevelFilter,
-                    concurrencyMode,
-                    prefetchWindow,
-                    maxConcurrency,
                     pruningDecisionListener,
                     decryptionKeyRetriever,
                     byteBufferPool,

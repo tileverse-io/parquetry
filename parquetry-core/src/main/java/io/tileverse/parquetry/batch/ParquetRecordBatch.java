@@ -22,9 +22,8 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
- * One batch of rows from a Parquet read. Holds one {@link ColumnVector} per projected leaf plus an
- * {@link java.lang.foreign.Arena} that owns all decompressed page memory. {@link #close()} closes the Arena,
- * invalidating any {@link java.lang.foreign.MemorySegment} views the vectors exposed.
+ * One batch of rows from a Parquet read. Holds one {@link ColumnVector} per projected leaf. Vectors are heap-backed at
+ * construction; their values remain valid even after {@link #close()}.
  */
 public sealed interface ParquetRecordBatch extends AutoCloseable permits DefaultParquetRecordBatch {
 
@@ -39,22 +38,11 @@ public sealed interface ParquetRecordBatch extends AutoCloseable permits Default
 
     /**
      * Adapts row {@code rowIndex} of this batch to a single {@link ParquetRecord}. The returned record is a view: it
-     * holds a reference to this batch and reads through to the vectors on each accessor call. The view remains valid as
-     * long as the producing batch (and its underlying page Arenas) does.
+     * holds a reference to this batch and reads through to the vectors on each accessor call.
      */
     ParquetRecord materialize(int rowIndex);
 
-    /**
-     * Releases the batch's own Arena (if any allocations landed in it). Idempotent.
-     *
-     * <p><strong>MemorySegment validity:</strong> vectors and any {@link java.lang.foreign.MemorySegment} views they
-     * expose remain valid as long as the producing {@link io.tileverse.parquetry.read.BatchRowGroupReader
-     * BatchRowGroupReader}'s underlying column readers retain the page that backs them. Page Arenas are owned by
-     * per-column readers and live until either the column reader advances past the page (the next call to
-     * {@code readBatch} on that column triggers the prior page's release) or the {@code BatchRowGroupReader} is closed.
-     * Consumers who need a value to outlive that window must copy it out before then (for example via
-     * {@link ColumnVector#materialize()} or {@code segment.toArray(JAVA_BYTE)}).
-     */
+    /** Releases the batch's token Arena. Idempotent. Vectors remain accessible after close. */
     @Override
     void close();
 }

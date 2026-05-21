@@ -47,21 +47,6 @@ public final class ListVector implements ColumnVector {
         return validity;
     }
 
-    @Override
-    public boolean isMaterialized() {
-        return child.isMaterialized();
-    }
-
-    @Override
-    public void materialize() {
-        child.materialize();
-    }
-
-    @Override
-    public void materializeSurvivors(BitSet survivors) {
-        child.materializeSurvivors(survivors);
-    }
-
     /** Returns the start offset (inclusive) of row {@code row}'s slice in the child vector. */
     public int rowOffsetStart(int row) {
         return offsets[row];

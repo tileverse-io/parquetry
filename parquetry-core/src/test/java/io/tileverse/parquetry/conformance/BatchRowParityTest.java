@@ -153,7 +153,7 @@ class BatchRowParityTest {
     private static List<Map<ColumnPath, Object>> snapshotViaRowApi(
             ParquetDataset dataset, ParquetSchema schema, List<ColumnPath> leaves) {
         try (Stream<ParquetRecord> records = dataset.read()) {
-            return records.map(record -> snapshotRow(record, schema, leaves)).toList();
+            return records.map(row -> snapshotRow(row, schema, leaves)).toList();
         }
     }
 
@@ -176,27 +176,27 @@ class BatchRowParityTest {
     // --- snapshot + comparison ---
 
     private static Map<ColumnPath, Object> snapshotRow(
-            @NonNull ParquetRecord record, @NonNull ParquetSchema schema, @NonNull List<ColumnPath> leaves) {
+            @NonNull ParquetRecord row, @NonNull ParquetSchema schema, @NonNull List<ColumnPath> leaves) {
         Map<ColumnPath, Object> cells = new LinkedHashMap<>(leaves.size());
         for (ColumnPath col : leaves) {
-            cells.put(col, snapshotCell(record, schema, col));
+            cells.put(col, snapshotCell(row, schema, col));
         }
         return cells;
     }
 
-    private static Object snapshotCell(ParquetRecord record, ParquetSchema schema, ColumnPath col) {
-        if (record.isNull(col)) {
+    private static Object snapshotCell(ParquetRecord row, ParquetSchema schema, ColumnPath col) {
+        if (row.isNull(col)) {
             return null;
         }
         PrimitiveKind kind = primitiveKindAt(schema, col);
         return switch (kind) {
-            case BOOLEAN -> Boolean.valueOf(record.getBoolean(col));
-            case INT32 -> Integer.valueOf(record.getInt(col));
-            case INT64 -> Long.valueOf(record.getLong(col));
-            case FLOAT -> Float.valueOf(record.getFloat(col));
-            case DOUBLE -> Double.valueOf(record.getDouble(col));
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> record.getBinary(col);
-            case INT96 -> int96Bytes(record.get(col));
+            case BOOLEAN -> Boolean.valueOf(row.getBoolean(col));
+            case INT32 -> Integer.valueOf(row.getInt(col));
+            case INT64 -> Long.valueOf(row.getLong(col));
+            case FLOAT -> Float.valueOf(row.getFloat(col));
+            case DOUBLE -> Double.valueOf(row.getDouble(col));
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> row.getBinary(col);
+            case INT96 -> int96Bytes(row.get(col));
         };
     }
 

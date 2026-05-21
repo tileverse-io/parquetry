@@ -57,23 +57,6 @@ class StructVectorTest {
         assertThat(vec.validity().get(1)).isFalse();
     }
 
-    @Test
-    void materializeCascadesToAllChildren() {
-        IntVector a = IntVector.materialized(new int[] {1}, allValid(1));
-        IntVector b = IntVector.materialized(new int[] {2}, allValid(1));
-        Map<ColumnPath, ColumnVector> children = Map.of(
-                ColumnPath.of("s", "a"), a,
-                ColumnPath.of("s", "b"), b);
-        BitSet validity = new BitSet(1);
-        validity.set(0);
-
-        StructVector vec = new StructVector(children, validity, 1);
-
-        assertThat(vec.isMaterialized()).isTrue();
-        vec.materialize();
-        assertThat(vec.isMaterialized()).isTrue();
-    }
-
     private static BitSet allValid(int n) {
         BitSet b = new BitSet(n);
         b.set(0, n);

@@ -15,6 +15,7 @@
  */
 package io.tileverse.parquetry.read;
 
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 
 import java.io.IOException;
@@ -22,6 +23,7 @@ import java.io.UncheckedIOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Optional;
 
@@ -38,8 +40,25 @@ import io.tileverse.parquetry.codec.Codec;
 import io.tileverse.parquetry.codec.CodecRegistry;
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.MalformedFileException;
+import io.tileverse.parquetry.page.ByteStreamSplitDoubleDecoder;
+import io.tileverse.parquetry.page.ByteStreamSplitFloatDecoder;
+import io.tileverse.parquetry.page.DeltaBinaryPackedInt32Decoder;
+import io.tileverse.parquetry.page.DeltaBinaryPackedInt64Decoder;
+import io.tileverse.parquetry.page.DeltaByteArrayDecoder;
+import io.tileverse.parquetry.page.DeltaLengthByteArrayDecoder;
 import io.tileverse.parquetry.page.Dictionary;
 import io.tileverse.parquetry.page.LevelDecoder;
+import io.tileverse.parquetry.page.PageDecoder;
+import io.tileverse.parquetry.page.PlainBinaryDecoder;
+import io.tileverse.parquetry.page.PlainBooleanDecoder;
+import io.tileverse.parquetry.page.PlainDoubleDecoder;
+import io.tileverse.parquetry.page.PlainFixedLenBinaryDecoder;
+import io.tileverse.parquetry.page.PlainFloatDecoder;
+import io.tileverse.parquetry.page.PlainInt32Decoder;
+import io.tileverse.parquetry.page.PlainInt64Decoder;
+import io.tileverse.parquetry.page.PlainInt96Decoder;
+import io.tileverse.parquetry.page.RleBooleanDecoder;
+import io.tileverse.parquetry.page.RleDictionaryPageDecoder;
 import io.tileverse.parquetry.read.LevelMaximaResolver.LevelMaxima;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.Field;
@@ -47,28 +66,18 @@ import io.tileverse.parquetry.schema.Field;
 import lombok.NonNull;
 
 /**
- * Per-column reader for the batch API. Fills one {@link ColumnVector} per call to {@link #readBatch(int)} from a
- * {@link FetchedColumnChunk}'s compressed byte stream.
+ * Per-column reader for the batch API. Each call to {@link #readBatch(int)} returns a {@link ColumnVector} sliced from
+ * the current page's pre-decoded values.
  *
- * <p>Each call to {@link #readBatch(int)} is <em>page-bounded</em>: the returned vector contains at most
- * {@code min(maxRows, remainingInCurrentPage)} rows. The caller is responsible for aligning batches across columns by
- * first asking {@link #rowsRemainingInCurrentPage()} and capping the {@code maxRows} argument accordingly. This is the
- * contract {@code BatchRowGroupReader} enforces.
- *
- * <p>Pages are decoded lazily: the current page is not decompressed until the first {@link #readBatch} or
- * {@link #rowsRemainingInCurrentPage} call that requires it. Each page is decompressed into a fresh
- * {@link Arena#ofConfined() confined Arena} that this reader owns. The previous page's Arena is closed when the next
- * page is loaded (in {@link #loadNextPage()}), at which point callers should no longer hold unmaterialized vector
- * references from the previous page. Callers that need values to outlive the page should call
- * {@link ColumnVector#materialize()} to copy values onto the heap before the reader advances.
- *
- * <p>The constructor's {@code arena} parameter is accepted for API compatibility but is not used for page allocation;
- * the reader always allocates its own per-page Arena. Use {@link #close()} when done to release any Arenas still held.
- *
- * <p>Dictionary-encoded columns require a {@code Dictionary<?>} wired into each {@code ColumnVector}'s factory method.
- * Dictionary-encoded pages are decoded via {@link io.tileverse.parquetry.page.RleDictionaryPageDecoder}.
+ * <p>Page lifecycle: {@link #loadNextPage()} decompresses the next page into a transient {@link Arena#ofConfined()
+ * confined Arena}, fully decodes rep-levels / def-levels / values into heap-backed Java arrays (or
+ * {@link MemorySegment}[] of heap-backed segments for binary kinds), and closes the Arena before returning. Once a page
+ * is loaded, every {@link #readBatch} call is array slicing - no Arena-backed memory escapes the load step, and
+ * within-page splitting is naturally correct because page state lives on the heap.
  */
 final class BatchColumnReader {
+
+    private static final int[] EMPTY_REP_LEVELS = new int[0];
 
     private final ColumnPath columnPath;
     private final Field.Primitive leaf;
@@ -77,28 +86,27 @@ final class BatchColumnReader {
     private final long totalValues;
     private final PageCursor pageCursor;
     private final int defBitWidth;
+    private final int repBitWidth;
     private final Optional<Dictionary<?>> dictionary;
 
-    private DecodedPage currentPage;
-    // The Arena that owns the current page's decompressed bytes. Created per page in loadNextPage().
-    // Closed when the next page is loaded (at which point all vectors from this page should be consumed).
-    private Arena currentPageArenaRef;
-    // Arena for the previous page; held until the next loadNextPage() call closes it.
-    private Arena previousPageArenaRef;
-    private int rowsConsumedInCurrentPage;
-    private long rowsConsumedTotal;
+    // Per-page state. Populated by loadNextPage; cleared on advance.
+    private boolean pageLoaded;
+    private int pageSize;
+    private int pageLogicalRowCount;
+    private BitSet pageValidity;
+    private int[] pageRepLevels; // null when maxRep == 0
+    private int[] pageInts;
+    private long[] pageLongs;
+    private float[] pageFloats;
+    private double[] pageDoubles;
+    private boolean[] pageBooleans;
+    private MemorySegment[] pageSegments;
 
-    /**
-     * Constructs a {@code BatchColumnReader} from a pre-fetched column chunk.
-     *
-     * <p>{@code leaf} is required separately because {@link FetchedColumnChunk} does not carry the schema leaf; the
-     * caller resolves it from the file schema before constructing the reader.
-     *
-     * @param chunk the fetched, compressed column chunk to read
-     * @param leaf the file-schema leaf for this column; used to determine the primitive kind and optional type length
-     * @param arena unused; kept for API compatibility with existing tests. The reader allocates its own Arena per page.
-     */
-    BatchColumnReader(@NonNull FetchedColumnChunk chunk, @NonNull Field.Primitive leaf, @NonNull Arena arena) {
+    private int valuesConsumedInCurrentPage;
+    private int logicalRowsConsumedInCurrentPage;
+    private long valuesConsumedTotal;
+
+    BatchColumnReader(@NonNull FetchedColumnChunk chunk, @NonNull Field.Primitive leaf) {
         this.columnPath = chunk.path();
         this.leaf = leaf;
         this.maxLevels = new LevelMaxima(chunk.maxRepetitionLevel(), chunk.maxDefinitionLevel());
@@ -106,156 +114,168 @@ final class BatchColumnReader {
         this.totalValues = chunk.metadata().numValues();
         this.pageCursor = new PageCursor(chunk.compressedBuffer().buffer(), columnPath);
         this.defBitWidth = LevelDecoder.computeBitWidth(maxLevels.maxDefinitionLevel());
+        this.repBitWidth = LevelDecoder.computeBitWidth(maxLevels.maxRepetitionLevel());
         this.dictionary = chunk.dictionary();
     }
 
-    /**
-     * Returns {@code true} while there are rows remaining in the current page or the page cursor has more pages. A
-     * {@code true} result means the next {@link #readBatch} call will return a non-empty vector.
-     */
+    // ---- public iteration surface ----
+
+    /** True while the current page has unconsumed values or the page cursor has more pages. */
     boolean hasMore() {
-        if (rowsConsumedTotal < totalValues) {
+        if (pageLoaded && valuesConsumedInCurrentPage < pageSize) {
             return true;
         }
-        // If a page is loaded and has unconsumed rows, we still have more (handles the case where totalValues
-        // is not set precisely but the page stream has data).
-        return currentPage != null && rowsConsumedInCurrentPage < currentPage.valueCount();
+        return pageCursor.hasRemaining();
     }
 
-    /**
-     * Returns the number of rows remaining in the current page. Loads the page if it has not been loaded yet.
-     *
-     * <p>Used by {@code BatchRowGroupReader} to compute the cross-column page-boundary cap: all columns share the same
-     * page-row-count constraint, so the driver calls this on each column and takes the minimum.
-     *
-     * @throws IllegalStateException if there are no more rows to read
-     */
+    /** Leaf-value count remaining in the current page. Loads the page on first call. */
     int rowsRemainingInCurrentPage() {
         ensurePageLoaded();
-        return currentPage.valueCount() - rowsConsumedInCurrentPage;
+        return pageSize - valuesConsumedInCurrentPage;
     }
 
     /**
-     * Reads up to {@code maxRows} rows from the current page into a new {@link ColumnVector}. The actual row count is
-     * {@code min(maxRows, rowsRemainingInCurrentPage())} so the batch never straddles a page boundary on this column.
-     *
-     * <p>Callers that want aligned page-boundary batches across all columns should call
-     * {@link #rowsRemainingInCurrentPage()} first and pass the minimum as {@code maxRows}.
-     *
-     * <p>The returned vector holds a lazy view of the decompressed page bytes in the current page's Arena. The Arena is
-     * closed when the page is exhausted (all rows consumed) or when the reader advances to the next page. Callers must
-     * not hold vector references past the point where the reader advances; for safety, materialize the vector (via
-     * {@link ColumnVector#materialize()}) before the batch closes if you need the values to outlive the page.
-     *
-     * <p><strong>Known limitation:</strong> when {@code maxRows} is less than the current page's remaining row count,
-     * subsequent batches that continue reading from the same page will produce incorrect values - the second batch's
-     * vector starts decoding from byte 0 of the page again. The page-aligned batch model used by the production caller
-     * ({@link BatchRowGroupReader}) avoids this by default: it only emits within-page splits when a
-     * {@code batchSizeCap} is explicitly set. A follow-up will add row-offset-aware vector materialization so the cap
-     * can split pages safely.
-     *
-     * @param maxRows maximum number of rows to include in the batch; must be positive
-     * @return a {@link ColumnVector} carrying at most {@code maxRows} rows
-     * @throws IllegalArgumentException if {@code maxRows} is not positive
-     * @throws IllegalStateException if there are no more rows to read
-     * @throws UncheckedIOException if a page decompression I/O error occurs
+     * Logical (top-level) row count remaining in the current page. For flat columns this equals
+     * {@link #rowsRemainingInCurrentPage()}; for repeated columns it counts rep=0 markers ahead of the consume cursor.
      */
-    ColumnVector readBatch(int maxRows) {
-        if (maxRows <= 0) {
-            throw new IllegalArgumentException("maxRows must be positive; got " + maxRows);
+    int logicalRowsRemainingInCurrentPage() {
+        ensurePageLoaded();
+        if (pageRepLevels == null) {
+            return pageSize - valuesConsumedInCurrentPage;
+        }
+        return pageLogicalRowCount - logicalRowsConsumedInCurrentPage;
+    }
+
+    /** Rep-level stream for the current page; one entry per leaf element. Null for flat columns. */
+    int[] currentPageRepLevels() {
+        ensurePageLoaded();
+        return pageRepLevels;
+    }
+
+    /** Position in the current page's value stream where the next {@link #readBatch} call will start. */
+    int valuesConsumedInCurrentPage() {
+        ensurePageLoaded();
+        return valuesConsumedInCurrentPage;
+    }
+
+    /**
+     * Number of leaf values that cover the next {@code logicalRows} logical rows in the current page. For flat columns
+     * this is {@code logicalRows}; for repeated columns it counts entries from the consume cursor until the
+     * {@code logicalRows}'th rep=0 marker.
+     */
+    int valuesForLogicalRows(int logicalRows) {
+        ensurePageLoaded();
+        if (logicalRows <= 0) {
+            return 0;
+        }
+        if (pageRepLevels == null) {
+            return logicalRows;
+        }
+        return countValuesForLogicalRows(pageRepLevels, valuesConsumedInCurrentPage, logicalRows);
+    }
+
+    /**
+     * Reads up to {@code maxValues} values from the current page into a new {@link ColumnVector}. The actual size is
+     * {@code min(maxValues, pageSize - valuesConsumedInCurrentPage)}. Subsequent calls continue within the same page
+     * until it is exhausted, then advance to the next page on demand.
+     */
+    ColumnVector readBatch(int maxValues) {
+        if (maxValues <= 0) {
+            throw new IllegalArgumentException("maxValues must be positive; got " + maxValues);
         }
         ensurePageLoaded();
-        if (rowsConsumedInCurrentPage >= currentPage.valueCount()) {
+        if (valuesConsumedInCurrentPage >= pageSize) {
             throw new IllegalStateException(
-                    "No more rows in column " + columnPath.dot() + " (totalValues=" + totalValues + ")");
+                    "No more values in column " + columnPath.dot() + " (totalValues=" + totalValues + ")");
         }
-        int rowsThisBatch = Math.min(maxRows, currentPage.valueCount() - rowsConsumedInCurrentPage);
-        BitSet validity = decodeValidity(rowsThisBatch);
-        ColumnVector vec = buildVector(rowsThisBatch, validity);
-        rowsConsumedInCurrentPage += rowsThisBatch;
-        rowsConsumedTotal += rowsThisBatch;
-        if (rowsConsumedInCurrentPage >= currentPage.valueCount()) {
+        int start = valuesConsumedInCurrentPage;
+        int n = Math.min(maxValues, pageSize - start);
+
+        ColumnVector vec = sliceVector(start, n);
+
+        valuesConsumedInCurrentPage += n;
+        logicalRowsConsumedInCurrentPage += countLogicalRowsInSlice(start, n);
+        valuesConsumedTotal += n;
+        if (valuesConsumedInCurrentPage >= pageSize) {
             advancePastCurrentPage();
         }
         return vec;
     }
 
-    // --- page management ---
+    // ---- page lifecycle ----
 
     private void ensurePageLoaded() {
-        if (currentPage == null) {
+        if (!pageLoaded) {
             loadNextPage();
         }
     }
 
     private void loadNextPage() {
-        // Close the previous page's Arena if it is still open. At this point, all batches from the
-        // previous page should have been consumed by the caller (we're advancing to the next page because
-        // the reader has no more rows in the current page). Any vectors from the previous page that the
-        // caller still holds will have stale MemorySegment references after this point.
-        if (previousPageArenaRef != null) {
-            previousPageArenaRef.close();
-            previousPageArenaRef = null;
-        }
-        // Each page gets its own confined Arena so its decompressed bytes outlive individual batch Arenas.
         Arena pageArena = Arena.ofConfined();
-        DecodedPage next;
         try {
-            next = pageCursor.nextDataPage(maxLevels, codec, pageArena);
-        } catch (IOException e) {
+            DecodedPage page;
+            try {
+                page = pageCursor.nextDataPage(maxLevels, codec, pageArena);
+            } catch (IOException e) {
+                throw new UncheckedIOException("Failed to read next page for column " + columnPath.dot(), e);
+            }
+            if (page == null) {
+                throw new MalformedFileException("Column " + columnPath.dot() + " exhausted page stream after "
+                        + valuesConsumedTotal + " values; expected " + totalValues);
+            }
+            decodeIntoHeap(page);
+        } finally {
             pageArena.close();
-            throw new UncheckedIOException("Failed to read next page for column " + columnPath.dot(), e);
         }
-        if (next == null) {
-            pageArena.close();
-            throw new MalformedFileException("Column " + columnPath.dot() + " exhausted page stream after "
-                    + rowsConsumedTotal + " values; expected " + totalValues);
-        }
-        currentPage = next;
-        currentPageArenaRef = pageArena;
-        rowsConsumedInCurrentPage = 0;
     }
 
-    /**
-     * Records that the current page is fully consumed and saves the page Arena reference for deferred closure. The
-     * Arena is closed when the NEXT page is loaded (in {@link #loadNextPage()}), at which point the caller should have
-     * stopped using vectors from this page. Sets {@code currentPage} to {@code null} so that the next
-     * {@link #ensurePageLoaded} call loads the following page.
-     */
+    private void decodeIntoHeap(DecodedPage page) {
+        pageSize = page.valueCount();
+        pageValidity = decodeValidity(page, pageSize);
+        pageRepLevels = decodeRepLevels(page, pageSize);
+        pageLogicalRowCount = (pageRepLevels == null) ? pageSize : countRepZeroMarkers(pageRepLevels);
+        clearTypedPayloads();
+        decodeValuesByKind(page);
+        valuesConsumedInCurrentPage = 0;
+        logicalRowsConsumedInCurrentPage = 0;
+        pageLoaded = true;
+    }
+
     private void advancePastCurrentPage() {
-        // Park the old Arena so loadNextPage() closes it when moving to the next page.
-        previousPageArenaRef = currentPageArenaRef;
-        currentPage = null;
-        currentPageArenaRef = null;
-        rowsConsumedInCurrentPage = 0;
+        pageLoaded = false;
+        pageSize = 0;
+        pageLogicalRowCount = 0;
+        pageValidity = null;
+        pageRepLevels = null;
+        clearTypedPayloads();
+        valuesConsumedInCurrentPage = 0;
+        logicalRowsConsumedInCurrentPage = 0;
     }
 
-    // --- def-level decoding ---
+    private void clearTypedPayloads() {
+        pageInts = null;
+        pageLongs = null;
+        pageFloats = null;
+        pageDoubles = null;
+        pageBooleans = null;
+        pageSegments = null;
+    }
 
-    /**
-     * Decodes {@code rows} definition level values from the current page and returns a validity {@link BitSet} where
-     * bit {@code i} is set iff row {@code i} is non-null (i.e. its def level equals {@code maxDefinitionLevel}).
-     *
-     * <p>When {@code maxDefinitionLevel == 0} (required / non-nullable column), all bits are set without reading any
-     * bytes, matching the {@code MemorySegment.NULL} def-level segment that {@link DecodedPage} uses for required
-     * columns.
-     */
-    private BitSet decodeValidity(int rows) {
-        BitSet validity = new BitSet(rows);
+    // ---- level decoding ----
+
+    private BitSet decodeValidity(DecodedPage page, int values) {
+        BitSet validity = new BitSet(values);
         int maxDef = maxLevels.maxDefinitionLevel();
         if (maxDef == 0) {
-            validity.set(0, rows);
+            validity.set(0, values);
             return validity;
         }
+        ByteBuffer defBuf = levelByteBuffer(page.defLevelBytes());
         LevelDecoder defDecoder = new LevelDecoder(defBitWidth);
-        MemorySegment defBytes = currentPage.defLevelBytes();
-        ByteBuffer defBuf = (defBytes == MemorySegment.NULL)
-                ? ByteBuffer.allocate(0).order(LITTLE_ENDIAN)
-                : defBytes.asByteBuffer().order(LITTLE_ENDIAN);
         defDecoder.load(defBuf);
-        int[] defLevels = new int[rows];
-        defDecoder.decode(rows, defLevels, 0);
-        for (int i = 0; i < rows; i++) {
+        int[] defLevels = new int[values];
+        defDecoder.decode(values, defLevels, 0);
+        for (int i = 0; i < values; i++) {
             if (defLevels[i] == maxDef) {
                 validity.set(i);
             }
@@ -263,63 +283,419 @@ final class BatchColumnReader {
         return validity;
     }
 
-    // --- vector construction ---
+    // null marks "flat column, no rep levels exist" - distinct from "repeated column with zero values in the page"
+    @SuppressWarnings("java:S1168")
+    private int[] decodeRepLevels(DecodedPage page, int values) {
+        if (maxLevels.maxRepetitionLevel() == 0) {
+            return null;
+        }
+        if (values == 0) {
+            return EMPTY_REP_LEVELS;
+        }
+        ByteBuffer repBuf = levelByteBuffer(page.repLevelBytes());
+        LevelDecoder repDecoder = new LevelDecoder(repBitWidth);
+        repDecoder.load(repBuf);
+        int[] repLevels = new int[values];
+        repDecoder.decode(values, repLevels, 0);
+        return repLevels;
+    }
+
+    private static ByteBuffer levelByteBuffer(MemorySegment levelBytes) {
+        if (levelBytes == MemorySegment.NULL) {
+            return ByteBuffer.allocate(0).order(LITTLE_ENDIAN);
+        }
+        return levelBytes.asByteBuffer().order(LITTLE_ENDIAN);
+    }
+
+    private static int countRepZeroMarkers(int[] repLevels) {
+        int count = 0;
+        for (int rep : repLevels) {
+            if (rep == 0) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static int countValuesForLogicalRows(int[] repLevels, int startIndex, int logicalRows) {
+        int rowsCrossed = 0;
+        int i = startIndex;
+        while (i < repLevels.length) {
+            if (repLevels[i] == 0) {
+                if (rowsCrossed == logicalRows) {
+                    return i - startIndex;
+                }
+                rowsCrossed++;
+            }
+            i++;
+        }
+        return repLevels.length - startIndex;
+    }
+
+    private int countLogicalRowsInSlice(int start, int count) {
+        if (pageRepLevels == null) {
+            return count;
+        }
+        int rows = 0;
+        int end = start + count;
+        for (int i = start; i < end; i++) {
+            if (pageRepLevels[i] == 0) {
+                rows++;
+            }
+        }
+        return rows;
+    }
+
+    // ---- per-kind value decoding ----
+
+    private void decodeValuesByKind(DecodedPage page) {
+        int nonNullCount = pageValidity.cardinality();
+        Encoding encoding = page.valuesEncoding();
+        ByteBuffer valueBuf = page.valueBytes().asByteBuffer().order(LITTLE_ENDIAN);
+        Dictionary<?> dict = dictionary.orElse(null);
+        switch (leaf.kind()) {
+            case INT32 -> pageInts = decodeInts(valueBuf, encoding, nonNullCount, dict);
+            case INT64 -> pageLongs = decodeLongs(valueBuf, encoding, nonNullCount, dict);
+            case FLOAT -> pageFloats = decodeFloats(valueBuf, encoding, nonNullCount, dict);
+            case DOUBLE -> pageDoubles = decodeDoubles(valueBuf, encoding, nonNullCount, dict);
+            case BOOLEAN -> pageBooleans = decodeBooleans(valueBuf, encoding, nonNullCount);
+            case BYTE_ARRAY -> pageSegments = decodeBinary(valueBuf, encoding, nonNullCount, dict);
+            case FIXED_LEN_BYTE_ARRAY -> pageSegments = decodeFixedLenBinary(valueBuf, encoding, nonNullCount, dict);
+            case INT96 -> pageSegments = decodeInt96(valueBuf, encoding, nonNullCount, dict);
+        }
+    }
+
+    private int[] decodeInts(ByteBuffer buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
+        int[] out = new int[pageSize];
+        if (nonNullCount == 0) {
+            return out;
+        }
+        PageDecoder<?> decoder = intDecoderFor(encoding, dict);
+        decoder.load(buf, nonNullCount);
+        if (nonNullCount == pageSize) {
+            decoder.decodeInts(pageSize, out, 0);
+            return out;
+        }
+        int[] dense = new int[nonNullCount];
+        decoder.decodeInts(nonNullCount, dense, 0);
+        spreadInts(dense, out);
+        return out;
+    }
+
+    private long[] decodeLongs(ByteBuffer buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
+        long[] out = new long[pageSize];
+        if (nonNullCount == 0) {
+            return out;
+        }
+        PageDecoder<?> decoder = longDecoderFor(encoding, dict);
+        decoder.load(buf, nonNullCount);
+        if (nonNullCount == pageSize) {
+            decoder.decodeLongs(pageSize, out, 0);
+            return out;
+        }
+        long[] dense = new long[nonNullCount];
+        decoder.decodeLongs(nonNullCount, dense, 0);
+        spreadLongs(dense, out);
+        return out;
+    }
+
+    private float[] decodeFloats(ByteBuffer buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
+        float[] out = new float[pageSize];
+        if (nonNullCount == 0) {
+            return out;
+        }
+        PageDecoder<?> decoder = floatDecoderFor(encoding, dict);
+        decoder.load(buf, nonNullCount);
+        if (nonNullCount == pageSize) {
+            decoder.decodeFloats(pageSize, out, 0);
+            return out;
+        }
+        float[] dense = new float[nonNullCount];
+        decoder.decodeFloats(nonNullCount, dense, 0);
+        spreadFloats(dense, out);
+        return out;
+    }
+
+    private double[] decodeDoubles(ByteBuffer buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
+        double[] out = new double[pageSize];
+        if (nonNullCount == 0) {
+            return out;
+        }
+        PageDecoder<?> decoder = doubleDecoderFor(encoding, dict);
+        decoder.load(buf, nonNullCount);
+        if (nonNullCount == pageSize) {
+            decoder.decodeDoubles(pageSize, out, 0);
+            return out;
+        }
+        double[] dense = new double[nonNullCount];
+        decoder.decodeDoubles(nonNullCount, dense, 0);
+        spreadDoubles(dense, out);
+        return out;
+    }
+
+    private boolean[] decodeBooleans(ByteBuffer buf, Encoding encoding, int nonNullCount) {
+        boolean[] out = new boolean[pageSize];
+        if (nonNullCount == 0) {
+            return out;
+        }
+        PageDecoder<?> decoder = booleanDecoderFor(encoding);
+        decoder.load(buf, nonNullCount);
+        if (nonNullCount == pageSize) {
+            decoder.decodeBooleans(pageSize, out, 0);
+            return out;
+        }
+        boolean[] dense = new boolean[nonNullCount];
+        decoder.decodeBooleans(nonNullCount, dense, 0);
+        spreadBooleans(dense, out);
+        return out;
+    }
+
+    private MemorySegment[] decodeBinary(ByteBuffer buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
+        MemorySegment[] out = new MemorySegment[pageSize];
+        if (nonNullCount == 0) {
+            return out;
+        }
+        PageDecoder<?> decoder = binaryDecoderFor(encoding, dict);
+        decoder.load(buf, nonNullCount);
+        if (nonNullCount == pageSize) {
+            decoder.decodeBinary(pageSize, out, 0);
+        } else {
+            MemorySegment[] dense = new MemorySegment[nonNullCount];
+            decoder.decodeBinary(nonNullCount, dense, 0);
+            spreadSegments(dense, out);
+        }
+        copySegmentsToHeap(out);
+        return out;
+    }
+
+    private MemorySegment[] decodeFixedLenBinary(
+            ByteBuffer buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
+        int byteWidth = requiredByteWidth();
+        MemorySegment[] out = new MemorySegment[pageSize];
+        if (nonNullCount == 0) {
+            return out;
+        }
+        PageDecoder<?> decoder = fixedLenBinaryDecoderFor(encoding, byteWidth, dict);
+        decoder.load(buf, nonNullCount);
+        if (nonNullCount == pageSize) {
+            decoder.decodeBinary(pageSize, out, 0);
+        } else {
+            MemorySegment[] dense = new MemorySegment[nonNullCount];
+            decoder.decodeBinary(nonNullCount, dense, 0);
+            spreadSegments(dense, out);
+        }
+        copySegmentsToHeap(out);
+        return out;
+    }
+
+    private MemorySegment[] decodeInt96(ByteBuffer buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
+        MemorySegment[] out = new MemorySegment[pageSize];
+        if (nonNullCount == 0) {
+            return out;
+        }
+        PageDecoder<?> decoder = int96DecoderFor(encoding, dict);
+        decoder.load(buf, nonNullCount);
+        if (nonNullCount == pageSize) {
+            decoder.decodeBinary(pageSize, out, 0);
+        } else {
+            MemorySegment[] dense = new MemorySegment[nonNullCount];
+            decoder.decodeBinary(nonNullCount, dense, 0);
+            spreadSegments(dense, out);
+        }
+        copySegmentsToHeap(out);
+        return out;
+    }
+
+    private int requiredByteWidth() {
+        return leaf.typeLength()
+                .orElseThrow(() -> new IllegalStateException(
+                        "FIXED_LEN_BYTE_ARRAY column " + columnPath.dot() + " is missing typeLength in schema"));
+    }
 
     /**
-     * Builds the typed {@link ColumnVector} for the current page, dispatching on the leaf's primitive kind. The
-     * {@code valueBytes} segment is a view into the Arena-allocated decompressed page; it remains valid as long as the
-     * Arena is open.
-     *
-     * <p>The chunk's dictionary (if present) is forwarded to every vector factory so that dictionary-encoded pages can
-     * be materialized via {@link io.tileverse.parquetry.page.RleDictionaryPageDecoder}.
+     * Replaces every non-null entry in {@code segments} with a heap-backed copy. Lets the caller close the page Arena
+     * without invalidating the segments.
      */
-    private ColumnVector buildVector(int rows, BitSet validity) {
-        MemorySegment valueBytes = currentPage.valueBytes();
-        Encoding encoding = currentPage.valuesEncoding();
-        Dictionary<?> dict = dictionary.orElse(null);
-        return switch (leaf.kind()) {
-            case INT32 -> IntVector.raw(valueBytes, encoding, rows, validity, dict);
-            case INT64 -> LongVector.raw(valueBytes, encoding, rows, validity, dict);
-            case FLOAT -> FloatVector.raw(valueBytes, encoding, rows, validity, dict);
-            case DOUBLE -> DoubleVector.raw(valueBytes, encoding, rows, validity, dict);
-            case BOOLEAN -> BooleanVector.raw(valueBytes, encoding, rows, validity);
-            case BYTE_ARRAY -> BinaryVector.raw(valueBytes, encoding, rows, validity, dict);
-            case FIXED_LEN_BYTE_ARRAY -> buildFixedLenBinaryVector(valueBytes, encoding, rows, validity, dict);
-            case INT96 -> Int96Vector.raw(valueBytes, encoding, rows, validity, dict);
+    private static void copySegmentsToHeap(MemorySegment[] segments) {
+        for (int i = 0; i < segments.length; i++) {
+            MemorySegment src = segments[i];
+            if (src == null) {
+                continue;
+            }
+            byte[] bytes = src.toArray(JAVA_BYTE);
+            segments[i] = MemorySegment.ofArray(bytes).asReadOnly();
+        }
+    }
+
+    // ---- spread (dense -> validity-positioned) ----
+
+    private void spreadInts(int[] dense, int[] dst) {
+        int j = 0;
+        for (int i = pageValidity.nextSetBit(0); i >= 0; i = pageValidity.nextSetBit(i + 1)) {
+            dst[i] = dense[j++];
+        }
+    }
+
+    private void spreadLongs(long[] dense, long[] dst) {
+        int j = 0;
+        for (int i = pageValidity.nextSetBit(0); i >= 0; i = pageValidity.nextSetBit(i + 1)) {
+            dst[i] = dense[j++];
+        }
+    }
+
+    private void spreadFloats(float[] dense, float[] dst) {
+        int j = 0;
+        for (int i = pageValidity.nextSetBit(0); i >= 0; i = pageValidity.nextSetBit(i + 1)) {
+            dst[i] = dense[j++];
+        }
+    }
+
+    private void spreadDoubles(double[] dense, double[] dst) {
+        int j = 0;
+        for (int i = pageValidity.nextSetBit(0); i >= 0; i = pageValidity.nextSetBit(i + 1)) {
+            dst[i] = dense[j++];
+        }
+    }
+
+    private void spreadBooleans(boolean[] dense, boolean[] dst) {
+        int j = 0;
+        for (int i = pageValidity.nextSetBit(0); i >= 0; i = pageValidity.nextSetBit(i + 1)) {
+            dst[i] = dense[j++];
+        }
+    }
+
+    private void spreadSegments(MemorySegment[] dense, MemorySegment[] dst) {
+        int j = 0;
+        for (int i = pageValidity.nextSetBit(0); i >= 0; i = pageValidity.nextSetBit(i + 1)) {
+            dst[i] = dense[j++];
+        }
+    }
+
+    // ---- decoder dispatch ----
+
+    private PageDecoder<?> intDecoderFor(Encoding encoding, Dictionary<?> dict) {
+        return switch (encoding) {
+            case PLAIN -> new PlainInt32Decoder();
+            case DELTA_BINARY_PACKED -> new DeltaBinaryPackedInt32Decoder();
+            case RLE_DICTIONARY, PLAIN_DICTIONARY -> requireDictionaryDecoder(dict, "INT32");
+            default -> throw unsupported(encoding, "INT32");
         };
     }
 
-    private ColumnVector buildFixedLenBinaryVector(
-            MemorySegment valueBytes, Encoding encoding, int rows, BitSet validity, Dictionary<?> dict) {
-        int byteWidth = leaf.typeLength()
-                .orElseThrow(() -> new IllegalStateException(
-                        "FIXED_LEN_BYTE_ARRAY column " + columnPath.dot() + " is missing typeLength in schema"));
-        return FixedLenBinaryVector.raw(valueBytes, encoding, rows, byteWidth, validity, dict);
+    private PageDecoder<?> longDecoderFor(Encoding encoding, Dictionary<?> dict) {
+        return switch (encoding) {
+            case PLAIN -> new PlainInt64Decoder();
+            case DELTA_BINARY_PACKED -> new DeltaBinaryPackedInt64Decoder();
+            case RLE_DICTIONARY, PLAIN_DICTIONARY -> requireDictionaryDecoder(dict, "INT64");
+            default -> throw unsupported(encoding, "INT64");
+        };
     }
 
-    /**
-     * Releases any page Arenas still held by this reader. Called by {@link BatchRowGroupReader} when the row group is
-     * fully consumed (no more batches). After this call, any vectors still held by the caller that reference
-     * Arena-backed memory will be invalid.
-     */
+    private PageDecoder<?> floatDecoderFor(Encoding encoding, Dictionary<?> dict) {
+        return switch (encoding) {
+            case PLAIN -> new PlainFloatDecoder();
+            case BYTE_STREAM_SPLIT -> new ByteStreamSplitFloatDecoder();
+            case RLE_DICTIONARY, PLAIN_DICTIONARY -> requireDictionaryDecoder(dict, "FLOAT");
+            default -> throw unsupported(encoding, "FLOAT");
+        };
+    }
+
+    private PageDecoder<?> doubleDecoderFor(Encoding encoding, Dictionary<?> dict) {
+        return switch (encoding) {
+            case PLAIN -> new PlainDoubleDecoder();
+            case BYTE_STREAM_SPLIT -> new ByteStreamSplitDoubleDecoder();
+            case RLE_DICTIONARY, PLAIN_DICTIONARY -> requireDictionaryDecoder(dict, "DOUBLE");
+            default -> throw unsupported(encoding, "DOUBLE");
+        };
+    }
+
+    private static PageDecoder<?> booleanDecoderFor(Encoding encoding) {
+        return switch (encoding) {
+            case PLAIN -> new PlainBooleanDecoder();
+            case RLE -> new RleBooleanDecoder();
+            default -> throw unsupported(encoding, "BOOLEAN");
+        };
+    }
+
+    private PageDecoder<?> binaryDecoderFor(Encoding encoding, Dictionary<?> dict) {
+        return switch (encoding) {
+            case PLAIN -> new PlainBinaryDecoder();
+            case DELTA_BYTE_ARRAY -> new DeltaByteArrayDecoder();
+            case DELTA_LENGTH_BYTE_ARRAY -> new DeltaLengthByteArrayDecoder();
+            case RLE_DICTIONARY, PLAIN_DICTIONARY -> requireDictionaryDecoder(dict, "BYTE_ARRAY");
+            default -> throw unsupported(encoding, "BYTE_ARRAY");
+        };
+    }
+
+    private PageDecoder<?> fixedLenBinaryDecoderFor(Encoding encoding, int byteWidth, Dictionary<?> dict) {
+        return switch (encoding) {
+            case PLAIN -> new PlainFixedLenBinaryDecoder(byteWidth);
+            case RLE_DICTIONARY, PLAIN_DICTIONARY -> requireDictionaryDecoder(dict, "FIXED_LEN_BYTE_ARRAY");
+            default -> throw unsupported(encoding, "FIXED_LEN_BYTE_ARRAY");
+        };
+    }
+
+    private PageDecoder<?> int96DecoderFor(Encoding encoding, Dictionary<?> dict) {
+        return switch (encoding) {
+            case PLAIN -> new PlainInt96Decoder();
+            case RLE_DICTIONARY, PLAIN_DICTIONARY -> requireDictionaryDecoder(dict, "INT96");
+            default -> throw unsupported(encoding, "INT96");
+        };
+    }
+
+    private static PageDecoder<?> requireDictionaryDecoder(Dictionary<?> dict, String kindLabel) {
+        if (dict == null) {
+            throw new IllegalStateException(
+                    "Dictionary-encoded data page requires a loaded Dictionary; none supplied for " + kindLabel);
+        }
+        return new RleDictionaryPageDecoder<>(dict);
+    }
+
+    private static UnsupportedOperationException unsupported(Encoding encoding, String kindLabel) {
+        return new UnsupportedOperationException(
+                "BatchColumnReader has no decoder wired for encoding " + encoding + " on " + kindLabel);
+    }
+
+    // ---- vector slicing ----
+
+    private ColumnVector sliceVector(int start, int n) {
+        int end = start + n;
+        BitSet sliceValidity = sliceBitSet(pageValidity, start, n);
+        return switch (leaf.kind()) {
+            case INT32 -> IntVector.materialized(Arrays.copyOfRange(pageInts, start, end), sliceValidity);
+            case INT64 -> LongVector.materialized(Arrays.copyOfRange(pageLongs, start, end), sliceValidity);
+            case FLOAT -> FloatVector.materialized(Arrays.copyOfRange(pageFloats, start, end), sliceValidity);
+            case DOUBLE -> DoubleVector.materialized(Arrays.copyOfRange(pageDoubles, start, end), sliceValidity);
+            case BOOLEAN -> BooleanVector.materialized(Arrays.copyOfRange(pageBooleans, start, end), sliceValidity);
+            case BYTE_ARRAY -> BinaryVector.materialized(Arrays.copyOfRange(pageSegments, start, end), sliceValidity);
+            case FIXED_LEN_BYTE_ARRAY ->
+                FixedLenBinaryVector.materialized(
+                        Arrays.copyOfRange(pageSegments, start, end), requiredByteWidth(), sliceValidity);
+            case INT96 -> Int96Vector.materialized(Arrays.copyOfRange(pageSegments, start, end), sliceValidity);
+        };
+    }
+
+    private static BitSet sliceBitSet(BitSet source, int start, int n) {
+        BitSet slice = new BitSet(n);
+        for (int i = source.nextSetBit(start); i >= 0 && i < start + n; i = source.nextSetBit(i + 1)) {
+            slice.set(i - start);
+        }
+        return slice;
+    }
+
+    // ---- close ----
+
+    /** No native memory to release; page Arenas are closed inside {@link #loadNextPage()}. */
     void close() {
-        if (currentPageArenaRef != null) {
-            currentPageArenaRef.close();
-            currentPageArenaRef = null;
-        }
-        if (previousPageArenaRef != null) {
-            previousPageArenaRef.close();
-            previousPageArenaRef = null;
-        }
-        currentPage = null;
+        advancePastCurrentPage();
     }
 
-    /** Returns the column path this reader serves. Used for diagnostics and tests. */
+    // ---- diagnostics ----
+
     ColumnPath columnPath() {
         return columnPath;
     }
 
-    /** Returns the optional dictionary for this chunk. */
     Optional<Dictionary<?>> dictionary() {
         return dictionary;
     }

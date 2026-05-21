@@ -65,23 +65,6 @@ public final class MapVector implements ColumnVector {
         return validity;
     }
 
-    @Override
-    public boolean isMaterialized() {
-        return keys.isMaterialized() && values.isMaterialized();
-    }
-
-    @Override
-    public void materialize() {
-        keys.materialize();
-        values.materialize();
-    }
-
-    @Override
-    public void materializeSurvivors(BitSet survivors) {
-        keys.materializeSurvivors(survivors);
-        values.materializeSurvivors(survivors);
-    }
-
     /** Returns the start offset (inclusive) of row {@code row}'s entries in the keys and values vectors. */
     public int rowOffsetStart(int row) {
         return offsets[row];

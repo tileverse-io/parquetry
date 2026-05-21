@@ -49,9 +49,3 @@ non_hadoop_lz4_compressed.parquet          # FOLLOW-UP: `Dictionary-encoded data
 datapage_v2.snappy.parquet                 # FOLLOW-UP: dict-encoded BYTE_ARRAY list element surfaces "Dictionary none supplied" - same family as non_hadoop_lz4_compressed
 nested_lists.snappy.parquet                # FOLLOW-UP: dict-encoded BYTE_ARRAY inside nested LIST surfaces "Dictionary none supplied" - same family
 nullable.impala.parquet                    # FOLLOW-UP: dict-encoded INT32 list element surfaces "Dictionary none supplied" - same family
-
-# LIST and nested STRUCT columns where the batch driver counts repeated leaf elements as logical rows;
-# blocks until the LIST/MAP nested-assembly wiring lands in BatchRowGroupReader.
-list_columns.parquet                       # FOLLOW-UP: int64 LIST element count != row count; nested assembly wiring
-nonnullable.impala.parquet                 # FOLLOW-UP: nested struct member count != row count; nested assembly wiring
-old_list_structure.parquet                 # FOLLOW-UP: legacy LIST encoding produces fewer leaf values than rows; nested assembly wiring

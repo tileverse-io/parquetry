@@ -39,24 +39,10 @@ class ReadOptionsTest {
     }
 
     @Test
-    void defaultsConcurrencyIsAutoWithPrefetch2() {
-        ReadOptions opts = ReadOptions.DEFAULTS;
-        assertThat(opts.concurrencyMode()).isEqualTo(ConcurrencyMode.AUTO);
-        assertThat(opts.prefetchWindow()).isEqualTo(2);
-        assertThat(opts.maxConcurrency()).isZero();
-    }
-
-    @Test
     void builderOverridesIndividualFlags() {
-        ReadOptions opts = ReadOptions.builder()
-                .useStatsFilter(false)
-                .concurrencyMode(ConcurrencyMode.SYNC)
-                .prefetchWindow(0)
-                .build();
+        ReadOptions opts = ReadOptions.builder().useStatsFilter(false).build();
         assertThat(opts.useStatsFilter()).isFalse();
         assertThat(opts.useDictionaryFilter()).isTrue(); // unchanged
-        assertThat(opts.concurrencyMode()).isEqualTo(ConcurrencyMode.SYNC);
-        assertThat(opts.prefetchWindow()).isZero();
     }
 
     @Test
@@ -70,15 +56,9 @@ class ReadOptionsTest {
     }
 
     @Test
-    void negativePrefetchRejected() {
-        ReadOptions.Builder builderWithBadPrefetch = ReadOptions.builder().prefetchWindow(-1);
-        assertThatThrownBy(builderWithBadPrefetch::build).isInstanceOf(IllegalArgumentException.class);
-    }
-
-    @Test
-    void negativeMaxConcurrencyRejected() {
-        ReadOptions.Builder builderWithBadConcurrency = ReadOptions.builder().maxConcurrency(-1);
-        assertThatThrownBy(builderWithBadConcurrency::build).isInstanceOf(IllegalArgumentException.class);
+    void zeroBatchSizeRejected() {
+        ReadOptions.Builder builder = ReadOptions.builder();
+        assertThatThrownBy(() -> builder.batchSize(0)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

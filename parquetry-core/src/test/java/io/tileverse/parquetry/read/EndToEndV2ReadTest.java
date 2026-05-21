@@ -31,8 +31,6 @@ import org.apache.parquet.hadoop.metadata.CompressionCodecName;
 import org.apache.parquet.io.LocalOutputFile;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.EnumSource;
 
 import io.tileverse.storage.RangeReader;
 import io.tileverse.storage.Storage;
@@ -62,17 +60,14 @@ class EndToEndV2ReadTest {
     private static final ColumnPath VALUE = ColumnPath.of("value");
     private static final ColumnPath OPTIONAL_VALUE = ColumnPath.of("optional_value");
 
-    @ParameterizedTest
-    @EnumSource(
-            value = ConcurrencyMode.class,
-            names = {"SYNC", "PREFETCH_ONLY", "FAN_OUT_ONLY"})
-    void readsParquet2SnappyFlatSchemaEndToEnd(ConcurrencyMode mode, @TempDir Path tmp) throws Exception {
+    @Test
+    void readsParquet2SnappyFlatSchemaEndToEnd(@TempDir Path tmp) throws Exception {
         Path file = tmp.resolve("v2-snappy.parquet");
         List<RowDto> expected = generateRows(100);
         writeParquet2File(file, expected, CompressionCodecName.SNAPPY, /*rowGroupBytes*/ 16L * 1024 * 1024);
 
         ByteBufferPool pool = new ByteBufferPool();
-        List<ParquetRecord> actual = readAllRecords(file, pool, mode);
+        List<ParquetRecord> actual = readAllRecords(file, pool);
 
         assertThat(actual).hasSize(expected.size());
         assertRecordsMatch(actual, expected);
@@ -81,18 +76,15 @@ class EndToEndV2ReadTest {
                 .isZero();
     }
 
-    @ParameterizedTest
-    @EnumSource(
-            value = ConcurrencyMode.class,
-            names = {"SYNC", "PREFETCH_ONLY", "FAN_OUT_ONLY"})
-    void readsParquet2WithMultipleRowGroups(ConcurrencyMode mode, @TempDir Path tmp) throws Exception {
+    @Test
+    void readsParquet2WithMultipleRowGroups(@TempDir Path tmp) throws Exception {
         Path file = tmp.resolve("v2-multi-rg.parquet");
         List<RowDto> expected = generateRows(2_000);
         // Tiny row-group target forces parquet-avro to flush multiple row groups for our 2000 rows.
         writeParquet2File(file, expected, CompressionCodecName.SNAPPY, /*rowGroupBytes*/ 8_192L);
 
         ByteBufferPool pool = new ByteBufferPool();
-        List<ParquetRecord> actual = readAllRecords(file, pool, mode);
+        List<ParquetRecord> actual = readAllRecords(file, pool);
 
         assertThat(actual).hasSize(expected.size());
         assertRecordsMatch(actual, expected);
@@ -109,9 +101,7 @@ class EndToEndV2ReadTest {
         writeParquet2File(file, expected, CompressionCodecName.UNCOMPRESSED, /*rowGroupBytes*/ 16L * 1024 * 1024);
 
         ByteBufferPool pool = new ByteBufferPool();
-        // Fan-out uses one virtual thread per projected column; with the UNCOMPRESSED codec there is no shared
-        // decompressor instance to race on, so we can exercise the parallel fetch path safely here.
-        List<ParquetRecord> actual = readAllRecords(file, pool, ConcurrencyMode.FAN_OUT_ONLY);
+        List<ParquetRecord> actual = readAllRecords(file, pool);
 
         assertRecordsMatch(actual, expected);
         assertThat(outstandingBorrows(pool)).isZero();
@@ -124,7 +114,7 @@ class EndToEndV2ReadTest {
         writeParquet2FileWithNullableColumn(file, rowCount);
 
         ByteBufferPool pool = new ByteBufferPool();
-        List<ParquetRecord> actual = readAllRecords(file, pool, ConcurrencyMode.FAN_OUT_ONLY);
+        List<ParquetRecord> actual = readAllRecords(file, pool);
 
         assertThat(actual).hasSize(rowCount);
         for (int i = 0; i < rowCount; i++) {
@@ -218,15 +208,11 @@ class EndToEndV2ReadTest {
 
     // --- read helper ---
 
-    private static List<ParquetRecord> readAllRecords(Path file, ByteBufferPool pool, ConcurrencyMode mode)
-            throws IOException {
+    private static List<ParquetRecord> readAllRecords(Path file, ByteBufferPool pool) throws IOException {
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
             ParquetDataset dataset = ParquetDataset.open(reader);
-            ReadOptions options = ReadOptions.builder()
-                    .concurrencyMode(mode)
-                    .byteBufferPool(pool)
-                    .build();
+            ReadOptions options = ReadOptions.builder().byteBufferPool(pool).build();
             List<ParquetRecord> collected = new ArrayList<>();
             try (Stream<ParquetRecord> stream = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
                 stream.forEach(collected::add);

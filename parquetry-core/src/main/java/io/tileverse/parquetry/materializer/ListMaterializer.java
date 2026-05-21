@@ -48,8 +48,6 @@ public final class ListMaterializer {
      *
      * <p>Null is intentional - distinguishes a null row from an empty list per the spec's empty-vs-null contract.
      */
-    // wildcard intentional - list elements are heterogeneous per ColumnVector subtype;
-    // null is intentional - distinguishes a null row from an empty list per the spec's empty-vs-null contract
     @SuppressWarnings({"java:S1452", "java:S1168"})
     public static List<?> materializeAt(ListVector vec, int rowIndex) {
         if (!vec.validity().get(rowIndex)) {

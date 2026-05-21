@@ -160,33 +160,7 @@ class BatchRowGroupReaderTest {
         }
     }
 
-    // --- test 4: vectors can be materialized before batch close and values are preserved ---
-
-    @Test
-    void vectorsCanBeMaterializedBeforeBatchClose() throws IOException {
-        // Materialize the vector (copy from Arena-backed memory to heap) before closing the batch.
-        // After materialization, values live on the heap and are independent of the Arena lifecycle.
-        int[] values = {10, 20, 30};
-        FetchedColumnChunk chunk = singlePageInt32Chunk(PATH_A, values);
-        ParquetSchema schema = flatSchema("a");
-
-        try (BatchRowGroupReader reader =
-                new BatchRowGroupReader(List.of(chunk), schema, schema, OptionalInt.empty())) {
-            try (ParquetRecordBatch batch = reader.nextBatch()) {
-                IntVector vec = (IntVector) batch.columns().get(PATH_A);
-                assertThat(vec.size()).isEqualTo(3);
-                assertThat(vec.isMaterialized()).isFalse();
-
-                // Eagerly materialize before batch closes
-                vec.materialize();
-                assertThat(vec.isMaterialized()).isTrue();
-                assertThat(vec.asArray()).containsExactly(10, 20, 30);
-            }
-            // batch closed; vec is still accessible because it is heap-backed after materialize()
-        }
-    }
-
-    // --- test 5: hasMore false on empty projection ---
+    // --- test 4: hasMore false on empty projection ---
 
     @Test
     void hasMoreFalseWhenNoProjectedLeaves() {

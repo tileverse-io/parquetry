@@ -52,7 +52,7 @@ import io.tileverse.parquetry.schema.ColumnPath;
  * regression test in CI. Requires the absolute file path below to resolve to a readable file.
  */
 @EnabledIfEnvironmentVariable(named = "PARQUETRY_OVERTURE_PROBE", matches = "true")
-class OvertureBuildingsProbe {
+class OvertureBuildingsProbeTest {
 
     private static final String OVERTURE_FILE = "/Volumes/geodata/geoparquet/overturemaps/2025-02-19.0/"
             + "theme=buildings/type=building/part-00017-bc5e53eb-b1f2-4193-9ba4-84e6c7ca7995-c000.zstd.parquet";
@@ -77,12 +77,11 @@ class OvertureBuildingsProbe {
             System.out.println("Leaf columns: " + leafCount + "; rows across "
                     + dataset.rowGroups().size() + " row groups: " + totalRows);
 
-            ReadOptions opts =
-                    ReadOptions.builder().concurrencyMode(ConcurrencyMode.FULL).build();
             long[] counted = {0L};
             ParquetRecord[] sampleHolder = {null};
             long start = System.nanoTime();
-            try (Stream<ParquetRecord> records = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, opts)) {
+            try (Stream<ParquetRecord> records =
+                    dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 records.forEach(r -> {
                     if (sampleHolder[0] == null) {
                         sampleHolder[0] = r;
@@ -144,14 +143,12 @@ class OvertureBuildingsProbe {
             System.out.println("=== Overture buildings probe :: full schema via batch API ===");
             System.out.println("Rows across " + dataset.rowGroups().size() + " row groups: " + totalRows);
 
-            ReadOptions opts =
-                    ReadOptions.builder().concurrencyMode(ConcurrencyMode.FULL).build();
             ColumnPath sourcesPath = ColumnPath.of("sources");
             long[] counted = {0L};
             boolean[] sampleChecked = {false};
             long start = System.nanoTime();
             try (Stream<ParquetRecordBatch> batches =
-                    dataset.readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, opts)) {
+                    dataset.readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 batches.forEach(batch -> {
                     try (ParquetRecordBatch owned = batch) {
                         int rowCount = owned.rowCount();
@@ -232,8 +229,7 @@ class OvertureBuildingsProbe {
                     dataset.rowGroups().stream().mapToLong(RowGroup::rowCount).sum();
             System.out.println("Total rows across all " + dataset.rowGroups().size() + " row groups: " + totalRows);
 
-            ReadOptions opts =
-                    ReadOptions.builder().concurrencyMode(ConcurrencyMode.FULL).build();
+            ReadOptions opts = ReadOptions.DEFAULTS;
             long fileSize = Files.size(file);
 
             long[] counted = {0L};

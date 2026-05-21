@@ -27,7 +27,7 @@ import lombok.NonNull;
  *
  * <p>The {@link io.tileverse.parquetry.filter.FilterPipeline} runs each row group through the stats, dictionary,
  * column-index, bloom-filter, and record-level tiers; the row groups that aren't entirely eliminated come out as
- * survivors. The pipeline that orchestrates reads (see {@link RowGroupPipeline}) receives this already-pruned list and
+ * survivors. The pipeline that orchestrates reads (see {@link BatchPipeline}) receives this already-pruned list and
  * does not re-run the filter.
  *
  * <p>{@code survivingRows} carries the narrowing produced by the column-index / bloom-filter tiers. An empty

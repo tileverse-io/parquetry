@@ -175,11 +175,11 @@ class ReadBatchesTest {
                 .withRowGroupSize(8_192L)
                 .build()) {
             for (RowDto r : rows) {
-                GenericData.Record record = new GenericData.Record(schema);
-                record.put("year", r.year());
-                record.put("country", r.country());
-                record.put("value", r.value());
-                writer.write(record);
+                GenericData.Record avroRecord = new GenericData.Record(schema);
+                avroRecord.put("year", r.year());
+                avroRecord.put("country", r.country());
+                avroRecord.put("value", r.value());
+                writer.write(avroRecord);
             }
         }
     }

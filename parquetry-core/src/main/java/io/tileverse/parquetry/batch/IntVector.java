@@ -15,61 +15,27 @@
  */
 package io.tileverse.parquetry.batch;
 
-import static java.nio.ByteOrder.LITTLE_ENDIAN;
-
-import java.lang.foreign.MemorySegment;
-import java.nio.ByteBuffer;
 import java.util.BitSet;
 
-import io.tileverse.parquetry.format.Encoding;
-import io.tileverse.parquetry.page.DeltaBinaryPackedInt32Decoder;
-import io.tileverse.parquetry.page.Dictionary;
-import io.tileverse.parquetry.page.PageDecoder;
-import io.tileverse.parquetry.page.PlainInt32Decoder;
-import io.tileverse.parquetry.page.RleDictionaryPageDecoder;
+import lombok.NonNull;
 
 public final class IntVector implements ColumnVector {
 
-    private final int size;
+    private final int[] values;
     private final BitSet validity;
-    private MemorySegment rawPage;
-    private Encoding encoding;
-    private int[] values;
-    private Dictionary<?> dictionary;
 
-    private IntVector(MemorySegment rawPage, Encoding encoding, int size, BitSet validity) {
-        this.rawPage = rawPage;
-        this.encoding = encoding;
-        this.size = size;
+    private IntVector(@NonNull int[] values, @NonNull BitSet validity) {
+        this.values = values;
         this.validity = validity;
     }
 
-    /** Builds a raw (lazy) IntVector backed by {@code page}. */
-    public static IntVector raw(MemorySegment page, Encoding encoding, int size, BitSet validity) {
-        return new IntVector(page, encoding, size, validity);
-    }
-
-    /**
-     * Builds a raw (lazy) IntVector backed by {@code page} with an optional dictionary for dictionary-encoded columns.
-     * {@code dictionary} may be {@code null} for non-dictionary encodings.
-     */
-    public static IntVector raw(
-            MemorySegment page, Encoding encoding, int size, BitSet validity, Dictionary<?> dictionary) {
-        IntVector vec = new IntVector(page, encoding, size, validity);
-        vec.dictionary = dictionary;
-        return vec;
-    }
-
-    /** Builds an already-materialized IntVector. Used when tests or upstream code already has the int[]. */
-    public static IntVector materialized(int[] values, BitSet validity) {
-        IntVector vec = new IntVector(null, null, values.length, validity);
-        vec.values = values;
-        return vec;
+    public static IntVector materialized(@NonNull int[] values, @NonNull BitSet validity) {
+        return new IntVector(values, validity);
     }
 
     @Override
     public int size() {
-        return size;
+        return values.length;
     }
 
     @Override
@@ -77,79 +43,11 @@ public final class IntVector implements ColumnVector {
         return validity;
     }
 
-    @Override
-    public boolean isMaterialized() {
-        return values != null;
-    }
-
-    @Override
-    public void materialize() {
-        if (values != null) {
-            return;
-        }
-        int nonNullCount = validity.cardinality();
-        int[] dst = new int[size];
-        if (nonNullCount > 0) {
-            PageDecoder<?> decoder = decoderFor(encoding);
-            decoder.load(asByteBuffer(rawPage), nonNullCount);
-            if (nonNullCount == size) {
-                decoder.decodeInts(size, dst, 0);
-            } else {
-                int[] dense = new int[nonNullCount];
-                decoder.decodeInts(nonNullCount, dense, 0);
-                spread(dense, dst);
-            }
-        }
-        values = dst;
-        rawPage = null;
-        encoding = null;
-        dictionary = null;
-    }
-
-    private void spread(int[] dense, int[] dst) {
-        int denseIndex = 0;
-        for (int i = validity.nextSetBit(0); i >= 0; i = validity.nextSetBit(i + 1)) {
-            dst[i] = dense[denseIndex++];
-        }
-    }
-
-    @Override
-    public void materializeSurvivors(BitSet survivors) {
-        materialize();
-    }
-
-    /** Returns the value at row {@code row}; triggers full materialization if needed. */
     public int get(int row) {
-        if (values == null) {
-            materialize();
-        }
         return values[row];
     }
 
-    /** Bulk accessor; triggers materialization if needed. */
     public int[] asArray() {
-        if (values == null) {
-            materialize();
-        }
         return values;
-    }
-
-    private PageDecoder<?> decoderFor(Encoding encoding) {
-        return switch (encoding) {
-            case PLAIN -> new PlainInt32Decoder();
-            case DELTA_BINARY_PACKED -> new DeltaBinaryPackedInt32Decoder();
-            case RLE_DICTIONARY, PLAIN_DICTIONARY -> {
-                if (dictionary == null) {
-                    throw new IllegalStateException("Dictionary-encoded IntVector but no dictionary supplied");
-                }
-                yield new RleDictionaryPageDecoder<>(dictionary);
-            }
-            default ->
-                throw new UnsupportedOperationException("IntVector materialize not yet wired for encoding " + encoding);
-        };
-    }
-
-    private static ByteBuffer asByteBuffer(MemorySegment segment) {
-        return segment.asByteBuffer().order(LITTLE_ENDIAN);
     }
 }
