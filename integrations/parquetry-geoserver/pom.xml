@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>io.tileverse.parquetry</groupId>
+    <artifactId>parquetry-integrations</artifactId>
+    <version>${revision}</version>
+  </parent>
+
+  <artifactId>parquetry-geoserver</artifactId>
+  <name>Parquetry :: Integrations :: GeoServer</name>
+  <description>GeoServer plugin exposing the read-only GeoParquet DataStore as a vector store type.</description>
+
+  <properties>
+    <gs.version>3.0.0-SNAPSHOT</gs.version>
+    <gt.version>35-SNAPSHOT</gt.version>
+    <!-- Jetty used only by the test-scope embedded launcher (Start); matches GeoServer 3.0-RC's Jetty. -->
+    <jetty.version>12.1.8</jetty.version>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>io.tileverse.parquetry</groupId>
+        <artifactId>parquetry-dependencies</artifactId>
+        <version>${project.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <!-- Manages tileverse-storage module versions and converges its transitive deps (Jackson, JNA, etc.). -->
+      <dependency>
+        <groupId>io.tileverse</groupId>
+        <artifactId>tileverse-bom</artifactId>
+        <version>${tileverse-storage.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <!-- GeoServer/GeoTools bring two versions of commons-lang3 transitively; pin to the higher one. -->
+      <dependency>
+        <groupId>org.apache.commons</groupId>
+        <artifactId>commons-lang3</artifactId>
+        <version>3.18.0</version>
+      </dependency>
+      <!-- GeoTools pulls javax.measure:unit-api 2.1.2 (via systems.uom) and 2.2 (via indriya); pin to 2.2. -->
+      <dependency>
+        <groupId>javax.measure</groupId>
+        <artifactId>unit-api</artifactId>
+        <version>2.2</version>
+      </dependency>
+      <!--
+        The GeoServer/GeoTools provided tree collides with parquetry's compile tree (and itself) on a handful of
+        common XML/jakarta/commons libraries. Pin each to the higher version to converge the dependency graph.
+      -->
+      <dependency>
+        <groupId>com.fasterxml.woodstox</groupId>
+        <artifactId>woodstox-core</artifactId>
+        <version>7.1.1</version>
+      </dependency>
+      <dependency>
+        <groupId>commons-codec</groupId>
+        <artifactId>commons-codec</artifactId>
+        <version>1.22.0</version>
+      </dependency>
+      <dependency>
+        <groupId>commons-io</groupId>
+        <artifactId>commons-io</artifactId>
+        <version>2.21.0</version>
+      </dependency>
+      <dependency>
+        <groupId>jakarta.activation</groupId>
+        <artifactId>jakarta.activation-api</artifactId>
+        <version>2.1.4</version>
+      </dependency>
+      <dependency>
+        <groupId>jakarta.xml.bind</groupId>
+        <artifactId>jakarta.xml.bind-api</artifactId>
+        <version>4.0.5</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.httpcomponents.core5</groupId>
+        <artifactId>httpcore5</artifactId>
+        <version>5.3.6</version>
+      </dependency>
+      <dependency>
+        <groupId>org.glassfish.jaxb</groupId>
+        <artifactId>jaxb-runtime</artifactId>
+        <version>4.0.7</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <dependency>
+      <groupId>io.tileverse.parquetry</groupId>
+      <artifactId>parquetry-geotools</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>org.geoserver</groupId>
+      <artifactId>gs-main</artifactId>
+      <version>${gs.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.geoserver</groupId>
+      <artifactId>gs-platform</artifactId>
+      <version>${gs.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.geoserver.web</groupId>
+      <artifactId>gs-web-core</artifactId>
+      <version>${gs.version}</version>
+      <scope>provided</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+
+    <!--
+      Test-scope only: the embedded GeoServer launcher (Start) runs the full GeoServer web app with this plugin on the
+      classpath, for IDE "Run as Application" development. gs-web-app pulls the complete GeoServer web stack; the Jetty
+      artifacts host it. None of this is on the published plugin's classpath.
+    -->
+    <dependency>
+      <groupId>org.geoserver.web</groupId>
+      <artifactId>gs-web-app</artifactId>
+      <version>${gs.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.jetty</groupId>
+      <artifactId>jetty-server</artifactId>
+      <version>${jetty.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.jetty.ee10</groupId>
+      <artifactId>jetty-ee10-webapp</artifactId>
+      <version>${jetty.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.jetty.ee10</groupId>
+      <artifactId>jetty-ee10-servlet</artifactId>
+      <version>${jetty.version}</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <repositories>
+    <!-- GeoServer 3.0.0-SNAPSHOT / GeoTools 35-SNAPSHOT live in the OSGeo snapshot repo until released. -->
+    <repository>
+      <releases>
+        <enabled>false</enabled>
+      </releases>
+      <snapshots>
+        <enabled>true</enabled>
+      </snapshots>
+      <id>osgeo-snapshot</id>
+      <name>OSGeo Snapshot Repository</name>
+      <url>https://repo.osgeo.org/repository/snapshot/</url>
+    </repository>
+  </repositories>
+</project>
