@@ -32,8 +32,8 @@ import java.util.OptionalLong;
  *   <li>{@link NotAParquetFileException} - bad magic / file too small; the bytes aren't a Parquet file at all.
  *   <li>{@link UnsupportedFeatureException} - known Parquet feature parquetry doesn't read yet (e.g. encrypted files
  *       pending the parquetry-encryption module).
- *   <li>{@link UnknownVariantException} - a Thrift enum wire code or union field id parquetry doesn't recognize; the
- *       file may be using a newer Parquet spec than this version models. Suitable for forward-compat tolerant catches.
+ *   <li>{@link UnknownCodeException} - a Thrift enum wire code or union field id parquetry doesn't recognize; the file
+ *       may be using a newer Parquet spec than this version models. Suitable for forward-compat tolerant catches.
  *   <li>{@link MalformedFileException} - structurally broken Parquet (truncated, missing required Thrift field, bad
  *       compact-protocol bytes).
  * </ul>

@@ -15,15 +15,13 @@
  */
 package io.tileverse.parquetry.filter;
 
+import static io.tileverse.parquetry.format.ParquetLayouts.DOUBLE;
+import static io.tileverse.parquetry.format.ParquetLayouts.FLOAT;
+import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
+import static io.tileverse.parquetry.format.ParquetLayouts.INT64;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
-import static java.lang.foreign.ValueLayout.JAVA_DOUBLE_UNALIGNED;
-import static java.lang.foreign.ValueLayout.JAVA_FLOAT_UNALIGNED;
-import static java.lang.foreign.ValueLayout.JAVA_INT_UNALIGNED;
-import static java.lang.foreign.ValueLayout.JAVA_LONG_UNALIGNED;
-import static java.nio.ByteOrder.LITTLE_ENDIAN;
 
 import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -294,19 +292,14 @@ final class ColumnIndexEvaluator {
         long size = raw.byteSize();
         return switch (kind) {
             case BOOLEAN -> size >= 1 ? Optional.of(new Value.BoolVal(raw.get(JAVA_BYTE, 0) != 0)) : Optional.empty();
-            case INT32 -> size >= 4 ? Optional.of(new Value.IntVal(raw.get(LE_INT, 0))) : Optional.empty();
-            case INT64 -> size >= 8 ? Optional.of(new Value.LongVal(raw.get(LE_LONG, 0))) : Optional.empty();
-            case FLOAT -> size >= 4 ? Optional.of(new Value.FloatVal(raw.get(LE_FLOAT, 0))) : Optional.empty();
-            case DOUBLE -> size >= 8 ? Optional.of(new Value.DoubleVal(raw.get(LE_DOUBLE, 0))) : Optional.empty();
+            case INT32 -> size >= 4 ? Optional.of(new Value.IntVal(raw.get(INT32, 0))) : Optional.empty();
+            case INT64 -> size >= 8 ? Optional.of(new Value.LongVal(raw.get(INT64, 0))) : Optional.empty();
+            case FLOAT -> size >= 4 ? Optional.of(new Value.FloatVal(raw.get(FLOAT, 0))) : Optional.empty();
+            case DOUBLE -> size >= 8 ? Optional.of(new Value.DoubleVal(raw.get(DOUBLE, 0))) : Optional.empty();
             case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> Optional.of(new Value.BinaryVal(raw));
             case INT96 -> Optional.empty();
         };
     }
-
-    private static final ValueLayout.OfInt LE_INT = JAVA_INT_UNALIGNED.withOrder(LITTLE_ENDIAN);
-    private static final ValueLayout.OfLong LE_LONG = JAVA_LONG_UNALIGNED.withOrder(LITTLE_ENDIAN);
-    private static final ValueLayout.OfFloat LE_FLOAT = JAVA_FLOAT_UNALIGNED.withOrder(LITTLE_ENDIAN);
-    private static final ValueLayout.OfDouble LE_DOUBLE = JAVA_DOUBLE_UNALIGNED.withOrder(LITTLE_ENDIAN);
 
     // S7475 (bare _ in nested record patterns) is informational only - palantirJavaFormat 2.90 cannot
     // parse the bare-underscore form Sonar suggests; see memory feedback-palantir-unnamed-pattern.

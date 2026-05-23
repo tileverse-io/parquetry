@@ -15,9 +15,17 @@
  */
 package io.tileverse.parquetry.schema.geo.projjson;
 
+import java.util.Optional;
+import java.util.OptionalDouble;
+import java.util.OptionalInt;
+import java.util.OptionalLong;
+
+import com.fasterxml.jackson.annotation.JsonInclude;
+
 import tools.jackson.core.Version;
 import tools.jackson.databind.JacksonModule;
 import tools.jackson.databind.module.SimpleDeserializers;
+import tools.jackson.databind.module.SimpleSerializers;
 
 /**
  * Jackson 3 module that wires the {@link CoordinateReferenceSystem} ADT into an
@@ -46,5 +54,19 @@ public final class ProjJsonModule extends JacksonModule {
         deserializers.addDeserializer(CoordinateReferenceSystem.class, new CoordinateReferenceSystemDeserializer());
         deserializers.addDeserializer(Identifier.class, new IdentifierDeserializer());
         context.addDeserializers(deserializers);
+
+        SimpleSerializers serializers = new SimpleSerializers();
+        serializers.addSerializer(CoordinateReferenceSystem.class, new CoordinateReferenceSystemSerializer());
+        context.addSerializers(serializers);
+
+        // Drop Optional / OptionalInt / OptionalDouble / OptionalLong fields whose value is empty from the JSON output.
+        // Without this, Jackson 3 renders Optional.empty() as a JSON null, and the symmetric deserializer reads that
+        // null back as Optional[null] / OptionalInt.empty() inconsistently across types - breaking round-trip equality
+        // (an empty Optional<JsonNode> becomes Optional[NullNode] on the next read).
+        JsonInclude.Value nonAbsent = JsonInclude.Value.construct(JsonInclude.Include.NON_ABSENT, null);
+        context.configOverride(Optional.class).setInclude(nonAbsent);
+        context.configOverride(OptionalInt.class).setInclude(nonAbsent);
+        context.configOverride(OptionalLong.class).setInclude(nonAbsent);
+        context.configOverride(OptionalDouble.class).setInclude(nonAbsent);
     }
 }

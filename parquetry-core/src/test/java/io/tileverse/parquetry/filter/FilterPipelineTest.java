@@ -16,8 +16,7 @@
 package io.tileverse.parquetry.filter;
 
 import static io.tileverse.parquetry.filter.Pred.col;
-import static java.lang.foreign.ValueLayout.JAVA_INT_UNALIGNED;
-import static java.nio.ByteOrder.LITTLE_ENDIAN;
+import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.lang.foreign.MemorySegment;
@@ -32,10 +31,10 @@ import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.format.Statistics;
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.schema.Field;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
+import io.tileverse.parquetry.schema.SchemaNode;
 
 class FilterPipelineTest {
 
@@ -149,14 +148,14 @@ class FilterPipelineTest {
 
     private static MemorySegment encodeInt(int v) {
         MemorySegment segment = MemorySegment.ofArray(new byte[4]);
-        segment.set(JAVA_INT_UNALIGNED.withOrder(LITTLE_ENDIAN), 0, v);
+        segment.set(INT32, 0, v);
         return segment.asReadOnly();
     }
 
     private static ParquetSchema flatSchema() {
-        Field.Primitive year = new Field.Primitive(
+        SchemaNode.Primitive year = new SchemaNode.Primitive(
                 "year", Repetition.OPTIONAL, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
-        Field.Group root = new Field.Group("root", Repetition.REQUIRED, List.of(year), Optional.empty(), -1);
+        SchemaNode.Group root = new SchemaNode.Group("root", Repetition.REQUIRED, List.of(year), Optional.empty(), -1);
         return new ParquetSchema(root);
     }
 }

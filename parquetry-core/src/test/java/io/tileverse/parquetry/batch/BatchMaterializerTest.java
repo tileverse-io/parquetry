@@ -25,10 +25,10 @@ import java.util.OptionalInt;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.schema.Field;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
+import io.tileverse.parquetry.schema.SchemaNode;
 
 class BatchMaterializerTest {
 
@@ -46,10 +46,10 @@ class BatchMaterializerTest {
      * construction pattern as ParquetRecordBatchTest.minimalSchema().
      */
     private static ParquetSchema minimalSchema() {
-        return new ParquetSchema(new Field.Group(
+        return new ParquetSchema(new SchemaNode.Group(
                 "root",
                 Repetition.REQUIRED,
-                List.of(new Field.Primitive(
+                List.of(new SchemaNode.Primitive(
                         "value", Repetition.REQUIRED, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1)),
                 Optional.empty(),
                 -1));

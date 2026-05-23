@@ -22,7 +22,7 @@ package io.tileverse.parquetry.format;
  * higher-level semantics (date, decimal, UUID, geography, etc.). {@link #INT96} is deprecated and only emitted for
  * legacy timestamp interop.
  *
- * <p>Each variant carries its Thrift wire code in {@link #value()}; deserializers resolve incoming i32 codes via
+ * <p>Each constant carries its Thrift wire code in {@link #value()}; deserializers resolve incoming i32 codes via
  * {@link #valueOf(int)} rather than indexing into {@link #values()}, so enum declaration order is no longer
  * load-bearing.
  */
@@ -42,16 +42,16 @@ public enum PhysicalType {
         this.value = value;
     }
 
-    /** Thrift wire code for this variant, matching the value defined in {@code parquet.thrift}. */
+    /** Thrift wire code for this constant, matching the value defined in {@code parquet.thrift}. */
     public int value() {
         return value;
     }
 
     /**
-     * Returns the variant whose {@link #value()} equals {@code code}. Compiles to a {@code tableswitch} bytecode - O(1)
-     * lookup, no allocations on the hot decode path.
+     * Returns the constant whose {@link #value()} equals {@code code}. Compiles to a {@code tableswitch} bytecode -
+     * O(1) lookup, no allocations on the hot decode path.
      *
-     * @throws UnknownVariantException if no defined variant carries that code (forward-compatibility is the caller's
+     * @throws UnknownCodeException if no defined case carries that code (forward-compatibility is the caller's
      *     responsibility - wrap this in a try/catch if you want to tolerate unknown values)
      */
     public static PhysicalType valueOf(int code) {
@@ -64,7 +64,7 @@ public enum PhysicalType {
             case 5 -> DOUBLE;
             case 6 -> BYTE_ARRAY;
             case 7 -> FIXED_LEN_BYTE_ARRAY;
-            default -> throw new UnknownVariantException("Unknown PhysicalType wire code: " + code);
+            default -> throw new UnknownCodeException("Unknown PhysicalType wire code: " + code);
         };
     }
 }

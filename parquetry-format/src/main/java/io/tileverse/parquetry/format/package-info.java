@@ -1,6 +1,6 @@
 /**
  * Hand-rolled Java bindings for the Apache Parquet on-disk format. Immutable records for the Thrift structs, enums for
- * the Thrift enums, and a sealed-interface variant for the {@link LogicalType} union. This module is the only place in
+ * the Thrift enums, and a sealed-interface model for the {@link LogicalType} union. This module is the only place in
  * parquetry that touches Parquet's Thrift Compact Protocol bytes; every other module operates on the records produced
  * here.
  *

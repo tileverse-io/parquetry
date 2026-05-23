@@ -167,12 +167,12 @@ class BloomFilterReaderTest {
     }
 
     /**
-     * One-variant Thrift union body: a single field-header (delta=1, type=STRUCT) followed by the variant's own STOP,
-     * then the union's STOP.
+     * Single-case Thrift union body: a single field-header (delta=1, type=STRUCT) followed by the case's own STOP, then
+     * the union's STOP.
      */
     private static void writeEmptyVariant(java.io.ByteArrayOutputStream out) {
         writeFieldHeader(out, 1, 0xC);
-        out.write(0); // end of variant struct
+        out.write(0); // end of case struct
         out.write(0); // end of union struct
     }
 

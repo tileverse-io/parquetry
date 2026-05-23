@@ -18,7 +18,7 @@ package io.tileverse.parquetry.filter;
 /**
  * Geographic bounding box for {@link Predicate.BboxIntersects}.
  *
- * <p>2D variant: {@code (minX, minY, maxX, maxY)}. 3D variant adds {@code minZ, maxZ}. Coordinate semantics are the
+ * <p>2D form: {@code (minX, minY, maxX, maxY)}. 3D form adds {@code minZ, maxZ}. Coordinate semantics are the
  * consumer's responsibility; the predicate evaluator only does numeric comparisons against the column's bbox
  * statistics.
  *
@@ -28,7 +28,7 @@ package io.tileverse.parquetry.filter;
  * @param maxY maximum Y coordinate
  * @param minZ minimum Z coordinate when {@link #is3d}; ignored otherwise (set to {@code 0.0} by {@link #of2d})
  * @param maxZ maximum Z coordinate when {@link #is3d}; ignored otherwise
- * @param is3d {@code true} when the bbox is 3D and Z components are meaningful; {@code false} for the 2D variant
+ * @param is3d {@code true} when the bbox is 3D and Z components are meaningful; {@code false} for the 2D form
  */
 public record Bbox(double minX, double minY, double maxX, double maxY, double minZ, double maxZ, boolean is3d) {
 

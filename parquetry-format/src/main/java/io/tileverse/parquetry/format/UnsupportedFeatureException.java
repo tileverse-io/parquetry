@@ -18,8 +18,8 @@ package io.tileverse.parquetry.format;
 /**
  * The file uses a Parquet feature parquetry recognizes but does not yet implement at this layer - typical examples are
  * encrypted files (which require the parquetry-encryption module to read) and bloom filters that declare an algorithm,
- * hash strategy, or compression parquetry doesn't yet decode. Distinct from {@link UnknownVariantException}, which
- * means "the variant id is not defined in any spec parquetry knows about".
+ * hash strategy, or compression parquetry doesn't yet decode. Distinct from {@link UnknownCodeException}, which means
+ * "the case id is not defined in any spec parquetry knows about".
  */
 @SuppressWarnings("serial")
 public class UnsupportedFeatureException extends ParquetFormatException {

@@ -1,0 +1,166 @@
+/*
+ * Copyright (c) 2026 Tileverse.io
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.tileverse.parquetry.data.read.page;
+
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
+
+import java.nio.ByteBuffer;
+
+/**
+ * Shared DELTA_BINARY_PACKED decode engine. Works on {@code long} internally; INT32 and INT64 decoders delegate here.
+ *
+ * <p>Per parquet-format Encodings.md, the encoding is block-based: a header gives block size, miniblock count, total
+ * value count, and the first value (zigzag varint). Each block is preceded by a zigzag min-delta and N bit-widths (one
+ * byte per miniblock); then the deltas are bit-packed in miniblocks at the per-miniblock width.
+ *
+ * <p>Value reconstruction: {@code value[i] = value[i-1] + (packed[i] + min_delta)}.
+ */
+final class DeltaBinaryPackedDecoder {
+
+    private ByteBuffer buffer;
+
+    // Header fields
+    private int blockSize;
+    private int miniblocksPerBlock;
+    private int valuesPerMiniblock;
+    private int totalValueCount;
+    private long lastValue;
+
+    // Current block state
+    private long currentMinDelta;
+    private int[] currentMiniblockWidths;
+    private int miniblockIndex; // index within current block
+    private int positionInMiniblock; // values consumed in current miniblock
+
+    // Bit-packed value buffer (LSB-first, per Parquet spec)
+    private long bitBuffer;
+    private int bitsInBuffer;
+
+    private int valuesEmitted;
+
+    void load(ByteBuffer page) {
+        this.buffer = page.order(LITTLE_ENDIAN);
+        this.blockSize = (int) readVarint();
+        this.miniblocksPerBlock = (int) readVarint();
+        this.valuesPerMiniblock = blockSize / miniblocksPerBlock;
+        this.totalValueCount = (int) readVarint();
+        long firstValue = readZigzagVarint();
+        this.lastValue = firstValue;
+        this.valuesEmitted = 0;
+        // Sentinel values trigger "fetch new block" on first call to next() after the first value
+        this.miniblockIndex = miniblocksPerBlock;
+        this.positionInMiniblock = valuesPerMiniblock;
+        this.currentMiniblockWidths = new int[miniblocksPerBlock];
+        this.bitBuffer = 0L;
+        this.bitsInBuffer = 0;
+    }
+
+    long next() {
+        if (valuesEmitted == 0) {
+            valuesEmitted++;
+            return lastValue;
+        }
+        if (positionInMiniblock == valuesPerMiniblock) {
+            miniblockIndex++;
+            positionInMiniblock = 0;
+            bitBuffer = 0L;
+            bitsInBuffer = 0;
+            if (miniblockIndex >= miniblocksPerBlock) {
+                loadNextBlock();
+                miniblockIndex = 0;
+            }
+        }
+        int width = currentMiniblockWidths[miniblockIndex];
+        long packed = (width == 0) ? 0L : readBitPacked(width);
+        long delta = packed + currentMinDelta;
+        long value = lastValue + delta;
+        lastValue = value;
+        positionInMiniblock++;
+        valuesEmitted++;
+        return value;
+    }
+
+    void skip(int n) {
+        for (int i = 0; i < n; i++) {
+            next();
+        }
+    }
+
+    int totalValueCount() {
+        return totalValueCount;
+    }
+
+    /**
+     * Returns the number of values actually encoded in complete blocks, including any padding values appended to fill
+     * the last block. This is always {@code >= totalValueCount()}.
+     *
+     * <p>DELTA_BINARY_PACKED encoders always write at least one full block after the header value, even when
+     * {@code totalValueCount == 1}. Callers that share a single {@link ByteBuffer} across multiple DELTA_BINARY_PACKED
+     * segments (as in DELTA_BYTE_ARRAY) must drain this many values from each segment to leave the buffer positioned at
+     * the start of the next segment.
+     */
+    int paddedValueCount() {
+        if (totalValueCount == 0) {
+            return 0;
+        }
+        // Encoders always write at least one block; even a single-value encoding has block bytes
+        // appended when the source array was padded to blockSize.
+        int valuesAfterHeader = Math.max(blockSize, totalValueCount - 1);
+        int fullBlocks = (valuesAfterHeader + blockSize - 1) / blockSize;
+        return 1 + fullBlocks * blockSize;
+    }
+
+    private void loadNextBlock() {
+        currentMinDelta = readZigzagVarint();
+        for (int i = 0; i < miniblocksPerBlock; i++) {
+            currentMiniblockWidths[i] = buffer.get() & 0xff;
+        }
+    }
+
+    private long readBitPacked(int width) {
+        while (bitsInBuffer < width) {
+            int b = buffer.get() & 0xff;
+            bitBuffer |= ((long) b) << bitsInBuffer;
+            bitsInBuffer += 8;
+        }
+        long mask = (width == 64) ? -1L : ((1L << width) - 1L);
+        long value = bitBuffer & mask;
+        bitBuffer >>>= width;
+        bitsInBuffer -= width;
+        return value;
+    }
+
+    private long readVarint() {
+        long result = 0L;
+        int shift = 0;
+        while (true) {
+            int b = buffer.get() & 0xff;
+            result |= ((long) (b & 0x7f)) << shift;
+            if ((b & 0x80) == 0) {
+                return result;
+            }
+            shift += 7;
+            if (shift > 70) {
+                throw new IllegalStateException("Varint too long in DELTA_BINARY_PACKED");
+            }
+        }
+    }
+
+    private long readZigzagVarint() {
+        long raw = readVarint();
+        return (raw >>> 1) ^ -(raw & 1);
+    }
+}

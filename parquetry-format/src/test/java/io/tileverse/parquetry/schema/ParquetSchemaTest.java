@@ -28,25 +28,25 @@ import io.tileverse.parquetry.format.LogicalType;
 
 class SchemaTest {
 
-    private static final ParquetSchema FLAT = new ParquetSchema(new Field.Group(
+    private static final ParquetSchema FLAT = new ParquetSchema(new SchemaNode.Group(
             "root",
             Repetition.REQUIRED,
             List.of(
-                    new Field.Primitive(
+                    new SchemaNode.Primitive(
                             "year",
                             Repetition.REQUIRED,
                             PrimitiveKind.INT32,
                             OptionalInt.empty(),
                             Optional.empty(),
                             -1),
-                    new Field.Primitive(
+                    new SchemaNode.Primitive(
                             "country",
                             Repetition.REQUIRED,
                             PrimitiveKind.BYTE_ARRAY,
                             OptionalInt.empty(),
                             Optional.of(new LogicalType.StringType()),
                             -1),
-                    new Field.Primitive(
+                    new SchemaNode.Primitive(
                             "geometry",
                             Repetition.OPTIONAL,
                             PrimitiveKind.BYTE_ARRAY,

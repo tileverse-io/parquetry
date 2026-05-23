@@ -15,12 +15,10 @@
  */
 package io.tileverse.parquetry.filter.bloom;
 
-import static java.lang.foreign.ValueLayout.JAVA_INT_UNALIGNED;
-import static java.lang.foreign.ValueLayout.JAVA_LONG_UNALIGNED;
-import static java.nio.ByteOrder.LITTLE_ENDIAN;
+import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
+import static io.tileverse.parquetry.format.ParquetLayouts.INT64;
 
 import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
 
 import io.airlift.compress.v3.xxhash.XxHash64Hasher;
 import lombok.NonNull;
@@ -57,7 +55,7 @@ import lombok.NonNull;
 public final class SplitBlockBloomFilter {
 
     /** Each block is 256 bits = 32 bytes = 8 words of 4 bytes. */
-    private static final int BYTES_PER_BLOCK = 32;
+    public static final int BYTES_PER_BLOCK = 32;
 
     /** Each block has 8 set/checked bits, one per word. */
     private static final int BITS_PER_BLOCK_WORD = 8;
@@ -70,13 +68,8 @@ public final class SplitBlockBloomFilter {
         0x47b6137b, 0x44974d91, 0x8824ad5b, 0xa2b7289d, 0x705495c7, 0x2df1424b, 0x9efc4947, 0x5c6bfb31
     };
 
-    /** Little-endian 32-bit unaligned read layout, used for all probe-loop word reads. */
-    private static final ValueLayout.OfInt INT_LE = JAVA_INT_UNALIGNED.withOrder(LITTLE_ENDIAN);
-
-    /** Little-endian 64-bit unaligned write layout, used to encode INT64 / DOUBLE values for hashing. */
-    private static final ValueLayout.OfLong LONG_LE = JAVA_LONG_UNALIGNED.withOrder(LITTLE_ENDIAN);
-
     private final MemorySegment bitset;
+
     private final int numBlocks;
 
     /**
@@ -114,7 +107,7 @@ public final class SplitBlockBloomFilter {
         int blockByteOffset = wordBase * 4;
         for (int i = 0; i < BITS_PER_BLOCK_WORD; i++) {
             int wordOffset = blockByteOffset + i * 4;
-            int word = bitset.get(INT_LE, wordOffset);
+            int word = bitset.get(INT32, wordOffset);
             int probe = 1 << probeBit(key, i);
             if ((word & probe) == 0) {
                 return false;
@@ -159,14 +152,14 @@ public final class SplitBlockBloomFilter {
     /** xxHash64 of {@code value} encoded as 4 little-endian bytes; matches Parquet's plain-encoding hash for INT32. */
     public static long hashInt32(int value) {
         byte[] bytes = new byte[4];
-        MemorySegment.ofArray(bytes).set(INT_LE, 0, value);
+        MemorySegment.ofArray(bytes).set(INT32, 0, value);
         return XxHash64Hasher.hash(bytes);
     }
 
     /** xxHash64 of {@code value} encoded as 8 little-endian bytes; matches Parquet's plain-encoding hash for INT64. */
     public static long hashInt64(long value) {
         byte[] bytes = new byte[8];
-        MemorySegment.ofArray(bytes).set(LONG_LE, 0, value);
+        MemorySegment.ofArray(bytes).set(INT64, 0, value);
         return XxHash64Hasher.hash(bytes);
     }
 
@@ -196,8 +189,41 @@ public final class SplitBlockBloomFilter {
         return XxHash64Hasher.hash(bytes, offset, length);
     }
 
+    /**
+     * Inserts {@code hash} into the writable bitset at {@code writableBitset}. The bitset's byte length must be a
+     * positive multiple of {@link #BYTES_PER_BLOCK}; otherwise an {@link IllegalArgumentException} is raised. Uses the
+     * exact block-and-salt math {@link #mightContain(long)} probes against, so a hash inserted here is guaranteed to
+     * read back as {@code true} on a later {@link #mightContain(long)} call over the same bytes.
+     *
+     * <p>This is the write-side counterpart of {@link #mightContain(long)}. The class itself remains immutable -- this
+     * method works against caller-owned bytes; readers wrap the same bytes in a fresh {@link SplitBlockBloomFilter} for
+     * probing.
+     */
+    public static void insertHash(@NonNull MemorySegment writableBitset, long hash) {
+        long length = writableBitset.byteSize();
+        if (length <= 0 || length % BYTES_PER_BLOCK != 0) {
+            throw new IllegalArgumentException(
+                    "Bloom filter bitset length must be a positive multiple of " + BYTES_PER_BLOCK + ", got " + length);
+        }
+        int numBlocks = (int) (length / BYTES_PER_BLOCK);
+        int blockIndex = blockIndexFor(hash, numBlocks);
+        int key = (int) hash;
+        int wordBase = blockIndex * BITS_PER_BLOCK_WORD;
+        int blockByteOffset = wordBase * 4;
+        for (int i = 0; i < BITS_PER_BLOCK_WORD; i++) {
+            int wordOffset = blockByteOffset + i * 4;
+            int word = writableBitset.get(INT32, wordOffset);
+            int probe = 1 << probeBit(key, i);
+            writableBitset.set(INT32, wordOffset, word | probe);
+        }
+    }
+
     /** Top 32 bits of the value hash select the block via {@code (top32 * numBlocks) >>> 32}. */
     private int blockIndexFor(long hash) {
+        return blockIndexFor(hash, numBlocks);
+    }
+
+    private static int blockIndexFor(long hash, int numBlocks) {
         long top = (hash >>> 32) & 0xffff_ffffL;
         return (int) ((top * numBlocks) >>> 32);
     }

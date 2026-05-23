@@ -18,18 +18,25 @@ package io.tileverse.parquetry.schema.geo.projjson;
 import java.util.List;
 import java.util.Optional;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 /**
  * A PROJJSON coordinate system: the ordered set of {@link Axis}es a CRS uses. {@link #subtype()} carries the schema's
  * coordinate-system subtype identifier (commonly {@code "ellipsoidal"}, {@code "Cartesian"}, or {@code "vertical"}).
+ *
+ * <p>The axis array is serialized as {@code "axis"} per canonical PROJJSON v0.7. Older parquetry fixtures and snapshots
+ * used {@code "axes"}; {@link JsonAlias} keeps that form readable so existing test resources continue to load.
  *
  * @param subtype coordinate-system family ({@code "ellipsoidal"}, {@code "Cartesian"}, {@code "vertical"}, ...); empty
  *     when not recorded
  * @param axes ordered axis definitions; the position in this list defines the coordinate order in stored geometries
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
-public record CoordinateSystem(Optional<String> subtype, List<Axis> axes) {
+public record CoordinateSystem(
+        Optional<String> subtype,
+        @JsonProperty("axis") @JsonAlias("axes") List<Axis> axes) {
 
     public CoordinateSystem {
         axes = axes == null ? List.of() : List.copyOf(axes);

@@ -16,15 +16,18 @@
 package io.tileverse.parquetry.schema;
 
 /**
- * Thrown when a caller's {@code Predicate} or {@code Projection} references a column that does not exist in the file
- * schema, or where the value type is incompatible with the column's primitive kind (e.g. {@code Eq(intCol,
- * StringVal)}).
+ * Thrown when a caller references a column that does not exist in the file schema, or where the value type is
+ * incompatible with the column's primitive kind (e.g. {@code Eq(intCol, StringVal)}, or
+ * {@code row.getLong(stringCol)}).
  *
- * <p>Raised eagerly at {@code ParquetDataset.read()} setup time so callers get a clear error before any data stream is
- * returned. Unchecked by design: the condition describes a programming error in the caller (a malformed predicate built
- * against the wrong schema), not a recoverable I/O state. Callers that want to react to it catch the type explicitly;
- * all other callers let it propagate. See the package documentation for the full rationale on unchecked exceptions
- * across the parquetry API.
+ * <p>Raised at the moment the caller-supplied column identity is checked against the schema: eagerly at
+ * {@code ParquetDataset.read()} setup time for {@code Predicate} and {@code Projection}, lazily per-cell for row and
+ * batch accessors that the caller drives after a record is materialized. Either way the condition describes a
+ * programming error in the caller (a malformed predicate, projection, or accessor built against the wrong schema), not
+ * a recoverable I/O state.
+ *
+ * <p>Unchecked by design. Callers that want to react to it catch the type explicitly; all other callers let it
+ * propagate. See the package documentation for the full rationale on unchecked exceptions across the parquetry API.
  */
 @SuppressWarnings("serial")
 public class ParquetSchemaException extends RuntimeException {

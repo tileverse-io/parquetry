@@ -23,7 +23,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.function.Predicate;
 
-import io.tileverse.parquetry.page.Dictionary;
+import io.tileverse.parquetry.data.read.page.Dictionary;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**

@@ -19,7 +19,7 @@ package io.tileverse.parquetry.format;
  * The file is structurally invalid Parquet - truncated mid-page, missing a required Thrift field, varints that don't
  * terminate, page cursors that fail to advance, and similar mid-stream corruption. Distinct from
  * {@link NotAParquetFileException} (the magic / size says it isn't even a Parquet file) and from
- * {@link UnknownVariantException} (a known field but an unknown variant id).
+ * {@link UnknownCodeException} (a known field but an unknown variant id).
  */
 @SuppressWarnings("serial")
 public class MalformedFileException extends ParquetFormatException {

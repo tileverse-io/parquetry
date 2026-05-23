@@ -44,10 +44,11 @@ import io.tileverse.parquetry.batch.MapVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.batch.StructVector;
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.schema.Field;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.ParquetSchemaException;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
+import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
  * Verifies that {@link BatchBackedParquetRecord} dispatches to the right {@link ColumnVector} subtype, honours
@@ -233,7 +234,7 @@ class BatchBackedParquetRecordTest {
             ParquetRecord row = batch.materialize(0);
 
             assertThatThrownBy(() -> row.getLong(INT_COL))
-                    .isInstanceOf(IllegalArgumentException.class)
+                    .isInstanceOf(ParquetSchemaException.class)
                     .hasMessageContaining("requested getLong");
         }
     }
@@ -270,7 +271,7 @@ class BatchBackedParquetRecordTest {
     }
 
     private static ParquetSchema primitiveSchema() {
-        return new ParquetSchema(new Field.Group(
+        return new ParquetSchema(new SchemaNode.Group(
                 "root",
                 Repetition.REQUIRED,
                 List.of(
@@ -284,7 +285,7 @@ class BatchBackedParquetRecordTest {
     }
 
     private static ParquetSchema binarySchema() {
-        return new ParquetSchema(new Field.Group(
+        return new ParquetSchema(new SchemaNode.Group(
                 "root",
                 Repetition.REQUIRED,
                 List.of(primitiveLeaf("col_binary", PrimitiveKind.BYTE_ARRAY)),
@@ -293,30 +294,31 @@ class BatchBackedParquetRecordTest {
     }
 
     private static ParquetSchema listSchema() {
-        Field.Primitive element = primitiveLeaf("element", PrimitiveKind.INT32);
-        Field.Group listGroup =
-                new Field.Group("col_list", Repetition.REQUIRED, List.of(element), Optional.empty(), -1);
+        SchemaNode.Primitive element = primitiveLeaf("element", PrimitiveKind.INT32);
+        SchemaNode.Group listGroup =
+                new SchemaNode.Group("col_list", Repetition.REQUIRED, List.of(element), Optional.empty(), -1);
         return new ParquetSchema(
-                new Field.Group("root", Repetition.REQUIRED, List.of(listGroup), Optional.empty(), -1));
+                new SchemaNode.Group("root", Repetition.REQUIRED, List.of(listGroup), Optional.empty(), -1));
     }
 
     private static ParquetSchema mapSchema() {
-        Field.Primitive keyLeaf = primitiveLeaf("key", PrimitiveKind.INT32);
-        Field.Primitive valueLeaf = primitiveLeaf("value", PrimitiveKind.INT32);
-        Field.Group mapGroup =
-                new Field.Group("col_map", Repetition.REQUIRED, List.of(keyLeaf, valueLeaf), Optional.empty(), -1);
-        return new ParquetSchema(new Field.Group("root", Repetition.REQUIRED, List.of(mapGroup), Optional.empty(), -1));
+        SchemaNode.Primitive keyLeaf = primitiveLeaf("key", PrimitiveKind.INT32);
+        SchemaNode.Primitive valueLeaf = primitiveLeaf("value", PrimitiveKind.INT32);
+        SchemaNode.Group mapGroup =
+                new SchemaNode.Group("col_map", Repetition.REQUIRED, List.of(keyLeaf, valueLeaf), Optional.empty(), -1);
+        return new ParquetSchema(
+                new SchemaNode.Group("root", Repetition.REQUIRED, List.of(mapGroup), Optional.empty(), -1));
     }
 
     private static ParquetSchema structSchema() {
-        Field.Primitive childInt = primitiveLeaf("child_int", PrimitiveKind.INT32);
-        Field.Group structGroup =
-                new Field.Group("col_struct", Repetition.REQUIRED, List.of(childInt), Optional.empty(), -1);
+        SchemaNode.Primitive childInt = primitiveLeaf("child_int", PrimitiveKind.INT32);
+        SchemaNode.Group structGroup =
+                new SchemaNode.Group("col_struct", Repetition.REQUIRED, List.of(childInt), Optional.empty(), -1);
         return new ParquetSchema(
-                new Field.Group("root", Repetition.REQUIRED, List.of(structGroup), Optional.empty(), -1));
+                new SchemaNode.Group("root", Repetition.REQUIRED, List.of(structGroup), Optional.empty(), -1));
     }
 
-    private static Field.Primitive primitiveLeaf(String name, PrimitiveKind kind) {
-        return new Field.Primitive(name, Repetition.REQUIRED, kind, OptionalInt.empty(), Optional.empty(), -1);
+    private static SchemaNode.Primitive primitiveLeaf(String name, PrimitiveKind kind) {
+        return new SchemaNode.Primitive(name, Repetition.REQUIRED, kind, OptionalInt.empty(), Optional.empty(), -1);
     }
 }

@@ -15,12 +15,10 @@
  */
 package io.tileverse.parquetry.filter.spatial;
 
-import static java.lang.foreign.ValueLayout.JAVA_DOUBLE_UNALIGNED;
-import static java.lang.foreign.ValueLayout.JAVA_FLOAT_UNALIGNED;
-import static java.nio.ByteOrder.LITTLE_ENDIAN;
+import static io.tileverse.parquetry.format.ParquetLayouts.DOUBLE;
+import static io.tileverse.parquetry.format.ParquetLayouts.FLOAT;
 
 import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -35,9 +33,9 @@ import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.format.Statistics;
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.schema.Field;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
+import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.schema.geo.geoparquet.BboxCovering;
 import io.tileverse.parquetry.schema.geo.geoparquet.Covering;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
@@ -135,7 +133,7 @@ final class CoveringColumnSource implements SpatialBoundsSource {
 
     private static Optional<PrimitiveKind> primitiveKindAt(ParquetSchema schema, ColumnPath path) {
         return schema.find(path)
-                .flatMap(f -> f instanceof Field.Primitive p ? Optional.of(p.kind()) : Optional.empty());
+                .flatMap(f -> f instanceof SchemaNode.Primitive p ? Optional.of(p.kind()) : Optional.empty());
     }
 
     /**
@@ -229,14 +227,11 @@ final class CoveringColumnSource implements SpatialBoundsSource {
     private static OptionalDouble decodeDouble(PrimitiveKind kind, MemorySegment raw) {
         long size = raw.byteSize();
         return switch (kind) {
-            case DOUBLE -> size >= 8 ? OptionalDouble.of(raw.get(LE_DOUBLE, 0)) : OptionalDouble.empty();
-            case FLOAT -> size >= 4 ? OptionalDouble.of(raw.get(LE_FLOAT, 0)) : OptionalDouble.empty();
+            case DOUBLE -> size >= 8 ? OptionalDouble.of(raw.get(DOUBLE, 0)) : OptionalDouble.empty();
+            case FLOAT -> size >= 4 ? OptionalDouble.of(raw.get(FLOAT, 0)) : OptionalDouble.empty();
             default -> OptionalDouble.empty();
         };
     }
-
-    private static final ValueLayout.OfFloat LE_FLOAT = JAVA_FLOAT_UNALIGNED.withOrder(LITTLE_ENDIAN);
-    private static final ValueLayout.OfDouble LE_DOUBLE = JAVA_DOUBLE_UNALIGNED.withOrder(LITTLE_ENDIAN);
 
     /** See {@link NativeStatsSource} for the same union policy and rationale. */
     private static Map<ColumnPath, BoundingBox> unionAcrossRowGroups(
@@ -273,6 +268,8 @@ final class CoveringColumnSource implements SpatialBoundsSource {
      */
     private record AxisRef(ColumnPath path, PrimitiveKind kind) {}
 
-    /** The four axes of one geometry column's covering. Z is intentionally out of scope for now. */
+    /**
+     * The four axes of one geometry column's covering. Z is intentionally out of scope for the current covering tier.
+     */
     private record BboxAxes(AxisRef xmin, AxisRef xmax, AxisRef ymin, AxisRef ymax) {}
 }

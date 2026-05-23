@@ -43,10 +43,10 @@ import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
 import io.tileverse.storage.s3.S3StorageProvider;
 
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
-import io.tileverse.parquetry.read.ReadOptions;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 

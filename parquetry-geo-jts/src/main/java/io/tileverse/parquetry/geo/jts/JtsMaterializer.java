@@ -37,8 +37,8 @@ import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.materializer.RowAccessor;
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.schema.Field;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
 import io.tileverse.parquetry.schema.geo.projjson.Identifier;
 
@@ -168,9 +168,9 @@ public final class JtsMaterializer implements Materializer<Map<ColumnPath, Objec
         Set<ColumnPath> out = new LinkedHashSet<>();
         for (ColumnPath leaf : schema.leafColumns()) {
             schema.find(leaf)
-                    .filter(Field.Primitive.class::isInstance)
-                    .map(Field.Primitive.class::cast)
-                    .flatMap(Field.Primitive::logicalType)
+                    .filter(SchemaNode.Primitive.class::isInstance)
+                    .map(SchemaNode.Primitive.class::cast)
+                    .flatMap(SchemaNode.Primitive::logicalType)
                     .filter(JtsMaterializer::isGeo)
                     .ifPresent(lt -> {
                         out.add(leaf);

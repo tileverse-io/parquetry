@@ -36,13 +36,13 @@ import io.tileverse.storage.RangeReader;
 import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
 
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.format.LogicalType;
-import io.tileverse.parquetry.read.ReadOptions;
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.schema.Field;
+import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 /**
@@ -140,7 +140,8 @@ class OgcGeoParquetConformanceIT {
         assertThat(geo.primaryColumn()).isEqualTo("geometry");
         assertThat(geo.columns()).containsKey("geometry");
 
-        Field.Primitive leaf = (Field.Primitive) dataset.schema().find(geometry).orElseThrow();
+        SchemaNode.Primitive leaf =
+                (SchemaNode.Primitive) dataset.schema().find(geometry).orElseThrow();
         assertThat(leaf.logicalType())
                 .as("SchemaBuilder must fold the 'geo' JSON into a LogicalType.Geometry annotation on the WKB column")
                 .hasValueSatisfying(lt -> assertThat(lt).isInstanceOf(LogicalType.Geometry.class));

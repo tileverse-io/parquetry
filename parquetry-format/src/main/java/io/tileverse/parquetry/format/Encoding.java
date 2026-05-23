@@ -19,7 +19,7 @@ package io.tileverse.parquetry.format;
  * Value or level encoding applied within a page; mirror of {@code Encoding} in {@code parquet.thrift}.
  *
  * <p>The Thrift wire codes have a gap at 1 (a deprecated {@code GROUP_VAR_INT} that was never used in real files) and
- * skip {@link #PLAIN_DICTIONARY} ahead to 2. Each variant carries its code in {@link #value()}; deserializers resolve
+ * skip {@link #PLAIN_DICTIONARY} ahead to 2. Each constant carries its code in {@link #value()}; deserializers resolve
  * incoming i32 values via {@link #valueOf(int)}, so the source-order of these constants is not load-bearing.
  */
 public enum Encoding {
@@ -39,13 +39,13 @@ public enum Encoding {
         this.value = value;
     }
 
-    /** Thrift wire code for this variant, matching the value defined in {@code parquet.thrift}. */
+    /** Thrift wire code for this constant, matching the value defined in {@code parquet.thrift}. */
     public int value() {
         return value;
     }
 
     /**
-     * @throws UnknownVariantException if no defined variant carries that code (including the spec's reserved-but-unused
+     * @throws UnknownCodeException if no defined variant carries that code (including the spec's reserved-but-unused
      *     slot at 1, {@code GROUP_VAR_INT}, which the parquetry decoder rejects rather than mapping to a placeholder)
      */
     public static Encoding valueOf(int code) {
@@ -59,7 +59,7 @@ public enum Encoding {
             case 7 -> DELTA_BYTE_ARRAY;
             case 8 -> RLE_DICTIONARY;
             case 9 -> BYTE_STREAM_SPLIT;
-            default -> throw new UnknownVariantException("Unknown Encoding wire code: " + code);
+            default -> throw new UnknownCodeException("Unknown Encoding wire code: " + code);
         };
     }
 }

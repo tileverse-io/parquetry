@@ -33,10 +33,11 @@ import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.materializer.RowAccessor;
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.schema.Field;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.ParquetSchemaException;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
+import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
  * Verifies the typed accessors, lazy binary materialization, and type-mismatch diagnostics that
@@ -60,7 +61,7 @@ class DefaultParquetRecordTest {
 
     @BeforeEach
     void setUp() {
-        schema = new ParquetSchema(new Field.Group(
+        schema = new ParquetSchema(new SchemaNode.Group(
                 "root",
                 Repetition.REQUIRED,
                 List.of(
@@ -144,7 +145,7 @@ class DefaultParquetRecordTest {
     @Test
     void getIntOnLongColumnThrowsWithDiagnosticMessage() {
         assertThatThrownBy(() -> parquetRecord.getInt(LONG_COL))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(ParquetSchemaException.class)
                 .hasMessageContaining(LONG_COL.dot())
                 .hasMessageContaining("INT64")
                 .hasMessageContaining("getInt");
@@ -153,7 +154,7 @@ class DefaultParquetRecordTest {
     @Test
     void getStringOnIntColumnThrowsWithDiagnosticMessage() {
         assertThatThrownBy(() -> parquetRecord.getString(INT_COL))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(ParquetSchemaException.class)
                 .hasMessageContaining(INT_COL.dot())
                 .hasMessageContaining("INT32")
                 .hasMessageContaining("getString");
@@ -169,7 +170,7 @@ class DefaultParquetRecordTest {
     void getIntOnUnknownColumnThrowsDiagnosticMessage() {
         ColumnPath missing = ColumnPath.of("does_not_exist");
         assertThatThrownBy(() -> parquetRecord.getInt(missing))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(ParquetSchemaException.class)
                 .hasMessageContaining("does_not_exist")
                 .hasMessageContaining("not present in the projected schema")
                 .hasMessageContaining("getInt");
@@ -180,8 +181,8 @@ class DefaultParquetRecordTest {
         assertThatThrownBy(() -> parquetRecord.getInt(NULL_COL)).isInstanceOf(NullPointerException.class);
     }
 
-    private static Field.Primitive leaf(String name, PrimitiveKind kind) {
-        return new Field.Primitive(name, Repetition.OPTIONAL, kind, OptionalInt.empty(), Optional.empty(), -1);
+    private static SchemaNode.Primitive leaf(String name, PrimitiveKind kind) {
+        return new SchemaNode.Primitive(name, Repetition.OPTIONAL, kind, OptionalInt.empty(), Optional.empty(), -1);
     }
 
     /** Test double: a {@link RowAccessor} backed by a mutable map. */

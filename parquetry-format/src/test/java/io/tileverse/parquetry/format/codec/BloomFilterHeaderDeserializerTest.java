@@ -27,9 +27,9 @@ import io.tileverse.parquetry.format.BloomFilterHeader;
 import io.tileverse.parquetry.format.ParquetFormatException;
 
 /**
- * Direct unit coverage for the Thrift {@code BloomFilterHeader} deserializer: happy path with every defined variant,
- * the four missing-required-field rejections, and the three unknown-union-variant rejections. Hand-rolls the on-disk
- * bytes so the test is independent of any encoder.
+ * Direct unit coverage for the Thrift {@code BloomFilterHeader} deserializer: happy path with every defined case, the
+ * four missing-required-field rejections, and the three unknown-union-case rejections. Hand-rolls the on-disk bytes so
+ * the test is independent of any encoder.
  */
 class BloomFilterHeaderDeserializerTest {
 
@@ -45,7 +45,7 @@ class BloomFilterHeaderDeserializerTest {
 
     @Test
     void rejectsUnknownAlgorithmVariant() {
-        // Algorithm union with variant id 2 (no such variant defined).
+        // Algorithm union with case id 2 (no such case defined).
         ByteArrayInputStream in = new ByteArrayInputStream(synthesizeHeader(64, 2, 1, 1));
         assertThatThrownBy(() -> ParquetFormatDeserializer.readBloomFilterHeader(in))
                 .isInstanceOf(ParquetFormatException.class)
@@ -134,8 +134,8 @@ class BloomFilterHeaderDeserializerTest {
     // --- helpers ---
 
     /**
-     * Synthesizes a complete {@code BloomFilterHeader} with the supplied union variant ids. Variant id 1 is the only
-     * defined value for all three unions; passing 2 etc. lets us exercise the rejection paths.
+     * Synthesizes a complete {@code BloomFilterHeader} with the supplied union case ids. Case id 1 is the only defined
+     * value for all three unions; passing 2 etc. lets us exercise the rejection paths.
      */
     private static byte[] synthesizeHeader(
             int numBytes, int algorithmVariant, int hashVariant, int compressionVariant) {
@@ -153,8 +153,8 @@ class BloomFilterHeaderDeserializerTest {
     }
 
     /**
-     * Writes a one-variant union with an arbitrary variant field id. Each variant is itself an empty struct (STOP-only
-     * body); the union's STOP byte trails.
+     * Writes a single-case union with an arbitrary case field id. Each case is itself an empty struct (STOP-only body);
+     * the union's STOP byte trails.
      */
     private static void writeVariant(ByteArrayOutputStream out, int variantId) {
         if (variantId <= 15) {
@@ -164,7 +164,7 @@ class BloomFilterHeaderDeserializerTest {
             out.write(0xC);
             writeVarint(out, zigZag32(variantId));
         }
-        out.write(0); // variant struct STOP
+        out.write(0); // case struct STOP
         out.write(0); // union STOP
     }
 

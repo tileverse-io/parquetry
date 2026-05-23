@@ -37,9 +37,10 @@ import io.tileverse.parquetry.batch.StructVector;
 import io.tileverse.parquetry.materializer.ListMaterializer;
 import io.tileverse.parquetry.materializer.MapMaterializer;
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.schema.Field;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.ParquetSchemaException;
 import io.tileverse.parquetry.schema.PrimitiveKind;
+import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
  * Shared dispatch helpers for {@link BatchBackedParquetRecord} and {@link BatchBackedSubRecord}. Both classes view a
@@ -138,7 +139,7 @@ final class BatchBackedRecords {
     private static ColumnVector requireVector(Map<ColumnPath, ColumnVector> columns, ColumnPath col) {
         ColumnVector vec = columns.get(col);
         if (vec == null) {
-            throw new IllegalArgumentException("Column " + col.dot() + " is not present in this record");
+            throw new ParquetSchemaException("Column " + col.dot() + " is not present in this record");
         }
         return vec;
     }
@@ -158,19 +159,19 @@ final class BatchBackedRecords {
     }
 
     private static PrimitiveKind lookupKind(ParquetSchema schema, ColumnPath col, String accessor) {
-        Optional<Field> field = schema.find(col);
+        Optional<SchemaNode> field = schema.find(col);
         if (field.isEmpty()) {
-            throw new IllegalArgumentException(
+            throw new ParquetSchemaException(
                     "Column " + col.dot() + " is not present in the projected schema (accessor " + accessor + ")");
         }
-        if (!(field.get() instanceof Field.Primitive primitive)) {
-            throw new IllegalArgumentException(
+        if (!(field.get() instanceof SchemaNode.Primitive primitive)) {
+            throw new ParquetSchemaException(
                     "Column " + col.dot() + " is a group column; accessor " + accessor + " requires a primitive leaf");
         }
         return primitive.kind();
     }
 
-    private static IllegalArgumentException mismatch(ColumnPath col, PrimitiveKind actual, String accessor) {
-        return new IllegalArgumentException("Column " + col.dot() + " is " + actual + "; requested " + accessor);
+    private static ParquetSchemaException mismatch(ColumnPath col, PrimitiveKind actual, String accessor) {
+        return new ParquetSchemaException("Column " + col.dot() + " is " + actual + "; requested " + accessor);
     }
 }

@@ -1,6 +1,0 @@
-io.tileverse.parquetry.codec.UncompressedCodec
-io.tileverse.parquetry.codec.SnappyCodec
-io.tileverse.parquetry.codec.GZipCodec
-io.tileverse.parquetry.codec.ZstdCodec
-io.tileverse.parquetry.codec.Lz4RawCodec
-io.tileverse.parquetry.codec.BrotliCodec

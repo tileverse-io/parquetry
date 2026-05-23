@@ -39,10 +39,10 @@ class SchemaBuilderTest {
         ParquetSchema schema = SchemaBuilder.build(footer.schema());
 
         assertThat(schema.root().children()).hasSize(1);
-        Field idField = schema.root().children().get(0);
+        SchemaNode idField = schema.root().children().get(0);
         assertThat(idField.name()).isEqualTo("id");
-        assertThat(idField).isInstanceOf(Field.Primitive.class);
-        assertThat(((Field.Primitive) idField).kind()).isEqualTo(PrimitiveKind.INT32);
+        assertThat(idField).isInstanceOf(SchemaNode.Primitive.class);
+        assertThat(((SchemaNode.Primitive) idField).kind()).isEqualTo(PrimitiveKind.INT32);
     }
 
     @Test

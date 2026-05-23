@@ -69,8 +69,8 @@ public final class SchemaBuilder {
             throw new IllegalArgumentException("ParquetSchema elements list is empty");
         }
         Cursor cursor = new Cursor(elements, 0);
-        Field rootField = consumeNext(cursor);
-        if (!(rootField instanceof Field.Group rootGroup)) {
+        SchemaNode rootField = consumeNext(cursor);
+        if (!(rootField instanceof SchemaNode.Group rootGroup)) {
             throw new IllegalArgumentException("ParquetSchema root must be a group, got: "
                     + rootField.getClass().getSimpleName());
         }
@@ -129,7 +129,7 @@ public final class SchemaBuilder {
     private static void recordOverride(
             ParquetSchema schema, String columnName, GeoColumn geoColumn, Map<ColumnPath, LogicalType> overrides) {
         ColumnPath path = ColumnPath.of(columnName);
-        Optional<Field> field = schema.find(path);
+        Optional<SchemaNode> field = schema.find(path);
         if (field.isEmpty()) {
             LOG.debug("'geo' references unknown column '{}'; skipping", columnName);
             return;
@@ -168,8 +168,8 @@ public final class SchemaBuilder {
      * Returns the leaf's native Geometry / Geography logical type when present. Non-primitive fields and primitives
      * with any other (or no) logical-type annotation surface as {@link Optional#empty()}.
      */
-    private static Optional<LogicalType> nativeGeoAnnotation(Field field) {
-        if (!(field instanceof Field.Primitive primitive)) {
+    private static Optional<LogicalType> nativeGeoAnnotation(SchemaNode field) {
+        if (!(field instanceof SchemaNode.Primitive primitive)) {
             return Optional.empty();
         }
         return primitive.logicalType().filter(SchemaBuilder::isGeoAnnotation);
@@ -181,12 +181,12 @@ public final class SchemaBuilder {
 
     /**
      * Consumes the next element (and all its descendants) from {@code cursor}, returning the corresponding
-     * {@link Field}.
+     * {@link SchemaNode}.
      *
      * <p>After this method returns, {@code cursor.position} points to the element immediately after the subtree rooted
      * at the consumed element.
      */
-    private static Field consumeNext(Cursor cursor) {
+    private static SchemaNode consumeNext(Cursor cursor) {
         SchemaElement element = cursor.elements.get(cursor.position);
         cursor.position++;
 
@@ -199,21 +199,22 @@ public final class SchemaBuilder {
         return consumePrimitive(element, repetition, fieldId);
     }
 
-    private static Field.Group consumeGroup(Cursor cursor, SchemaElement element, Repetition repetition, int fieldId) {
+    private static SchemaNode.Group consumeGroup(
+            Cursor cursor, SchemaElement element, Repetition repetition, int fieldId) {
         int childCount = element.numChildren().getAsInt();
-        List<Field> children = new ArrayList<>(childCount);
+        List<SchemaNode> children = new ArrayList<>(childCount);
         for (int i = 0; i < childCount; i++) {
             children.add(consumeNext(cursor));
         }
-        return new Field.Group(element.name(), repetition, children, element.logicalType(), fieldId);
+        return new SchemaNode.Group(element.name(), repetition, children, element.logicalType(), fieldId);
     }
 
-    private static Field.Primitive consumePrimitive(SchemaElement element, Repetition repetition, int fieldId) {
+    private static SchemaNode.Primitive consumePrimitive(SchemaElement element, Repetition repetition, int fieldId) {
         PhysicalType type = element.type()
                 .orElseThrow(() -> new IllegalStateException("Leaf SchemaElement missing type: " + element.name()));
         PrimitiveKind kind = mapKind(type);
         OptionalInt typeLength = element.typeLength();
-        return new Field.Primitive(element.name(), repetition, kind, typeLength, element.logicalType(), fieldId);
+        return new SchemaNode.Primitive(element.name(), repetition, kind, typeLength, element.logicalType(), fieldId);
     }
 
     private static Repetition mapRepetition(Optional<FieldRepetitionType> rep) {

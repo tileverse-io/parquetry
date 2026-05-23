@@ -18,7 +18,7 @@ package io.tileverse.parquetry.format;
 /**
  * Logical page type discriminator; mirror of {@code PageType} in {@code parquet.thrift}.
  *
- * <p>Carried by {@link PageHeader#type()}. Each variant carries its Thrift wire code in {@link #value()}; resolve
+ * <p>Carried by {@link PageHeader#type()}. Each constant carries its Thrift wire code in {@link #value()}; resolve
  * incoming i32 codes via {@link #valueOf(int)}.
  */
 public enum PageType {
@@ -33,19 +33,19 @@ public enum PageType {
         this.value = value;
     }
 
-    /** Thrift wire code for this variant, matching the value defined in {@code parquet.thrift}. */
+    /** Thrift wire code for this constant, matching the value defined in {@code parquet.thrift}. */
     public int value() {
         return value;
     }
 
-    /** @throws UnknownVariantException if no defined variant carries that code */
+    /** @throws UnknownCodeException if no defined case carries that code */
     public static PageType valueOf(int code) {
         return switch (code) {
             case 0 -> DATA_PAGE;
             case 1 -> INDEX_PAGE;
             case 2 -> DICTIONARY_PAGE;
             case 3 -> DATA_PAGE_V2;
-            default -> throw new UnknownVariantException("Unknown PageType wire code: " + code);
+            default -> throw new UnknownCodeException("Unknown PageType wire code: " + code);
         };
     }
 }

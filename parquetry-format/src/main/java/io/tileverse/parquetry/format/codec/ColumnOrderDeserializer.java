@@ -22,7 +22,7 @@ import io.tileverse.parquetry.format.ColumnOrder;
 /**
  * Deserializer for the Thrift {@code ColumnOrder} union.
  *
- * <p>The union has only one defined variant today:
+ * <p>The union has only one defined case today:
  *
  * <pre>
  * union ColumnOrder {
@@ -31,8 +31,8 @@ import io.tileverse.parquetry.format.ColumnOrder;
  * </pre>
  *
  * <p>Any unknown field IDs are skipped for forward compatibility; the result defaults to
- * {@link ColumnOrder.TypeDefined} regardless of the actual variant seen, since there is currently only one valid value
- * in the spec.
+ * {@link ColumnOrder.TypeDefined} regardless of the actual case seen, since there is currently only one valid value in
+ * the spec.
  */
 final class ColumnOrderDeserializer {
 

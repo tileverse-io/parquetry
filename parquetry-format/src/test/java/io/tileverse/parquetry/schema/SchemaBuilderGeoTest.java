@@ -35,13 +35,13 @@ import io.tileverse.parquetry.schema.geo.projjson.GeographicCRS;
  */
 class SchemaBuilderGeoTest {
 
-    private static final ParquetSchema GEO_SCHEMA = new ParquetSchema(new Field.Group(
+    private static final ParquetSchema GEO_SCHEMA = new ParquetSchema(new SchemaNode.Group(
             "root",
             Repetition.REQUIRED,
             List.of(
-                    new Field.Primitive(
+                    new SchemaNode.Primitive(
                             "id", Repetition.REQUIRED, PrimitiveKind.INT64, OptionalInt.empty(), Optional.empty(), -1),
-                    new Field.Primitive(
+                    new SchemaNode.Primitive(
                             "geometry",
                             Repetition.OPTIONAL,
                             PrimitiveKind.BYTE_ARRAY,
@@ -82,8 +82,8 @@ class SchemaBuilderGeoTest {
                 }
                 """;
         ParquetSchema out = SchemaBuilder.synthesizeGeoLogicalTypes(GEO_SCHEMA, Map.of("geo", geo));
-        Field.Primitive leaf =
-                (Field.Primitive) out.find(ColumnPath.of("geometry")).orElseThrow();
+        SchemaNode.Primitive leaf =
+                (SchemaNode.Primitive) out.find(ColumnPath.of("geometry")).orElseThrow();
         assertThat(leaf.logicalType())
                 .as("default / planar 'geo' column should synthesize Geometry")
                 .containsInstanceOf(LogicalType.Geometry.class);
@@ -107,8 +107,8 @@ class SchemaBuilderGeoTest {
                 }
                 """;
         ParquetSchema out = SchemaBuilder.synthesizeGeoLogicalTypes(GEO_SCHEMA, Map.of("geo", geo));
-        Field.Primitive leaf =
-                (Field.Primitive) out.find(ColumnPath.of("geometry")).orElseThrow();
+        SchemaNode.Primitive leaf =
+                (SchemaNode.Primitive) out.find(ColumnPath.of("geometry")).orElseThrow();
         assertThat(leaf.logicalType())
                 .as("'edges: spherical' should synthesize Geography")
                 .containsInstanceOf(LogicalType.Geography.class);
@@ -135,8 +135,8 @@ class SchemaBuilderGeoTest {
                 }
                 """;
         ParquetSchema out = SchemaBuilder.synthesizeGeoLogicalTypes(GEO_SCHEMA, Map.of("geo", geo));
-        Field.Primitive geometry =
-                (Field.Primitive) out.find(ColumnPath.of("geometry")).orElseThrow();
+        SchemaNode.Primitive geometry =
+                (SchemaNode.Primitive) out.find(ColumnPath.of("geometry")).orElseThrow();
         assertThat(geometry.logicalType())
                 .as("an unknown column in 'geo' should not annotate any actual leaf")
                 .isEmpty();
@@ -159,8 +159,8 @@ class SchemaBuilderGeoTest {
                 }
                 """;
         ParquetSchema out = SchemaBuilder.synthesizeGeoLogicalTypes(schemaWithNative, Map.of("geo", geo));
-        Field.Primitive leaf =
-                (Field.Primitive) out.find(ColumnPath.of("geometry")).orElseThrow();
+        SchemaNode.Primitive leaf =
+                (SchemaNode.Primitive) out.find(ColumnPath.of("geometry")).orElseThrow();
         assertThat(leaf.logicalType())
                 .as("native Geometry annotation must be preserved even when 'geo' KV would synthesize a different CRS")
                 .contains(nativeType);
@@ -180,8 +180,8 @@ class SchemaBuilderGeoTest {
                 }
                 """;
         ParquetSchema out = SchemaBuilder.synthesizeGeoLogicalTypes(schemaWithNative, Map.of("geo", geo));
-        Field.Primitive leaf =
-                (Field.Primitive) out.find(ColumnPath.of("geometry")).orElseThrow();
+        SchemaNode.Primitive leaf =
+                (SchemaNode.Primitive) out.find(ColumnPath.of("geometry")).orElseThrow();
         assertThat(leaf.logicalType())
                 .as("native Geography wins even when 'geo' KV would have synthesized Geometry")
                 .contains(nativeType);
@@ -201,26 +201,26 @@ class SchemaBuilderGeoTest {
                 }
                 """;
         ParquetSchema out = SchemaBuilder.synthesizeGeoLogicalTypes(schemaWithNative, Map.of("geo", geo));
-        Field.Primitive leaf =
-                (Field.Primitive) out.find(ColumnPath.of("geometry")).orElseThrow();
+        SchemaNode.Primitive leaf =
+                (SchemaNode.Primitive) out.find(ColumnPath.of("geometry")).orElseThrow();
         assertThat(leaf.logicalType())
                 .as("agreeing native + 'geo' KV should leave the native annotation unchanged")
                 .contains(nativeType);
     }
 
     private static ParquetSchema schemaWithAnnotation(LogicalType annotation) {
-        return new ParquetSchema(new Field.Group(
+        return new ParquetSchema(new SchemaNode.Group(
                 "root",
                 Repetition.REQUIRED,
                 List.of(
-                        new Field.Primitive(
+                        new SchemaNode.Primitive(
                                 "id",
                                 Repetition.REQUIRED,
                                 PrimitiveKind.INT64,
                                 OptionalInt.empty(),
                                 Optional.empty(),
                                 -1),
-                        new Field.Primitive(
+                        new SchemaNode.Primitive(
                                 "geometry",
                                 Repetition.OPTIONAL,
                                 PrimitiveKind.BYTE_ARRAY,

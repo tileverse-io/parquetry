@@ -19,10 +19,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.schema.Field;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.ParquetSchemaException;
 import io.tileverse.parquetry.schema.PrimitiveKind;
+import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
  * Rewrites a {@link Predicate} into a canonical form expected by the filter pipeline. Applies three structural passes -
@@ -65,7 +65,7 @@ final class PredicateNormalizer {
             case Predicate.Gt(ColumnPath col, Value v) -> checkLeafColumn(col, schema, v);
             case Predicate.GtEq(ColumnPath col, Value v) -> checkLeafColumn(col, schema, v);
             case Predicate.In(ColumnPath col, List<Value> values) -> {
-                Field.Primitive prim = requirePrimitive(col, schema);
+                SchemaNode.Primitive prim = requirePrimitive(col, schema);
                 for (Value v : values) {
                     requireCompatible(col, prim.kind(), v);
                 }
@@ -73,7 +73,7 @@ final class PredicateNormalizer {
             case Predicate.IsNull(ColumnPath col) -> requirePrimitive(col, schema);
             case Predicate.IsNotNull(ColumnPath col) -> requirePrimitive(col, schema);
             case Predicate.BboxIntersects(ColumnPath col, Bbox _) -> {
-                Field.Primitive prim = requirePrimitive(col, schema);
+                SchemaNode.Primitive prim = requirePrimitive(col, schema);
                 if (prim.kind() != PrimitiveKind.BYTE_ARRAY && prim.kind() != PrimitiveKind.FIXED_LEN_BYTE_ARRAY) {
                     throw new ParquetSchemaException(
                             "BboxIntersects requires a binary column; got " + col.dot() + " of type " + prim.kind());
@@ -192,15 +192,15 @@ final class PredicateNormalizer {
     }
 
     private static void checkLeafColumn(ColumnPath path, ParquetSchema schema, Value v) {
-        Field.Primitive prim = requirePrimitive(path, schema);
+        SchemaNode.Primitive prim = requirePrimitive(path, schema);
         requireCompatible(path, prim.kind(), v);
     }
 
-    private static Field.Primitive requirePrimitive(ColumnPath path, ParquetSchema schema) {
-        Field f = schema.find(path)
+    private static SchemaNode.Primitive requirePrimitive(ColumnPath path, ParquetSchema schema) {
+        SchemaNode f = schema.find(path)
                 .orElseThrow(() ->
                         new ParquetSchemaException("Column " + path.dot() + " is not defined in the file schema"));
-        if (!(f instanceof Field.Primitive p)) {
+        if (!(f instanceof SchemaNode.Primitive p)) {
             throw new ParquetSchemaException("Column " + path.dot() + " is a group, not a primitive column");
         }
         return p;

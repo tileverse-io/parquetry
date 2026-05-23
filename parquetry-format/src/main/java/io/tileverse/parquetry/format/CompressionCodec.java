@@ -19,10 +19,10 @@ package io.tileverse.parquetry.format;
  * Compression codec applied to a column chunk's page payloads; mirror of {@code CompressionCodec} in
  * {@code parquet.thrift}.
  *
- * <p>Selected via {@link ColumnMetaData#codec()}. {@link #LZO} and {@link #LZ4} are deprecated in favor of
- * {@link #LZ4_RAW}.
+ * <p>Selected via {@link ColumnMetaData#codec()}. {@link #LZ4} is deprecated in favor of {@link #LZ4_RAW}; {@link #LZO}
+ * is rare in modern pipelines (historically encumbered by C-library licensing) but not deprecated by the spec.
  *
- * <p>Each variant carries its Thrift wire code in {@link #value()}; resolve incoming i32 codes via
+ * <p>Each constant carries its Thrift wire code in {@link #value()}; resolve incoming i32 codes via
  * {@link #valueOf(int)}.
  */
 public enum CompressionCodec {
@@ -41,12 +41,12 @@ public enum CompressionCodec {
         this.value = value;
     }
 
-    /** Thrift wire code for this variant, matching the value defined in {@code parquet.thrift}. */
+    /** Thrift wire code for this constant, matching the value defined in {@code parquet.thrift}. */
     public int value() {
         return value;
     }
 
-    /** @throws UnknownVariantException if no defined variant carries that code */
+    /** @throws UnknownCodeException if no defined case carries that code */
     public static CompressionCodec valueOf(int code) {
         return switch (code) {
             case 0 -> UNCOMPRESSED;
@@ -57,7 +57,7 @@ public enum CompressionCodec {
             case 5 -> LZ4;
             case 6 -> ZSTD;
             case 7 -> LZ4_RAW;
-            default -> throw new UnknownVariantException("Unknown CompressionCodec wire code: " + code);
+            default -> throw new UnknownCodeException("Unknown CompressionCodec wire code: " + code);
         };
     }
 }

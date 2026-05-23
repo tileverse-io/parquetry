@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Pins each format enum's Thrift wire code to the values defined in {@code parquet.thrift}. If a contributor adds a
- * variant out of order, drops a slot, or otherwise drifts the {@code value()} accessor away from the spec, this
+ * constant out of order, drops a slot, or otherwise drifts the {@code value()} accessor away from the spec, this
  * tripwire fails before any runtime data gets misread.
  *
  * <p>Each assertion also covers the per-enum {@code valueOf(int)} switch by performing a roundtrip lookup; a missing
@@ -41,7 +41,7 @@ class EnumWireCodesTest {
         assertCode(PhysicalType.BYTE_ARRAY, 6);
         assertCode(PhysicalType.FIXED_LEN_BYTE_ARRAY, 7);
         assertThatThrownBy(() -> PhysicalType.valueOf(99))
-                .isInstanceOf(UnknownVariantException.class)
+                .isInstanceOf(UnknownCodeException.class)
                 .hasMessageContaining("99");
     }
 
@@ -50,7 +50,7 @@ class EnumWireCodesTest {
         assertCode(FieldRepetitionType.REQUIRED, 0);
         assertCode(FieldRepetitionType.OPTIONAL, 1);
         assertCode(FieldRepetitionType.REPEATED, 2);
-        assertThatThrownBy(() -> FieldRepetitionType.valueOf(3)).isInstanceOf(UnknownVariantException.class);
+        assertThatThrownBy(() -> FieldRepetitionType.valueOf(3)).isInstanceOf(UnknownCodeException.class);
     }
 
     @Test
@@ -67,7 +67,7 @@ class EnumWireCodesTest {
         assertCode(Encoding.BYTE_STREAM_SPLIT, 9);
         assertThatThrownBy(() -> Encoding.valueOf(1))
                 .as("GROUP_VAR_INT slot must be rejected by the parquetry decoder")
-                .isInstanceOf(UnknownVariantException.class);
+                .isInstanceOf(UnknownCodeException.class);
     }
 
     @Test

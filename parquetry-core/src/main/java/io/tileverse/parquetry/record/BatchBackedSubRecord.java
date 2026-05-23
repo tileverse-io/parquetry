@@ -22,6 +22,7 @@ import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.StructVector;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.ParquetSchemaException;
 
 import lombok.NonNull;
 
@@ -122,7 +123,7 @@ public final class BatchBackedSubRecord implements ParquetRecord {
             return null;
         }
         if (!(value instanceof List<?> list)) {
-            throw new IllegalArgumentException("Column " + col.dot() + " is not a list column");
+            throw new ParquetSchemaException("Column " + col.dot() + " is not a list column");
         }
         return (List<ParquetRecord>) list;
     }
@@ -132,10 +133,10 @@ public final class BatchBackedSubRecord implements ParquetRecord {
         Map<ColumnPath, ColumnVector> children = struct.children();
         ColumnVector vec = children.get(col);
         if (vec == null) {
-            throw new IllegalArgumentException("Column " + col.dot() + " is not present in this record");
+            throw new ParquetSchemaException("Column " + col.dot() + " is not present in this record");
         }
         if (!(vec instanceof StructVector inner)) {
-            throw new IllegalArgumentException("Column " + col.dot() + " is not a struct column");
+            throw new ParquetSchemaException("Column " + col.dot() + " is not a struct column");
         }
         if (!inner.validity().get(rowIndex)) {
             return null;

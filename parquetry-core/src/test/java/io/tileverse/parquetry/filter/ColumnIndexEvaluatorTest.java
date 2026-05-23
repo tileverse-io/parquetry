@@ -16,8 +16,7 @@
 package io.tileverse.parquetry.filter;
 
 import static io.tileverse.parquetry.filter.Pred.col;
-import static java.lang.foreign.ValueLayout.JAVA_INT_UNALIGNED;
-import static java.nio.ByteOrder.LITTLE_ENDIAN;
+import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.lang.foreign.MemorySegment;
@@ -185,7 +184,7 @@ class ColumnIndexEvaluatorTest {
 
     private static MemorySegment encodeInt(int v) {
         MemorySegment segment = MemorySegment.ofArray(new byte[4]);
-        segment.set(JAVA_INT_UNALIGNED.withOrder(LITTLE_ENDIAN), 0, v);
+        segment.set(INT32, 0, v);
         return segment.asReadOnly();
     }
 }

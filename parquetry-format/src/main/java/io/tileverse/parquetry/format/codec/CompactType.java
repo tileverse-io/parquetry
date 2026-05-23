@@ -15,6 +15,8 @@
  */
 package io.tileverse.parquetry.format.codec;
 
+import io.tileverse.parquetry.format.UnknownCodeException;
+
 /** Thrift Compact Protocol type IDs as encoded on the wire (4 bits in the type byte). */
 public enum CompactType {
     STOP(0),
@@ -52,7 +54,7 @@ public enum CompactType {
             case 10 -> SET;
             case 11 -> MAP;
             case 12 -> STRUCT;
-            default -> throw new IllegalArgumentException("Unknown CompactType code: " + code);
+            default -> throw new UnknownCodeException("Unknown CompactType code: " + code);
         };
     }
 }

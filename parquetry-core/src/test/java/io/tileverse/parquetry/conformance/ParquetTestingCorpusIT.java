@@ -51,14 +51,14 @@ import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
 
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
-import io.tileverse.parquetry.read.ReadOptions;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.schema.Field;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.SchemaNode;
 
 import io.tileverse.io.ByteBufferPool;
 
@@ -196,7 +196,7 @@ class ParquetTestingCorpusIT {
             ParquetSchema schema,
             ParquetRecord actual,
             GenericRecord expected) {
-        Field.Primitive prim = primitiveAt(schema, col);
+        SchemaNode.Primitive prim = primitiveAt(schema, col);
         Object oracleValue = oracleValueAt(expected, col);
         if (oracleValue == null) {
             assertThat(actual.isNull(col))
@@ -261,10 +261,10 @@ class ParquetTestingCorpusIT {
         }
     }
 
-    private static Field.Primitive primitiveAt(ParquetSchema schema, ColumnPath col) {
-        Optional<Field> field = schema.find(col);
-        return field.filter(Field.Primitive.class::isInstance)
-                .map(Field.Primitive.class::cast)
+    private static SchemaNode.Primitive primitiveAt(ParquetSchema schema, ColumnPath col) {
+        Optional<SchemaNode> field = schema.find(col);
+        return field.filter(SchemaNode.Primitive.class::isInstance)
+                .map(SchemaNode.Primitive.class::cast)
                 .orElseThrow(() -> new IllegalStateException(
                         "Expected primitive leaf at " + col + " (corpus IT should not see nested columns)"));
     }

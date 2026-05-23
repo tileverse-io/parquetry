@@ -111,7 +111,7 @@ public final class ParquetFormatDeserializer {
      * @param in stream positioned at the start of a Thrift-compact-encoded {@code BloomFilterHeader}
      * @return the decoded {@link BloomFilterHeader}
      * @throws ParquetFormatException if the bytes don't conform to the {@code BloomFilterHeader} Thrift layout or
-     *     declare an unknown algorithm / hash / compression variant
+     *     declare an unknown algorithm / hash / compression case
      * @throws UncheckedIOException if the underlying {@link InputStream} fails
      */
     public static BloomFilterHeader readBloomFilterHeader(InputStream in) {

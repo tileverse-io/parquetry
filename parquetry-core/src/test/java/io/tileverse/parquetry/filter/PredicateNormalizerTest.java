@@ -26,11 +26,11 @@ import java.util.OptionalInt;
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.schema.Field;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.ParquetSchemaException;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
+import io.tileverse.parquetry.schema.SchemaNode;
 
 class PredicateNormalizerTest {
 
@@ -206,20 +206,21 @@ class PredicateNormalizerTest {
     }
 
     private static ParquetSchema flatSchema() {
-        Field.Primitive year = primitive("year", PrimitiveKind.INT32);
-        Field.Primitive country = primitive("country", PrimitiveKind.BYTE_ARRAY);
-        Field.Group root = new Field.Group("root", Repetition.REQUIRED, List.of(year, country), Optional.empty(), -1);
+        SchemaNode.Primitive year = primitive("year", PrimitiveKind.INT32);
+        SchemaNode.Primitive country = primitive("country", PrimitiveKind.BYTE_ARRAY);
+        SchemaNode.Group root =
+                new SchemaNode.Group("root", Repetition.REQUIRED, List.of(year, country), Optional.empty(), -1);
         return new ParquetSchema(root);
     }
 
     private static ParquetSchema nestedSchema() {
-        Field.Primitive city = primitive("city", PrimitiveKind.BYTE_ARRAY);
-        Field.Group addr = new Field.Group("addr", Repetition.OPTIONAL, List.of(city), Optional.empty(), -1);
-        Field.Group root = new Field.Group("root", Repetition.REQUIRED, List.of(addr), Optional.empty(), -1);
+        SchemaNode.Primitive city = primitive("city", PrimitiveKind.BYTE_ARRAY);
+        SchemaNode.Group addr = new SchemaNode.Group("addr", Repetition.OPTIONAL, List.of(city), Optional.empty(), -1);
+        SchemaNode.Group root = new SchemaNode.Group("root", Repetition.REQUIRED, List.of(addr), Optional.empty(), -1);
         return new ParquetSchema(root);
     }
 
-    private static Field.Primitive primitive(String name, PrimitiveKind kind) {
-        return new Field.Primitive(name, Repetition.OPTIONAL, kind, OptionalInt.empty(), Optional.empty(), -1);
+    private static SchemaNode.Primitive primitive(String name, PrimitiveKind kind) {
+        return new SchemaNode.Primitive(name, Repetition.OPTIONAL, kind, OptionalInt.empty(), Optional.empty(), -1);
     }
 }

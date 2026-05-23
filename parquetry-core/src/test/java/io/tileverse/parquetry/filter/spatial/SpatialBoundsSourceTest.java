@@ -15,8 +15,7 @@
  */
 package io.tileverse.parquetry.filter.spatial;
 
-import static java.lang.foreign.ValueLayout.JAVA_DOUBLE_UNALIGNED;
-import static java.nio.ByteOrder.LITTLE_ENDIAN;
+import static io.tileverse.parquetry.format.ParquetLayouts.DOUBLE;
 import static java.util.Optional.empty;
 import static java.util.Optional.of;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -40,10 +39,10 @@ import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.format.Statistics;
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.schema.Field;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
+import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.schema.geo.geoparquet.BboxCovering;
 import io.tileverse.parquetry.schema.geo.geoparquet.Covering;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
@@ -233,16 +232,17 @@ class SpatialBoundsSourceTest {
 
     private static MemorySegment littleEndianDouble(double value) {
         MemorySegment segment = MemorySegment.ofArray(new byte[8]);
-        segment.set(JAVA_DOUBLE_UNALIGNED.withOrder(LITTLE_ENDIAN), 0, value);
+        segment.set(DOUBLE, 0, value);
         return segment.asReadOnly();
     }
 
     private static ParquetSchema schemaWithGeometry() {
-        return new ParquetSchema(new Field.Group("root", Repetition.REQUIRED, List.of(geometryLeaf()), empty(), -1));
+        return new ParquetSchema(
+                new SchemaNode.Group("root", Repetition.REQUIRED, List.of(geometryLeaf()), empty(), -1));
     }
 
     private static ParquetSchema schemaWithGeometryAndCoveringDoubles() {
-        return new ParquetSchema(new Field.Group(
+        return new ParquetSchema(new SchemaNode.Group(
                 "root",
                 Repetition.REQUIRED,
                 List.of(geometryLeaf(), doubleLeaf("xmin"), doubleLeaf("xmax"), doubleLeaf("ymin"), doubleLeaf("ymax")),
@@ -250,13 +250,14 @@ class SpatialBoundsSourceTest {
                 -1));
     }
 
-    private static Field.Primitive geometryLeaf() {
-        return new Field.Primitive(
+    private static SchemaNode.Primitive geometryLeaf() {
+        return new SchemaNode.Primitive(
                 "geometry", Repetition.OPTIONAL, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), empty(), -1);
     }
 
-    private static Field.Primitive doubleLeaf(String name) {
-        return new Field.Primitive(name, Repetition.OPTIONAL, PrimitiveKind.DOUBLE, OptionalInt.empty(), empty(), -1);
+    private static SchemaNode.Primitive doubleLeaf(String name) {
+        return new SchemaNode.Primitive(
+                name, Repetition.OPTIONAL, PrimitiveKind.DOUBLE, OptionalInt.empty(), empty(), -1);
     }
 
     private static GeoParquetMetadata geoWithCoveringAndFileBbox() {

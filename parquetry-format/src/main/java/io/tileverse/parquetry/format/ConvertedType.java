@@ -19,7 +19,7 @@ package io.tileverse.parquetry.format;
  * Deprecated Parquet "converted type" enum; superseded by {@link LogicalType} but still emitted by older writers, so
  * readers must decode it for backward compatibility.
  *
- * <p>Each variant carries its Thrift wire code in {@link #value()}; resolve incoming i32 codes via
+ * <p>Each constant carries its Thrift wire code in {@link #value()}; resolve incoming i32 codes via
  * {@link #valueOf(int)}.
  */
 public enum ConvertedType {
@@ -52,12 +52,12 @@ public enum ConvertedType {
         this.value = value;
     }
 
-    /** Thrift wire code for this variant, matching the value defined in {@code parquet.thrift}. */
+    /** Thrift wire code for this constant, matching the value defined in {@code parquet.thrift}. */
     public int value() {
         return value;
     }
 
-    /** @throws UnknownVariantException if no defined variant carries that code */
+    /** @throws UnknownCodeException if no defined case carries that code */
     public static ConvertedType valueOf(int code) {
         return switch (code) {
             case 0 -> UTF8;
@@ -82,7 +82,7 @@ public enum ConvertedType {
             case 19 -> JSON;
             case 20 -> BSON;
             case 21 -> INTERVAL;
-            default -> throw new UnknownVariantException("Unknown ConvertedType wire code: " + code);
+            default -> throw new UnknownCodeException("Unknown ConvertedType wire code: " + code);
         };
     }
 }

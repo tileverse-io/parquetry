@@ -50,7 +50,7 @@ class LogicalTypeGeometryWireTest {
         out.write(0); // STOP for the LogicalType union
 
         LogicalType lt = read(out);
-        assertThat(lt).as("variant 17 should decode as Geometry").isInstanceOf(LogicalType.Geometry.class);
+        assertThat(lt).as("case 17 should decode as Geometry").isInstanceOf(LogicalType.Geometry.class);
         LogicalType.Geometry geom = (LogicalType.Geometry) lt;
         assertThat(geom.crs())
                 .as("PROJJSON on the wire should be parsed eagerly, not surfaced as a raw string")
@@ -72,7 +72,7 @@ class LogicalTypeGeometryWireTest {
         out.write(0);
 
         LogicalType lt = read(out);
-        assertThat(lt).as("variant 18 should decode as Geography").isInstanceOf(LogicalType.Geography.class);
+        assertThat(lt).as("case 18 should decode as Geography").isInstanceOf(LogicalType.Geography.class);
         LogicalType.Geography geog = (LogicalType.Geography) lt;
         assertThat(geog.crs())
                 .as("Geography PROJJSON is parsed eagerly into the typed ADT")
@@ -116,7 +116,7 @@ class LogicalTypeGeometryWireTest {
     }
 
     /**
-     * Writes the LogicalType union's outer field header for variant {@code fieldId}. Field ids 17 / 18 don't fit in the
+     * Writes the LogicalType union's outer field header for case {@code fieldId}. Field ids 17 / 18 don't fit in the
      * 4-bit delta nibble, so the long form (top nibble = 0) is used followed by the zigzag-i32 absolute id.
      */
     private static void writeUnionVariantHeader(ByteArrayOutputStream out, int fieldId) {

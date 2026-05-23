@@ -17,7 +17,9 @@ package io.tileverse.parquetry.format;
 
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
@@ -25,28 +27,37 @@ import java.util.Arrays;
 import io.tileverse.storage.RangeReader;
 
 import io.tileverse.parquetry.format.codec.ParquetFormatDeserializer;
+import io.tileverse.parquetry.format.codec.ParquetFormatSerializer;
 
 /**
- * Reads Parquet file metadata and page-level structures from a {@link RangeReader}.
+ * Reads and writes Parquet file metadata and page-level Thrift structures.
  *
- * <p>{@link #readFooter(RangeReader)} locates the {@code FileMetaData} Thrift struct at the end of a Parquet file and
- * decodes it. The page-level methods read the corresponding structures at offsets the caller has obtained from the
- * footer (typically {@code ColumnChunk.column_index_offset}, {@code .offset_index_offset}, or
+ * <p>The read side ({@code readXxx}) pulls bytes off a {@link RangeReader} or {@link InputStream}.
+ * {@link #readFooter(RangeReader)} locates the {@code FileMetaData} Thrift struct at the end of a Parquet file and
+ * decodes it. The page-level read methods decode the corresponding structures at offsets the caller has obtained from
+ * the footer (typically {@code ColumnChunk.column_index_offset}, {@code .offset_index_offset}, or
  * {@code .data_page_offset}).
+ *
+ * <p>The write side ({@code writeXxx}) encodes the same Thrift structures to an {@link OutputStream}. Callers are
+ * responsible for placing the bytes at the right offsets in the resulting file (the page header before the page bytes,
+ * the column index / offset index / bloom filter after each row group's data, and the footer + footer length + trailing
+ * magic at the end).
  *
  * <p>Parquet file layout:
  *
  * <pre>
  *   [4-byte magic "PAR1"]
  *   [row group data ...]
+ *   [per-row-group column index / offset index / bloom filter blobs (optional)]
  *   [FileMetaData Thrift compact bytes]
  *   [4-byte footer length (little-endian)]
  *   [4-byte magic "PAR1"]
  * </pre>
  *
- * <p>If you already have the raw Thrift bytes in hand (e.g. by slicing a {@code ByteBuffer} from a custom transport),
- * call {@link ParquetFormatDeserializer} directly. The methods here pull bytes off a {@code RangeReader} and then
- * delegate to it.
+ * <p>If you already have the raw Thrift bytes in hand (e.g. by slicing a {@code ByteBuffer} from a custom transport) or
+ * want to write directly to a {@code ByteBuffer}, call {@link ParquetFormatDeserializer} or
+ * {@link ParquetFormatSerializer} directly. The methods here are the convenience surface that wraps those serializers
+ * around a stream-shaped caller.
  */
 public final class ParquetFormat {
 
@@ -146,6 +157,85 @@ public final class ParquetFormat {
         ByteBuffer footerBytes = reader.readRange(footerStart, footerLen);
         footerBytes.flip();
         return ParquetFormatDeserializer.readFileMetaData(toInputStream(footerBytes));
+    }
+
+    /**
+     * Writes a {@link PageHeader} to {@code out} as Thrift compact bytes.
+     *
+     * <p>Symmetric inverse of {@link #readPageHeader(InputStream)}: the bytes this method emits parse back through the
+     * reader to a {@link PageHeader} equal to {@code header}. Caller positions / flushes the stream and retains
+     * ownership.
+     *
+     * @param out stream to receive the encoded bytes
+     * @param header the page header to encode
+     * @throws UncheckedIOException if the underlying {@link OutputStream} fails
+     */
+    public static void writePageHeader(OutputStream out, PageHeader header) {
+        ParquetFormatSerializer.writePageHeader(out, header);
+    }
+
+    /**
+     * Writes a {@link ColumnIndex} to {@code out} as Thrift compact bytes. Symmetric inverse of
+     * {@link #readColumnIndex(RangeReader, long, int)}.
+     *
+     * @param out stream to receive the encoded bytes
+     * @param index the column index to encode
+     * @throws UncheckedIOException if the underlying {@link OutputStream} fails
+     */
+    public static void writeColumnIndex(OutputStream out, ColumnIndex index) {
+        ParquetFormatSerializer.writeColumnIndex(out, index);
+    }
+
+    /**
+     * Writes an {@link OffsetIndex} to {@code out} as Thrift compact bytes. Symmetric inverse of
+     * {@link #readOffsetIndex(RangeReader, long, int)}.
+     *
+     * @param out stream to receive the encoded bytes
+     * @param index the offset index to encode
+     * @throws UncheckedIOException if the underlying {@link OutputStream} fails
+     */
+    public static void writeOffsetIndex(OutputStream out, OffsetIndex index) {
+        ParquetFormatSerializer.writeOffsetIndex(out, index);
+    }
+
+    /**
+     * Writes a {@link BloomFilterHeader} to {@code out} as Thrift compact bytes. The bitset bytes follow this header in
+     * the file layout but are emitted by the caller; this method only encodes the header itself.
+     *
+     * @param out stream to receive the encoded bytes
+     * @param header the bloom filter header to encode
+     * @throws UncheckedIOException if the underlying {@link OutputStream} fails
+     */
+    public static void writeBloomFilterHeader(OutputStream out, BloomFilterHeader header) {
+        ParquetFormatSerializer.writeBloomFilterHeader(out, header);
+    }
+
+    /**
+     * Writes the {@link FileMetaData} footer to {@code out} as Thrift compact bytes.
+     *
+     * <p>Emits the footer struct only; callers that need the full Parquet file framing (magic bytes, footer length,
+     * tail magic) must produce those themselves. Use {@link #toBytes(FileMetaData)} when an in-memory byte buffer is
+     * more convenient than a stream.
+     *
+     * @param out stream to receive the encoded bytes
+     * @param footer the file-level metadata to encode
+     * @throws UncheckedIOException if the underlying {@link OutputStream} fails
+     */
+    public static void writeFooter(OutputStream out, FileMetaData footer) {
+        ParquetFormatSerializer.writeFileMetaData(out, footer);
+    }
+
+    /**
+     * Convenience: encodes {@code footer} into a fresh byte array via {@link #writeFooter(OutputStream, FileMetaData)}.
+     *
+     * @param footer the file-level metadata to encode
+     * @return the encoded Thrift compact bytes of {@code footer}
+     * @throws UncheckedIOException if the in-memory write somehow fails
+     */
+    public static byte[] toBytes(FileMetaData footer) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        writeFooter(out, footer);
+        return out.toByteArray();
     }
 
     private static InputStream toInputStream(ByteBuffer buf) {

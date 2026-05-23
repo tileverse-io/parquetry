@@ -28,7 +28,7 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.page.Dictionary;
+import io.tileverse.parquetry.data.read.page.Dictionary;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 class DictionaryEvaluatorTest {

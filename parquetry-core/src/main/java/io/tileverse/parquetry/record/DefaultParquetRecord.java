@@ -24,9 +24,10 @@ import java.util.Optional;
 
 import io.tileverse.parquetry.materializer.RowAccessor;
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.schema.Field;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.ParquetSchemaException;
 import io.tileverse.parquetry.schema.PrimitiveKind;
+import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
  * Lazy, per-row {@link ParquetRecord} that adapts the column-keyed {@link RowAccessor} produced by the Dremel assembler
@@ -155,20 +156,20 @@ final class DefaultParquetRecord implements ParquetRecord {
     }
 
     private PrimitiveKind lookupKind(ColumnPath col, String accessor) {
-        Optional<Field> field = schema.find(col);
+        Optional<SchemaNode> field = schema.find(col);
         if (field.isEmpty()) {
-            throw new IllegalArgumentException(
+            throw new ParquetSchemaException(
                     "Column " + col.dot() + " is not present in the projected schema (accessor " + accessor + ")");
         }
-        if (!(field.get() instanceof Field.Primitive primitive)) {
-            throw new IllegalArgumentException(
+        if (!(field.get() instanceof SchemaNode.Primitive primitive)) {
+            throw new ParquetSchemaException(
                     "Column " + col.dot() + " is a group column; accessor " + accessor + " requires a primitive leaf");
         }
         return primitive.kind();
     }
 
-    private static IllegalArgumentException mismatch(ColumnPath col, PrimitiveKind actual, String accessor) {
-        return new IllegalArgumentException("Column " + col.dot() + " is " + actual + "; requested " + accessor);
+    private static ParquetSchemaException mismatch(ColumnPath col, PrimitiveKind actual, String accessor) {
+        return new ParquetSchemaException("Column " + col.dot() + " is " + actual + "; requested " + accessor);
     }
 
     private static UnsupportedOperationException nestedNotYetSupported(ColumnPath col) {

@@ -45,15 +45,15 @@ import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
 
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
-import io.tileverse.parquetry.read.ReadOptions;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.schema.Field;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
+import io.tileverse.parquetry.schema.SchemaNode;
 
 import lombok.NonNull;
 
@@ -209,8 +209,8 @@ class BatchRowParityTest {
     }
 
     private static PrimitiveKind primitiveKindAt(ParquetSchema schema, ColumnPath col) {
-        Optional<Field> field = schema.find(col);
-        if (field.isEmpty() || !(field.get() instanceof Field.Primitive primitive)) {
+        Optional<SchemaNode> field = schema.find(col);
+        if (field.isEmpty() || !(field.get() instanceof SchemaNode.Primitive primitive)) {
             throw new IllegalStateException(
                     "Expected primitive leaf at " + col + "; the parity test only covers flat-primitive fixtures");
         }

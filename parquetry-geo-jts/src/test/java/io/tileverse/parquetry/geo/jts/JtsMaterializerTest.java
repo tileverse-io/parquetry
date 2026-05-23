@@ -33,10 +33,10 @@ import org.locationtech.jts.io.WKBWriter;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.materializer.RowAccessor;
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.schema.Field;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
+import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
 import io.tileverse.parquetry.schema.geo.projjson.GeographicCRS;
 import io.tileverse.parquetry.schema.geo.projjson.Identifier;
@@ -159,9 +159,9 @@ class JtsMaterializerTest {
     // --- helpers ---
 
     private static ParquetSchema schemaWithGeometryAt(String geometryColumnName, LogicalType geometryAnnotation) {
-        Field.Primitive idField = new Field.Primitive(
+        SchemaNode.Primitive idField = new SchemaNode.Primitive(
                 "id", Repetition.REQUIRED, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
-        Field.Primitive geomField = new Field.Primitive(
+        SchemaNode.Primitive geomField = new SchemaNode.Primitive(
                 geometryColumnName,
                 Repetition.OPTIONAL,
                 PrimitiveKind.BYTE_ARRAY,
@@ -169,7 +169,7 @@ class JtsMaterializerTest {
                 Optional.ofNullable(geometryAnnotation),
                 -1);
         return new ParquetSchema(
-                new Field.Group("root", Repetition.REQUIRED, List.of(idField, geomField), Optional.empty(), -1));
+                new SchemaNode.Group("root", Repetition.REQUIRED, List.of(idField, geomField), Optional.empty(), -1));
     }
 
     private static RowAccessor rowOf(Map<ColumnPath, Object> values) {

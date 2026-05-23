@@ -22,7 +22,7 @@ package io.tileverse.parquetry.format;
  * fields may be null, and {@link #REPEATED} fields encode the list-like (zero-or-more) shape that Parquet's repetition
  * levels track.
  *
- * <p>Each variant carries its Thrift wire code in {@link #value()}; resolve incoming i32 codes via
+ * <p>Each constant carries its Thrift wire code in {@link #value()}; resolve incoming i32 codes via
  * {@link #valueOf(int)}.
  */
 public enum FieldRepetitionType {
@@ -36,18 +36,18 @@ public enum FieldRepetitionType {
         this.value = value;
     }
 
-    /** Thrift wire code for this variant, matching the value defined in {@code parquet.thrift}. */
+    /** Thrift wire code for this constant, matching the value defined in {@code parquet.thrift}. */
     public int value() {
         return value;
     }
 
-    /** @throws UnknownVariantException if no defined variant carries that code */
+    /** @throws UnknownCodeException if no defined case carries that code */
     public static FieldRepetitionType valueOf(int code) {
         return switch (code) {
             case 0 -> REQUIRED;
             case 1 -> OPTIONAL;
             case 2 -> REPEATED;
-            default -> throw new UnknownVariantException("Unknown FieldRepetitionType wire code: " + code);
+            default -> throw new UnknownCodeException("Unknown FieldRepetitionType wire code: " + code);
         };
     }
 }

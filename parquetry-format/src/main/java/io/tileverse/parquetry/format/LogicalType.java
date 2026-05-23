@@ -22,10 +22,10 @@ import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
 /**
  * Parquet logical-type annotation (Thrift union {@code LogicalType}).
  *
- * <p>Sealed interface with one record per Thrift-union variant. Records that need no payload (e.g. {@link StringType})
- * are empty records to give every variant the same shape.
+ * <p>Sealed interface with one record per Thrift-union case. Records that need no payload (e.g. {@link StringType}) are
+ * empty records to give every case the same shape.
  *
- * <p>Variant {@link VariantStub} is a stub initially; it gains the variant type carrier later. Declared here so the
+ * <p>Variant {@link VariantStub} is a stub initially; it gains the case type carrier later. Declared here so the
  * sealed-type list is final from the start.
  */
 public sealed interface LogicalType
@@ -61,15 +61,15 @@ public sealed interface LogicalType
      * }
      * </pre>
      *
-     * <p>{@code TimeUnit} is structurally a Thrift <em>union</em>, not a Thrift enum: each variant is identified on the
+     * <p>{@code TimeUnit} is structurally a Thrift <em>union</em>, not a Thrift enum: each case is identified on the
      * wire by its Thrift compact-protocol <em>field id</em> (delta-encoded inside the union struct's field header), not
      * by an assigned i32 enum value. Each Java constant therefore carries its field id in {@link #fieldId()};
      * deserializers resolve incoming ids via {@link #valueOf(int)}.
      *
      * <p>Unlike {@link EdgeInterpolationAlgorithm}, this lookup is fail-fast on unknown ids: silently defaulting to
-     * {@link #MILLIS} when a future Parquet writer emits a new variant (e.g. picoseconds) would yield timestamps wrong
-     * by many orders of magnitude. Throwing surfaces the unknown variant at the deserialize boundary where the caller
-     * can decide to fail the read or skip the column.
+     * {@link #MILLIS} when a future Parquet writer emits a new case (e.g. picoseconds) would yield timestamps wrong by
+     * many orders of magnitude. Throwing surfaces the unknown case at the deserialize boundary where the caller can
+     * decide to fail the read or skip the column.
      */
     enum TimeUnit {
         MILLIS(1),
@@ -82,24 +82,24 @@ public sealed interface LogicalType
             this.fieldId = fieldId;
         }
 
-        /** Thrift compact-protocol field id of this variant within the {@code TimeUnit} union. */
+        /** Thrift compact-protocol field id of this case within the {@code TimeUnit} union. */
         public int fieldId() {
             return fieldId;
         }
 
         /**
-         * Returns the variant whose {@link #fieldId()} equals {@code fieldId}. Compiles to a {@code tableswitch}
-         * bytecode (O(1) lookup, no allocations).
+         * Returns the case whose {@link #fieldId()} equals {@code fieldId}. Compiles to a {@code tableswitch} bytecode
+         * (O(1) lookup, no allocations).
          *
-         * @throws UnknownVariantException if no defined variant carries that field id - see the enum javadoc on why
-         *     this lookup is intentionally fail-fast rather than forward-compat-tolerant.
+         * @throws UnknownCodeException if no defined variant carries that field id - see the enum javadoc on why this
+         *     lookup is intentionally fail-fast rather than forward-compat-tolerant.
          */
         public static TimeUnit valueOf(int fieldId) {
             return switch (fieldId) {
                 case 1 -> MILLIS;
                 case 2 -> MICROS;
                 case 3 -> NANOS;
-                default -> throw new UnknownVariantException("Unknown TimeUnit field id: " + fieldId);
+                default -> throw new UnknownCodeException("Unknown TimeUnit field id: " + fieldId);
             };
         }
     }

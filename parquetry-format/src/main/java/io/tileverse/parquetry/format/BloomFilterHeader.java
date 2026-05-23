@@ -23,7 +23,7 @@ package io.tileverse.parquetry.format;
  * bitset follows immediately after it and spans exactly {@link #numBytes()} bytes.
  *
  * <p>The three trailing fields ({@link Algorithm}, {@link HashStrategy}, {@link Compression}) each mirror a Thrift
- * union of empty structs. Every defined variant carries no payload, so parquetry surfaces them as nested enums.
+ * union of empty structs. Every defined case carries no payload, so parquetry surfaces them as nested enums.
  *
  * @param numBytes size of the bitset in bytes (always a multiple of 32 in a valid Parquet file)
  * @param algorithm bit-setting algorithm; currently only {@link Algorithm#SPLIT_BLOCK} is defined
@@ -34,9 +34,9 @@ public record BloomFilterHeader(int numBytes, Algorithm algorithm, HashStrategy 
 
     /**
      * The algorithm used to set bits in a Parquet bloom filter. Mirror of the {@code BloomFilterAlgorithm} Thrift union
-     * (a one-variant union of empty structs at time of writing).
+     * (a single-case union of empty structs at time of writing).
      *
-     * <p>Each variant carries its Thrift compact-protocol {@link #fieldId() field id} within the union struct.
+     * <p>Each case carries its Thrift compact-protocol {@link #fieldId() field id} within the union struct.
      * Deserializers resolve incoming ids via {@link #valueOf(int)}, which fails fast on unknown variants so a future
      * spec extension can't be silently misinterpreted as {@link #SPLIT_BLOCK}.
      */
@@ -50,23 +50,23 @@ public record BloomFilterHeader(int numBytes, Algorithm algorithm, HashStrategy 
             this.fieldId = fieldId;
         }
 
-        /** Thrift compact-protocol field id of this variant within the {@code BloomFilterAlgorithm} union. */
+        /** Thrift compact-protocol field id of this case within the {@code BloomFilterAlgorithm} union. */
         public int fieldId() {
             return fieldId;
         }
 
-        /** @throws UnknownVariantException if no defined variant carries that field id */
+        /** @throws UnknownCodeException if no defined variant carries that field id */
         public static Algorithm valueOf(int fieldId) {
             return switch (fieldId) {
                 case 1 -> SPLIT_BLOCK;
-                default -> throw new UnknownVariantException("Unknown BloomFilterAlgorithm field id: " + fieldId);
+                default -> throw new UnknownCodeException("Unknown BloomFilterAlgorithm field id: " + fieldId);
             };
         }
     }
 
     /**
      * The hash function used by a Parquet bloom filter. Mirror of the {@code BloomFilterHash} Thrift union (a
-     * one-variant union of empty structs at time of writing).
+     * single-case union of empty structs at time of writing).
      *
      * <p>See {@link Algorithm} for the wire-id rationale.
      */
@@ -80,23 +80,23 @@ public record BloomFilterHeader(int numBytes, Algorithm algorithm, HashStrategy 
             this.fieldId = fieldId;
         }
 
-        /** Thrift compact-protocol field id of this variant within the {@code BloomFilterHash} union. */
+        /** Thrift compact-protocol field id of this case within the {@code BloomFilterHash} union. */
         public int fieldId() {
             return fieldId;
         }
 
-        /** @throws UnknownVariantException if no defined variant carries that field id */
+        /** @throws UnknownCodeException if no defined variant carries that field id */
         public static HashStrategy valueOf(int fieldId) {
             return switch (fieldId) {
                 case 1 -> XXHASH;
-                default -> throw new UnknownVariantException("Unknown BloomFilterHash field id: " + fieldId);
+                default -> throw new UnknownCodeException("Unknown BloomFilterHash field id: " + fieldId);
             };
         }
     }
 
     /**
      * Compression applied to a Parquet bloom filter's bitset. Mirror of the {@code BloomFilterCompression} Thrift union
-     * (a one-variant union of empty structs at time of writing).
+     * (a single-case union of empty structs at time of writing).
      *
      * <p>See {@link Algorithm} for the wire-id rationale.
      */
@@ -110,16 +110,16 @@ public record BloomFilterHeader(int numBytes, Algorithm algorithm, HashStrategy 
             this.fieldId = fieldId;
         }
 
-        /** Thrift compact-protocol field id of this variant within the {@code BloomFilterCompression} union. */
+        /** Thrift compact-protocol field id of this case within the {@code BloomFilterCompression} union. */
         public int fieldId() {
             return fieldId;
         }
 
-        /** @throws UnknownVariantException if no defined variant carries that field id */
+        /** @throws UnknownCodeException if no defined variant carries that field id */
         public static Compression valueOf(int fieldId) {
             return switch (fieldId) {
                 case 1 -> UNCOMPRESSED;
-                default -> throw new UnknownVariantException("Unknown BloomFilterCompression field id: " + fieldId);
+                default -> throw new UnknownCodeException("Unknown BloomFilterCompression field id: " + fieldId);
             };
         }
     }

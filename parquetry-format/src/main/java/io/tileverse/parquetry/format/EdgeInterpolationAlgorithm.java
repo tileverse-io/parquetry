@@ -22,7 +22,7 @@ package io.tileverse.parquetry.format;
  * <p>Selects how to interpolate a geodesic edge between two vertices. {@link #SPHERICAL} treats the Earth as a sphere;
  * the others are progressively more accurate ellipsoidal models.
  *
- * <p>Each variant carries its Thrift wire code in {@link #value()}; resolve incoming i32 codes via
+ * <p>Each constant carries its Thrift wire code in {@link #value()}; resolve incoming i32 codes via
  * {@link #valueOf(int)}.
  */
 public enum EdgeInterpolationAlgorithm {
@@ -38,15 +38,15 @@ public enum EdgeInterpolationAlgorithm {
         this.value = value;
     }
 
-    /** Thrift wire code for this variant, matching the value defined in {@code parquet.thrift}. */
+    /** Thrift wire code for this constant, matching the value defined in {@code parquet.thrift}. */
     public int value() {
         return value;
     }
 
     /**
-     * @throws UnknownVariantException if no defined variant carries that code (typically because a newer Parquet writer
-     *     used an algorithm parquetry doesn't know yet - callers that want forward-compat tolerance should wrap this in
-     *     a try/catch)
+     * @throws UnknownCodeException if no defined case carries that code (typically because a newer Parquet writer used
+     *     an algorithm parquetry doesn't know yet - callers that want forward-compat tolerance should wrap this in a
+     *     try/catch)
      */
     public static EdgeInterpolationAlgorithm valueOf(int code) {
         return switch (code) {
@@ -55,7 +55,7 @@ public enum EdgeInterpolationAlgorithm {
             case 2 -> THOMAS;
             case 3 -> ANDOYER;
             case 4 -> KARNEY;
-            default -> throw new UnknownVariantException("Unknown EdgeInterpolationAlgorithm wire code: " + code);
+            default -> throw new UnknownCodeException("Unknown EdgeInterpolationAlgorithm wire code: " + code);
         };
     }
 }

@@ -32,7 +32,7 @@ import io.tileverse.parquetry.format.MalformedFileException;
  * }
  * </pre>
  *
- * Each of the three trailing unions has exactly one defined variant today; this deserializer returns the matching enum
+ * Each of the three trailing unions has exactly one defined case today; this deserializer returns the matching enum
  * value and rejects unknown variants so a future Parquet version that adds new algorithms can't be silently
  * misinterpreted.
  */
@@ -85,7 +85,7 @@ final class BloomFilterHeaderDeserializer {
 
     /**
      * Reads the one-of-N {@code BloomFilterAlgorithm} union. Unknown variants propagate from
-     * {@link BloomFilterHeader.Algorithm#valueOf(int)} as {@code UnknownVariantException}, so a future spec extension
+     * {@link BloomFilterHeader.Algorithm#valueOf(int)} as {@code UnknownCodeException}, so a future spec extension
      * can't be silently misinterpreted.
      */
     private static BloomFilterHeader.Algorithm readAlgorithm(CompactProtocolReader r) throws IOException {
@@ -99,21 +99,21 @@ final class BloomFilterHeaderDeserializer {
 
     /**
      * Reads the one-of-N {@code BloomFilterCompression} union. A compressed bitset would need codec wiring before it
-     * can be evaluated; unknown variants fail fast (via {@code UnknownVariantException}) so we never silently treat
-     * them as {@code UNCOMPRESSED}.
+     * can be evaluated; unknown variants fail fast (via {@code UnknownCodeException}) so we never silently treat them
+     * as {@code UNCOMPRESSED}.
      */
     private static BloomFilterHeader.Compression readCompression(CompactProtocolReader r) throws IOException {
         return BloomFilterHeader.Compression.valueOf(readSingleUnionVariantId(r));
     }
 
     /**
-     * Reads a Thrift union that has exactly one field set (each variant being an empty struct). Returns the variant's
-     * field id. Skips the empty-struct payload and any trailing fields a forward-compatible writer may have added.
+     * Reads a Thrift union that has exactly one field set (each case being an empty struct). Returns the case's field
+     * id. Skips the empty-struct payload and any trailing fields a forward-compatible writer may have added.
      */
     private static int readSingleUnionVariantId(CompactProtocolReader r) throws IOException {
         FieldHeader fh = r.readFieldHeader(0);
         if (fh.isStop()) {
-            throw new MalformedFileException("Bloom-filter union struct has no variant set");
+            throw new MalformedFileException("Bloom-filter union struct has no case set");
         }
         int variantId = fh.fieldId();
         r.skipStruct();

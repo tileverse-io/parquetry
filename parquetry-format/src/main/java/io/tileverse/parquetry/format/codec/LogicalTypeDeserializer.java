@@ -24,7 +24,7 @@ import org.slf4j.LoggerFactory;
 import io.tileverse.parquetry.format.EdgeInterpolationAlgorithm;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.MalformedFileException;
-import io.tileverse.parquetry.format.UnknownVariantException;
+import io.tileverse.parquetry.format.UnknownCodeException;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
 import io.tileverse.parquetry.schema.geo.projjson.ProjJsonModule;
 
@@ -34,8 +34,8 @@ import tools.jackson.databind.json.JsonMapper;
 /**
  * Deserializer for the Thrift {@code LogicalType} union.
  *
- * <p>Each field ID in the union corresponds to one variant. Variants with no payload are empty Thrift structs (STRUCT
- * type, zero fields before STOP). Variants with payload are decoded into the corresponding record.
+ * <p>Each field ID in the union corresponds to one case. Cases with no payload are empty Thrift structs (STRUCT type,
+ * zero fields before STOP). Variants with payload are decoded into the corresponding record.
  *
  * <pre>
  * union LogicalType {
@@ -269,7 +269,7 @@ final class LogicalTypeDeserializer {
                     int code = r.readI32();
                     try {
                         algorithm = Optional.of(EdgeInterpolationAlgorithm.valueOf(code));
-                    } catch (UnknownVariantException _) {
+                    } catch (UnknownCodeException _) {
                         // Unknown wire codes are tolerated (forward-compat for newer Parquet algorithms); algorithm
                         // stays empty so the consumer falls back to the spec default.
                     }
@@ -330,16 +330,16 @@ final class LogicalTypeDeserializer {
      * </pre>
      *
      * <p>Resolved via {@link LogicalType.TimeUnit#valueOf(int)}, which is intentionally fail-fast on unknown wire codes
-     * - see the {@code TimeUnit} javadoc for the reasoning. An empty union (no variant set) is also rejected since the
+     * - see the {@code TimeUnit} javadoc for the reasoning. An empty union (no case set) is also rejected since the
      * Parquet schema requires {@code TimeUnit} to carry a payload wherever it appears.
      */
     private static LogicalType.TimeUnit readTimeUnit(CompactProtocolReader r) throws IOException {
         FieldHeader fh = r.readFieldHeader(0);
         if (fh.isStop()) {
-            throw new MalformedFileException("TimeUnit union has no variant set");
+            throw new MalformedFileException("TimeUnit union has no case set");
         }
         LogicalType.TimeUnit unit = LogicalType.TimeUnit.valueOf(fh.fieldId());
-        // Skip the empty-struct payload of the chosen TimeUnit variant.
+        // Skip the empty-struct payload of the chosen TimeUnit case.
         r.skipStruct();
         // Consume the STOP of the TimeUnit union struct, tolerating forward-compat extra fields.
         FieldHeader stop = r.readFieldHeader(fh.fieldId());
