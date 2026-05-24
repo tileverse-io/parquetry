@@ -16,7 +16,6 @@
 package io.tileverse.parquetry.data.read.page;
 
 import java.lang.foreign.MemorySegment;
-import java.nio.ByteBuffer;
 
 /**
  * PLAIN decoder for FIXED_LEN_BYTE_ARRAY: exactly N bytes per value, where N comes from the column schema's
@@ -29,7 +28,8 @@ import java.nio.ByteBuffer;
 public final class PlainFixedLenBinaryDecoder implements PageDecoder<MemorySegment> {
 
     private final int length;
-    private ByteBuffer buffer;
+    private MemorySegment segment;
+    private long offset;
 
     /** @param length bytes per value; must be non-negative (zero is valid for degenerate schemas) */
     public PlainFixedLenBinaryDecoder(int length) {
@@ -40,15 +40,16 @@ public final class PlainFixedLenBinaryDecoder implements PageDecoder<MemorySegme
     }
 
     @Override
-    public void load(ByteBuffer page, int valueCount) {
-        this.buffer = page;
+    public void load(MemorySegment page, int valueCount) {
+        this.segment = page;
+        this.offset = 0L;
     }
 
     @Override
     public MemorySegment next() {
-        ByteBuffer slice = buffer.slice().limit(length);
-        buffer.position(buffer.position() + length);
-        return MemorySegment.ofBuffer(slice).asReadOnly();
+        MemorySegment value = segment.asSlice(offset, length).asReadOnly();
+        offset += length;
+        return value;
     }
 
     @Override
@@ -60,6 +61,6 @@ public final class PlainFixedLenBinaryDecoder implements PageDecoder<MemorySegme
 
     @Override
     public void skip(int n) {
-        buffer.position(buffer.position() + n * length);
+        offset += (long) n * length;
     }
 }

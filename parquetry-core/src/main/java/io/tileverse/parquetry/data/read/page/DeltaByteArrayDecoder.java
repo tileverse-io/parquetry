@@ -15,8 +15,9 @@
  */
 package io.tileverse.parquetry.data.read.page;
 
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
+
 import java.lang.foreign.MemorySegment;
-import java.nio.ByteBuffer;
 
 /**
  * DELTA_BYTE_ARRAY page decoder.
@@ -39,20 +40,21 @@ public final class DeltaByteArrayDecoder implements PageDecoder<MemorySegment> {
 
     private int[] prefixLengths;
     private int[] suffixLengths;
-    private ByteBuffer suffixBytes;
+    private MemorySegment suffixBytes;
+    private long suffixOffset;
     private byte[] previousValue;
     private int cursor;
 
     @Override
-    public void load(ByteBuffer page, int valueCount) {
-        // Use a slice so the caller's buffer position is not disturbed.
-        // DeltaBinaryPackedDecoder advances view.position() as it reads, so after
-        // decoding both length arrays the buffer position sits at the suffix bytes.
-        ByteBuffer view = page.slice();
-
-        prefixLengths = decodeDeltaInts(view);
-        suffixLengths = decodeDeltaInts(view);
-        suffixBytes = view;
+    public void load(MemorySegment page, int valueCount) {
+        // The two length arrays are packed back-to-back, followed by the suffix bytes. Each DeltaBinaryPackedDecoder
+        // reports how many bytes it consumed, so the next section starts right after it.
+        DeltaInts prefixes = decodeDeltaInts(page, 0L);
+        prefixLengths = prefixes.values();
+        DeltaInts suffixes = decodeDeltaInts(page, prefixes.nextOffset());
+        suffixLengths = suffixes.values();
+        suffixBytes = page.asSlice(suffixes.nextOffset());
+        suffixOffset = 0L;
         previousValue = new byte[0];
         cursor = 0;
     }
@@ -68,7 +70,8 @@ public final class DeltaByteArrayDecoder implements PageDecoder<MemorySegment> {
             System.arraycopy(previousValue, 0, value, 0, prefixLen);
         }
         if (suffixLen > 0) {
-            suffixBytes.get(value, prefixLen, suffixLen);
+            MemorySegment.copy(suffixBytes, JAVA_BYTE, suffixOffset, value, prefixLen, suffixLen);
+            suffixOffset += suffixLen;
         }
         previousValue = value;
         return MemorySegment.ofArray(value).asReadOnly();
@@ -89,30 +92,30 @@ public final class DeltaByteArrayDecoder implements PageDecoder<MemorySegment> {
         }
     }
 
+    /** A decoded DELTA_BINARY_PACKED integer array paired with the page offset immediately after it. */
+    private record DeltaInts(int[] values, long nextOffset) {}
+
     /**
-     * Decodes a DELTA_BINARY_PACKED integer sequence from {@code buffer}, advancing its position past all block bytes
-     * including any padding values used to fill the last block. Returns only the {@code totalValueCount} real values as
-     * an int array.
+     * Decodes a DELTA_BINARY_PACKED integer sequence starting at {@code offset}, returning the {@code totalValueCount}
+     * real values plus the offset of the byte right after the complete encoding (including padding).
      *
-     * <p>DELTA_BINARY_PACKED encodes values in fixed-size blocks. The encoder pads the last block to a full block
-     * boundary. If we stop reading after {@code totalValueCount} real values, the buffer position may be mid-block.
-     * Draining the padding values forces the buffer position to advance past the entire encoding so the next segment
-     * starts correctly.
+     * <p>DELTA_BINARY_PACKED encodes values in fixed-size blocks; the encoder pads the last block to a full block
+     * boundary. Stopping after {@code totalValueCount} real values can leave the cursor mid-block, so the padding
+     * values are drained to advance past the entire encoding before reading the offset.
      */
-    private static int[] decodeDeltaInts(ByteBuffer buffer) {
+    private static DeltaInts decodeDeltaInts(MemorySegment page, long offset) {
         DeltaBinaryPackedDecoder decoder = new DeltaBinaryPackedDecoder();
-        decoder.load(buffer);
+        decoder.load(page.asSlice(offset));
         int realCount = decoder.totalValueCount();
         int paddedCount = decoder.paddedValueCount();
         int[] values = new int[realCount];
         for (int i = 0; i < realCount; i++) {
             values[i] = (int) decoder.next();
         }
-        // Drain padding values so buffer.position() advances past the complete block bytes.
         int paddingCount = paddedCount - realCount;
         if (paddingCount > 0) {
             decoder.skip(paddingCount);
         }
-        return values;
+        return new DeltaInts(values, offset + decoder.position());
     }
 }

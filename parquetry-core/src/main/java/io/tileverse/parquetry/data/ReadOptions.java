@@ -19,7 +19,9 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.function.Consumer;
 
+import io.tileverse.parquetry.data.read.DecodeExecutor;
 import io.tileverse.parquetry.data.read.DecryptionKeyRetriever;
+import io.tileverse.parquetry.data.read.FetchBudget;
 import io.tileverse.parquetry.filter.PruningDecision;
 
 import io.tileverse.io.ByteBufferPool;
@@ -51,6 +53,13 @@ import lombok.NonNull;
  * @param byteBufferPool source of pooled buffers for column-chunk fetch and per-page decompression
  * @param batchSize maximum row count per emitted batch on the {@code readBatches(...)} path; empty means each batch is
  *     bounded only by the natural page row count
+ * @param fetchBudget shared, process-wide cap on the in-flight bytes a read may speculatively prefetch
+ * @param maxCoalesceGap largest byte gap between adjacent column chunks that the planner will bridge into one read
+ * @param maxCoalescedSpan largest byte span a single coalesced range may grow to before the planner opens a new range
+ * @param prefetchDepth how many upcoming row groups the prefetcher tries to fetch ahead of the consumed one
+ * @param maxConcurrentFetchesPerRead upper bound on row-group fetches running concurrently within one read
+ * @param decodeExecutor shared, process-wide CPU pool that decodes row groups in parallel
+ * @param maxDecodeAheadPerRead row groups one read may decode ahead of consumption; 0 decodes serially inline
  */
 public record ReadOptions(
         boolean useStatsFilter,
@@ -61,11 +70,34 @@ public record ReadOptions(
         @NonNull Consumer<PruningDecision> pruningDecisionListener,
         @NonNull Optional<DecryptionKeyRetriever> decryptionKeyRetriever,
         @NonNull ByteBufferPool byteBufferPool,
-        @NonNull OptionalInt batchSize) {
+        @NonNull OptionalInt batchSize,
+        @NonNull FetchBudget fetchBudget,
+        int maxCoalesceGap,
+        int maxCoalescedSpan,
+        int prefetchDepth,
+        int maxConcurrentFetchesPerRead,
+        @NonNull DecodeExecutor decodeExecutor,
+        int maxDecodeAheadPerRead) {
 
     public ReadOptions {
         if (batchSize.isPresent() && batchSize.getAsInt() <= 0) {
             throw new IllegalArgumentException("batchSize must be > 0 when present, got " + batchSize.getAsInt());
+        }
+        if (maxCoalesceGap < 0) {
+            throw new IllegalArgumentException("maxCoalesceGap must be >= 0, got " + maxCoalesceGap);
+        }
+        if (maxCoalescedSpan <= 0) {
+            throw new IllegalArgumentException("maxCoalescedSpan must be > 0, got " + maxCoalescedSpan);
+        }
+        if (prefetchDepth < 0) {
+            throw new IllegalArgumentException("prefetchDepth must be >= 0, got " + prefetchDepth);
+        }
+        if (maxConcurrentFetchesPerRead <= 0) {
+            throw new IllegalArgumentException(
+                    "maxConcurrentFetchesPerRead must be > 0, got " + maxConcurrentFetchesPerRead);
+        }
+        if (maxDecodeAheadPerRead < 0) {
+            throw new IllegalArgumentException("maxDecodeAheadPerRead must be >= 0, got " + maxDecodeAheadPerRead);
         }
     }
 
@@ -88,6 +120,13 @@ public record ReadOptions(
         private Optional<DecryptionKeyRetriever> decryptionKeyRetriever = Optional.empty();
         private ByteBufferPool byteBufferPool = ByteBufferPool.getDefault();
         private OptionalInt batchSize = OptionalInt.empty();
+        private FetchBudget fetchBudget = FetchBudget.defaultBudget();
+        private int maxCoalesceGap = 1 << 20;
+        private int maxCoalescedSpan = 8 << 20;
+        private int prefetchDepth = 2;
+        private int maxConcurrentFetchesPerRead = 4;
+        private DecodeExecutor decodeExecutor = DecodeExecutor.shared();
+        private int maxDecodeAheadPerRead = 2;
 
         private Builder() {}
 
@@ -144,6 +183,56 @@ public record ReadOptions(
             return this;
         }
 
+        public Builder fetchBudget(@NonNull FetchBudget v) {
+            this.fetchBudget = v;
+            return this;
+        }
+
+        public Builder maxCoalesceGap(int v) {
+            if (v < 0) {
+                throw new IllegalArgumentException("maxCoalesceGap must be >= 0, got " + v);
+            }
+            this.maxCoalesceGap = v;
+            return this;
+        }
+
+        public Builder maxCoalescedSpan(int v) {
+            if (v <= 0) {
+                throw new IllegalArgumentException("maxCoalescedSpan must be > 0, got " + v);
+            }
+            this.maxCoalescedSpan = v;
+            return this;
+        }
+
+        public Builder prefetchDepth(int v) {
+            if (v < 0) {
+                throw new IllegalArgumentException("prefetchDepth must be >= 0, got " + v);
+            }
+            this.prefetchDepth = v;
+            return this;
+        }
+
+        public Builder maxConcurrentFetchesPerRead(int v) {
+            if (v <= 0) {
+                throw new IllegalArgumentException("maxConcurrentFetchesPerRead must be > 0, got " + v);
+            }
+            this.maxConcurrentFetchesPerRead = v;
+            return this;
+        }
+
+        public Builder decodeExecutor(@NonNull DecodeExecutor v) {
+            this.decodeExecutor = v;
+            return this;
+        }
+
+        public Builder maxDecodeAheadPerRead(int v) {
+            if (v < 0) {
+                throw new IllegalArgumentException("maxDecodeAheadPerRead must be >= 0, got " + v);
+            }
+            this.maxDecodeAheadPerRead = v;
+            return this;
+        }
+
         public ReadOptions build() {
             return new ReadOptions(
                     useStatsFilter,
@@ -154,7 +243,14 @@ public record ReadOptions(
                     pruningDecisionListener,
                     decryptionKeyRetriever,
                     byteBufferPool,
-                    batchSize);
+                    batchSize,
+                    fetchBudget,
+                    maxCoalesceGap,
+                    maxCoalescedSpan,
+                    prefetchDepth,
+                    maxConcurrentFetchesPerRead,
+                    decodeExecutor,
+                    maxDecodeAheadPerRead);
         }
     }
 }

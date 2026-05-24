@@ -188,7 +188,8 @@ class DecoderFactoryConformanceTest {
                             .orElseThrow(
                                     () -> new IllegalStateException("DICTIONARY_PAGE missing header for " + debugLabel))
                             .numValues();
-                    Dictionary<?> dict = DictionaryDecoder.read(dictPage, kind, dictValueCount, typeLength);
+                    Dictionary<?> dict =
+                            DictionaryDecoder.read(MemorySegment.ofBuffer(dictPage), kind, dictValueCount, typeLength);
                     currentDict = Optional.of(dict);
 
                 } else if (type == PageType.DATA_PAGE) {
@@ -253,7 +254,7 @@ class DecoderFactoryConformanceTest {
             List<Object> out) {
 
         PageDecoder<?> decoder = DecoderFactory.decoderFor(encoding, kind, typeLength, dictionary);
-        decoder.load(valuePayload, numValues);
+        decoder.load(MemorySegment.ofBuffer(valuePayload), numValues);
         for (int i = 0; i < numValues; i++) {
             out.add(decoder.next());
         }

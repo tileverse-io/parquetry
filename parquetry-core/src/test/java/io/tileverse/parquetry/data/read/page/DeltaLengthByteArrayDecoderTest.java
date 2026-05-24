@@ -20,7 +20,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.ByteArrayOutputStream;
 import java.lang.foreign.MemorySegment;
-import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
 import org.junit.jupiter.api.Test;
@@ -53,7 +52,7 @@ class DeltaLengthByteArrayDecoderTest {
         byte[] page = out.toByteArray();
 
         PageDecoder<MemorySegment> decoder = new DeltaLengthByteArrayDecoder();
-        decoder.load(ByteBuffer.wrap(page), values.length);
+        decoder.load(MemorySegment.ofArray(page), values.length);
 
         for (String expected : values) {
             MemorySegment slice = decoder.next();
@@ -79,7 +78,7 @@ class DeltaLengthByteArrayDecoderTest {
         }
 
         PageDecoder<MemorySegment> decoder = new DeltaLengthByteArrayDecoder();
-        decoder.load(ByteBuffer.wrap(out.toByteArray()), values.length);
+        decoder.load(MemorySegment.ofArray(out.toByteArray()), values.length);
 
         // Skip first two, then read the last two
         decoder.skip(2);
@@ -114,7 +113,7 @@ class DeltaLengthByteArrayDecoderTest {
         byte[] page = out.toByteArray();
 
         PageDecoder<MemorySegment> decoder = new DeltaLengthByteArrayDecoder();
-        decoder.load(ByteBuffer.wrap(page), values.length);
+        decoder.load(MemorySegment.ofArray(page), values.length);
 
         MemorySegment[] dst = new MemorySegment[values.length];
         decoder.decodeBinary(values.length, dst, 0);

@@ -17,7 +17,7 @@ package io.tileverse.parquetry.data.read.page;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 
 import org.junit.jupiter.api.Test;
 
@@ -29,7 +29,7 @@ class ByteStreamSplitDoubleDecoderTest {
         byte[] encoded = encode(values);
 
         PageDecoder<Double> decoder = new ByteStreamSplitDoubleDecoder();
-        decoder.load(ByteBuffer.wrap(encoded), values.length);
+        decoder.load(MemorySegment.ofArray(encoded), values.length);
         for (int i = 0; i < values.length; i++) {
             assertThat(decoder.next()).as("value " + i).isEqualTo(values[i]);
         }
@@ -41,7 +41,7 @@ class ByteStreamSplitDoubleDecoderTest {
         byte[] encoded = encode(values);
 
         PageDecoder<Double> decoder = new ByteStreamSplitDoubleDecoder();
-        decoder.load(ByteBuffer.wrap(encoded), values.length);
+        decoder.load(MemorySegment.ofArray(encoded), values.length);
         decoder.skip(3);
         assertThat(decoder.next()).isEqualTo(4.0);
         assertThat(decoder.next()).isEqualTo(5.0);
@@ -53,7 +53,7 @@ class ByteStreamSplitDoubleDecoderTest {
         byte[] encoded = encode(values);
 
         PageDecoder<Double> decoder = new ByteStreamSplitDoubleDecoder();
-        decoder.load(ByteBuffer.wrap(encoded), values.length);
+        decoder.load(MemorySegment.ofArray(encoded), values.length);
 
         double[] dst = new double[values.length];
         decoder.decodeDoubles(values.length, dst, 0);

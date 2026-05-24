@@ -46,7 +46,7 @@ class PlainInt96DecoderTest {
         page.flip();
 
         PageDecoder<MemorySegment> decoder = new PlainInt96Decoder();
-        decoder.load(page, 3);
+        decoder.load(MemorySegment.ofBuffer(page), 3);
 
         MemorySegment result0 = decoder.next();
         assertThat(result0.byteSize()).isEqualTo(INT96_BYTES);
@@ -69,7 +69,7 @@ class PlainInt96DecoderTest {
         page.flip();
 
         PageDecoder<MemorySegment> decoder = new PlainInt96Decoder();
-        decoder.load(page, 1);
+        decoder.load(MemorySegment.ofBuffer(page), 1);
 
         MemorySegment slice = decoder.next();
         assertThat(slice.isReadOnly()).isTrue();
@@ -91,7 +91,7 @@ class PlainInt96DecoderTest {
         page.flip();
 
         PageDecoder<MemorySegment> decoder = new PlainInt96Decoder();
-        decoder.load(page, 3);
+        decoder.load(MemorySegment.ofBuffer(page), 3);
         decoder.skip(2);
 
         MemorySegment result = decoder.next();
@@ -108,7 +108,7 @@ class PlainInt96DecoderTest {
         page.flip();
 
         PageDecoder<MemorySegment> decoder = new PlainInt96Decoder();
-        decoder.load(page, 3);
+        decoder.load(MemorySegment.ofBuffer(page), 3);
 
         MemorySegment[] dst = new MemorySegment[3];
         decoder.decodeBinary(3, dst, 0);

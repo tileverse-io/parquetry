@@ -15,33 +15,39 @@
  */
 package io.tileverse.parquetry.data.read.page;
 
-import static java.nio.ByteOrder.LITTLE_ENDIAN;
+import static io.tileverse.parquetry.format.ParquetLayouts.DOUBLE;
 
-import java.nio.ByteBuffer;
-import java.nio.DoubleBuffer;
+import java.lang.foreign.MemorySegment;
 
 /** PLAIN decoder for DOUBLE: eight bytes, little-endian IEEE 754 per value. */
 public final class PlainDoubleDecoder implements PageDecoder<Double> {
 
-    private DoubleBuffer buffer;
+    private static final int BYTES_PER_VALUE = Double.BYTES;
+
+    private MemorySegment segment;
+    private long offset;
 
     @Override
-    public void load(ByteBuffer page, int valueCount) {
-        this.buffer = page.order(LITTLE_ENDIAN).asDoubleBuffer();
+    public void load(MemorySegment page, int valueCount) {
+        this.segment = page;
+        this.offset = 0L;
     }
 
     @Override
     public Double next() {
-        return buffer.get();
+        double value = segment.get(DOUBLE, offset);
+        offset += BYTES_PER_VALUE;
+        return value;
     }
 
     @Override
-    public void decodeDoubles(int n, double[] dst, int offset) {
-        buffer.get(dst, offset, n);
+    public void decodeDoubles(int n, double[] dst, int dstOffset) {
+        MemorySegment.copy(segment, DOUBLE, offset, dst, dstOffset, n);
+        offset += (long) n * BYTES_PER_VALUE;
     }
 
     @Override
     public void skip(int n) {
-        buffer.position(buffer.position() + n);
+        offset += (long) n * BYTES_PER_VALUE;
     }
 }

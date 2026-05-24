@@ -18,7 +18,7 @@ package io.tileverse.parquetry.data.read.page;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.ByteArrayOutputStream;
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 
 import org.junit.jupiter.api.Test;
 
@@ -31,7 +31,7 @@ class DeltaBinaryPackedDecoderTest {
         byte[] encoded = encodeInts(values, 32, 4); // 32 values, 4 miniblocks
 
         PageDecoder<Integer> decoder = new DeltaBinaryPackedInt32Decoder();
-        decoder.load(ByteBuffer.wrap(encoded), values.length);
+        decoder.load(MemorySegment.ofArray(encoded), values.length);
         for (int i = 0; i < values.length; i++) {
             assertThat(decoder.next()).as("value " + i).isEqualTo(values[i]);
         }
@@ -48,7 +48,7 @@ class DeltaBinaryPackedDecoderTest {
         byte[] encoded = encodeInts(padded, 16, 4);
 
         PageDecoder<Integer> decoder = new DeltaBinaryPackedInt32Decoder();
-        decoder.load(ByteBuffer.wrap(encoded), values.length);
+        decoder.load(MemorySegment.ofArray(encoded), values.length);
         for (int i = 0; i < values.length; i++) {
             assertThat(decoder.next()).as("value " + i).isEqualTo(values[i]);
         }
@@ -61,7 +61,7 @@ class DeltaBinaryPackedDecoderTest {
         byte[] encoded = encodeLongs(values, 128, 4);
 
         PageDecoder<Long> decoder = new DeltaBinaryPackedInt64Decoder();
-        decoder.load(ByteBuffer.wrap(encoded), values.length);
+        decoder.load(MemorySegment.ofArray(encoded), values.length);
         for (int i = 0; i < values.length; i++) {
             assertThat(decoder.next()).as("value " + i).isEqualTo(values[i]);
         }
@@ -77,7 +77,7 @@ class DeltaBinaryPackedDecoderTest {
         byte[] encoded = encodeInts(padded, 8, 2, values.length);
 
         PageDecoder<Integer> decoder = new DeltaBinaryPackedInt32Decoder();
-        decoder.load(ByteBuffer.wrap(encoded), values.length);
+        decoder.load(MemorySegment.ofArray(encoded), values.length);
 
         int[] dst = new int[values.length];
         decoder.decodeInts(values.length, dst, 0);
@@ -95,7 +95,7 @@ class DeltaBinaryPackedDecoderTest {
         byte[] encoded = encodeLongs(padded, 4, 2, values.length);
 
         PageDecoder<Long> decoder = new DeltaBinaryPackedInt64Decoder();
-        decoder.load(ByteBuffer.wrap(encoded), values.length);
+        decoder.load(MemorySegment.ofArray(encoded), values.length);
 
         long[] dst = new long[values.length];
         decoder.decodeLongs(values.length, dst, 0);

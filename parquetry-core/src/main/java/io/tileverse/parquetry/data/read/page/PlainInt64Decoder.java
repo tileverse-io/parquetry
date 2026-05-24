@@ -15,33 +15,39 @@
  */
 package io.tileverse.parquetry.data.read.page;
 
-import static java.nio.ByteOrder.LITTLE_ENDIAN;
+import static io.tileverse.parquetry.format.ParquetLayouts.INT64;
 
-import java.nio.ByteBuffer;
-import java.nio.LongBuffer;
+import java.lang.foreign.MemorySegment;
 
 /** PLAIN decoder for INT64: eight bytes, little-endian per value. */
 public final class PlainInt64Decoder implements PageDecoder<Long> {
 
-    private LongBuffer buffer;
+    private static final int BYTES_PER_VALUE = Long.BYTES;
+
+    private MemorySegment segment;
+    private long offset;
 
     @Override
-    public void load(ByteBuffer page, int valueCount) {
-        this.buffer = page.order(LITTLE_ENDIAN).asLongBuffer();
+    public void load(MemorySegment page, int valueCount) {
+        this.segment = page;
+        this.offset = 0L;
     }
 
     @Override
     public Long next() {
-        return buffer.get();
+        long value = segment.get(INT64, offset);
+        offset += BYTES_PER_VALUE;
+        return value;
     }
 
     @Override
-    public void decodeLongs(int n, long[] dst, int offset) {
-        buffer.get(dst, offset, n);
+    public void decodeLongs(int n, long[] dst, int dstOffset) {
+        MemorySegment.copy(segment, INT64, offset, dst, dstOffset, n);
+        offset += (long) n * BYTES_PER_VALUE;
     }
 
     @Override
     public void skip(int n) {
-        buffer.position(buffer.position() + n);
+        offset += (long) n * BYTES_PER_VALUE;
     }
 }

@@ -17,7 +17,7 @@ package io.tileverse.parquetry.data.write.page;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 import java.nio.IntBuffer;
 import java.util.stream.Stream;
 
@@ -97,7 +97,7 @@ class RleDictionaryEncoderTest {
         }
         Dictionary.IntDict dict = new Dictionary.IntDict(IntBuffer.wrap(dictValues));
         RleDictionaryPageDecoder<Integer> decoder = new RleDictionaryPageDecoder<>(dict);
-        decoder.load(ByteBuffer.wrap(out.toByteArray()), indexes.length);
+        decoder.load(MemorySegment.ofArray(out.toByteArray()), indexes.length);
 
         for (int i = 0; i < indexes.length; i++) {
             assertThat(decoder.next()).as("%s [%d]", label, i).isEqualTo(indexes[i] * 10);

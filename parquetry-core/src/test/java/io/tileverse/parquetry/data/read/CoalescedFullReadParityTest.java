@@ -1,0 +1,127 @@
+/*
+ * Copyright (c) 2026 Tileverse.io
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.tileverse.parquetry.data.read;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.OptionalLong;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import io.tileverse.storage.RangeReader;
+
+import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ReadOptions;
+import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.record.ParquetRecord;
+
+import io.tileverse.io.ByteBufferPool;
+
+/**
+ * Proves two properties of the coalesced+prefetched read path:
+ *
+ * <ol>
+ *   <li>A full read returns the correct number of records (parity with the written data).
+ *   <li>The number of {@link RangeReader#readRange} calls during data-page fetching is significantly fewer than one
+ *       call per column per row group, confirming that column chunks within a row group are coalesced into a single
+ *       range read.
+ * </ol>
+ */
+class CoalescedFullReadParityTest {
+
+    /**
+     * Delegating {@link RangeReader} that counts how many times {@link #readRange(long, int, ByteBuffer)} is called.
+     * Uses no mocking framework - just a plain wrapper.
+     */
+    private static final class CountingRangeReader implements RangeReader {
+
+        private final RangeReader delegate;
+        final AtomicInteger calls = new AtomicInteger();
+
+        CountingRangeReader(RangeReader delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public int readRange(long offset, int length, ByteBuffer target) {
+            calls.incrementAndGet();
+            return delegate.readRange(offset, length, target);
+        }
+
+        @Override
+        public OptionalLong size() {
+            return delegate.size();
+        }
+
+        @Override
+        public String getSourceIdentifier() {
+            return delegate.getSourceIdentifier();
+        }
+
+        @Override
+        public void close() throws IOException {
+            delegate.close();
+        }
+    }
+
+    @Test
+    void fullReadIsCorrectAndCoalescesRangeReads(@TempDir Path tmp) throws Exception {
+        int rows = 4_000;
+        Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(tmp, rows);
+        int rowGroups = TestParquetFiles.rowGroupCount(file);
+        int columns = 3;
+
+        ByteBufferPool pool = new ByteBufferPool();
+        List<ParquetRecord> records = new ArrayList<>();
+        int dataReads;
+        try (RangeReader base = TestParquetFiles.openRangeReader(file)) {
+            CountingRangeReader counting = new CountingRangeReader(base);
+            ParquetDataset dataset = ParquetDataset.open(counting);
+            ReadOptions options = ReadOptions.builder().byteBufferPool(pool).build();
+            try (Stream<ParquetRecord> stream = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
+                // Footer and filter-plan reads have already happened inside read().
+                // Counting from here isolates the coalesced data-page fetches only.
+                int before = counting.calls.get();
+                stream.forEach(records::add);
+                dataReads = counting.calls.get() - before;
+            }
+        }
+
+        assertThat(records).hasSize(rows);
+        assertThat(rowGroups).as("fixture must span multiple row groups").isGreaterThan(1);
+        assertThat(dataReads)
+                .as(
+                        "each row group's columns coalesce into about one range read, far below %d cols x %d row groups",
+                        columns, rowGroups)
+                .isLessThanOrEqualTo(rowGroups)
+                .isLessThan(columns * rowGroups);
+        assertThat(outstandingBorrows(pool)).isZero();
+    }
+
+    private static long outstandingBorrows(ByteBufferPool pool) {
+        ByteBufferPool.PoolStatistics stats = pool.getStatistics();
+        return (stats.created() + stats.reused()) - (stats.returned() + stats.discarded());
+    }
+}

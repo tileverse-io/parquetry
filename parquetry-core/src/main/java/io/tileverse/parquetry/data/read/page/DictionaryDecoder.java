@@ -15,11 +15,13 @@
  */
 package io.tileverse.parquetry.data.read.page;
 
+import static io.tileverse.parquetry.format.ParquetLayouts.DOUBLE;
+import static io.tileverse.parquetry.format.ParquetLayouts.FLOAT;
+import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
+import static io.tileverse.parquetry.format.ParquetLayouts.INT64;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
-import static java.nio.ByteOrder.LITTLE_ENDIAN;
 
 import java.lang.foreign.MemorySegment;
-import java.nio.ByteBuffer;
 import java.nio.DoubleBuffer;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
@@ -37,7 +39,7 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
  *
  * <p>Dictionary pages carry all unique values for a column chunk in PLAIN encoding. For fixed-width primitives the
  * decoder bulk-copies the page bytes into an owned primitive buffer (no boxing, single allocation); for variable-length
- * binary it copies each value into an owned heap {@link ByteBuffer}. Either way, the resulting {@link Dictionary}
+ * binary it copies each value into an owned heap {@link MemorySegment}. Either way, the resulting {@link Dictionary}
  * outlives the source page bytes, so its values must own their storage to survive the dictionary-page scratch buffer
  * being returned to its pool.
  */
@@ -55,7 +57,7 @@ public final class DictionaryDecoder {
      */
     // The wildcard return is intentional: the concrete element type is chosen at runtime by PrimitiveKind.
     @SuppressWarnings("java:S1452")
-    public static Dictionary<?> read(ByteBuffer page, PrimitiveKind kind, int valueCount, OptionalInt typeLength) {
+    public static Dictionary<?> read(MemorySegment page, PrimitiveKind kind, int valueCount, OptionalInt typeLength) {
         return switch (kind) {
             case BOOLEAN -> readBooleans(page, valueCount);
             case INT32 -> readInts(page, valueCount);
@@ -72,41 +74,40 @@ public final class DictionaryDecoder {
         };
     }
 
-    private static Dictionary.BooleanDict readBooleans(ByteBuffer page, int n) {
+    private static Dictionary.BooleanDict readBooleans(MemorySegment page, int n) {
         int requiredBytes = (n + 7) >>> 3;
-        if (page.remaining() < requiredBytes) {
-            throw new MalformedFileException("BOOLEAN dictionary page has " + page.remaining() + " byte(s) but "
+        if (page.byteSize() < requiredBytes) {
+            throw new MalformedFileException("BOOLEAN dictionary page has " + page.byteSize() + " byte(s) but "
                     + requiredBytes + " are required for " + n + " value(s)");
         }
-        return new Dictionary.BooleanDict(BitSet.valueOf(page), n);
+        return new Dictionary.BooleanDict(BitSet.valueOf(page.toArray(JAVA_BYTE)), n);
     }
 
-    private static Dictionary.IntDict readInts(ByteBuffer page, int n) {
-        IntBuffer view = page.duplicate().order(LITTLE_ENDIAN).asIntBuffer().limit(n);
-        IntBuffer owned = IntBuffer.allocate(n).put(view).flip().asReadOnlyBuffer();
-        return new Dictionary.IntDict(owned);
+    private static Dictionary.IntDict readInts(MemorySegment page, int n) {
+        int[] values = new int[n];
+        MemorySegment.copy(page, INT32, 0L, values, 0, n);
+        return new Dictionary.IntDict(IntBuffer.wrap(values).asReadOnlyBuffer());
     }
 
-    private static Dictionary.LongDict readLongs(ByteBuffer page, int n) {
-        LongBuffer view = page.duplicate().order(LITTLE_ENDIAN).asLongBuffer().limit(n);
-        LongBuffer owned = LongBuffer.allocate(n).put(view).flip().asReadOnlyBuffer();
-        return new Dictionary.LongDict(owned);
+    private static Dictionary.LongDict readLongs(MemorySegment page, int n) {
+        long[] values = new long[n];
+        MemorySegment.copy(page, INT64, 0L, values, 0, n);
+        return new Dictionary.LongDict(LongBuffer.wrap(values).asReadOnlyBuffer());
     }
 
-    private static Dictionary.FloatDict readFloats(ByteBuffer page, int n) {
-        FloatBuffer view = page.duplicate().order(LITTLE_ENDIAN).asFloatBuffer().limit(n);
-        FloatBuffer owned = FloatBuffer.allocate(n).put(view).flip().asReadOnlyBuffer();
-        return new Dictionary.FloatDict(owned);
+    private static Dictionary.FloatDict readFloats(MemorySegment page, int n) {
+        float[] values = new float[n];
+        MemorySegment.copy(page, FLOAT, 0L, values, 0, n);
+        return new Dictionary.FloatDict(FloatBuffer.wrap(values).asReadOnlyBuffer());
     }
 
-    private static Dictionary.DoubleDict readDoubles(ByteBuffer page, int n) {
-        DoubleBuffer view =
-                page.duplicate().order(LITTLE_ENDIAN).asDoubleBuffer().limit(n);
-        DoubleBuffer owned = DoubleBuffer.allocate(n).put(view).flip().asReadOnlyBuffer();
-        return new Dictionary.DoubleDict(owned);
+    private static Dictionary.DoubleDict readDoubles(MemorySegment page, int n) {
+        double[] values = new double[n];
+        MemorySegment.copy(page, DOUBLE, 0L, values, 0, n);
+        return new Dictionary.DoubleDict(DoubleBuffer.wrap(values).asReadOnlyBuffer());
     }
 
-    private static Dictionary.Int96Dict readInt96s(ByteBuffer page, int n) {
+    private static Dictionary.Int96Dict readInt96s(MemorySegment page, int n) {
         PlainInt96Decoder decoder = new PlainInt96Decoder();
         decoder.load(page, n);
         List<MemorySegment> values = new ArrayList<>(n);
@@ -116,7 +117,7 @@ public final class DictionaryDecoder {
         return new Dictionary.Int96Dict(values);
     }
 
-    private static Dictionary.BinaryDict readBinary(ByteBuffer page, int n) {
+    private static Dictionary.BinaryDict readBinary(MemorySegment page, int n) {
         PlainBinaryDecoder decoder = new PlainBinaryDecoder();
         decoder.load(page, n);
         List<MemorySegment> values = new ArrayList<>(n);
@@ -126,7 +127,7 @@ public final class DictionaryDecoder {
         return new Dictionary.BinaryDict(values);
     }
 
-    private static Dictionary.FixedLenBinaryDict readFixedLenBinary(ByteBuffer page, int n, int length) {
+    private static Dictionary.FixedLenBinaryDict readFixedLenBinary(MemorySegment page, int n, int length) {
         PlainFixedLenBinaryDecoder decoder = new PlainFixedLenBinaryDecoder(length);
         decoder.load(page, n);
         List<MemorySegment> values = new ArrayList<>(n);

@@ -15,8 +15,9 @@
  */
 package io.tileverse.parquetry.data.read.page;
 
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
+
 import java.lang.foreign.MemorySegment;
-import java.nio.ByteBuffer;
 
 /**
  * Data-page decoder for dictionary-encoded columns (PLAIN_DICTIONARY / RLE_DICTIONARY).
@@ -41,12 +42,10 @@ public final class RleDictionaryPageDecoder<T> implements PageDecoder<T> {
      * for index decoding.
      */
     @Override
-    public void load(ByteBuffer page, int valueCount) {
-        int bitWidth = page.get() & 0xff;
+    public void load(MemorySegment page, int valueCount) {
+        int bitWidth = page.get(JAVA_BYTE, 0L) & 0xff;
         indexDecoder = new LevelDecoder(bitWidth);
-        indexDecoder.load(page.slice());
-        // Advance position to end so callers see the full page as consumed.
-        page.position(page.limit());
+        indexDecoder.load(page.asSlice(1L));
     }
 
     @Override

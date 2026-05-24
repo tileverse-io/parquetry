@@ -17,6 +17,7 @@ package io.tileverse.parquetry.data.read.page;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 
 import org.junit.jupiter.api.Test;
@@ -35,7 +36,7 @@ class PlainBooleanDecoderTest {
         ByteBuffer page = ByteBuffer.wrap(new byte[] {(byte) 0xAA});
 
         PageDecoder<Boolean> decoder = new PlainBooleanDecoder();
-        decoder.load(page, 8);
+        decoder.load(MemorySegment.ofBuffer(page), 8);
 
         assertThat(decoder.next()).isFalse();
         assertThat(decoder.next()).isTrue();
@@ -60,7 +61,7 @@ class PlainBooleanDecoderTest {
         ByteBuffer page = ByteBuffer.wrap(new byte[] {(byte) 0x55, (byte) 0xFF});
 
         PageDecoder<Boolean> decoder = new PlainBooleanDecoder();
-        decoder.load(page, 16);
+        decoder.load(MemorySegment.ofBuffer(page), 16);
 
         // Byte 0 values (alternating T/F, bit0=1)
         assertThat(decoder.next()).isTrue();
@@ -84,7 +85,7 @@ class PlainBooleanDecoderTest {
         ByteBuffer page = ByteBuffer.wrap(new byte[] {(byte) 0x0F});
 
         PageDecoder<Boolean> decoder = new PlainBooleanDecoder();
-        decoder.load(page, 8);
+        decoder.load(MemorySegment.ofBuffer(page), 8);
         decoder.skip(4);
 
         // After skipping 4 (which were all true), we should read the next 4 (all false)
@@ -99,7 +100,7 @@ class PlainBooleanDecoderTest {
         ByteBuffer page = ByteBuffer.wrap(new byte[] {0x00});
 
         PageDecoder<Boolean> decoder = new PlainBooleanDecoder();
-        decoder.load(page, 8);
+        decoder.load(MemorySegment.ofBuffer(page), 8);
 
         for (int i = 0; i < 8; i++) {
             assertThat(decoder.next()).isFalse();
@@ -111,7 +112,7 @@ class PlainBooleanDecoderTest {
         ByteBuffer page = ByteBuffer.wrap(new byte[] {(byte) 0xFF});
 
         PageDecoder<Boolean> decoder = new PlainBooleanDecoder();
-        decoder.load(page, 8);
+        decoder.load(MemorySegment.ofBuffer(page), 8);
 
         for (int i = 0; i < 8; i++) {
             assertThat(decoder.next()).isTrue();
@@ -127,7 +128,7 @@ class PlainBooleanDecoderTest {
         page.flip();
 
         PageDecoder<Boolean> decoder = new PlainBooleanDecoder();
-        decoder.load(page, 13);
+        decoder.load(MemorySegment.ofBuffer(page), 13);
 
         boolean[] dst = new boolean[13];
         decoder.decodeBooleans(13, dst, 0);

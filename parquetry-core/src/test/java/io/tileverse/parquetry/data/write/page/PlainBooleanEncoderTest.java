@@ -17,7 +17,7 @@ package io.tileverse.parquetry.data.write.page;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -87,7 +87,7 @@ class PlainBooleanEncoderTest {
         new PlainBooleanEncoder().encode(values, values.length, out);
 
         PlainBooleanDecoder decoder = new PlainBooleanDecoder();
-        decoder.load(ByteBuffer.wrap(out.toByteArray()), values.length);
+        decoder.load(MemorySegment.ofArray(out.toByteArray()), values.length);
 
         boolean[] decoded = new boolean[values.length];
         decoder.decodeBooleans(values.length, decoded, 0);

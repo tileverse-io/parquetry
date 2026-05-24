@@ -20,7 +20,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.MemorySegment;
-import java.nio.ByteBuffer;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -77,7 +76,7 @@ class PlainInt96EncoderTest {
         new PlainInt96Encoder().encode(values, values.length, out);
 
         PlainInt96Decoder decoder = new PlainInt96Decoder();
-        decoder.load(ByteBuffer.wrap(out.toByteArray()), values.length);
+        decoder.load(MemorySegment.ofArray(out.toByteArray()), values.length);
 
         for (int i = 0; i < values.length; i++) {
             MemorySegment slice = decoder.next();

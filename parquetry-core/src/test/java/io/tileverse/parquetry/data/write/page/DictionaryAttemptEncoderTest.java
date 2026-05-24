@@ -17,7 +17,7 @@ package io.tileverse.parquetry.data.write.page;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 import java.nio.IntBuffer;
 import java.util.List;
 
@@ -79,7 +79,7 @@ class DictionaryAttemptEncoderTest {
         assertThat(result2.valueCount()).isEqualTo(3);
 
         PlainInt32Decoder plainDecoder = new PlainInt32Decoder();
-        plainDecoder.load(ByteBuffer.wrap(page2.toByteArray()), 3);
+        plainDecoder.load(MemorySegment.ofArray(page2.toByteArray()), 3);
         int[] decoded = new int[3];
         plainDecoder.decodeInts(3, decoded, 0);
         assertThat(decoded).containsExactly(3, 4, 3);
@@ -119,7 +119,7 @@ class DictionaryAttemptEncoderTest {
         assertThat(result.valueCount()).isEqualTo(5);
 
         PlainInt32Decoder plainDecoder = new PlainInt32Decoder();
-        plainDecoder.load(ByteBuffer.wrap(out.toByteArray()), 5);
+        plainDecoder.load(MemorySegment.ofArray(out.toByteArray()), 5);
         int[] decoded = new int[5];
         plainDecoder.decodeInts(5, decoded, 0);
         assertThat(decoded).containsExactly(10, 10, 20, 20, 10);
@@ -149,7 +149,7 @@ class DictionaryAttemptEncoderTest {
 
     private static int[] decodeIndices(byte[] pageBytes, int valueCount, Dictionary.IntDict dict) {
         RleDictionaryPageDecoder<Integer> decoder = new RleDictionaryPageDecoder<>(dict);
-        decoder.load(ByteBuffer.wrap(pageBytes), valueCount);
+        decoder.load(MemorySegment.ofArray(pageBytes), valueCount);
         int[] decoded = new int[valueCount];
         for (int i = 0; i < valueCount; i++) {
             decoded[i] = decoder.next();

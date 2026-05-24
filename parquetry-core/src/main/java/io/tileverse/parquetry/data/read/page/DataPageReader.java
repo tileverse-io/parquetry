@@ -17,7 +17,7 @@ package io.tileverse.parquetry.data.read.page;
 
 import java.io.IOException;
 import java.lang.foreign.Arena;
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 
 import io.tileverse.parquetry.data.Compression;
 import io.tileverse.parquetry.format.Encoding;
@@ -35,9 +35,9 @@ import io.tileverse.parquetry.schema.LevelMaxima;
  * <p>Use {@link #forHeader(PageHeader)} to dispatch per page; a column chunk may mix V1 and V2 pages in principle (rare
  * but legal), so the dispatch is per-page, not per-chunk.
  *
- * <p>The {@code compressedPagePayload} buffer passed to {@link #read(PageHeader, LevelMaxima, ByteBuffer, Compression,
- * Arena)} is a slice of the parent {@code FetchedColumnChunk}'s pooled compressed buffer; implementations must not
- * retain it past the call and must not close it.
+ * <p>The {@code compressedPagePayload} segment passed to {@link #read(PageHeader, LevelMaxima, MemorySegment,
+ * Compression, Arena)} is a slice of the parent {@code FetchedColumnChunk}'s compressed segment; implementations must
+ * not retain it past the call and must not close it.
  */
 public sealed interface DataPageReader permits DataPageV1Reader, DataPageV2Reader {
 
@@ -48,7 +48,7 @@ public sealed interface DataPageReader permits DataPageV1Reader, DataPageV2Reade
      * @param maxLevels the column's max repetition and definition levels; required by V1 to know whether the payload
      *     carries each level's length prefix. V2 ignores it because its level byte lengths come directly from the
      *     header.
-     * @param compressedPagePayload a read-positioned slice of the compressed column-chunk buffer covering exactly this
+     * @param compressedPagePayload a read-only slice of the compressed column-chunk segment covering exactly this
      *     page's bytes; implementations consume it locally and must not retain the reference
      * @param codec the column chunk's compression codec; used to decompress V2 value bytes and the entire V1 payload
      * @param pageArena the Arena to allocate the decompressed value bytes from; the caller owns the Arena's lifecycle
@@ -60,7 +60,7 @@ public sealed interface DataPageReader permits DataPageV1Reader, DataPageV2Reade
     DecodedPage read(
             PageHeader header,
             LevelMaxima maxLevels,
-            ByteBuffer compressedPagePayload,
+            MemorySegment compressedPagePayload,
             Compression codec,
             Arena pageArena)
             throws IOException;

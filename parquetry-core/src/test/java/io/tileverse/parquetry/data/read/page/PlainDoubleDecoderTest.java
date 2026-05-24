@@ -18,6 +18,7 @@ package io.tileverse.parquetry.data.read.page;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 
 import org.junit.jupiter.api.Test;
@@ -34,7 +35,7 @@ class PlainDoubleDecoderTest {
         page.flip();
 
         PageDecoder<Double> decoder = new PlainDoubleDecoder();
-        decoder.load(page, 4);
+        decoder.load(MemorySegment.ofBuffer(page), 4);
 
         assertThat(decoder.next()).isEqualTo(0.0);
         assertThat(decoder.next()).isEqualTo(-1.5);
@@ -52,7 +53,7 @@ class PlainDoubleDecoderTest {
         page.flip();
 
         PageDecoder<Double> decoder = new PlainDoubleDecoder();
-        decoder.load(page, 4);
+        decoder.load(MemorySegment.ofBuffer(page), 4);
         decoder.skip(2);
 
         assertThat(decoder.next()).isEqualTo(3.3);
@@ -67,7 +68,7 @@ class PlainDoubleDecoderTest {
         page.flip();
 
         PageDecoder<Double> decoder = new PlainDoubleDecoder();
-        decoder.load(page, 3);
+        decoder.load(MemorySegment.ofBuffer(page), 3);
 
         assertThat(decoder.next()).isNaN();
         assertThat(decoder.next()).isEqualTo(Double.POSITIVE_INFINITY);
@@ -84,7 +85,7 @@ class PlainDoubleDecoderTest {
         page.flip();
 
         PageDecoder<Double> decoder = new PlainDoubleDecoder();
-        decoder.load(page, 4);
+        decoder.load(MemorySegment.ofBuffer(page), 4);
 
         double[] dst = new double[4];
         decoder.decodeDoubles(4, dst, 0);

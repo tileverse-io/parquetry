@@ -16,13 +16,11 @@
 package io.tileverse.parquetry.data.read;
 
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
-import static java.nio.ByteOrder.LITTLE_ENDIAN;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
-import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Optional;
@@ -113,7 +111,7 @@ final class BatchColumnReader {
         this.maxLevels = new LevelMaxima(chunk.maxRepetitionLevel(), chunk.maxDefinitionLevel());
         this.codec = Compression.forWireCodec(chunk.metadata().codec());
         this.totalValues = chunk.metadata().numValues();
-        this.pageCursor = new PageCursor(chunk.compressedBuffer().buffer(), columnPath);
+        this.pageCursor = new PageCursor(chunk.compressedSegment(), columnPath);
         this.defBitWidth = LevelDecoder.computeBitWidth(maxLevels.maxDefinitionLevel());
         this.repBitWidth = LevelDecoder.computeBitWidth(maxLevels.maxRepetitionLevel());
         this.dictionary = chunk.dictionary();
@@ -271,16 +269,9 @@ final class BatchColumnReader {
             validity.set(0, values);
             return validity;
         }
-        ByteBuffer defBuf = levelByteBuffer(page.defLevelBytes());
         LevelDecoder defDecoder = new LevelDecoder(defBitWidth);
-        defDecoder.load(defBuf);
-        int[] defLevels = new int[values];
-        defDecoder.decode(values, defLevels, 0);
-        for (int i = 0; i < values; i++) {
-            if (defLevels[i] == maxDef) {
-                validity.set(i);
-            }
-        }
+        defDecoder.load(page.defLevelBytes());
+        defDecoder.decodeEquals(values, maxDef, validity, 0);
         return validity;
     }
 
@@ -293,19 +284,11 @@ final class BatchColumnReader {
         if (values == 0) {
             return EMPTY_REP_LEVELS;
         }
-        ByteBuffer repBuf = levelByteBuffer(page.repLevelBytes());
         LevelDecoder repDecoder = new LevelDecoder(repBitWidth);
-        repDecoder.load(repBuf);
+        repDecoder.load(page.repLevelBytes());
         int[] repLevels = new int[values];
         repDecoder.decode(values, repLevels, 0);
         return repLevels;
-    }
-
-    private static ByteBuffer levelByteBuffer(MemorySegment levelBytes) {
-        if (levelBytes == MemorySegment.NULL) {
-            return ByteBuffer.allocate(0).order(LITTLE_ENDIAN);
-        }
-        return levelBytes.asByteBuffer().order(LITTLE_ENDIAN);
     }
 
     private static int countRepZeroMarkers(int[] repLevels) {
@@ -352,7 +335,7 @@ final class BatchColumnReader {
     private void decodeValuesByKind(DecodedPage page) {
         int nonNullCount = pageValidity.cardinality();
         Encoding encoding = page.valuesEncoding();
-        ByteBuffer valueBuf = page.valueBytes().asByteBuffer().order(LITTLE_ENDIAN);
+        MemorySegment valueBuf = page.valueBytes();
         Dictionary<?> dict = dictionary.orElse(null);
         switch (leaf.kind()) {
             case INT32 -> pageInts = decodeInts(valueBuf, encoding, nonNullCount, dict);
@@ -366,7 +349,7 @@ final class BatchColumnReader {
         }
     }
 
-    private int[] decodeInts(ByteBuffer buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
+    private int[] decodeInts(MemorySegment buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
         int[] out = new int[pageSize];
         if (nonNullCount == 0) {
             return out;
@@ -383,7 +366,7 @@ final class BatchColumnReader {
         return out;
     }
 
-    private long[] decodeLongs(ByteBuffer buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
+    private long[] decodeLongs(MemorySegment buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
         long[] out = new long[pageSize];
         if (nonNullCount == 0) {
             return out;
@@ -400,7 +383,7 @@ final class BatchColumnReader {
         return out;
     }
 
-    private float[] decodeFloats(ByteBuffer buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
+    private float[] decodeFloats(MemorySegment buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
         float[] out = new float[pageSize];
         if (nonNullCount == 0) {
             return out;
@@ -417,7 +400,7 @@ final class BatchColumnReader {
         return out;
     }
 
-    private double[] decodeDoubles(ByteBuffer buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
+    private double[] decodeDoubles(MemorySegment buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
         double[] out = new double[pageSize];
         if (nonNullCount == 0) {
             return out;
@@ -434,7 +417,7 @@ final class BatchColumnReader {
         return out;
     }
 
-    private boolean[] decodeBooleans(ByteBuffer buf, Encoding encoding, int nonNullCount) {
+    private boolean[] decodeBooleans(MemorySegment buf, Encoding encoding, int nonNullCount) {
         boolean[] out = new boolean[pageSize];
         if (nonNullCount == 0) {
             return out;
@@ -451,7 +434,7 @@ final class BatchColumnReader {
         return out;
     }
 
-    private MemorySegment[] decodeBinary(ByteBuffer buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
+    private MemorySegment[] decodeBinary(MemorySegment buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
         MemorySegment[] out = new MemorySegment[pageSize];
         if (nonNullCount == 0) {
             return out;
@@ -465,12 +448,14 @@ final class BatchColumnReader {
             decoder.decodeBinary(nonNullCount, dense, 0);
             spreadSegments(dense, out);
         }
-        copySegmentsToHeap(out);
+        if (!isDictionaryEncoded(encoding)) {
+            copySegmentsToHeap(out);
+        }
         return out;
     }
 
     private MemorySegment[] decodeFixedLenBinary(
-            ByteBuffer buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
+            MemorySegment buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
         int byteWidth = requiredByteWidth();
         MemorySegment[] out = new MemorySegment[pageSize];
         if (nonNullCount == 0) {
@@ -485,11 +470,13 @@ final class BatchColumnReader {
             decoder.decodeBinary(nonNullCount, dense, 0);
             spreadSegments(dense, out);
         }
-        copySegmentsToHeap(out);
+        if (!isDictionaryEncoded(encoding)) {
+            copySegmentsToHeap(out);
+        }
         return out;
     }
 
-    private MemorySegment[] decodeInt96(ByteBuffer buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
+    private MemorySegment[] decodeInt96(MemorySegment buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
         MemorySegment[] out = new MemorySegment[pageSize];
         if (nonNullCount == 0) {
             return out;
@@ -503,7 +490,9 @@ final class BatchColumnReader {
             decoder.decodeBinary(nonNullCount, dense, 0);
             spreadSegments(dense, out);
         }
-        copySegmentsToHeap(out);
+        if (!isDictionaryEncoded(encoding)) {
+            copySegmentsToHeap(out);
+        }
         return out;
     }
 
@@ -511,6 +500,16 @@ final class BatchColumnReader {
         return leaf.typeLength()
                 .orElseThrow(() -> new IllegalStateException(
                         "FIXED_LEN_BYTE_ARRAY column " + columnPath.dot() + " is missing typeLength in schema"));
+    }
+
+    /**
+     * Dictionary-encoded binary values are references into the column's {@link Dictionary}, whose values are
+     * heap-owned, immutable, GC-managed segments (not page-Arena or pool memory). They outlive the page Arena and
+     * survive the chunk's close, so they need no per-row heap copy. PLAIN/DELTA values are zero-copy views into the
+     * page Arena and must be copied out before that Arena closes.
+     */
+    private static boolean isDictionaryEncoded(Encoding encoding) {
+        return encoding == Encoding.RLE_DICTIONARY || encoding == Encoding.PLAIN_DICTIONARY;
     }
 
     /**

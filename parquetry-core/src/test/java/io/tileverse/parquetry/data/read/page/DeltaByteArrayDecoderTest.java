@@ -20,7 +20,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.ByteArrayOutputStream;
 import java.lang.foreign.MemorySegment;
-import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
 import org.junit.jupiter.api.Test;
@@ -67,7 +66,7 @@ class DeltaByteArrayDecoderTest {
         byte[] page = out.toByteArray();
 
         PageDecoder<MemorySegment> decoder = new DeltaByteArrayDecoder();
-        decoder.load(ByteBuffer.wrap(page), values.length);
+        decoder.load(MemorySegment.ofArray(page), values.length);
 
         for (String expected : values) {
             MemorySegment slice = decoder.next();
@@ -100,7 +99,7 @@ class DeltaByteArrayDecoderTest {
         out.write("hello".getBytes(StandardCharsets.UTF_8));
 
         PageDecoder<MemorySegment> decoder = new DeltaByteArrayDecoder();
-        decoder.load(ByteBuffer.wrap(out.toByteArray()), 1);
+        decoder.load(MemorySegment.ofArray(out.toByteArray()), 1);
 
         MemorySegment slice = decoder.next();
         byte[] buf = slice.toArray(JAVA_BYTE);
@@ -144,7 +143,7 @@ class DeltaByteArrayDecoderTest {
         byte[] page = out.toByteArray();
 
         PageDecoder<MemorySegment> decoder = new DeltaByteArrayDecoder();
-        decoder.load(ByteBuffer.wrap(page), values.length);
+        decoder.load(MemorySegment.ofArray(page), values.length);
 
         MemorySegment[] dst = new MemorySegment[values.length];
         decoder.decodeBinary(values.length, dst, 0);

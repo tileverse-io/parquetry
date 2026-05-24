@@ -20,7 +20,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.MemorySegment;
-import java.nio.ByteBuffer;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -81,7 +80,7 @@ class PlainFixedLenBinaryEncoderTest {
         new PlainFixedLenBinaryEncoder(width).encode(values, values.length, out);
 
         PlainFixedLenBinaryDecoder decoder = new PlainFixedLenBinaryDecoder(width);
-        decoder.load(ByteBuffer.wrap(out.toByteArray()), values.length);
+        decoder.load(MemorySegment.ofArray(out.toByteArray()), values.length);
 
         for (int i = 0; i < values.length; i++) {
             MemorySegment slice = decoder.next();

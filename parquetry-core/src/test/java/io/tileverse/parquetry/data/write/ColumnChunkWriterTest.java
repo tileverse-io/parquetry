@@ -554,7 +554,7 @@ class ColumnChunkWriterTest {
         ByteBuffer payload = ByteBuffer.wrap(pageBytes, 1, pageBytes.length - 1).order(LITTLE_ENDIAN);
         io.tileverse.parquetry.data.read.page.LevelDecoder decoder =
                 new io.tileverse.parquetry.data.read.page.LevelDecoder(bitWidth);
-        decoder.load(payload);
+        decoder.load(MemorySegment.ofBuffer(payload));
         int[] indices = new int[count];
         decoder.decode(count, indices, 0);
         return indices;

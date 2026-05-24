@@ -17,7 +17,7 @@ package io.tileverse.parquetry.data.write.page;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -66,7 +66,7 @@ class ByteStreamSplitFloatEncoderTest {
         new ByteStreamSplitFloatEncoder().encode(values, values.length, out);
 
         ByteStreamSplitFloatDecoder decoder = new ByteStreamSplitFloatDecoder();
-        decoder.load(ByteBuffer.wrap(out.toByteArray()), values.length);
+        decoder.load(MemorySegment.ofArray(out.toByteArray()), values.length);
 
         float[] decoded = new float[values.length];
         decoder.decodeFloats(values.length, decoded, 0);

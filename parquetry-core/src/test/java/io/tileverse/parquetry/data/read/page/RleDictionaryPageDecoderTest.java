@@ -17,6 +17,7 @@ package io.tileverse.parquetry.data.read.page;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
 
@@ -62,7 +63,7 @@ class RleDictionaryPageDecoderTest {
         });
 
         PageDecoder<Integer> decoder = new RleDictionaryPageDecoder<>(dict);
-        decoder.load(page, 6);
+        decoder.load(MemorySegment.ofBuffer(page), 6);
 
         assertThat(decoder.next()).isEqualTo(10); // index 0
         assertThat(decoder.next()).isEqualTo(20); // index 1
@@ -101,7 +102,7 @@ class RleDictionaryPageDecoderTest {
         });
 
         PageDecoder<Integer> decoder = new RleDictionaryPageDecoder<>(dict);
-        decoder.load(page, 4);
+        decoder.load(MemorySegment.ofBuffer(page), 4);
 
         decoder.skip(1); // skip index 2
         assertThat(decoder.next()).isEqualTo(10); // index 0
@@ -124,7 +125,7 @@ class RleDictionaryPageDecoderTest {
         });
 
         PageDecoder<Integer> decoder = new RleDictionaryPageDecoder<>(dict);
-        decoder.load(page, 6);
+        decoder.load(MemorySegment.ofBuffer(page), 6);
 
         int[] dst = new int[6];
         decoder.decodeInts(6, dst, 0);

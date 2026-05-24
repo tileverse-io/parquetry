@@ -63,7 +63,7 @@ class DataPageV2ReaderTest {
 
         // DecodedPage owns the Arena; closing it closes the Arena.
         try (DecodedPage page =
-                reader.read(header, IGNORED, ByteBuffer.wrap(payload), uncompressed, Arena.ofConfined())) {
+                reader.read(header, IGNORED, MemorySegment.ofArray(payload), uncompressed, Arena.ofConfined())) {
             assertThat(page.valueCount()).isEqualTo(expected.length);
             assertThat(page.repLevelBytes())
                     .as("rep segment is NULL when repLen=0")
@@ -91,7 +91,7 @@ class DataPageV2ReaderTest {
                 newV2Header(expected.length, repLevels.length, defLevels.length, payload.length, /*compressed*/ false);
 
         try (DecodedPage page =
-                reader.read(header, IGNORED, ByteBuffer.wrap(payload), uncompressed, Arena.ofConfined())) {
+                reader.read(header, IGNORED, MemorySegment.ofArray(payload), uncompressed, Arena.ofConfined())) {
             assertThat(toBytes(page.repLevelBytes())).containsExactly(repLevels);
             assertThat(toBytes(page.defLevelBytes())).containsExactly(defLevels);
 
@@ -115,7 +115,7 @@ class DataPageV2ReaderTest {
                 newV2Header(expected.length, repLevels.length, defLevels.length, payload.length, /*compressed*/ true);
 
         try (DecodedPage page =
-                reader.read(header, IGNORED, ByteBuffer.wrap(payload), uncompressed, Arena.ofConfined())) {
+                reader.read(header, IGNORED, MemorySegment.ofArray(payload), uncompressed, Arena.ofConfined())) {
             assertThat(toBytes(page.repLevelBytes())).containsExactly(repLevels);
             assertThat(toBytes(page.defLevelBytes())).containsExactly(defLevels);
             int[] decoded =
@@ -148,7 +148,7 @@ class DataPageV2ReaderTest {
                         Optional.empty())));
 
         try (DecodedPage page =
-                reader.read(header, IGNORED, ByteBuffer.wrap(valueBytes), uncompressed, Arena.ofConfined())) {
+                reader.read(header, IGNORED, MemorySegment.ofArray(valueBytes), uncompressed, Arena.ofConfined())) {
             assertThat(page.valuesEncoding()).isEqualTo(Encoding.RLE_DICTIONARY);
         }
     }
@@ -158,7 +158,7 @@ class DataPageV2ReaderTest {
         byte[] payload = encodeInt32sLittleEndian(new int[] {1});
         PageHeader header = newV2Header(1, 0, 0, payload.length, false);
         Arena arena = Arena.ofConfined();
-        DecodedPage page = reader.read(header, IGNORED, ByteBuffer.wrap(payload), uncompressed, arena);
+        DecodedPage page = reader.read(header, IGNORED, MemorySegment.ofArray(payload), uncompressed, arena);
         page.close();
         // After close, the Arena is closed; any further allocation attempt must throw.
         assertThatThrownBy(() -> arena.allocate(1)).isInstanceOf(IllegalStateException.class);

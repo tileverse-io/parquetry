@@ -15,9 +15,9 @@
  */
 package io.tileverse.parquetry.data.read.page;
 
-import static java.nio.ByteOrder.LITTLE_ENDIAN;
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 
 /**
  * Shared DELTA_BINARY_PACKED decode engine. Works on {@code long} internally; INT32 and INT64 decoders delegate here.
@@ -27,10 +27,15 @@ import java.nio.ByteBuffer;
  * byte per miniblock); then the deltas are bit-packed in miniblocks at the per-miniblock width.
  *
  * <p>Value reconstruction: {@code value[i] = value[i-1] + (packed[i] + min_delta)}.
+ *
+ * <p>The decoder reads its input one byte at a time from a {@link MemorySegment}; {@link #position()} reports how many
+ * bytes have been consumed, which lets callers that pack several DELTA_BINARY_PACKED segments back-to-back (DELTA_BYTE
+ * ARRAY, DELTA_LENGTH_BYTE_ARRAY) find where the next segment begins.
  */
 final class DeltaBinaryPackedDecoder {
 
-    private ByteBuffer buffer;
+    private MemorySegment segment;
+    private long position;
 
     // Header fields
     private int blockSize;
@@ -51,8 +56,9 @@ final class DeltaBinaryPackedDecoder {
 
     private int valuesEmitted;
 
-    void load(ByteBuffer page) {
-        this.buffer = page.order(LITTLE_ENDIAN);
+    void load(MemorySegment page) {
+        this.segment = page;
+        this.position = 0L;
         this.blockSize = (int) readVarint();
         this.miniblocksPerBlock = (int) readVarint();
         this.valuesPerMiniblock = blockSize / miniblocksPerBlock;
@@ -66,6 +72,11 @@ final class DeltaBinaryPackedDecoder {
         this.currentMiniblockWidths = new int[miniblocksPerBlock];
         this.bitBuffer = 0L;
         this.bitsInBuffer = 0;
+    }
+
+    /** Number of bytes consumed from the loaded segment so far. */
+    long position() {
+        return position;
     }
 
     long next() {
@@ -108,9 +119,9 @@ final class DeltaBinaryPackedDecoder {
      * the last block. This is always {@code >= totalValueCount()}.
      *
      * <p>DELTA_BINARY_PACKED encoders always write at least one full block after the header value, even when
-     * {@code totalValueCount == 1}. Callers that share a single {@link ByteBuffer} across multiple DELTA_BINARY_PACKED
-     * segments (as in DELTA_BYTE_ARRAY) must drain this many values from each segment to leave the buffer positioned at
-     * the start of the next segment.
+     * {@code totalValueCount == 1}. Callers that pack several DELTA_BINARY_PACKED segments back-to-back (as in
+     * DELTA_BYTE_ARRAY) must drain this many values from each segment to leave the cursor positioned at the start of
+     * the next segment.
      */
     int paddedValueCount() {
         if (totalValueCount == 0) {
@@ -126,13 +137,13 @@ final class DeltaBinaryPackedDecoder {
     private void loadNextBlock() {
         currentMinDelta = readZigzagVarint();
         for (int i = 0; i < miniblocksPerBlock; i++) {
-            currentMiniblockWidths[i] = buffer.get() & 0xff;
+            currentMiniblockWidths[i] = readByte();
         }
     }
 
     private long readBitPacked(int width) {
         while (bitsInBuffer < width) {
-            int b = buffer.get() & 0xff;
+            int b = readByte();
             bitBuffer |= ((long) b) << bitsInBuffer;
             bitsInBuffer += 8;
         }
@@ -147,7 +158,7 @@ final class DeltaBinaryPackedDecoder {
         long result = 0L;
         int shift = 0;
         while (true) {
-            int b = buffer.get() & 0xff;
+            int b = readByte();
             result |= ((long) (b & 0x7f)) << shift;
             if ((b & 0x80) == 0) {
                 return result;
@@ -162,5 +173,9 @@ final class DeltaBinaryPackedDecoder {
     private long readZigzagVarint() {
         long raw = readVarint();
         return (raw >>> 1) ^ -(raw & 1);
+    }
+
+    private int readByte() {
+        return segment.get(JAVA_BYTE, position++) & 0xff;
     }
 }

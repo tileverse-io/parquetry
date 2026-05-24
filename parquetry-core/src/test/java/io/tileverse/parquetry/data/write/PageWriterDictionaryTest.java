@@ -71,7 +71,7 @@ class PageWriterDictionaryTest {
         byte[] decompressed = decompress(codec, compressedPayload, header.uncompressedPageSize());
 
         Dictionary<?> dictionary = DictionaryDecoder.read(
-                ByteBuffer.wrap(decompressed).order(LITTLE_ENDIAN),
+                MemorySegment.ofBuffer(ByteBuffer.wrap(decompressed).order(LITTLE_ENDIAN)),
                 PrimitiveKind.INT32,
                 dictionaryValues.length,
                 OptionalInt.empty());
@@ -121,7 +121,7 @@ class PageWriterDictionaryTest {
         byte[] decompressed = decompress(codec, compressedPayload, header.uncompressedPageSize());
 
         Dictionary.IntDict dict = (Dictionary.IntDict) DictionaryDecoder.read(
-                ByteBuffer.wrap(decompressed).order(LITTLE_ENDIAN),
+                MemorySegment.ofBuffer(ByteBuffer.wrap(decompressed).order(LITTLE_ENDIAN)),
                 PrimitiveKind.INT32,
                 dictionaryValues.length,
                 OptionalInt.empty());

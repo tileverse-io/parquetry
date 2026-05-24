@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Optional;
@@ -43,8 +44,6 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
-
-import io.tileverse.io.ByteBufferPool;
 
 /**
  * Unit tests for {@link BatchRowGroupReader}.
@@ -272,16 +271,11 @@ class BatchRowGroupReaderTest {
     }
 
     /**
-     * Wraps {@code data} in a non-pooled heap {@link ByteBufferPool.PooledByteBuffer} and builds a
-     * {@link FetchedColumnChunk} around it. The chunk is uncompressed with maxRep=0, maxDef=0 (required column).
+     * Wraps {@code data} in a read-only heap {@link MemorySegment} and builds a {@link FetchedColumnChunk} around it.
+     * The chunk is uncompressed with maxRep=0, maxDef=0 (required column).
      */
     private static FetchedColumnChunk heapChunk(ColumnPath path, byte[] data, long numValues) {
-        ByteBufferPool.PooledByteBuffer pooled = ByteBufferPool.heapBuffer(data.length);
-        ByteBuffer buf = pooled.buffer();
-        buf.clear();
-        buf.put(data);
-        buf.flip();
-        buf.order(LITTLE_ENDIAN);
+        MemorySegment segment = MemorySegment.ofArray(data).asReadOnly();
 
         ColumnMetaData meta = ColumnMetaData.builder()
                 .type(PhysicalType.INT32)
@@ -294,7 +288,7 @@ class BatchRowGroupReaderTest {
                 .dataPageOffset(0L)
                 .build();
 
-        return new FetchedColumnChunk(path, meta, /*maxRep*/ 0, /*maxDef*/ 0, pooled, Optional.empty());
+        return new FetchedColumnChunk(path, meta, /*maxRep*/ 0, /*maxDef*/ 0, segment, Optional.empty());
     }
 
     private static byte[] encodeInt32sLittleEndian(int[] values) {

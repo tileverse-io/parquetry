@@ -16,7 +16,6 @@
 package io.tileverse.parquetry.data.read.page;
 
 import java.lang.foreign.MemorySegment;
-import java.nio.ByteBuffer;
 
 /**
  * PLAIN decoder for INT96: twelve bytes, little-endian per value.
@@ -28,18 +27,20 @@ public final class PlainInt96Decoder implements PageDecoder<MemorySegment> {
 
     private static final int INT96_BYTES = 12;
 
-    private ByteBuffer buffer;
+    private MemorySegment segment;
+    private long offset;
 
     @Override
-    public void load(ByteBuffer page, int valueCount) {
-        this.buffer = page;
+    public void load(MemorySegment page, int valueCount) {
+        this.segment = page;
+        this.offset = 0L;
     }
 
     @Override
     public MemorySegment next() {
-        ByteBuffer slice = buffer.slice().limit(INT96_BYTES);
-        buffer.position(buffer.position() + INT96_BYTES);
-        return MemorySegment.ofBuffer(slice).asReadOnly();
+        MemorySegment value = segment.asSlice(offset, INT96_BYTES).asReadOnly();
+        offset += INT96_BYTES;
+        return value;
     }
 
     @Override
@@ -51,6 +52,6 @@ public final class PlainInt96Decoder implements PageDecoder<MemorySegment> {
 
     @Override
     public void skip(int n) {
-        buffer.position(buffer.position() + n * INT96_BYTES);
+        offset += (long) n * INT96_BYTES;
     }
 }

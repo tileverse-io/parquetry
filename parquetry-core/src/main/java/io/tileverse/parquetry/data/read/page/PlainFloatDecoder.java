@@ -15,33 +15,39 @@
  */
 package io.tileverse.parquetry.data.read.page;
 
-import static java.nio.ByteOrder.LITTLE_ENDIAN;
+import static io.tileverse.parquetry.format.ParquetLayouts.FLOAT;
 
-import java.nio.ByteBuffer;
-import java.nio.FloatBuffer;
+import java.lang.foreign.MemorySegment;
 
 /** PLAIN decoder for FLOAT: four bytes, little-endian IEEE 754 per value. */
 public final class PlainFloatDecoder implements PageDecoder<Float> {
 
-    private FloatBuffer buffer;
+    private static final int BYTES_PER_VALUE = Float.BYTES;
+
+    private MemorySegment segment;
+    private long offset;
 
     @Override
-    public void load(ByteBuffer page, int valueCount) {
-        this.buffer = page.order(LITTLE_ENDIAN).asFloatBuffer();
+    public void load(MemorySegment page, int valueCount) {
+        this.segment = page;
+        this.offset = 0L;
     }
 
     @Override
     public Float next() {
-        return buffer.get();
+        float value = segment.get(FLOAT, offset);
+        offset += BYTES_PER_VALUE;
+        return value;
     }
 
     @Override
-    public void decodeFloats(int n, float[] dst, int offset) {
-        buffer.get(dst, offset, n);
+    public void decodeFloats(int n, float[] dst, int dstOffset) {
+        MemorySegment.copy(segment, FLOAT, offset, dst, dstOffset, n);
+        offset += (long) n * BYTES_PER_VALUE;
     }
 
     @Override
     public void skip(int n) {
-        buffer.position(buffer.position() + n);
+        offset += (long) n * BYTES_PER_VALUE;
     }
 }

@@ -21,6 +21,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.stream.Stream;
 
 import io.tileverse.storage.RangeReader;
@@ -28,7 +30,9 @@ import io.tileverse.storage.RangeReader;
 import io.tileverse.parquetry.batch.BatchMaterializer;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.data.read.BatchPipeline;
-import io.tileverse.parquetry.data.read.ColumnFetcher;
+import io.tileverse.parquetry.data.read.ParallelDecodeCoordinator;
+import io.tileverse.parquetry.data.read.RowGroupFetcher;
+import io.tileverse.parquetry.data.read.RowGroupPrefetcher;
 import io.tileverse.parquetry.data.read.RowGroupSurvivor;
 import io.tileverse.parquetry.filter.ExplainPlan;
 import io.tileverse.parquetry.filter.FilterPipeline;
@@ -65,7 +69,7 @@ import lombok.NonNull;
  * footer.
  *
  * <p>Instances are safe to share across threads. Cached footer, schema, and metadata are immutable; every
- * {@code read()} call allocates its own filter survivors, column fetcher, and batch pipeline. The underlying
+ * {@code read()} call allocates its own filter survivors, row-group prefetcher, and batch pipeline. The underlying
  * {@link RangeReader} must itself be thread-safe; the reader does not own it, and the caller closes it after the last
  * returned stream has been closed.
  *
@@ -135,8 +139,8 @@ public class ParquetReader {
         ExplainPlan plan = runFilterPipeline(predicate, projection, options);
         List<RowGroupSurvivor> survivors = survivorsFor(plan);
         ParquetSchema projectedSchema = plan.projectedSchema();
-        ColumnFetcher fetcher = ColumnFetcher.real(rangeReader, fileSchema, options.byteBufferPool());
-        return BatchPipeline.rows(fileSchema, projectedSchema, survivors, fetcher, options.batchSize(), materializer);
+        ParallelDecodeCoordinator coordinator = newDecodeCoordinator(survivors, projectedSchema, options);
+        return BatchPipeline.rows(coordinator, materializer);
     }
 
     /** Streams record batches matching {@code predicate} under {@code projection} via the default batch shape. */
@@ -157,10 +161,56 @@ public class ParquetReader {
         ExplainPlan plan = runFilterPipeline(predicate, projection, options);
         List<RowGroupSurvivor> survivors = survivorsFor(plan);
         ParquetSchema projectedSchema = plan.projectedSchema();
-        ColumnFetcher fetcher = ColumnFetcher.real(rangeReader, fileSchema, options.byteBufferPool());
-        Stream<ParquetRecordBatch> batches =
-                BatchPipeline.batches(fileSchema, projectedSchema, survivors, fetcher, options.batchSize());
+        ParallelDecodeCoordinator coordinator = newDecodeCoordinator(survivors, projectedSchema, options);
+        Stream<ParquetRecordBatch> batches = BatchPipeline.batches(coordinator);
         return batches.map(batch -> materializer.materialize(projectedSchema, batch));
+    }
+
+    /**
+     * Builds the coalescing fetcher and the prefetch pipeline for one read. The prefetcher owns a fresh per-read
+     * virtual-thread executor; closing the returned stream cascades to {@link RowGroupPrefetcher#close()}, which shuts
+     * the executor down, so no executor outlives the read.
+     */
+    private RowGroupPrefetcher newPrefetcher(
+            List<RowGroupSurvivor> survivors, ParquetSchema projectedSchema, ReadOptions options) {
+        RowGroupFetcher fetcher = new RowGroupFetcher(
+                rangeReader,
+                fileSchema,
+                projectedSchema,
+                options.byteBufferPool(),
+                options.maxCoalesceGap(),
+                options.maxCoalescedSpan());
+        ExecutorService executor = Executors.newThreadPerTaskExecutor(
+                Thread.ofVirtual().name("parquetry-fetch-", 0).factory());
+        try {
+            return new RowGroupPrefetcher(
+                    survivors,
+                    fetcher,
+                    options.fetchBudget(),
+                    executor,
+                    options.prefetchDepth(),
+                    options.maxConcurrentFetchesPerRead());
+        } catch (RuntimeException e) {
+            executor.shutdownNow();
+            throw e;
+        }
+    }
+
+    /**
+     * Wraps the fetch prefetcher in a {@link ParallelDecodeCoordinator} that decodes row groups in parallel on the
+     * shared decode pool while preserving file order. Closing the returned coordinator drains in-flight decodes and
+     * cascades to {@link RowGroupPrefetcher#close()}, so the per-read fetch executor still shuts down with the read.
+     */
+    private ParallelDecodeCoordinator newDecodeCoordinator(
+            List<RowGroupSurvivor> survivors, ParquetSchema projectedSchema, ReadOptions options) {
+        RowGroupPrefetcher prefetcher = newPrefetcher(survivors, projectedSchema, options);
+        return new ParallelDecodeCoordinator(
+                prefetcher,
+                options.decodeExecutor(),
+                options.maxDecodeAheadPerRead(),
+                projectedSchema,
+                fileSchema,
+                options.batchSize());
     }
 
     /** Runs the filter pipeline without reading data and returns the explain plan. */

@@ -15,12 +15,11 @@
  */
 package io.tileverse.parquetry.data.read.page;
 
-import static java.nio.ByteOrder.LITTLE_ENDIAN;
+import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
 
 import java.io.IOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
-import java.nio.ByteBuffer;
 
 import io.tileverse.parquetry.data.Compression;
 import io.tileverse.parquetry.format.DataPageHeader;
@@ -54,29 +53,32 @@ public final class DataPageV1Reader implements DataPageReader {
     public DecodedPage read(
             PageHeader header,
             LevelMaxima maxLevels,
-            ByteBuffer compressedPagePayload,
+            MemorySegment compressedPagePayload,
             Compression codec,
             Arena pageArena)
             throws IOException {
         DataPageHeader v1 = header.dataPageHeader()
                 .orElseThrow(() -> new MalformedFileException("PageHeader does not carry a DataPageHeader"));
         MemorySegment payload = decompressPayload(header, compressedPagePayload, codec, pageArena);
-        // Walk the decompressed payload with a ByteBuffer cursor for the length-prefix reads.
-        ByteBuffer cursor = payload.asByteBuffer().order(LITTLE_ENDIAN);
-        MemorySegment repLevels = readOptionalLevelSlice(payload, cursor, maxLevels.maxRepetitionLevel(), "repetition");
-        MemorySegment defLevels = readOptionalLevelSlice(payload, cursor, maxLevels.maxDefinitionLevel(), "definition");
-        // After the level slices are consumed, the cursor position is the start of the values section.
-        MemorySegment valueBytes = payload.asSlice(cursor.position()).asReadOnly();
+        // Walk the decompressed payload with a byte offset for the length-prefix reads.
+        LevelSlice rep = readOptionalLevelSlice(payload, 0L, maxLevels.maxRepetitionLevel(), "repetition");
+        LevelSlice def =
+                readOptionalLevelSlice(payload, rep.nextOffset(), maxLevels.maxDefinitionLevel(), "definition");
+        // After the level slices are consumed, the offset is the start of the values section.
+        MemorySegment valueBytes = payload.asSlice(def.nextOffset()).asReadOnly();
         Encoding valuesEncoding = DataPageReader.normalizeEncoding(v1.encoding());
-        return new DecodedPage(v1.numValues(), valuesEncoding, repLevels, defLevels, valueBytes, pageArena);
+        return new DecodedPage(v1.numValues(), valuesEncoding, rep.slice(), def.slice(), valueBytes, pageArena);
     }
+
+    /** A level-bytes slice paired with the payload offset immediately after it. */
+    private record LevelSlice(MemorySegment slice, long nextOffset) {}
 
     /**
      * Decompresses the full page payload into an Arena-allocated segment sized for
      * {@link PageHeader#uncompressedPageSize()}.
      */
     private static MemorySegment decompressPayload(
-            PageHeader header, ByteBuffer compressedPagePayload, Compression codec, Arena pageArena)
+            PageHeader header, MemorySegment compressedPagePayload, Compression codec, Arena pageArena)
             throws IOException {
         int uncompressedSize = header.uncompressedPageSize();
         if (uncompressedSize < 0) {
@@ -84,52 +86,48 @@ public final class DataPageV1Reader implements DataPageReader {
                     "V1 page uncompressedPageSize must be non-negative, got " + uncompressedSize);
         }
         MemorySegment payload = pageArena.allocate(uncompressedSize);
-        MemorySegment compressedSource = MemorySegment.ofBuffer(compressedPagePayload.duplicate());
-        codec.decompress(compressedSource, payload);
+        codec.decompress(compressedPagePayload, payload);
         return payload;
     }
 
     /**
-     * Reads the next {@code [int32 LE length][bytes...]} pair when the column has a non-zero max level, returning
-     * {@link MemorySegment#NULL} otherwise. The returned slice is a read-only view into {@code payload}.
+     * Reads the next {@code [int32 LE length][bytes...]} pair when the column has a non-zero max level, returning a
+     * {@link MemorySegment#NULL} slice (and an unchanged offset) otherwise. The returned slice is a read-only view into
+     * {@code payload}.
      */
-    private static MemorySegment readOptionalLevelSlice(
-            MemorySegment payload, ByteBuffer cursor, int maxLevel, String levelKind) {
+    private static LevelSlice readOptionalLevelSlice(MemorySegment payload, long offset, int maxLevel, String kind) {
         if (maxLevel == 0) {
-            return MemorySegment.NULL;
+            return new LevelSlice(MemorySegment.NULL, offset);
         }
-        int prefix = readLengthPrefix(cursor, levelKind);
-        return sliceAndAdvance(payload, cursor, prefix, levelKind);
+        int prefix = readLengthPrefix(payload, offset, kind);
+        return sliceAndAdvance(payload, offset + Integer.BYTES, prefix, kind);
     }
 
-    private static int readLengthPrefix(ByteBuffer cursor, String levelKind) {
-        if (cursor.remaining() < Integer.BYTES) {
-            throw new MalformedFileException("V1 page truncated before " + levelKind
-                    + " level length prefix: remaining=" + cursor.remaining() + " bytes, need 4");
+    private static int readLengthPrefix(MemorySegment payload, long offset, String kind) {
+        if (payload.byteSize() - offset < Integer.BYTES) {
+            throw new MalformedFileException("V1 page truncated before " + kind + " level length prefix: remaining="
+                    + (payload.byteSize() - offset) + " bytes, need 4");
         }
-        int length = cursor.getInt();
+        int length = payload.get(INT32, offset);
         if (length < 0) {
-            throw new MalformedFileException("V1 page " + levelKind + " level length prefix is negative: " + length);
+            throw new MalformedFileException("V1 page " + kind + " level length prefix is negative: " + length);
         }
         return length;
     }
 
     /**
-     * Returns a read-only slice of the next {@code length} bytes of {@code payload} starting at the cursor's current
-     * position, then advances the cursor past them. Returns {@link MemorySegment#NULL} when {@code length == 0}.
+     * Returns a read-only slice of {@code length} bytes of {@code payload} starting at {@code offset}, paired with the
+     * offset immediately after it. Uses a {@link MemorySegment#NULL} slice when {@code length == 0}.
      */
-    private static MemorySegment sliceAndAdvance(
-            MemorySegment payload, ByteBuffer cursor, int length, String levelKind) {
-        if (length > cursor.remaining()) {
-            throw new MalformedFileException("V1 page " + levelKind + " level length " + length
-                    + " exceeds remaining payload bytes " + cursor.remaining());
+    private static LevelSlice sliceAndAdvance(MemorySegment payload, long offset, int length, String kind) {
+        if (length > payload.byteSize() - offset) {
+            throw new MalformedFileException("V1 page " + kind + " level length " + length
+                    + " exceeds remaining payload bytes " + (payload.byteSize() - offset));
         }
         if (length == 0) {
-            return MemorySegment.NULL;
+            return new LevelSlice(MemorySegment.NULL, offset);
         }
-        int offset = cursor.position();
         MemorySegment slice = payload.asSlice(offset, length).asReadOnly();
-        cursor.position(offset + length);
-        return slice;
+        return new LevelSlice(slice, offset + length);
     }
 }

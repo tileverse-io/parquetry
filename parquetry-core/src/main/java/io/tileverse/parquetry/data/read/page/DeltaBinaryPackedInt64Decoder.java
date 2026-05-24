@@ -15,7 +15,7 @@
  */
 package io.tileverse.parquetry.data.read.page;
 
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 
 /**
  * DELTA_BINARY_PACKED decoder for INT64 columns.
@@ -28,7 +28,7 @@ public final class DeltaBinaryPackedInt64Decoder implements PageDecoder<Long> {
     private final DeltaBinaryPackedDecoder delegate = new DeltaBinaryPackedDecoder();
 
     @Override
-    public void load(ByteBuffer page, int valueCount) {
+    public void load(MemorySegment page, int valueCount) {
         delegate.load(page);
     }
 

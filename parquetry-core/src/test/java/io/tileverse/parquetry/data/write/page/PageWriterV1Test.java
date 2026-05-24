@@ -119,13 +119,13 @@ class PageWriterV1Test {
 
         int[] decodedRep = new int[repLevels.length];
         LevelDecoder repDecoder = new LevelDecoder(LevelDecoder.computeBitWidth(1));
-        repDecoder.load(repSlice);
+        repDecoder.load(MemorySegment.ofBuffer(repSlice));
         repDecoder.decode(repLevels.length, decodedRep, 0);
         assertThat(decodedRep).containsExactly(repLevels);
 
         int[] decodedDef = new int[defLevels.length];
         LevelDecoder defDecoder = new LevelDecoder(LevelDecoder.computeBitWidth(2));
-        defDecoder.load(defSlice);
+        defDecoder.load(MemorySegment.ofBuffer(defSlice));
         defDecoder.decode(defLevels.length, decodedDef, 0);
         assertThat(decodedDef).containsExactly(defLevels);
 

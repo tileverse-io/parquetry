@@ -19,6 +19,7 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.OptionalInt;
@@ -38,7 +39,8 @@ class DictionaryDecoderTest {
         page.putInt(300);
         page.flip();
 
-        Dictionary<?> dict = DictionaryDecoder.read(page, PrimitiveKind.INT32, 3, OptionalInt.empty());
+        Dictionary<?> dict =
+                DictionaryDecoder.read(MemorySegment.ofBuffer(page), PrimitiveKind.INT32, 3, OptionalInt.empty());
 
         assertThat(dict).isInstanceOf(Dictionary.IntDict.class);
         Dictionary.IntDict intDict = (Dictionary.IntDict) dict;
@@ -67,7 +69,8 @@ class DictionaryDecoderTest {
         page.put(baz);
         page.flip();
 
-        Dictionary<?> dict = DictionaryDecoder.read(page, PrimitiveKind.BYTE_ARRAY, 3, OptionalInt.empty());
+        Dictionary<?> dict =
+                DictionaryDecoder.read(MemorySegment.ofBuffer(page), PrimitiveKind.BYTE_ARRAY, 3, OptionalInt.empty());
 
         assertThat(dict).isInstanceOf(Dictionary.BinaryDict.class);
         Dictionary.BinaryDict binaryDict = (Dictionary.BinaryDict) dict;
@@ -86,7 +89,8 @@ class DictionaryDecoderTest {
         page.putFloat(2.5f);
         page.flip();
 
-        Dictionary<?> dict = DictionaryDecoder.read(page, PrimitiveKind.FLOAT, 2, OptionalInt.empty());
+        Dictionary<?> dict =
+                DictionaryDecoder.read(MemorySegment.ofBuffer(page), PrimitiveKind.FLOAT, 2, OptionalInt.empty());
 
         assertThat(dict).isInstanceOf(Dictionary.FloatDict.class);
         Dictionary.FloatDict floatDict = (Dictionary.FloatDict) dict;
@@ -109,7 +113,8 @@ class DictionaryDecoderTest {
         dictPage.putFloat(3.5f);
         dictPage.flip();
 
-        Dictionary<?> dict = DictionaryDecoder.read(dictPage, PrimitiveKind.FLOAT, 3, OptionalInt.empty());
+        Dictionary<?> dict =
+                DictionaryDecoder.read(MemorySegment.ofBuffer(dictPage), PrimitiveKind.FLOAT, 3, OptionalInt.empty());
 
         // Indexes [0, 1, 2, 0, 1, 2] encoded at bitWidth=2.
         // byte 0: 0x24, byte 1: 0x09 (same bit pattern as RleDictionaryPageDecoderTest)
@@ -122,7 +127,7 @@ class DictionaryDecoderTest {
 
         @SuppressWarnings("unchecked")
         PageDecoder<Float> decoder = new RleDictionaryPageDecoder<>((Dictionary<Float>) dict);
-        decoder.load(indexPage, 6);
+        decoder.load(MemorySegment.ofBuffer(indexPage), 6);
 
         float[] dst = new float[6];
         decoder.decodeFloats(6, dst, 0);

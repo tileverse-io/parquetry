@@ -18,6 +18,7 @@ package io.tileverse.parquetry.data.read.page;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 
 import org.junit.jupiter.api.Test;
@@ -34,7 +35,7 @@ class PlainInt32DecoderTest {
         page.flip();
 
         PageDecoder<Integer> decoder = new PlainInt32Decoder();
-        decoder.load(page, 4);
+        decoder.load(MemorySegment.ofBuffer(page), 4);
 
         assertThat(decoder.next()).isZero();
         assertThat(decoder.next()).isEqualTo(-1);
@@ -52,7 +53,7 @@ class PlainInt32DecoderTest {
         page.flip();
 
         PageDecoder<Integer> decoder = new PlainInt32Decoder();
-        decoder.load(page, 4);
+        decoder.load(MemorySegment.ofBuffer(page), 4);
         decoder.skip(2);
 
         assertThat(decoder.next()).isEqualTo(30);
@@ -69,7 +70,7 @@ class PlainInt32DecoderTest {
         page.flip();
 
         PageDecoder<Integer> decoder = new PlainInt32Decoder();
-        decoder.load(page, 5);
+        decoder.load(MemorySegment.ofBuffer(page), 5);
         decoder.skip(1);
         assertThat(decoder.next()).isEqualTo(2);
         decoder.skip(1);
@@ -86,7 +87,7 @@ class PlainInt32DecoderTest {
         page.flip();
 
         PageDecoder<Integer> decoder = new PlainInt32Decoder();
-        decoder.load(page, 4);
+        decoder.load(MemorySegment.ofBuffer(page), 4);
 
         int[] dst = new int[5];
         dst[0] = -1; // sentinel - must be left alone
@@ -105,7 +106,7 @@ class PlainInt32DecoderTest {
         page.flip();
 
         PageDecoder<Integer> decoder = new PlainInt32Decoder();
-        decoder.load(page, 4);
+        decoder.load(MemorySegment.ofBuffer(page), 4);
 
         assertThat(decoder.next()).isEqualTo(10);
 

@@ -105,7 +105,9 @@ public final class BatchRowGroupReader implements AutoCloseable {
         if (!hasMore()) {
             throw new IllegalStateException("No more rows to read");
         }
-        Arena batchArena = Arena.ofConfined();
+        // Shared arena: vectors are heap-backed, but the batch may be decoded on a worker thread
+        // and closed by the consumer thread, so its arena must not be confined to a single thread.
+        Arena batchArena = Arena.ofShared();
         try {
             ensureColumnReadersBuilt();
             int batchRows = computeBatchRows();

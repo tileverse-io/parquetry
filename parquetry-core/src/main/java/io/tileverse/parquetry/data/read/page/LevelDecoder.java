@@ -15,9 +15,10 @@
  */
 package io.tileverse.parquetry.data.read.page;
 
-import static java.nio.ByteOrder.LITTLE_ENDIAN;
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
+import java.util.BitSet;
 
 /**
  * Decodes Parquet repetition and definition level streams.
@@ -33,13 +34,17 @@ import java.nio.ByteBuffer;
  *
  * <p>Used identically for both rep and def levels; the bit width per stream is computed from the column's max level
  * (see {@link #computeBitWidth(int)}).
+ *
+ * <p>The decoder reads its input one byte at a time from a {@link MemorySegment}, assembling multi-byte values itself.
  */
 public final class LevelDecoder {
 
     private final int bitWidth;
     private final int bytesPerRleValue;
 
-    private ByteBuffer buffer;
+    private MemorySegment segment;
+    private long position;
+
     private int remainingInRun;
     private boolean currentRunIsRle;
     private int rleValue;
@@ -68,11 +73,12 @@ public final class LevelDecoder {
 
     /**
      * Load the level stream's bytes. For DataPage V1 the stream is prefixed by a 4-byte LE length; for DataPage V2 the
-     * page header carries the length explicitly and the bytes here start at the first run header. Caller supplies the
-     * right slice.
+     * page header carries the length explicitly and the bytes here start at the first run header. The caller supplies
+     * the right slice.
      */
-    public void load(ByteBuffer bytes) {
-        this.buffer = bytes.order(LITTLE_ENDIAN);
+    public void load(MemorySegment bytes) {
+        this.segment = bytes;
+        this.position = 0L;
         this.remainingInRun = 0;
         this.bitPackedBuffer = 0L;
         this.bitsInBuffer = 0;
@@ -95,6 +101,41 @@ public final class LevelDecoder {
     public void decode(int n, int[] dst, int offset) {
         for (int i = 0; i < n; i++) {
             dst[offset + i] = nextValue();
+        }
+    }
+
+    /**
+     * Sets bit {@code base + i} in {@code out} for each of the next {@code count} levels that equals
+     * {@code targetLevel}, leaving the other bits untouched. RLE runs of the target value set a whole range in one
+     * call; only bit-packed runs are walked value by value. This is the def-level to validity-bitset path: it avoids
+     * materializing an {@code int[]} of levels and turns an all-defined page (a single RLE run) into one range set.
+     */
+    public void decodeEquals(int count, int targetLevel, BitSet out, int base) {
+        if (bitWidth == 0) {
+            if (targetLevel == 0) {
+                out.set(base, base + count);
+            }
+            return;
+        }
+        int produced = 0;
+        while (produced < count) {
+            if (remainingInRun == 0) {
+                readNextRunHeader();
+            }
+            int take = Math.min(remainingInRun, count - produced);
+            if (currentRunIsRle) {
+                if (rleValue == targetLevel) {
+                    out.set(base + produced, base + produced + take);
+                }
+            } else {
+                for (int i = 0; i < take; i++) {
+                    if (readBitPackedValue() == targetLevel) {
+                        out.set(base + produced + i);
+                    }
+                }
+            }
+            remainingInRun -= take;
+            produced += take;
         }
     }
 
@@ -135,12 +176,12 @@ public final class LevelDecoder {
     }
 
     /**
-     * Pull the next bit-packed value from the internal bit buffer, refilling from {@code buffer} one byte at a time as
+     * Pull the next bit-packed value from the internal bit buffer, refilling from the segment one byte at a time as
      * needed. Values are packed LSB-first per the Parquet spec.
      */
     private int readBitPackedValue() {
         while (bitsInBuffer < bitWidth) {
-            int b = buffer.get() & 0xff;
+            int b = readByte();
             bitPackedBuffer |= ((long) b) << bitsInBuffer;
             bitsInBuffer += 8;
         }
@@ -154,7 +195,7 @@ public final class LevelDecoder {
     private int readFixedWidthLE(int n) {
         int value = 0;
         for (int i = 0; i < n; i++) {
-            int b = buffer.get() & 0xff;
+            int b = readByte();
             value |= b << (i * 8);
         }
         return value;
@@ -164,7 +205,7 @@ public final class LevelDecoder {
         long result = 0L;
         int shift = 0;
         while (true) {
-            int b = buffer.get() & 0xff;
+            int b = readByte();
             result |= ((long) (b & 0x7f)) << shift;
             if ((b & 0x80) == 0) {
                 return result;
@@ -174,5 +215,10 @@ public final class LevelDecoder {
                 throw new IllegalStateException("Varint too long in level stream");
             }
         }
+    }
+
+    /** Read the next unsigned byte (0-255) from the loaded segment. */
+    private int readByte() {
+        return segment.get(JAVA_BYTE, position++) & 0xff;
     }
 }

@@ -64,7 +64,7 @@ class DataPageV1ReaderTest {
 
         // DecodedPage owns the Arena; closing it closes the Arena.
         try (DecodedPage page = reader.read(
-                header, new LevelMaxima(1, 2), ByteBuffer.wrap(payload), uncompressed, Arena.ofConfined())) {
+                header, new LevelMaxima(1, 2), MemorySegment.ofArray(payload), uncompressed, Arena.ofConfined())) {
             assertThat(page.valueCount()).isEqualTo(expected.length);
             assertThat(toBytes(page.repLevelBytes())).containsExactly(repLevels);
             assertThat(toBytes(page.defLevelBytes())).containsExactly(defLevels);
@@ -85,7 +85,7 @@ class DataPageV1ReaderTest {
         PageHeader header = newV1Header(expected.length, payload.length, Encoding.PLAIN);
 
         try (DecodedPage page = reader.read(
-                header, new LevelMaxima(0, 0), ByteBuffer.wrap(payload), uncompressed, Arena.ofConfined())) {
+                header, new LevelMaxima(0, 0), MemorySegment.ofArray(payload), uncompressed, Arena.ofConfined())) {
             assertThat(page.repLevelBytes())
                     .as("rep segment is NULL when maxRep=0")
                     .isEqualTo(MemorySegment.NULL);
@@ -108,7 +108,7 @@ class DataPageV1ReaderTest {
         PageHeader header = newV1Header(expected.length, payload.length, Encoding.PLAIN);
 
         try (DecodedPage page = reader.read(
-                header, new LevelMaxima(0, 1), ByteBuffer.wrap(payload), uncompressed, Arena.ofConfined())) {
+                header, new LevelMaxima(0, 1), MemorySegment.ofArray(payload), uncompressed, Arena.ofConfined())) {
             assertThat(page.repLevelBytes())
                     .as("rep segment is NULL when maxRep=0")
                     .isEqualTo(MemorySegment.NULL);
@@ -128,7 +128,7 @@ class DataPageV1ReaderTest {
         PageHeader header = newV1Header(expected.length, payload.length, Encoding.PLAIN_DICTIONARY);
 
         try (DecodedPage page = reader.read(
-                header, new LevelMaxima(0, 0), ByteBuffer.wrap(payload), uncompressed, Arena.ofConfined())) {
+                header, new LevelMaxima(0, 0), MemorySegment.ofArray(payload), uncompressed, Arena.ofConfined())) {
             assertThat(page.valuesEncoding()).isEqualTo(Encoding.RLE_DICTIONARY);
         }
     }
@@ -155,7 +155,7 @@ class DataPageV1ReaderTest {
                 /*dataPageHeaderV2*/ Optional.empty());
 
         try (DecodedPage page = reader.read(
-                header, new LevelMaxima(1, 2), ByteBuffer.wrap(compressedPayload), snappy, Arena.ofConfined())) {
+                header, new LevelMaxima(1, 2), MemorySegment.ofArray(compressedPayload), snappy, Arena.ofConfined())) {
             assertThat(toBytes(page.repLevelBytes())).containsExactly(repLevels);
             assertThat(toBytes(page.defLevelBytes())).containsExactly(defLevels);
             int[] decoded =
@@ -169,7 +169,7 @@ class DataPageV1ReaderTest {
         byte[] badRepLenPrefix = leInt(-1);
         byte[] payload = concat(badRepLenPrefix, new byte[] {0x00, 0x00, 0x00, 0x00});
         PageHeader header = newV1Header(0, payload.length, Encoding.PLAIN);
-        ByteBuffer wrapped = ByteBuffer.wrap(payload);
+        MemorySegment wrapped = MemorySegment.ofArray(payload);
         LevelMaxima levels = new LevelMaxima(1, 0);
         // Arena is closed in the finally block; the reader must not have allocated anything useful before the error.
         Arena arena = Arena.ofConfined();
@@ -188,7 +188,7 @@ class DataPageV1ReaderTest {
         byte[] payload = new byte[payloadBytes];
         ByteBuffer.wrap(payload).order(LITTLE_ENDIAN).putInt(payloadBytes); // claim too many rep bytes
         PageHeader header = newV1Header(0, payload.length, Encoding.PLAIN);
-        ByteBuffer wrapped = ByteBuffer.wrap(payload);
+        MemorySegment wrapped = MemorySegment.ofArray(payload);
         LevelMaxima levels = new LevelMaxima(1, 0);
         Arena arena = Arena.ofConfined();
         try {
@@ -204,7 +204,8 @@ class DataPageV1ReaderTest {
         byte[] payload = encodeInt32sLittleEndian(new int[] {1});
         PageHeader header = newV1Header(1, payload.length, Encoding.PLAIN);
         Arena arena = Arena.ofConfined();
-        DecodedPage page = reader.read(header, new LevelMaxima(0, 0), ByteBuffer.wrap(payload), uncompressed, arena);
+        DecodedPage page =
+                reader.read(header, new LevelMaxima(0, 0), MemorySegment.ofArray(payload), uncompressed, arena);
         page.close();
         // After close, the Arena is closed; any further allocation attempt must throw.
         assertThatThrownBy(() -> arena.allocate(1)).isInstanceOf(IllegalStateException.class);

@@ -15,7 +15,9 @@
  */
 package io.tileverse.parquetry.data.read.page;
 
-import java.nio.ByteBuffer;
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
+
+import java.lang.foreign.MemorySegment;
 
 /**
  * BYTE_STREAM_SPLIT page decoder for DOUBLE (8-byte values).
@@ -43,11 +45,11 @@ public final class ByteStreamSplitDoubleDecoder implements PageDecoder<Double> {
     private int cursor;
 
     @Override
-    public void load(ByteBuffer page, int valueCount) {
+    public void load(MemorySegment page, int valueCount) {
         this.valueCount = valueCount;
         int total = valueCount * BYTES_PER_VALUE;
         this.streams = new byte[total];
-        page.get(streams);
+        MemorySegment.copy(page, JAVA_BYTE, 0L, streams, 0, total);
         this.cursor = 0;
     }
 

@@ -16,7 +16,6 @@
 package io.tileverse.parquetry.data.read.page;
 
 import java.lang.foreign.MemorySegment;
-import java.nio.ByteBuffer;
 
 /**
  * DELTA_LENGTH_BYTE_ARRAY page decoder.
@@ -24,24 +23,20 @@ import java.nio.ByteBuffer;
  * <p>Per parquet-format Encodings.md: lengths are encoded with DELTA_BINARY_PACKED int32, followed by the concatenated
  * payload bytes. Each {@link #next()} yields a read-only {@link MemorySegment} view of the payload.
  *
- * <p>The length stream is decoded first (consuming bytes from the page buffer via DELTA_BINARY_PACKED's lazy block
- * reads). After all lengths are read, the buffer's position sits at the start of the concatenated payload, ready to
- * slice.
+ * <p>The length stream is decoded first; the length decoder reports how many bytes it consumed, so the payload starts
+ * right after it.
  */
 public final class DeltaLengthByteArrayDecoder implements PageDecoder<MemorySegment> {
 
     private int[] lengths;
     private int cursor;
-    private ByteBuffer payload;
+    private MemorySegment payload;
+    private long payloadOffset;
 
     @Override
-    public void load(ByteBuffer page, int valueCount) {
-        // Use a slice so the caller's buffer position is not disturbed.
-        // DeltaBinaryPackedDecoder mutates view.position() as it reads,
-        // so after decoding all lengths, view.position() is at the payload start.
-        ByteBuffer view = page.slice();
+    public void load(MemorySegment page, int valueCount) {
         DeltaBinaryPackedDecoder lengthDecoder = new DeltaBinaryPackedDecoder();
-        lengthDecoder.load(view);
+        lengthDecoder.load(page);
 
         int totalLengths = lengthDecoder.totalValueCount();
         this.lengths = new int[totalLengths];
@@ -50,16 +45,16 @@ public final class DeltaLengthByteArrayDecoder implements PageDecoder<MemorySegm
         }
 
         this.cursor = 0;
-        // view.position() has been advanced past all the lengths data by the decoder reads.
-        this.payload = view;
+        this.payload = page.asSlice(lengthDecoder.position());
+        this.payloadOffset = 0L;
     }
 
     @Override
     public MemorySegment next() {
         int len = lengths[cursor++];
-        ByteBuffer slice = payload.slice().limit(len);
-        payload.position(payload.position() + len);
-        return MemorySegment.ofBuffer(slice).asReadOnly();
+        MemorySegment slice = payload.asSlice(payloadOffset, len).asReadOnly();
+        payloadOffset += len;
+        return slice;
     }
 
     @Override
@@ -73,7 +68,7 @@ public final class DeltaLengthByteArrayDecoder implements PageDecoder<MemorySegm
     public void skip(int n) {
         for (int i = 0; i < n; i++) {
             int len = lengths[cursor++];
-            payload.position(payload.position() + len);
+            payloadOffset += len;
         }
     }
 }

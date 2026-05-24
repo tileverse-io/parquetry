@@ -18,6 +18,7 @@ package io.tileverse.parquetry.data.read.page;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 
 import org.junit.jupiter.api.Test;
@@ -36,7 +37,7 @@ class RleBooleanDecoderTest {
         page.flip();
 
         PageDecoder<Boolean> decoder = new RleBooleanDecoder();
-        decoder.load(page, 10);
+        decoder.load(MemorySegment.ofBuffer(page), 10);
         for (int i = 0; i < 10; i++) {
             assertThat(decoder.next()).as("value at index " + i).isTrue();
         }
@@ -53,7 +54,7 @@ class RleBooleanDecoderTest {
         page.flip();
 
         PageDecoder<Boolean> decoder = new RleBooleanDecoder();
-        decoder.load(page, 8);
+        decoder.load(MemorySegment.ofBuffer(page), 8);
         boolean[] expected = {false, true, false, true, false, true, false, true};
         for (int i = 0; i < 8; i++) {
             assertThat(decoder.next()).as("value at index " + i).isEqualTo(expected[i]);
@@ -70,7 +71,7 @@ class RleBooleanDecoderTest {
         page.flip();
 
         PageDecoder<Boolean> decoder = new RleBooleanDecoder();
-        decoder.load(page, 20);
+        decoder.load(MemorySegment.ofBuffer(page), 20);
         decoder.skip(15);
         for (int i = 0; i < 5; i++) {
             assertThat(decoder.next()).isTrue();
@@ -91,7 +92,7 @@ class RleBooleanDecoderTest {
         page.flip();
 
         PageDecoder<Boolean> decoder = new RleBooleanDecoder();
-        decoder.load(page, 13);
+        decoder.load(MemorySegment.ofBuffer(page), 13);
 
         boolean[] dst = new boolean[13];
         decoder.decodeBooleans(13, dst, 0);

@@ -15,12 +15,9 @@
  */
 package io.tileverse.parquetry.data.read.page;
 
-import static java.nio.ByteOrder.LITTLE_ENDIAN;
-
 import java.io.IOException;
-import java.io.InputStream;
 import java.lang.foreign.Arena;
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 
 import io.tileverse.parquetry.data.Compression;
 import io.tileverse.parquetry.format.MalformedFileException;
@@ -32,23 +29,26 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.LevelMaxima;
 
 /**
- * Walks the chunk's compressed byte buffer, yielding one decompressed {@link DecodedPage} per call.
+ * Walks the chunk's compressed bytes, yielding one decompressed {@link DecodedPage} per call.
  *
- * <p>The cursor tracks position inside an underlying {@link ByteBuffer} (duplicated from the caller's buffer so the
- * original position is never mutated) and dispatches header reads through {@link ParquetFormat#readPageHeader}.
- * Non-data pages (e.g. a misplaced dictionary or index page) are skipped silently; {@link #nextDataPage} returns
- * {@code null} when the buffer is exhausted.
+ * <p>The cursor tracks a byte offset inside the chunk's {@link MemorySegment} and dispatches header reads through
+ * {@link ParquetFormat#readPageHeader}. Non-data pages (e.g. a misplaced dictionary or index page) are skipped
+ * silently; {@link #nextDataPage} returns {@code null} when the chunk is exhausted.
  *
  * <p>Shared by every column reader that walks a chunk page by page.
  */
 public final class PageCursor {
 
-    private final ByteBuffer chunk;
+    private final MemorySegment chunk;
+    private final long limit;
     private final ColumnPath columnPath;
+    private long position;
 
-    public PageCursor(ByteBuffer chunk, ColumnPath columnPath) {
-        this.chunk = chunk.duplicate().order(LITTLE_ENDIAN);
+    public PageCursor(MemorySegment chunk, ColumnPath columnPath) {
+        this.chunk = chunk;
+        this.limit = chunk.byteSize();
         this.columnPath = columnPath;
+        this.position = 0L;
     }
 
     /**
@@ -56,14 +56,14 @@ public final class PageCursor {
      * exhausted. Non-data pages (e.g. a misplaced dictionary or index page in the data-page region) are skipped.
      */
     public DecodedPage nextDataPage(LevelMaxima maxLevels, Compression codec, Arena pageArena) throws IOException {
-        while (chunk.hasRemaining()) {
+        while (position < limit) {
             PageHeader header = readNextPageHeader();
             int compressedSize = header.compressedPageSize();
             if (compressedSize < 0) {
                 throw new MalformedFileException(
                         "Negative compressedPageSize " + compressedSize + " for column " + columnPath.dot());
             }
-            ByteBuffer pagePayload = sliceAndAdvance(compressedSize);
+            MemorySegment pagePayload = sliceAndAdvance(compressedSize);
             if (header.type() == PageType.DATA_PAGE || header.type() == PageType.DATA_PAGE_V2) {
                 return DataPageReader.forHeader(header).read(header, maxLevels, pagePayload, codec, pageArena);
             }
@@ -73,28 +73,28 @@ public final class PageCursor {
     }
 
     /**
-     * Returns {@code true} while the underlying buffer has bytes remaining to decode. A {@code true} result does not
-     * guarantee that the next call to {@link #nextDataPage} yields a data page; there may only be non-data pages left.
+     * Returns {@code true} while the cursor has bytes remaining to decode. A {@code true} result does not guarantee
+     * that the next call to {@link #nextDataPage} yields a data page; there may only be non-data pages left.
      */
     public boolean hasRemaining() {
-        return chunk.hasRemaining();
+        return position < limit;
     }
 
     /**
-     * Reads the next {@link PageHeader} from the cursor by wrapping the remaining buffer as an {@link InputStream} and
-     * advancing the buffer's position by exactly the number of header bytes consumed. Throws
-     * {@link ParquetFormatException} on premature end-of-stream or Thrift decode failure.
+     * Reads the next {@link PageHeader} by wrapping the remaining chunk bytes as an {@link java.io.InputStream} and
+     * advancing the cursor by exactly the number of header bytes consumed. Throws {@link ParquetFormatException} on
+     * premature end-of-stream or Thrift decode failure.
      */
     private PageHeader readNextPageHeader() {
-        ByteBufferInputStream stream = new ByteBufferInputStream(chunk);
-        int startPos = chunk.position();
+        MemorySegmentInputStream stream = new MemorySegmentInputStream(chunk, position, limit);
         try {
             PageHeader header = ParquetFormat.readPageHeader(stream);
-            int consumed = chunk.position() - startPos;
+            long consumed = stream.position() - position;
             if (consumed <= 0) {
                 throw new MalformedFileException("Page header read advanced the cursor by " + consumed
                         + " bytes for column " + columnPath.dot());
             }
+            position = stream.position();
             return header;
         } catch (ParquetFormatException e) {
             throw e.withContext("Failed to read page header for column " + columnPath.dot(), -1L, "PageHeader");
@@ -103,55 +103,15 @@ public final class PageCursor {
 
     /**
      * Returns a read-only zero-copy slice of the next {@code length} bytes of the cursor and advances past them. Throws
-     * {@link ParquetFormatException} when the cursor does not have that many bytes left.
+     * {@link MalformedFileException} when the cursor does not have that many bytes left.
      */
-    private ByteBuffer sliceAndAdvance(int length) {
-        if (chunk.remaining() < length) {
+    private MemorySegment sliceAndAdvance(int length) {
+        if (limit - position < length) {
             throw new MalformedFileException("Column " + columnPath.dot() + " page payload of " + length
-                    + " bytes overruns chunk (remaining=" + chunk.remaining() + ")");
+                    + " bytes overruns chunk (remaining=" + (limit - position) + ")");
         }
-        ByteBuffer slice = chunk.slice();
-        slice.limit(length);
-        slice.order(LITTLE_ENDIAN);
-        chunk.position(chunk.position() + length);
-        return slice.asReadOnlyBuffer().order(LITTLE_ENDIAN);
-    }
-
-    /**
-     * Minimal {@link InputStream} adapter over a {@link ByteBuffer}, used to feed
-     * {@link ParquetFormat#readPageHeader(InputStream)} from either a heap-backed or direct compressed chunk buffer
-     * without allocating an intermediate {@code byte[]}. The adapter advances the underlying buffer's position as it
-     * reads, so the caller can resume slicing from the buffer right after the header consumes its bytes.
-     */
-    private static final class ByteBufferInputStream extends InputStream {
-
-        private final ByteBuffer buffer;
-
-        ByteBufferInputStream(ByteBuffer buffer) {
-            this.buffer = buffer;
-        }
-
-        @Override
-        public int read() {
-            if (!buffer.hasRemaining()) {
-                return -1;
-            }
-            return buffer.get() & 0xff;
-        }
-
-        @Override
-        public int read(byte[] b, int off, int len) {
-            if (!buffer.hasRemaining()) {
-                return -1;
-            }
-            int toRead = Math.min(len, buffer.remaining());
-            buffer.get(b, off, toRead);
-            return toRead;
-        }
-
-        @Override
-        public int available() {
-            return buffer.remaining();
-        }
+        MemorySegment slice = chunk.asSlice(position, length).asReadOnly();
+        position += length;
+        return slice;
     }
 }

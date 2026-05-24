@@ -45,7 +45,7 @@ class PlainBinaryDecoderTest {
         page.flip();
 
         PageDecoder<MemorySegment> decoder = new PlainBinaryDecoder();
-        decoder.load(page, 3);
+        decoder.load(MemorySegment.ofBuffer(page), 3);
 
         MemorySegment resultEmpty = decoder.next();
         assertThat(resultEmpty.byteSize()).isZero();
@@ -66,7 +66,7 @@ class PlainBinaryDecoderTest {
         page.flip();
 
         PageDecoder<MemorySegment> decoder = new PlainBinaryDecoder();
-        decoder.load(page, 1);
+        decoder.load(MemorySegment.ofBuffer(page), 1);
 
         MemorySegment slice = decoder.next();
         assertThat(slice.isReadOnly()).isTrue();
@@ -89,7 +89,7 @@ class PlainBinaryDecoderTest {
         page.flip();
 
         PageDecoder<MemorySegment> decoder = new PlainBinaryDecoder();
-        decoder.load(page, 3);
+        decoder.load(MemorySegment.ofBuffer(page), 3);
         decoder.skip(2);
 
         MemorySegment result = decoder.next();
@@ -108,7 +108,7 @@ class PlainBinaryDecoderTest {
         page.flip();
 
         PageDecoder<MemorySegment> decoder = new PlainBinaryDecoder();
-        decoder.load(page, 3);
+        decoder.load(MemorySegment.ofBuffer(page), 3);
 
         MemorySegment[] dst = new MemorySegment[3];
         decoder.decodeBinary(3, dst, 0);

@@ -15,9 +15,9 @@
  */
 package io.tileverse.parquetry.data.read.page;
 
-import static java.nio.ByteOrder.LITTLE_ENDIAN;
+import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
 
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 
 /**
  * Boolean data-page decoder using Parquet's RLE encoding (RLE-Bit-Packed hybrid at bitWidth=1).
@@ -31,11 +31,9 @@ public final class RleBooleanDecoder implements PageDecoder<Boolean> {
     private final LevelDecoder delegate = new LevelDecoder(1);
 
     @Override
-    public void load(ByteBuffer page, int valueCount) {
-        ByteBuffer le = page.order(LITTLE_ENDIAN);
-        int length = le.getInt();
-        ByteBuffer payload = le.slice().limit(length);
-        le.position(le.position() + length);
+    public void load(MemorySegment page, int valueCount) {
+        int length = page.get(INT32, 0L);
+        MemorySegment payload = page.asSlice(Integer.BYTES, length);
         delegate.load(payload);
     }
 

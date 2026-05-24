@@ -15,10 +15,9 @@
  */
 package io.tileverse.parquetry.data.read.page;
 
-import static java.nio.ByteOrder.LITTLE_ENDIAN;
+import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
 
 import java.lang.foreign.MemorySegment;
-import java.nio.ByteBuffer;
 
 /**
  * PLAIN decoder for BYTE_ARRAY: a 4-byte little-endian length prefix followed by that many bytes per value.
@@ -28,19 +27,22 @@ import java.nio.ByteBuffer;
  */
 public final class PlainBinaryDecoder implements PageDecoder<MemorySegment> {
 
-    private ByteBuffer buffer;
+    private MemorySegment segment;
+    private long offset;
 
     @Override
-    public void load(ByteBuffer page, int valueCount) {
-        this.buffer = page.order(LITTLE_ENDIAN);
+    public void load(MemorySegment page, int valueCount) {
+        this.segment = page;
+        this.offset = 0L;
     }
 
     @Override
     public MemorySegment next() {
-        int length = buffer.getInt();
-        ByteBuffer slice = buffer.slice().limit(length);
-        buffer.position(buffer.position() + length);
-        return MemorySegment.ofBuffer(slice).asReadOnly();
+        int length = segment.get(INT32, offset);
+        offset += Integer.BYTES;
+        MemorySegment value = segment.asSlice(offset, length).asReadOnly();
+        offset += length;
+        return value;
     }
 
     @Override
@@ -53,8 +55,8 @@ public final class PlainBinaryDecoder implements PageDecoder<MemorySegment> {
     @Override
     public void skip(int n) {
         for (int i = 0; i < n; i++) {
-            int length = buffer.getInt();
-            buffer.position(buffer.position() + length);
+            int length = segment.get(INT32, offset);
+            offset += Integer.BYTES + length;
         }
     }
 }

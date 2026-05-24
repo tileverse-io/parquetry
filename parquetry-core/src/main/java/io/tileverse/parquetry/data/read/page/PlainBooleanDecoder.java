@@ -15,25 +15,26 @@
  */
 package io.tileverse.parquetry.data.read.page;
 
-import java.nio.ByteBuffer;
-import java.util.BitSet;
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
+
+import java.lang.foreign.MemorySegment;
 
 /**
  * PLAIN decoder for BOOLEAN: bit-packed, LSB-first, eight values per byte.
  *
- * <p>Bit 0 of byte 0 is value 0, bit 1 of byte 0 is value 1, etc. The decoder maintains an internal bit cursor and does
- * not advance the underlying buffer's position on each call, keeping it simple and allocation-free.
+ * <p>Bit 0 of byte 0 is value 0, bit 1 of byte 0 is value 1, etc. The decoder maintains an internal bit cursor and
+ * reads each bit straight from the page segment, so it neither copies the page nor allocates.
  */
 public final class PlainBooleanDecoder implements PageDecoder<Boolean> {
 
-    private BitSet bitset;
+    private MemorySegment segment;
     private int storedBitCount;
     private int bitPosition;
 
     @Override
-    public void load(ByteBuffer page, int valueCount) {
-        this.bitset = BitSet.valueOf(page);
-        this.storedBitCount = page.remaining() * Byte.SIZE;
+    public void load(MemorySegment page, int valueCount) {
+        this.segment = page;
+        this.storedBitCount = Math.toIntExact(page.byteSize() * Byte.SIZE);
         this.bitPosition = 0;
     }
 
@@ -43,7 +44,9 @@ public final class PlainBooleanDecoder implements PageDecoder<Boolean> {
             throw new IllegalStateException(
                     "PlainBooleanDecoder exhausted: position " + bitPosition + " >= storedBitCount " + storedBitCount);
         }
-        return bitset.get(bitPosition++);
+        int index = bitPosition++;
+        int b = segment.get(JAVA_BYTE, index >> 3) & 0xff;
+        return ((b >> (index & 7)) & 1) != 0;
     }
 
     @Override

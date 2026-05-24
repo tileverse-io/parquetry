@@ -40,7 +40,7 @@ class PlainFixedLenBinaryDecoderTest {
         page.flip();
 
         PageDecoder<MemorySegment> decoder = new PlainFixedLenBinaryDecoder(5);
-        decoder.load(page, 3);
+        decoder.load(MemorySegment.ofBuffer(page), 3);
 
         assertThat(decoder.next().toArray(JAVA_BYTE)).isEqualTo(aaa);
         assertThat(decoder.next().toArray(JAVA_BYTE)).isEqualTo(bbb);
@@ -54,7 +54,7 @@ class PlainFixedLenBinaryDecoderTest {
         page.flip();
 
         PageDecoder<MemorySegment> decoder = new PlainFixedLenBinaryDecoder(5);
-        decoder.load(page, 1);
+        decoder.load(MemorySegment.ofBuffer(page), 1);
 
         MemorySegment slice = decoder.next();
         assertThat(slice.isReadOnly()).isTrue();
@@ -67,7 +67,7 @@ class PlainFixedLenBinaryDecoderTest {
         page.flip();
 
         PageDecoder<MemorySegment> decoder = new PlainFixedLenBinaryDecoder(5);
-        decoder.load(page, 2);
+        decoder.load(MemorySegment.ofBuffer(page), 2);
 
         assertThat(decoder.next().byteSize()).isEqualTo(5);
         assertThat(decoder.next().byteSize()).isEqualTo(5);
@@ -86,7 +86,7 @@ class PlainFixedLenBinaryDecoderTest {
         page.flip();
 
         PageDecoder<MemorySegment> decoder = new PlainFixedLenBinaryDecoder(5);
-        decoder.load(page, 3);
+        decoder.load(MemorySegment.ofBuffer(page), 3);
         decoder.skip(2);
 
         assertThat(decoder.next().toArray(JAVA_BYTE)).isEqualTo(third);
@@ -106,7 +106,7 @@ class PlainFixedLenBinaryDecoderTest {
         page.flip();
 
         PageDecoder<MemorySegment> decoder = new PlainFixedLenBinaryDecoder(0);
-        decoder.load(page, 3);
+        decoder.load(MemorySegment.ofBuffer(page), 3);
 
         assertThat(decoder.next().byteSize()).isZero();
         assertThat(decoder.next().byteSize()).isZero();
@@ -123,7 +123,7 @@ class PlainFixedLenBinaryDecoderTest {
         page.flip();
 
         PageDecoder<MemorySegment> decoder = new PlainFixedLenBinaryDecoder(4);
-        decoder.load(page, 3);
+        decoder.load(MemorySegment.ofBuffer(page), 3);
 
         MemorySegment[] dst = new MemorySegment[3];
         decoder.decodeBinary(3, dst, 0);

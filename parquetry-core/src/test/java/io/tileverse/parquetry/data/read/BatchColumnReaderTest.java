@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
 import java.util.BitSet;
@@ -46,8 +47,6 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
-
-import io.tileverse.io.ByteBufferPool;
 
 /**
  * Unit tests for {@link BatchColumnReader}. Fixtures are built in-memory: Thrift compact page headers are written with
@@ -287,17 +286,10 @@ class BatchColumnReaderTest {
     }
 
     /**
-     * Wraps a byte array in a non-pooled heap {@link ByteBufferPool.PooledByteBuffer} and builds a
-     * {@link FetchedColumnChunk} around it. The buffer is flipped (ready-to-read) with position 0 and limit
-     * {@code data.length}.
+     * Wraps a byte array in a read-only heap {@link MemorySegment} and builds a {@link FetchedColumnChunk} around it.
      */
     private static FetchedColumnChunk heapChunk(ColumnPath path, byte[] data, long numValues, int maxRep, int maxDef) {
-        ByteBufferPool.PooledByteBuffer pooled = ByteBufferPool.heapBuffer(data.length);
-        ByteBuffer buf = pooled.buffer();
-        buf.clear();
-        buf.put(data);
-        buf.flip();
-        buf.order(LITTLE_ENDIAN);
+        MemorySegment segment = MemorySegment.ofArray(data).asReadOnly();
 
         ColumnMetaData meta = ColumnMetaData.builder()
                 .type(PhysicalType.INT32)
@@ -310,7 +302,7 @@ class BatchColumnReaderTest {
                 .dataPageOffset(0L)
                 .build();
 
-        return new FetchedColumnChunk(path, meta, maxRep, maxDef, pooled, Optional.empty());
+        return new FetchedColumnChunk(path, meta, maxRep, maxDef, segment, Optional.empty());
     }
 
     /**
@@ -331,12 +323,7 @@ class BatchColumnReaderTest {
         byte[] chunkBuffer =
                 encodeV1Page(indices.length, pagePayload, org.apache.parquet.format.Encoding.RLE_DICTIONARY);
 
-        ByteBufferPool.PooledByteBuffer pooled = ByteBufferPool.heapBuffer(chunkBuffer.length);
-        ByteBuffer buf = pooled.buffer();
-        buf.clear();
-        buf.put(chunkBuffer);
-        buf.flip();
-        buf.order(LITTLE_ENDIAN);
+        MemorySegment segment = MemorySegment.ofArray(chunkBuffer).asReadOnly();
 
         ColumnMetaData meta = ColumnMetaData.builder()
                 .type(PhysicalType.INT32)
@@ -349,7 +336,7 @@ class BatchColumnReaderTest {
                 .dataPageOffset(0L)
                 .build();
 
-        return new FetchedColumnChunk(PATH, meta, /*maxRep*/ 0, /*maxDef*/ 0, pooled, Optional.of(dictionary));
+        return new FetchedColumnChunk(PATH, meta, /*maxRep*/ 0, /*maxDef*/ 0, segment, Optional.of(dictionary));
     }
 
     /**

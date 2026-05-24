@@ -16,7 +16,6 @@
 package io.tileverse.parquetry.data.read.page;
 
 import java.lang.foreign.MemorySegment;
-import java.nio.ByteBuffer;
 
 /**
  * Lazily materializes column values from one decompressed data-page payload.
@@ -37,7 +36,7 @@ import java.nio.ByteBuffer;
  */
 public interface PageDecoder<T> {
 
-    void load(ByteBuffer page, int valueCount);
+    void load(MemorySegment page, int valueCount);
 
     T next();
 

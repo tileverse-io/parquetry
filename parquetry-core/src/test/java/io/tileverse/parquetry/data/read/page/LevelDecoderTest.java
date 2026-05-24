@@ -17,7 +17,8 @@ package io.tileverse.parquetry.data.read.page;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
+import java.util.BitSet;
 
 import org.junit.jupiter.api.Test;
 
@@ -38,7 +39,7 @@ class LevelDecoderTest {
     @Test
     void bitWidthZeroAlwaysReturnsZero() {
         LevelDecoder d = new LevelDecoder(0);
-        d.load(ByteBuffer.wrap(new byte[0]));
+        d.load(MemorySegment.ofArray(new byte[0]));
         int[] dst = new int[100];
         d.decode(100, dst, 0);
         for (int value : dst) {
@@ -52,7 +53,7 @@ class LevelDecoderTest {
         // Decodes to [5, 5, 5]
         byte[] bytes = {0x06, 0x05};
         LevelDecoder d = new LevelDecoder(3);
-        d.load(ByteBuffer.wrap(bytes));
+        d.load(MemorySegment.ofArray(bytes));
         int[] dst = new int[3];
         d.decode(3, dst, 0);
         assertThat(dst).containsExactly(5, 5, 5);
@@ -84,7 +85,7 @@ class LevelDecoderTest {
         // Canonical vector: [0x88, 0xC6, 0xFA]
         byte[] bytes = {0x03, (byte) 0x88, (byte) 0xC6, (byte) 0xFA};
         LevelDecoder d = new LevelDecoder(3);
-        d.load(ByteBuffer.wrap(bytes));
+        d.load(MemorySegment.ofArray(bytes));
         int[] dst = new int[8];
         d.decode(8, dst, 0);
         assertThat(dst).containsExactly(0, 1, 2, 3, 4, 5, 6, 7);
@@ -95,7 +96,7 @@ class LevelDecoderTest {
         // RLE run length 10 of value 7, bitWidth=3
         byte[] bytes = {(byte) (10 << 1), 0x07};
         LevelDecoder d = new LevelDecoder(3);
-        d.load(ByteBuffer.wrap(bytes));
+        d.load(MemorySegment.ofArray(bytes));
         d.skip(5);
         int[] dst = new int[1];
         d.decode(1, dst, 0);
@@ -111,11 +112,109 @@ class LevelDecoderTest {
         // Bit-packed run header = (1 << 1) | 1 = 3 (varint single byte) for groups=1 (8 values).
         // Bit-packed body: 0b11111111 = 0xff.
         // Trailing RLE run: header = (2 << 1) | 0 = 4 (varint single byte). RLE value byte = 0.
-        decoder.load(ByteBuffer.wrap(new byte[] {6, 0, 3, (byte) 0xff, 4, 0}));
+        decoder.load(MemorySegment.ofArray(new byte[] {6, 0, 3, (byte) 0xff, 4, 0}));
 
         int[] dst = new int[13];
         decoder.decode(13, dst, 0);
 
         assertThat(dst).containsExactly(0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0);
+    }
+
+    @Test
+    void decodesRleRunFromMemorySegment() {
+        // Same stream as rleRunOfSingleByteValue, loaded from a MemorySegment instead of a ByteBuffer.
+        byte[] bytes = {0x06, 0x05};
+        LevelDecoder d = new LevelDecoder(3);
+        d.load(MemorySegment.ofArray(bytes));
+        int[] dst = new int[3];
+        d.decode(3, dst, 0);
+        assertThat(dst).containsExactly(5, 5, 5);
+    }
+
+    @Test
+    void decodesBitPackedRunFromMemorySegment() {
+        // Same stream as bitPackedRunOfThreeBitValues, loaded from a MemorySegment.
+        byte[] bytes = {0x03, (byte) 0x88, (byte) 0xC6, (byte) 0xFA};
+        LevelDecoder d = new LevelDecoder(3);
+        d.load(MemorySegment.ofArray(bytes));
+        int[] dst = new int[8];
+        d.decode(8, dst, 0);
+        assertThat(dst).containsExactly(0, 1, 2, 3, 4, 5, 6, 7);
+    }
+
+    @Test
+    void bulkDecodeFromMemorySegmentMatchesByteBuffer() {
+        // The flat-optional def-level shape: RLE zeros, bit-packed ones, RLE zeros. Decoding the same
+        // bytes from a MemorySegment must match decoding from a ByteBuffer.
+        byte[] bytes = {6, 0, 3, (byte) 0xff, 4, 0};
+
+        LevelDecoder fromSegment = new LevelDecoder(1);
+        fromSegment.load(MemorySegment.ofArray(bytes));
+        int[] segmentLevels = new int[13];
+        fromSegment.decode(13, segmentLevels, 0);
+
+        LevelDecoder fromBuffer = new LevelDecoder(1);
+        fromBuffer.load(MemorySegment.ofArray(bytes));
+        int[] bufferLevels = new int[13];
+        fromBuffer.decode(13, bufferLevels, 0);
+
+        assertThat(segmentLevels)
+                .containsExactly(0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0)
+                .isEqualTo(bufferLevels);
+    }
+
+    @Test
+    void skipFromMemorySegmentAdvancesPastValues() {
+        byte[] bytes = {(byte) (10 << 1), 0x07};
+        LevelDecoder d = new LevelDecoder(3);
+        d.load(MemorySegment.ofArray(bytes));
+        d.skip(5);
+        int[] dst = new int[1];
+        d.decode(1, dst, 0);
+        assertThat(dst[0]).as("6th value, still in run").isEqualTo(7);
+    }
+
+    @Test
+    void decodeEqualsSetsBitsWhereLevelMatchesTargetAcrossMixedRuns() {
+        // RLE 3 zeros, bit-packed 8 ones, RLE 2 zeros -> levels [0,0,0,1,1,1,1,1,1,1,1,0,0].
+        // With target=1 the validity bits are the eight middle ones (indices 3..10).
+        byte[] bytes = {6, 0, 3, (byte) 0xff, 4, 0};
+        LevelDecoder d = new LevelDecoder(1);
+        d.load(MemorySegment.ofArray(bytes));
+
+        BitSet validity = new BitSet(13);
+        d.decodeEquals(13, 1, validity, 0);
+
+        BitSet expected = new BitSet(13);
+        expected.set(3, 11);
+        assertThat(validity).isEqualTo(expected);
+    }
+
+    @Test
+    void decodeEqualsBulkSetsAnRleRunOfTheTargetValue() {
+        // RLE run of value 1, length 10, bitWidth 1: header = (10 << 1) | 0 = 20 (0x14), value byte = 1.
+        byte[] bytes = {0x14, 0x01};
+        LevelDecoder d = new LevelDecoder(1);
+        d.load(MemorySegment.ofArray(bytes));
+
+        BitSet validity = new BitSet(10);
+        d.decodeEquals(10, 1, validity, 0);
+
+        assertThat(validity.cardinality()).isEqualTo(10);
+    }
+
+    @Test
+    void decodeEqualsHonorsTheBaseOffset() {
+        // RLE run of value 1, length 4: header = (4 << 1) = 8, value byte = 1.
+        byte[] bytes = {0x08, 0x01};
+        LevelDecoder d = new LevelDecoder(1);
+        d.load(MemorySegment.ofArray(bytes));
+
+        BitSet validity = new BitSet(10);
+        d.decodeEquals(4, 1, validity, 5);
+
+        BitSet expected = new BitSet(10);
+        expected.set(5, 9);
+        assertThat(validity).isEqualTo(expected);
     }
 }

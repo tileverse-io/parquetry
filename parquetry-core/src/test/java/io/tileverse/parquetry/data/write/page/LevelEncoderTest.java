@@ -18,7 +18,7 @@ package io.tileverse.parquetry.data.write.page;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 import java.util.Random;
 import java.util.stream.Stream;
 
@@ -48,7 +48,7 @@ class LevelEncoderTest {
         assertThat(out.size()).isZero();
 
         LevelDecoder decoder = new LevelDecoder(0);
-        decoder.load(ByteBuffer.wrap(out.toByteArray()));
+        decoder.load(MemorySegment.ofArray(out.toByteArray()));
         int[] decoded = new int[4];
         decoder.decode(4, decoded, 0);
         assertThat(decoded).containsExactly(0, 0, 0, 0);
@@ -101,7 +101,7 @@ class LevelEncoderTest {
         new LevelEncoder(maxLevel).encode(levels, levels.length, out);
 
         LevelDecoder decoder = new LevelDecoder(LevelDecoder.computeBitWidth(maxLevel));
-        decoder.load(ByteBuffer.wrap(out.toByteArray()));
+        decoder.load(MemorySegment.ofArray(out.toByteArray()));
 
         int[] decoded = new int[levels.length];
         decoder.decode(levels.length, decoded, 0);

@@ -94,6 +94,9 @@
 
     <!-- JaCoCo argLine property (overridden by jacoco:prepare-agent when coverage profile is active) -->
     <argLine/>
+    <!-- Append-only JVM args for the test forks. Set on the CLI to pass ad-hoc options without clobbering the
+         jacoco-owned @{argLine} or the preview flags, e.g. -DextraArgLine="-Xmx2g". Empty by default. -->
+    <extraArgLine/>
   </properties>
 
   <repositories>
@@ -147,8 +150,9 @@
           <artifactId>maven-surefire-plugin</artifactId>
           <version>3.5.2</version>
           <configuration>
-            <!-- @{argLine} lets jacoco:prepare-agent inject its agent when the coverage profile is active -->
-            <argLine>@{argLine} --enable-preview --enable-native-access=ALL-UNNAMED</argLine>
+            <!-- @{argLine} lets jacoco:prepare-agent inject its agent when the coverage profile is active;
+                 ${extraArgLine} appends ad-hoc CLI JVM args (e.g. -DextraArgLine="-Xmx2g") to the fork. -->
+            <argLine>@{argLine} --enable-preview --enable-native-access=ALL-UNNAMED ${extraArgLine}</argLine>
           </configuration>
         </plugin>
         <plugin>
@@ -156,8 +160,9 @@
           <artifactId>maven-failsafe-plugin</artifactId>
           <version>3.5.2</version>
           <configuration>
-            <!-- @{argLine} lets jacoco:prepare-agent-integration inject its agent when the coverage profile is active -->
-            <argLine>@{argLine} --enable-preview --enable-native-access=ALL-UNNAMED</argLine>
+            <!-- @{argLine} lets jacoco:prepare-agent-integration inject its agent when the coverage profile is active;
+                 ${extraArgLine} appends ad-hoc CLI JVM args (e.g. -DextraArgLine="-Xmx2g") to the fork. -->
+            <argLine>@{argLine} --enable-preview --enable-native-access=ALL-UNNAMED ${extraArgLine}</argLine>
             <!-- Aggregator modules (parent, BOMs, coverage-report) have no ITs; skip the IT phase there. -->
             <failIfNoTests>false</failIfNoTests>
             <failIfNoSpecifiedTests>false</failIfNoSpecifiedTests>
