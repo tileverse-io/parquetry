@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -50,6 +51,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     private final ParquetSchema projectedSchema;
     private final ParquetSchema fileSchema;
     private final OptionalInt batchSizeCap;
+    private final List<Optional<RowMask>> rowMasks;
 
     private final Map<Integer, Future<DecodedRowGroup>> window = new HashMap<>();
     private final int size;
@@ -62,13 +64,15 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
             int maxDecodeAheadPerRead,
             @NonNull ParquetSchema projectedSchema,
             @NonNull ParquetSchema fileSchema,
-            @NonNull OptionalInt batchSizeCap) {
+            @NonNull OptionalInt batchSizeCap,
+            @NonNull List<Optional<RowMask>> rowMasks) {
         this.prefetcher = prefetcher;
         this.decodeExecutor = decodeExecutor;
         this.maxDecodeAheadPerRead = maxDecodeAheadPerRead;
         this.projectedSchema = projectedSchema;
         this.fileSchema = fileSchema;
         this.batchSizeCap = batchSizeCap;
+        this.rowMasks = List.copyOf(rowMasks);
         this.size = prefetcher.size();
     }
 
@@ -86,7 +90,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
         }
         RowGroupFetch fetch = prefetcher.take(index);
         nextToSubmit = Math.max(nextToSubmit, index + 1);
-        return decode(fetch);
+        return decode(fetch, rowMasks.get(index));
     }
 
     private void submitAhead() throws IOException {
@@ -101,26 +105,26 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
                 decodeExecutor.release();
                 throw e;
             }
-            window.put(nextToSubmit, submitDecode(fetch));
+            window.put(nextToSubmit, submitDecode(fetch, rowMasks.get(nextToSubmit)));
             nextToSubmit++;
         }
     }
 
-    private Future<DecodedRowGroup> submitDecode(RowGroupFetch fetch) {
+    private Future<DecodedRowGroup> submitDecode(RowGroupFetch fetch, Optional<RowMask> mask) {
         try {
-            return decodeExecutor.submitAcquired(() -> decode(fetch));
+            return decodeExecutor.submitAcquired(() -> decode(fetch, mask));
         } catch (RejectedExecutionException e) {
             // The slot was released by submitAcquired; decode inline now and hand back a completed future.
-            return CompletableFuture.completedFuture(decode(fetch));
+            return CompletableFuture.completedFuture(decode(fetch, mask));
         }
     }
 
     @SuppressWarnings("MustBeClosed")
-    private DecodedRowGroup decode(RowGroupFetch fetch) {
+    private DecodedRowGroup decode(RowGroupFetch fetch, Optional<RowMask> mask) {
         try {
             List<ParquetRecordBatch> batches = new ArrayList<>();
             BatchRowGroupReader reader =
-                    new BatchRowGroupReader(fetch.columns(), projectedSchema, fileSchema, batchSizeCap);
+                    new BatchRowGroupReader(fetch.columns(), projectedSchema, fileSchema, batchSizeCap, mask);
             try {
                 while (reader.hasMore()) {
                     batches.add(reader.nextBatch());

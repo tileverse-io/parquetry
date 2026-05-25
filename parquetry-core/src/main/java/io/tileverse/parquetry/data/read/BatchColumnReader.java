@@ -46,6 +46,7 @@ import io.tileverse.parquetry.data.read.page.Dictionary;
 import io.tileverse.parquetry.data.read.page.LevelDecoder;
 import io.tileverse.parquetry.data.read.page.PageCursor;
 import io.tileverse.parquetry.data.read.page.PageDecoder;
+import io.tileverse.parquetry.data.read.page.PageSelection;
 import io.tileverse.parquetry.data.read.page.PlainBinaryDecoder;
 import io.tileverse.parquetry.data.read.page.PlainBooleanDecoder;
 import io.tileverse.parquetry.data.read.page.PlainDoubleDecoder;
@@ -56,8 +57,10 @@ import io.tileverse.parquetry.data.read.page.PlainInt64Decoder;
 import io.tileverse.parquetry.data.read.page.PlainInt96Decoder;
 import io.tileverse.parquetry.data.read.page.RleBooleanDecoder;
 import io.tileverse.parquetry.data.read.page.RleDictionaryPageDecoder;
+import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.MalformedFileException;
+import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.LevelMaxima;
 import io.tileverse.parquetry.schema.SchemaNode;
@@ -87,6 +90,7 @@ final class BatchColumnReader {
     private final int defBitWidth;
     private final int repBitWidth;
     private final Optional<Dictionary<?>> dictionary;
+    private final RowRanges survivingRows; // null when this column is not masked
 
     // Per-page state. Populated by loadNextPage; cleared on advance.
     private boolean pageLoaded;
@@ -104,17 +108,33 @@ final class BatchColumnReader {
     private int valuesConsumedInCurrentPage;
     private int logicalRowsConsumedInCurrentPage;
     private long valuesConsumedTotal;
+    private long survivingRowsConsumedTotal;
 
     BatchColumnReader(@NonNull FetchedColumnChunk chunk, @NonNull SchemaNode.Primitive leaf) {
+        this(chunk, leaf, null, null);
+    }
+
+    BatchColumnReader(
+            @NonNull FetchedColumnChunk chunk,
+            @NonNull SchemaNode.Primitive leaf,
+            RowRanges survivingRows,
+            OffsetIndex offsetIndex) {
         this.columnPath = chunk.path();
         this.leaf = leaf;
         this.maxLevels = new LevelMaxima(chunk.maxRepetitionLevel(), chunk.maxDefinitionLevel());
         this.codec = Compression.forWireCodec(chunk.metadata().codec());
         this.totalValues = chunk.metadata().numValues();
-        this.pageCursor = new PageCursor(chunk.compressedSegment(), columnPath);
         this.defBitWidth = LevelDecoder.computeBitWidth(maxLevels.maxDefinitionLevel());
         this.repBitWidth = LevelDecoder.computeBitWidth(maxLevels.maxRepetitionLevel());
         this.dictionary = chunk.dictionary();
+        if (survivingRows != null && offsetIndex != null) {
+            this.survivingRows = survivingRows;
+            PageSelection selection = PageSelection.forRanges(offsetIndex.pageLocations(), totalValues, survivingRows);
+            this.pageCursor = new PageCursor(chunk.compressedSegment(), columnPath, selection);
+        } else {
+            this.survivingRows = null;
+            this.pageCursor = new PageCursor(chunk.compressedSegment(), columnPath);
+        }
     }
 
     // ---- public iteration surface ----
@@ -123,6 +143,9 @@ final class BatchColumnReader {
     boolean hasMore() {
         if (pageLoaded && valuesConsumedInCurrentPage < pageSize) {
             return true;
+        }
+        if (survivingRows != null) {
+            return survivingRowsConsumedTotal < survivingRows.totalRows();
         }
         return pageCursor.hasRemaining();
     }
@@ -195,6 +218,9 @@ final class BatchColumnReader {
         valuesConsumedInCurrentPage += n;
         logicalRowsConsumedInCurrentPage += countLogicalRowsInSlice(start, n);
         valuesConsumedTotal += n;
+        if (survivingRows != null) {
+            survivingRowsConsumedTotal += n;
+        }
         if (valuesConsumedInCurrentPage >= pageSize) {
             advancePastCurrentPage();
         }
@@ -235,6 +261,9 @@ final class BatchColumnReader {
         pageLogicalRowCount = (pageRepLevels == null) ? pageSize : countRepZeroMarkers(pageRepLevels);
         clearTypedPayloads();
         decodeValuesByKind(page);
+        if (survivingRows != null) {
+            compactToSurvivingRows(pageCursor.currentPageFirstRowIndex());
+        }
         valuesConsumedInCurrentPage = 0;
         logicalRowsConsumedInCurrentPage = 0;
         pageLoaded = true;
@@ -656,6 +685,115 @@ final class BatchColumnReader {
                 "BatchColumnReader has no decoder wired for encoding " + encoding + " on " + kindLabel);
     }
 
+    // ---- row compaction for masked reads ----
+
+    /**
+     * Drops the rows of the just-decoded page that fall outside the surviving ranges, leaving only the surviving rows
+     * (in order) in the per-page arrays. Flat columns only: one value per row, no repetition levels.
+     */
+    private void compactToSurvivingRows(long pageFirstRow) {
+        int[] keep = survivingLocalPositions(pageFirstRow, pageSize);
+        if (keep.length == pageSize) {
+            return;
+        }
+        pageValidity = gatherValidity(pageValidity, keep);
+        gatherTypedPayloads(keep);
+        pageSize = keep.length;
+        pageLogicalRowCount = keep.length;
+    }
+
+    /** Local positions {@code p} of the page whose row group index {@code pageFirstRow + p} is in the surviving set. */
+    private int[] survivingLocalPositions(long pageFirstRow, int pageRows) {
+        long pageLast = pageFirstRow + pageRows - 1;
+        int[] keep = new int[pageRows];
+        int count = 0;
+        for (RowRanges.Range range : survivingRows.ranges()) {
+            if (range.last() < pageFirstRow || range.first() > pageLast) {
+                continue;
+            }
+            long from = Math.max(range.first(), pageFirstRow);
+            long to = Math.min(range.last(), pageLast);
+            for (long row = from; row <= to; row++) {
+                keep[count++] = (int) (row - pageFirstRow);
+            }
+        }
+        return (count == pageRows) ? keep : Arrays.copyOf(keep, count);
+    }
+
+    private void gatherTypedPayloads(int[] keep) {
+        if (pageInts != null) {
+            pageInts = gatherInts(pageInts, keep);
+        } else if (pageLongs != null) {
+            pageLongs = gatherLongs(pageLongs, keep);
+        } else if (pageFloats != null) {
+            pageFloats = gatherFloats(pageFloats, keep);
+        } else if (pageDoubles != null) {
+            pageDoubles = gatherDoubles(pageDoubles, keep);
+        } else if (pageBooleans != null) {
+            pageBooleans = gatherBooleans(pageBooleans, keep);
+        } else if (pageSegments != null) {
+            pageSegments = gatherSegments(pageSegments, keep);
+        }
+    }
+
+    private static BitSet gatherValidity(BitSet source, int[] keep) {
+        BitSet out = new BitSet(keep.length);
+        for (int j = 0; j < keep.length; j++) {
+            if (source.get(keep[j])) {
+                out.set(j);
+            }
+        }
+        return out;
+    }
+
+    private static int[] gatherInts(int[] source, int[] keep) {
+        int[] out = new int[keep.length];
+        for (int j = 0; j < keep.length; j++) {
+            out[j] = source[keep[j]];
+        }
+        return out;
+    }
+
+    private static long[] gatherLongs(long[] source, int[] keep) {
+        long[] out = new long[keep.length];
+        for (int j = 0; j < keep.length; j++) {
+            out[j] = source[keep[j]];
+        }
+        return out;
+    }
+
+    private static float[] gatherFloats(float[] source, int[] keep) {
+        float[] out = new float[keep.length];
+        for (int j = 0; j < keep.length; j++) {
+            out[j] = source[keep[j]];
+        }
+        return out;
+    }
+
+    private static double[] gatherDoubles(double[] source, int[] keep) {
+        double[] out = new double[keep.length];
+        for (int j = 0; j < keep.length; j++) {
+            out[j] = source[keep[j]];
+        }
+        return out;
+    }
+
+    private static boolean[] gatherBooleans(boolean[] source, int[] keep) {
+        boolean[] out = new boolean[keep.length];
+        for (int j = 0; j < keep.length; j++) {
+            out[j] = source[keep[j]];
+        }
+        return out;
+    }
+
+    private static MemorySegment[] gatherSegments(MemorySegment[] source, int[] keep) {
+        MemorySegment[] out = new MemorySegment[keep.length];
+        for (int j = 0; j < keep.length; j++) {
+            out[j] = source[keep[j]];
+        }
+        return out;
+    }
+
     // ---- vector slicing ----
 
     private ColumnVector sliceVector(int start, int n) {
@@ -691,6 +829,11 @@ final class BatchColumnReader {
     }
 
     // ---- diagnostics ----
+
+    /** Data pages this reader actually decoded; pages skipped by the surviving-row mask are not counted. */
+    int decodedDataPageCount() {
+        return pageCursor.decodedDataPageCount();
+    }
 
     ColumnPath columnPath() {
         return columnPath;

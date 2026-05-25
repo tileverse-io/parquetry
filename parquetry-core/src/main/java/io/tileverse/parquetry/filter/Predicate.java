@@ -57,6 +57,9 @@ public sealed interface Predicate {
         return columns;
     }
 
+    @SuppressWarnings(
+            "java:S6878") // palantirJavaFormat 2.90.0 doesn't support unnamed record patterns in records (e.g. case
+    // Eq(ColumnPath col, _) ->
     private static void collectColumns(Predicate predicate, Set<ColumnPath> columns) {
         switch (predicate) {
             case Always _ -> {

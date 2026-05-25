@@ -42,18 +42,29 @@ public final class PageCursor {
     private final MemorySegment chunk;
     private final long limit;
     private final ColumnPath columnPath;
+    private final PageSelection selection; // null = no page-skip (decode every data page)
     private long position;
+    private int dataPageOrdinal;
+    private long currentPageFirstRowIndex;
+    private int decodedDataPageCount;
+    private int skippedDataPageCount;
 
     public PageCursor(MemorySegment chunk, ColumnPath columnPath) {
+        this(chunk, columnPath, null);
+    }
+
+    public PageCursor(MemorySegment chunk, ColumnPath columnPath, PageSelection selection) {
         this.chunk = chunk;
         this.limit = chunk.byteSize();
         this.columnPath = columnPath;
+        this.selection = selection;
         this.position = 0L;
     }
 
     /**
      * Returns the next {@link DecodedPage} from the chunk's compressed bytes, or {@code null} when the cursor is
-     * exhausted. Non-data pages (e.g. a misplaced dictionary or index page in the data-page region) are skipped.
+     * exhausted. Non-data pages are skipped. When a {@link PageSelection} is present, data pages whose row span does
+     * not overlap the surviving rows are advanced past without decompressing or decoding.
      */
     public DecodedPage nextDataPage(LevelMaxima maxLevels, Compression codec, Arena pageArena) throws IOException {
         while (position < limit) {
@@ -63,13 +74,37 @@ public final class PageCursor {
                 throw new MalformedFileException(
                         "Negative compressedPageSize " + compressedSize + " for column " + columnPath.dot());
             }
-            MemorySegment pagePayload = sliceAndAdvance(compressedSize);
-            if (header.type() == PageType.DATA_PAGE || header.type() == PageType.DATA_PAGE_V2) {
-                return DataPageReader.forHeader(header).read(header, maxLevels, pagePayload, codec, pageArena);
+            boolean isDataPage = header.type() == PageType.DATA_PAGE || header.type() == PageType.DATA_PAGE_V2;
+            if (!isDataPage) {
+                sliceAndAdvance(compressedSize);
+                continue;
             }
-            // Skip any leftover dictionary/index pages quietly; their payload bytes were already advanced past.
+            int ordinal = dataPageOrdinal++;
+            MemorySegment pagePayload = sliceAndAdvance(compressedSize);
+            if (selection != null && !selection.isSurviving(ordinal)) {
+                skippedDataPageCount++;
+                continue;
+            }
+            currentPageFirstRowIndex = (selection != null) ? selection.firstRowIndex(ordinal) : 0L;
+            decodedDataPageCount++;
+            return DataPageReader.forHeader(header).read(header, maxLevels, pagePayload, codec, pageArena);
         }
         return null;
+    }
+
+    /** First row index (relative to the row group) of the page most recently returned by {@link #nextDataPage}. */
+    public long currentPageFirstRowIndex() {
+        return currentPageFirstRowIndex;
+    }
+
+    /** Data pages decompressed and decoded so far; excludes pages skipped by the {@link PageSelection}. */
+    public int decodedDataPageCount() {
+        return decodedDataPageCount;
+    }
+
+    /** Data pages advanced past without decoding because they fell outside the surviving rows. */
+    public int skippedDataPageCount() {
+        return skippedDataPageCount;
     }
 
     /**

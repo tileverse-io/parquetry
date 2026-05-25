@@ -36,10 +36,12 @@ import io.tileverse.parquetry.data.read.ParallelDecodeCoordinator;
 import io.tileverse.parquetry.data.read.RowGroupFetcher;
 import io.tileverse.parquetry.data.read.RowGroupPrefetcher;
 import io.tileverse.parquetry.data.read.RowGroupSurvivor;
+import io.tileverse.parquetry.data.read.RowMask;
 import io.tileverse.parquetry.filter.ExplainPlan;
 import io.tileverse.parquetry.filter.FilterPipeline;
 import io.tileverse.parquetry.filter.FilterPipeline.BloomFilterLookup;
 import io.tileverse.parquetry.filter.FilterPipeline.ColumnBloom;
+import io.tileverse.parquetry.filter.FilterPipeline.ColumnPageStats;
 import io.tileverse.parquetry.filter.FilterPipeline.ColumnPageStatsLookup;
 import io.tileverse.parquetry.filter.FilterPipeline.ColumnStats;
 import io.tileverse.parquetry.filter.FilterPipeline.ColumnStatsLookup;
@@ -47,12 +49,15 @@ import io.tileverse.parquetry.filter.FilterPipeline.DictionaryLookup;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.RowGroupPlan;
+import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.filter.bloom.BloomFilterReader;
 import io.tileverse.parquetry.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.format.ColumnChunk;
+import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.KeyValue;
+import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -143,15 +148,16 @@ public class ParquetReader {
         ExplainPlan plan = runFilterPipeline(predicate, scanProjection, options);
         List<RowGroupSurvivor> survivors = survivorsFor(plan);
         ParquetSchema scanSchema = plan.projectedSchema();
-        ParallelDecodeCoordinator coordinator = newDecodeCoordinator(survivors, scanSchema, options);
+        List<Optional<RowMask>> decodeMasks = decodeMasksFor(survivors, scanSchema, options);
+        ParallelDecodeCoordinator coordinator = newDecodeCoordinator(survivors, scanSchema, decodeMasks, options);
         ParquetSchema outputSchema = outputSchemaFor(projection);
         Predicate recordFilter = recordLevel ? recordFilterOf(plan.normalizedPredicate()) : null;
         return BatchPipeline.rows(coordinator, materializer, outputSchema, recordFilter);
     }
 
     /**
-     * Expands {@code projection} to also include the predicate's columns, so record-level evaluation can read them even
-     * when the caller did not project them. {@link Projection.All} already decodes every column.
+     * Expands {@code projection} to also include the predicate's columns, and hence record-level evaluation can read
+     * them even when the caller did not project them. {@link Projection.All} already decodes every column.
      */
     private static Projection scanProjectionFor(Projection projection, Predicate predicate) {
         return switch (projection) {
@@ -198,7 +204,8 @@ public class ParquetReader {
         ExplainPlan plan = runFilterPipeline(predicate, projection, options);
         List<RowGroupSurvivor> survivors = survivorsFor(plan);
         ParquetSchema projectedSchema = plan.projectedSchema();
-        ParallelDecodeCoordinator coordinator = newDecodeCoordinator(survivors, projectedSchema, options);
+        List<Optional<RowMask>> decodeMasks = decodeMasksFor(survivors, projectedSchema, options);
+        ParallelDecodeCoordinator coordinator = newDecodeCoordinator(survivors, projectedSchema, decodeMasks, options);
         Stream<ParquetRecordBatch> batches = BatchPipeline.batches(coordinator);
         return batches.map(batch -> materializer.materialize(projectedSchema, batch));
     }
@@ -239,7 +246,10 @@ public class ParquetReader {
      * cascades to {@link RowGroupPrefetcher#close()}, so the per-read fetch executor still shuts down with the read.
      */
     private ParallelDecodeCoordinator newDecodeCoordinator(
-            List<RowGroupSurvivor> survivors, ParquetSchema projectedSchema, ReadOptions options) {
+            List<RowGroupSurvivor> survivors,
+            ParquetSchema projectedSchema,
+            List<Optional<RowMask>> decodeMasks,
+            ReadOptions options) {
         RowGroupPrefetcher prefetcher = newPrefetcher(survivors, projectedSchema, options);
         return new ParallelDecodeCoordinator(
                 prefetcher,
@@ -247,7 +257,8 @@ public class ParquetReader {
                 options.maxDecodeAheadPerRead(),
                 projectedSchema,
                 fileSchema,
-                options.batchSize());
+                options.batchSize(),
+                decodeMasks);
     }
 
     /** Runs the filter pipeline without reading data and returns the explain plan. */
@@ -277,10 +288,59 @@ public class ParquetReader {
                     rg.numRows(),
                     statsLookup(rg),
                     noDictionaryLookup(),
-                    noColumnPageStatsLookup(),
+                    pageStatsLookupFor(rg, options),
                     bloomLookupFor(rg, options)));
         }
         return inputs;
+    }
+
+    /**
+     * Builds the per-row-group column-index lookup, or the no-op lookup when {@code useColumnIndexFilter} is off. The
+     * lookup is lazy and memoizing, mirroring {@link #bloomLookupFor}: a column's {@link ColumnIndex} and
+     * {@link OffsetIndex} are read only when the evaluator asks about that column, and at most once per call.
+     */
+    protected ColumnPageStatsLookup pageStatsLookupFor(io.tileverse.parquetry.format.RowGroup rg, ReadOptions options) {
+        if (!options.useColumnIndexFilter()) {
+            return noColumnPageStatsLookup();
+        }
+        Map<List<String>, ColumnChunk> byPath = new LinkedHashMap<>();
+        for (ColumnChunk chunk : rg.columns()) {
+            chunk.metaData().ifPresent(meta -> byPath.put(meta.pathInSchema(), chunk));
+        }
+        Map<ColumnPath, Optional<ColumnPageStats>> cache = new LinkedHashMap<>();
+        return path -> cache.computeIfAbsent(path, p -> loadColumnPageStats(byPath.get(p.parts()), p));
+    }
+
+    /**
+     * Reads one column's {@link ColumnIndex} and {@link OffsetIndex} when both index sections and a decodable primitive
+     * kind are present. Returns empty when any piece is missing or unreadable; the tier then degrades to
+     * {@link io.tileverse.parquetry.filter.PruningDecision.NotApplied} for that column rather than failing the read.
+     */
+    protected Optional<ColumnPageStats> loadColumnPageStats(ColumnChunk chunk, ColumnPath path) {
+        if (chunk == null
+                || chunk.columnIndexOffset().isEmpty()
+                || chunk.columnIndexLength().isEmpty()
+                || chunk.offsetIndexOffset().isEmpty()
+                || chunk.offsetIndexLength().isEmpty()) {
+            return Optional.empty();
+        }
+        Optional<PrimitiveKind> kind = primitiveKindAt(path);
+        if (kind.isEmpty()) {
+            return Optional.empty();
+        }
+        try {
+            ColumnIndex columnIndex = ParquetFormat.readColumnIndex(
+                    rangeReader,
+                    chunk.columnIndexOffset().getAsLong(),
+                    chunk.columnIndexLength().getAsInt());
+            OffsetIndex offsetIndex = ParquetFormat.readOffsetIndex(
+                    rangeReader,
+                    chunk.offsetIndexOffset().getAsLong(),
+                    chunk.offsetIndexLength().getAsInt());
+            return Optional.of(new ColumnPageStats(kind.orElseThrow(), columnIndex, offsetIndex));
+        } catch (RuntimeException _) {
+            return Optional.empty();
+        }
     }
 
     /**
@@ -336,6 +396,70 @@ public class ParquetReader {
             }
         }
         return survivors;
+    }
+
+    /**
+     * Builds one decode mask per survivor, parallel to {@code survivors}. A mask is present only when page-skip is both
+     * wanted and safe for that row group: {@code useColumnIndexFilter} on, the column-index tier narrowed the row set,
+     * every scanned column flat, and every scanned column has an offset index. Otherwise the entry is empty and the row
+     * group decodes in full.
+     */
+    protected List<Optional<RowMask>> decodeMasksFor(
+            List<RowGroupSurvivor> survivors, ParquetSchema scanSchema, ReadOptions options) {
+        List<Optional<RowMask>> masks = new ArrayList<>(survivors.size());
+        boolean scanFlat = options.useColumnIndexFilter() && allFlat(fileSchema, scanSchema.leafColumns());
+        for (RowGroupSurvivor survivor : survivors) {
+            masks.add(scanFlat ? maskFor(survivor, scanSchema) : Optional.empty());
+        }
+        return masks;
+    }
+
+    private Optional<RowMask> maskFor(RowGroupSurvivor survivor, ParquetSchema scanSchema) {
+        if (survivor.survivingRows().isEmpty()) {
+            return Optional.empty();
+        }
+        RowRanges surviving = survivor.survivingRows().orElseThrow();
+        Map<List<String>, ColumnChunk> byPath = new LinkedHashMap<>();
+        for (ColumnChunk chunk : survivor.rowGroup().columns()) {
+            chunk.metaData().ifPresent(meta -> byPath.put(meta.pathInSchema(), chunk));
+        }
+        Map<ColumnPath, OffsetIndex> offsetIndexes =
+                LinkedHashMap.newLinkedHashMap(scanSchema.leafColumns().size());
+        for (ColumnPath leaf : scanSchema.leafColumns()) {
+            Optional<OffsetIndex> offsetIndex = loadOffsetIndex(byPath.get(leaf.parts()));
+            if (offsetIndex.isEmpty()) {
+                return Optional.empty();
+            }
+            offsetIndexes.put(leaf, offsetIndex.orElseThrow());
+        }
+        return Optional.of(new RowMask(surviving, offsetIndexes));
+    }
+
+    /** True when every {@code leaf} is non-repeated (max repetition level 0) in {@code schema}. Pure; testable. */
+    static boolean allFlat(ParquetSchema schema, List<ColumnPath> leaves) {
+        for (ColumnPath leaf : leaves) {
+            if (schema.maxLevels(leaf).maxRepetitionLevel() > 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Reads one column's {@link OffsetIndex}, or empty when it is absent or unreadable (page-skip degrades off). */
+    protected Optional<OffsetIndex> loadOffsetIndex(ColumnChunk chunk) {
+        if (chunk == null
+                || chunk.offsetIndexOffset().isEmpty()
+                || chunk.offsetIndexLength().isEmpty()) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(ParquetFormat.readOffsetIndex(
+                    rangeReader,
+                    chunk.offsetIndexOffset().getAsLong(),
+                    chunk.offsetIndexLength().getAsInt()));
+        } catch (RuntimeException _) {
+            return Optional.empty();
+        }
     }
 
     /**

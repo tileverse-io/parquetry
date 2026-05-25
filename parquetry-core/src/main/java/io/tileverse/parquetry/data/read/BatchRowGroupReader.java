@@ -21,6 +21,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.OptionalInt;
 
 import com.google.errorprone.annotations.MustBeClosed;
@@ -28,6 +29,7 @@ import com.google.errorprone.annotations.MustBeClosed;
 import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaNode;
@@ -58,6 +60,7 @@ public final class BatchRowGroupReader implements AutoCloseable {
     private final ParquetSchema projectedSchema;
     private final OptionalInt batchSizeCap;
     private final List<ProjectedLeaf> projectedLeaves;
+    private final Optional<RowMask> rowMask;
 
     // Lazily built on first nextBatch() call; keyed by column path in declaration order.
     private Map<ColumnPath, BatchColumnReader> columnReaders;
@@ -66,10 +69,12 @@ public final class BatchRowGroupReader implements AutoCloseable {
             @NonNull List<FetchedColumnChunk> chunks,
             @NonNull ParquetSchema projectedSchema,
             @NonNull ParquetSchema fileSchema,
-            @NonNull OptionalInt batchSizeCap) {
+            @NonNull OptionalInt batchSizeCap,
+            @NonNull Optional<RowMask> rowMask) {
         this.projectedSchema = projectedSchema;
         this.batchSizeCap = batchSizeCap;
         this.projectedLeaves = resolveProjectedLeaves(chunks, fileSchema);
+        this.rowMask = rowMask;
     }
 
     /**
@@ -160,9 +165,18 @@ public final class BatchRowGroupReader implements AutoCloseable {
         }
         Map<ColumnPath, BatchColumnReader> readers = new HashMap<>();
         for (ProjectedLeaf leaf : projectedLeaves) {
-            readers.put(leaf.path(), new BatchColumnReader(leaf.chunk(), leaf.leaf()));
+            readers.put(leaf.path(), buildColumnReader(leaf));
         }
         columnReaders = readers;
+    }
+
+    private BatchColumnReader buildColumnReader(ProjectedLeaf leaf) {
+        if (rowMask.isEmpty()) {
+            return new BatchColumnReader(leaf.chunk(), leaf.leaf());
+        }
+        RowMask mask = rowMask.orElseThrow();
+        OffsetIndex offsetIndex = mask.offsetIndexes().get(leaf.path());
+        return new BatchColumnReader(leaf.chunk(), leaf.leaf(), mask.survivingRows(), offsetIndex);
     }
 
     // --- batch row count computation ---
