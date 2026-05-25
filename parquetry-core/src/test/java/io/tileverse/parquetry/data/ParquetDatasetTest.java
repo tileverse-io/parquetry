@@ -139,9 +139,9 @@ class DatasetTest {
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
             ParquetDataset dataset = ParquetDataset.open(reader);
 
-            List<RowGroup> view = dataset.rowGroups();
+            List<RowGroupSummary> view = dataset.rowGroups();
             assertThat(view).hasSizeGreaterThan(1);
-            long totalRows = view.stream().mapToLong(RowGroup::rowCount).sum();
+            long totalRows = view.stream().mapToLong(RowGroupSummary::rowCount).sum();
             assertThat(totalRows).isEqualTo(expected.size());
             for (int i = 0; i < view.size(); i++) {
                 assertThat(view.get(i).index()).isEqualTo(i);

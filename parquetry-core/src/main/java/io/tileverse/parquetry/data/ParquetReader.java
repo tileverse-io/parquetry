@@ -59,6 +59,7 @@ import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.KeyValue;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.ParquetFormat;
+import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -92,14 +93,14 @@ public class ParquetReader {
     private final FileMetaData footer;
     private final ParquetSchema fileSchema;
     private final Map<String, String> keyValueMetadata;
-    private final List<RowGroup> rowGroupView;
+    private final List<RowGroupSummary> rowGroupView;
 
     protected ParquetReader(
             RangeReader rangeReader,
             FileMetaData footer,
             ParquetSchema fileSchema,
             Map<String, String> keyValueMetadata,
-            List<RowGroup> rowGroupView) {
+            List<RowGroupSummary> rowGroupView) {
         this.rangeReader = rangeReader;
         this.footer = footer;
         this.fileSchema = fileSchema;
@@ -112,7 +113,7 @@ public class ParquetReader {
         FileMetaData footer = ParquetFormat.readFooter(reader);
         Map<String, String> kvMetadata = collapseKeyValueMetadata(footer.keyValueMetadata());
         ParquetSchema fileSchema = buildFileSchema(footer, kvMetadata);
-        List<RowGroup> rgView = toRowGroupView(footer);
+        List<RowGroupSummary> rgView = toRowGroupView(footer);
         return new ParquetReader(reader, footer, fileSchema, kvMetadata, rgView);
     }
 
@@ -127,7 +128,7 @@ public class ParquetReader {
     }
 
     /** Returns a public view of the row groups in file order. */
-    public List<RowGroup> rowGroups() {
+    public List<RowGroupSummary> rowGroups() {
         return rowGroupView;
     }
 
@@ -283,7 +284,7 @@ public class ParquetReader {
     protected List<FilterPipeline.RowGroupInputs> filterInputsFor(FileMetaData fm, ReadOptions options) {
         List<FilterPipeline.RowGroupInputs> inputs =
                 new ArrayList<>(fm.rowGroups().size());
-        for (io.tileverse.parquetry.format.RowGroup rg : fm.rowGroups()) {
+        for (RowGroup rg : fm.rowGroups()) {
             inputs.add(new FilterPipeline.RowGroupInputs(
                     rg.numRows(),
                     statsLookup(rg),
@@ -299,7 +300,7 @@ public class ParquetReader {
      * lookup is lazy and memoizing, mirroring {@link #bloomLookupFor}: a column's {@link ColumnIndex} and
      * {@link OffsetIndex} are read only when the evaluator asks about that column, and at most once per call.
      */
-    protected ColumnPageStatsLookup pageStatsLookupFor(io.tileverse.parquetry.format.RowGroup rg, ReadOptions options) {
+    protected ColumnPageStatsLookup pageStatsLookupFor(RowGroup rg, ReadOptions options) {
         if (!options.useColumnIndexFilter()) {
             return noColumnPageStatsLookup();
         }
@@ -352,7 +353,7 @@ public class ParquetReader {
      * group has no columns with bloom filters; the bloom tier degrades gracefully without forcing the evaluator to
      * handle nulls. Subclasses may override to plug a cached or remote bloom-filter source.
      */
-    protected BloomFilterLookup bloomLookupFor(io.tileverse.parquetry.format.RowGroup rg, ReadOptions options) {
+    protected BloomFilterLookup bloomLookupFor(RowGroup rg, ReadOptions options) {
         if (!options.useBloomFilter()) {
             return FilterPipeline.emptyBloomLookup();
         }
@@ -370,7 +371,7 @@ public class ParquetReader {
      * files). Subclasses may override to merge external stats sources (e.g. a sidecar index) with the in-footer
      * statistics.
      */
-    protected ColumnStatsLookup statsLookup(io.tileverse.parquetry.format.RowGroup rg) {
+    protected ColumnStatsLookup statsLookup(RowGroup rg) {
         Map<ColumnPath, ColumnStats> byPath = new LinkedHashMap<>();
         for (ColumnChunk chunk : rg.columns()) {
             recordColumnStats(chunk, byPath);
@@ -383,10 +384,10 @@ public class ParquetReader {
      * Subclasses may override to drop or reorder survivors before they enter the batch pipeline.
      */
     protected List<RowGroupSurvivor> survivorsFor(ExplainPlan plan) {
-        List<io.tileverse.parquetry.format.RowGroup> thriftRowGroups = footer.rowGroups();
+        List<RowGroup> thriftRowGroups = footer.rowGroups();
         List<RowGroupSurvivor> survivors = new ArrayList<>(plan.rowGroups().size());
         for (RowGroupPlan rgPlan : plan.rowGroups()) {
-            io.tileverse.parquetry.format.RowGroup rg = thriftRowGroups.get(rgPlan.index());
+            RowGroup rg = thriftRowGroups.get(rgPlan.index());
             switch (rgPlan.outcome()) {
                 case ELIMINATED -> {
                     /* drop */
@@ -467,7 +468,7 @@ public class ParquetReader {
      * captured when the writer provided it ({@code bloom_filter_length} was added in spec 2.10); older writers omit it
      * and the reader falls back to a two-step fetch.
      */
-    protected Map<ColumnPath, BloomChunkLocator> bloomLocatorsFor(io.tileverse.parquetry.format.RowGroup rg) {
+    protected Map<ColumnPath, BloomChunkLocator> bloomLocatorsFor(RowGroup rg) {
         Map<ColumnPath, BloomChunkLocator> locators = new LinkedHashMap<>();
         for (ColumnChunk chunk : rg.columns()) {
             locatorFor(chunk).ifPresent(entry -> locators.put(entry.path(), entry.locator()));
@@ -574,12 +575,12 @@ public class ParquetReader {
         return Collections.unmodifiableMap(collapsed);
     }
 
-    private static List<RowGroup> toRowGroupView(FileMetaData footer) {
-        List<io.tileverse.parquetry.format.RowGroup> rgs = footer.rowGroups();
-        List<RowGroup> view = new ArrayList<>(rgs.size());
+    private static List<RowGroupSummary> toRowGroupView(FileMetaData footer) {
+        List<RowGroup> rgs = footer.rowGroups();
+        List<RowGroupSummary> view = new ArrayList<>(rgs.size());
         for (int i = 0; i < rgs.size(); i++) {
-            io.tileverse.parquetry.format.RowGroup rg = rgs.get(i);
-            view.add(new RowGroup(
+            RowGroup rg = rgs.get(i);
+            view.add(new RowGroupSummary(
                     i,
                     rg.numRows(),
                     rg.totalByteSize(),

@@ -70,7 +70,7 @@ public sealed interface ParquetDataset permits DefaultParquetDataset {
     Map<String, String> keyValueMetadata();
 
     /** Returns a public view of the row groups, in file order. */
-    List<RowGroup> rowGroups();
+    List<RowGroupSummary> rowGroups();
 
     /**
      * Reads every record into the canonical {@link ParquetRecord} view, applying no predicate or projection.

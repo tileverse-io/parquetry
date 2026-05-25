@@ -62,7 +62,7 @@ import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.data.RowGroup;
+import io.tileverse.parquetry.data.RowGroupSummary;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -919,8 +919,9 @@ class OvertureBuildingsProbeTest {
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
             ParquetDataset dataset = ParquetDataset.open(reader);
             int leafCount = dataset.schema().leafColumns().size();
-            long totalRows =
-                    dataset.rowGroups().stream().mapToLong(RowGroup::rowCount).sum();
+            long totalRows = dataset.rowGroups().stream()
+                    .mapToLong(RowGroupSummary::rowCount)
+                    .sum();
             System.out.println();
             System.out.println("=== Overture buildings probe :: full schema ===");
             System.out.println("Leaf columns: " + leafCount + "; rows across "
@@ -986,8 +987,9 @@ class OvertureBuildingsProbeTest {
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
             ParquetDataset dataset = ParquetDataset.open(reader);
-            long totalRows =
-                    dataset.rowGroups().stream().mapToLong(RowGroup::rowCount).sum();
+            long totalRows = dataset.rowGroups().stream()
+                    .mapToLong(RowGroupSummary::rowCount)
+                    .sum();
             System.out.println();
             System.out.println("=== Overture buildings probe :: full schema via batch API ===");
             System.out.println("Rows across " + dataset.rowGroups().size() + " row groups: " + totalRows);
@@ -1050,7 +1052,7 @@ class OvertureBuildingsProbeTest {
 
             assertThat(dataset.rowGroups()).isNotEmpty();
             System.out.println("Row groups: " + dataset.rowGroups().size());
-            RowGroup first = dataset.rowGroups().get(0);
+            RowGroupSummary first = dataset.rowGroups().get(0);
             System.out.println("First row group: rowCount=" + first.rowCount()
                     + ", totalByteSize=" + first.totalByteSize()
                     + ", totalCompressedSize=" + first.totalCompressedSize());
@@ -1074,8 +1076,9 @@ class OvertureBuildingsProbeTest {
             Projection projection = Projection.of(flatLeaves);
             System.out.println("Projected " + flatLeaves.size() + " leaves (flat / optional-group only).");
 
-            long totalRows =
-                    dataset.rowGroups().stream().mapToLong(RowGroup::rowCount).sum();
+            long totalRows = dataset.rowGroups().stream()
+                    .mapToLong(RowGroupSummary::rowCount)
+                    .sum();
             System.out.println("Total rows across all " + dataset.rowGroups().size() + " row groups: " + totalRows);
 
             ReadOptions opts = ReadOptions.DEFAULTS;

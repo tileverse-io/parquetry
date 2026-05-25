@@ -67,7 +67,7 @@ final class DefaultParquetDataset implements ParquetDataset {
     }
 
     @Override
-    public List<RowGroup> rowGroups() {
+    public List<RowGroupSummary> rowGroups() {
         return readers.get(0).rowGroups();
     }
 
