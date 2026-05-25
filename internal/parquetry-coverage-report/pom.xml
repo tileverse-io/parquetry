@@ -4,7 +4,7 @@
 
   <parent>
     <groupId>io.tileverse.parquetry</groupId>
-    <artifactId>parquetry-parent</artifactId>
+    <artifactId>parquetry-internal</artifactId>
     <version>${revision}</version>
   </parent>
 

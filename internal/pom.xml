@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>io.tileverse.parquetry</groupId>
+    <artifactId>parquetry-parent</artifactId>
+    <version>${revision}</version>
+  </parent>
+
+  <artifactId>parquetry-internal</artifactId>
+  <packaging>pom</packaging>
+  <name>Parquetry :: Internal</name>
+  <description>Parent and aggregator for build-and-dev modules that are never published (the coverage report and JMH
+    benchmarks).</description>
+
+  <properties>
+    <!-- This aggregator and its children are dev tooling; never deploy them. -->
+    <maven.deploy.skip>true</maven.deploy.skip>
+  </properties>
+
+  <profiles>
+    <profile>
+      <!-- The coverage report aggregates JaCoCo across the reactor; only build it when the coverage profile is on. -->
+      <id>coverage</id>
+      <activation>
+        <property>
+          <name>coverage</name>
+        </property>
+      </activation>
+      <modules>
+        <module>parquetry-coverage-report</module>
+      </modules>
+    </profile>
+  </profiles>
+</project>

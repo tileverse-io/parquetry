@@ -119,11 +119,21 @@ try (ParquetDataset source = ParquetDataset.open(reader);
 
 ## Modules
 
-- `parquetry-format`: the Parquet and Thrift wire model with reading and writing.
-- `parquetry-core`: schema, decoders and encoders, the reader and writer, filter pushdown, and the batch API.
-- `parquetry-geo-jts`: materializes decoded geometries as JTS objects.
-- `parquetry-bom`, `parquetry-dependencies`: dependency and version management.
-- `parquetry-encryption`, `parquetry-variant`: placeholders for modular encryption and the Variant logical type.
+Modules are grouped by role. The foundation - the BOMs and the layered engine - sits flat at the root; three category directories absorb growth: ecosystem adapters, end-user applications, and modules the build needs but never publishes.
+
+```
+dependencies/, bom/                      # dependency and version management
+parquetry-format                         # the Parquet and Thrift wire model (read + write)
+parquetry-core                           # schema, codecs, reader/writer, filter pushdown, batch API
+parquetry-encryption, parquetry-variant  # placeholders: modular encryption, the Variant logical type
+integrations/                            # adapters to other ecosystems
+  parquetry-geo-jts                      # materialize decoded geometries as JTS objects
+apps/                                    # end-user applications (a CLI lands here), as they arrive
+internal/                                # not published; build and dev only
+  parquetry-coverage-report              # aggregated JaCoCo coverage (under the coverage profile)
+```
+
+Directories are for navigation; published artifact ids stay flat regardless (`io.tileverse.parquetry:parquetry-core`). Select a module by id with `-pl :parquetry-core`.
 
 ## Building
 
@@ -134,7 +144,7 @@ try (ParquetDataset source = ParquetDataset.open(reader);
 # Unit + integration tests (apache/parquet-testing corpus, LocalStack-backed S3 reader)
 ./mvnw verify
 
-# Aggregated coverage at coverage-report/target/site/jacoco-aggregate/index.html
+# Aggregated coverage at internal/parquetry-coverage-report/target/site/jacoco-aggregate/index.html
 ./mvnw -Pcoverage clean verify
 ```
 

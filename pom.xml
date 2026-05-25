@@ -34,13 +34,14 @@
   </developers>
 
   <modules>
-    <module>parquetry-dependencies</module>
-    <module>parquetry-bom</module>
+    <module>dependencies</module>
+    <module>bom</module>
     <module>parquetry-format</module>
     <module>parquetry-core</module>
     <module>parquetry-encryption</module>
     <module>parquetry-variant</module>
-    <module>parquetry-geo-jts</module>
+    <module>integrations</module>
+    <module>internal</module>
   </modules>
 
   <scm>
@@ -364,6 +365,7 @@
           <waitUntil>published</waitUntil>
           <waitMaxTime>3600</waitMaxTime>
           <excludeArtifacts>
+            <excludeArtifact>parquetry-internal</excludeArtifact>
             <excludeArtifact>parquetry-coverage-report</excludeArtifact>
           </excludeArtifacts>
         </configuration>
@@ -460,9 +462,6 @@
           <name>coverage</name>
         </property>
       </activation>
-      <modules>
-        <module>coverage-report</module>
-      </modules>
       <build>
         <plugins>
           <plugin>
