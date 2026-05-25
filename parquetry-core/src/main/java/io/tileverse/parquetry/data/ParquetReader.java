@@ -18,9 +18,11 @@ package io.tileverse.parquetry.data;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Stream;
@@ -136,11 +138,46 @@ public class ParquetReader {
             @NonNull Materializer<T> materializer,
             @NonNull ReadOptions options) {
 
-        ExplainPlan plan = runFilterPipeline(predicate, projection, options);
+        boolean recordLevel = options.useRecordLevelFilter();
+        Projection scanProjection = recordLevel ? scanProjectionFor(projection, predicate) : projection;
+        ExplainPlan plan = runFilterPipeline(predicate, scanProjection, options);
         List<RowGroupSurvivor> survivors = survivorsFor(plan);
-        ParquetSchema projectedSchema = plan.projectedSchema();
-        ParallelDecodeCoordinator coordinator = newDecodeCoordinator(survivors, projectedSchema, options);
-        return BatchPipeline.rows(coordinator, materializer);
+        ParquetSchema scanSchema = plan.projectedSchema();
+        ParallelDecodeCoordinator coordinator = newDecodeCoordinator(survivors, scanSchema, options);
+        ParquetSchema outputSchema = outputSchemaFor(projection);
+        Predicate recordFilter = recordLevel ? recordFilterOf(plan.normalizedPredicate()) : null;
+        return BatchPipeline.rows(coordinator, materializer, outputSchema, recordFilter);
+    }
+
+    /**
+     * Expands {@code projection} to also include the predicate's columns, so record-level evaluation can read them even
+     * when the caller did not project them. {@link Projection.All} already decodes every column.
+     */
+    private static Projection scanProjectionFor(Projection projection, Predicate predicate) {
+        return switch (projection) {
+            case Projection.All _ -> projection;
+            case Projection.Columns(Set<ColumnPath> kept) -> {
+                Set<ColumnPath> union = new LinkedHashSet<>(kept);
+                union.addAll(Predicate.columns(predicate));
+                yield Projection.of(union);
+            }
+        };
+    }
+
+    /** The schema rows are materialized through: exactly the caller's projection, not the expanded scan set. */
+    private ParquetSchema outputSchemaFor(Projection projection) {
+        return switch (projection) {
+            case Projection.All _ -> fileSchema;
+            case Projection.Columns(Set<ColumnPath> kept) -> fileSchema.project(kept);
+        };
+    }
+
+    /** Returns the per-row filter, or {@code null} when the predicate is trivially true (nothing to evaluate). */
+    private static Predicate recordFilterOf(Predicate normalized) {
+        if (normalized instanceof Predicate.Always(boolean value) && value) {
+            return null;
+        }
+        return normalized;
     }
 
     /** Streams record batches matching {@code predicate} under {@code projection} via the default batch shape. */

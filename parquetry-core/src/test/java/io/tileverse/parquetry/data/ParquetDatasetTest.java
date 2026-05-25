@@ -176,12 +176,10 @@ class DatasetTest {
 
     @Test
     void predicateEliminatesRowGroupsWhoseStatsExclude(@TempDir Path tmp) throws Exception {
-        // Year-clustered fixture: rows are written in contiguous blocks per year so most row groups end up with a tight
-        // [min, max] over `year`. The stats tier can therefore eliminate any row group whose year range excludes the
-        // predicate value; the reader doesn't yet narrow rows within a surviving row group, so the test only asserts
-        // that
-        // (a) every matching row survives, (b) elimination did kick in for at least one row group, and (c) the result
-        // is strictly smaller than the unfiltered dataset.
+        // Year-clustered fixture: rows are written in contiguous blocks per year, giving most row groups a tight
+        // [min, max] over `year`. The stats tier eliminates row groups whose year range excludes the predicate, and
+        // record-level filtering then drops the non-matching rows inside surviving row groups. The result is exactly
+        // the 2022 rows, and explain still shows a mix of eliminated and surviving row groups.
         Path file = tmp.resolve("dataset-filter-narrow.parquet");
         List<RowDto> rows = generateYearClusteredRows(2_000);
         writeParquetFile(file, rows, CompressionCodecName.SNAPPY, 8_192L);
@@ -196,10 +194,9 @@ class DatasetTest {
             List<RowDto> matched = readAll(dataset, keepYear2022, Projection.ALL, options);
             List<RowDto> expectedYearRows =
                     rows.stream().filter(r -> r.year() == 2022).toList();
-            assertThat(matched).as("every actual 2022 row must survive").containsAll(expectedYearRows);
             assertThat(matched)
-                    .as("filter pushdown must drop at least one row group's worth of rows")
-                    .hasSizeLessThan(rows.size());
+                    .as("record-level filtering returns exactly the matching rows")
+                    .containsExactlyInAnyOrderElementsOf(expectedYearRows);
 
             ExplainPlan plan = dataset.explain(keepYear2022, Projection.ALL, options);
             assertThat(plan.rowGroups()).anyMatch(rg -> rg.outcome() == RowGroupOutcome.ELIMINATED);

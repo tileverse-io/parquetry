@@ -134,6 +134,13 @@ class RecordLevelEvaluatorTest {
                 .isTrue();
     }
 
+    @Test
+    void bboxIntersectsPassesThroughUntilSpatialEvaluationLands() {
+        RecordLevelEvaluator.RecordAccessor row = row(Map.of());
+        assertThat(RecordLevelEvaluator.test(col("geom").intersects(Bbox.of2d(0, 0, 10, 10)), row))
+                .isTrue();
+    }
+
     private static RecordLevelEvaluator.RecordAccessor row(Map<String, Object> values) {
         Map<ColumnPath, Object> byPath = new HashMap<>();
         values.forEach((k, v) -> byPath.put(ColumnPath.of(k), v));

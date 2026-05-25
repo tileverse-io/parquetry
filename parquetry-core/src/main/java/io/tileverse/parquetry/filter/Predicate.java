@@ -15,7 +15,9 @@
  */
 package io.tileverse.parquetry.filter;
 
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 import io.tileverse.parquetry.schema.ColumnPath;
 
@@ -43,6 +45,37 @@ public sealed interface Predicate {
     /** Returns {@code NOT this} as a new {@link Not} predicate. */
     default Predicate negate() {
         return new Not(this);
+    }
+
+    /**
+     * Returns the leaf column paths referenced by {@code predicate}, in encounter order. The read path uses this to
+     * decode those columns for record-level evaluation even when they fall outside the caller's projection.
+     */
+    static Set<ColumnPath> columns(Predicate predicate) {
+        Set<ColumnPath> columns = new LinkedHashSet<>();
+        collectColumns(predicate, columns);
+        return columns;
+    }
+
+    private static void collectColumns(Predicate predicate, Set<ColumnPath> columns) {
+        switch (predicate) {
+            case Always _ -> {
+                /* no column */
+            }
+            case And and -> and.children().forEach(child -> collectColumns(child, columns));
+            case Or or -> or.children().forEach(child -> collectColumns(child, columns));
+            case Not not -> collectColumns(not.child(), columns);
+            case Eq eq -> columns.add(eq.col());
+            case NotEq notEq -> columns.add(notEq.col());
+            case Lt lt -> columns.add(lt.col());
+            case LtEq ltEq -> columns.add(ltEq.col());
+            case Gt gt -> columns.add(gt.col());
+            case GtEq gtEq -> columns.add(gtEq.col());
+            case In in -> columns.add(in.col());
+            case IsNull isNull -> columns.add(isNull.col());
+            case IsNotNull isNotNull -> columns.add(isNotNull.col());
+            case BboxIntersects bbox -> columns.add(bbox.col());
+        }
     }
 
     record Always(boolean value) implements Predicate {}

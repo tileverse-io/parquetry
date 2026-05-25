@@ -35,7 +35,7 @@ import io.tileverse.parquetry.schema.ColumnPath;
  *
  * <p>Assumes the predicate has been normalized (Not pushed to leaves, Always folded, And/Or flattened).
  */
-final class RecordLevelEvaluator {
+public final class RecordLevelEvaluator {
 
     private RecordLevelEvaluator() {}
 
@@ -45,13 +45,13 @@ final class RecordLevelEvaluator {
      * / java.time.LocalDate / java.time.LocalDateTime, or {@code null} when the column is NULL for this row.
      */
     @FunctionalInterface
-    interface RecordAccessor {
+    public interface RecordAccessor {
 
         Object value(ColumnPath path);
     }
 
     /** Returns {@code true} if {@code row} satisfies {@code predicate}. */
-    static boolean test(Predicate predicate, RecordAccessor row) {
+    public static boolean test(Predicate predicate, RecordAccessor row) {
         return switch (predicate) {
             case Predicate.Always(boolean value) -> value;
             case Predicate.And(List<Predicate> children) -> testAnd(children, row);
@@ -84,7 +84,9 @@ final class RecordLevelEvaluator {
             }
             case Predicate.IsNull(ColumnPath col) -> row.value(col) == null;
             case Predicate.IsNotNull(ColumnPath col) -> row.value(col) != null;
-            case Predicate.BboxIntersects _ -> false; // not supported at record-level yet (future geometry work)
+            // Spatial predicates are not yet evaluable per row. Pass them through (keep the row) rather than dropping
+            // every row; returning false here would empty out every spatial read. Real geometry evaluation lands later.
+            case Predicate.BboxIntersects _ -> true;
         };
     }
 

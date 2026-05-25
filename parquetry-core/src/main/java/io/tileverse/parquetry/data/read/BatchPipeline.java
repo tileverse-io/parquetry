@@ -28,6 +28,8 @@ import java.util.stream.StreamSupport;
 import com.google.errorprone.annotations.MustBeClosed;
 
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.filter.RecordLevelEvaluator;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.BatchRowAccessor;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -66,15 +68,29 @@ public final class BatchPipeline {
      */
     @MustBeClosed
     public static <T> Stream<T> rows(
-            @NonNull ParallelDecodeCoordinator coordinator, @NonNull Materializer<T> materializer) {
+            @NonNull ParallelDecodeCoordinator coordinator,
+            @NonNull Materializer<T> materializer,
+            @NonNull ParquetSchema outputSchema,
+            Predicate recordFilter) {
         Stream<ParquetRecordBatch> batchStream = batches(coordinator);
-        return batchStream.flatMap(batch -> rowsFromBatch(batch, materializer));
+        return batchStream.flatMap(batch -> rowsFromBatch(batch, materializer, outputSchema, recordFilter));
     }
 
-    private static <T> Stream<T> rowsFromBatch(ParquetRecordBatch batch, Materializer<T> materializer) {
-        ParquetSchema schema = batch.projectedSchema();
+    /**
+     * Iterates one batch row by row. When {@code recordFilter} is non-null, each row is tested against it before
+     * materialization, so non-matching rows are neither materialized nor emitted. A null filter passes every row
+     * through (the pushdown-only path). Rows are materialized through {@code outputSchema}, which may be a subset of
+     * the decoded batch schema when the predicate references columns outside the caller's projection.
+     */
+    private static <T> Stream<T> rowsFromBatch(
+            ParquetRecordBatch batch,
+            Materializer<T> materializer,
+            ParquetSchema outputSchema,
+            Predicate recordFilter) {
         Stream<T> rows = IntStream.range(0, batch.rowCount())
-                .mapToObj(rowIndex -> materializer.materialize(schema, new BatchRowAccessor(batch, rowIndex)));
+                .mapToObj(rowIndex -> new BatchRowAccessor(batch, rowIndex))
+                .filter(accessor -> recordFilter == null || RecordLevelEvaluator.test(recordFilter, accessor::get))
+                .map(accessor -> materializer.materialize(outputSchema, accessor));
         return rows.onClose(batch::close);
     }
 

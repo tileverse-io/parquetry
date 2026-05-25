@@ -65,7 +65,7 @@ public sealed interface ParquetDataset permits DefaultParquetDataset {
 
     /**
      * Returns the file-level key/value metadata, with duplicates collapsed (later keys win). Values absent in the
-     * thrift footer surface as the empty string here so callers don't need to track the {@code Optional} wrapping.
+     * thrift footer are reported as the empty string, freeing callers from the {@code Optional} wrapping.
      */
     Map<String, String> keyValueMetadata();
 
@@ -85,7 +85,12 @@ public sealed interface ParquetDataset permits DefaultParquetDataset {
 
     /**
      * Reads records matching {@code predicate}, projecting to {@code projection}, with caller-supplied {@code options}.
-     * Records surface as {@link ParquetRecord} via the default materializer.
+     * Each record is a {@link ParquetRecord} from the default materializer.
+     *
+     * <p>The stream contains only rows that satisfy {@code predicate}. After metadata pruning, each surviving row is
+     * evaluated against the predicate (the record-level tier, controlled by {@link ReadOptions#useRecordLevelFilter()}
+     * and on by default). Columns the predicate references are decoded for this test even when they fall outside
+     * {@code projection}; they are not added to the projected output.
      */
     @MustBeClosed
     Stream<ParquetRecord> read(Predicate predicate, Projection projection, ReadOptions options);
@@ -111,8 +116,13 @@ public sealed interface ParquetDataset permits DefaultParquetDataset {
     }
 
     /**
-     * Reads batches matching {@code predicate}, projecting to {@code projection}, with caller-supplied {@code options}.
-     * Batches surface as raw {@link ParquetRecordBatch} (the default identity materializer).
+     * Reads batches from the row groups and pages that survive metadata pruning for {@code predicate}, projecting to
+     * {@code projection}, with caller-supplied {@code options}. Each batch is a raw {@link ParquetRecordBatch} (the
+     * default identity materializer).
+     *
+     * <p>Unlike {@link #read read}, the batch path applies pruning only: an emitted batch may still contain rows that
+     * do not satisfy {@code predicate}. Callers needing per-row filtering should evaluate it themselves or use
+     * {@code read}.
      */
     @MustBeClosed
     Stream<ParquetRecordBatch> readBatches(Predicate predicate, Projection projection, ReadOptions options);
@@ -127,7 +137,7 @@ public sealed interface ParquetDataset permits DefaultParquetDataset {
 
     /**
      * Runs the filter pipeline without reading any column data; returns the {@link ExplainPlan} describing per-tier
-     * decisions for every row group. Use this to debug push-down or surface plan diagnostics to operators.
+     * decisions for every row group. Use this to debug push-down or report plan diagnostics to operators.
      */
     ExplainPlan explain(Predicate predicate, Projection projection, ReadOptions options);
 
