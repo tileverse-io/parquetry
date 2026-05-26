@@ -25,7 +25,6 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -59,6 +58,7 @@ import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.testsupport.CorpusFixtures;
 
 import io.tileverse.io.ByteBufferPool;
 
@@ -78,7 +78,7 @@ import io.tileverse.io.ByteBufferPool;
  */
 class ParquetTestingCorpusIT {
 
-    private static final Path DATA_DIR = Paths.get("src/test/resources/parquet-testing/data");
+    private static final Path DATA_DIR = CorpusFixtures.parquetTestingData();
     private static final String EXCLUSIONS_RESOURCE = "/parquet-testing-exclusions.txt";
 
     @Test

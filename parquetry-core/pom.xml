@@ -99,5 +99,12 @@
       <artifactId>localstack</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- Bundled test corpora (apache/parquet-testing) + the classpath extractor; reactor-only, never published. -->
+    <dependency>
+      <groupId>io.tileverse.parquetry</groupId>
+      <artifactId>parquetry-testkit</artifactId>
+      <version>${project.version}</version>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 </project>

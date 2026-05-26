@@ -20,7 +20,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
@@ -49,6 +48,7 @@ import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.testsupport.CorpusFixtures;
 
 import io.tileverse.io.ByteBufferPool;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
@@ -72,7 +72,7 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 @Testcontainers(disabledWithoutDocker = true)
 class CloudStorageIT {
 
-    private static final Path FIXTURE = Paths.get("src/test/resources/parquet-testing/data/binary.parquet");
+    private static final Path FIXTURE = CorpusFixtures.parquetTestingData().resolve("binary.parquet");
     private static final String BUCKET = "parquetry-it";
     private static final String KEY = "binary.parquet";
     private static final ColumnPath FOO = ColumnPath.of("foo");

@@ -24,7 +24,6 @@ import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -56,6 +55,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.testsupport.CorpusFixtures;
 
 /**
  * Round-trips every flat fixture from {@code parquet-testing/data/} through the parquetry writer and asserts the
@@ -67,7 +67,7 @@ import io.tileverse.parquetry.schema.SchemaNode;
 @Tag("conformance")
 class RoundTripCorpusIT {
 
-    private static final Path DATA_DIR = Paths.get("src/test/resources/parquet-testing/data");
+    private static final Path DATA_DIR = CorpusFixtures.parquetTestingData();
     private static final String EXCLUSIONS_RESOURCE = "/parquet-testing-exclusions.txt";
 
     @ParameterizedTest(name = "{0}")

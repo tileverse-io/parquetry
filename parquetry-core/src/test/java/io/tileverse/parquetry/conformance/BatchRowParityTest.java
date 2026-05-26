@@ -24,7 +24,6 @@ import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -54,6 +53,7 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.testsupport.CorpusFixtures;
 
 import lombok.NonNull;
 
@@ -71,7 +71,7 @@ import lombok.NonNull;
  */
 class BatchRowParityTest {
 
-    private static final Path DATA_DIR = Paths.get("src/test/resources/parquet-testing/data");
+    private static final Path DATA_DIR = CorpusFixtures.parquetTestingData();
     private static final String EXCLUSIONS_RESOURCE = "/parquet-testing-exclusions.txt";
 
     @Test

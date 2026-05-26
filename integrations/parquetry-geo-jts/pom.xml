@@ -44,5 +44,12 @@
       <artifactId>assertj-core</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- Bundled GeoParquet corpus (opengeospatial/geoparquet) + the classpath extractor; reactor-only. -->
+    <dependency>
+      <groupId>io.tileverse.parquetry</groupId>
+      <artifactId>parquetry-testkit</artifactId>
+      <version>${project.version}</version>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 </project>

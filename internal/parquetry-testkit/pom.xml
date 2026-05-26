@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>io.tileverse.parquetry</groupId>
+    <artifactId>parquetry-internal</artifactId>
+    <version>${revision}</version>
+  </parent>
+
+  <artifactId>parquetry-testkit</artifactId>
+  <name>Parquetry :: Internal :: Test Kit</name>
+  <description>Shared test fixtures for parquetry and its integrations: the Parquet and GeoParquet test corpora plus a
+    utility that extracts them from the classpath into a temp directory. Build and dev only; never published. Depends on
+    nothing in parquetry to stay free of dependency cycles with the modules that consume it at test scope.</description>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>io.tileverse.parquetry</groupId>
+        <artifactId>parquetry-dependencies</artifactId>
+        <version>${project.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <resources>
+      <!-- Bundle only the corpus fixtures from the submodules: all of parquet-testing, and just test_data/ from the
+           opengeospatial/geoparquet repo. The submodule .git pointer files are not resources. -->
+      <resource>
+        <directory>src/main/resources</directory>
+        <includes>
+          <include>parquet-testing/**</include>
+          <include>geoparquet/test_data/**</include>
+        </includes>
+        <excludes>
+          <exclude>**/.git</exclude>
+        </excludes>
+      </resource>
+    </resources>
+  </build>
+</project>

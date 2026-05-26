@@ -131,11 +131,22 @@ integrations/                            # adapters to other ecosystems
 apps/                                    # end-user applications (a CLI lands here), as they arrive
 internal/                                # not published; build and dev only
   parquetry-coverage-report              # aggregated JaCoCo coverage (under the coverage profile)
+  parquetry-testkit                      # bundled test corpora + classpath extractor (git submodules)
 ```
 
 Directories are for navigation; published artifact ids stay flat regardless (`io.tileverse.parquetry:parquetry-core`). Select a module by id with `-pl :parquetry-core`.
 
 ## Building
+
+The test corpora (`apache/parquet-testing` and `opengeospatial/geoparquet`) are git submodules under `parquetry-testkit`. Clone with them, or the conformance tests cannot run:
+
+```bash
+# Fresh clone, with submodules
+git clone --recurse-submodules <repo-url>
+
+# Already cloned without them
+git submodule update --init --recursive
+```
 
 ```bash
 # Compile and run unit tests

@@ -20,13 +20,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.locationtech.jts.geom.Geometry;
@@ -44,6 +44,7 @@ import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
+import io.tileverse.parquetry.testkit.TestCorpus;
 
 /**
  * Conformance suite against the {@code opengeospatial/geoparquet} {@code test_data/} fixtures. For each
@@ -59,28 +60,21 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
  */
 class OgcGeoParquetConformanceIT {
 
-    private static final Path TEST_DATA =
-            Paths.get("../../geoparquet/test_data").toAbsolutePath().normalize();
+    @TempDir
+    static Path corpusDir;
 
-    static boolean fixturesAvailable() {
-        return Files.isDirectory(TEST_DATA);
-    }
+    private static Path testData;
 
-    @Test
-    void testDataDirectoryIsAvailable() {
-        assertThat(TEST_DATA)
-                .as("opengeospatial/geoparquet test_data must be cloned alongside parquetry")
-                .isDirectory();
+    @BeforeAll
+    static void extractCorpus() {
+        testData = TestCorpus.extractDirectory("geoparquet/test_data", corpusDir);
     }
 
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {"point", "linestring", "polygon", "multipoint", "multilinestring", "multipolygon"})
     void wkbEncodedFixtureRoundTripsThroughJtsMaterializer(String geomType) throws Exception {
-        if (!fixturesAvailable()) {
-            return;
-        }
-        Path file = TEST_DATA.resolve("data-" + geomType + "-encoding_wkb.parquet");
-        Path csv = TEST_DATA.resolve("data-" + geomType + "-wkt.csv");
+        Path file = testData.resolve("data-" + geomType + "-encoding_wkb.parquet");
+        Path csv = testData.resolve("data-" + geomType + "-wkt.csv");
         assertThat(file).isRegularFile();
         assertThat(csv).isRegularFile();
 

@@ -366,6 +366,7 @@
           <waitMaxTime>3600</waitMaxTime>
           <excludeArtifacts>
             <excludeArtifact>parquetry-internal</excludeArtifact>
+            <excludeArtifact>parquetry-testkit</excludeArtifact>
             <excludeArtifact>parquetry-coverage-report</excludeArtifact>
           </excludeArtifacts>
         </configuration>

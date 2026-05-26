@@ -18,7 +18,6 @@ package io.tileverse.parquetry.data;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Path;
-import java.nio.file.Paths;
 
 import org.junit.jupiter.api.Test;
 
@@ -33,6 +32,7 @@ import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.PruningDecision;
 import io.tileverse.parquetry.filter.RowGroupOutcome;
 import io.tileverse.parquetry.filter.Tier;
+import io.tileverse.parquetry.testsupport.CorpusFixtures;
 
 /**
  * Bloom-tier end-to-end coverage against the {@code data_index_bloom_encoding_stats.parquet} fixture from the
@@ -53,7 +53,7 @@ import io.tileverse.parquetry.filter.Tier;
 class BloomFilterFixtureTest {
 
     private static final Path FIXTURE =
-            Paths.get("src/test/resources/parquet-testing/data/data_index_bloom_encoding_stats.parquet");
+            CorpusFixtures.parquetTestingData().resolve("data_index_bloom_encoding_stats.parquet");
 
     @Test
     void eqAbsentValueIsEliminatedByBloom() throws Exception {

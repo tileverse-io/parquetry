@@ -14,6 +14,10 @@
   <description>Parent and aggregator for build-and-dev modules that are never published (the coverage report and JMH
     benchmarks).</description>
 
+  <modules>
+    <module>parquetry-testkit</module>
+  </modules>
+
   <properties>
     <!-- This aggregator and its children are dev tooling; never deploy them. -->
     <maven.deploy.skip>true</maven.deploy.skip>
