@@ -63,7 +63,7 @@ import io.tileverse.parquetry.record.ParquetRecord;
  *
  * <pre>{@code
  * ./mvnw -Pbenchmarks -pl :parquetry-benchmarks -am package
- * java --enable-preview --enable-native-access=ALL-UNNAMED \
+ * java --enable-preview --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow \
  *   -jar internal/parquetry-benchmarks/target/benchmarks.jar PagePruningBenchmark
  * }</pre>
  */
@@ -72,16 +72,9 @@ import io.tileverse.parquetry.record.ParquetRecord;
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @Warmup(iterations = 3, time = 2)
 @Measurement(iterations = 5, time = 2)
-@Fork(
-        value = 1,
-        jvmArgsAppend = {"--enable-preview", "--enable-native-access=ALL-UNNAMED"})
+@Fork(1)
 public class PagePruningBenchmark {
 
-    private static final int ROWS = 1_000_000;
-    private static final int PAGE_VALUES = 2_048;
-    private static final int BAND = ROWS / 100;
-    private static final long PREDICATE_LOW = (ROWS - BAND) / 2L;
-    private static final long PREDICATE_HIGH = PREDICATE_LOW + BAND - 1L;
     private static final long SHUFFLE_SEED = 42L;
 
     /** Disk order of the {@code id} column: clustered (best case for pruning) or scattered (no pruning possible). */
@@ -96,6 +89,18 @@ public class PagePruningBenchmark {
     @Param({"true", "false"})
     private boolean useColumnIndex;
 
+    /**
+     * Shrinks the fixture to a few thousand rows for the CI sanity run that only checks the benchmark still runs. The
+     * default keeps the full measurement workload; it is not a measurement mode.
+     */
+    @Param({"false"})
+    private boolean smoke;
+
+    private int rows;
+    private int pageValues;
+    private long predicateLow;
+    private long predicateHigh;
+
     private Path workDir;
     private SyntheticParquet.OpenDataset open;
     private Predicate predicate;
@@ -104,13 +109,19 @@ public class PagePruningBenchmark {
 
     @Setup(Level.Trial)
     public void setUp() throws IOException {
+        rows = smoke ? 10_000 : 1_000_000;
+        pageValues = smoke ? 1_024 : 2_048;
+        int band = rows / 100;
+        predicateLow = (rows - band) / 2L;
+        predicateHigh = predicateLow + band - 1L;
+
         workDir = Files.createTempDirectory("parquetry-bench-page-pruning-");
         Path file = workDir.resolve("page-pruning.parquet");
         SyntheticParquet.writeIdValueFile(file, writeOptions(), idsForLayout());
         open = SyntheticParquet.open(file);
         predicate = Pred.col(SyntheticParquet.ID)
-                .gtEq(PREDICATE_LOW)
-                .and(Pred.col(SyntheticParquet.ID).ltEq(PREDICATE_HIGH));
+                .gtEq(predicateLow)
+                .and(Pred.col(SyntheticParquet.ID).ltEq(predicateHigh));
         projection = Projection.ALL;
         options = ReadOptions.builder().useColumnIndexFilter(useColumnIndex).build();
     }
@@ -131,15 +142,15 @@ public class PagePruningBenchmark {
 
     private long[] idsForLayout() {
         return layout == Layout.SORTED
-                ? SyntheticParquet.sortedIds(ROWS)
-                : SyntheticParquet.shuffledIds(ROWS, SHUFFLE_SEED);
+                ? SyntheticParquet.sortedIds(rows)
+                : SyntheticParquet.shuffledIds(rows, SHUFFLE_SEED);
     }
 
     private WriteOptions writeOptions() {
         return WriteOptions.builder()
                 .tempDir(workDir)
-                .rowGroupSize(WriteOptions.RowGroupSize.rows(ROWS + 1L))
-                .pageValueLimit(PAGE_VALUES)
+                .rowGroupSize(WriteOptions.RowGroupSize.rows(rows + 1L))
+                .pageValueLimit(pageValues)
                 .encodingPolicy("id", WriteOptions.EncodingPolicy.FORCE_PLAIN)
                 .encodingPolicy("value", WriteOptions.EncodingPolicy.FORCE_PLAIN)
                 .build();

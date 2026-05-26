@@ -19,22 +19,25 @@ This writes `internal/parquetry-benchmarks/target/benchmarks.jar` with
 ## Run
 
 parquetry compiles with Java preview features and uses the Foreign Function &
-Memory API. Both the launching JVM and the JVMs that JMH forks therefore need
-the preview and native-access flags. The forked-JVM flags are baked into each
-benchmark (`@Fork(jvmArgsAppend = ...)`); the launching JVM needs them on the
-command line:
+Memory API; both the launching JVM and the JVMs that JMH forks need the preview
+and native-access flags, plus `--sun-misc-unsafe-memory-access=allow` to silence
+JMH's own deprecated-`Unsafe` warning. Pass them on the launching command. JMH
+inherits the launching JVM's arguments into each fork, hence the forked benchmark
+JVMs receive them too without any per-benchmark `@Fork` configuration:
 
 ```bash
-java --enable-preview --enable-native-access=ALL-UNNAMED \
+java --enable-preview --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow \
   -jar internal/parquetry-benchmarks/target/benchmarks.jar
 ```
+
+`make benchmarks` builds the runner and runs the full suite in one step.
 
 Pass a regular expression to run a subset, and standard JMH options to tune the
 run:
 
 ```bash
 # one benchmark class
-java --enable-preview --enable-native-access=ALL-UNNAMED \
+java --enable-preview --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow \
   -jar internal/parquetry-benchmarks/target/benchmarks.jar PagePruningBenchmark
 
 # list everything the jar contains
@@ -49,6 +52,29 @@ java ... -jar .../benchmarks.jar PagePruningBenchmark -p layout=SORTED -prof gc 
 
 Each benchmark declares its own warmup/measurement/fork defaults via
 annotations; a plain run needs no tuning flags.
+
+## Sanity check (smoke)
+
+Every benchmark has a `smoke` parameter (default `false`). When `true`, each
+benchmark shrinks its own fixture to a few thousand rows while keeping every
+code path it exercises (the same parameter axes, multiple pages and row groups,
+a built bloom filter, a predicate that survives into the page-pruning tier).
+This is for catching breakage, not for timing.
+
+```bash
+java --enable-preview --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow \
+  -jar internal/parquetry-benchmarks/target/benchmarks.jar \
+  -p smoke=true -f 0 -wi 1 -i 1 -r 1 -foe true
+```
+
+`-f 0` runs in-process, `-wi 1 -i 1 -r 1` does one short warmup and one short
+measurement iteration, and `-foe true` makes the run exit non-zero if any
+benchmark throws (the point of the check). It asserts that every benchmark
+still compiles, shades, and executes, not how fast it runs.
+
+Run it locally with `make benchmarks-smoke` (builds the runner, then runs the
+smoke). CI splits the two phases into `make build-benchmarks` and
+`make run-benchmarks-smoke`, which are the same targets the one-shot composes.
 
 ## Benchmarks
 
@@ -65,8 +91,9 @@ not listed here is one a teammate will not know exists.
 - Generate fixtures in a `@Setup` method, not in the timed `@Benchmark`. Write
   synthetic files with `ParquetWriter` and read them through a
   `RangeReader` from `StorageFactory`, mirroring `PagePruningBenchmark`.
-- Put `@Fork(jvmArgsAppend = {"--enable-preview", "--enable-native-access=ALL-UNNAMED"})`
-  on every benchmark: the forked JVMs load preview-compiled classes and fail
-  without it.
+- Do not repeat the preview / native-access flags in `@Fork(jvmArgsAppend = ...)`.
+  The launching JVM must pass them (the jar's classes are preview-compiled), and
+  JMH inherits the launching JVM's arguments into each fork, hence the fork already
+  has them; repeating them only doubles the reported VM options.
 - Return a value from each `@Benchmark` (or use a `Blackhole`) to keep the JIT
   from eliminating the work being measured.
