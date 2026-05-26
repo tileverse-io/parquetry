@@ -40,7 +40,9 @@ import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.filter.RowRanges.Range;
+import io.tileverse.parquetry.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.format.ColumnChunk;
+import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.ParquetFormat;
@@ -74,9 +76,26 @@ class MaskedColumnReadTest {
             // Pages [0,1] [2,3] [4,5] [6,7]; keep rows 4..7 -> last two pages survive, first two are skipped.
             RowRanges surviving = new RowRanges(List.of(new Range(4, 7)));
 
+            IndexSectionLoader loader = new IndexSectionLoader() {
+                @Override
+                public OffsetIndex readOffsetIndex(long offset, int length) {
+                    return ParquetFormat.readOffsetIndex(reader, offset, length);
+                }
+
+                @Override
+                public ColumnIndex readColumnIndex(long offset, int length) {
+                    return ParquetFormat.readColumnIndex(reader, offset, length);
+                }
+
+                @Override
+                public SplitBlockBloomFilter readBloom(long offset, int length) {
+                    throw new UnsupportedOperationException("bloom filters not used in this test");
+                }
+            };
+            RowGroupChunks chunks = RowGroupChunks.of(rowGroup, schema, loader);
             RowGroupFetcher fetcher =
                     new RowGroupFetcher(reader, schema, schema, ByteBufferPool.getDefault(), 1 << 20, 8 << 20);
-            RowGroupSurvivor survivor = new RowGroupSurvivor(rowGroup, Optional.of(surviving));
+            RowGroupSurvivor survivor = new RowGroupSurvivor(chunks, Optional.of(surviving));
             try (RowGroupFetch fetch = fetcher.fetch(survivor, fetcher.planFor(survivor), BudgetReservation.NONE)) {
                 FetchedColumnChunk chunk = fetch.columns().get(0);
                 BatchColumnReader colReader = new BatchColumnReader(chunk, leaf(schema), surviving, offsetIndex);

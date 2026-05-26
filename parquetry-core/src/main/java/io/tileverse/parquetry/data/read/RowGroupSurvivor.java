@@ -23,25 +23,32 @@ import io.tileverse.parquetry.format.RowGroup;
 import lombok.NonNull;
 
 /**
- * One row group that the filter pipeline has cleared for reading, optionally narrowed to a set of row ranges.
+ * One row group the filter pipeline cleared for reading, optionally narrowed to a set of row ranges.
  *
- * <p>The {@link io.tileverse.parquetry.filter.FilterPipeline} runs each row group through the stats, dictionary,
- * column-index, bloom-filter, and record-level tiers; the row groups that aren't entirely eliminated come out as
- * survivors. The pipeline that orchestrates reads (see {@link BatchPipeline}) receives this already-pruned list and
- * does not re-run the filter.
+ * <p>The pipeline runs each row group through the stats, dictionary, column-index, bloom-filter, and record-level
+ * tiers; row groups that are not entirely eliminated come out as survivors. {@link BatchPipeline} receives the
+ * already-pruned list and does not re-run the filter.
  *
- * <p>{@code survivingRows} carries the narrowing produced by the column-index / bloom-filter tiers. An empty
- * {@link Optional} means "no narrowing": read every row of the row group. A present value means "read only the rows in
- * these ranges". Record-level filtering still runs inline during assembly per the streaming memory contract.
+ * <p>{@code survivingRows} carries the narrowing from the column-index tier. An empty {@link Optional} means "no
+ * narrowing": read every row. A present value means "read only the rows in these ranges". Record-level filtering still
+ * runs inline during assembly per the streaming memory contract.
  *
- * @param rowGroup the on-disk row group, including the per-column chunk metadata
+ * <p>The survivor carries its {@link RowGroupChunks} view, built once during filtering and reused by mask building and
+ * the fetcher, which keeps each index section read at most once per call.
+ *
+ * @param chunks the row group's chunk view (chunk index plus memoized index sections)
  * @param survivingRows the surviving row ranges within the row group, or empty for "read all rows"
  */
 public record RowGroupSurvivor(
-        @NonNull RowGroup rowGroup, @NonNull Optional<RowRanges> survivingRows) {
+        @NonNull RowGroupChunks chunks, @NonNull Optional<RowRanges> survivingRows) {
+
+    /** The on-disk row group, including the per-column chunk metadata. */
+    public RowGroup rowGroup() {
+        return chunks.rowGroup();
+    }
 
     /** Convenience for callers that have no row-range narrowing to apply. */
-    public static RowGroupSurvivor full(@NonNull RowGroup rowGroup) {
-        return new RowGroupSurvivor(rowGroup, Optional.empty());
+    public static RowGroupSurvivor full(@NonNull RowGroupChunks chunks) {
+        return new RowGroupSurvivor(chunks, Optional.empty());
     }
 }
