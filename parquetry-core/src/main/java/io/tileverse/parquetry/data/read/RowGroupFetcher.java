@@ -19,9 +19,7 @@ import java.io.IOException;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 import io.tileverse.storage.RangeReader;
 
@@ -29,7 +27,6 @@ import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.ParquetFormatException;
-import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
@@ -70,10 +67,10 @@ public final class RowGroupFetcher {
      * Builds the coalescing plan for {@code survivor} without performing any I/O (used to size budget reservations).
      */
     public FetchPlan planFor(RowGroupSurvivor survivor) {
-        Map<List<String>, ColumnChunk> chunksByPath = indexChunksByPath(survivor.rowGroup());
+        RowGroupChunks chunks = survivor.chunks();
         List<ColumnRange> columns = new ArrayList<>();
         for (ColumnPath path : projectedSchema.leafColumns()) {
-            ColumnMetaData meta = requireMeta(chunksByPath, path);
+            ColumnMetaData meta = requireMeta(chunks, path);
             columns.add(new ColumnRange(path, chunkStart(meta), chunkLength(meta, path)));
         }
         return CoalescingFetchPlanner.plan(columns, maxCoalesceGap, maxCoalescedSpan);
@@ -85,7 +82,7 @@ public final class RowGroupFetcher {
      */
     public RowGroupFetch fetch(RowGroupSurvivor survivor, FetchPlan plan, BudgetReservation reservation)
             throws IOException {
-        Map<List<String>, ColumnChunk> chunksByPath = indexChunksByPath(survivor.rowGroup());
+        RowGroupChunks chunks = survivor.chunks();
         List<PooledByteBuffer> buffers = new ArrayList<>(plan.ranges().size());
         List<MemorySegment> rangeSegments = new ArrayList<>(plan.ranges().size());
         try {
@@ -103,7 +100,7 @@ public final class RowGroupFetcher {
                 buffer.flip();
                 rangeSegments.add(MemorySegment.ofBuffer(buffer));
             }
-            List<FetchedColumnChunk> columns = sliceColumns(plan, chunksByPath, rangeSegments);
+            List<FetchedColumnChunk> columns = sliceColumns(plan, chunks, rangeSegments);
             return new RowGroupFetch(buffers, columns, reservation);
         } catch (IOException | RuntimeException e) {
             for (PooledByteBuffer buffer : buffers) {
@@ -119,12 +116,11 @@ public final class RowGroupFetcher {
     }
 
     private List<FetchedColumnChunk> sliceColumns(
-            FetchPlan plan, Map<List<String>, ColumnChunk> chunksByPath, List<MemorySegment> rangeSegments)
-            throws IOException {
+            FetchPlan plan, RowGroupChunks chunks, List<MemorySegment> rangeSegments) throws IOException {
         List<FetchedColumnChunk> columns = new ArrayList<>(plan.slices().size());
         for (ColumnPath path : projectedSchema.leafColumns()) {
             ColumnSlice slice = plan.slices().get(path);
-            ColumnMetaData meta = requireMeta(chunksByPath, path);
+            ColumnMetaData meta = requireMeta(chunks, path);
             MemorySegment chunkSegment =
                     rangeSegments.get(slice.rangeIndex()).asSlice(slice.offsetWithinRange(), slice.length());
             columns.add(ColumnChunkSlicer.slice(chunkSegment, meta, path, fileSchema));
@@ -132,11 +128,9 @@ public final class RowGroupFetcher {
         return columns;
     }
 
-    private ColumnMetaData requireMeta(Map<List<String>, ColumnChunk> chunksByPath, ColumnPath path) {
-        ColumnChunk chunk = chunksByPath.get(path.parts());
-        if (chunk == null) {
-            throw new IllegalStateException("Row group does not contain column " + path.dot());
-        }
+    private ColumnMetaData requireMeta(RowGroupChunks chunks, ColumnPath path) {
+        ColumnChunk chunk = chunks.chunk(path)
+                .orElseThrow(() -> new IllegalStateException("Row group does not contain column " + path.dot()));
         return chunk.metaData()
                 .orElseThrow(() ->
                         new ParquetFormatException("ColumnChunk for " + path.dot() + " is missing inline metaData"));
@@ -153,16 +147,5 @@ public final class RowGroupFetcher {
                     "Column chunk for " + path.dot() + " has an unsupported totalCompressedSize " + size);
         }
         return (int) size;
-    }
-
-    private static Map<List<String>, ColumnChunk> indexChunksByPath(RowGroup rowGroup) {
-        Map<List<String>, ColumnChunk> index = new LinkedHashMap<>();
-        for (ColumnChunk chunk : rowGroup.columns()) {
-            ColumnMetaData meta = chunk.metaData()
-                    .orElseThrow(
-                            () -> new MalformedFileException("ColumnChunk without inline metadata is not supported"));
-            index.put(meta.pathInSchema(), chunk);
-        }
-        return index;
     }
 }

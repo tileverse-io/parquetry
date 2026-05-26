@@ -32,7 +32,9 @@ import io.tileverse.storage.RangeReader;
 import io.tileverse.parquetry.batch.BatchMaterializer;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.data.read.BatchPipeline;
+import io.tileverse.parquetry.data.read.IndexSectionLoader;
 import io.tileverse.parquetry.data.read.ParallelDecodeCoordinator;
+import io.tileverse.parquetry.data.read.RowGroupChunks;
 import io.tileverse.parquetry.data.read.RowGroupFetcher;
 import io.tileverse.parquetry.data.read.RowGroupPrefetcher;
 import io.tileverse.parquetry.data.read.RowGroupSurvivor;
@@ -40,10 +42,7 @@ import io.tileverse.parquetry.data.read.RowMask;
 import io.tileverse.parquetry.filter.ExplainPlan;
 import io.tileverse.parquetry.filter.FilterPipeline;
 import io.tileverse.parquetry.filter.FilterPipeline.BloomFilterLookup;
-import io.tileverse.parquetry.filter.FilterPipeline.ColumnBloom;
-import io.tileverse.parquetry.filter.FilterPipeline.ColumnPageStats;
 import io.tileverse.parquetry.filter.FilterPipeline.ColumnPageStatsLookup;
-import io.tileverse.parquetry.filter.FilterPipeline.ColumnStats;
 import io.tileverse.parquetry.filter.FilterPipeline.ColumnStatsLookup;
 import io.tileverse.parquetry.filter.FilterPipeline.DictionaryLookup;
 import io.tileverse.parquetry.filter.Predicate;
@@ -52,9 +51,7 @@ import io.tileverse.parquetry.filter.RowGroupPlan;
 import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.filter.bloom.BloomFilterReader;
 import io.tileverse.parquetry.filter.bloom.SplitBlockBloomFilter;
-import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnIndex;
-import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.KeyValue;
 import io.tileverse.parquetry.format.OffsetIndex;
@@ -64,9 +61,7 @@ import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
-import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.SchemaBuilder;
-import io.tileverse.parquetry.schema.SchemaNode;
 
 import lombok.NonNull;
 
@@ -146,8 +141,9 @@ public class ParquetReader {
 
         boolean recordLevel = options.useRecordLevelFilter();
         Projection scanProjection = recordLevel ? scanProjectionFor(projection, predicate) : projection;
-        ExplainPlan plan = runFilterPipeline(predicate, scanProjection, options);
-        List<RowGroupSurvivor> survivors = survivorsFor(plan);
+        List<RowGroupChunks> rowGroupChunks = rowGroupChunks();
+        ExplainPlan plan = runFilterPipeline(predicate, scanProjection, options, rowGroupChunks);
+        List<RowGroupSurvivor> survivors = survivorsFor(plan, rowGroupChunks);
         ParquetSchema scanSchema = plan.projectedSchema();
         List<Optional<RowMask>> decodeMasks = decodeMasksFor(survivors, scanSchema, options);
         ParallelDecodeCoordinator coordinator = newDecodeCoordinator(survivors, scanSchema, decodeMasks, options);
@@ -202,8 +198,9 @@ public class ParquetReader {
             @NonNull BatchMaterializer<T> materializer,
             @NonNull ReadOptions options) {
 
-        ExplainPlan plan = runFilterPipeline(predicate, projection, options);
-        List<RowGroupSurvivor> survivors = survivorsFor(plan);
+        List<RowGroupChunks> rowGroupChunks = rowGroupChunks();
+        ExplainPlan plan = runFilterPipeline(predicate, projection, options, rowGroupChunks);
+        List<RowGroupSurvivor> survivors = survivorsFor(plan, rowGroupChunks);
         ParquetSchema projectedSchema = plan.projectedSchema();
         List<Optional<RowMask>> decodeMasks = decodeMasksFor(survivors, projectedSchema, options);
         ParallelDecodeCoordinator coordinator = newDecodeCoordinator(survivors, projectedSchema, decodeMasks, options);
@@ -214,7 +211,7 @@ public class ParquetReader {
     /**
      * Builds the coalescing fetcher and the prefetch pipeline for one read. The prefetcher owns a fresh per-read
      * virtual-thread executor; closing the returned stream cascades to {@link RowGroupPrefetcher#close()}, which shuts
-     * the executor down, so no executor outlives the read.
+     * the executor down. No executor outlives the read.
      */
     private RowGroupPrefetcher newPrefetcher(
             List<RowGroupSurvivor> survivors, ParquetSchema projectedSchema, ReadOptions options) {
@@ -244,7 +241,7 @@ public class ParquetReader {
     /**
      * Wraps the fetch prefetcher in a {@link ParallelDecodeCoordinator} that decodes row groups in parallel on the
      * shared decode pool while preserving file order. Closing the returned coordinator drains in-flight decodes and
-     * cascades to {@link RowGroupPrefetcher#close()}, so the per-read fetch executor still shuts down with the read.
+     * cascades to {@link RowGroupPrefetcher#close()}; the per-read fetch executor still shuts down with the read.
      */
     private ParallelDecodeCoordinator newDecodeCoordinator(
             List<RowGroupSurvivor> survivors,
@@ -265,135 +262,124 @@ public class ParquetReader {
     /** Runs the filter pipeline without reading data and returns the explain plan. */
     public ExplainPlan explain(
             @NonNull Predicate predicate, @NonNull Projection projection, @NonNull ReadOptions options) {
-        return runFilterPipeline(predicate, projection, options);
+        return runFilterPipeline(predicate, projection, options, rowGroupChunks());
+    }
+
+    /**
+     * Binds index-section reads to this reader's {@link RangeReader}. Subclasses may override to plug a cached source.
+     */
+    protected IndexSectionLoader indexSectionLoader() {
+        return new IndexSectionLoader() {
+            @Override
+            public OffsetIndex readOffsetIndex(long offset, int length) {
+                return ParquetFormat.readOffsetIndex(rangeReader, offset, length);
+            }
+
+            @Override
+            public ColumnIndex readColumnIndex(long offset, int length) {
+                return ParquetFormat.readColumnIndex(rangeReader, offset, length);
+            }
+
+            @Override
+            public SplitBlockBloomFilter readBloom(long offset, int length) {
+                return length > 0
+                        ? BloomFilterReader.read(rangeReader, offset, length)
+                        : BloomFilterReader.readWithoutLength(rangeReader, offset);
+            }
+        };
+    }
+
+    /**
+     * Builds one {@link RowGroupChunks} per footer row group, in file order, reused across the filter and decode
+     * phases.
+     */
+    protected List<RowGroupChunks> rowGroupChunks() {
+        IndexSectionLoader loader = indexSectionLoader();
+        List<RowGroup> rgs = footer.rowGroups();
+        List<RowGroupChunks> chunks = new ArrayList<>(rgs.size());
+        for (RowGroup rg : rgs) {
+            chunks.add(RowGroupChunks.of(rg, fileSchema, loader));
+        }
+        return chunks;
     }
 
     /**
      * Builds inputs for and runs the filter pipeline. Subclasses may override to inject extra inputs (e.g. an external
      * row-group catalog) before delegation.
      */
-    protected ExplainPlan runFilterPipeline(Predicate predicate, Projection projection, ReadOptions options) {
-        List<FilterPipeline.RowGroupInputs> inputs = filterInputsFor(footer, options);
+    protected ExplainPlan runFilterPipeline(
+            Predicate predicate, Projection projection, ReadOptions options, List<RowGroupChunks> rowGroupChunks) {
+        List<FilterPipeline.RowGroupInputs> inputs = filterInputsFor(rowGroupChunks, options);
         return FilterPipeline.evaluate(fileSchema, projection, predicate, inputs);
     }
 
     /**
-     * Builds one {@link FilterPipeline.RowGroupInputs} per row group from the file footer. Subclasses may override to
-     * supply richer dictionary or page-stats lookups than the in-footer defaults.
+     * Builds one {@link FilterPipeline.RowGroupInputs} per row group from the pre-built chunk views. Subclasses may
+     * override to supply richer dictionary or page-stats lookups than the in-footer defaults.
      */
-    protected List<FilterPipeline.RowGroupInputs> filterInputsFor(FileMetaData fm, ReadOptions options) {
-        List<FilterPipeline.RowGroupInputs> inputs =
-                new ArrayList<>(fm.rowGroups().size());
-        for (RowGroup rg : fm.rowGroups()) {
+    protected List<FilterPipeline.RowGroupInputs> filterInputsFor(
+            List<RowGroupChunks> rowGroupChunks, ReadOptions options) {
+        List<FilterPipeline.RowGroupInputs> inputs = new ArrayList<>(rowGroupChunks.size());
+        for (RowGroupChunks chunks : rowGroupChunks) {
             inputs.add(new FilterPipeline.RowGroupInputs(
-                    rg.numRows(),
-                    statsLookup(rg),
+                    chunks.numRows(),
+                    statsLookup(chunks),
                     noDictionaryLookup(),
-                    pageStatsLookupFor(rg, options),
-                    bloomLookupFor(rg, options)));
+                    pageStatsLookupFor(chunks, options),
+                    bloomLookupFor(chunks, options)));
         }
         return inputs;
     }
 
     /**
-     * Builds the per-row-group column-index lookup, or the no-op lookup when {@code useColumnIndexFilter} is off. The
-     * lookup is lazy and memoizing, mirroring {@link #bloomLookupFor}: a column's {@link ColumnIndex} and
-     * {@link OffsetIndex} are read only when the evaluator asks about that column, and at most once per call.
+     * Returns the inline statistics lookup for {@code chunks}. Each call to the returned lookup delegates to
+     * {@link RowGroupChunks#stats}, which reads from the in-footer column metadata without any I/O. Subclasses may
+     * override to merge external stats sources (e.g. a sidecar index) with the in-footer statistics.
      */
-    protected ColumnPageStatsLookup pageStatsLookupFor(RowGroup rg, ReadOptions options) {
+    protected ColumnStatsLookup statsLookup(RowGroupChunks chunks) {
+        return chunks::stats;
+    }
+
+    /**
+     * Returns the column-index tier lookup for {@code chunks}, or the no-op lookup when {@code useColumnIndexFilter} is
+     * off. Each call to the returned lookup delegates to {@link RowGroupChunks#pageStats}, which memoizes the result so
+     * each column's index sections are read at most once per call.
+     */
+    protected ColumnPageStatsLookup pageStatsLookupFor(RowGroupChunks chunks, ReadOptions options) {
         if (!options.useColumnIndexFilter()) {
             return noColumnPageStatsLookup();
         }
-        Map<List<String>, ColumnChunk> byPath = new LinkedHashMap<>();
-        for (ColumnChunk chunk : rg.columns()) {
-            chunk.metaData().ifPresent(meta -> byPath.put(meta.pathInSchema(), chunk));
-        }
-        Map<ColumnPath, Optional<ColumnPageStats>> cache = new LinkedHashMap<>();
-        return path -> cache.computeIfAbsent(path, p -> loadColumnPageStats(byPath.get(p.parts()), p));
+        return chunks::pageStats;
     }
 
     /**
-     * Reads one column's {@link ColumnIndex} and {@link OffsetIndex} when both index sections and a decodable primitive
-     * kind are present. Returns empty when any piece is missing or unreadable; the tier then degrades to
-     * {@link io.tileverse.parquetry.filter.PruningDecision.NotApplied} for that column rather than failing the read.
+     * Returns the bloom-filter lookup for {@code chunks}. Each call to the returned lookup delegates to
+     * {@link RowGroupChunks#bloom}, which memoizes the result so each column's bloom filter is read at most once per
+     * call. Returns {@link FilterPipeline#emptyBloomLookup()} when {@code options.useBloomFilter()} is off; the bloom
+     * tier degrades gracefully without forcing the evaluator to handle nulls. Subclasses may override to plug a cached
+     * or remote bloom-filter source.
      */
-    protected Optional<ColumnPageStats> loadColumnPageStats(ColumnChunk chunk, ColumnPath path) {
-        if (chunk == null
-                || chunk.columnIndexOffset().isEmpty()
-                || chunk.columnIndexLength().isEmpty()
-                || chunk.offsetIndexOffset().isEmpty()
-                || chunk.offsetIndexLength().isEmpty()) {
-            return Optional.empty();
-        }
-        Optional<PrimitiveKind> kind = primitiveKindAt(path);
-        if (kind.isEmpty()) {
-            return Optional.empty();
-        }
-        try {
-            ColumnIndex columnIndex = ParquetFormat.readColumnIndex(
-                    rangeReader,
-                    chunk.columnIndexOffset().getAsLong(),
-                    chunk.columnIndexLength().getAsInt());
-            OffsetIndex offsetIndex = ParquetFormat.readOffsetIndex(
-                    rangeReader,
-                    chunk.offsetIndexOffset().getAsLong(),
-                    chunk.offsetIndexLength().getAsInt());
-            return Optional.of(new ColumnPageStats(kind.orElseThrow(), columnIndex, offsetIndex));
-        } catch (RuntimeException _) {
-            return Optional.empty();
-        }
-    }
-
-    /**
-     * Builds the per-row-group bloom-filter lookup. The lookup is memoizing and lazy: bytes are only fetched when the
-     * evaluator asks about a specific column (and only Eq/In leaves trigger that), and each column is fetched at most
-     * once per {@code read()} or {@code explain()} call.
-     *
-     * <p>Returns {@link FilterPipeline#emptyBloomLookup()} when {@code options.useBloomFilter()} is off or the row
-     * group has no columns with bloom filters; the bloom tier degrades gracefully without forcing the evaluator to
-     * handle nulls. Subclasses may override to plug a cached or remote bloom-filter source.
-     */
-    protected BloomFilterLookup bloomLookupFor(RowGroup rg, ReadOptions options) {
+    protected BloomFilterLookup bloomLookupFor(RowGroupChunks chunks, ReadOptions options) {
         if (!options.useBloomFilter()) {
             return FilterPipeline.emptyBloomLookup();
         }
-        Map<ColumnPath, BloomChunkLocator> locators = bloomLocatorsFor(rg);
-        if (locators.isEmpty()) {
-            return FilterPipeline.emptyBloomLookup();
-        }
-        Map<ColumnPath, Optional<ColumnBloom>> cache = new LinkedHashMap<>();
-        return path -> cache.computeIfAbsent(path, p -> loadBloom(locators.get(p)));
-    }
-
-    /**
-     * Builds the inline stats lookup from the row group's column metadata. Returns empty for columns that have no
-     * statistics or whose path does not map to a leaf in the file schema (the latter only happens with malformed
-     * files). Subclasses may override to merge external stats sources (e.g. a sidecar index) with the in-footer
-     * statistics.
-     */
-    protected ColumnStatsLookup statsLookup(RowGroup rg) {
-        Map<ColumnPath, ColumnStats> byPath = new LinkedHashMap<>();
-        for (ColumnChunk chunk : rg.columns()) {
-            recordColumnStats(chunk, byPath);
-        }
-        return path -> Optional.ofNullable(byPath.get(path));
+        return chunks::bloom;
     }
 
     /**
      * Translates the explain plan's row-group outcomes into materialization-ready {@link RowGroupSurvivor survivors}.
      * Subclasses may override to drop or reorder survivors before they enter the batch pipeline.
      */
-    protected List<RowGroupSurvivor> survivorsFor(ExplainPlan plan) {
-        List<RowGroup> thriftRowGroups = footer.rowGroups();
+    protected List<RowGroupSurvivor> survivorsFor(ExplainPlan plan, List<RowGroupChunks> rowGroupChunks) {
         List<RowGroupSurvivor> survivors = new ArrayList<>(plan.rowGroups().size());
         for (RowGroupPlan rgPlan : plan.rowGroups()) {
-            RowGroup rg = thriftRowGroups.get(rgPlan.index());
+            RowGroupChunks chunks = rowGroupChunks.get(rgPlan.index());
             switch (rgPlan.outcome()) {
                 case ELIMINATED -> {
                     /* drop */
                 }
-                case PARTIAL -> survivors.add(new RowGroupSurvivor(rg, rgPlan.survivingRows()));
-                case FULL -> survivors.add(RowGroupSurvivor.full(rg));
+                case PARTIAL -> survivors.add(new RowGroupSurvivor(chunks, rgPlan.survivingRows()));
+                case FULL -> survivors.add(RowGroupSurvivor.full(chunks));
             }
         }
         return survivors;
@@ -420,14 +406,11 @@ public class ParquetReader {
             return Optional.empty();
         }
         RowRanges surviving = survivor.survivingRows().orElseThrow();
-        Map<List<String>, ColumnChunk> byPath = new LinkedHashMap<>();
-        for (ColumnChunk chunk : survivor.rowGroup().columns()) {
-            chunk.metaData().ifPresent(meta -> byPath.put(meta.pathInSchema(), chunk));
-        }
+        RowGroupChunks chunks = survivor.chunks();
         Map<ColumnPath, OffsetIndex> offsetIndexes =
                 LinkedHashMap.newLinkedHashMap(scanSchema.leafColumns().size());
         for (ColumnPath leaf : scanSchema.leafColumns()) {
-            Optional<OffsetIndex> offsetIndex = loadOffsetIndex(byPath.get(leaf.parts()));
+            Optional<OffsetIndex> offsetIndex = chunks.offsetIndex(leaf);
             if (offsetIndex.isEmpty()) {
                 return Optional.empty();
             }
@@ -445,107 +428,6 @@ public class ParquetReader {
         }
         return true;
     }
-
-    /** Reads one column's {@link OffsetIndex}, or empty when it is absent or unreadable (page-skip degrades off). */
-    protected Optional<OffsetIndex> loadOffsetIndex(ColumnChunk chunk) {
-        if (chunk == null
-                || chunk.offsetIndexOffset().isEmpty()
-                || chunk.offsetIndexLength().isEmpty()) {
-            return Optional.empty();
-        }
-        try {
-            return Optional.of(ParquetFormat.readOffsetIndex(
-                    rangeReader,
-                    chunk.offsetIndexOffset().getAsLong(),
-                    chunk.offsetIndexLength().getAsInt()));
-        } catch (RuntimeException _) {
-            return Optional.empty();
-        }
-    }
-
-    /**
-     * Scans the row group's column chunks once and indexes those that advertise a bloom-filter offset. The length is
-     * captured when the writer provided it ({@code bloom_filter_length} was added in spec 2.10); older writers omit it
-     * and the reader falls back to a two-step fetch.
-     */
-    protected Map<ColumnPath, BloomChunkLocator> bloomLocatorsFor(RowGroup rg) {
-        Map<ColumnPath, BloomChunkLocator> locators = new LinkedHashMap<>();
-        for (ColumnChunk chunk : rg.columns()) {
-            locatorFor(chunk).ifPresent(entry -> locators.put(entry.path(), entry.locator()));
-        }
-        return locators;
-    }
-
-    /**
-     * Resolves one locator into a loaded {@link ColumnBloom}. The single-I/O fast path applies when {@code length} is
-     * set; otherwise the slow path of {@link BloomFilterReader#readWithoutLength} runs. Decode failures (truncated
-     * bitset, unsupported algorithm) return empty - the evaluator degrades to NotApplied for that column instead of
-     * aborting the read.
-     */
-    protected Optional<ColumnBloom> loadBloom(BloomChunkLocator locator) {
-        if (locator == null) {
-            return Optional.empty();
-        }
-        try {
-            SplitBlockBloomFilter bloom = locator.length() > 0
-                    ? BloomFilterReader.read(rangeReader, locator.offset(), locator.length())
-                    : BloomFilterReader.readWithoutLength(rangeReader, locator.offset());
-            return Optional.of(new ColumnBloom(locator.kind(), bloom));
-        } catch (RuntimeException _) {
-            return Optional.empty();
-        }
-    }
-
-    /**
-     * Resolves one column chunk to its bloom-filter locator, or empty when the chunk has no bloom-filter offset, no
-     * column metadata, or no matching primitive leaf in the file schema. Extracted from the row-group loop to keep the
-     * loop a single pass without a chain of {@code continue} statements.
-     */
-    private Optional<PathedLocator> locatorFor(ColumnChunk chunk) {
-        return chunk.metaData().flatMap(m -> {
-            if (m.bloomFilterOffset().isEmpty()) {
-                return Optional.empty();
-            }
-            ColumnPath path = new ColumnPath(m.pathInSchema());
-            return primitiveKindAt(path).map(kind -> {
-                int length = m.bloomFilterLength().isPresent()
-                        ? Math.toIntExact(m.bloomFilterLength().getAsLong())
-                        : -1;
-                return new PathedLocator(
-                        path, new BloomChunkLocator(m.bloomFilterOffset().getAsLong(), length, kind));
-            });
-        });
-    }
-
-    /** Records one column's inline stats keyed by path, when both the stats and the schema leaf are present. */
-    protected void recordColumnStats(ColumnChunk chunk, Map<ColumnPath, ColumnStats> byPath) {
-        Optional<ColumnMetaData> maybeMeta = chunk.metaData();
-        if (maybeMeta.isEmpty() || maybeMeta.orElseThrow().statistics().isEmpty()) {
-            return;
-        }
-        ColumnMetaData meta = maybeMeta.orElseThrow();
-        ColumnPath path = new ColumnPath(meta.pathInSchema());
-        primitiveKindAt(path)
-                .ifPresent(kind ->
-                        byPath.put(path, new ColumnStats(kind, meta.statistics().orElseThrow())));
-    }
-
-    /** Resolves a column path to its primitive kind, or empty for non-primitive or unknown paths. */
-    protected Optional<PrimitiveKind> primitiveKindAt(ColumnPath path) {
-        return fileSchema
-                .find(path)
-                .flatMap(field -> field instanceof SchemaNode.Primitive p ? Optional.of(p.kind()) : Optional.empty());
-    }
-
-    /** Carrier returned by {@link #locatorFor} - the calling loop puts the path-keyed entry in one step. */
-    private record PathedLocator(ColumnPath path, BloomChunkLocator locator) {}
-
-    /**
-     * Pre-computed bloom-filter coordinates per column; cached to avoid re-walking the row group on every lookup.
-     * {@code length} is the total chunk size ({@code bloom_filter_length} from the column metadata) or {@code -1} when
-     * the writer omitted it; the loader picks the fast or slow read path accordingly.
-     */
-    protected record BloomChunkLocator(long offset, int length, PrimitiveKind kind) {}
 
     private static DictionaryLookup noDictionaryLookup() {
         return path -> Optional.empty();
