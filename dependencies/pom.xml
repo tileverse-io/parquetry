@@ -19,6 +19,11 @@
         <version>${jackson.version}</version>
       </dependency>
       <dependency>
+        <groupId>tools.jackson.core</groupId>
+        <artifactId>jackson-core</artifactId>
+        <version>${jackson.version}</version>
+      </dependency>
+      <dependency>
         <groupId>io.opentelemetry</groupId>
         <artifactId>opentelemetry-api</artifactId>
         <version>${opentelemetry.version}</version>

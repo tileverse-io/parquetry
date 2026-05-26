@@ -12,7 +12,7 @@
   <description>Read-only GeoTools DataStore for GeoParquet, backed by the parquetry dataset catalog.</description>
 
   <properties>
-    <gt.version>35-SNAPSHOT</gt.version>
+    <gt.version>35-RC</gt.version>
   </properties>
 
   <dependencyManagement>
@@ -31,18 +31,6 @@
         <version>${tileverse-storage.version}</version>
         <type>pom</type>
         <scope>import</scope>
-      </dependency>
-      <!-- gt-main brings two versions of commons-lang3 transitively; pin to the higher one. -->
-      <dependency>
-        <groupId>org.apache.commons</groupId>
-        <artifactId>commons-lang3</artifactId>
-        <version>3.18.0</version>
-      </dependency>
-      <!-- gt-main pulls javax.measure:unit-api 2.1.2 (via systems.uom) and 2.2 (via indriya); pin to 2.2. -->
-      <dependency>
-        <groupId>javax.measure</groupId>
-        <artifactId>unit-api</artifactId>
-        <version>2.2</version>
       </dependency>
     </dependencies>
   </dependencyManagement>
@@ -96,7 +84,19 @@
   </dependencies>
 
   <repositories>
-    <!-- GeoTools 35-SNAPSHOT lives in the OSGeo snapshot repo until 35 is released. -->
+    <!-- GeoTools 35-RC lives in the OSGeo release repo until 35 is final. -->
+    <repository>
+      <releases>
+        <enabled>true</enabled>
+      </releases>
+      <snapshots>
+        <enabled>false</enabled>
+      </snapshots>
+      <id>osgeo-release</id>
+      <name>OSGeo Release Repository</name>
+      <url>https://repo.osgeo.org/repository/release/</url>
+    </repository>
+    <!-- Keep the OSGeo snapshot repo for development builds against GeoTools snapshots. -->
     <repository>
       <releases>
         <enabled>false</enabled>
@@ -109,4 +109,37 @@
       <url>https://repo.osgeo.org/repository/snapshot/</url>
     </repository>
   </repositories>
+
+  <profiles>
+    <profile>
+      <!--
+        Converges the GeoTools provided tree for the enforcer dependencyConvergence rule. Overrides live here,
+        mirroring the root POM, and are only paid when convergence is actually being checked. Active by default;
+        opt out with -DskipDependencyConvergence.
+      -->
+      <id>dependencyConvergence</id>
+      <activation>
+        <activeByDefault>false</activeByDefault>
+        <property>
+          <name>!skipDependencyConvergence</name>
+        </property>
+      </activation>
+      <dependencyManagement>
+        <dependencies>
+          <!-- gt-main brings two versions of commons-lang3 transitively; pin to the higher one. -->
+          <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-lang3</artifactId>
+            <version>3.18.0</version>
+          </dependency>
+          <!-- gt-main pulls javax.measure:unit-api 2.1.2 (via systems.uom) and 2.2 (via indriya); pin to 2.2. -->
+          <dependency>
+            <groupId>javax.measure</groupId>
+            <artifactId>unit-api</artifactId>
+            <version>2.2</version>
+          </dependency>
+        </dependencies>
+      </dependencyManagement>
+    </profile>
+  </profiles>
 </project>
