@@ -1,0 +1,54 @@
+name: Publish Snapshot
+
+on:
+  workflow_run:
+    workflows: ["Pull Request Validation"]
+    branches: [main]
+    types:
+      - completed
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish-snapshot:
+    name: Publish SNAPSHOT to Maven Central
+    runs-on: ubuntu-latest
+    # Only after a green validation run, or when triggered by hand.
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Configure Maven settings
+        uses: s4u/maven-settings-action@v3.1.0
+        with:
+          servers: |
+            [{
+              "id": "central",
+              "username": "${{ secrets.CENTRAL_USERNAME }}",
+              "password": "${{ secrets.CENTRAL_TOKEN }}"
+            }]
+
+      - name: Publish snapshot
+        if: ${{ !contains(github.event.head_commit.message, '[skip-publish]') }}
+        run: ./mvnw deploy -DskipTests -Dgpg.skip=false -ntp
+        env:
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}

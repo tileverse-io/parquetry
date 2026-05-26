@@ -159,6 +159,10 @@ git submodule update --init --recursive
 ./mvnw -Pcoverage clean verify
 ```
 
+## Releases
+
+Pushing a tag whose name starts with a digit (`1.0-M1`, `1.0.0`, `2.0-RC1`) builds, tests, and publishes that exact version to Maven Central, then creates the matching GitHub Release. Any other tag or arbitrary version is published by hand through the same release workflow's `workflow_dispatch` (select the ref, supply the version). SNAPSHOTs publish automatically from `main` once PR validation passes. See [.github/workflows](.github/workflows/README.md).
+
 ## Status
 
 The read path is complete: Parquet 1.x and 2.x, full Dremel assembly, every standard codec, five-tier filter pushdown, GeoParquet 1.x and 2.0, the vectorized batch API, and parallel fetch and decode. The write path covers flat columns with statistics, indexes, and bloom filters; nested and repeated-column writing and parallel encoding are next. Modular encryption and the Variant logical type are reserved for future work.
