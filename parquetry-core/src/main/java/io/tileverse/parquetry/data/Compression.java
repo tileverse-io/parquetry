@@ -342,7 +342,7 @@ public sealed interface Compression
 
         @Override
         public int compress(MemorySegment src, MemorySegment output) throws IOException {
-            ZstdCompressor compressor = ZstdCompressor.create(level);
+            ZstdCompressor compressor = compressorAtBestLevel();
             try {
                 return compressor.compress(src, output);
             } catch (IllegalArgumentException overflow) {
@@ -353,7 +353,24 @@ public sealed interface Compression
 
         @Override
         public long maxCompressedLength(long uncompressedLength) {
-            return ZstdCompressor.create(level).maxCompressedLength(CompressionSupport.intExact(uncompressedLength));
+            return compressorAtBestLevel().maxCompressedLength(CompressionSupport.intExact(uncompressedLength));
+        }
+
+        /**
+         * A compressor at the configured {@link #level}, degrading to the backend default when only the non-native zstd
+         * compressor is available (platforms without aircompressor's native zstd, such as Windows). That compressor
+         * accepts only its default level and rejects any other. The level changes the compression ratio, not the wire
+         * format; a file written at the default level still reads back identically, on every platform.
+         *
+         * <p>The level is already validated to {@code [1, 22]} by the constructor; a rejection here can only mean the
+         * non-native backend declining a non-default level.
+         */
+        private ZstdCompressor compressorAtBestLevel() {
+            try {
+                return ZstdCompressor.create(level);
+            } catch (IllegalArgumentException nonNativeRejectsNonDefaultLevel) {
+                return ZstdCompressor.create();
+            }
         }
     }
 
