@@ -91,6 +91,7 @@ final class BatchColumnReader {
     private final int repBitWidth;
     private final Optional<Dictionary<?>> dictionary;
     private final RowRanges survivingRows; // null when this column is not masked
+    private final boolean skipDecode;
 
     // Per-page state. Populated by loadNextPage; cleared on advance.
     private boolean pageLoaded;
@@ -109,9 +110,10 @@ final class BatchColumnReader {
     private int logicalRowsConsumedInCurrentPage;
     private long valuesConsumedTotal;
     private long survivingRowsConsumedTotal;
+    private long decodedValueCount;
 
     BatchColumnReader(@NonNull FetchedColumnChunk chunk, @NonNull SchemaNode.Primitive leaf) {
-        this(chunk, leaf, null, null);
+        this(chunk, leaf, null, null, false);
     }
 
     BatchColumnReader(
@@ -119,6 +121,16 @@ final class BatchColumnReader {
             @NonNull SchemaNode.Primitive leaf,
             RowRanges survivingRows,
             OffsetIndex offsetIndex) {
+        this(chunk, leaf, survivingRows, offsetIndex, false);
+    }
+
+    BatchColumnReader(
+            @NonNull FetchedColumnChunk chunk,
+            @NonNull SchemaNode.Primitive leaf,
+            RowRanges survivingRows,
+            OffsetIndex offsetIndex,
+            boolean skipDecode) {
+        this.skipDecode = skipDecode;
         this.columnPath = chunk.path();
         this.leaf = leaf;
         this.maxLevels = new LevelMaxima(chunk.maxRepetitionLevel(), chunk.maxDefinitionLevel());
@@ -260,9 +272,13 @@ final class BatchColumnReader {
         pageRepLevels = decodeRepLevels(page, pageSize);
         pageLogicalRowCount = (pageRepLevels == null) ? pageSize : countRepZeroMarkers(pageRepLevels);
         clearTypedPayloads();
-        decodeValuesByKind(page);
-        if (survivingRows != null) {
-            compactToSurvivingRows(pageCursor.currentPageFirstRowIndex());
+        if (skipDecode && survivingRows != null) {
+            decodeSelectedRows(page, pageCursor.currentPageFirstRowIndex());
+        } else {
+            decodeValuesByKind(page);
+            if (survivingRows != null) {
+                compactToSurvivingRows(pageCursor.currentPageFirstRowIndex());
+            }
         }
         valuesConsumedInCurrentPage = 0;
         logicalRowsConsumedInCurrentPage = 0;
@@ -363,6 +379,7 @@ final class BatchColumnReader {
 
     private void decodeValuesByKind(DecodedPage page) {
         int nonNullCount = pageValidity.cardinality();
+        decodedValueCount += nonNullCount;
         Encoding encoding = page.valuesEncoding();
         MemorySegment valueBuf = page.valueBytes();
         Dictionary<?> dict = dictionary.orElse(null);
@@ -685,6 +702,114 @@ final class BatchColumnReader {
                 "BatchColumnReader has no decoder wired for encoding " + encoding + " on " + kindLabel);
     }
 
+    // ---- skip-decode for masked reads ----
+
+    /**
+     * Decodes only the surviving rows' non-null values for the just-loaded page, advancing the decoder past the
+     * unselected non-null values with {@link PageDecoder#skip(int)} instead of materializing them. Produces per-page
+     * arrays identical to {@link #compactToSurvivingRows(long)} while touching only the kept values. Flat columns only:
+     * one value per row, no repetition levels.
+     */
+    private void decodeSelectedRows(DecodedPage page, long pageFirstRow) {
+        if (pageRepLevels != null) {
+            throw new IllegalStateException(
+                    "skip-decode is only defined for flat columns; column " + columnPath.dot() + " is repeated");
+        }
+        int[] keep = survivingLocalPositions(pageFirstRow, pageSize);
+        int nonNullCount = pageValidity.cardinality();
+        Encoding encoding = page.valuesEncoding();
+        Dictionary<?> dict = dictionary.orElse(null);
+        allocateCompactedPayload(keep.length);
+        BitSet keptValidity = new BitSet(keep.length);
+
+        if (nonNullCount > 0) {
+            PageDecoder<?> decoder = decoderFor(encoding, dict);
+            decoder.load(page.valueBytes(), nonNullCount);
+            gatherSelectedValues(decoder, keep, keptValidity);
+            sealBinaryPayloadIfNeeded(encoding);
+        }
+
+        pageValidity = keptValidity;
+        pageSize = keep.length;
+        pageLogicalRowCount = keep.length;
+    }
+
+    /**
+     * Walks the page rows in order, decoding one value per kept non-null row into slot {@code keepCursor} and skipping
+     * over the unselected non-null values that precede it. Non-null values past the last kept row are never consumed.
+     */
+    private void gatherSelectedValues(PageDecoder<?> decoder, int[] keep, BitSet keptValidity) {
+        int keepCursor = 0;
+        int pendingSkip = 0;
+        for (int row = 0; row < pageSize && keepCursor < keep.length; row++) {
+            boolean nonNull = pageValidity.get(row);
+            boolean kept = keep[keepCursor] == row;
+            if (kept) {
+                if (nonNull) {
+                    if (pendingSkip > 0) {
+                        decoder.skip(pendingSkip);
+                        pendingSkip = 0;
+                    }
+                    decodeOneInto(decoder, keepCursor);
+                    keptValidity.set(keepCursor);
+                    decodedValueCount++;
+                }
+                keepCursor++;
+            } else if (nonNull) {
+                pendingSkip++;
+            }
+        }
+    }
+
+    private void allocateCompactedPayload(int size) {
+        switch (leaf.kind()) {
+            case INT32 -> pageInts = new int[size];
+            case INT64 -> pageLongs = new long[size];
+            case FLOAT -> pageFloats = new float[size];
+            case DOUBLE -> pageDoubles = new double[size];
+            case BOOLEAN -> pageBooleans = new boolean[size];
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> pageSegments = new MemorySegment[size];
+        }
+    }
+
+    private void decodeOneInto(PageDecoder<?> decoder, int index) {
+        switch (leaf.kind()) {
+            case INT32 -> decoder.decodeInts(1, pageInts, index);
+            case INT64 -> decoder.decodeLongs(1, pageLongs, index);
+            case FLOAT -> decoder.decodeFloats(1, pageFloats, index);
+            case DOUBLE -> decoder.decodeDoubles(1, pageDoubles, index);
+            case BOOLEAN -> decoder.decodeBooleans(1, pageBooleans, index);
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> decoder.decodeBinary(1, pageSegments, index);
+        }
+    }
+
+    /**
+     * Decoded binary values are zero-copy views into the page Arena for non-dictionary encodings and must be copied to
+     * the heap before that Arena closes, mirroring the full decode path. Dictionary-encoded values are heap-owned and
+     * need no copy.
+     */
+    private void sealBinaryPayloadIfNeeded(Encoding encoding) {
+        if (pageSegments == null) {
+            return;
+        }
+        if (!isDictionaryEncoded(encoding)) {
+            copySegmentsToHeap(pageSegments);
+        }
+    }
+
+    private PageDecoder<?> decoderFor(Encoding encoding, Dictionary<?> dict) {
+        return switch (leaf.kind()) {
+            case INT32 -> intDecoderFor(encoding, dict);
+            case INT64 -> longDecoderFor(encoding, dict);
+            case FLOAT -> floatDecoderFor(encoding, dict);
+            case DOUBLE -> doubleDecoderFor(encoding, dict);
+            case BOOLEAN -> booleanDecoderFor(encoding);
+            case BYTE_ARRAY -> binaryDecoderFor(encoding, dict);
+            case FIXED_LEN_BYTE_ARRAY -> fixedLenBinaryDecoderFor(encoding, requiredByteWidth(), dict);
+            case INT96 -> int96DecoderFor(encoding, dict);
+        };
+    }
+
     // ---- row compaction for masked reads ----
 
     /**
@@ -833,6 +958,11 @@ final class BatchColumnReader {
     /** Data pages this reader actually decoded; pages skipped by the surviving-row mask are not counted. */
     int decodedDataPageCount() {
         return pageCursor.decodedDataPageCount();
+    }
+
+    /** Count of non-null values run through a value decoder by this reader. */
+    long decodedValueCount() {
+        return decodedValueCount;
     }
 
     ColumnPath columnPath() {

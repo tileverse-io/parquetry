@@ -33,6 +33,7 @@ import io.tileverse.parquetry.batch.BatchMaterializer;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.data.read.BatchPipeline;
 import io.tileverse.parquetry.data.read.IndexSectionLoader;
+import io.tileverse.parquetry.data.read.LateMaterialization;
 import io.tileverse.parquetry.data.read.ParallelDecodeCoordinator;
 import io.tileverse.parquetry.data.read.RowGroupChunks;
 import io.tileverse.parquetry.data.read.RowGroupFetcher;
@@ -145,11 +146,77 @@ public class ParquetReader {
         ExplainPlan plan = runFilterPipeline(predicate, scanProjection, options, rowGroupChunks);
         List<RowGroupSurvivor> survivors = survivorsFor(plan, rowGroupChunks);
         ParquetSchema scanSchema = plan.projectedSchema();
-        List<Optional<RowMask>> decodeMasks = decodeMasksFor(survivors, scanSchema, options);
-        ParallelDecodeCoordinator coordinator = newDecodeCoordinator(survivors, scanSchema, decodeMasks, options);
         ParquetSchema outputSchema = outputSchemaFor(projection);
-        Predicate recordFilter = recordLevel ? recordFilterOf(plan.normalizedPredicate()) : null;
+        List<Optional<RowMask>> decodeMasks = decodeMasksFor(survivors, scanSchema, options);
+        Predicate normalized = plan.normalizedPredicate();
+        Optional<LateMaterialization> lateMat =
+                lateMaterializationFor(survivors, scanSchema, outputSchema, normalized, options, recordLevel);
+        ParallelDecodeCoordinator coordinator =
+                newDecodeCoordinator(survivors, scanSchema, decodeMasks, options, lateMat);
+        Predicate recordFilter = (recordLevel && lateMat.isEmpty()) ? recordFilterOf(normalized) : null;
         return BatchPipeline.rows(coordinator, materializer, outputSchema, recordFilter);
+    }
+
+    /**
+     * Decides whether the read can decode output columns only for predicate-matching rows, and packages the per-row-
+     * group inputs when it can. Returns empty (whole-read fallback to full decode plus post-decode record filtering)
+     * unless every condition holds:
+     *
+     * <ul>
+     *   <li>record-level filtering is on,
+     *   <li>every scanned leaf is flat (the two-phase reader handles flat columns only),
+     *   <li>the predicate is not trivially true (there is something to evaluate),
+     *   <li>the predicate references at least one column, and
+     *   <li>every survivor has an offset index for every output leaf (phase two needs it to skip-decode).
+     * </ul>
+     */
+    private Optional<LateMaterialization> lateMaterializationFor(
+            List<RowGroupSurvivor> survivors,
+            ParquetSchema scanSchema,
+            ParquetSchema outputSchema,
+            Predicate normalized,
+            ReadOptions options,
+            boolean recordLevel) {
+        if (!options.useLateMaterialization()) {
+            return Optional.empty();
+        }
+        if (!recordLevel) {
+            return Optional.empty();
+        }
+        if (!allFlat(fileSchema, scanSchema.leafColumns())) {
+            return Optional.empty();
+        }
+        if (recordFilterOf(normalized) == null) {
+            return Optional.empty();
+        }
+        Set<ColumnPath> predicateLeaves = Predicate.columns(normalized);
+        if (predicateLeaves.isEmpty()) {
+            return Optional.empty();
+        }
+        List<ColumnPath> outputLeaves = outputSchema.leafColumns();
+        List<LateMaterialization.PerRowGroup> perRowGroup = new ArrayList<>(survivors.size());
+        for (RowGroupSurvivor survivor : survivors) {
+            Optional<Map<ColumnPath, OffsetIndex>> outputOffsetIndexes = outputOffsetIndexesFor(survivor, outputLeaves);
+            if (outputOffsetIndexes.isEmpty()) {
+                return Optional.empty();
+            }
+            perRowGroup.add(new LateMaterialization.PerRowGroup(
+                    outputOffsetIndexes.orElseThrow(), survivor.chunks().numRows()));
+        }
+        return Optional.of(new LateMaterialization(normalized, predicateLeaves, outputSchema, perRowGroup));
+    }
+
+    private Optional<Map<ColumnPath, OffsetIndex>> outputOffsetIndexesFor(
+            RowGroupSurvivor survivor, List<ColumnPath> outputLeaves) {
+        Map<ColumnPath, OffsetIndex> offsetIndexes = LinkedHashMap.newLinkedHashMap(outputLeaves.size());
+        for (ColumnPath leaf : outputLeaves) {
+            Optional<OffsetIndex> offsetIndex = survivor.chunks().offsetIndex(leaf);
+            if (offsetIndex.isEmpty()) {
+                return Optional.empty();
+            }
+            offsetIndexes.put(leaf, offsetIndex.orElseThrow());
+        }
+        return Optional.of(offsetIndexes);
     }
 
     /**
@@ -203,7 +270,8 @@ public class ParquetReader {
         List<RowGroupSurvivor> survivors = survivorsFor(plan, rowGroupChunks);
         ParquetSchema projectedSchema = plan.projectedSchema();
         List<Optional<RowMask>> decodeMasks = decodeMasksFor(survivors, projectedSchema, options);
-        ParallelDecodeCoordinator coordinator = newDecodeCoordinator(survivors, projectedSchema, decodeMasks, options);
+        ParallelDecodeCoordinator coordinator =
+                newDecodeCoordinator(survivors, projectedSchema, decodeMasks, options, Optional.empty());
         Stream<ParquetRecordBatch> batches = BatchPipeline.batches(coordinator);
         return batches.map(batch -> materializer.materialize(projectedSchema, batch));
     }
@@ -247,7 +315,8 @@ public class ParquetReader {
             List<RowGroupSurvivor> survivors,
             ParquetSchema projectedSchema,
             List<Optional<RowMask>> decodeMasks,
-            ReadOptions options) {
+            ReadOptions options,
+            Optional<LateMaterialization> lateMat) {
         RowGroupPrefetcher prefetcher = newPrefetcher(survivors, projectedSchema, options);
         return new ParallelDecodeCoordinator(
                 prefetcher,
@@ -256,7 +325,8 @@ public class ParquetReader {
                 projectedSchema,
                 fileSchema,
                 options.batchSize(),
-                decodeMasks);
+                decodeMasks,
+                lateMat);
     }
 
     /** Runs the filter pipeline without reading data and returns the explain plan. */

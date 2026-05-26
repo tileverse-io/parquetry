@@ -61,6 +61,7 @@ public final class BatchRowGroupReader implements AutoCloseable {
     private final OptionalInt batchSizeCap;
     private final List<ProjectedLeaf> projectedLeaves;
     private final Optional<RowMask> rowMask;
+    private final boolean skipDecode;
 
     // Lazily built on first nextBatch() call; keyed by column path in declaration order.
     private Map<ColumnPath, BatchColumnReader> columnReaders;
@@ -71,10 +72,27 @@ public final class BatchRowGroupReader implements AutoCloseable {
             @NonNull ParquetSchema fileSchema,
             @NonNull OptionalInt batchSizeCap,
             @NonNull Optional<RowMask> rowMask) {
+        this(chunks, projectedSchema, fileSchema, batchSizeCap, rowMask, false);
+    }
+
+    /**
+     * Builds a reader that, when a {@code rowMask} is present, decodes only the masked rows' values via skip-decode
+     * instead of decoding the whole page and discarding the rest. {@code skipDecode} has no effect when the mask is
+     * empty (the reader decodes every row in full). Skip-decode is defined for flat columns only; the caller guarantees
+     * every masked column is flat.
+     */
+    public BatchRowGroupReader(
+            @NonNull List<FetchedColumnChunk> chunks,
+            @NonNull ParquetSchema projectedSchema,
+            @NonNull ParquetSchema fileSchema,
+            @NonNull OptionalInt batchSizeCap,
+            @NonNull Optional<RowMask> rowMask,
+            boolean skipDecode) {
         this.projectedSchema = projectedSchema;
         this.batchSizeCap = batchSizeCap;
         this.projectedLeaves = resolveProjectedLeaves(chunks, fileSchema);
         this.rowMask = rowMask;
+        this.skipDecode = skipDecode;
     }
 
     /**
@@ -176,7 +194,7 @@ public final class BatchRowGroupReader implements AutoCloseable {
         }
         RowMask mask = rowMask.orElseThrow();
         OffsetIndex offsetIndex = mask.offsetIndexes().get(leaf.path());
-        return new BatchColumnReader(leaf.chunk(), leaf.leaf(), mask.survivingRows(), offsetIndex);
+        return new BatchColumnReader(leaf.chunk(), leaf.leaf(), mask.survivingRows(), offsetIndex, skipDecode);
     }
 
     // --- batch row count computation ---
