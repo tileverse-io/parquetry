@@ -54,6 +54,7 @@ public final class DictionaryAttemptEncoder<V, C> {
     private final List<V> dictionaryValues = new ArrayList<>();
     private long dictionaryBytes;
     private boolean overflowed;
+    private boolean emittedDictionaryPage;
 
     private final List<Integer> pageIndices = new ArrayList<>();
     private final List<V> pageFallbackValues = new ArrayList<>();
@@ -119,7 +120,16 @@ public final class DictionaryAttemptEncoder<V, C> {
         return overflowed;
     }
 
+    /**
+     * True once at least one page has been flushed as {@link Encoding#RLE_DICTIONARY}. Those pages index into the chunk
+     * dictionary; the dictionary page must therefore be written even when a later page overflows to PLAIN.
+     */
+    public boolean emittedDictionaryPage() {
+        return emittedDictionaryPage;
+    }
+
     private PageResult flushDictionaryPage(WritableByteChannel dst) throws IOException {
+        emittedDictionaryPage = true;
         int n = pageIndices.size();
         int[] indices = new int[n];
         for (int i = 0; i < n; i++) {

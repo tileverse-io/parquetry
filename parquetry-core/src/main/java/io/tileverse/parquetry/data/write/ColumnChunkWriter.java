@@ -634,8 +634,9 @@ public final class ColumnChunkWriter implements AutoCloseable {
 
     private void emitDictionaryAndBufferedPages() throws IOException {
         long dictBytes = 0L;
-        if (!dictionary.encoder().overflowed()
-                && !dictionary.encoder().dictionaryValues().isEmpty()) {
+        // Write the dictionary page whenever any buffered page was emitted as RLE_DICTIONARY, even if a later page
+        // overflowed to PLAIN: those early pages index into the (now frozen) dictionary and are unreadable without it.
+        if (dictionary.encoder().emittedDictionaryPage()) {
             dictBytes = writeDictionaryPage();
         }
         for (byte[] page : bufferedPages) {

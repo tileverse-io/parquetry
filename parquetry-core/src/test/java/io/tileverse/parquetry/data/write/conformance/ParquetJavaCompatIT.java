@@ -145,6 +145,38 @@ class ParquetJavaCompatIT {
         }
     }
 
+    @Test
+    void dictionaryOverflowChunkReadsThroughParquetJava() throws Exception {
+        // The first pages dictionary-encode a few repeated values (RLE_DICTIONARY); later distinct values overflow the
+        // dictionary byte budget and fall back to PLAIN. The early dictionary pages index into the chunk dictionary,
+        // which the reader can only find when the writer keeps the dictionary page.
+        ParquetSchema schema = singleBinaryColumnSchema("label");
+        int rowCount = 100;
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>(rowCount);
+        for (int i = 0; i < rowCount; i++) {
+            String value = i < 60 ? "dup-" + (i % 4) : "uniq-" + i;
+            Map<ColumnPath, Object> row = new HashMap<>(1);
+            row.put(ColumnPath.of("label"), MemorySegment.ofArray(value.getBytes(StandardCharsets.UTF_8)));
+            rows.add(row);
+        }
+        Path file = tempDir.resolve("dictionary-overflow.parquet");
+        WriteOptions options = WriteOptions.builder()
+                .tempDir(tempDir)
+                .pageValueLimit(10)
+                .dictionaryByteLimit(40)
+                .build();
+        writeRows(file, schema, options, rows);
+
+        List<GenericRecord> read = readWithAvro(file);
+        assertThat(read).hasSize(rowCount);
+        for (int i = 0; i < rowCount; i++) {
+            String expected = i < 60 ? "dup-" + (i % 4) : "uniq-" + i;
+            assertThat(new String(toBytes(read.get(i).get("label")), StandardCharsets.UTF_8))
+                    .as("row %d", i)
+                    .isEqualTo(expected);
+        }
+    }
+
     // --- row construction + comparison ---
 
     private static List<Map<ColumnPath, Object>> syntheticRows(int count) {
@@ -245,5 +277,15 @@ class ParquetJavaCompatIT {
 
     private static SchemaNode.Primitive primitive(String name, PrimitiveKind kind) {
         return new SchemaNode.Primitive(name, Repetition.REQUIRED, kind, OptionalInt.empty(), Optional.empty(), -1);
+    }
+
+    private static ParquetSchema singleBinaryColumnSchema(String name) {
+        SchemaNode.Group root = new SchemaNode.Group(
+                "schema",
+                Repetition.REQUIRED,
+                List.<SchemaNode>of(primitive(name, PrimitiveKind.BYTE_ARRAY)),
+                Optional.empty(),
+                -1);
+        return new ParquetSchema(root);
     }
 }
