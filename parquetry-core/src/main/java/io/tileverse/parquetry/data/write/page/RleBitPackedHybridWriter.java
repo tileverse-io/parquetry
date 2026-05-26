@@ -37,7 +37,7 @@ import java.nio.channels.WritableByteChannel;
  *
  * <p>The encoding strategy here is intentionally simple: scan for runs of equal consecutive values and emit them as RLE
  * if {@code >= 8} long, otherwise accumulate into a bit-packed group. This matches what Parquet readers expect and what
- * reference encoders (parquet-mr, arrow-cpp) produce, even if it is not always the absolute minimum byte-count
+ * reference encoders (parquet-java, arrow-cpp) produce, even if it is not always the absolute minimum byte-count
  * encoding.
  */
 public final class RleBitPackedHybridWriter {

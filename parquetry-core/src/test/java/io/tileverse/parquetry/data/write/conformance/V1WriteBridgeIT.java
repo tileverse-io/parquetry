@@ -55,9 +55,9 @@ import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
- * Counterpart to {@link ParquetMrCompatIT} for the V1.1 page-format bridge: validates that the legacy DATA_PAGE output
- * reads through the parquet-java 1.14 reader, that dictionary encoding survives the bridge, and that the GeoParquet 1.1
- * KV blob is forced on by the writer when V1.1 is selected.
+ * Counterpart to {@link ParquetJavaCompatIT} for the V1.1 page-format bridge: validates that the legacy DATA_PAGE
+ * output reads through the parquet-java 1.14 reader, that dictionary encoding survives the bridge, and that the
+ * GeoParquet 1.1 KV blob is forced on by the writer when V1.1 is selected.
  */
 @Tag("conformance")
 class V1WriteBridgeIT {

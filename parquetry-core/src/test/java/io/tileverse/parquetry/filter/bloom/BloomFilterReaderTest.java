@@ -38,7 +38,7 @@ import io.tileverse.parquetry.format.ParquetFormatException;
 /**
  * Direct unit coverage for {@link BloomFilterReader}: both the single-I/O fast path (when bloom_filter_length is known)
  * and the two-step fallback (when it isn't), plus the rejection paths for malformed / unsupported sections. Synthesizes
- * the on-disk bytes itself so the tests don't depend on a particular parquet-mr writer behavior.
+ * the on-disk bytes itself so the tests don't depend on a particular parquet-java writer behavior.
  */
 class BloomFilterReaderTest {
 

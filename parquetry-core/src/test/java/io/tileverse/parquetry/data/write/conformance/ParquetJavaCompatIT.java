@@ -63,7 +63,7 @@ import io.tileverse.parquetry.schema.SchemaNode;
  * assertions (row group count, codec per chunk).
  */
 @Tag("conformance")
-class ParquetMrCompatIT {
+class ParquetJavaCompatIT {
 
     @TempDir
     Path tempDir;
