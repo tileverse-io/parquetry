@@ -16,6 +16,7 @@
 
   <modules>
     <module>parquetry-testkit</module>
+    <module>parquetry-benchmarks</module>
   </modules>
 
   <properties>
