@@ -63,7 +63,7 @@ import io.tileverse.parquetry.record.ParquetRecord;
  *
  * <pre>{@code
  * ./mvnw -Pbenchmarks -pl :parquetry-benchmarks -am package
- * java --enable-preview --enable-native-access=ALL-UNNAMED \
+ * java --enable-preview --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow \
  *   -jar internal/parquetry-benchmarks/target/benchmarks.jar FilterTierBenchmark
  * }</pre>
  */
@@ -72,15 +72,11 @@ import io.tileverse.parquetry.record.ParquetRecord;
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @Warmup(iterations = 3, time = 2)
 @Measurement(iterations = 5, time = 2)
-@Fork(
-        value = 1,
-        jvmArgsAppend = {"--enable-preview", "--enable-native-access=ALL-UNNAMED"})
+@Fork(1)
 public class FilterTierBenchmark {
 
-    private static final int ROWS = 1_000_000;
-    private static final int ROWS_PER_GROUP = 100_000;
-    private static final int PAGE_VALUES = 2_048;
-    private static final long TARGET_ID = 555_555L;
+    private static final long TARGET_FRACTION_NUMERATOR = 555_555L;
+    private static final long TARGET_FRACTION_DENOMINATOR = 1_000_000L;
 
     /**
      * Which metadata tiers run for a configuration. The record-level tier is always on; each value returns the same row
@@ -117,6 +113,18 @@ public class FilterTierBenchmark {
     @Param({"RECORD_ONLY", "STATS", "COLUMN_INDEX", "BLOOM", "ALL"})
     private Tiers tiers;
 
+    /**
+     * Shrinks the fixture to a few thousand rows across a handful of row groups for the CI sanity run that only checks
+     * the benchmark still runs. The default keeps the full measurement workload; it is not a measurement mode.
+     */
+    @Param({"false"})
+    private boolean smoke;
+
+    private int rows;
+    private int rowsPerGroup;
+    private int pageValues;
+    private long targetId;
+
     private Path workDir;
     private SyntheticParquet.OpenDataset open;
     private Predicate predicate;
@@ -125,11 +133,18 @@ public class FilterTierBenchmark {
 
     @Setup(Level.Trial)
     public void setUp() throws IOException {
+        rows = smoke ? 4_000 : 1_000_000;
+        rowsPerGroup = smoke ? 1_000 : 100_000;
+        pageValues = smoke ? 256 : 2_048;
+        // The target lands in a middle row group, on a page interior to it. Every metadata tier then has something to
+        // prune at either size.
+        targetId = rows * TARGET_FRACTION_NUMERATOR / TARGET_FRACTION_DENOMINATOR;
+
         workDir = Files.createTempDirectory("parquetry-bench-filter-tier-");
         Path file = workDir.resolve("filter-tier.parquet");
-        SyntheticParquet.writeIdValueFile(file, writeOptions(), SyntheticParquet.sortedIds(ROWS));
+        SyntheticParquet.writeIdValueFile(file, writeOptions(), SyntheticParquet.sortedIds(rows));
         open = SyntheticParquet.open(file);
-        predicate = Pred.col(SyntheticParquet.ID).eq(TARGET_ID);
+        predicate = Pred.col(SyntheticParquet.ID).eq(targetId);
         projection = Projection.ALL;
         options = tiers.toReadOptions();
     }
@@ -151,11 +166,11 @@ public class FilterTierBenchmark {
     private WriteOptions writeOptions() {
         return WriteOptions.builder()
                 .tempDir(workDir)
-                .rowGroupSize(WriteOptions.RowGroupSize.rows(ROWS_PER_GROUP))
-                .pageValueLimit(PAGE_VALUES)
+                .rowGroupSize(WriteOptions.RowGroupSize.rows(rowsPerGroup))
+                .pageValueLimit(pageValues)
                 .encodingPolicy("id", WriteOptions.EncodingPolicy.FORCE_PLAIN)
                 .encodingPolicy("value", WriteOptions.EncodingPolicy.FORCE_PLAIN)
-                .bloomFilter("id", new WriteOptions.BloomFilterConfig(0.01, ROWS_PER_GROUP))
+                .bloomFilter("id", new WriteOptions.BloomFilterConfig(0.01, rowsPerGroup))
                 .build();
     }
 }
