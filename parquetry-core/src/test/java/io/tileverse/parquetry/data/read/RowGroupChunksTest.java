@@ -30,10 +30,6 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
-
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteRow;
@@ -49,6 +45,7 @@ import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.RowGroup;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -77,11 +74,10 @@ class RowGroupChunksTest {
         Path file = writeMultiPageInt64File();
         ParquetSchema schema = flatSchema(requiredInt64("v"));
 
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            FileMetaData footer = ParquetFormat.readFooter(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            FileMetaData footer = ParquetFormat.readFooter(source);
             RowGroup rowGroup = footer.rowGroups().get(0);
-            CountingLoader loader = new CountingLoader(reader);
+            CountingLoader loader = new CountingLoader(source);
             RowGroupChunks chunks = RowGroupChunks.of(rowGroup, schema, loader);
 
             Optional<ColumnPageStats> first = chunks.pageStats(V);
@@ -397,32 +393,32 @@ class RowGroupChunksTest {
      */
     private static final class CountingLoader implements IndexSectionLoader {
 
-        private final RangeReader reader;
+        private final ByteRangeSource source;
         private int offsetIndexReads = 0;
         private int columnIndexReads = 0;
 
-        CountingLoader(RangeReader reader) {
-            this.reader = reader;
+        CountingLoader(ByteRangeSource source) {
+            this.source = source;
         }
 
         @Override
         public OffsetIndex readOffsetIndex(long offset, int length) {
             offsetIndexReads++;
-            return ParquetFormat.readOffsetIndex(reader, offset, length);
+            return ParquetFormat.readOffsetIndex(source, offset, length);
         }
 
         @Override
         public ColumnIndex readColumnIndex(long offset, int length) {
             columnIndexReads++;
-            return ParquetFormat.readColumnIndex(reader, offset, length);
+            return ParquetFormat.readColumnIndex(source, offset, length);
         }
 
         @Override
         public SplitBlockBloomFilter readBloom(long offset, int length) {
             if (length > 0) {
-                return BloomFilterReader.read(reader, offset, length);
+                return BloomFilterReader.read(source, offset, length);
             }
-            return BloomFilterReader.readWithoutLength(reader, offset);
+            return BloomFilterReader.readWithoutLength(source, offset);
         }
 
         int offsetIndexReadCount() {

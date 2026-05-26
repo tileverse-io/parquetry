@@ -20,24 +20,21 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 import java.nio.file.Path;
-import java.util.OptionalLong;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.storage.RangeReader;
-
 import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
-
-import io.tileverse.io.ByteBufferPool;
+import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * Proves that a mid-stream fetch failure releases the fetch budget and returns all borrowed buffers to the pool - i.e.
@@ -46,17 +43,17 @@ import io.tileverse.io.ByteBufferPool;
 class FetchFailureCleanupTest {
 
     /**
-     * Delegates all reads to the wrapped reader until armed, then throws on the second {@link #readRange} call after
-     * arming. Letting the first armed read succeed allows the prefetcher to start a row-group fetch before failing on
-     * the next one, exercising the mid-stream cleanup path.
+     * Delegates all reads to the wrapped source until armed, then throws on the second {@link #read} call after arming.
+     * Letting the first armed read succeed allows the prefetcher to start a row-group fetch before failing on the next
+     * one, exercising the mid-stream cleanup path.
      */
-    private static final class FailAfterArmRangeReader implements RangeReader {
+    private static final class FailAfterArmByteRangeSource implements ByteRangeSource {
 
-        private final RangeReader delegate;
+        private final ByteRangeSource delegate;
         private volatile boolean armed = false;
         private final AtomicInteger armedReads = new AtomicInteger();
 
-        FailAfterArmRangeReader(RangeReader delegate) {
+        FailAfterArmByteRangeSource(ByteRangeSource delegate) {
             this.delegate = delegate;
         }
 
@@ -65,25 +62,20 @@ class FetchFailureCleanupTest {
         }
 
         @Override
-        public int readRange(long offset, int length, ByteBuffer target) {
+        public int read(long offset, MemorySegment dst) {
             if (armed && armedReads.incrementAndGet() == 2) {
                 throw new UncheckedIOException(new IOException("injected fetch failure"));
             }
-            return delegate.readRange(offset, length, target);
+            return delegate.read(offset, dst);
         }
 
         @Override
-        public OptionalLong size() {
+        public long size() {
             return delegate.size();
         }
 
         @Override
-        public String getSourceIdentifier() {
-            return delegate.getSourceIdentifier();
-        }
-
-        @Override
-        public void close() throws IOException {
+        public void close() {
             delegate.close();
         }
     }
@@ -91,15 +83,15 @@ class FetchFailureCleanupTest {
     @Test
     void fetchFailureMidStreamReleasesBudgetAndBuffers(@TempDir Path tmp) throws Exception {
         Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(tmp, 4_000);
-        ByteBufferPool pool = new ByteBufferPool();
+        CountingSegmentPool pool = new CountingSegmentPool();
         FetchBudget budget = FetchBudget.ofMaxMemoryFraction(0.1);
         long capacityBefore = budget.available();
 
-        try (RangeReader base = TestParquetFiles.openRangeReader(file)) {
-            FailAfterArmRangeReader failing = new FailAfterArmRangeReader(base);
+        try (ByteRangeSource base = TestParquetFiles.openRangeReader(file)) {
+            FailAfterArmByteRangeSource failing = new FailAfterArmByteRangeSource(base);
             ParquetDataset dataset = ParquetDataset.open(failing);
             ReadOptions options = ReadOptions.builder()
-                    .byteBufferPool(pool)
+                    .segmentPool(pool)
                     .fetchBudget(budget)
                     .prefetchDepth(2)
                     .build();
@@ -114,13 +106,8 @@ class FetchFailureCleanupTest {
         assertThat(budget.available())
                 .as("budget fully restored after a mid-stream fetch failure")
                 .isEqualTo(capacityBefore);
-        assertThat(outstandingBorrows(pool))
+        assertThat(pool.outstanding())
                 .as("all pooled buffers returned after a mid-stream fetch failure")
                 .isZero();
-    }
-
-    private static long outstandingBorrows(ByteBufferPool pool) {
-        ByteBufferPool.PoolStatistics stats = pool.getStatistics();
-        return (stats.created() + stats.reused()) - (stats.returned() + stats.discarded());
     }
 }

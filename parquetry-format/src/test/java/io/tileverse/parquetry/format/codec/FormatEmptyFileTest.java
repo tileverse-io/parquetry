@@ -22,22 +22,18 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
-
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.PhysicalType;
+import io.tileverse.parquetry.io.ByteRangeSource;
 
 class FormatEmptyFileTest {
 
     @Test
     void readsEmptyFileMetaData(@TempDir Path tmp) throws Exception {
         Path file = TestFiles.emptyIntColumn(tmp);
-        try (Storage storage = StorageFactory.open(tmp.toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            FileMetaData footer = ParquetFormat.readFooter(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            FileMetaData footer = ParquetFormat.readFooter(source);
 
             assertThat(footer.version()).isPositive();
             assertThat(footer.numRows()).isZero();

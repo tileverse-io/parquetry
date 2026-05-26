@@ -27,7 +27,7 @@ import java.util.Optional;
  * @param pageLocations {@link PageLocation} per data page, ordered by ascending {@link PageLocation#offset()}
  * @param unencodedByteArrayDataBytes per-page unencoded/uncompressed byte size for {@code BYTE_ARRAY} columns; empty
  *     when not recorded ({@code unencoded_byte_array_data_bytes} in the thrift schema)
- * @see ParquetFormat#readOffsetIndex(io.tileverse.storage.RangeReader, long, int)
+ * @see ParquetFormat#readOffsetIndex(io.tileverse.parquetry.io.ByteRangeSource, long, int)
  */
 public record OffsetIndex(List<PageLocation> pageLocations, Optional<List<Long>> unencodedByteArrayDataBytes) {
 

@@ -23,15 +23,13 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.storage.RangeReader;
-
 import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
-
-import io.tileverse.io.ByteBufferPool;
+import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * Proves that {@code maxDecodeAheadPerRead=0} routes all decodes through the inline (serial) path and never touches the
@@ -47,12 +45,12 @@ class SerialDecodeFallbackTest {
         int rows = 4_000;
         Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(tmp, rows);
         DecodeExecutor decodePool = DecodeExecutor.ofParallelism(4);
-        ByteBufferPool pool = new ByteBufferPool();
+        CountingSegmentPool pool = new CountingSegmentPool();
         long count;
-        try (RangeReader reader = TestParquetFiles.openRangeReader(file)) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
+        try (ByteRangeSource source = TestParquetFiles.openRangeReader(file)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
             ReadOptions options = ReadOptions.builder()
-                    .byteBufferPool(pool)
+                    .segmentPool(pool)
                     .decodeExecutor(decodePool)
                     .maxDecodeAheadPerRead(0)
                     .build();
@@ -64,12 +62,7 @@ class SerialDecodeFallbackTest {
         assertThat(decodePool.availableSlots())
                 .as("maxDecodeAheadPerRead=0 must decode inline and never acquire a decode slot")
                 .isEqualTo(4);
-        assertThat(outstandingBorrows(pool)).isZero();
+        assertThat(pool.outstanding()).isZero();
         decodePool.shutdownNow();
-    }
-
-    private static long outstandingBorrows(ByteBufferPool pool) {
-        ByteBufferPool.PoolStatistics stats = pool.getStatistics();
-        return (stats.created() + stats.reused()) - (stats.returned() + stats.discarded());
     }
 }

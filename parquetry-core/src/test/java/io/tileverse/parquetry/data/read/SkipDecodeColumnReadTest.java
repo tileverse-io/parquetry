@@ -31,10 +31,6 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
-
 import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.data.ParquetWriter;
@@ -49,13 +45,13 @@ import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
+import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
-
-import io.tileverse.io.ByteBufferPool;
 
 /**
  * Verifies that the skip-decode mode of {@link BatchColumnReader} emits exactly the same rows as the default compacting
@@ -120,21 +116,20 @@ class SkipDecodeColumnReadTest {
 
     private DrainResult drainWith(Path file, ParquetSchema schema, RowRanges mask, boolean skipDecode)
             throws Exception {
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            FileMetaData footer = ParquetFormat.readFooter(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            FileMetaData footer = ParquetFormat.readFooter(source);
             RowGroup rowGroup = footer.rowGroups().get(0);
-            OffsetIndex offsetIndex = loadOffsetIndex(reader, rowGroup);
+            OffsetIndex offsetIndex = loadOffsetIndex(source, rowGroup);
 
             IndexSectionLoader loader = new IndexSectionLoader() {
                 @Override
                 public OffsetIndex readOffsetIndex(long offset, int length) {
-                    return ParquetFormat.readOffsetIndex(reader, offset, length);
+                    return ParquetFormat.readOffsetIndex(source, offset, length);
                 }
 
                 @Override
                 public ColumnIndex readColumnIndex(long offset, int length) {
-                    return ParquetFormat.readColumnIndex(reader, offset, length);
+                    return ParquetFormat.readColumnIndex(source, offset, length);
                 }
 
                 @Override
@@ -144,7 +139,7 @@ class SkipDecodeColumnReadTest {
             };
             RowGroupChunks chunks = RowGroupChunks.of(rowGroup, schema, loader);
             RowGroupFetcher fetcher =
-                    new RowGroupFetcher(reader, schema, schema, ByteBufferPool.getDefault(), 1 << 20, 8 << 20);
+                    new RowGroupFetcher(source, schema, schema, SegmentPool.getDefault(), 1 << 20, 8 << 20);
             RowGroupSurvivor survivor = new RowGroupSurvivor(chunks, Optional.of(mask));
             try (RowGroupFetch fetch = fetcher.fetch(survivor, fetcher.planFor(survivor), BudgetReservation.NONE)) {
                 FetchedColumnChunk chunk = fetch.columns().get(0);
@@ -220,10 +215,10 @@ class SkipDecodeColumnReadTest {
                 .build();
     }
 
-    private static OffsetIndex loadOffsetIndex(RangeReader reader, RowGroup rowGroup) {
+    private static OffsetIndex loadOffsetIndex(ByteRangeSource source, RowGroup rowGroup) {
         ColumnChunk chunk = rowGroup.columns().get(0);
         return ParquetFormat.readOffsetIndex(
-                reader,
+                source,
                 chunk.offsetIndexOffset().getAsLong(),
                 chunk.offsetIndexLength().getAsInt());
     }

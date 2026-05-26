@@ -19,23 +19,18 @@ import static io.tileverse.parquetry.filter.Pred.col;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
-import java.util.OptionalLong;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
 
 import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.ParquetWriter;
@@ -50,6 +45,7 @@ import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -80,20 +76,17 @@ class OffsetIndexSingleReadTest {
 
         // Confirm the predicate yields a PARTIAL row-group outcome; a FULL outcome means the
         // column-index tier did not activate and the single-read property cannot be demonstrated.
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader plainReader =
-                        storage.openRangeReader(file.getFileName().toString())) {
+        try (ByteRangeSource plain = ByteRangeSource.ofFile(file)) {
             ExplainPlan plan =
-                    ParquetDataset.open(plainReader).explain(col("id").eq(5L), Projection.ALL, ReadOptions.DEFAULTS);
+                    ParquetDataset.open(plain).explain(col("id").eq(5L), Projection.ALL, ReadOptions.DEFAULTS);
             assertThat(plan.rowGroups().get(0).outcome())
                     .as("predicate must narrow to PARTIAL so the decode-mask builder runs")
                     .isEqualTo(RowGroupOutcome.PARTIAL);
         }
 
         // Wrap a fresh reader in the counting decorator and drive a full filtered read.
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader base = storage.openRangeReader(file.getFileName().toString())) {
-            CountingRangeReader counting = new CountingRangeReader(base, idOffsetIndexOffset);
+        try (ByteRangeSource base = ByteRangeSource.ofFile(file)) {
+            CountingByteRangeSource counting = new CountingByteRangeSource(base, idOffsetIndexOffset);
             Predicate predicate = col("id").eq(5L);
             long rowsMatched;
             try (Stream<ParquetRecord> rows =
@@ -121,9 +114,8 @@ class OffsetIndexSingleReadTest {
      * column chunk in row group 0.
      */
     private long readIdOffsetIndexOffset(Path file) throws IOException {
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            FileMetaData footer = ParquetFormat.readFooter(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            FileMetaData footer = ParquetFormat.readFooter(source);
             RowGroup rowGroup = footer.rowGroups().get(0);
             ColumnChunk idChunk = findIdChunk(rowGroup);
             return idChunk.offsetIndexOffset()
@@ -188,52 +180,42 @@ class OffsetIndexSingleReadTest {
     // -------------------------------------------------------------------------
 
     /**
-     * A {@link RangeReader} decorator that counts how many times {@link #readRange(long, int)} (the 2-arg,
-     * buffer-allocating overload) is called with an offset equal to the watched byte offset. That overload is what
-     * {@link io.tileverse.parquetry.format.ParquetFormat} uses when loading OffsetIndex and ColumnIndex structures;
-     * column-data fetches use the 3-arg overload and never hit those offsets.
+     * A {@link ByteRangeSource} decorator that counts how many times {@link #read(long, MemorySegment)} is called with
+     * an offset equal to the watched byte offset. {@link io.tileverse.parquetry.format.ParquetFormat} reads each
+     * OffsetIndex / ColumnIndex section starting exactly at its recorded offset; column-data fetches read at the
+     * coalesced data-range offsets and never start at an index-section offset.
      */
-    private static final class CountingRangeReader implements RangeReader {
+    private static final class CountingByteRangeSource implements ByteRangeSource {
 
-        private final RangeReader delegate;
+        private final ByteRangeSource delegate;
         private final long watchedOffset;
         private final AtomicInteger hits = new AtomicInteger();
 
-        CountingRangeReader(RangeReader delegate, long watchedOffset) {
+        CountingByteRangeSource(ByteRangeSource delegate, long watchedOffset) {
             this.delegate = delegate;
             this.watchedOffset = watchedOffset;
         }
 
-        /** Returns how many times the 2-arg {@code readRange} was called at the watched offset. */
+        /** Returns how many times {@link #read(long, MemorySegment)} was called at the watched offset. */
         int readsAtWatchedOffset() {
             return hits.get();
         }
 
         @Override
-        public ByteBuffer readRange(long offset, int length) {
-            if (offset == watchedOffset) {
-                hits.incrementAndGet();
-            }
-            return delegate.readRange(offset, length);
-        }
-
-        @Override
-        public int readRange(long offset, int length, ByteBuffer target) {
-            return delegate.readRange(offset, length, target);
-        }
-
-        @Override
-        public OptionalLong size() {
+        public long size() {
             return delegate.size();
         }
 
         @Override
-        public String getSourceIdentifier() {
-            return delegate.getSourceIdentifier();
+        public int read(long offset, MemorySegment dst) {
+            if (offset == watchedOffset) {
+                hits.incrementAndGet();
+            }
+            return delegate.read(offset, dst);
         }
 
         @Override
-        public void close() throws IOException {
+        public void close() {
             delegate.close();
         }
     }

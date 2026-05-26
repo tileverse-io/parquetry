@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -33,10 +33,6 @@ import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
 
 import io.tileverse.parquetry.data.Compression;
 import io.tileverse.parquetry.data.ParquetDataset;
@@ -54,6 +50,7 @@ import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.PageHeader;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -218,9 +215,8 @@ class WriterCompressionTest {
 
     private static List<Integer> readInts(Path file, String columnName) throws Exception {
         List<Integer> out = new ArrayList<>();
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
             try (Stream<ParquetRecord> stream =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 stream.forEach(r -> out.add(r.getInt(ColumnPath.of(columnName))));
@@ -230,9 +226,8 @@ class WriterCompressionTest {
     }
 
     private static ColumnMetaData columnMetadata(Path file, String columnName) throws Exception {
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            FileMetaData footer = ParquetFormat.readFooter(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            FileMetaData footer = ParquetFormat.readFooter(source);
             for (RowGroup rg : footer.rowGroups()) {
                 ColumnMetaData meta = findColumnInRowGroup(rg, columnName);
                 if (meta != null) {
@@ -259,9 +254,8 @@ class WriterCompressionTest {
 
     private static List<PageHeader> collectPageHeaders(Path file, String columnName) throws Exception {
         List<PageHeader> headers = new ArrayList<>();
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            FileMetaData footer = ParquetFormat.readFooter(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            FileMetaData footer = ParquetFormat.readFooter(source);
             for (RowGroup rg : footer.rowGroups()) {
                 ColumnMetaData meta = findColumnInRowGroup(rg, columnName);
                 if (meta == null) {
@@ -272,10 +266,8 @@ class WriterCompressionTest {
                 if (chunkSize <= 0 || chunkSize > Integer.MAX_VALUE) {
                     continue;
                 }
-                ByteBuffer buf = reader.readRange(chunkStart, (int) chunkSize);
-                buf.flip();
-                byte[] bytes = new byte[buf.remaining()];
-                buf.get(bytes);
+                byte[] bytes = new byte[(int) chunkSize];
+                source.readFully(chunkStart, MemorySegment.ofArray(bytes));
                 InputStream in = new ByteArrayInputStream(bytes);
                 long consumed = 0L;
                 while (consumed < chunkSize) {

@@ -30,8 +30,8 @@ import io.tileverse.parquetry.format.ParquetFormatException;
  * Low-level decoder facade: reads the four Parquet metadata structures from a raw {@link InputStream} containing the
  * Thrift-compact bytes of the corresponding record. Callers that already have the bytes in hand (slicing them out of a
  * {@code ByteBuffer}, a memory-mapped file, or a custom transport) use this directly; callers reading from a
- * {@code RangeReader} use {@link io.tileverse.parquetry.format.ParquetFormat} instead, which knows the file layout and
- * delegates here for the actual decode.
+ * {@code ByteRangeSource} use {@link io.tileverse.parquetry.format.ParquetFormat} instead, which knows the file layout
+ * and delegates here for the actual decode.
  */
 public final class ParquetFormatDeserializer {
 

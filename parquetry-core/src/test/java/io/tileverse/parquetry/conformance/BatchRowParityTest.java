@@ -39,15 +39,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
-
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -85,10 +82,8 @@ class BatchRowParityTest {
     @MethodSource("conformanceFixtures")
     void rowAndBatchApisAgree(String fixtureName) throws Exception {
         Path fixture = DATA_DIR.resolve(fixtureName);
-        try (Storage storage = StorageFactory.open(fixture.getParent().toUri());
-                RangeReader reader =
-                        storage.openRangeReader(fixture.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(fixture)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
             ParquetSchema schema = dataset.schema();
             List<ColumnPath> leaves = schema.leafColumns();
 

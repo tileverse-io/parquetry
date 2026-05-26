@@ -15,19 +15,19 @@
  */
 package io.tileverse.parquetry.data;
 
+import java.nio.channels.FileChannel;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
 import com.google.errorprone.annotations.MustBeClosed;
 
-import io.tileverse.storage.RangeReader;
-
 import io.tileverse.parquetry.batch.BatchMaterializer;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.filter.ExplainPlan;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -35,10 +35,10 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 /**
  * Public facade for reading one or many Parquet files that share the same schema.
  *
- * <p>A {@code ParquetDataset} is the entry point to the parquetry read pipeline. The {@link #open(RangeReader)} factory
- * opens a one-file dataset over the supplied {@link RangeReader}; a future release will add factories for partitioned
- * datasets where every file agrees on {@link ParquetSchema} by equality. Concurrent {@code read()} calls on a shared
- * instance are safe; each call constructs its own column readers, filter-pipeline state, and single-use
+ * <p>A {@code ParquetDataset} is the entry point to the parquetry read pipeline. The {@link #open(ByteRangeSource)}
+ * factory opens a one-file dataset over the supplied {@link ByteRangeSource}; a future release will add factories for
+ * partitioned datasets where every file agrees on {@link ParquetSchema} by equality. Concurrent {@code read()} calls on
+ * a shared instance are safe; each call constructs its own column readers, filter-pipeline state, and single-use
  * {@link io.tileverse.parquetry.data.read.BatchPipeline} stream.
  *
  * <p>The default {@link #read()} overload reads every record through the canonical {@link ParquetRecord} materializer
@@ -60,7 +60,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
  */
 public sealed interface ParquetDataset permits DefaultParquetDataset {
 
-    /** Returns the file's schema as decoded at {@link #open(RangeReader) open} time. */
+    /** Returns the file's schema as decoded at {@link #open(ByteRangeSource) open} time. */
     ParquetSchema schema();
 
     /**
@@ -142,19 +142,25 @@ public sealed interface ParquetDataset permits DefaultParquetDataset {
     ExplainPlan explain(Predicate predicate, Projection projection, ReadOptions options);
 
     /**
-     * Opens a {@code ParquetDataset} over the file backed by {@code reader}. Reads the footer (one round trip) and
-     * decodes the schema; subsequent {@code read} calls reuse both.
+     * Opens a {@code ParquetDataset} over {@code source}. Reads the footer (one positional read) and decodes the
+     * schema; subsequent {@code read} calls reuse both.
      *
-     * <p>The returned {@code ParquetDataset} does <em>not</em> own the {@code RangeReader} - the caller retains
-     * responsibility for closing it after the last {@code read(...)} stream has been closed. This matches the contract
-     * every other parquetry-core reader follows.
+     * <p>The returned {@code ParquetDataset} does <em>not</em> own {@code source}; the caller closes it after the last
+     * {@code read(...)} stream is closed.
      *
-     * @throws io.tileverse.parquetry.format.ParquetFormatException if the bytes at the file's footer don't conform to
-     *     the Parquet / Thrift spec (bad magic, encrypted file, invalid footer length, malformed metadata, etc.)
-     * @throws java.io.UncheckedIOException if the underlying {@link RangeReader} fails to deliver the bytes
+     * @throws io.tileverse.parquetry.format.ParquetFormatException if the footer bytes don't conform to the spec
+     * @throws java.io.UncheckedIOException if {@code source} fails to deliver the bytes
      */
-    static ParquetDataset open(RangeReader reader) {
-        ParquetReader fileReader = ParquetReader.open(reader);
-        return new DefaultParquetDataset(java.util.List.of(fileReader));
+    static ParquetDataset open(ByteRangeSource source) {
+        ParquetReader fileReader = ParquetReader.open(source);
+        return new DefaultParquetDataset(List.of(fileReader));
+    }
+
+    /**
+     * Convenience over a borrowed {@link FileChannel}: equivalent to {@code open(ByteRangeSource.ofChannel(channel))}.
+     * The caller retains and closes the channel.
+     */
+    static ParquetDataset open(FileChannel channel) {
+        return open(ByteRangeSource.ofChannel(channel));
     }
 }

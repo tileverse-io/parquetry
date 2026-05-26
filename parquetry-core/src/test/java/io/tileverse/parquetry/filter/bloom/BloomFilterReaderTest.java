@@ -29,11 +29,8 @@ import java.util.OptionalLong;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
-
 import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.io.ByteRangeSource;
 
 /**
  * Direct unit coverage for {@link BloomFilterReader}: both the single-I/O fast path (when bloom_filter_length is known)
@@ -51,9 +48,8 @@ class BloomFilterReaderTest {
     void readKnownLengthRoundTrip(@TempDir Path tmp) throws IOException {
         byte[] chunk = synthesizeBloomChunk(1, new long[] {SplitBlockBloomFilter.hashInt32(42)});
         Path file = writeBytes(tmp.resolve("bloom-known.bin"), chunk);
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            SplitBlockBloomFilter bloom = BloomFilterReader.read(reader, 0L, chunk.length);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            SplitBlockBloomFilter bloom = BloomFilterReader.read(source, 0L, chunk.length);
             assertThat(bloom.mightContainInt(42)).isTrue();
             assertThat(bloom.mightContainInt(99)).isFalse();
         }
@@ -66,9 +62,8 @@ class BloomFilterReaderTest {
         // (the chunk is somewhere in the middle of a file, with other data after).
         byte[] padded = padWith(chunk, 200);
         Path file = writeBytes(tmp.resolve("bloom-unknown.bin"), padded);
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            SplitBlockBloomFilter bloom = BloomFilterReader.readWithoutLength(reader, 0L);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            SplitBlockBloomFilter bloom = BloomFilterReader.readWithoutLength(source, 0L);
             assertThat(bloom.mightContainInt(123)).isTrue();
             assertThat(bloom.mightContainInt(7)).isFalse();
         }
@@ -80,9 +75,8 @@ class BloomFilterReaderTest {
         byte[] chunk = synthesizeBloomChunk(1, new long[] {SplitBlockBloomFilter.hashInt32(1)});
         // Tail with no padding: simulate "exactly bloom chunk at end of file"; readWithoutLength must still cope.
         Path file = writeBytes(tmp.resolve("bloom-eof.bin"), chunk);
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            SplitBlockBloomFilter bloom = BloomFilterReader.readWithoutLength(reader, 0L);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            SplitBlockBloomFilter bloom = BloomFilterReader.readWithoutLength(source, 0L);
             assertThat(bloom.mightContainInt(1)).isTrue();
         }
     }
@@ -90,12 +84,11 @@ class BloomFilterReaderTest {
     @Test
     void readRejectsNonPositiveLength(@TempDir Path tmp) throws IOException {
         Path file = writeBytes(tmp.resolve("bloom-bad.bin"), new byte[16]);
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            assertThatThrownBy(() -> BloomFilterReader.read(reader, 0L, 0))
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            assertThatThrownBy(() -> BloomFilterReader.read(source, 0L, 0))
                     .isInstanceOf(ParquetFormatException.class)
                     .hasMessageContaining("Invalid bloom filter length");
-            assertThatThrownBy(() -> BloomFilterReader.read(reader, 0L, -10))
+            assertThatThrownBy(() -> BloomFilterReader.read(source, 0L, -10))
                     .isInstanceOf(ParquetFormatException.class);
         }
     }
@@ -107,9 +100,8 @@ class BloomFilterReaderTest {
         byte[] truncated = new byte[chunk.length - 8];
         System.arraycopy(chunk, 0, truncated, 0, truncated.length);
         Path file = writeBytes(tmp.resolve("bloom-truncated.bin"), truncated);
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            assertThatThrownBy(() -> BloomFilterReader.read(reader, 0L, truncated.length))
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            assertThatThrownBy(() -> BloomFilterReader.read(source, 0L, truncated.length))
                     .isInstanceOf(ParquetFormatException.class)
                     .hasMessageContaining("truncated");
         }

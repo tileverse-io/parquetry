@@ -15,6 +15,11 @@
     <dependencies>
       <dependency>
         <groupId>io.tileverse.parquetry</groupId>
+        <artifactId>parquetry-io</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.tileverse.parquetry</groupId>
         <artifactId>parquetry-format</artifactId>
         <version>${project.version}</version>
       </dependency>

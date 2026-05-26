@@ -32,27 +32,23 @@ import org.apache.parquet.io.LocalOutputFile;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
-
 import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.format.ParquetFormat;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
-
-import io.tileverse.io.ByteBufferPool;
+import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * End-to-end integration test: write a small Parquet 2.0 file via {@code parquet-avro}, then read it back through the
  * parquetry pipeline (DataPageV2Reader + BatchColumnReader + BatchRowGroupReader behind the row-API adapter) and assert
  * the records round-trip exactly.
  *
- * <p>Reads go through {@link ParquetDataset#open(RangeReader)} so this test exercises the same code path that
- * production callers use.
+ * <p>Reads go through {@link ParquetDataset#open(ByteRangeSource)}, exercising the same code path that production
+ * callers use.
  */
 class EndToEndV2ReadTest {
 
@@ -67,12 +63,12 @@ class EndToEndV2ReadTest {
         List<RowDto> expected = generateRows(100);
         writeParquet2File(file, expected, CompressionCodecName.SNAPPY, /*rowGroupBytes*/ 16L * 1024 * 1024);
 
-        ByteBufferPool pool = new ByteBufferPool();
+        CountingSegmentPool pool = new CountingSegmentPool();
         List<ParquetRecord> actual = readAllRecords(file, pool);
 
         assertThat(actual).hasSize(expected.size());
         assertRecordsMatch(actual, expected);
-        assertThat(outstandingBorrows(pool))
+        assertThat(pool.outstanding())
                 .as("Every borrowed PooledByteBuffer must be returned end-to-end")
                 .isZero();
     }
@@ -84,7 +80,7 @@ class EndToEndV2ReadTest {
         // Tiny row-group target forces parquet-avro to flush multiple row groups for our 2000 rows.
         writeParquet2File(file, expected, CompressionCodecName.SNAPPY, /*rowGroupBytes*/ 8_192L);
 
-        ByteBufferPool pool = new ByteBufferPool();
+        CountingSegmentPool pool = new CountingSegmentPool();
         List<ParquetRecord> actual = readAllRecords(file, pool);
 
         assertThat(actual).hasSize(expected.size());
@@ -92,7 +88,7 @@ class EndToEndV2ReadTest {
         assertThat(rowGroupCount(file))
                 .as("fixture should span multiple row groups for the multi-RG assertion to be load-bearing")
                 .isGreaterThan(1);
-        assertThat(outstandingBorrows(pool)).isZero();
+        assertThat(pool.outstanding()).isZero();
     }
 
     @Test
@@ -101,11 +97,11 @@ class EndToEndV2ReadTest {
         List<RowDto> expected = generateRows(50);
         writeParquet2File(file, expected, CompressionCodecName.UNCOMPRESSED, /*rowGroupBytes*/ 16L * 1024 * 1024);
 
-        ByteBufferPool pool = new ByteBufferPool();
+        CountingSegmentPool pool = new CountingSegmentPool();
         List<ParquetRecord> actual = readAllRecords(file, pool);
 
         assertRecordsMatch(actual, expected);
-        assertThat(outstandingBorrows(pool)).isZero();
+        assertThat(pool.outstanding()).isZero();
     }
 
     @Test
@@ -114,7 +110,7 @@ class EndToEndV2ReadTest {
         int rowCount = 20;
         writeParquet2FileWithNullableColumn(file, rowCount);
 
-        ByteBufferPool pool = new ByteBufferPool();
+        CountingSegmentPool pool = new CountingSegmentPool();
         List<ParquetRecord> actual = readAllRecords(file, pool);
 
         assertThat(actual).hasSize(rowCount);
@@ -134,7 +130,7 @@ class EndToEndV2ReadTest {
                         .isEqualTo(expectedOptionalValue(i));
             }
         }
-        assertThat(outstandingBorrows(pool)).isZero();
+        assertThat(pool.outstanding()).isZero();
     }
 
     // --- fixture generation ---
@@ -209,11 +205,10 @@ class EndToEndV2ReadTest {
 
     // --- read helper ---
 
-    private static List<ParquetRecord> readAllRecords(Path file, ByteBufferPool pool) throws IOException {
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
-            ReadOptions options = ReadOptions.builder().byteBufferPool(pool).build();
+    private static List<ParquetRecord> readAllRecords(Path file, CountingSegmentPool pool) throws IOException {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
+            ReadOptions options = ReadOptions.builder().segmentPool(pool).build();
             List<ParquetRecord> collected = new ArrayList<>();
             try (Stream<ParquetRecord> stream = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
                 stream.forEach(collected::add);
@@ -223,9 +218,8 @@ class EndToEndV2ReadTest {
     }
 
     private static int rowGroupCount(Path file) throws IOException {
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            return ParquetFormat.readFooter(reader).rowGroups().size();
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            return ParquetFormat.readFooter(source).rowGroups().size();
         }
     }
 
@@ -239,11 +233,6 @@ class EndToEndV2ReadTest {
             assertThat(rec.getString(COUNTRY)).as("country @ row %d", i).isEqualTo(exp.country());
             assertThat(rec.getDouble(VALUE)).as("value @ row %d", i).isEqualTo(exp.value());
         }
-    }
-
-    private static long outstandingBorrows(ByteBufferPool pool) {
-        ByteBufferPool.PoolStatistics stats = pool.getStatistics();
-        return (stats.created() + stats.reused()) - (stats.returned() + stats.discarded());
     }
 
     // --- value type ---

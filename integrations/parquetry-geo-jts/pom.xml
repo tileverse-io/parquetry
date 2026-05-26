@@ -8,7 +8,7 @@
   </parent>
 
   <artifactId>parquetry-geo-jts</artifactId>
-  <name>Parquetry :: Geo :: JTS</name>
+  <name>Parquetry :: Integrations :: Geo :: JTS</name>
   <description>JTS Geometry materialization for GeoParquet 1.x and 2.0 files.</description>
 
   <dependencyManagement>

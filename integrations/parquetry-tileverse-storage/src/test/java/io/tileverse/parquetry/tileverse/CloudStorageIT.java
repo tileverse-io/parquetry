@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.integration;
+package io.tileverse.parquetry.tileverse;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -32,6 +32,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.testcontainers.containers.localstack.LocalStackContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -46,9 +47,10 @@ import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.testsupport.CorpusFixtures;
+import io.tileverse.parquetry.testkit.TestCorpus;
 
 import io.tileverse.io.ByteBufferPool;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
@@ -61,18 +63,25 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 /**
  * End-to-end integration tests that drive the parquetry pipeline through a real cloud-storage {@link RangeReader} -
- * specifically tileverse-storage's S3 reader pointed at a LocalStack container.
+ * specifically tileverse-storage's S3 reader pointed at a LocalStack container, opened through the
+ * {@link ByteRangeSources} adapter.
  *
- * <p>Each read uses an isolated {@link ByteBufferPool} and materializes column values into heap-owned {@code byte[]}
- * <em>inside</em> the stream's try-with-resources scope. That lets the assertions safely compare results across threads
- * and across calls without depending on the lifetime of pool-backed buffers.
+ * <p>Each read wires a fresh {@link ByteBufferPool} into the parquetry pipeline via {@link SegmentPools#backedBy},
+ * exercising the ByteBufferPool-backed {@code SegmentPool} adapter. Column values are materialized into heap-owned
+ * {@code byte[]} <em>inside</em> the stream's try-with-resources scope, while the pool-backed buffers are still live.
+ * That lets the assertions safely compare results across threads and across calls without depending on the lifetime of
+ * pool-backed buffers.
  *
  * <p>Disabled automatically when no Docker daemon is reachable (see {@link Testcontainers#disabledWithoutDocker()}).
  */
 @Testcontainers(disabledWithoutDocker = true)
 class CloudStorageIT {
 
-    private static final Path FIXTURE = CorpusFixtures.parquetTestingData().resolve("binary.parquet");
+    @TempDir
+    static Path corpusDir;
+
+    static Path fixture;
+
     private static final String BUCKET = "parquetry-it";
     private static final String KEY = "binary.parquet";
     private static final ColumnPath FOO = ColumnPath.of("foo");
@@ -88,13 +97,16 @@ class CloudStorageIT {
 
     @BeforeAll
     static void uploadFixture() {
-        assertThat(FIXTURE).as("parquet-testing submodule must be initialized").isRegularFile();
+        fixture = TestCorpus.extractFile("parquet-testing/data/binary.parquet", corpusDir);
+        assertThat(fixture)
+                .as("binary.parquet must be extracted from the testkit corpus")
+                .isRegularFile();
         credentials = StaticCredentialsProvider.create(
                 AwsBasicCredentials.create(localstack.getAccessKey(), localstack.getSecretKey()));
         s3Client = newS3Client();
         s3Client.createBucket(CreateBucketRequest.builder().bucket(BUCKET).build());
         s3Client.putObject(
-                PutObjectRequest.builder().bucket(BUCKET).key(KEY).build(), RequestBody.fromFile(FIXTURE.toFile()));
+                PutObjectRequest.builder().bucket(BUCKET).key(KEY).build(), RequestBody.fromFile(fixture.toFile()));
     }
 
     @AfterAll
@@ -150,11 +162,14 @@ class CloudStorageIT {
      * per-call {@link ByteBufferPool} buffers are still live; the returned list survives any subsequent pool release.
      */
     private static List<byte[]> readFooColumn(Storage storage, String key) throws IOException {
-        ByteBufferPool pool = new ByteBufferPool();
-        ReadOptions opts = ReadOptions.builder().byteBufferPool(pool).build();
+        ByteBufferPool backing = new ByteBufferPool();
+        ReadOptions opts = ReadOptions.builder()
+                .segmentPool(SegmentPools.backedBy(backing))
+                .build();
         try (storage;
-                RangeReader reader = storage.openRangeReader(key)) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
+                RangeReader reader = storage.openRangeReader(key);
+                ByteRangeSource source = ByteRangeSources.from(reader)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
             try (Stream<ParquetRecord> stream = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, opts)) {
                 return stream.map(CloudStorageIT::fooOf).toList();
             }
@@ -175,7 +190,7 @@ class CloudStorageIT {
     }
 
     private static Storage localStorage() {
-        Path absolute = FIXTURE.toAbsolutePath();
+        Path absolute = fixture.toAbsolutePath();
         return StorageFactory.open(absolute.getParent().toUri());
     }
 

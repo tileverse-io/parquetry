@@ -29,14 +29,11 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
-
 import io.tileverse.parquetry.filter.ExplainPlan;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.RowGroupOutcome;
 import io.tileverse.parquetry.filter.RowGroupPlan;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -54,9 +51,8 @@ class PagePruningExplainTest {
     @Test
     void columnIndexTierNarrowsToTheSurvivingPages() throws Exception {
         Path file = writeEightRowsAcrossFourPages();
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
             ExplainPlan plan = dataset.explain(col("v").gtEq(5), Projection.ALL, ReadOptions.DEFAULTS);
 
             RowGroupPlan rg = plan.rowGroups().get(0);

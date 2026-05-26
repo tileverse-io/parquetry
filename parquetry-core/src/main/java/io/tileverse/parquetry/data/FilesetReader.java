@@ -15,24 +15,24 @@
  */
 package io.tileverse.parquetry.data;
 
-import io.tileverse.storage.RangeReader;
+import io.tileverse.parquetry.io.ByteRangeSource;
 
 /**
- * Adapter contract for resolving the per-file {@link RangeReader range readers} that a multi-file
+ * Adapter contract for resolving the per-file {@link ByteRangeSource byte sources} that a multi-file
  * {@link ParquetDataset} will stitch together at read time.
  *
  * <p>This is the public seam that future work (partitioned datasets, Iceberg / Delta manifest handlers) will satisfy
  * without forcing {@code ParquetDataset.open} to grow new overloads. The single-file path goes through
- * {@link ParquetDataset#open(RangeReader)} unchanged.
+ * {@link ParquetDataset#open(ByteRangeSource)} unchanged.
  */
 public interface FilesetReader {
 
     /**
-     * Returns a {@link RangeReader} positioned at file {@code index} of the fileset. Implementations decide their own
-     * indexing (file order, manifest order, etc.); the caller of the multi-file dataset only iterates in increasing
+     * Returns a {@link ByteRangeSource} positioned at file {@code index} of the fileset. Implementations decide their
+     * own indexing (file order, manifest order, etc.); the caller of the multi-file dataset only iterates in increasing
      * {@code index} order.
      */
-    RangeReader openFile(int index);
+    ByteRangeSource openFile(int index);
 
     /** Returns the number of files in the fileset. */
     int fileCount();

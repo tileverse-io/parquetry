@@ -7,7 +7,7 @@
  * <h2>Entry points</h2>
  *
  * <ul>
- *   <li>{@link ParquetFormat} reads file-level structures from a {@code RangeReader} (footer, page header, column /
+ *   <li>{@link ParquetFormat} reads file-level structures from a {@code ByteRangeSource} (footer, page header, column /
  *       offset index). Use this when opening a Parquet file by byte range.
  *   <li>{@link io.tileverse.parquetry.format.codec.ParquetFormatDeserializer} decodes the same structures from a raw
  *       {@code InputStream} of Thrift-compact bytes. Use this when you already have the bytes in hand from a custom

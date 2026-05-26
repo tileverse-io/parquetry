@@ -32,14 +32,11 @@ import org.apache.parquet.io.LocalOutputFile;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
-
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
@@ -54,9 +51,8 @@ class ReadBatchesTest {
         int rowCount = 1_000;
         writeFixture(file, generateRows(rowCount));
 
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
 
             long totalRows = 0L;
             int batchCount = 0;
@@ -84,9 +80,8 @@ class ReadBatchesTest {
 
         ReadOptions options = ReadOptions.builder().batchSize(100).build();
 
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
 
             long totalRows = 0L;
             int maxObservedBatchSize = 0;
@@ -118,9 +113,8 @@ class ReadBatchesTest {
         ReadOptions options = ReadOptions.builder().batchSize(100).build();
         ColumnPath yearPath = ColumnPath.of("year");
 
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
 
             List<Integer> seenYears = new ArrayList<>(rowCount);
             try (Stream<ParquetRecordBatch> batches =

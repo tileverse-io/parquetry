@@ -27,8 +27,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Stream;
 
-import io.tileverse.storage.RangeReader;
-
 import io.tileverse.parquetry.batch.BatchMaterializer;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.data.read.BatchPipeline;
@@ -58,6 +56,7 @@ import io.tileverse.parquetry.format.KeyValue;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -67,15 +66,15 @@ import io.tileverse.parquetry.schema.SchemaBuilder;
 import lombok.NonNull;
 
 /**
- * Read entry point for a single Parquet file. Opens the footer once via {@link #open(RangeReader)}, caches the decoded
- * {@link FileMetaData}, the parquetry {@link ParquetSchema}, and the collapsed key/value metadata, and exposes
+ * Read entry point for a single Parquet file. Opens the footer once via {@link #open(ByteRangeSource)}, caches the
+ * decoded {@link FileMetaData}, the parquetry {@link ParquetSchema}, and the collapsed key/value metadata, and exposes
  * {@link #read read}, {@link #readBatches readBatches}, and {@link #explain explain} entry points that share that one
  * footer.
  *
  * <p>Instances are safe to share across threads. Cached footer, schema, and metadata are immutable; every
  * {@code read()} call allocates its own filter survivors, row-group prefetcher, and batch pipeline. The underlying
- * {@link RangeReader} must itself be thread-safe; the reader does not own it, and the caller closes it after the last
- * returned stream has been closed.
+ * {@link ByteRangeSource} must itself be thread-safe; the reader does not own it, and the caller closes it after the
+ * last returned stream has been closed.
  *
  * <p>The class is non-final and the per-row-group filter helpers ({@link #runFilterPipeline runFilterPipeline},
  * {@link #filterInputsFor filterInputsFor}, {@link #bloomLookupFor bloomLookupFor}, {@link #statsLookup statsLookup},
@@ -85,32 +84,32 @@ import lombok.NonNull;
  */
 public class ParquetReader {
 
-    private final RangeReader rangeReader;
+    private final ByteRangeSource source;
     private final FileMetaData footer;
     private final ParquetSchema fileSchema;
     private final Map<String, String> keyValueMetadata;
     private final List<RowGroupSummary> rowGroupView;
 
     protected ParquetReader(
-            RangeReader rangeReader,
+            ByteRangeSource source,
             FileMetaData footer,
             ParquetSchema fileSchema,
             Map<String, String> keyValueMetadata,
             List<RowGroupSummary> rowGroupView) {
-        this.rangeReader = rangeReader;
+        this.source = source;
         this.footer = footer;
         this.fileSchema = fileSchema;
         this.keyValueMetadata = keyValueMetadata;
         this.rowGroupView = rowGroupView;
     }
 
-    /** Opens a reader, performing exactly one footer read against {@code reader}. */
-    public static ParquetReader open(@NonNull RangeReader reader) {
-        FileMetaData footer = ParquetFormat.readFooter(reader);
+    /** Opens a reader, performing exactly one footer read against {@code source}. */
+    public static ParquetReader open(@NonNull ByteRangeSource source) {
+        FileMetaData footer = ParquetFormat.readFooter(source);
         Map<String, String> kvMetadata = collapseKeyValueMetadata(footer.keyValueMetadata());
         ParquetSchema fileSchema = buildFileSchema(footer, kvMetadata);
         List<RowGroupSummary> rgView = toRowGroupView(footer);
-        return new ParquetReader(reader, footer, fileSchema, kvMetadata, rgView);
+        return new ParquetReader(source, footer, fileSchema, kvMetadata, rgView);
     }
 
     /** Returns the file schema, with GeoParquet 1.x logical-type annotations folded in. */
@@ -284,10 +283,10 @@ public class ParquetReader {
     private RowGroupPrefetcher newPrefetcher(
             List<RowGroupSurvivor> survivors, ParquetSchema projectedSchema, ReadOptions options) {
         RowGroupFetcher fetcher = new RowGroupFetcher(
-                rangeReader,
+                source,
                 fileSchema,
                 projectedSchema,
-                options.byteBufferPool(),
+                options.segmentPool(),
                 options.maxCoalesceGap(),
                 options.maxCoalescedSpan());
         ExecutorService executor = Executors.newThreadPerTaskExecutor(
@@ -336,25 +335,26 @@ public class ParquetReader {
     }
 
     /**
-     * Binds index-section reads to this reader's {@link RangeReader}. Subclasses may override to plug a cached source.
+     * Binds index-section reads to this reader's {@link ByteRangeSource}. Subclasses may override to plug a cached
+     * source.
      */
     protected IndexSectionLoader indexSectionLoader() {
         return new IndexSectionLoader() {
             @Override
             public OffsetIndex readOffsetIndex(long offset, int length) {
-                return ParquetFormat.readOffsetIndex(rangeReader, offset, length);
+                return ParquetFormat.readOffsetIndex(source, offset, length);
             }
 
             @Override
             public ColumnIndex readColumnIndex(long offset, int length) {
-                return ParquetFormat.readColumnIndex(rangeReader, offset, length);
+                return ParquetFormat.readColumnIndex(source, offset, length);
             }
 
             @Override
             public SplitBlockBloomFilter readBloom(long offset, int length) {
                 return length > 0
-                        ? BloomFilterReader.read(rangeReader, offset, length)
-                        : BloomFilterReader.readWithoutLength(rangeReader, offset);
+                        ? BloomFilterReader.read(source, offset, length)
+                        : BloomFilterReader.readWithoutLength(source, offset);
             }
         };
     }

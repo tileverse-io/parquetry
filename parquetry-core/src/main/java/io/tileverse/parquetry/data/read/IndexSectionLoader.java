@@ -21,7 +21,7 @@ import io.tileverse.parquetry.format.OffsetIndex;
 
 /**
  * Reads a column chunk's index sections from a backing store. {@link RowGroupChunks} depends on this minimal interface
- * rather than on a {@code RangeReader} directly, which keeps it pure and lets tests drive it with a counting fake.
+ * rather than on a {@code ByteRangeSource} directly, which keeps it pure and lets tests drive it with a counting fake.
  *
  * <p>The reader binds an implementation to its data source; the loader is called at most once per column per section,
  * because {@link RowGroupChunks} memoizes the result.

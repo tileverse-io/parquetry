@@ -37,10 +37,6 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
-
 import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
@@ -49,6 +45,7 @@ import io.tileverse.parquetry.data.WriteOptions.EncodingPolicy;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.format.LogicalType;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -77,10 +74,8 @@ class RoundTripCorpusIT {
 
         ParquetSchema schema;
         List<RowSnapshot> originalRows;
-        try (Storage storage = StorageFactory.open(fixture.getParent().toUri());
-                RangeReader reader =
-                        storage.openRangeReader(fixture.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(fixture)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
             schema = dataset.schema();
             assumeTrue(isFlatPrimitiveSchema(schema), "fixture has nested or repeated columns");
             assumeTrue(
@@ -231,9 +226,8 @@ class RoundTripCorpusIT {
     }
 
     private static List<RowSnapshot> readRowsFromFile(Path file) throws IOException {
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
             List<ColumnPath> leaves = dataset.schema().leafColumns();
             return snapshotRowsFromDataset(dataset, leaves);
         }

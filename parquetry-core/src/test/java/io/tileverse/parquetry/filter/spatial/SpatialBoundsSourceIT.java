@@ -25,13 +25,10 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
-
 import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.ParquetFormat;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaBuilder;
@@ -60,10 +57,8 @@ class SpatialBoundsSourceIT {
             return;
         }
 
-        try (Storage storage = StorageFactory.open(EXAMPLE_PARQUET.getParent().toUri());
-                RangeReader reader =
-                        storage.openRangeReader(EXAMPLE_PARQUET.getFileName().toString())) {
-            FileMetaData footer = ParquetFormat.readFooter(reader);
+        try (ByteRangeSource byteSource = ByteRangeSource.ofFile(EXAMPLE_PARQUET)) {
+            FileMetaData footer = ParquetFormat.readFooter(byteSource);
             String geoJson = lookupGeoJson(footer);
             assertThat(geoJson)
                     .as("example.parquet must carry the 'geo' KV entry")

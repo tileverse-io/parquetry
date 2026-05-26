@@ -14,16 +14,6 @@
   <dependencyManagement>
     <dependencies>
       <dependency>
-        <groupId>io.tileverse.storage</groupId>
-        <artifactId>tileverse-storage-core</artifactId>
-        <version>${tileverse-storage.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>io.tileverse.storage</groupId>
-        <artifactId>tileverse-storage-s3</artifactId>
-        <version>${tileverse-storage.version}</version>
-      </dependency>
-      <dependency>
         <groupId>tools.jackson.core</groupId>
         <artifactId>jackson-databind</artifactId>
         <version>${jackson.version}</version>
@@ -42,6 +32,21 @@
         <groupId>org.brotli</groupId>
         <artifactId>dec</artifactId>
         <version>${brotli-dec.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.slf4j</groupId>
+        <artifactId>slf4j-api</artifactId>
+        <version>${slf4j.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.google.errorprone</groupId>
+        <artifactId>error_prone_annotations</artifactId>
+        <version>${error-prone-annotations.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.jspecify</groupId>
+        <artifactId>jspecify</artifactId>
+        <version>${jspecify.version}</version>
       </dependency>
       <dependency>
         <groupId>org.locationtech.jts</groupId>

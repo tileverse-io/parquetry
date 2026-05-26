@@ -36,18 +36,14 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
-
 import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
-
-import io.tileverse.io.ByteBufferPool;
+import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * V1 fixture conformance: reads each committed {@code parquet-avro 1.x} fixture under
@@ -79,14 +75,14 @@ class DataPageV1ConformanceTest {
         Path fixture = stageFixture(fixtureName, tmp);
         List<GenericRecord> expected = readAllViaParquetAvro(fixture);
 
-        ByteBufferPool pool = new ByteBufferPool();
+        CountingSegmentPool pool = new CountingSegmentPool();
         List<ParquetRecord> actual = readAllViaParquetry(fixture, pool);
 
         assertThat(actual)
                 .as("%s row count must match parquet-avro oracle", fixtureName)
                 .hasSameSizeAs(expected);
         assertIntStringRecordsMatchOracle(fixtureName, actual, expected);
-        assertThat(outstandingBorrows(pool))
+        assertThat(pool.outstanding())
                 .as("pooled buffers must drain after %s", fixtureName)
                 .isZero();
     }
@@ -97,14 +93,14 @@ class DataPageV1ConformanceTest {
         Path fixture = stageFixture(fixtureName, tmp);
         List<GenericRecord> expected = readAllViaParquetAvro(fixture);
 
-        ByteBufferPool pool = new ByteBufferPool();
+        CountingSegmentPool pool = new CountingSegmentPool();
         List<ParquetRecord> actual = readAllViaParquetry(fixture, pool);
 
         assertThat(actual)
                 .as("%s row count must match parquet-avro oracle", fixtureName)
                 .hasSameSizeAs(expected);
         assertNullableRecordsMatchOracle(actual, expected);
-        assertThat(outstandingBorrows(pool))
+        assertThat(pool.outstanding())
                 .as("pooled buffers must drain after %s", fixtureName)
                 .isZero();
     }
@@ -161,12 +157,10 @@ class DataPageV1ConformanceTest {
 
     // --- pipeline drivers ---
 
-    private static List<ParquetRecord> readAllViaParquetry(Path fixture, ByteBufferPool pool) throws IOException {
-        try (Storage storage = StorageFactory.open(fixture.getParent().toUri());
-                RangeReader reader =
-                        storage.openRangeReader(fixture.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
-            ReadOptions options = ReadOptions.builder().byteBufferPool(pool).build();
+    private static List<ParquetRecord> readAllViaParquetry(Path fixture, CountingSegmentPool pool) throws IOException {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(fixture)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
+            ReadOptions options = ReadOptions.builder().segmentPool(pool).build();
             try (Stream<ParquetRecord> records = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
                 return records.toList();
             }
@@ -189,8 +183,8 @@ class DataPageV1ConformanceTest {
     // --- fixture staging ---
 
     /**
-     * Copies a classpath fixture into {@code tmp} so the parquetry reader (file-backed RangeReader) can open it by
-     * directory + name. Returns the staged path; the temp directory is cleaned up by JUnit.
+     * Copies a classpath fixture into {@code tmp} where the parquetry reader (file-backed ByteRangeSource) can open it
+     * by path. Returns the staged path; the temp directory is cleaned up by JUnit.
      */
     private static Path stageFixture(String fixtureName, Path tmp) throws IOException {
         String resourcePath = FIXTURE_DIR + fixtureName;
@@ -204,12 +198,5 @@ class DataPageV1ConformanceTest {
             Files.copy(in, out, StandardCopyOption.REPLACE_EXISTING);
         }
         return out;
-    }
-
-    // --- pool accounting ---
-
-    private static long outstandingBorrows(ByteBufferPool pool) {
-        ByteBufferPool.PoolStatistics stats = pool.getStatistics();
-        return (stats.created() + stats.reused()) - (stats.returned() + stats.discarded());
     }
 }

@@ -7,10 +7,9 @@ Page decoders + encoders, codecs, filter pushdown, the Dremel walker, the `Parqu
 The entry points all live in `io.tileverse.parquetry.data`:
 
 ```java
-// Read one file:
-try (Storage storage = StorageFactory.open(file.getParent().toUri());
-     RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-    ParquetDataset dataset = ParquetDataset.open(reader);
+// Read one local file (pure JDK, no third-party dependency):
+try (ByteRangeSource source = ByteRangeSource.ofFile(path)) {
+    ParquetDataset dataset = ParquetDataset.open(source);
     try (Stream<ParquetRecord> stream = dataset.read(
             col("year").gtEq(2020).and(col("country").eq("AR")),
             Projection.of(Set.of(ColumnPath.of("year"), ColumnPath.of("country"))),
@@ -25,6 +24,8 @@ try (FileChannel sink = FileChannel.open(out, CREATE, WRITE, TRUNCATE_EXISTING);
     rows.forEach(writer::write);
 }
 ```
+
+The read source is a `ByteRangeSource` (the [`parquetry-io`](../parquetry-io/) SPI). `ofFile(Path)` / `ofChannel(FileChannel)` cover local files on the JDK alone -- parquetry-core carries no `io.tileverse.*` runtime dependency. Reading from S3 / Azure / GCS / HTTP goes through the optional [`parquetry-tileverse-storage`](../integrations/parquetry-tileverse-storage/) adapter: `ParquetDataset.open(ByteRangeSources.from(rangeReader))`.
 
 The write sink is a `WritableByteChannel`. It does not have to be seekable: any genuinely streaming output target (an HTTP request body, a blob-storage upload, anything that exposes `WritableByteChannel`) works -- rows are encoded into per-column temp files first and only consolidated onto the sink at row-group flush. An `OutputStream` overload is provided as a convenience and shims through `Channels.newChannel(...)`.
 
@@ -47,7 +48,7 @@ Direction rule: **cross-cutting capabilities stay at the top level; direction-sp
 ## Where it fits
 
 ```
-        parquetry-format records + schema/* + schema.geo.*    tileverse-storage RangeReader
+        parquetry-format records + schema/* + schema.geo.*    parquetry-io ByteRangeSource + SegmentPool
                               \                                       /
                                v                                     v
                               +------------------------------------------+
@@ -74,8 +75,8 @@ Direction rule: **cross-cutting capabilities stay at the top level; direction-sp
 ## Dependencies
 
 - `parquetry-format` (Thrift records, `ParquetFormat` facade, schema model, typed PROJJSON / GeoParquetMetadata ADTs, `SchemaBuilder` folding the `"geo"` JSON into the schema at footer-read time).
+- `parquetry-io` (the `ByteRangeSource` read source and `SegmentPool` buffer-pool SPIs; pure JDK).
 - `io.airlift:aircompressor-v3` (Snappy / Gzip / Lz4Raw / Zstd / Lzo / legacy LZ4 codecs + bloom-filter xxHash64).
 - `org.brotli:dec` (Brotli decompression).
-- `io.tileverse.storage:tileverse-storage-core` (transitively via `parquetry-format`).
 
-No `parquet-*`, `hadoop-*`, `libthrift`, or `avro` at compile or runtime.
+No `parquet-*`, `hadoop-*`, `libthrift`, or `avro` at compile or runtime, and **no `io.tileverse.*` runtime dependency**: local-file reads run on the JDK alone; cloud reads come from the optional `parquetry-tileverse-storage` adapter.

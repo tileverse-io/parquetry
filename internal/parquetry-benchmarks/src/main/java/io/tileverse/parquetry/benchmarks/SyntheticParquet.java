@@ -28,15 +28,12 @@ import java.util.Random;
 import java.util.Set;
 import java.util.stream.Stream;
 
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
-
 import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -89,11 +86,10 @@ final class SyntheticParquet {
         }
     }
 
-    /** Opens a dataset over {@code file}; the returned handle owns the storage and reader it closes. */
+    /** Opens a dataset over {@code file}; the returned handle owns the byte source it closes. */
     static OpenDataset open(Path file) {
-        Storage storage = StorageFactory.open(file.getParent().toUri());
-        RangeReader reader = storage.openRangeReader(file.getFileName().toString());
-        return new OpenDataset(storage, reader, ParquetDataset.open(reader));
+        ByteRangeSource source = ByteRangeSource.ofFile(file);
+        return new OpenDataset(source, ParquetDataset.open(source));
     }
 
     static void deleteRecursively(Path dir) throws IOException {
@@ -168,16 +164,14 @@ final class SyntheticParquet {
         return new SchemaNode.Primitive(name, Repetition.REQUIRED, kind, OptionalInt.empty(), Optional.empty(), -1);
     }
 
-    /** A dataset plus the storage and reader behind it; close it to release all three. */
+    /** A dataset plus the byte source behind it; close it to release both. */
     static final class OpenDataset implements AutoCloseable {
 
-        private final Storage storage;
-        private final RangeReader reader;
+        private final ByteRangeSource source;
         private final ParquetDataset dataset;
 
-        private OpenDataset(Storage storage, RangeReader reader, ParquetDataset dataset) {
-            this.storage = storage;
-            this.reader = reader;
+        private OpenDataset(ByteRangeSource source, ParquetDataset dataset) {
+            this.source = source;
             this.dataset = dataset;
         }
 
@@ -186,9 +180,8 @@ final class SyntheticParquet {
         }
 
         @Override
-        public void close() throws IOException {
-            reader.close();
-            storage.close();
+        public void close() {
+            source.close();
         }
     }
 

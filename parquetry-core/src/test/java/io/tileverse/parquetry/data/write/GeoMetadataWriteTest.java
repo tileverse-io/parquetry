@@ -32,10 +32,6 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
-
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.GeoParquetMetadataMode;
@@ -46,6 +42,7 @@ import io.tileverse.parquetry.format.KeyValue;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.SchemaElement;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -232,9 +229,8 @@ class GeoMetadataWriteTest {
     }
 
     private static FileMetaData readFooter(Path file) throws Exception {
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            return ParquetFormat.readFooter(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            return ParquetFormat.readFooter(source);
         }
     }
 

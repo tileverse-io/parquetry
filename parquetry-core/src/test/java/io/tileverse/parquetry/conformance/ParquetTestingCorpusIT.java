@@ -45,22 +45,18 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
-
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.testsupport.CorpusFixtures;
-
-import io.tileverse.io.ByteBufferPool;
+import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * Conformance integration test that reads every {@code .parquet} file under
@@ -94,14 +90,14 @@ class ParquetTestingCorpusIT {
         Path fixture = DATA_DIR.resolve(fixtureName);
         List<GenericRecord> expected = readAllViaParquetAvro(fixture);
 
-        ByteBufferPool pool = new ByteBufferPool();
+        CountingSegmentPool pool = new CountingSegmentPool();
         List<ParquetRecord> actual = readAllViaParquetry(fixture, pool);
 
         assertThat(actual)
                 .as("%s row count must match parquet-avro oracle", fixtureName)
                 .hasSameSizeAs(expected);
         assertRowsMatchOracle(fixtureName, actual, expected);
-        assertThat(outstandingBorrows(pool))
+        assertThat(pool.outstanding())
                 .as("pooled buffers must drain after %s", fixtureName)
                 .isZero();
     }
@@ -112,13 +108,13 @@ class ParquetTestingCorpusIT {
         Path fixture = DATA_DIR.resolve(fixtureName);
         long expectedRows = readAllViaParquetAvro(fixture).size();
 
-        ByteBufferPool pool = new ByteBufferPool();
+        CountingSegmentPool pool = new CountingSegmentPool();
         long actualRows = totalRowsViaBatchApi(fixture, pool);
 
         assertThat(actualRows)
                 .as("%s batch row count must match parquet-avro oracle", fixtureName)
                 .isEqualTo(expectedRows);
-        assertThat(outstandingBorrows(pool))
+        assertThat(pool.outstanding())
                 .as("pooled buffers must drain after %s", fixtureName)
                 .isZero();
     }
@@ -307,25 +303,21 @@ class ParquetTestingCorpusIT {
 
     // --- pipeline drivers ---
 
-    private static List<ParquetRecord> readAllViaParquetry(Path fixture, ByteBufferPool pool) throws IOException {
-        try (Storage storage = StorageFactory.open(fixture.getParent().toUri());
-                RangeReader reader =
-                        storage.openRangeReader(fixture.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
-            ReadOptions options = ReadOptions.builder().byteBufferPool(pool).build();
+    private static List<ParquetRecord> readAllViaParquetry(Path fixture, CountingSegmentPool pool) throws IOException {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(fixture)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
+            ReadOptions options = ReadOptions.builder().segmentPool(pool).build();
             try (Stream<ParquetRecord> records = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
                 return records.toList();
             }
         }
     }
 
-    private static long totalRowsViaBatchApi(Path fixture, ByteBufferPool pool) throws IOException {
+    private static long totalRowsViaBatchApi(Path fixture, CountingSegmentPool pool) throws IOException {
         long[] total = {0L};
-        try (Storage storage = StorageFactory.open(fixture.getParent().toUri());
-                RangeReader reader =
-                        storage.openRangeReader(fixture.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
-            ReadOptions options = ReadOptions.builder().byteBufferPool(pool).build();
+        try (ByteRangeSource source = ByteRangeSource.ofFile(fixture)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
+            ReadOptions options = ReadOptions.builder().segmentPool(pool).build();
             try (Stream<ParquetRecordBatch> batches =
                     dataset.readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
                 batches.forEach(batch -> {
@@ -354,12 +346,5 @@ class ParquetTestingCorpusIT {
             }
         }
         return rows;
-    }
-
-    // --- pool accounting ---
-
-    private static long outstandingBorrows(ByteBufferPool pool) {
-        ByteBufferPool.PoolStatistics stats = pool.getStatistics();
-        return (stats.created() + stats.reused()) - (stats.returned() + stats.discarded());
     }
 }

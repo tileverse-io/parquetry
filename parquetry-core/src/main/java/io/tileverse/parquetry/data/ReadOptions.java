@@ -23,8 +23,8 @@ import io.tileverse.parquetry.data.read.DecodeExecutor;
 import io.tileverse.parquetry.data.read.DecryptionKeyRetriever;
 import io.tileverse.parquetry.data.read.FetchBudget;
 import io.tileverse.parquetry.filter.PruningDecision;
+import io.tileverse.parquetry.io.SegmentPool;
 
-import io.tileverse.io.ByteBufferPool;
 import lombok.NonNull;
 
 /**
@@ -34,14 +34,14 @@ import lombok.NonNull;
  * a known-bad statistic). The {@code pruningDecisionListener} receives one {@link PruningDecision} per (row group,
  * tier) pair as the pipeline runs - the same vocabulary as {@code ExplainPlan}.
  *
- * <p>The {@code byteBufferPool} backs every column-chunk fetch and every per-page decompression buffer; defaults to
- * {@link ByteBufferPool#getDefault()}. See the package documentation for the streaming memory contract that motivates
- * the pool.
+ * <p>The {@code segmentPool} backs every column-chunk fetch and every per-page decompression buffer; defaults to
+ * {@link SegmentPool#getDefault()}. See the package documentation for the streaming memory contract that motivates the
+ * pool.
  *
  * <p>Reads execute synchronously on the caller's thread. Callers that want parallelism issue concurrent
  * {@code read(...)} calls against the dataset (which is thread-safe), or wrap the returned
- * {@link java.util.stream.Stream} themselves. Prefetching of column-chunk bytes is the {@code RangeReader} caching
- * layer's responsibility, not the reader's.
+ * {@link java.util.stream.Stream} themselves. Caching or prefetching of column-chunk bytes belongs to the
+ * {@link io.tileverse.parquetry.io.ByteRangeSource} implementation, not the reader.
  *
  * @param useStatsFilter run the STATS tier
  * @param useDictionaryFilter run the DICTIONARY tier
@@ -54,7 +54,7 @@ import lombok.NonNull;
  *     non-trivial; otherwise it has no effect.
  * @param pruningDecisionListener called once per per-row-group tier outcome; never {@code null} (defaults to no-op)
  * @param decryptionKeyRetriever supplied by the encryption module; empty when the file isn't encrypted
- * @param byteBufferPool source of pooled buffers for column-chunk fetch and per-page decompression
+ * @param segmentPool source of pooled native segments for column-chunk fetch and per-page decompression
  * @param batchSize maximum row count per emitted batch on the {@code readBatches(...)} path; empty means each batch is
  *     bounded only by the natural page row count
  * @param fetchBudget shared, process-wide cap on the in-flight bytes a read may speculatively prefetch
@@ -74,7 +74,7 @@ public record ReadOptions(
         boolean useLateMaterialization,
         @NonNull Consumer<PruningDecision> pruningDecisionListener,
         @NonNull Optional<DecryptionKeyRetriever> decryptionKeyRetriever,
-        @NonNull ByteBufferPool byteBufferPool,
+        @NonNull SegmentPool segmentPool,
         @NonNull OptionalInt batchSize,
         @NonNull FetchBudget fetchBudget,
         int maxCoalesceGap,
@@ -106,7 +106,7 @@ public record ReadOptions(
         }
     }
 
-    /** Sensible defaults: all tiers on, no listener, no decryption, shared {@link ByteBufferPool#getDefault()}. */
+    /** Sensible defaults: all tiers on, no listener, no decryption, shared {@link SegmentPool#getDefault()}. */
     public static final ReadOptions DEFAULTS = builder().build();
 
     public static Builder builder() {
@@ -124,7 +124,7 @@ public record ReadOptions(
         private boolean useLateMaterialization = true;
         private Consumer<PruningDecision> pruningDecisionListener = _ -> {};
         private Optional<DecryptionKeyRetriever> decryptionKeyRetriever = Optional.empty();
-        private ByteBufferPool byteBufferPool = ByteBufferPool.getDefault();
+        private SegmentPool segmentPool = SegmentPool.getDefault();
         private OptionalInt batchSize = OptionalInt.empty();
         private FetchBudget fetchBudget = FetchBudget.defaultBudget();
         private int maxCoalesceGap = 1 << 20;
@@ -176,8 +176,8 @@ public record ReadOptions(
             return this;
         }
 
-        public Builder byteBufferPool(@NonNull ByteBufferPool v) {
-            this.byteBufferPool = v;
+        public Builder segmentPool(@NonNull SegmentPool v) {
+            this.segmentPool = v;
             return this;
         }
 
@@ -254,7 +254,7 @@ public record ReadOptions(
                     useLateMaterialization,
                     pruningDecisionListener,
                     decryptionKeyRetriever,
-                    byteBufferPool,
+                    segmentPool,
                     batchSize,
                     fetchBudget,
                     maxCoalesceGap,

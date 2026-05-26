@@ -5,7 +5,7 @@ The whole format and schema layer of parquetry: hand-rolled Java bindings for th
 ## What it does
 
 - Decodes Parquet's `FileMetaData`, `RowGroup`, `ColumnChunk`, `PageHeader`, `ColumnIndex`, `OffsetIndex`, `Statistics`, `GeospatialStatistics`, and per-leaf logical types from a stream of Thrift-compact bytes.
-- Surfaces them as Java 25 records that mirror [`parquet.thrift`](https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift) field for field, in `io.tileverse.parquetry.format.*`.
+- Exposes them as Java 25 records that mirror [`parquet.thrift`](https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift) field for field, in `io.tileverse.parquetry.format.*`.
 - Builds a sealed-record schema tree (`Field`, `ParquetSchema`, `ColumnPath`, `SchemaBuilder`) from the flat `SchemaElement` stream, in `io.tileverse.parquetry.schema.*`.
 - Models the typed PROJJSON CRS ADT (`CoordinateReferenceSystem` sealed interface with `GeographicCRS`, `GeodeticCRS`, `ProjectedCRS`, `CompoundCRS`, `BoundCRS`, `VerticalCRS`, `Transformation`, plus an `Unknown` forward-compat permit) in `io.tileverse.parquetry.schema.geo.projjson.*`.
 - Models the typed GeoParquet `"geo"` key-value metadata (`GeoParquetMetadata` sealed interface with `V1_0` / `V1_1` / `V2` permits, plus `GeoColumn`, `Covering`, `BboxCovering`) in `io.tileverse.parquetry.schema.geo.geoparquet.*`.
@@ -17,7 +17,7 @@ Two top-level packages reflect a clean wire-vs-model split:
 | Package | Holds | Rule |
 |---|---|---|
 | `io.tileverse.parquetry.format.*` | Thrift wire records + codec | "if it's in `parquet.thrift`, it's here" |
-| `io.tileverse.parquetry.schema.*` | Typed Java API surface | "if it's a model we built on top, it's here" |
+| `io.tileverse.parquetry.schema.*` | Typed Java API model | "if it's a model we built on top, it's here" |
 
 The one intentional `format -> schema` reference: `LogicalType.Geometry.crs()` returns a `CoordinateReferenceSystem` from `schema.geo.projjson`. That's the one Thrift record where parquetry eagerly parses the wire string into a typed value at footer-read time.
 
@@ -28,9 +28,9 @@ The one intentional `format -> schema` reference: `LogicalType.Geometry.crs()` r
                        |
                        v
        +----------------------------------+
-       | parquetry-format                 |  <- you are here
-       | ParquetFormat (RangeReader API)  |
-       | ParquetFormatDeserializer        |
+       | parquetry-format                    |  <- you are here
+       | ParquetFormat (ByteRangeSource API) |
+       | ParquetFormatDeserializer           |
        | + typed schema model             |
        | + typed PROJJSON / GeoParquet    |
        +----------------------------------+
@@ -43,7 +43,7 @@ The one intentional `format -> schema` reference: `LogicalType.Geometry.crs()` r
 
 Two decoder facades, both in `io.tileverse.parquetry.format`:
 
-- `ParquetFormat` - high-level. Methods take an `io.tileverse.storage.RangeReader` and return decoded records (`readFooter`, `readPageHeader`, `readColumnIndex`, `readOffsetIndex`). All exceptions are runtime: `ParquetFormatException` for spec violations, `UncheckedIOException` for transport failures.
+- `ParquetFormat` - high-level. Methods take an `io.tileverse.parquetry.io.ByteRangeSource` and return decoded records (`readFooter`, `readPageHeader`, `readColumnIndex`, `readOffsetIndex`). All exceptions are runtime: `ParquetFormatException` for spec violations, `UncheckedIOException` for transport failures.
 - `ParquetFormatDeserializer` (in subpackage `format.codec`) - low-level. Same operations against a raw `InputStream` of Thrift-compact bytes, for callers that have already pulled the bytes off a custom transport.
 
 Everything else in `format.codec` is package-private mechanics (the Thrift Compact Protocol reader, the per-struct deserializers).
@@ -55,9 +55,9 @@ Neither `ProjJsonModule` nor `GeoParquetModule` ships a `META-INF/services` desc
 ## Dependencies
 
 Compile:
-- `io.tileverse.storage:tileverse-storage-core` (for `RangeReader`).
+- `io.tileverse.parquetry:parquetry-io` (for the `ByteRangeSource` read source the `ParquetFormat` facade reads from).
 - `tools.jackson.core:jackson-databind` (Jackson 3) for the typed PROJJSON and GeoParquetMetadata deserializers.
 
 Test: JUnit 5 + AssertJ; the OGC `geoparquet` test corpus's PROJJSON fixtures (committed under `src/test/resources/`).
 
-No `libthrift`, `parquet-*`, `hadoop-*`, or `avro` at compile or runtime - that's the whole point of this module.
+No `libthrift`, `parquet-*`, `hadoop-*`, or `avro` at compile or runtime - that's the whole point of this module. Also free of any `io.tileverse.storage` dependency: footer and index reads go through the pure-JDK `ByteRangeSource` SPI in `parquetry-io`.

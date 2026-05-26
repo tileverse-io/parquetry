@@ -21,10 +21,6 @@ import java.nio.file.Path;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
-
 import io.tileverse.parquetry.filter.ExplainPlan;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
@@ -32,6 +28,7 @@ import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.PruningDecision;
 import io.tileverse.parquetry.filter.RowGroupOutcome;
 import io.tileverse.parquetry.filter.Tier;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.testsupport.CorpusFixtures;
 
 /**
@@ -57,10 +54,8 @@ class BloomFilterFixtureTest {
 
     @Test
     void eqAbsentValueIsEliminatedByBloom() throws Exception {
-        try (Storage storage = StorageFactory.open(FIXTURE.getParent().toUri());
-                RangeReader reader =
-                        storage.openRangeReader(FIXTURE.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(FIXTURE)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
             Predicate p = Pred.col("String").eq("absent_value_that_is_definitely_not_in_the_file");
             ExplainPlan plan = dataset.explain(p, Projection.ALL, ReadOptions.DEFAULTS);
 
@@ -75,10 +70,8 @@ class BloomFilterFixtureTest {
 
     @Test
     void eqPresentValueSurvivesAllTiers() throws Exception {
-        try (Storage storage = StorageFactory.open(FIXTURE.getParent().toUri());
-                RangeReader reader =
-                        storage.openRangeReader(FIXTURE.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(FIXTURE)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
             // "Hello" is the recorded min of the column; it must be in both the stats range and the bloom bitset.
             Predicate p = Pred.col("String").eq("Hello");
             ExplainPlan plan = dataset.explain(p, Projection.ALL, ReadOptions.DEFAULTS);
@@ -94,10 +87,8 @@ class BloomFilterFixtureTest {
 
     @Test
     void disablingBloomTierStopsEliminations() throws Exception {
-        try (Storage storage = StorageFactory.open(FIXTURE.getParent().toUri());
-                RangeReader reader =
-                        storage.openRangeReader(FIXTURE.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(FIXTURE)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
             Predicate p = Pred.col("String").eq("absent_value_that_is_definitely_not_in_the_file");
 
             ReadOptions noBloom = ReadOptions.builder().useBloomFilter(false).build();

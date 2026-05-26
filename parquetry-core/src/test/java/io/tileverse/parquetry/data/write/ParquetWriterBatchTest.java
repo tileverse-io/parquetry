@@ -35,10 +35,6 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
-
 import io.tileverse.parquetry.batch.BinaryVector;
 import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
@@ -53,6 +49,7 @@ import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
 import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -128,11 +125,9 @@ class ParquetWriterBatchTest {
             assertThat(writer.rowGroupsWritten()).isEqualTo(5L);
         }
         long totalRows = batches * rowsPerBatch;
-        try (Storage storage = StorageFactory.open(parquetFile.getParent().toUri());
-                RangeReader reader =
-                        storage.openRangeReader(parquetFile.getFileName().toString())) {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(parquetFile)) {
             io.tileverse.parquetry.format.FileMetaData footer =
-                    io.tileverse.parquetry.format.ParquetFormat.readFooter(reader);
+                    io.tileverse.parquetry.format.ParquetFormat.readFooter(source);
             assertThat(footer.rowGroups()).hasSize(5);
             assertThat(footer.numRows()).isEqualTo(totalRows);
         }
@@ -160,10 +155,8 @@ class ParquetWriterBatchTest {
             writer.writeBatch(batch);
         }
 
-        try (Storage storage = StorageFactory.open(parquetFile.getParent().toUri());
-                RangeReader reader =
-                        storage.openRangeReader(parquetFile.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(parquetFile)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
             try (Stream<ParquetRecord> stream =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 List<ParquetRecord> all = stream.toList();
@@ -247,10 +240,8 @@ class ParquetWriterBatchTest {
 
     private static List<Map<String, Object>> readAll(Path parquetFile, ParquetSchema schema) throws Exception {
         List<Map<String, Object>> out = new ArrayList<>();
-        try (Storage storage = StorageFactory.open(parquetFile.getParent().toUri());
-                RangeReader reader =
-                        storage.openRangeReader(parquetFile.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(parquetFile)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
             try (Stream<ParquetRecord> stream =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 stream.forEach(parquetRecord -> out.add(extractAll(parquetRecord, schema)));

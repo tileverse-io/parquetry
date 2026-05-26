@@ -24,15 +24,13 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.storage.RangeReader;
-
 import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
-
-import io.tileverse.io.ByteBufferPool;
+import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * Proves that closing a parallel-decode stream early - after consuming just one record - drains any in-flight decode
@@ -44,11 +42,11 @@ class ParallelDecodeEarlyCloseTest {
     void closingEarlyDrainsInFlightDecodesWithoutLeaks(@TempDir Path tmp) throws Exception {
         Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(tmp, 4_000);
         DecodeExecutor decodePool = DecodeExecutor.ofParallelism(4);
-        ByteBufferPool pool = new ByteBufferPool();
-        try (RangeReader reader = TestParquetFiles.openRangeReader(file)) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
+        CountingSegmentPool pool = new CountingSegmentPool();
+        try (ByteRangeSource source = TestParquetFiles.openRangeReader(file)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
             ReadOptions options = ReadOptions.builder()
-                    .byteBufferPool(pool)
+                    .segmentPool(pool)
                     .decodeExecutor(decodePool)
                     .maxDecodeAheadPerRead(4)
                     .build();
@@ -61,14 +59,9 @@ class ParallelDecodeEarlyCloseTest {
         assertThat(decodePool.availableSlots())
                 .as("all decode slots released after early close")
                 .isEqualTo(4);
-        assertThat(outstandingBorrows(pool))
+        assertThat(pool.outstanding())
                 .as("prefetched/decoded-but-unconsumed buffers returned on early close")
                 .isZero();
         decodePool.shutdownNow();
-    }
-
-    private static long outstandingBorrows(ByteBufferPool pool) {
-        ByteBufferPool.PoolStatistics stats = pool.getStatistics();
-        return (stats.created() + stats.reused()) - (stats.returned() + stats.discarded());
     }
 }
