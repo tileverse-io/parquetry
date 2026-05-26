@@ -52,6 +52,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     private final ParquetSchema fileSchema;
     private final OptionalInt batchSizeCap;
     private final List<Optional<RowMask>> rowMasks;
+    private final Optional<LateMaterialization> lateMat;
 
     private final Map<Integer, Future<DecodedRowGroup>> window = new HashMap<>();
     private final int size;
@@ -65,7 +66,8 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
             @NonNull ParquetSchema projectedSchema,
             @NonNull ParquetSchema fileSchema,
             @NonNull OptionalInt batchSizeCap,
-            @NonNull List<Optional<RowMask>> rowMasks) {
+            @NonNull List<Optional<RowMask>> rowMasks,
+            @NonNull Optional<LateMaterialization> lateMat) {
         this.prefetcher = prefetcher;
         this.decodeExecutor = decodeExecutor;
         this.maxDecodeAheadPerRead = maxDecodeAheadPerRead;
@@ -73,6 +75,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
         this.fileSchema = fileSchema;
         this.batchSizeCap = batchSizeCap;
         this.rowMasks = List.copyOf(rowMasks);
+        this.lateMat = lateMat;
         this.size = prefetcher.size();
     }
 
@@ -90,7 +93,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
         }
         RowGroupFetch fetch = prefetcher.take(index);
         nextToSubmit = Math.max(nextToSubmit, index + 1);
-        return decode(fetch, rowMasks.get(index));
+        return decode(fetch, rowMasks.get(index), index);
     }
 
     private void submitAhead() throws IOException {
@@ -105,23 +108,26 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
                 decodeExecutor.release();
                 throw e;
             }
-            window.put(nextToSubmit, submitDecode(fetch, rowMasks.get(nextToSubmit)));
+            window.put(nextToSubmit, submitDecode(fetch, rowMasks.get(nextToSubmit), nextToSubmit));
             nextToSubmit++;
         }
     }
 
-    private Future<DecodedRowGroup> submitDecode(RowGroupFetch fetch, Optional<RowMask> mask) {
+    private Future<DecodedRowGroup> submitDecode(RowGroupFetch fetch, Optional<RowMask> mask, int index) {
         try {
-            return decodeExecutor.submitAcquired(() -> decode(fetch, mask));
+            return decodeExecutor.submitAcquired(() -> decode(fetch, mask, index));
         } catch (RejectedExecutionException e) {
             // The slot was released by submitAcquired; decode inline now and hand back a completed future.
-            return CompletableFuture.completedFuture(decode(fetch, mask));
+            return CompletableFuture.completedFuture(decode(fetch, mask, index));
         }
     }
 
     @SuppressWarnings("MustBeClosed")
-    private DecodedRowGroup decode(RowGroupFetch fetch, Optional<RowMask> mask) {
+    private DecodedRowGroup decode(RowGroupFetch fetch, Optional<RowMask> mask, int index) {
         try {
+            if (lateMat.isPresent()) {
+                return decodeLateMaterialized(fetch, mask, index);
+            }
             List<ParquetRecordBatch> batches = new ArrayList<>();
             BatchRowGroupReader reader =
                     new BatchRowGroupReader(fetch.columns(), projectedSchema, fileSchema, batchSizeCap, mask);
@@ -139,6 +145,27 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
         } finally {
             fetch.close();
         }
+    }
+
+    /**
+     * Decodes one row group two-phase: evaluate the predicate over its columns, then materialize the output columns
+     * only for the matching rows. The returned batches are already filtered, hence the row pipeline applies no further
+     * record filter on this path.
+     */
+    private DecodedRowGroup decodeLateMaterialized(RowGroupFetch fetch, Optional<RowMask> mask, int index) {
+        LateMaterialization lm = lateMat.orElseThrow();
+        LateMaterialization.PerRowGroup perRg = lm.perRowGroup().get(index);
+        LateMaterializingRowGroupReader reader = new LateMaterializingRowGroupReader(
+                fetch.columns(),
+                fileSchema,
+                lm.outputSchema(),
+                lm.predicateLeaves(),
+                lm.predicate(),
+                batchSizeCap,
+                mask,
+                perRg.outputOffsetIndexes(),
+                perRg.numRows());
+        return new DecodedRowGroup(reader.decodeAll());
     }
 
     private DecodedRowGroup join(Future<DecodedRowGroup> future) throws IOException {

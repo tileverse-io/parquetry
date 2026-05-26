@@ -48,6 +48,10 @@ import lombok.NonNull;
  * @param useColumnIndexFilter run the COLUMN_INDEX tier
  * @param useBloomFilter run the BLOOM_FILTER tier (when loaded)
  * @param useRecordLevelFilter run the RECORD_LEVEL tier inline during record assembly
+ * @param useLateMaterialization on the row {@code read(...)} path over flat columns, decode the output columns only for
+ *     rows that match the predicate (two-phase decode); when off, decode every surviving row's output columns and drop
+ *     non-matches at materialization. Honored only when {@code useRecordLevelFilter} is on and the predicate is
+ *     non-trivial; otherwise it has no effect.
  * @param pruningDecisionListener called once per per-row-group tier outcome; never {@code null} (defaults to no-op)
  * @param decryptionKeyRetriever supplied by the encryption module; empty when the file isn't encrypted
  * @param byteBufferPool source of pooled buffers for column-chunk fetch and per-page decompression
@@ -67,6 +71,7 @@ public record ReadOptions(
         boolean useColumnIndexFilter,
         boolean useBloomFilter,
         boolean useRecordLevelFilter,
+        boolean useLateMaterialization,
         @NonNull Consumer<PruningDecision> pruningDecisionListener,
         @NonNull Optional<DecryptionKeyRetriever> decryptionKeyRetriever,
         @NonNull ByteBufferPool byteBufferPool,
@@ -116,6 +121,7 @@ public record ReadOptions(
         private boolean useColumnIndexFilter = true;
         private boolean useBloomFilter = true;
         private boolean useRecordLevelFilter = true;
+        private boolean useLateMaterialization = true;
         private Consumer<PruningDecision> pruningDecisionListener = _ -> {};
         private Optional<DecryptionKeyRetriever> decryptionKeyRetriever = Optional.empty();
         private ByteBufferPool byteBufferPool = ByteBufferPool.getDefault();
@@ -152,6 +158,11 @@ public record ReadOptions(
 
         public Builder useRecordLevelFilter(boolean v) {
             this.useRecordLevelFilter = v;
+            return this;
+        }
+
+        public Builder useLateMaterialization(boolean v) {
+            this.useLateMaterialization = v;
             return this;
         }
 
@@ -240,6 +251,7 @@ public record ReadOptions(
                     useColumnIndexFilter,
                     useBloomFilter,
                     useRecordLevelFilter,
+                    useLateMaterialization,
                     pruningDecisionListener,
                     decryptionKeyRetriever,
                     byteBufferPool,

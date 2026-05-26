@@ -18,11 +18,14 @@ package io.tileverse.parquetry.benchmarks;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Random;
+import java.util.Set;
 import java.util.stream.Stream;
 
 import io.tileverse.storage.RangeReader;
@@ -33,6 +36,7 @@ import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteRow;
+import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -107,6 +111,53 @@ final class SyntheticParquet {
         }
     }
 
+    /**
+     * Returns the {@link ColumnPath} for the i-th output column in the wide-table schema ({@code v0}, {@code v1}, ...).
+     */
+    static ColumnPath valueColumn(int i) {
+        return ColumnPath.of("v" + i);
+    }
+
+    /**
+     * Returns a projection over all {@code valueColumns} output columns ({@code v0..v{N-1}}) in the wide schema,
+     * deliberately excluding the {@code id} predicate column. This lets the read-path benchmark measure output-column
+     * decode work in isolation.
+     */
+    static Projection wideValueProjection(int valueColumns) {
+        Set<ColumnPath> cols = new HashSet<>();
+        for (int i = 0; i < valueColumns; i++) {
+            cols.add(valueColumn(i));
+        }
+        return Projection.of(cols);
+    }
+
+    /**
+     * Writes one file with an {@code id INT64} key column and {@code valueColumns} DOUBLE output columns named
+     * {@code v0..v{N-1}}. Each output column value is deterministic: {@code id * (col + 1) * 0.5}. The rows are written
+     * in {@code ids} order; pass sorted ids to cluster matches into a few pages and make column-index pruning
+     * effective.
+     */
+    static void writeWideFile(Path file, WriteOptions options, long[] ids, int valueColumns) throws IOException {
+        ParquetSchema schema = wideSchema(valueColumns);
+        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+            WideRow row = new WideRow(valueColumns);
+            for (long id : ids) {
+                row.id = id;
+                writer.write(row);
+            }
+        }
+    }
+
+    private static ParquetSchema wideSchema(int valueColumns) {
+        List<SchemaNode> leaves = new ArrayList<>(1 + valueColumns);
+        leaves.add(required("id", PrimitiveKind.INT64));
+        for (int i = 0; i < valueColumns; i++) {
+            leaves.add(required("v" + i, PrimitiveKind.DOUBLE));
+        }
+        SchemaNode.Group root = new SchemaNode.Group("schema", Repetition.REQUIRED, leaves, Optional.empty(), -1);
+        return new ParquetSchema(root);
+    }
+
     private static ParquetSchema idValueSchema() {
         List<SchemaNode> leaves = List.of(required("id", PrimitiveKind.INT64), required("value", PrimitiveKind.DOUBLE));
         SchemaNode.Group root = new SchemaNode.Group("schema", Repetition.REQUIRED, leaves, Optional.empty(), -1);
@@ -152,6 +203,30 @@ final class SyntheticParquet {
                 return id;
             }
             return value;
+        }
+    }
+
+    /**
+     * Reused across the wide-table write loop. Each output column value is {@code id * (col + 1) * 0.5}, making the
+     * values deterministic without any extra per-row allocation.
+     */
+    private static final class WideRow implements WriteRow {
+        private final int valueColumns;
+        private long id;
+
+        private WideRow(int valueColumns) {
+            this.valueColumns = valueColumns;
+        }
+
+        @Override
+        public Object value(ColumnPath path) {
+            if (path.equals(ID)) {
+                return id;
+            }
+            // paths are "v0", "v1", ... - parse the column index from the dot-joined name
+            String name = path.dot();
+            int col = Integer.parseInt(name.substring(1));
+            return id * (col + 1) * 0.5;
         }
     }
 }
