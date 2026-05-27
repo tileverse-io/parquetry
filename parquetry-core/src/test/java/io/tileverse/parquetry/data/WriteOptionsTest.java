@@ -99,6 +99,7 @@ class WriteOptionsTest {
         assertThat(o.indexedColumns()).isEmpty();
         assertThat(o.bloomFilters()).isEmpty();
         assertThat(o.crs()).isEmpty();
+        assertThat(o.keyValueMetadata()).isEmpty();
     }
 
     @Test
@@ -277,6 +278,53 @@ class WriteOptionsTest {
         WriteOptions o = WriteOptions.builder().tempDir(tmp).build();
 
         assertThat(o.tempDir()).isEqualTo(tmp);
+    }
+
+    @Test
+    void keyValueMetadataCarriesThroughBuild() {
+        WriteOptions o = WriteOptions.builder()
+                .keyValueMetadata("pandas", "{}")
+                .keyValueMetadata("author", "tileverse")
+                .build();
+
+        assertThat(o.keyValueMetadata()).containsEntry("pandas", "{}").containsEntry("author", "tileverse");
+    }
+
+    @Test
+    void keyValueMetadataMapAccumulatesWithSingleEntries() {
+        WriteOptions o = WriteOptions.builder()
+                .keyValueMetadata("a", "1")
+                .keyValueMetadata(Map.of("b", "2", "c", "3"))
+                .build();
+
+        assertThat(o.keyValueMetadata()).containsOnlyKeys("a", "b", "c");
+    }
+
+    @Test
+    void keyValueMetadataRejectsReservedGeoKey() {
+        WriteOptions.Builder b = WriteOptions.builder();
+
+        assertThatThrownBy(() -> b.keyValueMetadata("geo", "{}"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("geo");
+    }
+
+    @Test
+    void keyValueMetadataMapRejectsReservedGeoKey() {
+        WriteOptions.Builder b = WriteOptions.builder();
+        Map<String, String> withGeo = Map.of("geo", "{}");
+
+        assertThatThrownBy(() -> b.keyValueMetadata(withGeo))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("geo");
+    }
+
+    @Test
+    void keyValueMetadataIsImmutableAfterBuild() {
+        WriteOptions o = WriteOptions.builder().keyValueMetadata("k", "v").build();
+
+        Map<String, String> kv = o.keyValueMetadata();
+        assertThatThrownBy(() -> kv.put("x", "y")).isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Nested
