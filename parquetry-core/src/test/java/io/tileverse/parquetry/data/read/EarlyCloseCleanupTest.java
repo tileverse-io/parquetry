@@ -24,15 +24,13 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.storage.RangeReader;
-
 import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
-
-import io.tileverse.io.ByteBufferPool;
+import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * Proves that closing a read stream after consuming only one record releases all prefetched-but-unconsumed buffers and
@@ -46,14 +44,14 @@ class EarlyCloseCleanupTest {
     @Test
     void closingEarlyReleasesPrefetchedBuffersAndBudget(@TempDir Path tmp) throws Exception {
         Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(tmp, 4_000);
-        ByteBufferPool pool = new ByteBufferPool();
+        CountingSegmentPool pool = new CountingSegmentPool();
         FetchBudget budget = FetchBudget.ofMaxMemoryFraction(0.1);
         long capacityBefore = budget.available();
 
-        try (RangeReader reader = TestParquetFiles.openRangeReader(file)) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
+        try (ByteRangeSource source = TestParquetFiles.openRangeReader(file)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
             ReadOptions options = ReadOptions.builder()
-                    .byteBufferPool(pool)
+                    .segmentPool(pool)
                     .fetchBudget(budget)
                     .prefetchDepth(4)
                     .build();
@@ -68,13 +66,8 @@ class EarlyCloseCleanupTest {
         assertThat(budget.available())
                 .as("prefetched-but-unconsumed row groups release their reserved bytes on early close")
                 .isEqualTo(capacityBefore);
-        assertThat(outstandingBorrows(pool))
+        assertThat(pool.outstanding())
                 .as("prefetched-but-unconsumed buffers are returned on early close")
                 .isZero();
-    }
-
-    private static long outstandingBorrows(ByteBufferPool pool) {
-        ByteBufferPool.PoolStatistics stats = pool.getStatistics();
-        return (stats.created() + stats.reused()) - (stats.returned() + stats.discarded());
     }
 }

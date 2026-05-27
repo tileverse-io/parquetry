@@ -27,15 +27,13 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.storage.RangeReader;
-
 import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
-
-import io.tileverse.io.ByteBufferPool;
+import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * Proves that many concurrent reads sharing one small {@link FetchBudget} never exceed it, never deadlock, and leave
@@ -55,7 +53,7 @@ class ConcurrentBoundedReadTest {
         // frequently fail and the serial fallback path runs.
         FetchBudget budget = FetchBudget.ofBytes(64 * 1024);
         long capacityBefore = budget.available();
-        ByteBufferPool pool = new ByteBufferPool();
+        CountingSegmentPool pool = new CountingSegmentPool();
 
         int readers = 16;
         List<Throwable> failures = new CopyOnWriteArrayList<>();
@@ -63,10 +61,10 @@ class ConcurrentBoundedReadTest {
         List<Thread> threads = new ArrayList<>();
         for (int r = 0; r < readers; r++) {
             threads.add(Thread.ofVirtual().start(() -> {
-                try (RangeReader reader = TestParquetFiles.openRangeReader(file)) {
-                    ParquetDataset dataset = ParquetDataset.open(reader);
+                try (ByteRangeSource source = TestParquetFiles.openRangeReader(file)) {
+                    ParquetDataset dataset = ParquetDataset.open(source);
                     ReadOptions options = ReadOptions.builder()
-                            .byteBufferPool(pool)
+                            .segmentPool(pool)
                             .fetchBudget(budget)
                             .prefetchDepth(3)
                             .maxConcurrentFetchesPerRead(4)
@@ -93,11 +91,6 @@ class ConcurrentBoundedReadTest {
         assertThat(budget.available())
                 .as("every reserved byte is released once all reads finish")
                 .isEqualTo(capacityBefore);
-        assertThat(outstandingBorrows(pool)).as("no pooled buffer leaks").isZero();
-    }
-
-    private static long outstandingBorrows(ByteBufferPool pool) {
-        ByteBufferPool.PoolStatistics stats = pool.getStatistics();
-        return (stats.created() + stats.reused()) - (stats.returned() + stats.discarded());
+        assertThat(pool.outstanding()).as("no pooled buffer leaks").isZero();
     }
 }

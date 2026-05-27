@@ -20,9 +20,9 @@ import java.util.Optional;
 
 import io.tileverse.parquetry.data.read.page.Dictionary;
 import io.tileverse.parquetry.format.ColumnMetaData;
+import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.schema.ColumnPath;
 
-import io.tileverse.io.ByteBufferPool;
 import lombok.NonNull;
 
 /**
@@ -35,7 +35,7 @@ import lombok.NonNull;
  * dictionary (small, shared across data pages) is held here directly.
  *
  * <p>This view does not own memory. Its segment is valid only while the owning {@link RowGroupFetch} is open; that
- * fetch returns the pooled buffers to the {@link ByteBufferPool} when it is closed.
+ * fetch returns the pooled segments to the {@link SegmentPool} when it is closed.
  *
  * @param path the leaf column path this chunk belongs to (file schema path)
  * @param metadata the on-disk {@link ColumnMetaData} for the chunk

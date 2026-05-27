@@ -35,10 +35,6 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
-
 import io.tileverse.parquetry.data.Compression;
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
@@ -51,6 +47,7 @@ import io.tileverse.parquetry.format.PageType;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.RowGroup;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
@@ -84,10 +81,9 @@ class DecoderFactoryConformanceTest {
             return;
         }
 
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
 
-            FileMetaData footer = ParquetFormat.readFooter(reader);
+            FileMetaData footer = ParquetFormat.readFooter(source);
             ParquetSchema schema = SchemaBuilder.build(footer.schema());
 
             for (RowGroup rg : footer.rowGroups()) {
@@ -115,7 +111,7 @@ class DecoderFactoryConformanceTest {
                         typeLength = prim.typeLength();
                     }
 
-                    List<Object> values = decodeAllValues(reader, meta, kind, typeLength, name + "/" + colName);
+                    List<Object> values = decodeAllValues(source, meta, kind, typeLength, name + "/" + colName);
 
                     assertThat(values)
                             .as("column %s in %s (row-group %d)", colName, name, colIndex)
@@ -133,7 +129,7 @@ class DecoderFactoryConformanceTest {
      * running buffer position.
      */
     private static List<Object> decodeAllValues(
-            RangeReader reader, ColumnMetaData meta, PrimitiveKind kind, OptionalInt typeLength, String debugLabel)
+            ByteRangeSource source, ColumnMetaData meta, PrimitiveKind kind, OptionalInt typeLength, String debugLabel)
             throws Exception {
 
         // Determine the start of the page section. If a dictionary page exists its offset is
@@ -144,7 +140,10 @@ class DecoderFactoryConformanceTest {
         long chunkEnd = chunkStart + meta.totalCompressedSize();
         int chunkLen = (int) (chunkEnd - chunkStart);
 
-        ByteBuffer chunkBuf = reader.readRange(chunkStart, chunkLen);
+        byte[] chunkArray = new byte[chunkLen];
+        source.readFully(chunkStart, MemorySegment.ofArray(chunkArray));
+        ByteBuffer chunkBuf = ByteBuffer.wrap(chunkArray);
+        chunkBuf.position(chunkLen);
         chunkBuf.flip();
 
         Compression codec = Compression.forWireCodec(meta.codec());

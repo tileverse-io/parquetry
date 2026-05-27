@@ -34,10 +34,6 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
-
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
@@ -51,14 +47,14 @@ import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
+import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.BatchRowAccessor;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
-
-import io.tileverse.io.ByteBufferPool;
 
 /** Drives the two-phase late-materializing reader over a real single-row-group, multi-page chunk. */
 class LateMaterializingRowGroupReaderTest {
@@ -80,9 +76,8 @@ class LateMaterializingRowGroupReaderTest {
         Predicate predicate = Pred.and(Pred.col(ID).gtEq(10L), Pred.col(ID).lt(20L));
         ParquetSchema outputSchema = fileSchema.project(Set.of(V, NAME));
 
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ReaderFixture fixture = openFixture(reader, fileSchema, predicate);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ReaderFixture fixture = openFixture(source, fileSchema, predicate);
             try (RowGroupFetch fetch = fixture.fetch()) {
                 LateMaterializingRowGroupReader lateReader = new LateMaterializingRowGroupReader(
                         fetch.columns(),
@@ -113,9 +108,8 @@ class LateMaterializingRowGroupReaderTest {
         Predicate predicate = Pred.col(ID).eq(25L);
         ParquetSchema outputSchema = fileSchema.project(Set.of(ID, V));
 
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ReaderFixture fixture = openFixture(reader, fileSchema, predicate);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ReaderFixture fixture = openFixture(source, fileSchema, predicate);
             try (RowGroupFetch fetch = fixture.fetch()) {
                 LateMaterializingRowGroupReader lateReader = new LateMaterializingRowGroupReader(
                         fetch.columns(),
@@ -149,9 +143,8 @@ class LateMaterializingRowGroupReaderTest {
         Predicate predicate = Pred.col(ID).eq((long) ROW_COUNT + 100L);
         ParquetSchema outputSchema = fileSchema.project(Set.of(V, NAME));
 
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ReaderFixture fixture = openFixture(reader, fileSchema, predicate);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ReaderFixture fixture = openFixture(source, fileSchema, predicate);
             try (RowGroupFetch fetch = fixture.fetch()) {
                 LateMaterializingRowGroupReader lateReader = new LateMaterializingRowGroupReader(
                         fetch.columns(),
@@ -175,12 +168,12 @@ class LateMaterializingRowGroupReaderTest {
 
     // --- fixture assembly ---
 
-    private ReaderFixture openFixture(RangeReader reader, ParquetSchema fileSchema, Predicate predicate) {
-        FileMetaData footer = ParquetFormat.readFooter(reader);
+    private ReaderFixture openFixture(ByteRangeSource source, ParquetSchema fileSchema, Predicate predicate) {
+        FileMetaData footer = ParquetFormat.readFooter(source);
         assertThat(footer.rowGroups()).as("test file holds a single row group").hasSize(1);
         RowGroup rowGroup = footer.rowGroups().get(0);
 
-        IndexSectionLoader loader = indexLoader(reader);
+        IndexSectionLoader loader = indexLoader(source);
         RowGroupChunks chunks = RowGroupChunks.of(rowGroup, fileSchema, loader);
 
         Set<ColumnPath> scanLeaves = scanLeaves(fileSchema, predicate);
@@ -192,7 +185,7 @@ class LateMaterializingRowGroupReaderTest {
         }
 
         RowGroupFetcher fetcher =
-                new RowGroupFetcher(reader, fileSchema, scanSchema, ByteBufferPool.getDefault(), 1 << 20, 8 << 20);
+                new RowGroupFetcher(source, fileSchema, scanSchema, SegmentPool.getDefault(), 1 << 20, 8 << 20);
         RowGroupSurvivor survivor = RowGroupSurvivor.full(chunks);
         return new ReaderFixture(fetcher, survivor, offsetIndexes, chunks.numRows());
     }
@@ -203,16 +196,16 @@ class LateMaterializingRowGroupReaderTest {
         return scan;
     }
 
-    private static IndexSectionLoader indexLoader(RangeReader reader) {
+    private static IndexSectionLoader indexLoader(ByteRangeSource source) {
         return new IndexSectionLoader() {
             @Override
             public OffsetIndex readOffsetIndex(long offset, int length) {
-                return ParquetFormat.readOffsetIndex(reader, offset, length);
+                return ParquetFormat.readOffsetIndex(source, offset, length);
             }
 
             @Override
             public ColumnIndex readColumnIndex(long offset, int length) {
-                return ParquetFormat.readColumnIndex(reader, offset, length);
+                return ParquetFormat.readColumnIndex(source, offset, length);
             }
 
             @Override

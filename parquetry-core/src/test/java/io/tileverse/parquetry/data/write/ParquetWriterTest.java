@@ -36,10 +36,6 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
-
 import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
@@ -49,6 +45,7 @@ import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.format.LogicalType;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -94,11 +91,9 @@ class ParquetWriterTest {
             assertThat(writer.rowGroupsWritten()).isEqualTo(2L);
         }
 
-        try (Storage storage = StorageFactory.open(parquetFile.getParent().toUri());
-                RangeReader reader =
-                        storage.openRangeReader(parquetFile.getFileName().toString())) {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(parquetFile)) {
             io.tileverse.parquetry.format.FileMetaData footer =
-                    io.tileverse.parquetry.format.ParquetFormat.readFooter(reader);
+                    io.tileverse.parquetry.format.ParquetFormat.readFooter(source);
             assertThat(footer.rowGroups()).hasSize(3);
             assertThat(footer.rowGroups().get(0).numRows()).isEqualTo(5L);
             assertThat(footer.rowGroups().get(1).numRows()).isEqualTo(5L);
@@ -132,11 +127,9 @@ class ParquetWriterTest {
             assertThat(writer.rowGroupsWritten()).isEqualTo(1L);
         }
 
-        try (Storage storage = StorageFactory.open(parquetFile.getParent().toUri());
-                RangeReader reader =
-                        storage.openRangeReader(parquetFile.getFileName().toString())) {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(parquetFile)) {
             io.tileverse.parquetry.format.FileMetaData footer =
-                    io.tileverse.parquetry.format.ParquetFormat.readFooter(reader);
+                    io.tileverse.parquetry.format.ParquetFormat.readFooter(source);
             assertThat(footer.rowGroups()).hasSize(2);
             assertThat(footer.rowGroups().get(0).numRows()).isEqualTo(3L);
             assertThat(footer.rowGroups().get(1).numRows()).isEqualTo(4L);
@@ -152,11 +145,9 @@ class ParquetWriterTest {
             assertThat(writer.totalRows()).isZero();
             assertThat(writer.rowGroupsWritten()).isZero();
         }
-        try (Storage storage = StorageFactory.open(parquetFile.getParent().toUri());
-                RangeReader reader =
-                        storage.openRangeReader(parquetFile.getFileName().toString())) {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(parquetFile)) {
             io.tileverse.parquetry.format.FileMetaData footer =
-                    io.tileverse.parquetry.format.ParquetFormat.readFooter(reader);
+                    io.tileverse.parquetry.format.ParquetFormat.readFooter(source);
             assertThat(footer.rowGroups()).isEmpty();
             assertThat(footer.numRows()).isZero();
             assertThat(footer.schema()).isNotEmpty();
@@ -174,11 +165,9 @@ class ParquetWriterTest {
                     row(Map.of(ColumnPath.of("geometry"), MemorySegment.ofArray(wkbPoint), ColumnPath.of("id"), 1)));
         }
 
-        try (Storage storage = StorageFactory.open(parquetFile.getParent().toUri());
-                RangeReader reader =
-                        storage.openRangeReader(parquetFile.getFileName().toString())) {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(parquetFile)) {
             io.tileverse.parquetry.format.FileMetaData footer =
-                    io.tileverse.parquetry.format.ParquetFormat.readFooter(reader);
+                    io.tileverse.parquetry.format.ParquetFormat.readFooter(source);
             List<io.tileverse.parquetry.format.KeyValue> kv = footer.keyValueMetadata();
             String geoJson = kv.stream()
                     .filter(e -> e.key().equals("geo"))
@@ -247,9 +236,8 @@ class ParquetWriterTest {
 
     private static List<Integer> readIds(Path file) throws Exception {
         List<Integer> ids = new ArrayList<>();
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
             try (Stream<ParquetRecord> stream =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 stream.forEach(r -> ids.add(r.getInt(ColumnPath.of("id"))));

@@ -30,11 +30,8 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
-
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -54,9 +51,8 @@ class PagePruningReadTest {
     @Test
     void readMatchesABruteForceFilterAcrossPages() throws Exception {
         Path file = writeOneHundredRows();
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
             try (Stream<ParquetRecord> rows = dataset.read(col("v").gtEq(80), Projection.ALL, ReadOptions.DEFAULTS)) {
                 List<Integer> got = rows.map(r -> r.getInt(V)).sorted().toList();
                 List<Integer> expected =
@@ -69,9 +65,8 @@ class PagePruningReadTest {
     @Test
     void predicateOnAColumnOutsideTheProjectionStillPrunesPages() throws Exception {
         Path file = writeOneHundredRows();
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
             Projection tagOnly = Projection.of(Set.of(TAG));
             try (Stream<ParquetRecord> rows = dataset.read(col("v").gtEq(95), tagOnly, ReadOptions.DEFAULTS)) {
                 List<Integer> tags = rows.map(r -> r.getInt(TAG)).sorted().toList();
@@ -85,9 +80,8 @@ class PagePruningReadTest {
         Path file = writeOneHundredRows();
         ReadOptions noColumnIndex =
                 ReadOptions.builder().useColumnIndexFilter(false).build();
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
             try (Stream<ParquetRecord> rows = dataset.read(col("v").gtEq(80), Projection.ALL, noColumnIndex)) {
                 List<Integer> got = rows.map(r -> r.getInt(V)).sorted().toList();
                 assertThat(got)
@@ -99,9 +93,8 @@ class PagePruningReadTest {
     @Test
     void readWithoutNarrowingReturnsEveryMatchingRow() throws Exception {
         Path file = writeOneHundredRows();
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
             // A predicate every page can satisfy: the tier passes all pages, no mask, full decode.
             try (Stream<ParquetRecord> rows = dataset.read(col("v").gtEq(0), Projection.ALL, ReadOptions.DEFAULTS)) {
                 assertThat(rows.count()).isEqualTo(100L);

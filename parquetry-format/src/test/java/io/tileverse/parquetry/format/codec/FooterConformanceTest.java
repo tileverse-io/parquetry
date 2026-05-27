@@ -31,12 +31,9 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
-
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.ParquetFormat;
+import io.tileverse.parquetry.io.ByteRangeSource;
 
 /**
  * Conformance test: reads footer via parquetry and compares against the parquet-avro oracle for each of the 10
@@ -87,9 +84,8 @@ class FooterConformanceTest {
     }
 
     private FileMetaData readParquetryFooter(Path file) throws Exception {
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            return ParquetFormat.readFooter(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            return ParquetFormat.readFooter(source);
         }
     }
 

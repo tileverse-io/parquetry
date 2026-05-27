@@ -16,9 +16,7 @@
 package io.tileverse.parquetry.data.read;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.nio.file.Path;
-import java.util.OptionalLong;
 
 import org.apache.avro.generic.GenericData;
 import org.apache.parquet.avro.AvroParquetWriter;
@@ -27,17 +25,14 @@ import org.apache.parquet.hadoop.ParquetWriter;
 import org.apache.parquet.hadoop.metadata.CompressionCodecName;
 import org.apache.parquet.io.LocalOutputFile;
 
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
-
 import io.tileverse.parquetry.format.ParquetFormat;
+import io.tileverse.parquetry.io.ByteRangeSource;
 
 /**
  * Shared test-fixture helpers for Parquet read-path tests.
  *
- * <p>Provides a canonical three-column multi-row-group file writer, a row-group counter, and a storage-aware
- * {@link RangeReader} factory that bundles {@link Storage} lifetime into the reader.
+ * <p>Provides a canonical three-column multi-row-group file writer, a row-group counter, and a {@link ByteRangeSource}
+ * factory over a local file.
  */
 final class TestParquetFiles {
 
@@ -82,62 +77,16 @@ final class TestParquetFiles {
     /**
      * Returns the number of row groups in the given Parquet file.
      *
-     * <p>Opens a fresh storage and reader for the sole purpose of reading the footer, then closes both before
-     * returning.
+     * <p>Opens a fresh source for the sole purpose of reading the footer, then closes it before returning.
      */
     static int rowGroupCount(Path file) throws IOException {
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            return ParquetFormat.readFooter(reader).rowGroups().size();
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            return ParquetFormat.readFooter(source).rowGroups().size();
         }
     }
 
-    /**
-     * Opens a {@link RangeReader} backed by a {@link Storage} whose lifetime is tied to the reader.
-     *
-     * <p>The returned reader delegates all I/O to the underlying reader opened from a {@link StorageFactory}-created
-     * storage. Calling {@link RangeReader#close()} closes both the underlying reader and the storage, so callers can
-     * use a single try-with-resources.
-     */
-    static RangeReader openRangeReader(Path file) throws IOException {
-        Storage storage = StorageFactory.open(file.getParent().toUri());
-        RangeReader reader = storage.openRangeReader(file.getFileName().toString());
-        return new StorageOwningRangeReader(storage, reader);
-    }
-
-    /** Wraps a {@link RangeReader} + its parent {@link Storage} so both are closed together. */
-    private static final class StorageOwningRangeReader implements RangeReader {
-
-        private final Storage storage;
-        private final RangeReader delegate;
-
-        StorageOwningRangeReader(Storage storage, RangeReader delegate) {
-            this.storage = storage;
-            this.delegate = delegate;
-        }
-
-        @Override
-        public int readRange(long offset, int length, ByteBuffer target) {
-            return delegate.readRange(offset, length, target);
-        }
-
-        @Override
-        public OptionalLong size() {
-            return delegate.size();
-        }
-
-        @Override
-        public String getSourceIdentifier() {
-            return delegate.getSourceIdentifier();
-        }
-
-        @Override
-        public void close() throws IOException {
-            try {
-                delegate.close();
-            } finally {
-                storage.close();
-            }
-        }
+    /** Opens a {@link ByteRangeSource} over the local {@code file}; closing it closes the underlying channel. */
+    static ByteRangeSource openRangeReader(Path file) {
+        return ByteRangeSource.ofFile(file);
     }
 }

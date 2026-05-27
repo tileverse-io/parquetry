@@ -40,7 +40,7 @@ import java.util.Optional;
  *     ({@code repetition_level_histograms} in the thrift schema)
  * @param definitionLevelHistograms definition-level histograms for every page, concatenated in page order
  *     ({@code definition_level_histograms} in the thrift schema)
- * @see ParquetFormat#readColumnIndex(io.tileverse.storage.RangeReader, long, int)
+ * @see ParquetFormat#readColumnIndex(io.tileverse.parquetry.io.ByteRangeSource, long, int)
  */
 public record ColumnIndex(
         List<Boolean> nullPages,

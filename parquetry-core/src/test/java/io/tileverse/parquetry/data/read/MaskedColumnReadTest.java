@@ -29,10 +29,6 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
-
 import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.data.ParquetWriter;
@@ -47,13 +43,13 @@ import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
+import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
-
-import io.tileverse.io.ByteBufferPool;
 
 /** Drives a single masked {@link BatchColumnReader} over a real multi-page chunk. */
 class MaskedColumnReadTest {
@@ -67,11 +63,10 @@ class MaskedColumnReadTest {
     void maskedReaderYieldsOnlySurvivingRowsAndSkipsNonSurvivingPages() throws Exception {
         Path file = writeEightRowsAcrossFourPages();
         ParquetSchema schema = flatSchema(requiredInt32("v"));
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            FileMetaData footer = ParquetFormat.readFooter(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            FileMetaData footer = ParquetFormat.readFooter(source);
             RowGroup rowGroup = footer.rowGroups().get(0);
-            OffsetIndex offsetIndex = loadOffsetIndex(reader, rowGroup);
+            OffsetIndex offsetIndex = loadOffsetIndex(source, rowGroup);
 
             // Pages [0,1] [2,3] [4,5] [6,7]; keep rows 4..7 -> last two pages survive, first two are skipped.
             RowRanges surviving = new RowRanges(List.of(new Range(4, 7)));
@@ -79,12 +74,12 @@ class MaskedColumnReadTest {
             IndexSectionLoader loader = new IndexSectionLoader() {
                 @Override
                 public OffsetIndex readOffsetIndex(long offset, int length) {
-                    return ParquetFormat.readOffsetIndex(reader, offset, length);
+                    return ParquetFormat.readOffsetIndex(source, offset, length);
                 }
 
                 @Override
                 public ColumnIndex readColumnIndex(long offset, int length) {
-                    return ParquetFormat.readColumnIndex(reader, offset, length);
+                    return ParquetFormat.readColumnIndex(source, offset, length);
                 }
 
                 @Override
@@ -94,7 +89,7 @@ class MaskedColumnReadTest {
             };
             RowGroupChunks chunks = RowGroupChunks.of(rowGroup, schema, loader);
             RowGroupFetcher fetcher =
-                    new RowGroupFetcher(reader, schema, schema, ByteBufferPool.getDefault(), 1 << 20, 8 << 20);
+                    new RowGroupFetcher(source, schema, schema, SegmentPool.getDefault(), 1 << 20, 8 << 20);
             RowGroupSurvivor survivor = new RowGroupSurvivor(chunks, Optional.of(surviving));
             try (RowGroupFetch fetch = fetcher.fetch(survivor, fetcher.planFor(survivor), BudgetReservation.NONE)) {
                 FetchedColumnChunk chunk = fetch.columns().get(0);
@@ -125,10 +120,10 @@ class MaskedColumnReadTest {
         return out;
     }
 
-    private static OffsetIndex loadOffsetIndex(RangeReader reader, RowGroup rowGroup) {
+    private static OffsetIndex loadOffsetIndex(ByteRangeSource source, RowGroup rowGroup) {
         ColumnChunk chunk = rowGroup.columns().get(0);
         return ParquetFormat.readOffsetIndex(
-                reader,
+                source,
                 chunk.offsetIndexOffset().getAsLong(),
                 chunk.offsetIndexLength().getAsInt());
     }

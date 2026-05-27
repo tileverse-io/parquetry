@@ -21,19 +21,19 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 
-import io.tileverse.storage.RangeReader;
-
 import io.tileverse.parquetry.format.codec.ParquetFormatDeserializer;
 import io.tileverse.parquetry.format.codec.ParquetFormatSerializer;
+import io.tileverse.parquetry.io.ByteRangeSource;
 
 /**
  * Reads and writes Parquet file metadata and page-level Thrift structures.
  *
- * <p>The read side ({@code readXxx}) pulls bytes off a {@link RangeReader} or {@link InputStream}.
- * {@link #readFooter(RangeReader)} locates the {@code FileMetaData} Thrift struct at the end of a Parquet file and
+ * <p>The read side ({@code readXxx}) pulls bytes off a {@link ByteRangeSource} or {@link InputStream}.
+ * {@link #readFooter(ByteRangeSource)} locates the {@code FileMetaData} Thrift struct at the end of a Parquet file and
  * decodes it. The page-level read methods decode the corresponding structures at offsets the caller has obtained from
  * the footer (typically {@code ColumnChunk.column_index_offset}, {@code .offset_index_offset}, or
  * {@code .data_page_offset}).
@@ -56,7 +56,7 @@ import io.tileverse.parquetry.format.codec.ParquetFormatSerializer;
  *
  * <p>If you already have the raw Thrift bytes in hand (e.g. by slicing a {@code ByteBuffer} from a custom transport) or
  * want to write directly to a {@code ByteBuffer}, call {@link ParquetFormatDeserializer} or
- * {@link ParquetFormatSerializer} directly. The methods here are the convenience surface that wraps those serializers
+ * {@link ParquetFormatSerializer} directly. The methods here are the convenience facade that wraps those serializers
  * around a stream-shaped caller.
  */
 public final class ParquetFormat {
@@ -86,58 +86,40 @@ public final class ParquetFormat {
     }
 
     /**
-     * Reads the {@link ColumnIndex} for a column chunk from a Parquet file. The {@code offset} and {@code length} are
+     * Reads the {@link ColumnIndex} for a column chunk from {@code source}. The {@code offset} and {@code length} are
      * taken from {@code ColumnChunk.column_index_offset} and {@code .column_index_length}.
      *
-     * @param reader source of byte-range reads for the file; caller retains ownership
-     * @param offset byte offset of the ColumnIndex in the file
-     * @param length byte length of the ColumnIndex
-     * @return the decoded {@link ColumnIndex}
      * @throws ParquetFormatException if the bytes at {@code offset} don't conform to the {@code ColumnIndex} layout
-     * @throws UncheckedIOException if the underlying {@link RangeReader} read fails
+     * @throws java.io.UncheckedIOException if the underlying read fails
      */
-    public static ColumnIndex readColumnIndex(RangeReader reader, long offset, int length) {
-        ByteBuffer buf = reader.readRange(offset, length);
-        buf.flip();
-        return ParquetFormatDeserializer.readColumnIndex(toInputStream(buf));
+    public static ColumnIndex readColumnIndex(ByteRangeSource source, long offset, int length) {
+        return ParquetFormatDeserializer.readColumnIndex(toInputStream(readFully(source, offset, length)));
     }
 
     /**
-     * Reads the {@link OffsetIndex} for a column chunk from a Parquet file. The {@code offset} and {@code length} are
+     * Reads the {@link OffsetIndex} for a column chunk from {@code source}. The {@code offset} and {@code length} are
      * taken from {@code ColumnChunk.offset_index_offset} and {@code .offset_index_length}.
      *
-     * @param reader source of byte-range reads for the file; caller retains ownership
-     * @param offset byte offset of the OffsetIndex in the file
-     * @param length byte length of the OffsetIndex
-     * @return the decoded {@link OffsetIndex}
      * @throws ParquetFormatException if the bytes at {@code offset} don't conform to the {@code OffsetIndex} layout
-     * @throws UncheckedIOException if the underlying {@link RangeReader} read fails
+     * @throws java.io.UncheckedIOException if the underlying read fails
      */
-    public static OffsetIndex readOffsetIndex(RangeReader reader, long offset, int length) {
-        ByteBuffer buf = reader.readRange(offset, length);
-        buf.flip();
-        return ParquetFormatDeserializer.readOffsetIndex(toInputStream(buf));
+    public static OffsetIndex readOffsetIndex(ByteRangeSource source, long offset, int length) {
+        return ParquetFormatDeserializer.readOffsetIndex(toInputStream(readFully(source, offset, length)));
     }
 
     /**
-     * Reads the {@link FileMetaData} footer from a Parquet file.
+     * Reads the {@link FileMetaData} footer from {@code source}.
      *
-     * @param reader source of byte-range reads for the file; caller retains ownership
-     * @return the decoded {@link FileMetaData}
      * @throws ParquetFormatException if the file is too small, has wrong magic bytes, uses encryption (PARE magic),
      *     declares an invalid footer length, or contains Thrift bytes that don't match the {@code FileMetaData} layout
-     * @throws UncheckedIOException if the underlying {@link RangeReader} read fails, or the reader cannot determine the
-     *     file size
+     * @throws java.io.UncheckedIOException if the underlying read fails
      */
-    public static FileMetaData readFooter(RangeReader reader) {
-        final long size =
-                reader.size().orElseThrow(() -> new MalformedFileException("RangeReader cannot determine file size"));
+    public static FileMetaData readFooter(ByteRangeSource source) {
+        long size = source.size();
         if (size < MIN_FILE_SIZE) {
             throw new NotAParquetFileException("File too small to be a Parquet file: " + size + " bytes");
         }
-        ByteBuffer tail = reader.readRange(size - 8, 8);
-        tail.flip();
-        tail.order(LITTLE_ENDIAN);
+        ByteBuffer tail = readFully(source, size - 8, 8).order(LITTLE_ENDIAN);
         int footerLen = tail.getInt();
         byte[] magic = new byte[4];
         tail.get(magic);
@@ -154,9 +136,14 @@ public final class ParquetFormat {
         if (footerStart < 0) {
             throw new MalformedFileException("Footer length " + footerLen + " extends before start of file");
         }
-        ByteBuffer footerBytes = reader.readRange(footerStart, footerLen);
-        footerBytes.flip();
-        return ParquetFormatDeserializer.readFileMetaData(toInputStream(footerBytes));
+        return ParquetFormatDeserializer.readFileMetaData(toInputStream(readFully(source, footerStart, footerLen)));
+    }
+
+    /** Reads exactly {@code length} bytes at {@code offset} into a fresh heap buffer positioned at zero for reading. */
+    private static ByteBuffer readFully(ByteRangeSource source, long offset, int length) {
+        byte[] bytes = new byte[length];
+        source.readFully(offset, MemorySegment.ofArray(bytes));
+        return ByteBuffer.wrap(bytes);
     }
 
     /**
@@ -176,7 +163,7 @@ public final class ParquetFormat {
 
     /**
      * Writes a {@link ColumnIndex} to {@code out} as Thrift compact bytes. Symmetric inverse of
-     * {@link #readColumnIndex(RangeReader, long, int)}.
+     * {@link #readColumnIndex(ByteRangeSource, long, int)}.
      *
      * @param out stream to receive the encoded bytes
      * @param index the column index to encode
@@ -188,7 +175,7 @@ public final class ParquetFormat {
 
     /**
      * Writes an {@link OffsetIndex} to {@code out} as Thrift compact bytes. Symmetric inverse of
-     * {@link #readOffsetIndex(RangeReader, long, int)}.
+     * {@link #readOffsetIndex(ByteRangeSource, long, int)}.
      *
      * @param out stream to receive the encoded bytes
      * @param index the offset index to encode

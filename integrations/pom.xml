@@ -15,5 +15,6 @@
 
   <modules>
     <module>parquetry-geo-jts</module>
+    <module>parquetry-tileverse-storage</module>
   </modules>
 </project>

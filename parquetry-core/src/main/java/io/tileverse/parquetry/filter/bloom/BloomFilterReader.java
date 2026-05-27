@@ -19,25 +19,24 @@ import java.io.InputStream;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 
-import io.tileverse.storage.RangeReader;
-
 import io.tileverse.parquetry.format.BloomFilterHeader;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.format.UnsupportedFeatureException;
 import io.tileverse.parquetry.format.codec.ParquetFormatDeserializer;
+import io.tileverse.parquetry.io.ByteRangeSource;
 
 /**
- * Fetches a column chunk's bloom-filter bytes on demand from a {@link RangeReader} and decodes the header + bitset into
- * a ready-to-probe {@link SplitBlockBloomFilter}.
+ * Fetches a column chunk's bloom-filter bytes on demand from a {@link ByteRangeSource} and decodes the header + bitset
+ * into a ready-to-probe {@link SplitBlockBloomFilter}.
  *
  * <p>Reads exactly the bytes the column metadata advertises ({@code bloom_filter_offset} +
  * {@code bloom_filter_length}); never speculatively fetches more. Callers that want predicate-driven laziness (skip
  * fetching for columns the predicate doesn't reference) decide when to invoke {@link #read} - this class doesn't cache.
  *
  * <p>Currently only the spec-defined combination (split-block algorithm + xxHash64 + uncompressed) is decoded; other
- * combinations would need codec wiring (none are defined by parquet-format at time of writing) and surface as a
+ * combinations would need codec wiring (none are defined by parquet-format at time of writing) and are reported as a
  * {@link ParquetFormatException}. Files that omit {@code bloom_filter_length} are not supported here - the predicate
  * evaluator degrades to {@code NotApplied} for those rather than guessing a read length.
  */
@@ -53,24 +52,24 @@ public final class BloomFilterReader {
     private static final int HEADER_PROBE_BYTES = 128;
 
     /**
-     * Reads the bloom-filter chunk at {@code offset} of total {@code length} bytes from {@code reader}, decoding the
+     * Reads the bloom-filter chunk at {@code offset} of total {@code length} bytes from {@code source}, decoding the
      * header and wrapping the trailing {@code header.numBytes()} bytes as a {@link SplitBlockBloomFilter}. This is the
      * single-I/O fast path for files that record {@code bloom_filter_length}.
      *
-     * @param reader the file reader; caller retains ownership
+     * @param source the file source; caller retains ownership
      * @param offset {@code ColumnMetaData.bloom_filter_offset}
      * @param length {@code ColumnMetaData.bloom_filter_length} (header + bitset)
      * @return the loaded bloom filter, ready for {@code mightContain} probes
      * @throws ParquetFormatException if the section uses an unsupported algorithm / hash / compression, the header /
      *     bitset are truncated, or the bitset size is not a positive multiple of 32 bytes
      */
-    public static SplitBlockBloomFilter read(RangeReader reader, long offset, int length) {
+    public static SplitBlockBloomFilter read(ByteRangeSource source, long offset, int length) {
         if (length <= 0) {
             throw new MalformedFileException("Invalid bloom filter length: " + length);
         }
-        ByteBuffer buf = reader.readRange(offset, length);
-        buf.flip();
-        return decode(buf);
+        byte[] bytes = new byte[length];
+        source.readFully(offset, MemorySegment.ofArray(bytes));
+        return decode(ByteBuffer.wrap(bytes));
     }
 
     /**
@@ -78,9 +77,13 @@ public final class BloomFilterReader {
      * pre-spec-2.10 omit the field). Uses a two-step fetch: a small probe to decode the header, then a bounded read of
      * exactly the header-declared bitset size.
      */
-    public static SplitBlockBloomFilter readWithoutLength(RangeReader reader, long offset) {
-        ByteBuffer probe = reader.readRange(offset, HEADER_PROBE_BYTES);
-        probe.flip();
+    public static SplitBlockBloomFilter readWithoutLength(ByteRangeSource source, long offset) {
+        byte[] probeBytes = new byte[HEADER_PROBE_BYTES];
+        int probed = source.read(offset, MemorySegment.ofArray(probeBytes));
+        if (probed <= 0) {
+            throw new MalformedFileException("No bloom filter bytes at offset " + offset);
+        }
+        ByteBuffer probe = ByteBuffer.wrap(probeBytes, 0, probed).slice();
         ByteBuffer headerView = probe.duplicate();
         BloomFilterHeader header = readHeader(headerView);
         rejectUnsupported(header);
@@ -94,9 +97,9 @@ public final class BloomFilterReader {
             return new SplitBlockBloomFilter(asReadOnlySegment(bitset));
         }
         long bitsetStart = offset + headerByteLength;
-        ByteBuffer bitset = reader.readRange(bitsetStart, header.numBytes());
-        bitset.flip();
-        return new SplitBlockBloomFilter(asReadOnlySegment(bitset));
+        byte[] bitsetBytes = new byte[header.numBytes()];
+        source.readFully(bitsetStart, MemorySegment.ofArray(bitsetBytes));
+        return new SplitBlockBloomFilter(asReadOnlySegment(ByteBuffer.wrap(bitsetBytes)));
     }
 
     /**
@@ -125,8 +128,7 @@ public final class BloomFilterReader {
     /**
      * Wraps {@code bitset}'s active region (between its current position and limit) as a read-only
      * {@link MemorySegment} view, suitable for {@link SplitBlockBloomFilter}'s constructor.
-     * {@link MemorySegment#ofBuffer} already respects the buffer's position / limit, so callers don't need a fresh
-     * slice.
+     * {@link MemorySegment#ofBuffer} already respects the buffer's position / limit; callers don't need a fresh slice.
      */
     private static MemorySegment asReadOnlySegment(ByteBuffer bitset) {
         return MemorySegment.ofBuffer(bitset).asReadOnly();
@@ -139,7 +141,8 @@ public final class BloomFilterReader {
 
     /**
      * The Parquet spec only defines one algorithm / hash / compression combination today. Anything else can't be probed
-     * without new decoder code, so refuse explicitly instead of silently treating it as the supported combo.
+     * without new decoder code. Refusing it explicitly avoids silently treating an unknown combination as the supported
+     * one.
      */
     private static void rejectUnsupported(BloomFilterHeader header) {
         if (header.algorithm() != BloomFilterHeader.Algorithm.SPLIT_BLOCK) {

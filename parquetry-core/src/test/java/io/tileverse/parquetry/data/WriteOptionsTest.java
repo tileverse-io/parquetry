@@ -39,10 +39,6 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
-
 import io.tileverse.parquetry.data.WriteOptions.BloomFilterConfig;
 import io.tileverse.parquetry.data.WriteOptions.EncodingPolicy;
 import io.tileverse.parquetry.data.WriteOptions.GeoParquetMetadataMode;
@@ -58,6 +54,7 @@ import io.tileverse.parquetry.format.PageHeader;
 import io.tileverse.parquetry.format.PageType;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -613,32 +610,28 @@ class WriteOptionsTest {
 
         private List<Encoding> readDataPageEncodings(Path file, String columnName) throws Exception {
             List<Encoding> out = new ArrayList<>();
-            try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                    RangeReader reader =
-                            storage.openRangeReader(file.getFileName().toString())) {
-                FileMetaData footer = ParquetFormat.readFooter(reader);
+            try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+                FileMetaData footer = ParquetFormat.readFooter(source);
                 for (RowGroup rg : footer.rowGroups()) {
                     ColumnMetaData meta = findColumnInRowGroup(rg, columnName);
                     if (meta == null) {
                         continue;
                     }
-                    collectPageEncodings(reader, meta, out);
+                    collectPageEncodings(source, meta, out);
                 }
             }
             return out;
         }
 
-        private void collectPageEncodings(RangeReader reader, ColumnMetaData meta, List<Encoding> out)
+        private void collectPageEncodings(ByteRangeSource source, ColumnMetaData meta, List<Encoding> out)
                 throws java.io.IOException {
             long chunkStart = meta.dictionaryPageOffset().orElse(meta.dataPageOffset());
             long chunkSize = meta.totalCompressedSize();
             if (chunkSize <= 0 || chunkSize > Integer.MAX_VALUE) {
                 return;
             }
-            ByteBuffer chunkBuffer = reader.readRange(chunkStart, (int) chunkSize);
-            chunkBuffer.flip();
-            byte[] chunkBytes = new byte[chunkBuffer.remaining()];
-            chunkBuffer.get(chunkBytes);
+            byte[] chunkBytes = new byte[(int) chunkSize];
+            source.readFully(chunkStart, MemorySegment.ofArray(chunkBytes));
             InputStream in = new ByteArrayInputStream(chunkBytes);
             long consumed = 0L;
             while (consumed < chunkSize) {
@@ -668,10 +661,8 @@ class WriteOptionsTest {
         }
 
         private ColumnMetaData columnMetadata(Path file, String columnName) throws Exception {
-            try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                    RangeReader reader =
-                            storage.openRangeReader(file.getFileName().toString())) {
-                FileMetaData footer = ParquetFormat.readFooter(reader);
+            try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+                FileMetaData footer = ParquetFormat.readFooter(source);
                 for (RowGroup rg : footer.rowGroups()) {
                     ColumnMetaData meta = findColumnInRowGroup(rg, columnName);
                     if (meta != null) {

@@ -25,16 +25,14 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.storage.RangeReader;
-
 import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
-
-import io.tileverse.io.ByteBufferPool;
+import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * Proves that the parallel decode path returns identical records in identical (strict file) order as the serial path.
@@ -71,12 +69,12 @@ class ParallelDecodeParityTest {
     }
 
     private static List<String> read(Path file, int decodeAhead, DecodeExecutor executor) throws Exception {
-        ByteBufferPool pool = new ByteBufferPool();
+        CountingSegmentPool pool = new CountingSegmentPool();
         List<String> rendered = new ArrayList<>();
-        try (RangeReader reader = TestParquetFiles.openRangeReader(file)) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
+        try (ByteRangeSource source = TestParquetFiles.openRangeReader(file)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
             ReadOptions options = ReadOptions.builder()
-                    .byteBufferPool(pool)
+                    .segmentPool(pool)
                     .decodeExecutor(executor)
                     .maxDecodeAheadPerRead(decodeAhead)
                     .build();
@@ -84,16 +82,11 @@ class ParallelDecodeParityTest {
                 stream.forEach(record -> rendered.add(renderKey(record)));
             }
         }
-        assertThat(outstandingBorrows(pool)).isZero();
+        assertThat(pool.outstanding()).isZero();
         return rendered;
     }
 
     private static String renderKey(ParquetRecord record) {
         return record.getInt(YEAR) + "|" + record.getString(COUNTRY) + "|" + record.getDouble(VALUE);
-    }
-
-    private static long outstandingBorrows(ByteBufferPool pool) {
-        ByteBufferPool.PoolStatistics stats = pool.getStatistics();
-        return (stats.created() + stats.reused()) - (stats.returned() + stats.discarded());
     }
 }

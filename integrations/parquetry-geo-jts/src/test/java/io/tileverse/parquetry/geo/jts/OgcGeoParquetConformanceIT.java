@@ -32,15 +32,12 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.io.WKTReader;
 
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
-
 import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.format.LogicalType;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
@@ -51,8 +48,8 @@ import io.tileverse.parquetry.testkit.TestCorpus;
  * {@code data-<type>-encoding_wkb.parquet} file we read every row through parquetry's {@link JtsMaterializer} and
  * compare the decoded {@link Geometry} to the WKT in the matching {@code data-<type>-wkt.csv} sidecar.
  *
- * <p>Gated on the OGC repo being cloned alongside parquetry; skips silently otherwise. {@code generate_test_data.py} in
- * that repo describes how the fixtures were built (Shapely + pyarrow).
+ * <p>Skipped when the OGC repo is not cloned alongside parquetry; runs otherwise. {@code generate_test_data.py} in that
+ * repo describes how the fixtures were built (Shapely + pyarrow).
  *
  * <p>Only the WKB-encoded fixtures are exercised. The {@code _encoding_native} fixtures use a GeoParquet 2.0
  * structured-coordinate encoding (groups with {@code x}/{@code y} fields) that's out of scope for the WKB-focused
@@ -103,9 +100,8 @@ class OgcGeoParquetConformanceIT {
 
     private static List<Geometry> readGeometries(Path file) throws IOException {
         ColumnPath geometry = ColumnPath.of("geometry");
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
             assertGeoMetadataParses(dataset, geometry);
             JtsMaterializer materializer = new JtsMaterializer(dataset.schema());
             assertThat(materializer.geometryColumns())

@@ -31,10 +31,6 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
-
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.BloomFilterConfig;
@@ -46,6 +42,7 @@ import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -254,22 +251,20 @@ class BloomFilterWriteTest {
     }
 
     private static SplitBlockBloomFilter loadBloomFilter(Path file, String columnName) throws Exception {
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            FileMetaData footer = ParquetFormat.readFooter(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            FileMetaData footer = ParquetFormat.readFooter(source);
             ColumnMetaData meta = findColumn(footer, columnName);
             long offset = meta.bloomFilterOffset()
                     .orElseThrow(() -> new AssertionError("column " + columnName + " has no bloom filter"));
             int length =
                     (int) meta.bloomFilterLength().orElseThrow(() -> new AssertionError("bloom_filter_length missing"));
-            return BloomFilterReader.read(reader, offset, length);
+            return BloomFilterReader.read(source, offset, length);
         }
     }
 
     private static ColumnMetaData columnMetadata(Path file, String columnName) throws Exception {
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            FileMetaData footer = ParquetFormat.readFooter(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            FileMetaData footer = ParquetFormat.readFooter(source);
             return findColumn(footer, columnName);
         }
     }

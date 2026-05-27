@@ -30,11 +30,8 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
-
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -59,9 +56,8 @@ class RecordLevelFilterTest {
     @Test
     void readAppliesTheRecordLevelPredicate() throws Exception {
         Path file = writeFixture();
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
             try (Stream<ParquetRecord> rows =
                     dataset.read(col("pop").gt(1_000_000), Projection.ALL, ReadOptions.DEFAULTS)) {
                 List<Integer> ids = rows.map(r -> r.getInt(ID)).sorted().toList();
@@ -73,9 +69,8 @@ class RecordLevelFilterTest {
     @Test
     void recordLevelPredicateUsesColumnsOutsideTheProjection() throws Exception {
         Path file = writeFixture();
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
             Projection idOnly = Projection.of(Set.of(ID));
             try (Stream<ParquetRecord> rows = dataset.read(col("pop").gt(1_000_000), idOnly, ReadOptions.DEFAULTS)) {
                 List<Integer> ids = rows.map(r -> r.getInt(ID)).sorted().toList();
@@ -89,9 +84,8 @@ class RecordLevelFilterTest {
         Path file = writeFixture();
         ReadOptions pushdownOnly =
                 ReadOptions.builder().useRecordLevelFilter(false).build();
-        try (Storage storage = StorageFactory.open(file.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
             try (Stream<ParquetRecord> rows = dataset.read(col("pop").gt(1_000_000), Projection.ALL, pushdownOnly)) {
                 assertThat(rows.count()).isEqualTo(4L);
             }

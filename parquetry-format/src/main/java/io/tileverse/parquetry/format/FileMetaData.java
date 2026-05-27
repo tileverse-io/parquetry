@@ -44,7 +44,7 @@ import lombok.Builder;
  *     ({@code encryption_algorithm} in the thrift schema)
  * @param footerSigningKeyMetadata retrieval metadata for the key used to sign the footer; {@link MemorySegment#NULL}
  *     when the footer is not signed ({@code footer_signing_key_metadata} in the thrift schema)
- * @see ParquetFormat#readFooter(io.tileverse.storage.RangeReader)
+ * @see ParquetFormat#readFooter(io.tileverse.parquetry.io.ByteRangeSource)
  */
 // S2789: constructor null-tolerates Optional to support the @Builder pattern.
 @SuppressWarnings("java:S2789")

@@ -33,4 +33,5 @@ Only joins the reactor when the `coverage` profile is active. The default `./mvn
 ## Notes
 
 - The module is also marked `<packaging>pom</packaging>` and skips the deploy plugin - it's an internal artifact, never published.
-- Current aggregated coverage: ~80% line / ~58% branch. Lifting that figure is follow-up work, mostly in parquetry-format's Thrift decoders.
+- The aggregate spans `parquetry-format` and `parquetry-core` only. The newer `parquetry-io` module (the `ByteRangeSource` / `SegmentPool` SPIs) and the `parquetry-tileverse-storage` adapter run their own tests in-module but are not folded into this report yet; adding them is a candidate follow-up.
+- Aggregated coverage sits around ~80% line / ~58% branch. Lifting that figure is follow-up work, mostly in parquetry-format's Thrift decoders.

@@ -30,10 +30,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
-
 import io.tileverse.parquetry.data.Compression;
 import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.ParquetWriter;
@@ -44,6 +40,7 @@ import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
 import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -153,9 +150,8 @@ class WritePerformanceProbeTest {
         Path file = tempDir.resolve(label + "-replay.parquet");
         long startNanos = System.nanoTime();
         long rowCount = 0L;
-        try (Storage storage = StorageFactory.open(input.getParent().toUri());
-                RangeReader reader = storage.openRangeReader(input.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(reader);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(input)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
             ParquetSchema schema = dataset.schema();
             try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options);
                     Stream<ParquetRecord> records =

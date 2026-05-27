@@ -24,8 +24,13 @@
 
   <dependencies>
     <dependency>
-      <groupId>io.tileverse.storage</groupId>
-      <artifactId>tileverse-storage-core</artifactId>
+      <groupId>io.tileverse.parquetry</groupId>
+      <artifactId>parquetry-io</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-api</artifactId>
     </dependency>
     <dependency>
       <groupId>tools.jackson.core</groupId>

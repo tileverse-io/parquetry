@@ -17,27 +17,23 @@ package io.tileverse.parquetry.data.read;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.io.IOException;
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.OptionalLong;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.storage.RangeReader;
-
 import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
-
-import io.tileverse.io.ByteBufferPool;
+import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * Proves that the multi-range-per-row-group slicing path (rangeIndex > 0) decodes records correctly when the coalesced
@@ -45,36 +41,29 @@ import io.tileverse.io.ByteBufferPool;
  */
 class MultiRangeCoalescingTest {
 
-    /**
-     * Delegating {@link RangeReader} that counts how many times {@link #readRange(long, int, ByteBuffer)} is called.
-     */
-    private static final class CountingRangeReader implements RangeReader {
+    /** Delegating {@link ByteRangeSource} that counts how many times {@link #read(long, MemorySegment)} is called. */
+    private static final class CountingByteRangeSource implements ByteRangeSource {
 
-        private final RangeReader delegate;
+        private final ByteRangeSource delegate;
         final AtomicInteger calls = new AtomicInteger();
 
-        CountingRangeReader(RangeReader delegate) {
+        CountingByteRangeSource(ByteRangeSource delegate) {
             this.delegate = delegate;
         }
 
         @Override
-        public int readRange(long offset, int length, ByteBuffer target) {
+        public int read(long offset, MemorySegment dst) {
             calls.incrementAndGet();
-            return delegate.readRange(offset, length, target);
+            return delegate.read(offset, dst);
         }
 
         @Override
-        public OptionalLong size() {
+        public long size() {
             return delegate.size();
         }
 
         @Override
-        public String getSourceIdentifier() {
-            return delegate.getSourceIdentifier();
-        }
-
-        @Override
-        public void close() throws IOException {
+        public void close() {
             delegate.close();
         }
     }
@@ -86,16 +75,16 @@ class MultiRangeCoalescingTest {
         int rowGroups = TestParquetFiles.rowGroupCount(file);
         int columns = 3;
 
-        ByteBufferPool pool = new ByteBufferPool();
+        CountingSegmentPool pool = new CountingSegmentPool();
         List<ParquetRecord> records = new ArrayList<>();
         int dataReads;
-        try (RangeReader base = TestParquetFiles.openRangeReader(file)) {
-            CountingRangeReader counting = new CountingRangeReader(base);
+        try (ByteRangeSource base = TestParquetFiles.openRangeReader(file)) {
+            CountingByteRangeSource counting = new CountingByteRangeSource(base);
             ParquetDataset dataset = ParquetDataset.open(counting);
             // A span of 1 byte forces every column chunk to be its own range, exercising the multi-range slicing path
             // (ColumnSlice.rangeIndex > 0). Column chunks that fit within the span are still single-range.
             ReadOptions options = ReadOptions.builder()
-                    .byteBufferPool(pool)
+                    .segmentPool(pool)
                     .maxCoalesceGap(0)
                     .maxCoalescedSpan(1)
                     .build();
@@ -114,11 +103,6 @@ class MultiRangeCoalescingTest {
                         dataReads, rowGroups, columns)
                 .isGreaterThan(rowGroups)
                 .isLessThanOrEqualTo(columns * rowGroups);
-        assertThat(outstandingBorrows(pool)).isZero();
-    }
-
-    private static long outstandingBorrows(ByteBufferPool pool) {
-        ByteBufferPool.PoolStatistics stats = pool.getStatistics();
-        return (stats.created() + stats.reused()) - (stats.returned() + stats.discarded());
+        assertThat(pool.outstanding()).isZero();
     }
 }

@@ -17,21 +17,19 @@ package io.tileverse.parquetry.data.read;
 
 import java.io.IOException;
 import java.lang.foreign.MemorySegment;
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
-
-import io.tileverse.storage.RangeReader;
 
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.SegmentPool;
+import io.tileverse.parquetry.io.SegmentPool.Pooled;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
-import io.tileverse.io.ByteBufferPool;
-import io.tileverse.io.ByteBufferPool.PooledByteBuffer;
 import lombok.NonNull;
 
 /**
@@ -41,21 +39,21 @@ import lombok.NonNull;
  */
 public final class RowGroupFetcher {
 
-    private final RangeReader rangeReader;
+    private final ByteRangeSource source;
     private final ParquetSchema fileSchema;
     private final ParquetSchema projectedSchema;
-    private final ByteBufferPool pool;
+    private final SegmentPool pool;
     private final int maxCoalesceGap;
     private final int maxCoalescedSpan;
 
     public RowGroupFetcher(
-            @NonNull RangeReader rangeReader,
+            @NonNull ByteRangeSource source,
             @NonNull ParquetSchema fileSchema,
             @NonNull ParquetSchema projectedSchema,
-            @NonNull ByteBufferPool pool,
+            @NonNull SegmentPool pool,
             int maxCoalesceGap,
             int maxCoalescedSpan) {
-        this.rangeReader = rangeReader;
+        this.source = source;
         this.fileSchema = fileSchema;
         this.projectedSchema = projectedSchema;
         this.pool = pool;
@@ -83,27 +81,24 @@ public final class RowGroupFetcher {
     public RowGroupFetch fetch(RowGroupSurvivor survivor, FetchPlan plan, BudgetReservation reservation)
             throws IOException {
         RowGroupChunks chunks = survivor.chunks();
-        List<PooledByteBuffer> buffers = new ArrayList<>(plan.ranges().size());
+        List<Pooled> buffers = new ArrayList<>(plan.ranges().size());
         List<MemorySegment> rangeSegments = new ArrayList<>(plan.ranges().size());
         try {
             for (CoalescedRange range : plan.ranges()) {
-                PooledByteBuffer pooled = pool.borrowDirect(range.length());
+                Pooled pooled = pool.borrow(range.length());
                 buffers.add(pooled);
-                ByteBuffer buffer = pooled.buffer();
-                buffer.clear();
-                buffer.limit(range.length());
-                int read = rangeReader.readRange(range.fileOffset(), range.length(), buffer);
+                MemorySegment rangeSegment = pooled.segment();
+                int read = source.read(range.fileOffset(), rangeSegment);
                 if (read != range.length()) {
                     throw new IOException("Short read for coalesced range at offset " + range.fileOffset()
                             + ": expected " + range.length() + " bytes, got " + read);
                 }
-                buffer.flip();
-                rangeSegments.add(MemorySegment.ofBuffer(buffer));
+                rangeSegments.add(rangeSegment);
             }
             List<FetchedColumnChunk> columns = sliceColumns(plan, chunks, rangeSegments);
             return new RowGroupFetch(buffers, columns, reservation);
         } catch (IOException | RuntimeException e) {
-            for (PooledByteBuffer buffer : buffers) {
+            for (Pooled buffer : buffers) {
                 try {
                     buffer.close();
                 } catch (RuntimeException ignored) {

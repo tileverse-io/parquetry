@@ -17,23 +17,24 @@ package io.tileverse.parquetry.data.read;
 
 import java.util.List;
 
-import io.tileverse.io.ByteBufferPool.PooledByteBuffer;
+import io.tileverse.parquetry.io.SegmentPool.Pooled;
+
 import lombok.NonNull;
 
 /**
- * The coalesced buffers and column views for one row group. Owns the pooled buffers borrowed for its coalesced ranges;
- * {@link #close()} returns them to the pool and releases the budget reservation. The {@link FetchedColumnChunk} views
- * it exposes share these buffers and are valid only until close. Close is idempotent.
+ * The coalesced segments and column views for one row group. Owns the pooled segments borrowed for its coalesced
+ * ranges; {@link #close()} returns them to the pool and releases the budget reservation. The {@link FetchedColumnChunk}
+ * views it exposes share these segments and are valid only until close. Close is idempotent.
  */
 public final class RowGroupFetch implements AutoCloseable {
 
-    private final List<PooledByteBuffer> buffers;
+    private final List<Pooled> buffers;
     private final List<FetchedColumnChunk> columns;
     private final BudgetReservation reservation;
     private boolean closed;
 
     RowGroupFetch(
-            @NonNull List<PooledByteBuffer> buffers,
+            @NonNull List<Pooled> buffers,
             @NonNull List<FetchedColumnChunk> columns,
             @NonNull BudgetReservation reservation) {
         this.buffers = List.copyOf(buffers);
@@ -52,11 +53,11 @@ public final class RowGroupFetch implements AutoCloseable {
             return;
         }
         closed = true;
-        for (PooledByteBuffer buffer : buffers) {
+        for (Pooled buffer : buffers) {
             try {
                 buffer.close();
             } catch (RuntimeException ignored) {
-                // best-effort; pool stats surface any chronic leak
+                // best-effort cleanup; a chronic leak shows up in pool accounting
             }
         }
         reservation.release();

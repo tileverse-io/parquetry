@@ -17,71 +17,62 @@ package io.tileverse.parquetry.data.read;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.io.IOException;
-import java.nio.ByteBuffer;
+import java.lang.foreign.MemorySegment;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.OptionalLong;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.storage.RangeReader;
-
 import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
-
-import io.tileverse.io.ByteBufferPool;
+import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * Proves two properties of the coalesced+prefetched read path:
  *
  * <ol>
  *   <li>A full read returns the correct number of records (parity with the written data).
- *   <li>The number of {@link RangeReader#readRange} calls during data-page fetching is significantly fewer than one
- *       call per column per row group, confirming that column chunks within a row group are coalesced into a single
- *       range read.
+ *   <li>The number of {@link ByteRangeSource#read} calls during data-page fetching is significantly fewer than one call
+ *       per column per row group, confirming that column chunks within a row group are coalesced into a single range
+ *       read.
  * </ol>
  */
 class CoalescedFullReadParityTest {
 
     /**
-     * Delegating {@link RangeReader} that counts how many times {@link #readRange(long, int, ByteBuffer)} is called.
-     * Uses no mocking framework - just a plain wrapper.
+     * Delegating {@link ByteRangeSource} that counts how many times {@link #read(long, MemorySegment)} is called. Uses
+     * no mocking framework - just a plain wrapper.
      */
-    private static final class CountingRangeReader implements RangeReader {
+    private static final class CountingByteRangeSource implements ByteRangeSource {
 
-        private final RangeReader delegate;
+        private final ByteRangeSource delegate;
         final AtomicInteger calls = new AtomicInteger();
 
-        CountingRangeReader(RangeReader delegate) {
+        CountingByteRangeSource(ByteRangeSource delegate) {
             this.delegate = delegate;
         }
 
         @Override
-        public int readRange(long offset, int length, ByteBuffer target) {
+        public int read(long offset, MemorySegment dst) {
             calls.incrementAndGet();
-            return delegate.readRange(offset, length, target);
+            return delegate.read(offset, dst);
         }
 
         @Override
-        public OptionalLong size() {
+        public long size() {
             return delegate.size();
         }
 
         @Override
-        public String getSourceIdentifier() {
-            return delegate.getSourceIdentifier();
-        }
-
-        @Override
-        public void close() throws IOException {
+        public void close() {
             delegate.close();
         }
     }
@@ -93,13 +84,13 @@ class CoalescedFullReadParityTest {
         int rowGroups = TestParquetFiles.rowGroupCount(file);
         int columns = 3;
 
-        ByteBufferPool pool = new ByteBufferPool();
+        CountingSegmentPool pool = new CountingSegmentPool();
         List<ParquetRecord> records = new ArrayList<>();
         int dataReads;
-        try (RangeReader base = TestParquetFiles.openRangeReader(file)) {
-            CountingRangeReader counting = new CountingRangeReader(base);
+        try (ByteRangeSource base = TestParquetFiles.openRangeReader(file)) {
+            CountingByteRangeSource counting = new CountingByteRangeSource(base);
             ParquetDataset dataset = ParquetDataset.open(counting);
-            ReadOptions options = ReadOptions.builder().byteBufferPool(pool).build();
+            ReadOptions options = ReadOptions.builder().segmentPool(pool).build();
             try (Stream<ParquetRecord> stream = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
                 // Footer and filter-plan reads have already happened inside read().
                 // Counting from here isolates the coalesced data-page fetches only.
@@ -117,11 +108,6 @@ class CoalescedFullReadParityTest {
                         columns, rowGroups)
                 .isLessThanOrEqualTo(rowGroups)
                 .isLessThan(columns * rowGroups);
-        assertThat(outstandingBorrows(pool)).isZero();
-    }
-
-    private static long outstandingBorrows(ByteBufferPool pool) {
-        ByteBufferPool.PoolStatistics stats = pool.getStatistics();
-        return (stats.created() + stats.reused()) - (stats.returned() + stats.discarded());
+        assertThat(pool.outstanding()).isZero();
     }
 }
