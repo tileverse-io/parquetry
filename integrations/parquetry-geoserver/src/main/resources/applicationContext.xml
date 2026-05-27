@@ -23,7 +23,7 @@
   <!--
     Binds the GeoParquet DataStore factory to GeoServer's generic store edit panel.
     Omitting componentClass makes GeoServer use DefaultDataStoreEditPanel, whose form
-    is generated from the factory's Param[] (uri, namespace).
+    is generated from the factory's Param[] (uri, namespace, fid).
   -->
   <bean id="geoParquetDataStorePanel" class="org.geoserver.web.data.resource.DataStorePanelInfo">
     <property name="id" value="geoparquet"/>

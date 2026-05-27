@@ -22,6 +22,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 import org.geotools.api.data.FeatureReader;
@@ -42,19 +43,22 @@ final class GeoParquetFeatureReader implements FeatureReader<SimpleFeatureType, 
 
     private final SimpleFeatureType featureType;
     private final List<AttributeMapping> attributes;
+    private final Optional<AttributeMapping> fidAttribute;
     private final SimpleFeatureBuilder builder;
     private final Stream<Map<ColumnPath, Object>> stream;
     private final Iterator<Map<ColumnPath, Object>> rows;
-    private long featureId;
+    private long syntheticId;
 
     GeoParquetFeatureReader(
             SimpleFeatureType readType,
             List<AttributeMapping> attributes,
             ParquetDataset dataset,
             Predicate predicate,
-            Projection projection) {
+            Projection projection,
+            Optional<AttributeMapping> fidAttribute) {
         this.featureType = readType;
         this.attributes = attributes;
+        this.fidAttribute = fidAttribute;
         this.builder = new SimpleFeatureBuilder(readType);
         JtsMaterializer materializer = new JtsMaterializer(dataset.schema());
         this.stream = dataset.read(predicate, projection, materializer, ReadOptions.DEFAULTS);
@@ -81,7 +85,23 @@ final class GeoParquetFeatureReader implements FeatureReader<SimpleFeatureType, 
             Object value = row.get(attr.path());
             builder.set(attr.name(), attr.geometry() ? value : convert(value, attr.binding()));
         }
-        return builder.buildFeature(Long.toString(featureId++));
+        return builder.buildFeature(featureId(row));
+    }
+
+    /**
+     * The feature id for the current row: the configured feature id column's value when one is set, falling back to a
+     * synthetic per-read sequence when no column is configured or its value is null.
+     */
+    private String featureId(Map<ColumnPath, Object> row) {
+        if (fidAttribute.isEmpty()) {
+            return Long.toString(syntheticId++);
+        }
+        AttributeMapping fid = fidAttribute.get();
+        Object value = convert(row.get(fid.path()), fid.binding());
+        if (value == null) {
+            return Long.toString(syntheticId++);
+        }
+        return String.valueOf(value);
     }
 
     /**

@@ -84,8 +84,17 @@ final class GeoParquetFeatureSource extends ContentFeatureSource {
     synchronized GeoParquetSchemaMapper.Mapping mapping() throws IOException {
         if (mapping == null) {
             ParquetDataset ds = dataset();
-            mapping = GeoParquetSchemaMapper.map(
-                    getEntry().getTypeName(), getDataStore().getNamespaceURI(), ds.schema(), ds.keyValueMetadata());
+            String fidColumn = ((GeoParquetDataStore) getDataStore()).fidColumn();
+            try {
+                mapping = GeoParquetSchemaMapper.map(
+                        getEntry().getTypeName(),
+                        getDataStore().getNamespaceURI(),
+                        ds.schema(),
+                        ds.keyValueMetadata(),
+                        fidColumn);
+            } catch (IllegalArgumentException badConfiguration) {
+                throw new IOException(badConfiguration.getMessage(), badConfiguration);
+            }
         }
         return mapping;
     }
@@ -196,8 +205,8 @@ final class GeoParquetFeatureSource extends ContentFeatureSource {
         SimpleFeatureType readType = readType(m, t);
         List<GeoParquetSchemaMapper.AttributeMapping> readAttributes = attributesFor(m, readType);
 
-        FeatureReader<SimpleFeatureType, SimpleFeature> reader =
-                new GeoParquetFeatureReader(readType, readAttributes, dataset(), t.predicate(), t.readProjection());
+        FeatureReader<SimpleFeatureType, SimpleFeature> reader = new GeoParquetFeatureReader(
+                readType, readAttributes, dataset(), t.predicate(), t.readProjection(), m.fidAttribute());
 
         if (t.postFilter() != Filter.INCLUDE) {
             reader = new FilteringFeatureReader<>(reader, t.postFilter());

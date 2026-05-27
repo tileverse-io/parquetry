@@ -40,9 +40,22 @@ public final class GeoParquetDataStore extends ContentDataStore implements AutoC
 
     private final ParquetDatasetCatalog catalog;
 
+    /** Name of the column to use as the feature id, or null to auto-detect a column named {@code "id"}. */
+    private volatile String fidColumn;
+
     /** Creates a store backed by the given catalog. The store takes ownership of the catalog. */
     public GeoParquetDataStore(ParquetDatasetCatalog catalog) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
+    }
+
+    /** Sets the column to use as the feature id; null restores auto-detection of a column named {@code "id"}. */
+    void setFidColumn(String fidColumn) {
+        this.fidColumn = fidColumn;
+    }
+
+    /** The configured feature id column name, or null when none is set. */
+    String fidColumn() {
+        return fidColumn;
     }
 
     @Override

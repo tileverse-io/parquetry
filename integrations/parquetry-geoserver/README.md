@@ -10,7 +10,7 @@ from that jar. The `applicationContext.xml` here declares:
 
 - a `DataStorePanelInfo` binding `GeoParquetDataStoreFactory` to GeoServer's
   generic store edit panel (the connection form is generated from the factory's
-  `Param[]`: `uri`, `namespace`), and
+  `Param[]`: `uri`, `namespace`, `fid`), and
 - a `ModuleStatusImpl` so the plugin appears under About > Server Status >
   Modules.
 

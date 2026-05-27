@@ -16,8 +16,10 @@
 package io.tileverse.parquetry.geotools;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 import org.geotools.api.data.Query;
@@ -52,6 +54,39 @@ class QueryTranslatorTest {
                 new AttributeMapping("name", ColumnPath.of("name"), false, String.class),
                 new AttributeMapping("pop", ColumnPath.of("pop"), false, Long.class));
         return new Mapping(ft, attrs);
+    }
+
+    private static Mapping mappingWithFid() {
+        Mapping base = mapping();
+        AttributeMapping fid = base.attributes().stream()
+                .filter(a -> a.name().equals("name"))
+                .findFirst()
+                .orElseThrow();
+        return new Mapping(base.featureType(), base.attributes(), Optional.of(fid));
+    }
+
+    @Test
+    void idFilterWithoutFeatureIdColumnIsRejected() {
+        QueryTranslator translator = new QueryTranslator(mapping());
+        Query q = new Query("t", FF.id(Set.of(FF.featureId("x"))));
+        assertThatThrownBy(() -> translator.translate(q)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void idFilterWithFeatureIdColumnStaysInPostFilter() {
+        Filter idFilter = FF.id(Set.of(FF.featureId("x")));
+        Query q = new Query("t", idFilter);
+        QueryTranslator.TranslatedQuery t = new QueryTranslator(mappingWithFid()).translate(q);
+        assertThat(t.predicate()).isEqualTo((Predicate) Predicate.ALWAYS_TRUE);
+        assertThat(t.postFilter()).isEqualTo(idFilter);
+    }
+
+    @Test
+    void projectionIncludesFeatureIdColumn() {
+        Query q = new Query("t", Filter.INCLUDE, new String[] {"geom"});
+        QueryTranslator.TranslatedQuery t = new QueryTranslator(mappingWithFid()).translate(q);
+        assertThat(t.readProjection())
+                .isEqualTo(Projection.of(Set.of(ColumnPath.of("geometry"), ColumnPath.of("name"))));
     }
 
     @Test

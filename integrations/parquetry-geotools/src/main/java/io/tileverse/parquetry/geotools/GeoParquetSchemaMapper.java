@@ -47,6 +47,9 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
  */
 final class GeoParquetSchemaMapper {
 
+    /** Default feature id column name, used when no column is explicitly configured. */
+    private static final String DEFAULT_FID_COLUMN = "id";
+
     private GeoParquetSchemaMapper() {}
 
     /**
@@ -55,8 +58,19 @@ final class GeoParquetSchemaMapper {
      */
     record AttributeMapping(String name, ColumnPath path, boolean geometry, Class<?> binding) {}
 
-    /** The result of a schema mapping: the built feature type and the ordered list of attribute mappings. */
-    record Mapping(SimpleFeatureType featureType, List<AttributeMapping> attributes) {}
+    /**
+     * The result of a schema mapping: the built feature type, the ordered list of attribute mappings, and the attribute
+     * that provides the feature id ({@link Optional#empty()} when none could be resolved, in which case the reader
+     * falls back to a synthetic per-read feature id).
+     */
+    record Mapping(
+            SimpleFeatureType featureType, List<AttributeMapping> attributes, Optional<AttributeMapping> fidAttribute) {
+
+        /** Convenience for the common case of a mapping with no feature id column. */
+        Mapping(SimpleFeatureType featureType, List<AttributeMapping> attributes) {
+            this(featureType, attributes, Optional.empty());
+        }
+    }
 
     /**
      * Maps the given schema and key-value metadata to a {@link Mapping}.
@@ -65,9 +79,16 @@ final class GeoParquetSchemaMapper {
      * @param namespaceUri optional namespace URI; may be null
      * @param schema the parquet schema from the file footer
      * @param kvMetadata file-level key-value metadata (used to extract the GeoParquet {@code "geo"} block)
+     * @param configuredFidColumn the column to use as the feature id, or null to auto-detect a column named
+     *     {@code "id"}
      * @return the completed mapping
      */
-    static Mapping map(String typeName, String namespaceUri, ParquetSchema schema, Map<String, String> kvMetadata) {
+    static Mapping map(
+            String typeName,
+            String namespaceUri,
+            ParquetSchema schema,
+            Map<String, String> kvMetadata,
+            String configuredFidColumn) {
         Optional<GeoParquetMetadata> geo = parseGeoMetadata(kvMetadata);
         String primaryGeometryColumn =
                 geo.map(GeoParquetMetadata::primaryColumn).orElse(null);
@@ -100,7 +121,51 @@ final class GeoParquetSchemaMapper {
         if (defaultGeometryName != null) {
             ftb.setDefaultGeometry(defaultGeometryName);
         }
-        return new Mapping(ftb.buildFeatureType(), List.copyOf(attributes));
+        List<AttributeMapping> mappedAttributes = List.copyOf(attributes);
+        Optional<AttributeMapping> fid = resolveFidAttribute(typeName, configuredFidColumn, mappedAttributes);
+        return new Mapping(ftb.buildFeatureType(), mappedAttributes, fid);
+    }
+
+    /**
+     * Resolves which attribute provides the feature id.
+     *
+     * <p>An explicitly configured column name must match a usable attribute, or it is a configuration error. With no
+     * explicit name, an attribute literally named {@code "id"} is used when present and usable. When neither resolves,
+     * the result is empty and the reader falls back to a synthetic per-read feature id.
+     */
+    static Optional<AttributeMapping> resolveFidAttribute(
+            String typeName, String configuredColumn, List<AttributeMapping> attributes) {
+        if (configuredColumn != null && !configuredColumn.isBlank()) {
+            return Optional.of(requireUsableFid(typeName, configuredColumn, attributes));
+        }
+        return attributes.stream()
+                .filter(attr -> attr.name().equals(DEFAULT_FID_COLUMN))
+                .filter(GeoParquetSchemaMapper::isUsableFid)
+                .findFirst();
+    }
+
+    private static AttributeMapping requireUsableFid(
+            String typeName, String column, List<AttributeMapping> attributes) {
+        return attributes.stream()
+                .filter(attr -> attr.name().equals(column))
+                .filter(GeoParquetSchemaMapper::isUsableFid)
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "feature id column '%s' is not a usable (non-geometry, string or numeric) attribute of feature type '%s'"
+                                .formatted(column, typeName)));
+    }
+
+    /** A usable feature id attribute is non-geometry and binds to a string or numeric type that stringifies cleanly. */
+    private static boolean isUsableFid(AttributeMapping attr) {
+        if (attr.geometry()) {
+            return false;
+        }
+        Class<?> binding = attr.binding();
+        return binding == String.class
+                || binding == Integer.class
+                || binding == Long.class
+                || binding == Float.class
+                || binding == Double.class;
     }
 
     /**

@@ -35,6 +35,11 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
             new Param("filetype", String.class, "Must be 'geoparquet'", true, "geoparquet");
     public static final Param URIP = new Param("uri", String.class, "URI of a GeoParquet file (or directory)", true);
     public static final Param NAMESPACE = new Param("namespace", String.class, "Feature type namespace", false);
+    public static final Param FID = new Param(
+            "fid",
+            String.class,
+            "Column to use as the feature id (defaults to a column named 'id' when present; otherwise feature ids are synthetic and Id filters are rejected)",
+            false);
 
     @Override
     public String getDisplayName() {
@@ -48,7 +53,7 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
 
     @Override
     public Param[] getParametersInfo() {
-        return new Param[] {FILETYPE, URIP, NAMESPACE};
+        return new Param[] {FILETYPE, URIP, NAMESPACE, FID};
     }
 
     @Override
@@ -70,6 +75,7 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
         String uriText = (String) URIP.lookUp(params);
         URI datasetUri = URI.create(uriText);
         String namespace = (String) NAMESPACE.lookUp(params);
+        String fidColumn = (String) FID.lookUp(params);
 
         URI base = baseContainer(datasetUri);
         String pattern = filePattern(datasetUri);
@@ -81,6 +87,9 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
         GeoParquetDataStore store = new GeoParquetDataStore(catalog);
         if (namespace != null) {
             store.setNamespaceURI(namespace);
+        }
+        if (fidColumn != null) {
+            store.setFidColumn(fidColumn);
         }
         return store;
     }

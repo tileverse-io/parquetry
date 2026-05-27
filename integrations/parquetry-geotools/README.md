@@ -27,6 +27,7 @@ feature cap, and counting down into the parquetry read path.
 | `filetype`  | yes      | Must be `geoparquet` |
 | `uri`       | yes      | URI of a GeoParquet file (local path, `s3://`, `gs://`, `https://`, ... per the tileverse storage backends) |
 | `namespace` | no       | Feature type namespace |
+| `fid`       | no       | Column to use as the feature id (see [Feature ids](#feature-ids)) |
 
 ```java
 Map<String, Object> params = Map.of("filetype", "geoparquet", "uri", "s3://bucket/roads.parquet");
@@ -62,6 +63,22 @@ SimpleFeatureSource roads = store.getFeatureSource(store.getTypeNames()[0]);
 The pushed predicate is always a sound necessary condition of the full filter,
 and the residual catches anything it over-accepts. Results therefore match an
 unfiltered scan exactly.
+
+## Feature ids
+
+Each feature needs an id. The store resolves it in this order:
+
+1. The column named by the `fid` connection parameter, when set. It must be a
+   non-geometry string or numeric column, or opening the store fails.
+2. Otherwise a column literally named `id`, when present and usable.
+3. Otherwise a synthetic per-read sequence number.
+
+When a feature id column resolves, that column's value is the feature id, and
+`Id` filters work (GeoTools applies them on the materialized features). When it
+does not (case 3), the synthetic ids are not stable across reads. An `Id` filter
+against them would match nothing useful, and is rejected rather than failing
+silently. The feature id column is always decoded for id assignment even when a
+query does not request it as an output attribute.
 
 ## Where it fits
 

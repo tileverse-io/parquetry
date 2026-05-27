@@ -22,6 +22,7 @@ import java.util.Set;
 import org.geotools.api.data.Query;
 import org.geotools.api.filter.Filter;
 import org.geotools.api.filter.FilterFactory;
+import org.geotools.api.filter.Id;
 import org.geotools.api.filter.expression.PropertyName;
 import org.geotools.factory.CommonFactoryFinder;
 import org.geotools.filter.Capabilities;
@@ -64,6 +65,7 @@ final class QueryTranslator {
 
     TranslatedQuery translate(Query query) {
         Filter filter = query.getFilter() == null ? Filter.INCLUDE : query.getFilter();
+        requireFeatureIdColumnForIdFilter(filter);
         Filter preCandidate = coarsePreFilter(filter);
         Filter coarsePost = coarsePostFilter(filter);
         FilterToPredicate.Result translated = translator.translate(preCandidate);
@@ -102,7 +104,36 @@ final class QueryTranslator {
         for (String postName : attributeNames(postFilter)) {
             addColumn(kept, postName);
         }
+        // The reader needs the feature id column to assign feature ids; decode it even when the query omits it.
+        mapping.fidAttribute().ifPresent(fid -> kept.add(fid.path()));
         return Projection.of(kept);
+    }
+
+    /**
+     * Rejects an {@code Id} filter when no feature id column is resolved. Without a stable feature id, the synthetic
+     * per-read ids an Id filter would match against are meaningless; rejecting the filter reports a programming error
+     * rather than returning a silently empty result. When a feature id column is present, GeoTools applies the Id
+     * filter on the materialized features: it is not in {@link GeoParquetFilterCapabilities} and stays in the
+     * post-filter.
+     */
+    private void requireFeatureIdColumnForIdFilter(Filter filter) {
+        if (mapping.fidAttribute().isPresent()) {
+            return;
+        }
+        if (containsIdFilter(filter)) {
+            throw new IllegalArgumentException(
+                    "Id filters require a feature id column, but none is configured and no 'id' column is present; "
+                            + "set the 'fid' connection parameter or add an 'id' column");
+        }
+    }
+
+    private static boolean containsIdFilter(Filter filter) {
+        if (filter == null || filter == Filter.INCLUDE || filter == Filter.EXCLUDE) {
+            return false;
+        }
+        Set<Object> found = new LinkedHashSet<>();
+        filter.accept(new IdFilterDetector(), found);
+        return !found.isEmpty();
     }
 
     private void addColumn(Set<ColumnPath> kept, String attributeName) {
@@ -136,6 +167,16 @@ final class QueryTranslator {
             return a;
         }
         return FF.and(List.of(a, b));
+    }
+
+    /** Records a marker into the {@code Set} passed as visitor data when the filter contains an {@link Id} node. */
+    private static final class IdFilterDetector extends DefaultFilterVisitor {
+        @Override
+        @SuppressWarnings("unchecked")
+        public Object visit(Id filter, Object data) {
+            ((Set<Object>) data).add(Boolean.TRUE);
+            return data;
+        }
     }
 
     /** Accumulates every referenced property's local name into the {@code Set<String>} passed as visitor data. */

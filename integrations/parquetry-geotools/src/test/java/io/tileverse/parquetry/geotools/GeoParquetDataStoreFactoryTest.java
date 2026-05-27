@@ -49,4 +49,11 @@ class GeoParquetDataStoreFactoryTest {
             store.dispose();
         }
     }
+
+    @Test
+    void exposesOptionalFidParameter() {
+        GeoParquetDataStoreFactory factory = new GeoParquetDataStoreFactory();
+        assertThat(factory.getParametersInfo())
+                .anySatisfy(param -> assertThat(param.key).isEqualTo("fid"));
+    }
 }

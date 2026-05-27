@@ -16,8 +16,11 @@
 package io.tileverse.parquetry.geotools;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.io.IOException;
 import java.nio.file.Path;
+import java.util.Set;
 
 import org.geotools.api.data.FeatureReader;
 import org.geotools.api.data.Query;
@@ -193,6 +196,53 @@ class GeoParquetPushdownIT {
             q.setStartIndex(1);
             q.setMaxFeatures(2);
             assertThat(count(fs.getReader(q))).isEqualTo(2);
+        }
+    }
+
+    @Test
+    void featureIdComesFromConfiguredColumn(@TempDir Path dir) throws Exception {
+        try (GeoParquetDataStore store = store(dir)) {
+            store.setFidColumn("name");
+            GeoParquetFeatureSource fs = (GeoParquetFeatureSource) store.getFeatureSource("example");
+
+            String someName;
+            try (FeatureReader<SimpleFeatureType, SimpleFeature> reader = fs.getReader(new Query("example"))) {
+                assertThat(reader.hasNext()).isTrue();
+                SimpleFeature first = reader.next();
+                someName = (String) first.getAttribute("name");
+                assertThat(first.getID()).isEqualTo(someName);
+            }
+
+            Query byId = new Query("example", FF.id(Set.of(FF.featureId(someName))));
+            try (FeatureReader<SimpleFeatureType, SimpleFeature> reader = fs.getReader(byId)) {
+                assertThat(reader.hasNext()).isTrue();
+                SimpleFeature match = reader.next();
+                assertThat(match.getID()).isEqualTo(someName);
+                assertThat(match.getAttribute("name")).isEqualTo(someName);
+                assertThat(reader.hasNext()).isFalse();
+            }
+        }
+    }
+
+    @Test
+    void idFilterWithoutFeatureIdColumnIsRejected(@TempDir Path dir) throws Exception {
+        try (GeoParquetDataStore store = store(dir)) {
+            GeoParquetFeatureSource fs = (GeoParquetFeatureSource) store.getFeatureSource("example");
+            Query byId = new Query("example", FF.id(Set.of(FF.featureId("0"))));
+            assertThatThrownBy(() -> fs.getReader(byId)).isInstanceOf(IOException.class);
+        }
+    }
+
+    @Test
+    void configuredFeatureIdColumnMustExist(@TempDir Path dir) throws Exception {
+        try (GeoParquetDataStore store = store(dir)) {
+            store.setFidColumn("no_such_column");
+            GeoParquetFeatureSource fs = (GeoParquetFeatureSource) store.getFeatureSource("example");
+            Query all = new Query("example");
+            // ContentFeatureSource resolves the schema eagerly and wraps the build failure in a RuntimeException.
+            assertThatThrownBy(() -> fs.getReader(all))
+                    .hasMessageContaining("no_such_column")
+                    .hasCauseInstanceOf(IOException.class);
         }
     }
 
