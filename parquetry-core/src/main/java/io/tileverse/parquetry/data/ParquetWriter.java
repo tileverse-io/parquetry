@@ -94,7 +94,6 @@ public class ParquetWriter implements AutoCloseable {
     private static final byte[] MAGIC = {'P', 'A', 'R', '1'};
     private static final String GEO_KEY = "geo";
     private static final String CREATED_BY = "parquetry";
-    private static final String CREATED_BY_VERSION = "1.0-SNAPSHOT";
     private static final int THRIFT_VIEW_BUFFER_BYTES = 8192;
 
     private final CountingWritableByteChannel out;
@@ -373,7 +372,7 @@ public class ParquetWriter implements AutoCloseable {
                 .numRows(totalRows)
                 .rowGroups(completedRowGroups)
                 .keyValueMetadata(keyValueMetadata)
-                .createdBy(Optional.of(CREATED_BY + " version " + CREATED_BY_VERSION))
+                .createdBy(Optional.of(CREATED_BY + " version " + ParquetryVersion.version()))
                 .columnOrders(Optional.of(typeDefinedColumnOrders()))
                 .build();
 
