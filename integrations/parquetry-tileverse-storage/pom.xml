@@ -28,19 +28,6 @@
         <type>pom</type>
         <scope>import</scope>
       </dependency>
-      <!--
-        tileverse-storage-all bundles the Azure / GCS / AWS SDKs, whose transitive versions diverge (Jackson, JNA,
-        azure-json, msal4j). Import the same cloud-dependencies BOM tileverse uses to reconcile them; that BOM is not
-        inherited through the tileverse-storage-all jar. Scoped to this module to keep the cloud-SDK footprint out of
-        the rest of the reactor.
-      -->
-      <dependency>
-        <groupId>io.tileverse</groupId>
-        <artifactId>cloud-dependencies-bom</artifactId>
-        <version>${cloud-dependencies-bom.version}</version>
-        <type>pom</type>
-        <scope>import</scope>
-      </dependency>
     </dependencies>
   </dependencyManagement>
 
