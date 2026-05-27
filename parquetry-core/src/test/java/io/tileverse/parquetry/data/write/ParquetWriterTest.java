@@ -188,6 +188,25 @@ class ParquetWriterTest {
     }
 
     @Test
+    void footerDeclaresTypeDefinedColumnOrderPerLeaf() throws Exception {
+        ParquetSchema schema = flatSchema(requiredInt32("id"), requiredInt32("code"));
+        WriteOptions options = options().build();
+        Path parquetFile = tempDir.resolve("column-orders.parquet");
+        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
+            writer.write(row(Map.of(ColumnPath.of("id"), 1, ColumnPath.of("code"), 2)));
+        }
+
+        try (ByteRangeSource source = ByteRangeSource.ofFile(parquetFile)) {
+            io.tileverse.parquetry.format.FileMetaData footer =
+                    io.tileverse.parquetry.format.ParquetFormat.readFooter(source);
+            assertThat(footer.columnOrders()).hasValueSatisfying(orders -> {
+                assertThat(orders).hasSize(2);
+                assertThat(orders).allMatch(io.tileverse.parquetry.format.ColumnOrder.TypeDefined.class::isInstance);
+            });
+        }
+    }
+
+    @Test
     void closeIsIdempotent() throws Exception {
         ParquetSchema schema = flatSchema(requiredInt32("id"));
         WriteOptions options = options().build();

@@ -54,6 +54,7 @@ import io.tileverse.parquetry.format.BloomFilterHeader;
 import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
+import io.tileverse.parquetry.format.ColumnOrder;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.GeospatialStatistics;
 import io.tileverse.parquetry.format.KeyValue;
@@ -373,6 +374,7 @@ public class ParquetWriter implements AutoCloseable {
                 .rowGroups(completedRowGroups)
                 .keyValueMetadata(keyValueMetadata)
                 .createdBy(Optional.of(CREATED_BY + " version " + CREATED_BY_VERSION))
+                .columnOrders(Optional.of(typeDefinedColumnOrders()))
                 .build();
 
         long footerStart = out.bytesWritten();
@@ -395,6 +397,21 @@ public class ParquetWriter implements AutoCloseable {
             return List.of();
         }
         return List.of(new KeyValue(GEO_KEY, geoJson));
+    }
+
+    /**
+     * Declares the type-defined sort order for every leaf column. This is the signal that the footer's
+     * {@code min_value}/{@code max_value} statistics obey each column type's logical ordering (signed for numeric
+     * types, unsigned-lexicographic for binary) rather than the legacy signed-byte comparison. Readers must disregard
+     * the modern statistics fields when it is absent.
+     */
+    private List<ColumnOrder> typeDefinedColumnOrders() {
+        int leafCount = schema.leafColumns().size();
+        List<ColumnOrder> orders = new ArrayList<>(leafCount);
+        for (int i = 0; i < leafCount; i++) {
+            orders.add(new ColumnOrder.TypeDefined());
+        }
+        return orders;
     }
 
     /**
