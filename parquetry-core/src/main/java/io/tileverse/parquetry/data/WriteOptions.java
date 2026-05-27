@@ -57,6 +57,8 @@ import lombok.NonNull;
  * @param indexedColumns columns flagged for bloom filter emission; unmodifiable
  * @param bloomFilters per-column explicit bloom filter configs; unmodifiable
  * @param crs per-column CRS overrides keyed by dotted column path; unmodifiable
+ * @param keyValueMetadata caller-supplied file-level key/value metadata merged into the footer alongside the
+ *     writer-managed GeoParquet entry; the reserved {@code "geo"} key is rejected; unmodifiable
  * @param tempDir working directory for column-chunk temp files
  * @param progressListener optional progress listener
  * @param progressListenerCadenceRows row cadence between {@link WriteProgressListener#onRowsWritten(long)} callbacks
@@ -75,9 +77,12 @@ public record WriteOptions(
         @NonNull Set<String> indexedColumns,
         @NonNull Map<String, BloomFilterConfig> bloomFilters,
         @NonNull Map<String, CoordinateReferenceSystem> crs,
+        @NonNull Map<String, String> keyValueMetadata,
         @NonNull Path tempDir,
         @NonNull Optional<WriteProgressListener> progressListener,
         long progressListenerCadenceRows) {
+
+    private static final String RESERVED_GEO_KEY = "geo";
 
     public WriteOptions {
         if (pageValueLimit <= 0) {
@@ -107,6 +112,8 @@ public record WriteOptions(
         bloomFilters = unmodifiableSnapshot(bloomFilters);
         crs = unmodifiableSnapshot(crs);
         indexedColumns = unmodifiableSnapshot(indexedColumns);
+        rejectReservedKeys(keyValueMetadata);
+        keyValueMetadata = unmodifiableSnapshot(keyValueMetadata);
     }
 
     /**
@@ -304,6 +311,7 @@ public record WriteOptions(
         private final Set<String> indexedColumns = new LinkedHashSet<>();
         private final Map<String, BloomFilterConfig> bloomFilters = new LinkedHashMap<>();
         private final Map<String, CoordinateReferenceSystem> crs = new LinkedHashMap<>();
+        private final Map<String, String> keyValueMetadata = new LinkedHashMap<>();
         private Path tempDir = Path.of(System.getProperty("java.io.tmpdir"));
         private Optional<WriteProgressListener> progressListener = Optional.empty();
         private long progressListenerCadenceRows = 100_000L;
@@ -407,6 +415,26 @@ public record WriteOptions(
             return this;
         }
 
+        /**
+         * Adds a caller-managed file-level key/value metadata entry, merged into the footer alongside the
+         * writer-managed GeoParquet block. Accumulates across calls; a repeated key overwrites. The reserved
+         * {@code "geo"} key is rejected because the writer derives it from the geometry columns.
+         */
+        public Builder keyValueMetadata(@NonNull String key, @NonNull String value) {
+            if (RESERVED_GEO_KEY.equals(key)) {
+                throw reservedKeyError();
+            }
+            this.keyValueMetadata.put(key, value);
+            return this;
+        }
+
+        /** Adds every entry of {@code entries}; same accumulation and reserved-key rules as the single-entry form. */
+        public Builder keyValueMetadata(@NonNull Map<String, String> entries) {
+            rejectReservedKeys(entries);
+            this.keyValueMetadata.putAll(entries);
+            return this;
+        }
+
         public Builder tempDir(@NonNull Path dir) {
             this.tempDir = dir;
             return this;
@@ -440,6 +468,7 @@ public record WriteOptions(
                     indexedColumns,
                     bloomFilters,
                     crs,
+                    keyValueMetadata,
                     tempDir,
                     progressListener,
                     progressListenerCadenceRows);
@@ -451,6 +480,18 @@ public record WriteOptions(
             }
             return value;
         }
+    }
+
+    private static void rejectReservedKeys(Map<String, String> entries) {
+        if (entries.containsKey(RESERVED_GEO_KEY)) {
+            throw reservedKeyError();
+        }
+    }
+
+    private static IllegalArgumentException reservedKeyError() {
+        return new IllegalArgumentException(
+                "'" + RESERVED_GEO_KEY
+                        + "' is a reserved key managed by the writer; it is derived from the geometry columns and cannot be set explicitly");
     }
 
     private static <K, V> Map<K, V> unmodifiableSnapshot(Map<K, V> source) {

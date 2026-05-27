@@ -386,16 +386,18 @@ public class ParquetWriter implements AutoCloseable {
     }
 
     /**
-     * Builds the file's key/value metadata. Default behaviour emits the GeoParquet 1.x {@code "geo"} entry when at
-     * least one geospatial column was written. Subclasses may override to add bespoke entries (e.g. authoring tool
-     * version, custom application metadata).
+     * Builds the file's key/value metadata: the caller's {@link WriteOptions#keyValueMetadata()} entries followed by
+     * the writer-managed GeoParquet 1.x {@code "geo"} entry, emitted when at least one geospatial column was written.
+     * Subclasses may override to add bespoke entries (e.g. authoring tool version, custom application metadata).
      */
     protected List<KeyValue> buildKeyValueMetadata() {
+        List<KeyValue> entries = new ArrayList<>();
+        options.keyValueMetadata().forEach((key, value) -> entries.add(new KeyValue(key, Optional.of(value))));
         Optional<String> geoJson = geoWriter.v1JsonPayload(schema, geoSummaries);
-        if (geoJson.isEmpty()) {
-            return List.of();
+        if (geoJson.isPresent()) {
+            entries.add(new KeyValue(GEO_KEY, geoJson));
         }
-        return List.of(new KeyValue(GEO_KEY, geoJson));
+        return entries;
     }
 
     /**

@@ -227,6 +227,27 @@ class ParquetWriterTest {
     }
 
     @Test
+    void footerCarriesCallerKeyValueMetadataAlongsideGeo() throws Exception {
+        ParquetSchema schema = flatSchema(requiredBinary("geometry"), requiredInt32("id"));
+        WriteOptions options = options()
+                .crsEpsg("geometry", 4326)
+                .keyValueMetadata("pandas", "{\"version\":\"1.0\"}")
+                .build();
+        Path parquetFile = tempDir.resolve("geo-with-kv.parquet");
+        byte[] wkbPoint = wkbPoint(1.0, 2.0);
+        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
+            writer.write(
+                    row(Map.of(ColumnPath.of("geometry"), MemorySegment.ofArray(wkbPoint), ColumnPath.of("id"), 1)));
+        }
+
+        try (ByteRangeSource source = ByteRangeSource.ofFile(parquetFile)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
+            Map<String, String> kv = dataset.keyValueMetadata();
+            assertThat(kv).containsKey("geo").containsEntry("pandas", "{\"version\":\"1.0\"}");
+        }
+    }
+
+    @Test
     void closeIsIdempotent() throws Exception {
         ParquetSchema schema = flatSchema(requiredInt32("id"));
         WriteOptions options = options().build();
