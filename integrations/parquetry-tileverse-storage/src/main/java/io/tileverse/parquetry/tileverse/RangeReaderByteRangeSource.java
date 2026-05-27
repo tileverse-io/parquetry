@@ -68,7 +68,7 @@ final class RangeReaderByteRangeSource implements ByteRangeSource {
         int requested = (int) length;
         int total = 0;
         while (total < requested) {
-            ByteBuffer target = dst.asSlice(total, requested - total).asByteBuffer();
+            ByteBuffer target = dst.asSlice(total, (long) requested - total).asByteBuffer();
             int read = reader.readRange(offset + total, requested - total, target);
             if (read <= 0) {
                 break;

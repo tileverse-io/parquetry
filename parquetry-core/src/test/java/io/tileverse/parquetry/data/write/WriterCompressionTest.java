@@ -213,7 +213,7 @@ class WriterCompressionTest {
         return copy::get;
     }
 
-    private static List<Integer> readInts(Path file, String columnName) throws Exception {
+    private static List<Integer> readInts(Path file, String columnName) {
         List<Integer> out = new ArrayList<>();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetDataset dataset = ParquetDataset.open(source);
@@ -225,7 +225,7 @@ class WriterCompressionTest {
         return out;
     }
 
-    private static ColumnMetaData columnMetadata(Path file, String columnName) throws Exception {
+    private static ColumnMetaData columnMetadata(Path file, String columnName) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             FileMetaData footer = ParquetFormat.readFooter(source);
             for (RowGroup rg : footer.rowGroups()) {

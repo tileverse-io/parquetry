@@ -67,6 +67,8 @@ public final class LateMaterializingRowGroupReader {
     private final Map<ColumnPath, OffsetIndex> offsetIndexes;
     private final long numRows;
 
+    // S107: aggregates the late-materialization decode inputs; a parameter object would only relocate the arity.
+    @SuppressWarnings("java:S107")
     public LateMaterializingRowGroupReader(
             @NonNull List<FetchedColumnChunk> chunks,
             @NonNull ParquetSchema fileSchema,
@@ -168,7 +170,7 @@ public final class LateMaterializingRowGroupReader {
         for (ParquetRecordBatch batch : batches) {
             try {
                 batch.close();
-            } catch (RuntimeException ignored) {
+            } catch (RuntimeException _) {
                 // Best-effort cleanup while propagating the original failure.
             }
         }

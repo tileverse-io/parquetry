@@ -294,7 +294,7 @@ class ParquetWriterTest {
         return copy::get;
     }
 
-    private static List<Integer> readIds(Path file) throws Exception {
+    private static List<Integer> readIds(Path file) {
         List<Integer> ids = new ArrayList<>();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetDataset dataset = ParquetDataset.open(source);

@@ -75,8 +75,9 @@ class LateMaterializationReadTest {
 
         assertThat(actual)
                 .as("output-only projection yields exactly the predicate-matching rows, in order")
-                .containsExactlyElementsOf(expected);
-        assertThat(actual).as("ten rows match id in [40, 50)").hasSize(10);
+                .containsExactlyElementsOf(expected)
+                .as("ten rows match id in [40, 50)")
+                .hasSize(10);
     }
 
     @Test
@@ -90,8 +91,8 @@ class LateMaterializationReadTest {
 
         assertThat(actual)
                 .as("the predicate column appears in the output with its matching value")
-                .containsExactlyElementsOf(expected);
-        assertThat(actual).hasSize(1);
+                .containsExactlyElementsOf(expected)
+                .hasSize(1);
         assertThat(actual.get(0).id())
                 .as("the projected id carries the matched value")
                 .isEqualTo(73L);
@@ -106,9 +107,10 @@ class LateMaterializationReadTest {
         List<Row> actual = readRows(file, predicate, projection, ReadOptions.DEFAULTS);
         List<Row> expected = baseline(predicate, projection);
 
-        assertThat(actual).containsExactlyElementsOf(expected);
-        assertThat(actual).as("five rows match id >= 95").hasSize(5);
         assertThat(actual)
+                .containsExactlyElementsOf(expected)
+                .as("five rows match id >= 95")
+                .hasSize(5)
                 .as("the predicate column is not in the projection, hence absent from output")
                 .allSatisfy(row -> assertThat(row.id()).isNull());
     }
@@ -134,8 +136,7 @@ class LateMaterializationReadTest {
                 .hasSize(ROW_COUNT);
         assertThat(pagePruned)
                 .as("the record filter off path keeps every matching row, only pages were pruned")
-                .containsAll(matching);
-        assertThat(pagePruned)
+                .containsAll(matching)
                 .as("no per-row filtering happened, hence the result is a superset of the ten matching rows")
                 .hasSizeGreaterThan(matching.size());
     }
@@ -163,8 +164,9 @@ class LateMaterializationReadTest {
 
         assertThat(actual)
                 .as("matching rows are collected in order across multiple row groups")
-                .containsExactlyElementsOf(expected);
-        assertThat(actual).as("seventy rows match id in [10, 80)").hasSize(70);
+                .containsExactlyElementsOf(expected)
+                .as("seventy rows match id in [10, 80)")
+                .hasSize(70);
     }
 
     @Test
@@ -189,12 +191,11 @@ class LateMaterializationReadTest {
 
     // --- read + baseline helpers ---
 
-    private List<Row> readRows(Path file, Predicate predicate, Projection projection, ReadOptions options)
-            throws Exception {
+    private List<Row> readRows(Path file, Predicate predicate, Projection projection, ReadOptions options) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetDataset dataset = ParquetDataset.open(source);
             try (Stream<ParquetRecord> rows = dataset.read(predicate, projection, options)) {
-                return rows.map(record -> toRow(record, projection)).toList();
+                return rows.map(rec -> toRow(rec, projection)).toList();
             }
         }
     }
@@ -214,6 +215,7 @@ class LateMaterializationReadTest {
      * Evaluates the small family of {@code id}-range predicates this test uses against the known row contents, which
      * keeps the baseline independent of the reader under test.
      */
+    @SuppressWarnings("java:S7475") // palantirJavaFormat 2.90 limitation
     private static boolean matchesSelectiveRange(Predicate predicate, long id) {
         return switch (predicate) {
             case Predicate.Eq(ColumnPath _, var value) -> id == ((Number) longOf(value)).longValue();
@@ -241,12 +243,12 @@ class LateMaterializationReadTest {
         return new Row(projectedId, projectedV, projectedName, projectedTag);
     }
 
-    private Row toRow(ParquetRecord record, Projection projection) {
+    private Row toRow(ParquetRecord rec, Projection projection) {
         Set<ColumnPath> kept = keptColumns(projection);
-        Long id = kept.contains(ID) ? record.getLong(ID) : null;
-        Double v = kept.contains(V) ? record.getDouble(V) : null;
-        String name = kept.contains(NAME) ? record.getString(NAME) : null;
-        Integer tag = kept.contains(TAG) ? record.getInt(TAG) : null;
+        Long id = kept.contains(ID) ? rec.getLong(ID) : null;
+        Double v = kept.contains(V) ? rec.getDouble(V) : null;
+        String name = kept.contains(NAME) ? rec.getString(NAME) : null;
+        Integer tag = kept.contains(TAG) ? rec.getInt(TAG) : null;
         return new Row(id, v, name, tag);
     }
 
@@ -293,7 +295,7 @@ class LateMaterializationReadTest {
 
     private static ParquetSchema flatSchema(SchemaNode.Primitive... leaves) {
         List<SchemaNode> children =
-                Stream.of(leaves).map(leaf -> (SchemaNode) leaf).toList();
+                Stream.of(leaves).map(SchemaNode.class::cast).toList();
         SchemaNode.Group root = new SchemaNode.Group("schema", Repetition.REQUIRED, children, Optional.empty(), -1);
         return new ParquetSchema(root);
     }

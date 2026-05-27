@@ -98,8 +98,6 @@ public class PagePruningBenchmark {
 
     private int rows;
     private int pageValues;
-    private long predicateLow;
-    private long predicateHigh;
 
     private Path workDir;
     private SyntheticParquet.OpenDataset open;
@@ -112,8 +110,8 @@ public class PagePruningBenchmark {
         rows = smoke ? 10_000 : 1_000_000;
         pageValues = smoke ? 1_024 : 2_048;
         int band = rows / 100;
-        predicateLow = (rows - band) / 2L;
-        predicateHigh = predicateLow + band - 1L;
+        long predicateLow = (rows - band) / 2L;
+        long predicateHigh = predicateLow + band - 1L;
 
         workDir = Files.createTempDirectory("parquetry-bench-page-pruning-");
         Path file = workDir.resolve("page-pruning.parquet");
@@ -134,8 +132,8 @@ public class PagePruningBenchmark {
 
     @Benchmark
     public double filteredRead() {
-        try (Stream<ParquetRecord> rows = open.dataset().read(predicate, projection, options)) {
-            return rows.mapToDouble(record -> record.getDouble(SyntheticParquet.VALUE))
+        try (Stream<ParquetRecord> records = open.dataset().read(predicate, projection, options)) {
+            return records.mapToDouble(rec -> rec.getDouble(SyntheticParquet.VALUE))
                     .sum();
         }
     }

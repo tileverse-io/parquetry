@@ -18,7 +18,6 @@ package io.tileverse.parquetry.data.read;
 import static io.tileverse.parquetry.filter.Pred.col;
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.io.IOException;
 import java.lang.foreign.MemorySegment;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -113,7 +112,7 @@ class OffsetIndexSingleReadTest {
      * Opens the file on a plain reader, reads the footer, and returns the OffsetIndex byte offset for the {@code id}
      * column chunk in row group 0.
      */
-    private long readIdOffsetIndexOffset(Path file) throws IOException {
+    private long readIdOffsetIndexOffset(Path file) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             FileMetaData footer = ParquetFormat.readFooter(source);
             RowGroup rowGroup = footer.rowGroups().get(0);

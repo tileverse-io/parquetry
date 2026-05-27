@@ -183,7 +183,7 @@ class GeoServerOutputDemoIT {
         return new SchemaNode.Primitive(name, Repetition.REQUIRED, kind, OptionalInt.empty(), Optional.empty(), -1);
     }
 
-    private static FileMetaData readFooter(Path file) throws Exception {
+    private static FileMetaData readFooter(Path file) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             return ParquetFormat.readFooter(source);
         }

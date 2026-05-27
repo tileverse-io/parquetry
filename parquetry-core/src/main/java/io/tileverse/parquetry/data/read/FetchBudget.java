@@ -50,7 +50,7 @@ public final class FetchBudget {
 
     /** A budget capped at {@code fraction} of {@code min(maxHeap, maxDirectMemory)}; {@code fraction} in (0, 1]. */
     public static FetchBudget ofMaxMemoryFraction(double fraction) {
-        if (!(fraction > 0) || fraction > 1.0) {
+        if (Double.isNaN(fraction) || fraction <= 0.0 || fraction > 1.0) {
             throw new IllegalArgumentException("fraction must be in (0, 1], got " + fraction);
         }
         long basis = Math.min(Runtime.getRuntime().maxMemory(), maxDirectMemoryBytes());
@@ -114,9 +114,9 @@ public final class FetchBudget {
             if (configured > 0) {
                 return configured;
             }
-        } catch (RuntimeException ignored) {
-            // The HotSpot diagnostic bean may be absent on non-HotSpot JVMs, or the option value may be non-numeric;
-            // in either case fall back to the heap size as the memory basis.
+        } catch (RuntimeException _) {
+            // The HotSpot diagnostic bean is absent on non-HotSpot JVMs and its option value can be non-numeric.
+            // Either way, fall back to the heap size as the memory basis.
         }
         return Runtime.getRuntime().maxMemory();
     }

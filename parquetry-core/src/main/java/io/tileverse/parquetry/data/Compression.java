@@ -368,7 +368,7 @@ public sealed interface Compression
         private ZstdCompressor compressorAtBestLevel() {
             try {
                 return ZstdCompressor.create(level);
-            } catch (IllegalArgumentException nonNativeRejectsNonDefaultLevel) {
+            } catch (IllegalArgumentException _) {
                 return ZstdCompressor.create();
             }
         }

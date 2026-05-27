@@ -704,11 +704,11 @@ class WriteOptionsTest {
             }
         }
 
-        private List<Encoding> columnEncodings(Path file, String columnName) throws Exception {
+        private List<Encoding> columnEncodings(Path file, String columnName) {
             return columnMetadata(file, columnName).encodings();
         }
 
-        private ColumnMetaData columnMetadata(Path file, String columnName) throws Exception {
+        private ColumnMetaData columnMetadata(Path file, String columnName) {
             try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
                 FileMetaData footer = ParquetFormat.readFooter(source);
                 for (RowGroup rg : footer.rowGroups()) {

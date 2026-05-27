@@ -52,7 +52,7 @@ class PageSelectionTest {
     void exposesEachPagesFirstRowIndex() {
         PageSelection selection = PageSelection.forRanges(FOUR_PAGES, 8, RowRanges.all(8));
 
-        assertThat(selection.firstRowIndex(0)).isEqualTo(0L);
+        assertThat(selection.firstRowIndex(0)).isZero();
         assertThat(selection.firstRowIndex(2)).isEqualTo(4L);
         assertThat(selection.firstRowIndex(3)).isEqualTo(6L);
         assertThat(selection.survivingPageCount()).isEqualTo(4);

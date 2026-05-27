@@ -68,7 +68,7 @@ class ParallelDecodeParityTest {
                 .containsExactlyElementsOf(serial);
     }
 
-    private static List<String> read(Path file, int decodeAhead, DecodeExecutor executor) throws Exception {
+    private static List<String> read(Path file, int decodeAhead, DecodeExecutor executor) {
         CountingSegmentPool pool = new CountingSegmentPool();
         List<String> rendered = new ArrayList<>();
         try (ByteRangeSource source = TestParquetFiles.openRangeReader(file)) {
@@ -79,14 +79,14 @@ class ParallelDecodeParityTest {
                     .maxDecodeAheadPerRead(decodeAhead)
                     .build();
             try (Stream<ParquetRecord> stream = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
-                stream.forEach(record -> rendered.add(renderKey(record)));
+                stream.forEach(rec -> rendered.add(renderKey(rec)));
             }
         }
         assertThat(pool.outstanding()).isZero();
         return rendered;
     }
 
-    private static String renderKey(ParquetRecord record) {
-        return record.getInt(YEAR) + "|" + record.getString(COUNTRY) + "|" + record.getDouble(VALUE);
+    private static String renderKey(ParquetRecord rec) {
+        return rec.getInt(YEAR) + "|" + rec.getString(COUNTRY) + "|" + rec.getDouble(VALUE);
     }
 }

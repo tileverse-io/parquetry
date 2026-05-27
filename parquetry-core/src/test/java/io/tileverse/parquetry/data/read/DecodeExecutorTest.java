@@ -38,7 +38,7 @@ class DecodeExecutorTest {
     }
 
     @Test
-    void boundsConcurrencyToParallelism() throws Exception {
+    void boundsConcurrencyToParallelism() {
         DecodeExecutor executor = DecodeExecutor.ofParallelism(2);
         try {
             assertThat(executor.tryAcquire()).isTrue();
@@ -61,7 +61,7 @@ class DecodeExecutorTest {
         assertThat(executor.tryAcquire()).isTrue();
         try {
             executor.submitAcquired(() -> "x");
-        } catch (java.util.concurrent.RejectedExecutionException expected) {
+        } catch (java.util.concurrent.RejectedExecutionException _) {
             // expected
         }
         assertThat(executor.availableSlots())
@@ -79,7 +79,7 @@ class DecodeExecutorTest {
             });
             try {
                 future.get();
-            } catch (java.util.concurrent.ExecutionException expected) {
+            } catch (java.util.concurrent.ExecutionException _) {
                 // the task's exception is wrapped in the Future; we only assert slot state here
             }
             assertThat(executor.availableSlots())

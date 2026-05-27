@@ -154,7 +154,7 @@ public final class RowGroupChunks {
             return Optional.of(loader.readOffsetIndex(
                     chunk.offsetIndexOffset().getAsLong(),
                     chunk.offsetIndexLength().getAsInt()));
-        } catch (RuntimeException failedRead) {
+        } catch (RuntimeException _) {
             return Optional.empty();
         }
     }
@@ -170,7 +170,7 @@ public final class RowGroupChunks {
             return Optional.of(loader.readColumnIndex(
                     chunk.columnIndexOffset().getAsLong(),
                     chunk.columnIndexLength().getAsInt()));
-        } catch (RuntimeException failedRead) {
+        } catch (RuntimeException _) {
             return Optional.empty();
         }
     }
@@ -205,7 +205,7 @@ public final class RowGroupChunks {
             SplitBlockBloomFilter filter =
                     loader.readBloom(columnMeta.bloomFilterOffset().getAsLong(), length);
             return Optional.of(new ColumnBloom(kind.orElseThrow(), filter));
-        } catch (RuntimeException failedRead) {
+        } catch (RuntimeException _) {
             return Optional.empty();
         }
     }

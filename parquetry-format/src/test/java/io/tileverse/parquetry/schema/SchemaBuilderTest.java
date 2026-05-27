@@ -76,7 +76,7 @@ class SchemaBuilderTest {
         assertThat(schema.leafColumns()).hasSize(2);
     }
 
-    private static FileMetaData readFooter(Path file) throws Exception {
+    private static FileMetaData readFooter(Path file) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             return ParquetFormat.readFooter(source);
         }

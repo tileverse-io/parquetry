@@ -101,7 +101,7 @@ public final class RowGroupFetcher {
             for (Pooled buffer : buffers) {
                 try {
                     buffer.close();
-                } catch (RuntimeException ignored) {
+                } catch (RuntimeException _) {
                     // best-effort cleanup; rethrow the original failure
                 }
             }

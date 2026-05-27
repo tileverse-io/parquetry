@@ -96,7 +96,7 @@ public final class TestCorpus {
             } finally {
                 fileSystem.close();
             }
-        } catch (FileSystemAlreadyExistsException alreadyOpen) {
+        } catch (FileSystemAlreadyExistsException _) {
             // Another reader already mounted this jar; reuse its file system and leave it open for them.
             FileSystem fileSystem = FileSystems.getFileSystem(jarUri);
             copyTree(fileSystem.getPath("/" + resourcePath), targetDir);

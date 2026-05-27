@@ -238,7 +238,7 @@ class ParquetWriterBatchTest {
         return copy::get;
     }
 
-    private static List<Map<String, Object>> readAll(Path parquetFile, ParquetSchema schema) throws Exception {
+    private static List<Map<String, Object>> readAll(Path parquetFile, ParquetSchema schema) {
         List<Map<String, Object>> out = new ArrayList<>();
         try (ByteRangeSource source = ByteRangeSource.ofFile(parquetFile)) {
             ParquetDataset dataset = ParquetDataset.open(source);

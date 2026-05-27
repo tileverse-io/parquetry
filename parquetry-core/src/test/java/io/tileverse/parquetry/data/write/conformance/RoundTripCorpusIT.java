@@ -225,7 +225,7 @@ class RoundTripCorpusIT {
         }
     }
 
-    private static List<RowSnapshot> readRowsFromFile(Path file) throws IOException {
+    private static List<RowSnapshot> readRowsFromFile(Path file) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetDataset dataset = ParquetDataset.open(source);
             List<ColumnPath> leaves = dataset.schema().leafColumns();

@@ -151,7 +151,7 @@ public class LateMaterializationBenchmark {
     @Param({"false"})
     private boolean smoke;
 
-    private int rows;
+    private int rowCount;
     private int valueColumns;
     private int pageValues;
     private Path workDir;
@@ -162,7 +162,7 @@ public class LateMaterializationBenchmark {
 
     @Setup(Level.Trial)
     public void setUp() throws IOException {
-        rows = smoke ? SMOKE_ROWS : ROWS;
+        rowCount = smoke ? SMOKE_ROWS : ROWS;
         valueColumns = smoke ? SMOKE_VALUE_COLUMNS : VALUE_COLUMNS;
         pageValues = smoke ? SMOKE_PAGE_VALUES : PAGE_VALUES;
         workDir = Files.createTempDirectory("parquetry-bench-late-mat-");
@@ -170,7 +170,7 @@ public class LateMaterializationBenchmark {
         long[] ids = idsForLayout();
         SyntheticParquet.writeWideFile(file, writeOptions(), ids, valueColumns);
         open = SyntheticParquet.open(file);
-        predicate = selectivity.predicate(rows);
+        predicate = selectivity.predicate(rowCount);
         // Project only the output columns - id is the predicate column and is excluded from the output
         // to let output-column decode dominate, which measures late-mat savings cleanly.
         projection = SyntheticParquet.wideValueProjection(valueColumns);
@@ -190,21 +190,21 @@ public class LateMaterializationBenchmark {
     @Benchmark
     public double filteredRead() {
         try (Stream<ParquetRecord> rows = open.dataset().read(predicate, projection, options)) {
-            return rows.mapToDouble(record -> record.getDouble(SyntheticParquet.valueColumn(0)))
+            return rows.mapToDouble(rec -> rec.getDouble(SyntheticParquet.valueColumn(0)))
                     .sum();
         }
     }
 
     private long[] idsForLayout() {
         return layout == Layout.SORTED
-                ? SyntheticParquet.sortedIds(rows)
-                : SyntheticParquet.shuffledIds(rows, SHUFFLE_SEED);
+                ? SyntheticParquet.sortedIds(rowCount)
+                : SyntheticParquet.shuffledIds(rowCount, SHUFFLE_SEED);
     }
 
     private WriteOptions writeOptions() {
         WriteOptions.Builder builder = WriteOptions.builder()
                 .tempDir(workDir)
-                .rowGroupSize(WriteOptions.RowGroupSize.rows(rows + 1L))
+                .rowGroupSize(WriteOptions.RowGroupSize.rows(rowCount + 1L))
                 .pageValueLimit(pageValues)
                 .encodingPolicy("id", WriteOptions.EncodingPolicy.FORCE_PLAIN);
         for (int i = 0; i < valueColumns; i++) {

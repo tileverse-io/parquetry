@@ -73,7 +73,7 @@ public final class DataPageV2Reader implements DataPageReader {
         int valuesUncompressedSize = computeValuesUncompressedSize(header, repLen, defLen);
 
         MemorySegment repLevels = sliceOrNull(compressedPagePayload, 0L, repLen);
-        MemorySegment defLevels = sliceOrNull(compressedPagePayload, (long) repLen, defLen);
+        MemorySegment defLevels = sliceOrNull(compressedPagePayload, repLen, defLen);
         MemorySegment valuesSlice = compressedPagePayload.asSlice((long) repLen + defLen);
 
         Encoding valuesEncoding = DataPageReader.normalizeEncoding(v2.encoding());

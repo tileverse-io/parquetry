@@ -205,7 +205,7 @@ class EndToEndV2ReadTest {
 
     // --- read helper ---
 
-    private static List<ParquetRecord> readAllRecords(Path file, CountingSegmentPool pool) throws IOException {
+    private static List<ParquetRecord> readAllRecords(Path file, CountingSegmentPool pool) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetDataset dataset = ParquetDataset.open(source);
             ReadOptions options = ReadOptions.builder().segmentPool(pool).build();
@@ -217,7 +217,7 @@ class EndToEndV2ReadTest {
         }
     }
 
-    private static int rowGroupCount(Path file) throws IOException {
+    private static int rowGroupCount(Path file) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             return ParquetFormat.readFooter(source).rowGroups().size();
         }

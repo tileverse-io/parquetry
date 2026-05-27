@@ -67,7 +67,7 @@ public final class CorpusFixtures {
         }
         try (Stream<Path> paths = Files.walk(root)) {
             paths.sorted(Comparator.reverseOrder()).forEach(CorpusFixtures::deleteQuietly);
-        } catch (IOException ignored) {
+        } catch (IOException _) {
             // Best-effort cleanup of a temp directory at JVM shutdown.
         }
     }
@@ -75,7 +75,7 @@ public final class CorpusFixtures {
     private static void deleteQuietly(Path path) {
         try {
             Files.deleteIfExists(path);
-        } catch (IOException ignored) {
+        } catch (IOException _) {
             // Best-effort.
         }
     }

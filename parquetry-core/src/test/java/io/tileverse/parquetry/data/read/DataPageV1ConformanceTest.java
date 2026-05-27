@@ -157,7 +157,7 @@ class DataPageV1ConformanceTest {
 
     // --- pipeline drivers ---
 
-    private static List<ParquetRecord> readAllViaParquetry(Path fixture, CountingSegmentPool pool) throws IOException {
+    private static List<ParquetRecord> readAllViaParquetry(Path fixture, CountingSegmentPool pool) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixture)) {
             ParquetDataset dataset = ParquetDataset.open(source);
             ReadOptions options = ReadOptions.builder().segmentPool(pool).build();

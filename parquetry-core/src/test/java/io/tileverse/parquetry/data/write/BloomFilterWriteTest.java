@@ -250,7 +250,7 @@ class BloomFilterWriteTest {
         return copy::get;
     }
 
-    private static SplitBlockBloomFilter loadBloomFilter(Path file, String columnName) throws Exception {
+    private static SplitBlockBloomFilter loadBloomFilter(Path file, String columnName) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             FileMetaData footer = ParquetFormat.readFooter(source);
             ColumnMetaData meta = findColumn(footer, columnName);
@@ -262,7 +262,7 @@ class BloomFilterWriteTest {
         }
     }
 
-    private static ColumnMetaData columnMetadata(Path file, String columnName) throws Exception {
+    private static ColumnMetaData columnMetadata(Path file, String columnName) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             FileMetaData footer = ParquetFormat.readFooter(source);
             return findColumn(footer, columnName);

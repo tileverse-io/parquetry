@@ -64,11 +64,11 @@ final class TestParquetFiles {
                 .withRowGroupSize(8_192L)
                 .build()) {
             for (int i = 0; i < rows; i++) {
-                GenericData.Record record = new GenericData.Record(schema);
-                record.put("year", 2020 + (i % 5));
-                record.put("country", (i % 2 == 0) ? "AR" : "BR");
-                record.put("value", i * 1.5);
-                writer.write(record);
+                GenericData.Record rec = new GenericData.Record(schema);
+                rec.put("year", 2020 + (i % 5));
+                rec.put("country", (i % 2 == 0) ? "AR" : "BR");
+                rec.put("value", i * 1.5);
+                writer.write(rec);
             }
         }
         return file;
@@ -79,7 +79,7 @@ final class TestParquetFiles {
      *
      * <p>Opens a fresh source for the sole purpose of reading the footer, then closes it before returning.
      */
-    static int rowGroupCount(Path file) throws IOException {
+    static int rowGroupCount(Path file) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             return ParquetFormat.readFooter(source).rowGroups().size();
         }

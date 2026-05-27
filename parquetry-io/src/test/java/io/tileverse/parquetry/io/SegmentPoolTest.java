@@ -126,7 +126,7 @@ class SegmentPoolTest {
                             if (segment.get(ValueLayout.JAVA_INT, 0) != i) {
                                 failed.set(true);
                             }
-                        } catch (RuntimeException e) {
+                        } catch (RuntimeException _) {
                             failed.set(true);
                         }
                     }

@@ -38,9 +38,9 @@ class CoalescingFetchPlannerTest {
                 List.of(col("a", 0, 100), col("b", 100, 100), col("c", 300, 100)), GAP, SPAN);
 
         assertThat(plan.ranges()).containsExactly(new CoalescedRange(0, 400));
-        assertThat(plan.slices().get(ColumnPath.of("a"))).isEqualTo(new ColumnSlice(0, 0, 100));
-        assertThat(plan.slices().get(ColumnPath.of("b"))).isEqualTo(new ColumnSlice(0, 100, 100));
-        assertThat(plan.slices().get(ColumnPath.of("c"))).isEqualTo(new ColumnSlice(0, 300, 100));
+        assertThat(plan.slices()).containsEntry(ColumnPath.of("a"), new ColumnSlice(0, 0, 100));
+        assertThat(plan.slices()).containsEntry(ColumnPath.of("b"), new ColumnSlice(0, 100, 100));
+        assertThat(plan.slices()).containsEntry(ColumnPath.of("c"), new ColumnSlice(0, 300, 100));
         assertThat(plan.totalBytes()).isEqualTo(400);
     }
 
@@ -50,7 +50,7 @@ class CoalescingFetchPlannerTest {
                 CoalescingFetchPlanner.plan(List.of(col("a", 0, 100), col("b", 100 + GAP + 1, 100)), GAP, SPAN);
 
         assertThat(plan.ranges()).containsExactly(new CoalescedRange(0, 100), new CoalescedRange(100 + GAP + 1, 100));
-        assertThat(plan.slices().get(ColumnPath.of("b"))).isEqualTo(new ColumnSlice(1, 0, 100));
+        assertThat(plan.slices()).containsEntry(ColumnPath.of("b"), new ColumnSlice(1, 0, 100));
     }
 
     @Test
@@ -66,7 +66,7 @@ class CoalescingFetchPlannerTest {
         FetchPlan plan = CoalescingFetchPlanner.plan(List.of(col("a", 0, SPAN + 5_000)), GAP, SPAN);
 
         assertThat(plan.ranges()).containsExactly(new CoalescedRange(0, SPAN + 5_000));
-        assertThat(plan.slices().get(ColumnPath.of("a"))).isEqualTo(new ColumnSlice(0, 0, SPAN + 5_000));
+        assertThat(plan.slices()).containsEntry(ColumnPath.of("a"), new ColumnSlice(0, 0, SPAN + 5_000));
     }
 
     @Test
@@ -83,7 +83,7 @@ class CoalescingFetchPlannerTest {
                 List.of(col("c", 200, 100), col("a", 0, 100), col("b", 100, 100)), GAP, SPAN);
 
         assertThat(plan.ranges()).containsExactly(new CoalescedRange(0, 300));
-        assertThat(plan.slices().get(ColumnPath.of("a"))).isEqualTo(new ColumnSlice(0, 0, 100));
-        assertThat(plan.slices().get(ColumnPath.of("c"))).isEqualTo(new ColumnSlice(0, 200, 100));
+        assertThat(plan.slices()).containsEntry(ColumnPath.of("a"), new ColumnSlice(0, 0, 100));
+        assertThat(plan.slices()).containsEntry(ColumnPath.of("c"), new ColumnSlice(0, 200, 100));
     }
 }

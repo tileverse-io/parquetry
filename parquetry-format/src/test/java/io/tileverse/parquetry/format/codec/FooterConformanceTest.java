@@ -83,7 +83,7 @@ class FooterConformanceTest {
         }
     }
 
-    private FileMetaData readParquetryFooter(Path file) throws Exception {
+    private FileMetaData readParquetryFooter(Path file) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             return ParquetFormat.readFooter(source);
         }

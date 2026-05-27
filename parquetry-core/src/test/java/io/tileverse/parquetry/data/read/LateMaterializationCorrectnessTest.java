@@ -183,12 +183,13 @@ class LateMaterializationCorrectnessTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("predicateCases")
-    void lateMaterializationMatchesBaseline(Case tc) throws Exception {
+    void lateMaterializationMatchesBaseline(Case tc) {
         List<Row> actual = readRows(tc.predicate(), tc.projection(), ReadOptions.DEFAULTS);
         List<Row> expected = buildBaseline(tc.predicate(), tc.projection());
 
-        assertThat(actual).as("%s: row count", tc.label()).hasSize(tc.expectedCount());
         assertThat(actual)
+                .as("%s: row count", tc.label())
+                .hasSize(tc.expectedCount())
                 .as("%s: late-mat rows equal brute-force baseline (same count, values, order)", tc.label())
                 .containsExactlyElementsOf(expected);
     }
@@ -199,7 +200,7 @@ class LateMaterializationCorrectnessTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("predicateCases")
-    void nullableOutputColumnsAreCorrect(Case tc) throws Exception {
+    void nullableOutputColumnsAreCorrect(Case tc) {
         List<Row> actual = readRows(tc.predicate(), tc.projection(), ReadOptions.DEFAULTS);
 
         Set<ColumnPath> kept = resolveKept(tc.projection());
@@ -247,7 +248,7 @@ class LateMaterializationCorrectnessTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("predicateCases")
-    void readBatchesIsUnaffectedByRecordFilter(Case tc) throws Exception {
+    void readBatchesIsUnaffectedByRecordFilter(Case tc) {
         // read() with record filter disabled - page-pruned superset only
         ReadOptions noRecordFilter =
                 ReadOptions.builder().useRecordLevelFilter(false).build();
@@ -276,16 +277,16 @@ class LateMaterializationCorrectnessTest {
     // Read helpers
     // ---------------------------------------------------------------------------
 
-    private List<Row> readRows(Predicate predicate, Projection projection, ReadOptions options) throws Exception {
+    private List<Row> readRows(Predicate predicate, Projection projection, ReadOptions options) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixtureFile)) {
             ParquetDataset dataset = ParquetDataset.open(source);
             try (Stream<ParquetRecord> rows = dataset.read(predicate, projection, options)) {
-                return rows.map(record -> toRow(record, projection)).toList();
+                return rows.map(rec -> toRow(rec, projection)).toList();
             }
         }
     }
 
-    private List<Row> flattenBatches(Predicate predicate, Projection projection, ReadOptions options) throws Exception {
+    private List<Row> flattenBatches(Predicate predicate, Projection projection, ReadOptions options) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixtureFile)) {
             ParquetDataset dataset = ParquetDataset.open(source);
             List<Row> result = new ArrayList<>();
@@ -293,8 +294,8 @@ class LateMaterializationCorrectnessTest {
                 List<ParquetRecordBatch> collected = batches.toList();
                 for (ParquetRecordBatch batch : collected) {
                     for (int i = 0; i < batch.rowCount(); i++) {
-                        ParquetRecord record = batch.materialize(i);
-                        result.add(toRow(record, projection));
+                        ParquetRecord rec = batch.materialize(i);
+                        result.add(toRow(rec, projection));
                     }
                     batch.close();
                 }
@@ -321,6 +322,7 @@ class LateMaterializationCorrectnessTest {
      * Evaluates the predicates used in this test against the known row contents. Keeps the baseline independent of the
      * reader under test.
      */
+    @SuppressWarnings("java:S7475") // palantirJavaFormat:2.90 doesn't support removing unused type from unnamed pattern
     private static boolean evaluatePredicate(Predicate predicate, long id) {
         return switch (predicate) {
             case Predicate.Always(boolean value) -> value;
@@ -360,28 +362,28 @@ class LateMaterializationCorrectnessTest {
         return new Row(projId, projI32, projI64, projD, projName);
     }
 
-    private Row toRow(ParquetRecord record, Projection projection) {
+    private Row toRow(ParquetRecord rec, Projection projection) {
         Set<ColumnPath> kept = resolveKept(projection);
-        Long id = kept.contains(ID) ? record.getLong(ID) : null;
-        Integer i32 = kept.contains(I32) ? readNullableInt(record, I32) : null;
-        Long i64 = kept.contains(I64) ? record.getLong(I64) : null;
-        Double d = kept.contains(D) ? record.getDouble(D) : null;
-        String name = kept.contains(NAME) ? readNullableString(record, NAME) : null;
+        Long id = kept.contains(ID) ? rec.getLong(ID) : null;
+        Integer i32 = kept.contains(I32) ? readNullableInt(rec, I32) : null;
+        Long i64 = kept.contains(I64) ? rec.getLong(I64) : null;
+        Double d = kept.contains(D) ? rec.getDouble(D) : null;
+        String name = kept.contains(NAME) ? readNullableString(rec, NAME) : null;
         return new Row(id, i32, i64, d, name);
     }
 
-    private static Integer readNullableInt(ParquetRecord record, ColumnPath col) {
-        if (record.isNull(col)) {
+    private static Integer readNullableInt(ParquetRecord rec, ColumnPath col) {
+        if (rec.isNull(col)) {
             return null;
         }
-        return record.getInt(col);
+        return rec.getInt(col);
     }
 
-    private static String readNullableString(ParquetRecord record, ColumnPath col) {
-        if (record.isNull(col)) {
+    private static String readNullableString(ParquetRecord rec, ColumnPath col) {
+        if (rec.isNull(col)) {
             return null;
         }
-        return record.getString(col);
+        return rec.getString(col);
     }
 
     private static Set<ColumnPath> resolveKept(Projection projection) {
@@ -455,6 +457,6 @@ class LateMaterializationCorrectnessTest {
         cells.put(I64, i64ValueFor(id));
         cells.put(D, dValueFor(id));
         cells.put(NAME, id % NAME_NULL_STRIDE == 0 ? null : nameValueFor(id).getBytes(StandardCharsets.UTF_8));
-        return path -> cells.get(path);
+        return cells::get;
     }
 }

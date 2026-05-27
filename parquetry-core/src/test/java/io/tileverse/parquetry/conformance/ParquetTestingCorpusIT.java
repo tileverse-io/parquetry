@@ -303,7 +303,7 @@ class ParquetTestingCorpusIT {
 
     // --- pipeline drivers ---
 
-    private static List<ParquetRecord> readAllViaParquetry(Path fixture, CountingSegmentPool pool) throws IOException {
+    private static List<ParquetRecord> readAllViaParquetry(Path fixture, CountingSegmentPool pool) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixture)) {
             ParquetDataset dataset = ParquetDataset.open(source);
             ReadOptions options = ReadOptions.builder().segmentPool(pool).build();
@@ -313,7 +313,7 @@ class ParquetTestingCorpusIT {
         }
     }
 
-    private static long totalRowsViaBatchApi(Path fixture, CountingSegmentPool pool) throws IOException {
+    private static long totalRowsViaBatchApi(Path fixture, CountingSegmentPool pool) {
         long[] total = {0L};
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixture)) {
             ParquetDataset dataset = ParquetDataset.open(source);

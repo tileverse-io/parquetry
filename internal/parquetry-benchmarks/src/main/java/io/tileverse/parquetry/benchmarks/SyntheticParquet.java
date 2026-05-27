@@ -26,6 +26,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Random;
 import java.util.Set;
+import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
 import io.tileverse.parquetry.data.ParquetDataset;
@@ -54,16 +55,13 @@ final class SyntheticParquet {
 
     /** Identity-ordered keys {@code 0..count-1}; per-page and per-row-group bounds are then contiguous. */
     static long[] sortedIds(int count) {
-        long[] ids = new long[count];
-        for (int i = 0; i < count; i++) {
-            ids[i] = i;
-        }
-        return ids;
+        return LongStream.range(0, count).toArray();
     }
 
     /** A deterministic permutation of {@code 0..count-1}; bounds of any contiguous slice span the whole domain. */
     static long[] shuffledIds(int count, long seed) {
         long[] ids = sortedIds(count);
+        @SuppressWarnings("java:S2245") // not a security sentitive path, PRNG is ok
         Random random = new Random(seed);
         for (int i = ids.length - 1; i > 0; i--) {
             int j = random.nextInt(i + 1);
@@ -100,7 +98,7 @@ final class SyntheticParquet {
             walk.sorted(Comparator.reverseOrder()).forEach(path -> {
                 try {
                     Files.deleteIfExists(path);
-                } catch (IOException ignored) {
+                } catch (IOException _) {
                     // best effort cleanup of a trial's scratch directory
                 }
             });
@@ -136,7 +134,7 @@ final class SyntheticParquet {
     static void writeWideFile(Path file, WriteOptions options, long[] ids, int valueColumns) throws IOException {
         ParquetSchema schema = wideSchema(valueColumns);
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            WideRow row = new WideRow(valueColumns);
+            WideRow row = new WideRow();
             for (long id : ids) {
                 row.id = id;
                 writer.write(row);
@@ -204,12 +202,7 @@ final class SyntheticParquet {
      * values deterministic without any extra per-row allocation.
      */
     private static final class WideRow implements WriteRow {
-        private final int valueColumns;
         private long id;
-
-        private WideRow(int valueColumns) {
-            this.valueColumns = valueColumns;
-        }
 
         @Override
         public Object value(ColumnPath path) {

@@ -57,7 +57,7 @@ final class DecodedRowGroup implements AutoCloseable {
         while (emitted < batches.size()) {
             try {
                 batches.get(emitted).close();
-            } catch (RuntimeException ignored) {
+            } catch (RuntimeException _) {
                 // best-effort; close remaining batches even if one throws
             }
             emitted++;

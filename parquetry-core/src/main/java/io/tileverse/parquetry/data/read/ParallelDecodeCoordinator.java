@@ -59,6 +59,8 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     private int nextToConsume;
     private int nextToSubmit;
 
+    // S107: aggregates the parallel-decode collaborators; a parameter object would only relocate the arity.
+    @SuppressWarnings("java:S107")
     public ParallelDecodeCoordinator(
             @NonNull RowGroupPrefetcher prefetcher,
             @NonNull DecodeExecutor decodeExecutor,
@@ -116,7 +118,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     private Future<DecodedRowGroup> submitDecode(RowGroupFetch fetch, Optional<RowMask> mask, int index) {
         try {
             return decodeExecutor.submitAcquired(() -> decode(fetch, mask, index));
-        } catch (RejectedExecutionException e) {
+        } catch (RejectedExecutionException _) {
             // The slot was released by submitAcquired; decode inline now and hand back a completed future.
             return CompletableFuture.completedFuture(decode(fetch, mask, index));
         }
@@ -124,7 +126,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
 
     @SuppressWarnings("MustBeClosed")
     private DecodedRowGroup decode(RowGroupFetch fetch, Optional<RowMask> mask, int index) {
-        try {
+        try (fetch) {
             if (lateMat.isPresent()) {
                 return decodeLateMaterialized(fetch, mask, index);
             }
@@ -142,8 +144,6 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
                 reader.close();
             }
             return new DecodedRowGroup(batches);
-        } finally {
-            fetch.close();
         }
     }
 
@@ -202,9 +202,9 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
         try {
             DecodedRowGroup rowGroup = future.get();
             rowGroup.close();
-        } catch (InterruptedException e) {
+        } catch (InterruptedException _) {
             Thread.currentThread().interrupt();
-        } catch (ExecutionException ignored) {
+        } catch (ExecutionException _) {
             // The decode failed and already released its own batches and fetch.
         }
     }
@@ -213,7 +213,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
         for (ParquetRecordBatch batch : batches) {
             try {
                 batch.close();
-            } catch (RuntimeException ignored) {
+            } catch (RuntimeException _) {
                 // best-effort
             }
         }

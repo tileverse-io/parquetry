@@ -84,8 +84,7 @@ class SkipDecodeColumnReadTest {
 
         assertThat(skip.decodedValueCount)
                 .as("skip-decode materializes only the selected non-null values")
-                .isEqualTo(selectedNonNull);
-        assertThat(skip.decodedValueCount)
+                .isEqualTo(selectedNonNull)
                 .as("skip-decode materializes far fewer values than the compact path")
                 .isLessThan(compact.decodedValueCount);
     }
@@ -108,8 +107,7 @@ class SkipDecodeColumnReadTest {
 
         assertThat(skip.decodedValueCount)
                 .as("skip-decode materializes only the selected non-null values")
-                .isEqualTo(selectedNonNull);
-        assertThat(skip.decodedValueCount)
+                .isEqualTo(selectedNonNull)
                 .as("skip-decode materializes far fewer values than the compact path")
                 .isLessThan(compact.decodedValueCount);
     }

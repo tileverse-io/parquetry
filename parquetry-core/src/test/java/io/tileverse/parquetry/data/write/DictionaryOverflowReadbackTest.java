@@ -79,7 +79,7 @@ class DictionaryOverflowReadbackTest {
         for (int i = 0; i < ROWS; i++) {
             expected.add((long) (i < DICT_PREFIX ? i % 4 : 1_000 + i));
         }
-        assertThat(readColumn(file, col, record -> record.getLong(col))).isEqualTo(expected);
+        assertThat(readColumn(file, rec -> rec.getLong(col))).isEqualTo(expected);
     }
 
     @Test
@@ -91,7 +91,7 @@ class DictionaryOverflowReadbackTest {
         for (int i = 0; i < ROWS; i++) {
             expected.add(labelFor(i));
         }
-        assertThat(readColumn(file, col, record -> record.getString(col))).isEqualTo(expected);
+        assertThat(readColumn(file, rec -> rec.getString(col))).isEqualTo(expected);
     }
 
     private Path writeOverflowChunk(ColumnPath col, PrimitiveKind kind, IntFunction<Object> valueAt) throws Exception {
@@ -115,20 +115,19 @@ class DictionaryOverflowReadbackTest {
         return file;
     }
 
-    private static <T> List<T> readColumn(Path file, ColumnPath col, java.util.function.Function<ParquetRecord, T> get)
-            throws Exception {
+    private static <T> List<T> readColumn(Path file, java.util.function.Function<ParquetRecord, T> get) {
         List<T> values = new ArrayList<>();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetDataset dataset = ParquetDataset.open(source);
             try (Stream<ParquetRecord> rows =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
-                rows.forEach(record -> values.add(get.apply(record)));
+                rows.forEach(rec -> values.add(get.apply(rec)));
             }
         }
         return values;
     }
 
-    private static boolean dictionaryPageWritten(Path file, ColumnPath col) throws Exception {
+    private static boolean dictionaryPageWritten(Path file, ColumnPath col) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             FileMetaData footer = ParquetFormat.readFooter(source);
             for (RowGroup rg : footer.rowGroups()) {

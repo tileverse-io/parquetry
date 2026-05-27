@@ -52,7 +52,7 @@ class SpatialBoundsSourceIT {
     private static final Path EXAMPLE_PARQUET = GEOPARQUET_ROOT.resolve("examples/example.parquet");
 
     @Test
-    void exampleParquetFallsThroughToGeoJsonFileBounds() throws Exception {
+    void exampleParquetFallsThroughToGeoJsonFileBounds() {
         if (!Files.isRegularFile(EXAMPLE_PARQUET)) {
             return;
         }

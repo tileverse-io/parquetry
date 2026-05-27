@@ -123,19 +123,28 @@ public final class LevelDecoder {
                 readNextRunHeader();
             }
             int take = Math.min(remainingInRun, count - produced);
-            if (currentRunIsRle) {
-                if (rleValue == targetLevel) {
-                    out.set(base + produced, base + produced + take);
-                }
-            } else {
-                for (int i = 0; i < take; i++) {
-                    if (readBitPackedValue() == targetLevel) {
-                        out.set(base + produced + i);
-                    }
-                }
-            }
+            setEqualBits(out, base + produced, take, targetLevel);
             remainingInRun -= take;
             produced += take;
+        }
+    }
+
+    /**
+     * Sets the bits in {@code [from, from + take)} whose level equals {@code targetLevel}, consuming {@code take}
+     * values of the current run. An RLE run sets the whole range in one call; a bit-packed run is walked value by
+     * value.
+     */
+    private void setEqualBits(BitSet out, int from, int take, int targetLevel) {
+        if (currentRunIsRle) {
+            if (rleValue == targetLevel) {
+                out.set(from, from + take);
+            }
+            return;
+        }
+        for (int i = 0; i < take; i++) {
+            if (readBitPackedValue() == targetLevel) {
+                out.set(from + i);
+            }
         }
     }
 

@@ -56,7 +56,7 @@ public final class RowGroupFetch implements AutoCloseable {
         for (Pooled buffer : buffers) {
             try {
                 buffer.close();
-            } catch (RuntimeException ignored) {
+            } catch (RuntimeException _) {
                 // best-effort cleanup; a chronic leak shows up in pool accounting
             }
         }

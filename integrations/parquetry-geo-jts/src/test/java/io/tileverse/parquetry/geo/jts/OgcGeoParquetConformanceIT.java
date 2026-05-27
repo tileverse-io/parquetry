@@ -98,7 +98,7 @@ class OgcGeoParquetConformanceIT {
         }
     }
 
-    private static List<Geometry> readGeometries(Path file) throws IOException {
+    private static List<Geometry> readGeometries(Path file) {
         ColumnPath geometry = ColumnPath.of("geometry");
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetDataset dataset = ParquetDataset.open(source);

@@ -81,13 +81,12 @@ public final class PageCursor {
             }
             int ordinal = dataPageOrdinal++;
             MemorySegment pagePayload = sliceAndAdvance(compressedSize);
-            if (selection != null && !selection.isSurviving(ordinal)) {
-                skippedDataPageCount++;
-                continue;
+            if (selection == null || selection.isSurviving(ordinal)) {
+                currentPageFirstRowIndex = (selection != null) ? selection.firstRowIndex(ordinal) : 0L;
+                decodedDataPageCount++;
+                return DataPageReader.forHeader(header).read(header, maxLevels, pagePayload, codec, pageArena);
             }
-            currentPageFirstRowIndex = (selection != null) ? selection.firstRowIndex(ordinal) : 0L;
-            decodedDataPageCount++;
-            return DataPageReader.forHeader(header).read(header, maxLevels, pagePayload, codec, pageArena);
+            skippedDataPageCount++;
         }
         return null;
     }

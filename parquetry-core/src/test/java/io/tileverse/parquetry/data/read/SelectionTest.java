@@ -64,7 +64,7 @@ class SelectionTest {
         Selection selection = builder.build();
 
         assertThat(selection.isEmpty()).as("isEmpty when no rows passed").isTrue();
-        assertThat(selection.rows().totalRows()).as("totalRows when empty").isEqualTo(0);
+        assertThat(selection.rows().totalRows()).as("totalRows when empty").isZero();
     }
 
     @Test

@@ -93,6 +93,8 @@ public final class DeltaByteArrayDecoder implements PageDecoder<MemorySegment> {
     }
 
     /** A decoded DELTA_BINARY_PACKED integer array paired with the page offset immediately after it. */
+    // S6218: internal decode carrier, never compared or hashed. Array-aware equals/hashCode would be dead weight.
+    @SuppressWarnings("java:S6218")
     private record DeltaInts(int[] values, long nextOffset) {}
 
     /**

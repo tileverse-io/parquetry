@@ -53,7 +53,7 @@ class BloomFilterFixtureTest {
             CorpusFixtures.parquetTestingData().resolve("data_index_bloom_encoding_stats.parquet");
 
     @Test
-    void eqAbsentValueIsEliminatedByBloom() throws Exception {
+    void eqAbsentValueIsEliminatedByBloom() {
         try (ByteRangeSource source = ByteRangeSource.ofFile(FIXTURE)) {
             ParquetDataset dataset = ParquetDataset.open(source);
             Predicate p = Pred.col("String").eq("absent_value_that_is_definitely_not_in_the_file");
@@ -69,7 +69,7 @@ class BloomFilterFixtureTest {
     }
 
     @Test
-    void eqPresentValueSurvivesAllTiers() throws Exception {
+    void eqPresentValueSurvivesAllTiers() {
         try (ByteRangeSource source = ByteRangeSource.ofFile(FIXTURE)) {
             ParquetDataset dataset = ParquetDataset.open(source);
             // "Hello" is the recorded min of the column; it must be in both the stats range and the bloom bitset.
@@ -86,7 +86,7 @@ class BloomFilterFixtureTest {
     }
 
     @Test
-    void disablingBloomTierStopsEliminations() throws Exception {
+    void disablingBloomTierStopsEliminations() {
         try (ByteRangeSource source = ByteRangeSource.ofFile(FIXTURE)) {
             ParquetDataset dataset = ParquetDataset.open(source);
             Predicate p = Pred.col("String").eq("absent_value_that_is_definitely_not_in_the_file");

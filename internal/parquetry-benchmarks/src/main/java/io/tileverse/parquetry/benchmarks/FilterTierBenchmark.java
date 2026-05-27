@@ -120,10 +120,8 @@ public class FilterTierBenchmark {
     @Param({"false"})
     private boolean smoke;
 
-    private int rows;
     private int rowsPerGroup;
     private int pageValues;
-    private long targetId;
 
     private Path workDir;
     private SyntheticParquet.OpenDataset open;
@@ -133,12 +131,12 @@ public class FilterTierBenchmark {
 
     @Setup(Level.Trial)
     public void setUp() throws IOException {
-        rows = smoke ? 4_000 : 1_000_000;
+        int rows = smoke ? 4_000 : 1_000_000;
         rowsPerGroup = smoke ? 1_000 : 100_000;
         pageValues = smoke ? 256 : 2_048;
         // The target lands in a middle row group, on a page interior to it. Every metadata tier then has something to
         // prune at either size.
-        targetId = rows * TARGET_FRACTION_NUMERATOR / TARGET_FRACTION_DENOMINATOR;
+        long targetId = rows * TARGET_FRACTION_NUMERATOR / TARGET_FRACTION_DENOMINATOR;
 
         workDir = Files.createTempDirectory("parquetry-bench-filter-tier-");
         Path file = workDir.resolve("filter-tier.parquet");
@@ -158,7 +156,7 @@ public class FilterTierBenchmark {
     @Benchmark
     public double pointLookup() {
         try (Stream<ParquetRecord> rows = open.dataset().read(predicate, projection, options)) {
-            return rows.mapToDouble(record -> record.getDouble(SyntheticParquet.VALUE))
+            return rows.mapToDouble(rec -> rec.getDouble(SyntheticParquet.VALUE))
                     .sum();
         }
     }

@@ -228,7 +228,7 @@ class GeoMetadataWriteTest {
         return WriteRow.of(Map.of(ColumnPath.of("geometry"), MemorySegment.ofArray(wkb)));
     }
 
-    private static FileMetaData readFooter(Path file) throws Exception {
+    private static FileMetaData readFooter(Path file) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             return ParquetFormat.readFooter(source);
         }

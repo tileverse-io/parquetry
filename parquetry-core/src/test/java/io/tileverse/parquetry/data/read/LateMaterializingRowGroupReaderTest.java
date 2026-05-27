@@ -263,7 +263,7 @@ class LateMaterializingRowGroupReaderTest {
     /**
      * Decodes every row of the file and keeps only those satisfying the predicate, used as the correctness baseline.
      */
-    private List<MaterializedRow> bruteForce(Predicate predicate, ParquetSchema outputSchema) throws Exception {
+    private List<MaterializedRow> bruteForce(Predicate predicate, ParquetSchema outputSchema) {
         List<MaterializedRow> matching = new ArrayList<>();
         for (long id = 0; id < ROW_COUNT; id++) {
             WriteValues values = valuesFor(id);
@@ -337,7 +337,7 @@ class LateMaterializingRowGroupReaderTest {
 
     private static ParquetSchema flatSchema(SchemaNode.Primitive... leaves) {
         List<SchemaNode> children =
-                Stream.of(leaves).map(leaf -> (SchemaNode) leaf).toList();
+                Stream.of(leaves).map(SchemaNode.class::cast).toList();
         SchemaNode.Group root = new SchemaNode.Group("schema", Repetition.REQUIRED, children, Optional.empty(), -1);
         return new ParquetSchema(root);
     }

@@ -367,7 +367,7 @@ class RowGroupChunksTest {
 
     private static ParquetSchema flatSchema(SchemaNode.Primitive... leaves) {
         List<SchemaNode> children =
-                Stream.of(leaves).map(node -> (SchemaNode) node).toList();
+                Stream.of(leaves).map(SchemaNode.class::cast).toList();
         SchemaNode.Group root = new SchemaNode.Group("schema", Repetition.REQUIRED, children, Optional.empty(), -1);
         return new ParquetSchema(root);
     }

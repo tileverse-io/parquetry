@@ -80,7 +80,7 @@ class BatchRowParityTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("conformanceFixtures")
-    void rowAndBatchApisAgree(String fixtureName) throws Exception {
+    void rowAndBatchApisAgree(String fixtureName) {
         Path fixture = DATA_DIR.resolve(fixtureName);
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixture)) {
             ParquetDataset dataset = ParquetDataset.open(source);

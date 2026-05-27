@@ -108,7 +108,7 @@ public final class RowGroupPrefetcher implements AutoCloseable {
                     concurrencyPermits.release();
                 }
             });
-        } catch (RejectedExecutionException e) {
+        } catch (RejectedExecutionException _) {
             concurrencyPermits.release();
             reservation.release();
             return;
@@ -165,9 +165,9 @@ public final class RowGroupPrefetcher implements AutoCloseable {
         try {
             RowGroupFetch fetch = future.get();
             fetch.close();
-        } catch (InterruptedException e) {
+        } catch (InterruptedException _) {
             Thread.currentThread().interrupt();
-        } catch (ExecutionException ignored) {
+        } catch (ExecutionException _) {
             // The fetch failed and already released its own buffers and reservation in RowGroupFetcher.fetch.
         }
     }
