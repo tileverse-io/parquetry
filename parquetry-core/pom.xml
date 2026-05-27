@@ -106,4 +106,23 @@
       <scope>test</scope>
     </dependency>
   </dependencies>
+
+  <build>
+    <resources>
+      <resource>
+        <filtering>true</filtering>
+        <directory>src/main/resources</directory>
+        <includes>
+          <include>io/tileverse/parquetry/build.properties</include>
+        </includes>
+      </resource>
+      <resource>
+        <filtering>false</filtering>
+        <directory>src/main/resources</directory>
+        <excludes>
+          <exclude>io/tileverse/parquetry/build.properties</exclude>
+        </excludes>
+      </resource>
+    </resources>
+  </build>
 </project>

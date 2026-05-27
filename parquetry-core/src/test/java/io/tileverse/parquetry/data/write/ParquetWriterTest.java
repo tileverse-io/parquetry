@@ -207,6 +207,26 @@ class ParquetWriterTest {
     }
 
     @Test
+    void footerCreatedByReportsParquetryBuildVersion() throws Exception {
+        ParquetSchema schema = flatSchema(requiredInt32("id"));
+        WriteOptions options = options().build();
+        Path parquetFile = tempDir.resolve("created-by.parquet");
+        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
+            writer.write(row(Map.of(ColumnPath.of("id"), 1)));
+        }
+
+        try (ByteRangeSource source = ByteRangeSource.ofFile(parquetFile)) {
+            io.tileverse.parquetry.format.FileMetaData footer =
+                    io.tileverse.parquetry.format.ParquetFormat.readFooter(source);
+            String createdBy = footer.createdBy().orElseThrow();
+            assertThat(createdBy).startsWith("parquetry version ");
+            // The build version must be resolved from the Maven-filtered resource: neither the unresolved
+            // placeholder nor the missing-resource fallback may leak into a published file.
+            assertThat(createdBy).doesNotContain("${").doesNotContain("unknown");
+        }
+    }
+
+    @Test
     void closeIsIdempotent() throws Exception {
         ParquetSchema schema = flatSchema(requiredInt32("id"));
         WriteOptions options = options().build();
