@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Runs the parquetry-cli shaded jar with the JVM flags parquetry needs (FFM native access, module opens).
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+jar="$(ls "${here}/../target/"parquetry-cli-*-shaded.jar 2>/dev/null | head -n1)"
+if [[ -z "${jar}" ]]; then
+  echo "par: shaded jar not found; run './mvnw -pl parquetry-cli -am package' first" >&2
+  exit 1
+fi
+exec java \
+  --enable-native-access=ALL-UNNAMED \
+  -Dfile.encoding=UTF-8 \
+  --add-opens=java.base/java.lang=ALL-UNNAMED \
+  --add-opens=java.base/java.lang.reflect=ALL-UNNAMED \
+  --add-opens=java.base/java.util=ALL-UNNAMED \
+  ${JAVA_OPTS:-} \
+  -jar "${jar}" "$@"

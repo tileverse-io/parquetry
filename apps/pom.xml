@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>io.tileverse.parquetry</groupId>
+    <artifactId>parquetry-parent</artifactId>
+    <version>${revision}</version>
+  </parent>
+
+  <artifactId>parquetry-apps</artifactId>
+  <packaging>pom</packaging>
+  <name>Parquetry :: Apps</name>
+  <description>Parent and aggregator for end-user applications built on parquetry, such as the par command-line tool.</description>
+
+  <modules>
+    <module>parquetry-cli</module>
+  </modules>
+
+  <properties>
+    <!-- Apps ship as shaded jars and native binaries via releases, not as Maven Central libraries; never deploy them. -->
+    <maven.deploy.skip>true</maven.deploy.skip>
+  </properties>
+</project>
