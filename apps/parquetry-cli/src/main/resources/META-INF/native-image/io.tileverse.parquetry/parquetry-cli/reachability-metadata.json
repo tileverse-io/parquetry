@@ -1,0 +1,8330 @@
+{
+  "reflection": [
+    {
+      "type": "apple.security.AppleProvider",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.sun.crypto.provider.AESCipher$General",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.sun.crypto.provider.ARCFOURCipher",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.sun.crypto.provider.ChaCha20Cipher$ChaCha20Poly1305",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.sun.crypto.provider.DESCipher",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.sun.crypto.provider.DESedeCipher",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.sun.crypto.provider.DHParameters",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.sun.crypto.provider.GaloisCounterMode$AESGCM",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.sun.crypto.provider.TlsMasterSecretGenerator",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.sun.management.VMOption$Origin",
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "ATTACH_ON_DEMAND"
+        },
+        {
+          "name": "CONFIG_FILE"
+        },
+        {
+          "name": "DEFAULT"
+        },
+        {
+          "name": "ENVIRON_VAR"
+        },
+        {
+          "name": "ERGONOMIC"
+        },
+        {
+          "name": "MANAGEMENT"
+        },
+        {
+          "name": "OTHER"
+        },
+        {
+          "name": "VM_CREATION"
+        }
+      ]
+    },
+    {
+      "type": "com.sun.management.internal.Flag",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.String",
+            "java.lang.Object",
+            "boolean",
+            "boolean",
+            "com.sun.management.VMOption$Origin"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "groovy.lang.Closure"
+    },
+    {
+      "type": "io.airlift.compress.v3.deflate.DeflateNative$MethodHandles",
+      "allDeclaredMethods": true,
+      "allDeclaredConstructors": true
+    },
+    {
+      "type": "io.airlift.compress.v3.lz4.Lz4Native$MethodHandles",
+      "allDeclaredMethods": true,
+      "allDeclaredConstructors": true
+    },
+    {
+      "type": "io.airlift.compress.v3.snappy.SnappyNative$MethodHandles",
+      "allDeclaredMethods": true,
+      "allDeclaredConstructors": true
+    },
+    {
+      "type": "io.airlift.compress.v3.xxhash.XxHash3Bindings$MethodHandles",
+      "allDeclaredMethods": true,
+      "allDeclaredConstructors": true
+    },
+    {
+      "type": "io.airlift.compress.v3.xxhash.XxHash64Bindings$MethodHandles",
+      "allDeclaredMethods": true,
+      "allDeclaredConstructors": true
+    },
+    {
+      "type": "io.airlift.compress.v3.zstd.ZstdNative$MethodHandles",
+      "allDeclaredMethods": true,
+      "allDeclaredConstructors": true
+    },
+    {
+      "type": "io.tileverse.parquetry.cli.GlobalOptions",
+      "fields": [
+        {
+          "name": "columns"
+        },
+        {
+          "name": "filter"
+        },
+        {
+          "name": "format"
+        },
+        {
+          "name": "limit"
+        },
+        {
+          "name": "verbose"
+        }
+      ],
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "io.tileverse.parquetry.cli.Par"
+    },
+    {
+      "type": "io.tileverse.parquetry.cli.cmd.CatCmd",
+      "fields": [
+        {
+          "name": "options"
+        },
+        {
+          "name": "spec"
+        },
+        {
+          "name": "uri"
+        }
+      ],
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "io.tileverse.parquetry.cli.cmd.CpCmd",
+      "fields": [
+        {
+          "name": "options"
+        }
+      ],
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "io.tileverse.parquetry.cli.cmd.MetaCmd",
+      "fields": [
+        {
+          "name": "options"
+        },
+        {
+          "name": "spec"
+        }
+      ],
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "io.tileverse.parquetry.cli.cmd.SchemaCmd",
+      "fields": [
+        {
+          "name": "options"
+        },
+        {
+          "name": "spec"
+        },
+        {
+          "name": "uri"
+        }
+      ],
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "io.tileverse.parquetry.schema.geo.geoparquet.BboxCovering",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "io.tileverse.parquetry.schema.ColumnPath",
+            "io.tileverse.parquetry.schema.ColumnPath",
+            "io.tileverse.parquetry.schema.ColumnPath",
+            "io.tileverse.parquetry.schema.ColumnPath",
+            "java.util.Optional",
+            "java.util.Optional"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "io.tileverse.parquetry.schema.geo.geoparquet.BboxDeserializer",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystemDeserializer",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "io.tileverse.parquetry.schema.geo.projjson.IdentifierDeserializer",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "io.tileverse.parquetry.schema.geo.geoparquet.Covering",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "io.tileverse.parquetry.schema.geo.geoparquet.BboxCovering"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.util.Optional",
+            "java.util.List",
+            "java.util.Optional",
+            "java.util.Optional",
+            "java.util.Optional",
+            "java.util.Optional",
+            "java.util.OptionalDouble",
+            "java.util.Optional"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata"
+    },
+    {
+      "type": "io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata$V1_1",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.String",
+            "java.lang.String",
+            "java.util.Map"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "io.tileverse.storage.file.FileStorageProvider"
+    },
+    {
+      "type": "io.tileverse.storage.http.HttpStorageProvider"
+    },
+    {
+      "type": "java.lang.Boolean",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "getBoolean",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "java.lang.LinkageError",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.String",
+            "java.lang.Throwable"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "java.lang.Long",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "long"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "java.lang.Object"
+    },
+    {
+      "type": "java.lang.Record"
+    },
+    {
+      "type": "java.nio.file.Path"
+    },
+    {
+      "type": "java.nio.file.Paths"
+    },
+    {
+      "type": "java.security.AlgorithmParametersSpi"
+    },
+    {
+      "type": "java.security.KeyStoreSpi"
+    },
+    {
+      "type": "java.sql.Connection"
+    },
+    {
+      "type": "java.sql.Driver"
+    },
+    {
+      "type": "java.sql.DriverManager"
+    },
+    {
+      "type": "java.sql.Time"
+    },
+    {
+      "type": "java.sql.Timestamp"
+    },
+    {
+      "type": "java.time.Duration"
+    },
+    {
+      "type": "java.time.Instant"
+    },
+    {
+      "type": "java.time.LocalDate"
+    },
+    {
+      "type": "java.time.LocalDateTime"
+    },
+    {
+      "type": "java.time.LocalTime"
+    },
+    {
+      "type": "java.time.MonthDay"
+    },
+    {
+      "type": "java.time.OffsetDateTime"
+    },
+    {
+      "type": "java.time.OffsetTime"
+    },
+    {
+      "type": "java.time.Period"
+    },
+    {
+      "type": "java.time.Year"
+    },
+    {
+      "type": "java.time.YearMonth"
+    },
+    {
+      "type": "java.time.ZoneId"
+    },
+    {
+      "type": "java.time.ZoneOffset"
+    },
+    {
+      "type": "java.time.ZonedDateTime"
+    },
+    {
+      "type": "org.slf4j.simple.SimpleServiceProvider"
+    },
+    {
+      "type": "picocli.CommandLine$AutoHelpMixin",
+      "fields": [
+        {
+          "name": "helpRequested"
+        },
+        {
+          "name": "versionRequested"
+        }
+      ]
+    },
+    {
+      "type": "sun.management.VMManagementImpl",
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "compTimeMonitoringSupport"
+        },
+        {
+          "name": "currentThreadCpuTimeSupport"
+        },
+        {
+          "name": "objectMonitorUsageSupport"
+        },
+        {
+          "name": "otherThreadCpuTimeSupport"
+        },
+        {
+          "name": "remoteDiagnosticCommandsSupport"
+        },
+        {
+          "name": "synchronizerUsageSupport"
+        },
+        {
+          "name": "threadAllocatedMemorySupport"
+        },
+        {
+          "name": "threadContentionMonitoringSupport"
+        }
+      ]
+    },
+    {
+      "type": "sun.security.pkcs12.PKCS12KeyStore",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.pkcs12.PKCS12KeyStore$DualFormatPKCS12",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.provider.DSA$SHA224withDSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.provider.DSA$SHA256withDSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.provider.NativePRNG",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.security.SecureRandomParameters"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.security.provider.SHA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.provider.SHA2$SHA224",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.provider.SHA2$SHA256",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.provider.SHA5$SHA384",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.provider.SHA5$SHA512",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.provider.X509Factory",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.rsa.PSSParameters",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.rsa.RSAKeyFactory$Legacy",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.rsa.RSAPSSSignature",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.rsa.RSASignature$SHA224withRSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.ssl.KeyManagerFactoryImpl$SunX509",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.ssl.SSLContextImpl$DefaultSSLContext",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.ssl.TrustManagerFactoryImpl$PKIXFactory",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.x509.AuthorityInfoAccessExtension",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.Boolean",
+            "java.lang.Object"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.security.x509.AuthorityKeyIdentifierExtension",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.Boolean",
+            "java.lang.Object"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.security.x509.BasicConstraintsExtension",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.Boolean",
+            "java.lang.Object"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.security.x509.CRLDistributionPointsExtension",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.Boolean",
+            "java.lang.Object"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.security.x509.CertificatePoliciesExtension",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.Boolean",
+            "java.lang.Object"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.security.x509.ExtendedKeyUsageExtension",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.Boolean",
+            "java.lang.Object"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.security.x509.KeyUsageExtension",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.Boolean",
+            "java.lang.Object"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.security.x509.NetscapeCertTypeExtension",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.Boolean",
+            "java.lang.Object"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.security.x509.PrivateKeyUsageExtension",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.Boolean",
+            "java.lang.Object"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.security.x509.SubjectKeyIdentifierExtension",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.Boolean",
+            "java.lang.Object"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.text.resources.cldr.FormatData"
+    },
+    {
+      "type": "sun.text.resources.cldr.FormatData_en"
+    },
+    {
+      "type": "sun.text.resources.cldr.FormatData_en_US"
+    },
+    {
+      "type": "sun.util.resources.cldr.CalendarData"
+    },
+    {
+      "type": "tools.jackson.databind.deser.Deserializers[]"
+    },
+    {
+      "type": "tools.jackson.databind.deser.KeyDeserializers[]"
+    },
+    {
+      "type": "tools.jackson.databind.deser.ValueInstantiators[]"
+    },
+    {
+      "type": "tools.jackson.databind.ser.Serializers[]"
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FD",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FDA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FDAMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FDAMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FDAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FDARMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FDARMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FDAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FDAWMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FDAWMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FDAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FDAWRMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FDAWRMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FDMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FDMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FDR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FDRMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FDRMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FDW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FDWMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FDWMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FDWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FDWRMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FDWRMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FSAMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FSAMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FSAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FSARMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FSARMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FSAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FSAWMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FSAWMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FSAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FSAWRMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FSAWRMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FSMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FSMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FSR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FSRMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FSRMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FSW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FSWMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FSWMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FSWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FSWRMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FSWRMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FWA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FWAMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FWAMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FWAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FWARMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FWARMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FWAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FWAWMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FWAWMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FWAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FWAWRMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FWAWRMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FWMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FWMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FWRMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FWRMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FWW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FWWMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FWWMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FWWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FWWRMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.FWWRMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PD",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PDA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PDAMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PDAMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PDAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PDARMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PDARMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PDAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PDAWMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PDAWMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PDAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PDAWRMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PDAWRMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PDMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PDMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PDR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PDRMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PDRMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PDW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PDWMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PDWMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PDWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PDWRMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PDWRMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PSAMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PSAMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PSAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PSARMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PSARMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PSAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PSAWMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PSAWMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PSAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PSAWRMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PSAWRMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PSMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PSMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PSR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PSRMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PSRMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PSW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PSWMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PSWMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PSWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PSWRMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PSWRMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PWA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PWAMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PWAMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PWAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PWARMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PWARMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PWAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PWAWMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PWAWMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PWAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PWAWRMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PWAWRMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PWMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PWMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PWRMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PWRMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PWW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PWWMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PWWMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PWWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PWWRMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.PWWRMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SI",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SIA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SIAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SIAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SIAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SIL",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILMSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILMSAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILMSAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILMSAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILMSR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILMSW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILMSWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILMWA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILMWAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILMWAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILMWAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILMWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILMWW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILMWWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILSAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILSAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILSAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILSMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILSMSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILSMSAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILSMSAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILSMSAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILSMSR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILSMSW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILSMSWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILSMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILSMWA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILSMWAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILSMWAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILSMWAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILSMWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILSMWW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILSMWWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILSR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILSW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILSWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SILWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SIMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SIMSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SIMSAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SIMSAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SIMSAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SIMSR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SIMSW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SIMSWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SIMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SIMWA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SIMWAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SIMWAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SIMWAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SIMWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SIMWW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SIMWWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SIR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SIS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SISA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SISAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SISAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SISAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SISMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SISMSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SISMSAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SISMSAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SISMSAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SISMSR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SISMSW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SISMSWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SISMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SISMWA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SISMWAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SISMWAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SISMWAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SISMWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SISMWW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SISMWWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SISR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SISW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SISWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SIW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SIWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSL",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLMSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLMSAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLMSAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLMSAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLMSR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLMSW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLMSWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLMWA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLMWAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLMWAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLMWAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLMWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLMWW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLMWWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLSAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLSAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLSAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLSMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLSMSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLSMSAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLSMSAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLSMSAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLSMSR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLSMSW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLSMSWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLSMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLSMWA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLSMWAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLSMWAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLSMWAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLSMWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLSMWW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLSMWWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLSR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLSW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLSWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSLWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSMSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSMSAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSMSAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSMSAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSMSR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSMSW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSMSWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSMWA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSMWAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSMWAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSMWAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSMWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSMWW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSMWWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSSAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSSAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSSAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSSMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSSMSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSSMSAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSSMSAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSSMSAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSSMSR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSSMSW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSSMSWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSSMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSSMWA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSSMWAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSSMWAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSSMWAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSSMWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSSMWW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSSMWWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSSR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSSW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSSWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.SSWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WI",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WIA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WIAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WIAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WIAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WIL",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILMSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILMSAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILMSAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILMSAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILMSR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILMSW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILMSWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILMWA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILMWAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILMWAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILMWAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILMWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILMWW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILMWWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILSAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILSAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILSAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILSMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILSMSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILSMSAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILSMSAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILSMSAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILSMSR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILSMSW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILSMSWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILSMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILSMWA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILSMWAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILSMWAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILSMWAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILSMWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILSMWW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILSMWWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILSR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILSW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILSWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WILWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WIMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WIMSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WIMSAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WIMSAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WIMSAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WIMSR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WIMSW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WIMSWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WIMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WIMWA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WIMWAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WIMWAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WIMWAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WIMWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WIMWW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WIMWWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WIR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WIS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WISA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WISAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WISAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WISAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WISMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WISMSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WISMSAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WISMSAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WISMSAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WISMSR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WISMSW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WISMSWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WISMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WISMWA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WISMWAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WISMWAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WISMWAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WISMWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WISMWW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WISMWWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WISR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WISW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WISWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WIW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WIWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSL",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLMSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLMSAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLMSAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLMSAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLMSR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLMSW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLMSWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLMWA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLMWAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLMWAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLMWAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLMWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLMWW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLMWWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLSAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLSAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLSAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLSMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLSMSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLSMSAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLSMSAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLSMSAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLSMSR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLSMSW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLSMSWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLSMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLSMWA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLSMWAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLSMWAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLSMWAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLSMWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLSMWW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLSMWWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLSR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLSW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLSWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSLWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSMSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSMSAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSMSAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSMSAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSMSR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSMSW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSMSWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSMWA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSMWAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSMWAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSMWAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSMWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSMWW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSMWWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSSAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSSAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSSAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSSMS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSSMSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSSMSAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSSMSAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSSMSAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSSMSR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSSMSW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSSMSWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSSMW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSSMWA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSSMWAR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSSMWAW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSSMWAWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSSMWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSSMWW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSSMWWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSSR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSSW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSSWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSW",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.WSWR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ],
+      "fields": [
+        {
+          "name": "FACTORY"
+        }
+      ]
+    }
+  ],
+  "resources": [
+    {
+      "glob": "io/tileverse/parquetry/schema/geo/projjson/epsg/*.json"
+    },
+    {
+      "glob": "io/tileverse/parquetry/schema/geo/projjson/ogc/*.json"
+    },
+    {
+      "glob": "META-INF/services/io.tileverse.storage.spi.StorageProvider"
+    },
+    {
+      "glob": "META-INF/services/java.net.spi.URLStreamHandlerProvider"
+    },
+    {
+      "glob": "META-INF/services/java.nio.channels.spi.SelectorProvider"
+    },
+    {
+      "glob": "META-INF/services/org.slf4j.spi.SLF4JServiceProvider"
+    },
+    {
+      "glob": "aircompressor/macos-aarch64/libzstd.dylib"
+    },
+    {
+      "glob": "simplelogger.properties"
+    },
+    {
+      "module": "java.base",
+      "glob": "jdk/internal/icu/impl/data/icudt76b/nfc.nrm"
+    }
+  ],
+  "foreign": {
+    "downcalls": [
+      {
+        "returnType": "jlong",
+        "parameterTypes": [
+          "void*",
+          "jlong",
+          "void*",
+          "jlong"
+        ],
+        "options": {
+          "critical": {
+            "allowHeapAccess": true
+          }
+        }
+      },
+      {
+        "returnType": "jint",
+        "parameterTypes": [
+          "jlong"
+        ],
+        "options": {
+          "critical": {
+            "allowHeapAccess": true
+          }
+        }
+      },
+      {
+        "returnType": "jlong",
+        "parameterTypes": [
+          "void*",
+          "jlong",
+          "void*",
+          "jlong",
+          "jint"
+        ],
+        "options": {
+          "critical": {
+            "allowHeapAccess": true
+          }
+        }
+      },
+      {
+        "returnType": "jint",
+        "parameterTypes": [],
+        "options": {
+          "critical": {
+            "allowHeapAccess": true
+          }
+        }
+      },
+      {
+        "returnType": "jlong",
+        "parameterTypes": [
+          "jlong"
+        ],
+        "options": {
+          "critical": {
+            "allowHeapAccess": true
+          }
+        }
+      },
+      {
+        "returnType": "void*",
+        "parameterTypes": [
+          "jlong"
+        ],
+        "options": {
+          "critical": {
+            "allowHeapAccess": true
+          }
+        }
+      },
+      {
+        "returnType": "jlong",
+        "parameterTypes": [
+          "void*",
+          "jlong"
+        ],
+        "options": {
+          "critical": {
+            "allowHeapAccess": true
+          }
+        }
+      }
+    ]
+  }
+}
