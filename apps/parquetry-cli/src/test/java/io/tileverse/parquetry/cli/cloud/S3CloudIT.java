@@ -1,0 +1,125 @@
+/*
+ * Copyright (c) 2026 Multivers.io
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.tileverse.parquetry.cli.cloud;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.nio.file.Path;
+
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.testcontainers.containers.localstack.LocalStackContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.DockerImageName;
+
+import io.tileverse.parquetry.cli.support.CliRunner;
+import io.tileverse.parquetry.cli.support.Fixtures;
+
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+
+/**
+ * Drives the {@code par} CLI against an S3 bucket served by LocalStack, exercising the cloud-storage configuration
+ * flags ({@code --provider}, {@code --region}, {@code --access-key}, {@code --secret-key}, {@code --path-style}) end to
+ * end. A custom S3 endpoint is addressed by passing the full {@code http://host:port/bucket/key} URL, the
+ * tileverse-storage convention for S3-compatible servers.
+ */
+@Testcontainers(disabledWithoutDocker = true)
+class S3CloudIT {
+
+    private static final String BUCKET = "par-it";
+    private static final String KEY = "cities.parquet";
+
+    @TempDir
+    static Path workDir;
+
+    @Container
+    @SuppressWarnings("resource")
+    static LocalStackContainer localstack = new LocalStackContainer(
+                    DockerImageName.parse("localstack/localstack:3.2.0"))
+            .withServices(LocalStackContainer.Service.S3);
+
+    private static S3Client s3Client;
+
+    @BeforeAll
+    static void uploadFixture() throws Exception {
+        Path fixture = workDir.resolve(KEY);
+        Fixtures.writeCities(fixture);
+        StaticCredentialsProvider credentials = StaticCredentialsProvider.create(
+                AwsBasicCredentials.create(localstack.getAccessKey(), localstack.getSecretKey()));
+        s3Client = S3Client.builder()
+                .endpointOverride(localstack.getEndpoint())
+                .region(Region.of(localstack.getRegion()))
+                .credentialsProvider(credentials)
+                .forcePathStyle(true)
+                .build();
+        s3Client.createBucket(CreateBucketRequest.builder().bucket(BUCKET).build());
+        s3Client.putObject(
+                PutObjectRequest.builder().bucket(BUCKET).key(KEY).build(), RequestBody.fromFile(fixture.toFile()));
+    }
+
+    @AfterAll
+    static void shutdown() {
+        if (s3Client != null) {
+            s3Client.close();
+        }
+    }
+
+    @Test
+    void metaReadsFromS3() {
+        String out = run("meta", objectUrl());
+        assertThat(out).contains("rows", "4");
+    }
+
+    @Test
+    void catReadsRowsFromS3() {
+        String out = run("cat", objectUrl());
+        assertThat(out.strip().split("\n")).hasSize(4);
+        assertThat(out).contains("Rosario");
+    }
+
+    private static String objectUrl() {
+        String endpoint = localstack.getEndpoint().toString().replaceAll("/+$", "");
+        return endpoint + "/" + BUCKET + "/" + KEY;
+    }
+
+    private static String run(String command, String url) {
+        CliRunner.Result result = CliRunner.run(
+                command,
+                url,
+                "--provider",
+                "s3",
+                "--region",
+                localstack.getRegion(),
+                "--access-key",
+                localstack.getAccessKey(),
+                "--secret-key",
+                localstack.getSecretKey(),
+                "--path-style");
+        assertThat(result.exitCode())
+                .as("par %s exit code; stderr was: %s", command, result.stderr())
+                .isZero();
+        return result.stdout();
+    }
+}
