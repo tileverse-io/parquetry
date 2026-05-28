@@ -20,7 +20,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -71,11 +70,6 @@ class GcsCloudIT {
         storage.create(BlobInfo.newBuilder(BUCKET, KEY).build(), Files.readAllBytes(fixture));
     }
 
-    @AfterAll
-    static void noop() {
-        // fake-gcs-server is torn down by Testcontainers; the upload client holds no closeable resources to release.
-    }
-
     @Test
     void metaReadsFromGcs() {
         String out = run("meta", "gs://" + BUCKET + "/" + KEY);
@@ -87,6 +81,45 @@ class GcsCloudIT {
         String out = run("cat", "gs://" + BUCKET + "/" + KEY);
         assertThat(out.strip().split("\n")).hasSize(4);
         assertThat(out).contains("Rosario");
+    }
+
+    @Test
+    void copiesLocalFileToGcs(@TempDir Path tempDir) throws Exception {
+        Path local = tempDir.resolve("upload.parquet");
+        Fixtures.writeCities(local);
+        String target = "gs://" + BUCKET + "/uploaded.parquet";
+
+        CliRunner.Result copy = CliRunner.run(
+                "cp", local.toString(), target, "--dst-endpoint", endpoint(), "--dst-gcs-project", PROJECT);
+        assertThat(copy.exitCode())
+                .as("par cp local->gcs exit code; stderr was: %s", copy.stderr())
+                .isZero();
+
+        String count = run("row-count", target);
+        assertThat(count.strip()).isEqualTo("4");
+    }
+
+    @Test
+    void copiesGcsFileToLocal(@TempDir Path tempDir) {
+        Path local = tempDir.resolve("downloaded.parquet");
+
+        CliRunner.Result copy = CliRunner.run(
+                "cp",
+                "gs://" + BUCKET + "/" + KEY,
+                local.toString(),
+                "--endpoint",
+                endpoint(),
+                "--gcs-project",
+                PROJECT);
+        assertThat(copy.exitCode())
+                .as("par cp gcs->local exit code; stderr was: %s", copy.stderr())
+                .isZero();
+
+        CliRunner.Result count = CliRunner.run("row-count", local.toString());
+        assertThat(count.exitCode())
+                .as("par row-count exit code; stderr was: %s", count.stderr())
+                .isZero();
+        assertThat(count.stdout().strip()).isEqualTo("4");
     }
 
     private static String endpoint() {

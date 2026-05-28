@@ -20,56 +20,58 @@ import java.util.Properties;
 import picocli.CommandLine.Option;
 
 /**
- * Storage provider options shared by subcommands via {@code @Mixin}. These flags map directly to the {@code storage.*}
- * parameter keys consumed by {@code StorageFactory.open(URI, Properties)}.
+ * Storage provider options for the copy DESTINATION, shared by subcommands via {@code @Mixin}. A copy may read from one
+ * backend and write to a different one (for example MinIO to Azure), which needs connection flags distinct from those
+ * of the source ({@link StorageOptions}). These {@code --dst-} flags map to the same {@code storage.*} parameter keys
+ * consumed by {@code StorageFactory.open(URI, Properties)}.
  */
-public final class StorageOptions {
+public final class DstStorageOptions {
 
     @Option(
-            names = {"--provider"},
+            names = {"--dst-provider"},
             paramLabel = "<id>",
-            description = "Force the storage provider: s3, gcs, http, file.")
+            description = "Force the destination storage provider: s3, gcs, http, file.")
     public String provider;
 
     @Option(
-            names = {"--region"},
+            names = {"--dst-region"},
             paramLabel = "<region>",
-            description = "S3 region.")
+            description = "Destination S3 region.")
     public String region;
 
     @Option(
-            names = {"--access-key"},
+            names = {"--dst-access-key"},
             paramLabel = "<key>",
-            description = "S3 access key id.")
+            description = "Destination S3 access key id.")
     public String accessKey;
 
     @Option(
-            names = {"--secret-key"},
+            names = {"--dst-secret-key"},
             paramLabel = "<key>",
-            description = "S3 secret access key.")
+            description = "Destination S3 secret access key.")
     public String secretKey;
 
     @Option(
-            names = {"--path-style"},
-            description = "Use S3 path-style addressing (for MinIO / S3-compatible endpoints).")
+            names = {"--dst-path-style"},
+            description = "Use S3 path-style addressing for the destination (for MinIO / S3-compatible endpoints).")
     public boolean pathStyle;
 
     @Option(
-            names = {"--anonymous"},
-            description = "Access the store anonymously (no credentials).")
+            names = {"--dst-anonymous"},
+            description = "Access the destination store anonymously (no credentials).")
     public boolean anonymous;
 
     @Option(
-            names = {"--gcs-project"},
+            names = {"--dst-gcs-project"},
             paramLabel = "<project>",
-            description = "Google Cloud project id.")
+            description = "Destination Google Cloud project id.")
     public String gcsProject;
 
     @Option(
-            names = {"--endpoint"},
+            names = {"--dst-endpoint"},
             paramLabel = "<url>",
-            description = "GCS host override, e.g. http://localhost:4443. "
-                    + "For S3-compatible endpoints, pass the full https URL as the argument and use --provider s3.")
+            description = "Destination GCS host override, e.g. http://localhost:4443. "
+                    + "For S3-compatible endpoints, pass the full https URL as the argument and use --dst-provider s3.")
     public String endpoint;
 
     /**

@@ -82,10 +82,55 @@ class CpCmdTest {
     }
 
     @Test
+    void copiesIntoDirectoryDestinationUsingSourceFilename(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("cities.parquet");
+        Path destDir = Files.createDirectory(dir.resolve("out"));
+        Fixtures.writeCities(src);
+
+        int code = Par.newCommandLine().execute("cp", src.toString(), destDir.toString());
+        assertThat(code).isZero();
+
+        Path written = destDir.resolve("cities.parquet");
+        assertThat(written).exists();
+        assertThat(rowCount(written)).isEqualTo(4L);
+    }
+
+    @Test
+    void copiesToFileUriDestination(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("cities.parquet");
+        Path dst = dir.resolve("copy.parquet");
+        Fixtures.writeCities(src);
+
+        int code =
+                Par.newCommandLine().execute("cp", src.toString(), dst.toUri().toString());
+        assertThat(code).isZero();
+        assertThat(dst).exists();
+        assertThat(rowCount(dst)).isEqualTo(4L);
+    }
+
+    @Test
     void refusesToOverwriteSource(@TempDir Path dir) throws Exception {
         Path src = dir.resolve("cities.parquet");
         Fixtures.writeCities(src);
         int code = Par.newCommandLine().execute("cp", src.toString(), src.toString());
+        assertThat(code).isEqualTo(CliExitCode.GENERIC);
+    }
+
+    @Test
+    void refusesToWriteOntoSourceViaDirectoryDestination(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("cities.parquet");
+        Fixtures.writeCities(src);
+        // dst is the directory holding the source; the resolved object is dir/cities.parquet, the source itself.
+        int code = Par.newCommandLine().execute("cp", src.toString(), dir.toString() + "/");
+        assertThat(code).isEqualTo(CliExitCode.GENERIC);
+    }
+
+    @Test
+    void refusesToWriteOntoSourceViaFileUri(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("cities.parquet");
+        Fixtures.writeCities(src);
+        int code =
+                Par.newCommandLine().execute("cp", src.toString(), src.toUri().toString());
         assertThat(code).isEqualTo(CliExitCode.GENERIC);
     }
 
@@ -97,5 +142,35 @@ class CpCmdTest {
         Files.writeString(dst, "exists");
         int code = Par.newCommandLine().execute("cp", src.toString(), dst.toString());
         assertThat(code).isEqualTo(CliExitCode.GENERIC);
+    }
+
+    @Test
+    void overwritesExistingDestinationWithForce(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("cities.parquet");
+        Path dst = dir.resolve("dst.parquet");
+        Fixtures.writeCities(src);
+        Files.writeString(dst, "stale-content");
+
+        int code = Par.newCommandLine().execute("cp", src.toString(), dst.toString(), "-f");
+        assertThat(code).isZero();
+        assertThat(rowCount(dst)).isEqualTo(4L);
+    }
+
+    @Test
+    void rejectsDirectoryPrefixSource(@TempDir Path dir) {
+        Path dst = dir.resolve("out.parquet");
+        int code = Par.newCommandLine().execute("cp", "s3://bucket/prefix/", dst.toString());
+        assertThat(code).isEqualTo(CliExitCode.GENERIC);
+    }
+
+    private static long rowCount(Path file) throws Exception {
+        try (Storage storage = StorageFactory.open(file.getParent().toUri());
+                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
+            ParquetDataset dataset = ParquetDataset.open(ByteRangeSources.from(reader));
+            try (Stream<ParquetRecord> rows =
+                    dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
+                return rows.count();
+            }
+        }
     }
 }

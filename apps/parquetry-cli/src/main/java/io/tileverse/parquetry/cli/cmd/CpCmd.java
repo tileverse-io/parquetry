@@ -15,10 +15,7 @@
  */
 package io.tileverse.parquetry.cli.cmd;
 
-import java.io.OutputStream;
 import java.net.URI;
-import java.net.URISyntaxException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -27,6 +24,7 @@ import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.stream.Stream;
 
+import io.tileverse.parquetry.cli.DstStorageOptions;
 import io.tileverse.parquetry.cli.GlobalOptions;
 import io.tileverse.parquetry.cli.StorageOptions;
 import io.tileverse.parquetry.cli.UriResolver;
@@ -60,7 +58,10 @@ public final class CpCmd implements Callable<Integer> {
     @Parameters(index = "0", paramLabel = "<src>", description = "Source Parquet file path or URI.")
     private String src;
 
-    @Parameters(index = "1", paramLabel = "<dst>", description = "Destination Parquet file path (local).")
+    @Parameters(
+            index = "1",
+            paramLabel = "<dst>",
+            description = "Destination Parquet file path or URI (local or cloud).")
     private String dst;
 
     @Option(
@@ -74,10 +75,13 @@ public final class CpCmd implements Callable<Integer> {
     @Mixin
     private StorageOptions storage;
 
+    @Mixin
+    private DstStorageOptions dstStorage;
+
     @Override
     public Integer call() throws Exception {
-        Path destination = Path.of(dst).toAbsolutePath().normalize();
-        checkDestination(destination);
+        String sourceFileName = sourceFileName();
+        refuseWritingOntoSource(sourceFileName);
         try (UriResolver.OpenFile open = UriResolver.open(src, storage.toProperties())) {
             ParquetDataset dataset = ParquetDataset.open(open.source());
             ParquetSchema sourceSchema = dataset.schema();
@@ -85,7 +89,7 @@ public final class CpCmd implements Callable<Integer> {
             ParquetSchema writeSchema = buildWriteSchema(sourceSchema, projection);
             RecordToWriteRow.requireWritable(writeSchema);
             Predicate predicate = buildPredicate(sourceSchema);
-            writeAll(dataset, writeSchema, projection, predicate, destination, dataset.keyValueMetadata());
+            writeAll(dataset, writeSchema, projection, predicate, sourceFileName, dataset.keyValueMetadata());
         }
         return 0;
     }
@@ -104,32 +108,24 @@ public final class CpCmd implements Callable<Integer> {
         return FilterParser.parse(options.filter, schema);
     }
 
-    private void checkDestination(Path destination) {
-        Path source = sourceAsLocalPath();
-        if (source != null && source.equals(destination)) {
-            throw new IllegalArgumentException("cp refuses to write onto the source file: " + destination);
+    private String sourceFileName() {
+        URI sourceUri = UriResolver.normalizeToUri(src);
+        if ("file".equals(sourceUri.getScheme())) {
+            return Path.of(sourceUri).getFileName().toString();
         }
-        if (Files.exists(destination) && !overwrite) {
-            throw new IllegalArgumentException("destination exists (use -f to overwrite): " + destination);
+        String path = sourceUri.getPath();
+        if (path == null || path.isEmpty() || path.endsWith("/")) {
+            throw new IllegalArgumentException("source must point to a file, not a directory prefix: " + src);
         }
+        return path.substring(path.lastIndexOf('/') + 1);
     }
 
-    private Path sourceAsLocalPath() {
-        try {
-            URI uri = new URI(src);
-            if (uri.getScheme() == null) {
-                return Path.of(src).toAbsolutePath().normalize();
-            }
-            if ("file".equals(uri.getScheme())) {
-                return Path.of(uri).toAbsolutePath().normalize();
-            }
-        } catch (URISyntaxException ignored) {
-            // non-URI source: treat as a local path
-            return Path.of(src).toAbsolutePath().normalize();
-        } catch (RuntimeException ignored) {
-            // non-file source cannot collide with a local destination
+    private void refuseWritingOntoSource(String sourceFileName) {
+        URI sourceUri = UriResolver.normalizeToUri(src);
+        URI destinationUri = UriResolver.resolvedUri(dst, sourceFileName);
+        if (sourceUri.equals(destinationUri)) {
+            throw new IllegalArgumentException("cp refuses to write onto the source file: " + dst);
         }
-        return null;
     }
 
     private void writeAll(
@@ -137,13 +133,14 @@ public final class CpCmd implements Callable<Integer> {
             ParquetSchema writeSchema,
             Projections.Resolved projection,
             Predicate predicate,
-            Path destination,
+            String sourceFileName,
             Map<String, String> sourceKeyValue)
             throws Exception {
-        WriteOptions writeOptions = buildWriteOptions(writeSchema, destination.getParent(), sourceKeyValue);
+        WriteOptions writeOptions = buildWriteOptions(writeSchema, writerTempDir(sourceFileName), sourceKeyValue);
         long limit = options.limit == null ? Long.MAX_VALUE : options.limit;
-        try (OutputStream out = Files.newOutputStream(destination);
-                ParquetWriter writer = ParquetWriter.create(out, writeSchema, writeOptions);
+        try (UriResolver.OpenSink sink =
+                        UriResolver.openForWrite(dst, sourceFileName, overwrite, dstStorage.toProperties());
+                ParquetWriter writer = ParquetWriter.create(sink.out(), writeSchema, writeOptions);
                 Stream<ParquetRecord> rows = dataset.read(predicate, projection.projection(), ReadOptions.DEFAULTS)) {
             long written = 0;
             Iterator<ParquetRecord> it = rows.iterator();
@@ -152,6 +149,18 @@ public final class CpCmd implements Callable<Integer> {
                 written++;
             }
         }
+    }
+
+    /**
+     * Where the writer spills working files. A local destination uses its own directory; a remote destination has no
+     * local parent, and the system temporary directory is used instead.
+     */
+    private Path writerTempDir(String sourceFileName) {
+        URI destinationUri = UriResolver.resolvedUri(dst, sourceFileName);
+        if ("file".equals(destinationUri.getScheme())) {
+            return Path.of(destinationUri).getParent();
+        }
+        return Path.of(System.getProperty("java.io.tmpdir"));
     }
 
     private static WriteOptions buildWriteOptions(

@@ -52,6 +52,11 @@ public class CliSteps {
         Fixtures.writeGeoCities(workDir.resolve("geo.parquet"));
     }
 
+    @Given("a directory {string}")
+    public void aDirectory(String name) throws Exception {
+        Files.createDirectories(workDir.resolve(name));
+    }
+
     @When("I run: {}")
     public void iRun(String commandLine) {
         CliRunner.Result result = CliRunner.run(resolveArgs(commandLine));
@@ -90,6 +95,22 @@ public class CliSteps {
     @Then("stderr contains {string}")
     public void stderrContains(String needle) {
         assertThat(stderr).contains(needle);
+    }
+
+    @Then("the file {string} exists")
+    public void theFileExists(String relativePath) {
+        Path file = workDir.resolve(relativePath);
+        assertThat(file).exists();
+    }
+
+    @Then("the file {string} has {int} rows")
+    public void theFileHasRows(String relativePath, int expected) {
+        Path file = workDir.resolve(relativePath);
+        CliRunner.Result result = CliRunner.run("row-count", file.toString());
+        assertThat(result.exitCode())
+                .as("par row-count exit code; stderr was: %s", result.stderr())
+                .isZero();
+        assertThat(Integer.parseInt(result.stdout().strip())).isEqualTo(expected);
     }
 
     @After

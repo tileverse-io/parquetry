@@ -99,9 +99,68 @@ class S3CloudIT {
         assertThat(out).contains("Rosario");
     }
 
+    @Test
+    void copiesLocalFileToS3(@TempDir Path tempDir) throws Exception {
+        Path local = tempDir.resolve("upload.parquet");
+        Fixtures.writeCities(local);
+        String target = objectUrl("uploaded.parquet");
+
+        CliRunner.Result copy = CliRunner.run(
+                "cp",
+                local.toString(),
+                target,
+                "--dst-provider",
+                "s3",
+                "--dst-region",
+                localstack.getRegion(),
+                "--dst-access-key",
+                localstack.getAccessKey(),
+                "--dst-secret-key",
+                localstack.getSecretKey(),
+                "--dst-path-style");
+        assertThat(copy.exitCode())
+                .as("par cp local->s3 exit code; stderr was: %s", copy.stderr())
+                .isZero();
+
+        String count = run("row-count", target);
+        assertThat(count.strip()).isEqualTo("4");
+    }
+
+    @Test
+    void copiesS3FileToLocal(@TempDir Path tempDir) {
+        Path local = tempDir.resolve("downloaded.parquet");
+
+        CliRunner.Result copy = CliRunner.run(
+                "cp",
+                objectUrl(),
+                local.toString(),
+                "--provider",
+                "s3",
+                "--region",
+                localstack.getRegion(),
+                "--access-key",
+                localstack.getAccessKey(),
+                "--secret-key",
+                localstack.getSecretKey(),
+                "--path-style");
+        assertThat(copy.exitCode())
+                .as("par cp s3->local exit code; stderr was: %s", copy.stderr())
+                .isZero();
+
+        CliRunner.Result count = CliRunner.run("row-count", local.toString());
+        assertThat(count.exitCode())
+                .as("par row-count exit code; stderr was: %s", count.stderr())
+                .isZero();
+        assertThat(count.stdout().strip()).isEqualTo("4");
+    }
+
     private static String objectUrl() {
+        return objectUrl(KEY);
+    }
+
+    private static String objectUrl(String key) {
         String endpoint = localstack.getEndpoint().toString().replaceAll("/+$", "");
-        return endpoint + "/" + BUCKET + "/" + KEY;
+        return endpoint + "/" + BUCKET + "/" + key;
     }
 
     private static String run(String command, String url) {
