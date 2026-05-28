@@ -27,6 +27,12 @@ public enum Tier {
     /** Per-column min/max/nullCount carried in {@code ColumnMetaData.statistics}. Trivial CPU, no extra I/O. */
     STATS,
 
+    /**
+     * Per-row-group geometry bounding box from native GeoParquet 2.0 {@code GeospatialStatistics}. Same granularity and
+     * cost as {@link #STATS}: a numeric box comparison, no extra I/O.
+     */
+    SPATIAL,
+
     /** Per-column dictionary pages. One I/O round trip per equality-bearing column. */
     DICTIONARY,
 

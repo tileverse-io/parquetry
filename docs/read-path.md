@@ -177,6 +177,10 @@ flowchart TD
 stats / column index / bloom filter, and it loads each section once and hands the
 same instance to the decode-mask builder later.
 
+Bbox spatial predicates over a GeoParquet geometry column add one row-group tier,
+`SPATIAL`, after STATS, plus a covering-column lowering step that feeds the STATS
+and COLUMN_INDEX tiers above. See [Spatial filtering](spatial-filtering.md).
+
 ---
 
 ## 5. Fetch and decode
@@ -334,4 +338,5 @@ classDiagram
 
 *Scope: the row and batch read paths over flat columns. Nested/repeated columns
 take the full-decode path (late materialization and page-skip are flat-only).
-Writing, encryption, and the geometry materializer are documented separately.*
+Spatial (bbox) filtering is covered in [spatial-filtering.md](spatial-filtering.md);
+writing, encryption, and the geometry materializer are documented separately.*

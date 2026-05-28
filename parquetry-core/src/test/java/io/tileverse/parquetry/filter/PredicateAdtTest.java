@@ -43,7 +43,7 @@ class PredicateAdtTest {
                 new Predicate.And(List.of(Predicate.ALWAYS_TRUE, Predicate.ALWAYS_TRUE)),
                 new Predicate.Or(List.of(Predicate.ALWAYS_TRUE, Predicate.ALWAYS_FALSE)),
                 new Predicate.Not(Predicate.ALWAYS_FALSE),
-                new Predicate.BboxIntersects(ColumnPath.of("geom"), Bbox.of2d(0, 0, 1, 1)));
+                new Predicate.Spatial.BboxIntersects(ColumnPath.of("geom"), Bbox.of2d(0, 0, 1, 1)));
         assertThat(all).hasSize(15);
     }
 
@@ -66,7 +66,7 @@ class PredicateAdtTest {
                     case Predicate.And _ -> "and";
                     case Predicate.Or _ -> "or";
                     case Predicate.Not _ -> "not";
-                    case Predicate.BboxIntersects _ -> "bbox";
+                    case Predicate.Spatial _ -> "bbox";
                 };
         assertThat(description).isEqualTo("eq(year)");
     }

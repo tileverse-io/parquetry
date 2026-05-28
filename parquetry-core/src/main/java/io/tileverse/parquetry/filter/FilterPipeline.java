@@ -22,6 +22,8 @@ import java.util.Optional;
 
 import io.tileverse.parquetry.data.read.page.Dictionary;
 import io.tileverse.parquetry.filter.bloom.SplitBlockBloomFilter;
+import io.tileverse.parquetry.filter.spatial.EmptyBoundsSource;
+import io.tileverse.parquetry.filter.spatial.SpatialBoundsSource;
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.Statistics;
@@ -45,6 +47,8 @@ public final class FilterPipeline {
      * @param rowCount total rows in the row group; surfaces in {@link RowGroupPlan#rowCount()} and lets the stats tier
      *     check counts like null-count vs row-count
      * @param stats lookup for the STATS tier (per-column min/max + null/distinct counts)
+     * @param spatialBounds source for the SPATIAL tier (per-row-group geometry bounding boxes from native GeoParquet
+     *     2.0 statistics); {@link EmptyBoundsSource#INSTANCE} when the file has no usable geometry bounds
      * @param dictionaries lookup for the DICTIONARY tier; returns the loaded dictionary page when one was written
      * @param pageIndexes lookup for the COLUMN_INDEX tier (per-page min/max + offsets)
      * @param blooms lookup for the BLOOM_FILTER tier; returns the column's loaded split-block bloom filter when one was
@@ -53,20 +57,22 @@ public final class FilterPipeline {
     public record RowGroupInputs(
             long rowCount,
             ColumnStatsLookup stats,
+            SpatialBoundsSource spatialBounds,
             DictionaryLookup dictionaries,
             ColumnPageStatsLookup pageIndexes,
             BloomFilterLookup blooms) {
 
         /**
-         * Backwards-compatible four-arg constructor for callers that don't yet wire a bloom-filter lookup; defaults to
-         * {@link FilterPipeline#emptyBloomLookup()} so the bloom tier degrades to {@link PruningDecision.NotApplied}.
+         * Backwards-compatible four-arg constructor for callers that don't yet wire spatial bounds or a bloom-filter
+         * lookup; defaults the spatial source to {@link EmptyBoundsSource#INSTANCE} (the SPATIAL tier degrades to
+         * {@link PruningDecision.NotApplied}) and the blooms to {@link FilterPipeline#emptyBloomLookup()}.
          */
         public RowGroupInputs(
                 long rowCount,
                 ColumnStatsLookup stats,
                 DictionaryLookup dictionaries,
                 ColumnPageStatsLookup pageIndexes) {
-            this(rowCount, stats, dictionaries, pageIndexes, emptyBloomLookup());
+            this(rowCount, stats, EmptyBoundsSource.INSTANCE, dictionaries, pageIndexes, emptyBloomLookup());
         }
     }
 
@@ -168,6 +174,12 @@ public final class FilterPipeline {
         PruningDecision statsDecision = StatsEvaluator.evaluate(normalized, inputs.stats(), inputs.rowCount());
         tierDecisions.add(statsDecision);
         if (statsDecision instanceof PruningDecision.Eliminated) {
+            return new RowGroupPlan(index, inputs.rowCount(), tierDecisions, RowGroupOutcome.ELIMINATED, surviving);
+        }
+
+        PruningDecision spatialDecision = SpatialBoundsEvaluator.evaluate(normalized, inputs.spatialBounds(), index);
+        tierDecisions.add(spatialDecision);
+        if (spatialDecision instanceof PruningDecision.Eliminated) {
             return new RowGroupPlan(index, inputs.rowCount(), tierDecisions, RowGroupOutcome.ELIMINATED, surviving);
         }
 

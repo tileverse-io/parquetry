@@ -81,8 +81,8 @@ final class StatsEvaluator {
             case Predicate.In(ColumnPath col, List<Value> values) -> evalIn(col, values, columns);
             case Predicate.IsNull(ColumnPath col) -> evalIsNull(col, columns, rowCount);
             case Predicate.IsNotNull(ColumnPath col) -> evalIsNotNull(col, columns, rowCount);
-            case Predicate.BboxIntersects _ ->
-                new PruningDecision.NotApplied(TIER, "BboxIntersects not handled at STATS tier");
+            case Predicate.Spatial _ ->
+                new PruningDecision.NotApplied(TIER, "spatial predicate handled by the bounds source");
         };
     }
 
@@ -125,7 +125,7 @@ final class StatsEvaluator {
     }
 
     /**
-     * Handles {@code Not} wrappers that survived normalization (only In and BboxIntersects do). Both turn into
+     * Handles {@code Not} wrappers that survived normalization (only In and the spatial relations do). Both turn into
      * NotApplied at the stats tier.
      */
     private static PruningDecision evaluateNotLeaf(

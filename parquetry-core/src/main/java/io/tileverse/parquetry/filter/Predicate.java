@@ -24,8 +24,8 @@ import io.tileverse.parquetry.schema.ColumnPath;
 /**
  * Sealed predicate ADT for filter pushdown.
  *
- * <p>Use pattern matching on the variants to evaluate or transform. The {@code Pred} fluent builder emits these
- * records; the normalizer and the 5-tier evaluator pipeline consume them.
+ * <p>Use pattern matching on the cases to evaluate or transform. The {@code Pred} fluent builder emits these records;
+ * the normalizer and the 5-tier evaluator pipeline consume them.
  */
 public sealed interface Predicate {
 
@@ -79,7 +79,7 @@ public sealed interface Predicate {
             case In in -> columns.add(in.col());
             case IsNull isNull -> columns.add(isNull.col());
             case IsNotNull isNotNull -> columns.add(isNotNull.col());
-            case BboxIntersects bbox -> columns.add(bbox.col());
+            case Spatial s -> columns.add(s.col());
         }
     }
 
@@ -121,5 +121,54 @@ public sealed interface Predicate {
 
     record Not(Predicate child) implements Predicate {}
 
-    record BboxIntersects(ColumnPath col, Bbox bbox) implements Predicate {}
+    /**
+     * A coordinate-free bbox relation between a geometry column and a query box.
+     *
+     * <p>Each relation is evaluated in 2D only (X/Y); the Z ordinate is ignored even when the geometry includes it. All
+     * edges are treated as inclusive. The evaluation computes the geometry's 2D bounding box from either per-row-group
+     * statistics (row-group pruning) or the WKB byte stream (record-level confirmation), and then tests that box
+     * against {@link #bbox()}. A row is retained only when both checks agree it satisfies the relation.
+     *
+     * <p>These predicates filter on the geometry's bounding box, not on the exact geometry shape. True spatial
+     * predicates - such as an exact polygon intersection or a topological "within" - belong in the caller: push the
+     * envelope as one of these bbox relations for coarse row elimination, then re-apply the exact test against the
+     * matched rows using a geometry engine.
+     *
+     * <p>Pruning is conservative: when no usable bounds exist for a row group, the row group is kept in full and
+     * record-level WKB evaluation confirms every row. Wrapping a spatial leaf in {@link Not} disables pruning for that
+     * relation (the row group is always kept) and inverts the record-level decision.
+     */
+    sealed interface Spatial extends Predicate {
+        ColumnPath col();
+
+        Bbox bbox();
+
+        /**
+         * The geometry's 2D bounding box overlaps the query box. Overlap is true when the two boxes share at least one
+         * point (edges inclusive), and false when they are completely disjoint. This is the weakest of the four
+         * relations and the most common starting point for GIS query filtering.
+         */
+        record BboxIntersects(ColumnPath col, Bbox bbox) implements Spatial {}
+
+        /**
+         * The geometry's 2D bounding box encloses the query box. That is, every point of the query box lies inside (or
+         * on the edge of) the geometry's envelope. Equivalent to {@code geomBbox.contains(queryBbox)} with edges
+         * inclusive. A geometry whose bounding box exactly equals the query box satisfies this relation.
+         */
+        record BboxContains(ColumnPath col, Bbox bbox) implements Spatial {}
+
+        /**
+         * The geometry's 2D bounding box is enclosed by the query box. That is, every point of the geometry's envelope
+         * lies inside (or on the edge of) the query box. Equivalent to {@code geomBbox.coveredBy(queryBbox)} with edges
+         * inclusive. A geometry whose bounding box exactly equals the query box satisfies this relation.
+         */
+        record BboxCoveredBy(ColumnPath col, Bbox bbox) implements Spatial {}
+
+        /**
+         * The geometry's 2D bounding box matches the query box exactly on all four edges: minX, minY, maxX, maxY. Z is
+         * ignored. This is the strictest of the four relations; it implies both {@link BboxContains} and
+         * {@link BboxCoveredBy}.
+         */
+        record BboxEquals(ColumnPath col, Bbox bbox) implements Spatial {}
+    }
 }

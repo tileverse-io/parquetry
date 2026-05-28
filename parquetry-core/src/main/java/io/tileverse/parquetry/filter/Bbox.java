@@ -16,7 +16,7 @@
 package io.tileverse.parquetry.filter;
 
 /**
- * Geographic bounding box for {@link Predicate.BboxIntersects}.
+ * Geographic bounding box for {@link Predicate.Spatial}.
  *
  * <p>2D form: {@code (minX, minY, maxX, maxY)}. 3D form adds {@code minZ, maxZ}. Coordinate semantics are the
  * consumer's responsibility; the predicate evaluator only does numeric comparisons against the column's bbox
@@ -57,5 +57,23 @@ public record Bbox(double minX, double minY, double maxX, double maxY, double mi
         }
         boolean zIntersect = !(maxZ < other.minZ || minZ > other.maxZ);
         return xyIntersect && zIntersect;
+    }
+
+    /**
+     * True when this box encloses {@code other} in 2D (edges inclusive). Z is ignored; use {@link #intersects} when 3D
+     * containment matters.
+     */
+    public boolean contains(Bbox other) {
+        return minX <= other.minX && minY <= other.minY && maxX >= other.maxX && maxY >= other.maxY;
+    }
+
+    /** True when {@code other} encloses this box in 2D - the inverse of {@link #contains}. */
+    public boolean coveredBy(Bbox other) {
+        return other.contains(this);
+    }
+
+    /** True when the four 2D edges are equal; Z is ignored. */
+    public boolean sameBox2d(Bbox other) {
+        return minX == other.minX && minY == other.minY && maxX == other.maxX && maxY == other.maxY;
     }
 }
