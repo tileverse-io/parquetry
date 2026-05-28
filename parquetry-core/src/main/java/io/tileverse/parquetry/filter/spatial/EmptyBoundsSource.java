@@ -31,7 +31,7 @@ import io.tileverse.parquetry.schema.ColumnPath;
  * since the no-op fallback genuinely is a unit-type value and not a state-bearing object.
  */
 @SuppressWarnings("java:S6548")
-enum EmptyBoundsSource implements SpatialBoundsSource {
+public enum EmptyBoundsSource implements SpatialBoundsSource {
     INSTANCE;
 
     @Override

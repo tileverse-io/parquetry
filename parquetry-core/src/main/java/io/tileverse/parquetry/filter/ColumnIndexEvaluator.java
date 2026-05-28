@@ -45,7 +45,7 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
  *   <li>{@link PruningDecision.PassedAll} when every page survives - i.e. the predicate doesn't help here.
  *   <li>{@link PruningDecision.NarrowedTo} when a strict subset of pages survives.
  *   <li>{@link PruningDecision.NotApplied} when the column has no ColumnIndex/OffsetIndex loaded, the value type isn't
- *       decodable, or the predicate doesn't translate to a column-index lookup (BboxIntersects).
+ *       decodable, or the predicate doesn't translate to a column-index lookup (spatial predicates).
  * </ul>
  *
  * <p>Assumes the predicate has already been normalized (Not pushed to leaves, Always folded, And/Or flattened).
@@ -114,7 +114,7 @@ final class ColumnIndexEvaluator {
                         (min, max) -> values.stream().anyMatch(v -> within(v, min, max)));
             case Predicate.IsNull(ColumnPath col) -> nullLeafRanges(col, columns, rowGroupRowCount, true);
             case Predicate.IsNotNull(ColumnPath col) -> nullLeafRanges(col, columns, rowGroupRowCount, false);
-            case Predicate.BboxIntersects _ -> Optional.empty();
+            case Predicate.Spatial _ -> Optional.empty();
         };
     }
 

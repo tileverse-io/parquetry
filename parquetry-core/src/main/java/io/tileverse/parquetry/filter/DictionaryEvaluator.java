@@ -72,8 +72,8 @@ final class DictionaryEvaluator {
                 new PruningDecision.NotApplied(TIER, "IsNull: dictionaries don't track nulls");
             case io.tileverse.parquetry.filter.Predicate.IsNotNull _ ->
                 new PruningDecision.NotApplied(TIER, "IsNotNull: dictionaries don't track nulls");
-            case io.tileverse.parquetry.filter.Predicate.BboxIntersects _ ->
-                new PruningDecision.NotApplied(TIER, "BboxIntersects not handled at DICTIONARY tier");
+            case io.tileverse.parquetry.filter.Predicate.Spatial _ ->
+                new PruningDecision.NotApplied(TIER, "spatial predicate not handled at DICTIONARY tier");
         };
     }
 

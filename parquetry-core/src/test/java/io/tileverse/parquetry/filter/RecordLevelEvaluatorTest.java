@@ -18,12 +18,16 @@ package io.tileverse.parquetry.filter;
 import static io.tileverse.parquetry.filter.Pred.col;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.lang.foreign.MemorySegment;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.HashMap;
 import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.testsupport.Wkb;
 
 class RecordLevelEvaluatorTest {
 
@@ -135,10 +139,84 @@ class RecordLevelEvaluatorTest {
     }
 
     @Test
-    void bboxIntersectsPassesThroughUntilSpatialEvaluationLands() {
-        RecordLevelEvaluator.RecordAccessor row = row(Map.of());
-        assertThat(RecordLevelEvaluator.test(col("geom").intersects(Bbox.of2d(0, 0, 10, 10)), row))
+    void bboxIntersectsEvaluatesWkbGeometryPerRow() {
+        // A point at (5, 5) intersects the query box [0,0 - 10,10].
+        MemorySegment hitGeom = wkbPoint(5.0, 5.0);
+        RecordLevelEvaluator.RecordAccessor hit = row(Map.of("geom", hitGeom));
+        assertThat(RecordLevelEvaluator.test(col("geom").intersects(Bbox.of2d(0, 0, 10, 10)), hit))
+                .as("point inside query box should intersect")
                 .isTrue();
+
+        // A point at (20, 20) is outside [0,0 - 10,10].
+        MemorySegment missGeom = wkbPoint(20.0, 20.0);
+        RecordLevelEvaluator.RecordAccessor miss = row(Map.of("geom", missGeom));
+        assertThat(RecordLevelEvaluator.test(col("geom").intersects(Bbox.of2d(0, 0, 10, 10)), miss))
+                .as("point outside query box should not intersect")
+                .isFalse();
+    }
+
+    @Test
+    void nullGeometryFailsAnySpatialRelation() {
+        // A row with no geometry value (null) must be excluded by every spatial predicate.
+        RecordLevelEvaluator.RecordAccessor rowWithNoGeom = row(Map.of());
+        assertThat(RecordLevelEvaluator.test(col("geom").intersects(Bbox.of2d(0, 0, 10, 10)), rowWithNoGeom))
+                .as("null geometry must not pass a spatial predicate")
+                .isFalse();
+    }
+
+    @Test
+    void nullGeometryAlsoFailsNegatedSpatialPredicate() {
+        // OGC simple-feature semantics: a null geometry yields UNKNOWN, which a NOT cannot turn into a match.
+        // The row is excluded from both a spatial predicate and its negation.
+        RecordLevelEvaluator.RecordAccessor rowWithNoGeom = row(Map.of());
+        Predicate notIntersects = new Predicate.Not(col("geom").intersects(Bbox.of2d(0, 0, 10, 10)));
+        assertThat(RecordLevelEvaluator.test(notIntersects, rowWithNoGeom))
+                .as("null geometry must not pass a negated spatial predicate")
+                .isFalse();
+    }
+
+    @Test
+    void negatedSpatialInvertsForPresentGeometry() {
+        Predicate notIntersects = new Predicate.Not(col("geom").intersects(Bbox.of2d(0, 0, 10, 10)));
+        RecordLevelEvaluator.RecordAccessor inside = row(Map.of("geom", wkbPoint(5.0, 5.0)));
+        assertThat(RecordLevelEvaluator.test(notIntersects, inside))
+                .as("a geometry inside the query box intersects; its negation is false")
+                .isFalse();
+        RecordLevelEvaluator.RecordAccessor outside = row(Map.of("geom", wkbPoint(20.0, 20.0)));
+        assertThat(RecordLevelEvaluator.test(notIntersects, outside))
+                .as("a geometry outside the query box does not intersect; its negation is true")
+                .isTrue();
+    }
+
+    @Test
+    void emptyGeometryIsDroppedByASpatialPredicate() {
+        RecordLevelEvaluator.RecordAccessor row = row(Map.of("geom", Wkb.fromWkt("POLYGON EMPTY")));
+        assertThat(RecordLevelEvaluator.test(col("geom").bboxCoveredBy(Bbox.of2d(0, 0, 10, 10)), row))
+                .as("an empty geometry is not covered by anything")
+                .isFalse();
+        assertThat(RecordLevelEvaluator.test(col("geom").intersects(Bbox.of2d(0, 0, 10, 10)), row))
+                .as("an empty geometry intersects nothing")
+                .isFalse();
+    }
+
+    @Test
+    void emptyGeometryIsKeptByANegatedSpatialPredicate() {
+        // OGC/JTS: an empty geometry's predicate is a definite false; its negation is therefore true (kept),
+        // unlike a null geometry, which is excluded from both.
+        RecordLevelEvaluator.RecordAccessor row = row(Map.of("geom", Wkb.fromWkt("POLYGON EMPTY")));
+        Predicate notCoveredBy = new Predicate.Not(col("geom").bboxCoveredBy(Bbox.of2d(0, 0, 10, 10)));
+        assertThat(RecordLevelEvaluator.test(notCoveredBy, row))
+                .as("the negation of a definite-false relation is true")
+                .isTrue();
+    }
+
+    private static MemorySegment wkbPoint(double x, double y) {
+        ByteBuffer buf = ByteBuffer.allocate(21).order(ByteOrder.LITTLE_ENDIAN);
+        buf.put((byte) 0x01);
+        buf.putInt(1); // point type
+        buf.putDouble(x);
+        buf.putDouble(y);
+        return MemorySegment.ofArray(buf.array()).asReadOnly();
     }
 
     private static RecordLevelEvaluator.RecordAccessor row(Map<String, Object> values) {

@@ -64,8 +64,8 @@ final class BloomFilterEvaluator {
             case Predicate.IsNull _ -> new PruningDecision.NotApplied(TIER, "IsNull not handled at BLOOM_FILTER tier");
             case Predicate.IsNotNull _ ->
                 new PruningDecision.NotApplied(TIER, "IsNotNull not handled at BLOOM_FILTER tier");
-            case Predicate.BboxIntersects _ ->
-                new PruningDecision.NotApplied(TIER, "BboxIntersects not handled at BLOOM_FILTER tier");
+            case Predicate.Spatial _ ->
+                new PruningDecision.NotApplied(TIER, "spatial predicate not handled at BLOOM_FILTER tier");
         };
     }
 

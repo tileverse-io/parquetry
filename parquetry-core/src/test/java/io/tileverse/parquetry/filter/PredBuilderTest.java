@@ -57,7 +57,7 @@ class PredBuilderTest {
     @Test
     void bboxIntersects() {
         Predicate p = col("geom").intersects(Bbox.of2d(0, 0, 10, 10));
-        assertThat(p).isInstanceOf(Predicate.BboxIntersects.class);
+        assertThat(p).isInstanceOf(Predicate.Spatial.BboxIntersects.class);
     }
 
     @Test

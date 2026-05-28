@@ -200,7 +200,23 @@ public final class Pred {
         }
 
         public Predicate intersects(Bbox bbox) {
-            return new Predicate.BboxIntersects(path, bbox);
+            return new Predicate.Spatial.BboxIntersects(path, bbox);
+        }
+
+        public Predicate bboxIntersects(Bbox bbox) {
+            return new Predicate.Spatial.BboxIntersects(path, bbox);
+        }
+
+        public Predicate bboxContains(Bbox bbox) {
+            return new Predicate.Spatial.BboxContains(path, bbox);
+        }
+
+        public Predicate bboxCoveredBy(Bbox bbox) {
+            return new Predicate.Spatial.BboxCoveredBy(path, bbox);
+        }
+
+        public Predicate bboxEquals(Bbox bbox) {
+            return new Predicate.Spatial.BboxEquals(path, bbox);
         }
     }
 }

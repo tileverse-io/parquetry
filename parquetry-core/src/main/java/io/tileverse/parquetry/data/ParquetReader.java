@@ -25,6 +25,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 import io.tileverse.parquetry.batch.BatchMaterializer;
@@ -46,10 +47,13 @@ import io.tileverse.parquetry.filter.FilterPipeline.ColumnStatsLookup;
 import io.tileverse.parquetry.filter.FilterPipeline.DictionaryLookup;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.filter.PruningDecision;
 import io.tileverse.parquetry.filter.RowGroupPlan;
 import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.filter.bloom.BloomFilterReader;
 import io.tileverse.parquetry.filter.bloom.SplitBlockBloomFilter;
+import io.tileverse.parquetry.filter.spatial.SpatialBoundsSource;
+import io.tileverse.parquetry.filter.spatial.SpatialCoveringRewrite;
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.KeyValue;
@@ -62,6 +66,7 @@ import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaBuilder;
+import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 import lombok.NonNull;
 
@@ -84,11 +89,14 @@ import lombok.NonNull;
  */
 public class ParquetReader {
 
+    private static final String GEO_KEY = "geo";
+
     private final ByteRangeSource source;
     private final FileMetaData footer;
     private final ParquetSchema fileSchema;
     private final Map<String, String> keyValueMetadata;
     private final List<RowGroupSummary> rowGroupView;
+    private final Optional<GeoParquetMetadata> geoMetadata;
 
     protected ParquetReader(
             ByteRangeSource source,
@@ -101,6 +109,7 @@ public class ParquetReader {
         this.fileSchema = fileSchema;
         this.keyValueMetadata = keyValueMetadata;
         this.rowGroupView = rowGroupView;
+        this.geoMetadata = parseGeoMetadata(keyValueMetadata);
     }
 
     /** Opens a reader, performing exactly one footer read against {@code source}. */
@@ -134,15 +143,17 @@ public class ParquetReader {
 
     /** Streams rows matching {@code predicate} under {@code projection}, materialized via {@code materializer}. */
     public <T> Stream<T> read(
-            @NonNull Predicate predicate,
+            @NonNull Predicate rawPredicate,
             @NonNull Projection projection,
             @NonNull Materializer<T> materializer,
             @NonNull ReadOptions options) {
 
+        Predicate predicate = lowerSpatialPredicates(rawPredicate);
         boolean recordLevel = options.useRecordLevelFilter();
         Projection scanProjection = recordLevel ? scanProjectionFor(projection, predicate) : projection;
         List<RowGroupChunks> rowGroupChunks = rowGroupChunks();
         ExplainPlan plan = runFilterPipeline(predicate, scanProjection, options, rowGroupChunks);
+        reportPruningDecisions(plan, options);
         List<RowGroupSurvivor> survivors = survivorsFor(plan, rowGroupChunks);
         ParquetSchema scanSchema = plan.projectedSchema();
         ParquetSchema outputSchema = outputSchemaFor(projection);
@@ -241,6 +252,15 @@ public class ParquetReader {
         };
     }
 
+    /**
+     * Rewrites GeoParquet bbox-relation leaves into equivalent comparisons on the geometry column's covering columns
+     * when this file has covering metadata, letting the numeric stats and column-index tiers prune without decoding the
+     * geometry. A file without covering keeps its spatial leaf for the record-level WKB path.
+     */
+    private Predicate lowerSpatialPredicates(Predicate predicate) {
+        return SpatialCoveringRewrite.expand(predicate, fileSchema, geoMetadata);
+    }
+
     /** Returns the per-row filter, or {@code null} when the predicate is trivially true (nothing to evaluate). */
     private static Predicate recordFilterOf(Predicate normalized) {
         if (normalized instanceof Predicate.Always(boolean value) && value) {
@@ -259,11 +279,12 @@ public class ParquetReader {
      * {@code materializer}.
      */
     public <T> Stream<T> readBatches(
-            @NonNull Predicate predicate,
+            @NonNull Predicate rawPredicate,
             @NonNull Projection projection,
             @NonNull BatchMaterializer<T> materializer,
             @NonNull ReadOptions options) {
 
+        Predicate predicate = lowerSpatialPredicates(rawPredicate);
         List<RowGroupChunks> rowGroupChunks = rowGroupChunks();
         ExplainPlan plan = runFilterPipeline(predicate, projection, options, rowGroupChunks);
         List<RowGroupSurvivor> survivors = survivorsFor(plan, rowGroupChunks);
@@ -330,7 +351,8 @@ public class ParquetReader {
 
     /** Runs the filter pipeline without reading data and returns the explain plan. */
     public ExplainPlan explain(
-            @NonNull Predicate predicate, @NonNull Projection projection, @NonNull ReadOptions options) {
+            @NonNull Predicate rawPredicate, @NonNull Projection projection, @NonNull ReadOptions options) {
+        Predicate predicate = lowerSpatialPredicates(rawPredicate);
         return runFilterPipeline(predicate, projection, options, rowGroupChunks());
     }
 
@@ -383,17 +405,27 @@ public class ParquetReader {
         return FilterPipeline.evaluate(fileSchema, projection, predicate, inputs);
     }
 
+    /** Replays every per-row-group tier decision to the caller's listener, in row-group then tier order. */
+    private static void reportPruningDecisions(ExplainPlan plan, ReadOptions options) {
+        Consumer<PruningDecision> listener = options.pruningDecisionListener();
+        for (RowGroupPlan rowGroupPlan : plan.rowGroups()) {
+            rowGroupPlan.tiers().forEach(listener);
+        }
+    }
+
     /**
      * Builds one {@link FilterPipeline.RowGroupInputs} per row group from the pre-built chunk views. Subclasses may
      * override to supply richer dictionary or page-stats lookups than the in-footer defaults.
      */
     protected List<FilterPipeline.RowGroupInputs> filterInputsFor(
             List<RowGroupChunks> rowGroupChunks, ReadOptions options) {
+        SpatialBoundsSource spatialBounds = SpatialBoundsSource.of(footer, fileSchema, geoMetadata);
         List<FilterPipeline.RowGroupInputs> inputs = new ArrayList<>(rowGroupChunks.size());
         for (RowGroupChunks chunks : rowGroupChunks) {
             inputs.add(new FilterPipeline.RowGroupInputs(
                     chunks.numRows(),
                     statsLookup(chunks),
+                    spatialBounds,
                     noDictionaryLookup(),
                     pageStatsLookupFor(chunks, options),
                     bloomLookupFor(chunks, options)));
@@ -500,11 +532,11 @@ public class ParquetReader {
     }
 
     private static DictionaryLookup noDictionaryLookup() {
-        return path -> Optional.empty();
+        return _ -> Optional.empty();
     }
 
     private static ColumnPageStatsLookup noColumnPageStatsLookup() {
-        return path -> Optional.empty();
+        return _ -> Optional.empty();
     }
 
     /**
@@ -514,6 +546,22 @@ public class ParquetReader {
      */
     private static ParquetSchema buildFileSchema(FileMetaData footer, Map<String, String> kvMetadata) {
         return SchemaBuilder.build(footer.schema(), kvMetadata);
+    }
+
+    /**
+     * Parses the GeoParquet {@code "geo"} key-value entry once, returning empty when it is absent or cannot be parsed.
+     * The covering-column lowering consults it to replace spatial predicate leaves.
+     */
+    private static Optional<GeoParquetMetadata> parseGeoMetadata(Map<String, String> kvMetadata) {
+        String geoJson = kvMetadata.get(GEO_KEY);
+        if (geoJson == null || geoJson.isEmpty()) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(GeoParquetMetadata.parse(geoJson));
+        } catch (RuntimeException _) {
+            return Optional.empty();
+        }
     }
 
     private static Map<String, String> collapseKeyValueMetadata(List<KeyValue> entries) {

@@ -23,6 +23,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
+import io.tileverse.parquetry.filter.spatial.WkbEnvelope;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
@@ -56,6 +57,7 @@ public final class RecordLevelEvaluator {
             case Predicate.Always(boolean value) -> value;
             case Predicate.And(List<Predicate> children) -> testAnd(children, row);
             case Predicate.Or(List<Predicate> children) -> testOr(children, row);
+            case Predicate.Not(Predicate.Spatial spatial) -> negatedSpatialHolds(spatial, row);
             case Predicate.Not(Predicate child) -> !test(child, row);
             case Predicate.Eq(ColumnPath col, Value v) -> compare(row.value(col), v) == 0;
             case Predicate.NotEq(ColumnPath col, Value v) -> {
@@ -84,9 +86,7 @@ public final class RecordLevelEvaluator {
             }
             case Predicate.IsNull(ColumnPath col) -> row.value(col) == null;
             case Predicate.IsNotNull(ColumnPath col) -> row.value(col) != null;
-            // Spatial predicates are not yet evaluable per row. Pass them through (keep the row) rather than dropping
-            // every row; returning false here would empty out every spatial read. Real geometry evaluation lands later.
-            case Predicate.BboxIntersects _ -> true;
+            case Predicate.Spatial spatial -> spatialHolds(spatial, row);
         };
     }
 
@@ -106,6 +106,20 @@ public final class RecordLevelEvaluator {
             }
         }
         return false;
+    }
+
+    private static boolean spatialHolds(Predicate.Spatial spatial, RecordAccessor row) {
+        Object geometry = row.value(spatial.col());
+        return geometry != null && WkbEnvelope.matches(spatial, (MemorySegment) geometry);
+    }
+
+    /**
+     * Negation of a spatial relation under OGC simple-feature semantics: a null geometry has no spatial truth value; it
+     * is excluded from both a spatial predicate and its negation rather than being flipped into a match.
+     */
+    private static boolean negatedSpatialHolds(Predicate.Spatial spatial, RecordAccessor row) {
+        Object geometry = row.value(spatial.col());
+        return geometry != null && !WkbEnvelope.matches(spatial, (MemorySegment) geometry);
     }
 
     /**

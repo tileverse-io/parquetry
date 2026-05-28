@@ -15,22 +15,14 @@
  */
 package io.tileverse.parquetry.data.write;
 
-import static io.tileverse.parquetry.format.ParquetLayouts.DOUBLE;
-import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
-import static java.lang.foreign.ValueLayout.JAVA_BYTE;
-import static java.lang.foreign.ValueLayout.JAVA_DOUBLE_UNALIGNED;
-import static java.lang.foreign.ValueLayout.JAVA_INT_UNALIGNED;
-import static java.nio.ByteOrder.BIG_ENDIAN;
-
 import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.TreeSet;
 
-import io.tileverse.parquetry.data.ParquetWriteException;
+import io.tileverse.parquetry.filter.spatial.WkbEnvelope;
 import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.format.GeospatialStatistics;
 
@@ -40,34 +32,15 @@ import lombok.NonNull;
  * Per-geometry-column accumulator that walks WKB payloads to expand a running bounding box (X, Y, optional Z, optional
  * M) and to record the set of WKB geometry type codes observed.
  *
- * <p>The WKB format mandates a leading byte-order byte (0x00 big-endian, 0x01 little-endian) followed by a 4-byte type
- * code in the declared byte order; the type code identifies the geometry kind and its coordinate dimensions. This
- * accumulator walks the structure directly through the input {@link MemorySegment} so no intermediate byte array is
- * materialized; no JTS dependency is introduced here.
+ * <p>The structural WKB walk lives in {@link WkbEnvelope}; this accumulator implements {@link WkbEnvelope.Visitor} to
+ * expand its extents as coordinates stream through. No intermediate byte array is materialized and no JTS dependency is
+ * introduced here.
  *
  * <p>{@link #finish()} returns the assembled {@link GeospatialStatistics}: the bounding box is absent when no
  * coordinates were observed, and the geometry-type set is absent when no payload was supplied. Z and M extents are
  * tracked separately so a stream of mixed 2D / 3D / measured geometries still yields a faithful box.
  */
-public final class GeospatialStatisticsAccumulator {
-
-    private static final ValueLayout.OfInt INT_BE = JAVA_INT_UNALIGNED.withOrder(BIG_ENDIAN);
-    private static final ValueLayout.OfDouble DOUBLE_BE = JAVA_DOUBLE_UNALIGNED.withOrder(BIG_ENDIAN);
-
-    private static final byte WKB_BIG_ENDIAN = 0x00;
-    private static final byte WKB_LITTLE_ENDIAN = 0x01;
-
-    private static final int TYPE_POINT = 1;
-    private static final int TYPE_LINESTRING = 2;
-    private static final int TYPE_POLYGON = 3;
-    private static final int TYPE_MULTIPOINT = 4;
-    private static final int TYPE_MULTILINESTRING = 5;
-    private static final int TYPE_MULTIPOLYGON = 6;
-    private static final int TYPE_GEOMETRYCOLLECTION = 7;
-
-    private static final int Z_OFFSET = 1000;
-    private static final int M_OFFSET = 2000;
-    private static final int ZM_OFFSET = 3000;
+public final class GeospatialStatisticsAccumulator implements WkbEnvelope.Visitor {
 
     private boolean hasObservation;
 
@@ -91,8 +64,27 @@ public final class GeospatialStatisticsAccumulator {
      * recording the geometry's type code. Callers retain ownership of the segment; the accumulator only reads from it.
      */
     public void update(@NonNull MemorySegment wkb) {
-        Cursor cursor = new Cursor(wkb, 0L);
-        consumeGeometry(cursor);
+        WkbEnvelope.walk(wkb, this);
+    }
+
+    @Override
+    public void geometryType(int rawType) {
+        geospatialTypes.add(rawType);
+    }
+
+    @Override
+    public boolean coordinate(double x, double y, double z, double m, boolean hasZ, boolean hasM) {
+        if (Double.isNaN(x) || Double.isNaN(y)) {
+            return true; // POINT EMPTY and other degenerate coordinates have no real location
+        }
+        expandXY(x, y);
+        if (hasZ) {
+            expandZ(z);
+        }
+        if (hasM) {
+            expandM(m);
+        }
+        return true;
     }
 
     /**
@@ -135,72 +127,6 @@ public final class GeospatialStatisticsAccumulator {
                 hasM ? OptionalDouble.of(mmax) : OptionalDouble.empty());
     }
 
-    /**
-     * Consumes one geometry starting at the cursor's current position. The cursor advances past the byte-order byte,
-     * the type code, and every coordinate belonging to the geometry (recursing through containers).
-     */
-    private void consumeGeometry(Cursor cursor) {
-        cursor.byteOrder = readByteOrder(cursor);
-        int rawType = cursor.readInt();
-        Dimensions dims = dimensionsFor(rawType);
-        int baseType = baseType(rawType);
-        geospatialTypes.add(rawType);
-        switch (baseType) {
-            case TYPE_POINT -> consumePoint(cursor, dims);
-            case TYPE_LINESTRING -> consumeLineString(cursor, dims);
-            case TYPE_POLYGON -> consumePolygon(cursor, dims);
-            case TYPE_MULTIPOINT, TYPE_MULTILINESTRING, TYPE_MULTIPOLYGON, TYPE_GEOMETRYCOLLECTION ->
-                consumeCollection(cursor);
-            default -> {
-                /* unknown case; coordinate walk skipped, type code already recorded */
-            }
-        }
-    }
-
-    private void consumePoint(Cursor cursor, Dimensions dims) {
-        consumeCoordinate(cursor, dims);
-    }
-
-    private void consumeLineString(Cursor cursor, Dimensions dims) {
-        int numPoints = cursor.readInt();
-        for (int i = 0; i < numPoints; i++) {
-            consumeCoordinate(cursor, dims);
-        }
-    }
-
-    private void consumePolygon(Cursor cursor, Dimensions dims) {
-        int numRings = cursor.readInt();
-        for (int i = 0; i < numRings; i++) {
-            int numPoints = cursor.readInt();
-            for (int j = 0; j < numPoints; j++) {
-                consumeCoordinate(cursor, dims);
-            }
-        }
-    }
-
-    /**
-     * Walks a collection (MULTIPOINT / MULTILINESTRING / MULTIPOLYGON / GEOMETRYCOLLECTION). Every element carries its
-     * own byte-order byte and type code, so we recurse from the top of {@link #consumeGeometry}.
-     */
-    private void consumeCollection(Cursor cursor) {
-        int numElements = cursor.readInt();
-        for (int i = 0; i < numElements; i++) {
-            consumeGeometry(cursor);
-        }
-    }
-
-    private void consumeCoordinate(Cursor cursor, Dimensions dims) {
-        double x = cursor.readDouble();
-        double y = cursor.readDouble();
-        expandXY(x, y);
-        if (dims.hasZ) {
-            expandZ(cursor.readDouble());
-        }
-        if (dims.hasM) {
-            expandM(cursor.readDouble());
-        }
-    }
-
     private void expandXY(double x, double y) {
         hasObservation = true;
         if (x < xmin) {
@@ -218,6 +144,9 @@ public final class GeospatialStatisticsAccumulator {
     }
 
     private void expandZ(double z) {
+        if (Double.isNaN(z)) {
+            return; // a geometry can have finite XY but a missing Z; record nothing for it
+        }
         hasZ = true;
         if (z < zmin) {
             zmin = z;
@@ -228,95 +157,15 @@ public final class GeospatialStatisticsAccumulator {
     }
 
     private void expandM(double m) {
+        if (Double.isNaN(m)) {
+            return; // a geometry can have finite XY but a missing M; record nothing for it
+        }
         hasM = true;
         if (m < mmin) {
             mmin = m;
         }
         if (m > mmax) {
             mmax = m;
-        }
-    }
-
-    private static byte readByteOrder(Cursor cursor) {
-        byte order = cursor.segment.get(JAVA_BYTE, cursor.offset);
-        cursor.offset += 1;
-        if (order != WKB_BIG_ENDIAN && order != WKB_LITTLE_ENDIAN) {
-            throw new ParquetWriteException("Invalid WKB byte-order byte: 0x" + Integer.toHexString(order & 0xff));
-        }
-        return order;
-    }
-
-    private static Dimensions dimensionsFor(int rawType) {
-        if (rawType >= ZM_OFFSET) {
-            return Dimensions.ZM;
-        }
-        if (rawType >= M_OFFSET) {
-            return Dimensions.M;
-        }
-        if (rawType >= Z_OFFSET) {
-            return Dimensions.Z;
-        }
-        return Dimensions.XY;
-    }
-
-    private static int baseType(int rawType) {
-        if (rawType >= ZM_OFFSET) {
-            return rawType - ZM_OFFSET;
-        }
-        if (rawType >= M_OFFSET) {
-            return rawType - M_OFFSET;
-        }
-        if (rawType >= Z_OFFSET) {
-            return rawType - Z_OFFSET;
-        }
-        return rawType;
-    }
-
-    /**
-     * Cursor over a WKB payload. Tracks the current byte-order context (each contained geometry can flip the order),
-     * the underlying segment, and the running read offset.
-     */
-    private static final class Cursor {
-
-        private final MemorySegment segment;
-        private long offset;
-        private byte byteOrder = WKB_LITTLE_ENDIAN;
-
-        Cursor(MemorySegment segment, long offset) {
-            this.segment = segment;
-            this.offset = offset;
-        }
-
-        int readInt() {
-            int value = byteOrder == WKB_LITTLE_ENDIAN ? segment.get(INT32, offset) : segment.get(INT_BE, offset);
-            offset += 4;
-            return value;
-        }
-
-        double readDouble() {
-            double value =
-                    byteOrder == WKB_LITTLE_ENDIAN ? segment.get(DOUBLE, offset) : segment.get(DOUBLE_BE, offset);
-            offset += 8;
-            return value;
-        }
-    }
-
-    /**
-     * Whether a WKB type code carries Z and / or M ordinates per coordinate. The +1000 / +2000 / +3000 type-code
-     * prefixes signal Z, M, and ZM variants of the seven base geometry kinds.
-     */
-    private enum Dimensions {
-        XY(false, false),
-        Z(true, false),
-        M(false, true),
-        ZM(true, true);
-
-        private final boolean hasZ;
-        private final boolean hasM;
-
-        Dimensions(boolean hasZ, boolean hasM) {
-            this.hasZ = hasZ;
-            this.hasM = hasM;
         }
     }
 }

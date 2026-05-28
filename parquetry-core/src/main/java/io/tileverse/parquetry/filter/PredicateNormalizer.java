@@ -72,11 +72,11 @@ final class PredicateNormalizer {
             }
             case Predicate.IsNull(ColumnPath col) -> requirePrimitive(col, schema);
             case Predicate.IsNotNull(ColumnPath col) -> requirePrimitive(col, schema);
-            case Predicate.BboxIntersects(ColumnPath col, Bbox _) -> {
-                SchemaNode.Primitive prim = requirePrimitive(col, schema);
+            case Predicate.Spatial s -> {
+                SchemaNode.Primitive prim = requirePrimitive(s.col(), schema);
                 if (prim.kind() != PrimitiveKind.BYTE_ARRAY && prim.kind() != PrimitiveKind.FIXED_LEN_BYTE_ARRAY) {
-                    throw new ParquetSchemaException(
-                            "BboxIntersects requires a binary column; got " + col.dot() + " of type " + prim.kind());
+                    throw new ParquetSchemaException("a spatial predicate requires a binary column; got "
+                            + s.col().dot() + " of type " + prim.kind());
                 }
             }
         }
@@ -104,7 +104,7 @@ final class PredicateNormalizer {
 
     /**
      * Returns the logical negation of an already-Not-pushed predicate. For comparison atoms (Eq/Lt/...) returns the
-     * complementary operator. For {@code In} and {@code BboxIntersects} - which have no simple leaf complement - wraps
+     * complementary operator. For {@code In} and the spatial relations - which have no simple leaf complement - wraps
      * in a {@code Not}; the pipeline keeps these as outer negations.
      */
     private static Predicate negate(Predicate p) {
@@ -126,7 +126,7 @@ final class PredicateNormalizer {
             case Predicate.IsNull(ColumnPath col) -> new Predicate.IsNotNull(col);
             case Predicate.IsNotNull(ColumnPath col) -> new Predicate.IsNull(col);
             case Predicate.In _ -> new Predicate.Not(p);
-            case Predicate.BboxIntersects _ -> new Predicate.Not(p);
+            case Predicate.Spatial _ -> new Predicate.Not(p);
         };
     }
 
