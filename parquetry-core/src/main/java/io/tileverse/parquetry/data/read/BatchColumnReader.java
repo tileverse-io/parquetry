@@ -15,8 +15,6 @@
  */
 package io.tileverse.parquetry.data.read;
 
-import static java.lang.foreign.ValueLayout.JAVA_BYTE;
-
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.lang.foreign.Arena;
@@ -559,17 +557,28 @@ final class BatchColumnReader {
     }
 
     /**
-     * Replaces every non-null entry in {@code segments} with a heap-backed copy. Lets the caller close the page Arena
-     * without invalidating the segments.
+     * Relocates every non-null entry in {@code segments} off the page Arena, letting the caller close it without
+     * invalidating them. The page's binary values are packed into a single heap buffer and each entry becomes a
+     * read-only slice of it - one allocation per page instead of one per value.
      */
     private static void copySegmentsToHeap(MemorySegment[] segments) {
+        long total = 0;
+        for (MemorySegment src : segments) {
+            if (src != null) {
+                total += src.byteSize();
+            }
+        }
+        MemorySegment backing = MemorySegment.ofArray(new byte[Math.toIntExact(total)]);
+        long offset = 0;
         for (int i = 0; i < segments.length; i++) {
             MemorySegment src = segments[i];
             if (src == null) {
                 continue;
             }
-            byte[] bytes = src.toArray(JAVA_BYTE);
-            segments[i] = MemorySegment.ofArray(bytes).asReadOnly();
+            long length = src.byteSize();
+            MemorySegment.copy(src, 0L, backing, offset, length);
+            segments[i] = backing.asSlice(offset, length).asReadOnly();
+            offset += length;
         }
     }
 
