@@ -24,6 +24,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Random;
@@ -58,6 +59,7 @@ import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.geo.jts.JtsGeometryFilter;
+import io.tileverse.parquetry.geo.jts.JtsMaterializer;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -111,6 +113,11 @@ import io.tileverse.parquetry.schema.SchemaNode;
  * </ul>
  *
  * <p>The {@code geometrySize} parameter scales per-row WKB decode cost (same axis as {@code SpatialPruningBenchmark}).
+ *
+ * <p>The {@code output} parameter selects how the geometry output column is materialised: WKB keeps it as raw bytes (no
+ * JTS parse on the output side); JTS parses it into a {@code Geometry}. On the IN_CORE_GATE mode the JTS-minus-WKB
+ * difference isolates the surviving rows' output parse - the parse the gate already did once for its exact test.
+ * Reusing the gate's decoded geometry as the output value would reclaim that parse.
  *
  * <pre>{@code
  * ./mvnw -Pbenchmarks -pl :parquetry-benchmarks -am package
@@ -224,6 +231,23 @@ public class JtsSpatialFilterBenchmark {
         APP_SIDE_FILTER
     }
 
+    /**
+     * How the geometry output column is materialised.
+     *
+     * <ul>
+     *   <li>WKB: the default record materializer keeps the geometry as raw WKB; no JTS parse on the output side.
+     *   <li>JTS: {@link JtsMaterializer} parses each output row's WKB into a JTS {@code Geometry}.
+     * </ul>
+     *
+     * The interesting cell is IN_CORE_GATE: the JTS-minus-WKB difference is the surviving rows' output parse, which the
+     * gate already paid once for its exact test. That difference is the upper bound on what reusing the gate's decoded
+     * geometry as the output value would save.
+     */
+    public enum OutputForm {
+        WKB,
+        JTS
+    }
+
     @Param({"BBOX_ONLY", "IN_CORE_GATE", "APP_SIDE_FILTER"})
     private Mode mode;
 
@@ -235,6 +259,9 @@ public class JtsSpatialFilterBenchmark {
 
     @Param({"SMALL", "LARGE"})
     private GeometrySize geometrySize;
+
+    @Param({"WKB", "JTS"})
+    private OutputForm output;
 
     /** Shrinks the fixture for a fast end-to-end check. The default keeps the full measurement workload. */
     @Param({"false"})
@@ -256,6 +283,11 @@ public class JtsSpatialFilterBenchmark {
      * JtsGeometryFilter is thread-safe after construction; allocating one per trial is safe.
      */
     private JtsGeometryFilter appSideFilter;
+
+    /**
+     * Output materializer for the JTS {@link OutputForm}: parses each output row's geometry WKB into a JTS geometry.
+     */
+    private JtsMaterializer jtsMaterializer;
 
     @SuppressWarnings("java:S125") // explanatory comment for the fixture intent, not commented-out code
     @Setup(Level.Trial)
@@ -281,6 +313,9 @@ public class JtsSpatialFilterBenchmark {
 
         // APP_SIDE_FILTER reuses a separate JtsGeometryFilter for the app-side stream step.
         appSideFilter = JtsGeometryFilter.intersects(GEOMETRY_COL, queryDiamond);
+
+        // JTS output form parses each output row's geometry; Projection.ALL materializes the full schema.
+        jtsMaterializer = new JtsMaterializer(open.dataset().schema());
     }
 
     @TearDown(Level.Trial)
@@ -307,9 +342,7 @@ public class JtsSpatialFilterBenchmark {
      * exact geometry falls outside the diamond but inside its envelope. Returns a superset of the exact result.
      */
     private void runBboxOnly(Blackhole bh) {
-        try (Stream<ParquetRecord> rows = open.dataset().read(bboxPredicate, Projection.ALL, ReadOptions.DEFAULTS)) {
-            rows.forEach(row -> bh.consume(row.getInt(ID_COL)));
-        }
+        readAndConsume(bboxPredicate, bh);
     }
 
     /**
@@ -318,10 +351,29 @@ public class JtsSpatialFilterBenchmark {
      * before their other columns are materialised. Only truly intersecting rows contribute to the output.
      */
     private void runInCoreGate(Blackhole bh) {
-        try (Stream<ParquetRecord> rows =
-                open.dataset().read(inCoreGatePredicate, Projection.ALL, ReadOptions.DEFAULTS)) {
-            rows.forEach(row -> bh.consume(row.getInt(ID_COL)));
+        readAndConsume(inCoreGatePredicate, bh);
+    }
+
+    /**
+     * Reads {@code predicate}'s result set and consumes each row, materialising the geometry output as raw WKB or as a
+     * JTS geometry per the {@code output} axis.
+     */
+    private void readAndConsume(Predicate predicate, Blackhole bh) {
+        if (output == OutputForm.JTS) {
+            try (Stream<Map<ColumnPath, Object>> rows =
+                    open.dataset().read(predicate, Projection.ALL, jtsMaterializer, ReadOptions.DEFAULTS)) {
+                rows.forEach(row -> consumeJts(row, bh));
+            }
+        } else {
+            try (Stream<ParquetRecord> rows = open.dataset().read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
+                rows.forEach(row -> bh.consume(row.getInt(ID_COL)));
+            }
         }
+    }
+
+    private void consumeJts(Map<ColumnPath, Object> row, Blackhole bh) {
+        bh.consume(row.get(GEOMETRY_COL));
+        bh.consume(row.get(ID_COL));
     }
 
     /**
@@ -329,13 +381,23 @@ public class JtsSpatialFilterBenchmark {
      * app-side. Every bbox-candidate row decodes all its output columns, including those the exact test will discard.
      * This models an application that pushes only the envelope to the reader and re-applies exactness afterwards.
      *
-     * <p>The geometry WKB is read from the record via {@link ParquetRecord#getGeometryBytes(ColumnPath)}, which
-     * materialises a fresh byte array per call. The {@link JtsGeometryFilter#gate} method wraps that array in a
-     * {@link MemorySegment} for the JTS decode step.
+     * <p>Under the WKB output form the geometry is read from the record via
+     * {@link ParquetRecord#getGeometryBytes(ColumnPath)} and re-parsed for the test. Under the JTS output form the
+     * geometry is already materialised as a JTS object, and the app-side test runs on that materialised geometry
+     * without a second parse.
      */
     private void runAppSideFilter(Blackhole bh) {
-        try (Stream<ParquetRecord> rows = open.dataset().read(bboxPredicate, Projection.ALL, ReadOptions.DEFAULTS)) {
-            rows.filter(row -> appSideMatchesGeometry(row)).forEach(row -> bh.consume(row.getInt(ID_COL)));
+        if (output == OutputForm.JTS) {
+            try (Stream<Map<ColumnPath, Object>> rows =
+                    open.dataset().read(bboxPredicate, Projection.ALL, jtsMaterializer, ReadOptions.DEFAULTS)) {
+                rows.filter(row -> appSideFilter.matches((Geometry) row.get(GEOMETRY_COL)))
+                        .forEach(row -> consumeJts(row, bh));
+            }
+        } else {
+            try (Stream<ParquetRecord> rows =
+                    open.dataset().read(bboxPredicate, Projection.ALL, ReadOptions.DEFAULTS)) {
+                rows.filter(this::appSideMatchesGeometry).forEach(row -> bh.consume(row.getInt(ID_COL)));
+            }
         }
     }
 
