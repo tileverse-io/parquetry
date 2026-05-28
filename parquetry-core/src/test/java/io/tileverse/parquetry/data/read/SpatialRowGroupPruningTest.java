@@ -18,6 +18,7 @@ package io.tileverse.parquetry.data.read;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
+import java.lang.foreign.MemorySegment;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -38,6 +39,7 @@ import io.tileverse.parquetry.data.WriteOptions.GeoParquetMetadataMode;
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
 import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.filter.Bbox;
+import io.tileverse.parquetry.filter.GeometryFilter;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -107,11 +109,60 @@ class SpatialRowGroupPruningTest {
                 .allMatch(id -> id >= ROWS_PER_GROUP * 2 && id < ROWS_PER_GROUP * 3);
     }
 
+    @Test
+    void geometryFilterPruningPredicateEliminatesDisjointRowGroupsAtSpatialTier() throws Exception {
+        Path file = writeFourClusteredRowGroups();
+
+        ColumnPath geomCol = ColumnPath.of("geometry");
+        // A query box that is disjoint from rg1, rg2, and rg3 - only rg0 overlaps [0..10].
+        Bbox disjointFromMostGroups = Bbox.of2d(0, 0, 10, 10);
+        Predicate.Spatial pruning = new Predicate.Spatial.BboxIntersects(geomCol, disjointFromMostGroups);
+        GeometryFilter<Object> fake = fakePruningOnlyFilter(geomCol, Optional.of(pruning));
+        Predicate predicate = Predicate.geometryFilter(fake);
+
+        List<PruningDecision> decisions = new ArrayList<>();
+        ReadOptions options =
+                ReadOptions.builder().pruningDecisionListener(decisions::add).build();
+
+        readIds(file, predicate, options);
+
+        assertThat(spatialEliminations(decisions))
+                .as(
+                        "the GeometryFilterPredicate's pruning predicate must drive SPATIAL-tier elimination of disjoint row groups")
+                .isEqualTo(3);
+    }
+
     private static long spatialEliminations(List<PruningDecision> decisions) {
         return decisions.stream()
                 .filter(d -> d.tier() == Tier.SPATIAL)
                 .filter(d -> d instanceof PruningDecision.Eliminated)
                 .count();
+    }
+
+    /**
+     * Returns a fake {@link GeometryFilter} whose {@code pruningPredicate()} returns {@code lowering}. The gate keeps
+     * every row that reaches it (decode returns a sentinel, matches always accepts it). This isolates the pruning
+     * assertion: only the spatial-tier elimination count matters here, not the exact row set.
+     */
+    private static GeometryFilter<Object> fakePruningOnlyFilter(
+            ColumnPath geomCol, Optional<Predicate.Spatial> lowering) {
+        return new GeometryFilter<>() {
+            public ColumnPath column() {
+                return geomCol;
+            }
+
+            public Optional<Predicate.Spatial> pruningPredicate() {
+                return lowering;
+            }
+
+            public Object decode(MemorySegment wkb) {
+                return Boolean.TRUE;
+            }
+
+            public boolean matches(Object geometry) {
+                return true;
+            }
+        };
     }
 
     private Path writeFourClusteredRowGroups() throws Exception {

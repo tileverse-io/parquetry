@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Optional;
 
 import io.tileverse.parquetry.filter.Bbox;
+import io.tileverse.parquetry.filter.GeometryFilter;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -74,6 +75,7 @@ public final class SpatialCoveringRewrite {
             case Predicate.Or(List<Predicate> children) -> new Predicate.Or(rewriteAll(children, schema, geo));
             case Predicate.Not(Predicate child) -> new Predicate.Not(rewrite(child, schema, geo));
             case Predicate.Spatial spatial -> rewriteSpatial(spatial, schema, geo);
+            case Predicate.GeometryFilterPredicate gfp -> rewriteGeometryFilter(gfp, schema, geo);
             default -> predicate;
         };
     }
@@ -88,6 +90,28 @@ public final class SpatialCoveringRewrite {
             return spatial;
         }
         return lower(spatial, covering.orElseThrow());
+    }
+
+    /**
+     * Rewrites a {@link Predicate.GeometryFilterPredicate} when its {@link GeometryFilter#pruningPredicate()} provides
+     * a bbox lowering and the geometry column has a resolvable covering. Because the lowering is only a necessary
+     * condition of the exact gate (not equivalent to it), the gate leaf is preserved and the covering comparison is
+     * added as a coarse pre-filter: the result is {@code And(coveringComparisons, gfp)}. When the lowering is absent or
+     * no covering is resolvable, the predicate is returned unchanged.
+     */
+    private static Predicate rewriteGeometryFilter(
+            Predicate.GeometryFilterPredicate gfp, ParquetSchema schema, GeoParquetMetadata geo) {
+        Optional<Predicate.Spatial> lowering = gfp.filter().pruningPredicate();
+        if (lowering.isEmpty()) {
+            return gfp;
+        }
+        Predicate.Spatial spatial = lowering.orElseThrow();
+        Optional<BboxCovering> covering = coveringFor(spatial.col(), schema, geo);
+        if (covering.isEmpty()) {
+            return gfp;
+        }
+        Predicate loweredCovering = lower(spatial, covering.orElseThrow());
+        return new Predicate.And(List.of(loweredCovering, gfp));
     }
 
     private static Predicate lower(Predicate.Spatial spatial, BboxCovering c) {

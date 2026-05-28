@@ -19,10 +19,12 @@ import static io.tileverse.parquetry.filter.Pred.col;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
@@ -208,6 +210,87 @@ class RecordLevelEvaluatorTest {
         assertThat(RecordLevelEvaluator.test(notCoveredBy, row))
                 .as("the negation of a definite-false relation is true")
                 .isTrue();
+    }
+
+    @Test
+    void geometryFilterPassesRowWhosePointIsInsideBox() {
+        RecordLevelEvaluator.RecordAccessor row = row(Map.of("geom", wkbPoint(5.0, 5.0)));
+        assertThat(RecordLevelEvaluator.test(Predicate.geometryFilter(pointInBox(0, 0, 10, 10)), row))
+                .as("a point inside the query box must pass the geometry filter")
+                .isTrue();
+    }
+
+    @Test
+    void geometryFilterRejectsRowWhosePointIsOutsideBox() {
+        RecordLevelEvaluator.RecordAccessor row = row(Map.of("geom", wkbPoint(20.0, 20.0)));
+        assertThat(RecordLevelEvaluator.test(Predicate.geometryFilter(pointInBox(0, 0, 10, 10)), row))
+                .as("a point outside the query box must fail the geometry filter")
+                .isFalse();
+    }
+
+    @Test
+    void nullGeometryFailsGeometryFilter() {
+        RecordLevelEvaluator.RecordAccessor rowWithNoGeom = row(Map.of());
+        assertThat(RecordLevelEvaluator.test(Predicate.geometryFilter(pointInBox(0, 0, 10, 10)), rowWithNoGeom))
+                .as("a null geometry must not pass a geometry filter (OGC semantics)")
+                .isFalse();
+    }
+
+    @Test
+    void nullGeometryFailsNegatedGeometryFilter() {
+        // OGC simple-feature semantics: a null geometry has no spatial truth value; it is excluded
+        // from both the filter and its negation - symmetrical with negated spatial predicates.
+        RecordLevelEvaluator.RecordAccessor rowWithNoGeom = row(Map.of());
+        Predicate notMatch = new Predicate.Not(Predicate.geometryFilter(pointInBox(0, 0, 10, 10)));
+        assertThat(RecordLevelEvaluator.test(notMatch, rowWithNoGeom))
+                .as("a null geometry must not pass a negated geometry filter either (OGC semantics)")
+                .isFalse();
+    }
+
+    @Test
+    void negatedGeometryFilterIsInverseForPresentGeometry() {
+        GeometryFilter<double[]> filter = pointInBox(0, 0, 10, 10);
+        Predicate notMatch = new Predicate.Not(Predicate.geometryFilter(filter));
+        RecordLevelEvaluator.RecordAccessor inside = row(Map.of("geom", wkbPoint(5.0, 5.0)));
+        assertThat(RecordLevelEvaluator.test(notMatch, inside))
+                .as("a geometry inside the box passes the filter; its negation is false")
+                .isFalse();
+        RecordLevelEvaluator.RecordAccessor outside = row(Map.of("geom", wkbPoint(20.0, 20.0)));
+        assertThat(RecordLevelEvaluator.test(notMatch, outside))
+                .as("a geometry outside the box fails the filter; its negation is true")
+                .isTrue();
+    }
+
+    /**
+     * A geometry filter whose decode reads the WKB point format written by {@link #wkbPoint}: 1 byte byte-order +
+     * 4-byte type int + two little-endian doubles. Matches when the point is inside [minX, maxX] x [minY, maxY].
+     */
+    private static GeometryFilter<double[]> pointInBox(double minX, double minY, double maxX, double maxY) {
+        return new GeometryFilter<>() {
+            @Override
+            public ColumnPath column() {
+                return ColumnPath.of("geom");
+            }
+
+            @Override
+            public Optional<Predicate.Spatial> pruningPredicate() {
+                return Optional.empty();
+            }
+
+            @Override
+            public double[] decode(MemorySegment wkb) {
+                // WKB point layout: 1-byte order + 4-byte type + 8-byte x + 8-byte y
+                ValueLayout.OfDouble doubleLE = ValueLayout.JAVA_DOUBLE_UNALIGNED.withOrder(ByteOrder.LITTLE_ENDIAN);
+                double x = wkb.get(doubleLE, 5);
+                double y = wkb.get(doubleLE, 13);
+                return new double[] {x, y};
+            }
+
+            @Override
+            public boolean matches(double[] point) {
+                return point[0] >= minX && point[0] <= maxX && point[1] >= minY && point[1] <= maxY;
+            }
+        };
     }
 
     private static MemorySegment wkbPoint(double x, double y) {

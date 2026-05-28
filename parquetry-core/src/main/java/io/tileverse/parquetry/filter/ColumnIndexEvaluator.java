@@ -115,6 +115,7 @@ final class ColumnIndexEvaluator {
             case Predicate.IsNull(ColumnPath col) -> nullLeafRanges(col, columns, rowGroupRowCount, true);
             case Predicate.IsNotNull(ColumnPath col) -> nullLeafRanges(col, columns, rowGroupRowCount, false);
             case Predicate.Spatial _ -> Optional.empty();
+            case Predicate.GeometryFilterPredicate _ -> Optional.empty();
         };
     }
 

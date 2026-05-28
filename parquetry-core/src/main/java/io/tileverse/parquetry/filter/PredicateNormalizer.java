@@ -79,6 +79,9 @@ final class PredicateNormalizer {
                             + s.col().dot() + " of type " + prim.kind());
                 }
             }
+            case Predicate.GeometryFilterPredicate _ -> {
+                /* opaque geometry leaf; column validated by the filter */
+            }
         }
     }
 
@@ -127,6 +130,7 @@ final class PredicateNormalizer {
             case Predicate.IsNotNull(ColumnPath col) -> new Predicate.IsNull(col);
             case Predicate.In _ -> new Predicate.Not(p);
             case Predicate.Spatial _ -> new Predicate.Not(p);
+            case Predicate.GeometryFilterPredicate _ -> new Predicate.Not(p);
         };
     }
 
