@@ -57,6 +57,10 @@ public final class SpatialBoundsEvaluator {
             case Predicate.Or or -> allUnsatisfiable(or.children(), bounds, rowGroupIndex);
             case Predicate.Not _ -> false;
             case Predicate.Spatial spatial -> spatialUnsatisfiable(spatial, bounds, rowGroupIndex);
+            case Predicate.GeometryFilterPredicate(GeometryFilter<?> f) ->
+                f.pruningPredicate()
+                        .map(spatial -> spatialUnsatisfiable(spatial, bounds, rowGroupIndex))
+                        .orElse(false);
             default -> false;
         };
     }

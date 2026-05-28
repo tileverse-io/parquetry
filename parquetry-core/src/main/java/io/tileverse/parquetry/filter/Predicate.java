@@ -48,6 +48,15 @@ public sealed interface Predicate {
     }
 
     /**
+     * Returns a predicate that applies an exact {@link GeometryFilter} at record level after coarse bbox pruning. The
+     * filter supplies its own sound bbox lowering through {@link GeometryFilter#pruningPredicate()}; the reader prunes
+     * row groups and pages with that lowering, then runs the exact {@link GeometryFilter#gate} on each surviving row.
+     */
+    static Predicate geometryFilter(GeometryFilter<?> filter) {
+        return new GeometryFilterPredicate(filter);
+    }
+
+    /**
      * Returns the leaf column paths referenced by {@code predicate}, in encounter order. The read path uses this to
      * decode those columns for record-level evaluation even when they fall outside the caller's projection.
      */
@@ -80,6 +89,7 @@ public sealed interface Predicate {
             case IsNull isNull -> columns.add(isNull.col());
             case IsNotNull isNotNull -> columns.add(isNotNull.col());
             case Spatial s -> columns.add(s.col());
+            case GeometryFilterPredicate gfp -> columns.add(gfp.filter().column());
         }
     }
 
@@ -171,4 +181,11 @@ public sealed interface Predicate {
          */
         record BboxEquals(ColumnPath col, Bbox bbox) implements Spatial {}
     }
+
+    /**
+     * A leaf predicate that delegates exact geometry testing to a {@link GeometryFilter}. The bbox lowering from
+     * {@link GeometryFilter#pruningPredicate()} is used for coarse row-group and page pruning;
+     * {@link GeometryFilter#gate} performs the exact per-row test.
+     */
+    record GeometryFilterPredicate(GeometryFilter<?> filter) implements Predicate {}
 }

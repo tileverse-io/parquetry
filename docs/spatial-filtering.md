@@ -165,16 +165,20 @@ prune the read down to a small candidate set.
 True-geometry filtering - a real intersection against the curve, decimation,
 reprojection - belongs to a geometry-engine integration, not the core. The
 materializer that decodes WKB into a geometry object is output-only; it never runs
-in the filter path. The intended pattern for a consumer such as GeoServer:
+in the filter path. There are two ways to apply the exact test:
 
-1. Push the query's envelope as a bbox relation. The core prunes and returns a
-   candidate stream.
-2. Re-apply the exact geometry filter on the candidates, in the consumer's own
-   geometry model.
-
-An injected `GeometryFilter<T>` extension point that folds the exact re-check into
-the read (decoding each candidate geometry once) is the next step on this track;
-until then the re-check is the consumer's.
+1. **Consumer-side re-check.** Push the query's envelope as a bbox relation; the
+   core prunes and returns a candidate stream. Re-apply the exact geometry filter
+   on the candidates in the consumer's own geometry model.
+2. **In-core gate.** Inject a `GeometryFilter<T>` (`filter/GeometryFilter.java`)
+   through `Predicate.geometryFilter(...)`. The filter provides a sound bbox
+   lowering for coarse pruning plus an exact `matches` test; the reader prunes with
+   the lowering, then runs the exact test per surviving row, dropping non-matches
+   before their other columns materialize. `parquetry-geo-jts` ships
+   `JtsGeometryFilter` over the JTS topology predicates. The gate decodes each
+   surviving geometry once for the test; output materialization decodes the WKB
+   again (reusing the gate's geometry as the output value is a possible future
+   optimization).
 
 ---
 
@@ -188,7 +192,9 @@ until then the re-check is the consumer's.
 | Record-level evaluation | `filter/RecordLevelEvaluator.java` |
 | Covering-column lowering | `filter/spatial/SpatialCoveringRewrite.java` |
 | Native row-group pruning | `filter/SpatialBoundsEvaluator.java`, `filter/Tier.java`, `filter/spatial/SpatialBoundsSource.java` |
-| Benchmark | `internal/parquetry-benchmarks/.../SpatialPruningBenchmark.java` |
+| Exact geometry gate (SPI) | `filter/GeometryFilter.java`, `Predicate.geometryFilter(...)` |
+| JTS-backed exact filter | `integrations/parquetry-geo-jts/.../JtsGeometryFilter.java` |
+| Benchmarks | `internal/parquetry-benchmarks/.../SpatialPruningBenchmark.java`, `SpatialGateBenchmark.java`, `JtsSpatialFilterBenchmark.java` |
 
 ---
 

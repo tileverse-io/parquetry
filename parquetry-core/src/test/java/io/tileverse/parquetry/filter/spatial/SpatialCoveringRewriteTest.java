@@ -17,16 +17,19 @@ package io.tileverse.parquetry.filter.spatial;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.lang.foreign.MemorySegment;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.OptionalInt;
+import java.util.Set;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.filter.Bbox;
+import io.tileverse.parquetry.filter.GeometryFilter;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -154,6 +157,95 @@ class SpatialCoveringRewriteTest {
                 Pred.col(YMAX).gtEq(0.0)));
         Predicate expected = new Predicate.And(List.of(expectedSpatial, idEq));
         assertThat(rewritten).isEqualTo(expected);
+    }
+
+    @Test
+    void geometryFilterWithPresentLoweringAndCoveringProducesAndWithGatePreserved() {
+        ColumnPath geomCol = ColumnPath.of("geometry");
+        Bbox queryBox = Bbox.of2d(0, 0, 10, 10);
+        Predicate.Spatial lowering = new Predicate.Spatial.BboxIntersects(geomCol, queryBox);
+        Predicate.GeometryFilterPredicate gfp =
+                new Predicate.GeometryFilterPredicate(fakePruningFilter(geomCol, Optional.of(lowering)));
+
+        Predicate rewritten = SpatialCoveringRewrite.expand(gfp, schema, geoWithCovering);
+
+        assertThat(rewritten)
+                .as("result must be an And when a covering is available")
+                .isInstanceOf(Predicate.And.class);
+        Set<ColumnPath> cols = Predicate.columns(rewritten);
+        assertThat(cols)
+                .as("result must reference both covering columns and the geometry column")
+                .contains(XMIN, XMAX, YMIN, YMAX, geomCol);
+        assertThat(containsGeometryFilterPredicate(rewritten))
+                .as("the GeometryFilterPredicate gate must still be present in the rewritten tree")
+                .isTrue();
+    }
+
+    @Test
+    void geometryFilterWithEmptyLoweringIsReturnedUnchanged() {
+        ColumnPath geomCol = ColumnPath.of("geometry");
+        Predicate.GeometryFilterPredicate gfp =
+                new Predicate.GeometryFilterPredicate(fakePruningFilter(geomCol, Optional.empty()));
+
+        Predicate rewritten = SpatialCoveringRewrite.expand(gfp, schema, geoWithCovering);
+
+        assertThat(rewritten)
+                .as("a GeometryFilterPredicate with no pruning predicate must be returned unchanged")
+                .isSameAs(gfp);
+    }
+
+    @Test
+    void geometryFilterWithLoweringButNoCoveringIsReturnedUnchanged() {
+        ColumnPath geomCol = ColumnPath.of("geometry");
+        Bbox queryBox = Bbox.of2d(0, 0, 10, 10);
+        Predicate.Spatial lowering = new Predicate.Spatial.BboxIntersects(geomCol, queryBox);
+        Predicate.GeometryFilterPredicate gfp =
+                new Predicate.GeometryFilterPredicate(fakePruningFilter(geomCol, Optional.of(lowering)));
+        Optional<GeoParquetMetadata> geoNoCovering = Optional.of(geoWithoutCovering());
+
+        Predicate rewritten = SpatialCoveringRewrite.expand(gfp, schema, geoNoCovering);
+
+        assertThat(rewritten)
+                .as("a GeometryFilterPredicate with no resolvable covering must be returned unchanged")
+                .isSameAs(gfp);
+    }
+
+    /** Walks a predicate tree and returns true when it contains a {@link Predicate.GeometryFilterPredicate} node. */
+    private static boolean containsGeometryFilterPredicate(Predicate predicate) {
+        return switch (predicate) {
+            case Predicate.GeometryFilterPredicate _ -> true;
+            case Predicate.And(List<Predicate> children) ->
+                children.stream().anyMatch(SpatialCoveringRewriteTest::containsGeometryFilterPredicate);
+            case Predicate.Or(List<Predicate> children) ->
+                children.stream().anyMatch(SpatialCoveringRewriteTest::containsGeometryFilterPredicate);
+            case Predicate.Not(Predicate child) -> containsGeometryFilterPredicate(child);
+            default -> false;
+        };
+    }
+
+    /**
+     * Returns a fake {@link GeometryFilter} for the given column whose {@code pruningPredicate()} returns
+     * {@code lowering}. The {@code decode} and {@code matches} methods throw if called, because pruning must not invoke
+     * the exact gate.
+     */
+    private static GeometryFilter<Object> fakePruningFilter(ColumnPath geomCol, Optional<Predicate.Spatial> lowering) {
+        return new GeometryFilter<>() {
+            public ColumnPath column() {
+                return geomCol;
+            }
+
+            public Optional<Predicate.Spatial> pruningPredicate() {
+                return lowering;
+            }
+
+            public Object decode(MemorySegment wkb) {
+                throw new UnsupportedOperationException("decode must not be called during pruning");
+            }
+
+            public boolean matches(Object geometry) {
+                throw new UnsupportedOperationException("matches must not be called during pruning");
+            }
+        };
     }
 
     // --- fixtures ---

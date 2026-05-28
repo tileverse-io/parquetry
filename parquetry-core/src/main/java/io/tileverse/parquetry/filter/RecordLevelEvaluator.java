@@ -58,6 +58,8 @@ public final class RecordLevelEvaluator {
             case Predicate.And(List<Predicate> children) -> testAnd(children, row);
             case Predicate.Or(List<Predicate> children) -> testOr(children, row);
             case Predicate.Not(Predicate.Spatial spatial) -> negatedSpatialHolds(spatial, row);
+            case Predicate.Not(Predicate.GeometryFilterPredicate(GeometryFilter<?> filter)) ->
+                negatedGeometryFilterHolds(filter, row);
             case Predicate.Not(Predicate child) -> !test(child, row);
             case Predicate.Eq(ColumnPath col, Value v) -> compare(row.value(col), v) == 0;
             case Predicate.NotEq(ColumnPath col, Value v) -> {
@@ -87,6 +89,7 @@ public final class RecordLevelEvaluator {
             case Predicate.IsNull(ColumnPath col) -> row.value(col) == null;
             case Predicate.IsNotNull(ColumnPath col) -> row.value(col) != null;
             case Predicate.Spatial spatial -> spatialHolds(spatial, row);
+            case Predicate.GeometryFilterPredicate(GeometryFilter<?> filter) -> geometryFilterHolds(filter, row);
         };
     }
 
@@ -120,6 +123,36 @@ public final class RecordLevelEvaluator {
     private static boolean negatedSpatialHolds(Predicate.Spatial spatial, RecordAccessor row) {
         Object geometry = row.value(spatial.col());
         return geometry != null && !WkbEnvelope.matches(spatial, (MemorySegment) geometry);
+    }
+
+    private static boolean geometryFilterHolds(GeometryFilter<?> filter, RecordAccessor row) {
+        MemorySegment wkb = wkbValue(filter, row);
+        if (wkb == null) {
+            return false;
+        }
+        return filter.gate(wkb).isPresent();
+    }
+
+    /**
+     * Negation of a geometry filter under OGC simple-feature semantics: a null geometry has no spatial truth value and
+     * is excluded from both the filter and its negation. An empty geometry whose exact test is a definite false is
+     * dropped by the filter and kept by its negation - that follows from the filter's own
+     * {@link GeometryFilter#matches} result.
+     */
+    private static boolean negatedGeometryFilterHolds(GeometryFilter<?> filter, RecordAccessor row) {
+        MemorySegment wkb = wkbValue(filter, row);
+        if (wkb == null) {
+            return false;
+        }
+        return filter.gate(wkb).isEmpty();
+    }
+
+    private static MemorySegment wkbValue(GeometryFilter<?> filter, RecordAccessor row) {
+        Object value = row.value(filter.column());
+        if (value instanceof MemorySegment wkb) {
+            return wkb;
+        }
+        return null;
     }
 
     /**

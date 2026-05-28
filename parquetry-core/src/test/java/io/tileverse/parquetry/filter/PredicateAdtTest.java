@@ -67,6 +67,7 @@ class PredicateAdtTest {
                     case Predicate.Or _ -> "or";
                     case Predicate.Not _ -> "not";
                     case Predicate.Spatial _ -> "bbox";
+                    case Predicate.GeometryFilterPredicate _ -> "geometryFilter";
                 };
         assertThat(description).isEqualTo("eq(year)");
     }

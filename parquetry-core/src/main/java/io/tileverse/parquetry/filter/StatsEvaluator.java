@@ -83,6 +83,8 @@ final class StatsEvaluator {
             case Predicate.IsNotNull(ColumnPath col) -> evalIsNotNull(col, columns, rowCount);
             case Predicate.Spatial _ ->
                 new PruningDecision.NotApplied(TIER, "spatial predicate handled by the bounds source");
+            case Predicate.GeometryFilterPredicate _ ->
+                new PruningDecision.NotApplied(TIER, "GeometryFilter not handled at STATS tier");
         };
     }
 
