@@ -25,7 +25,6 @@ import java.util.OptionalInt;
 import java.util.Set;
 
 import org.locationtech.jts.geom.Geometry;
-import org.locationtech.jts.io.WKBReader;
 
 import io.tileverse.parquetry.format.EdgeInterpolationAlgorithm;
 import io.tileverse.parquetry.format.LogicalType;
@@ -56,12 +55,11 @@ import io.tileverse.parquetry.schema.geo.projjson.Identifier;
  * {@code Optional.empty()} CRS on a Geometry leaf to the GeoParquet default (OGC:CRS84); consumers that need
  * {@code 4326} for that case set it themselves on top of this materializer's output.
  *
- * <p>This class is thread-confined: a single {@code WKBReader} instance is reused per materializer instance. Pass one
- * materializer per reader thread.
+ * <p>This class is thread-safe: it holds only immutable column lookups and delegates WKB decoding to a shared,
+ * thread-safe reader, hence a single materializer instance may be shared across reader threads.
  */
 public final class JtsMaterializer implements Materializer<Map<ColumnPath, Object>> {
 
-    private final WKBReader wkbReader;
     private final Set<ColumnPath> geoColumns;
     private final Map<ColumnPath, Integer> sridByColumn;
 
@@ -71,7 +69,6 @@ public final class JtsMaterializer implements Materializer<Map<ColumnPath, Objec
      * RowAccessor)} call only does map lookups, not schema walks.
      */
     public JtsMaterializer(ParquetSchema projectedSchema) {
-        this.wkbReader = new WKBReader();
         Map<ColumnPath, Integer> sridScratch = new LinkedHashMap<>();
         this.geoColumns = collectGeoColumns(projectedSchema, sridScratch);
         this.sridByColumn = Map.copyOf(sridScratch);
@@ -112,7 +109,7 @@ public final class JtsMaterializer implements Materializer<Map<ColumnPath, Objec
     }
 
     private Geometry decodeWkb(ColumnPath path, MemorySegment wkb) {
-        Geometry geometry = JtsWkb.read(wkbReader, wkb);
+        Geometry geometry = JtsWkb.read(wkb);
         Integer srid = sridByColumn.get(path);
         if (srid != null) {
             geometry.setSRID(srid);

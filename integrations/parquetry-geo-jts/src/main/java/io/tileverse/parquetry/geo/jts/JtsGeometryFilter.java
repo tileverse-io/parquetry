@@ -24,7 +24,6 @@ import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.prep.PreparedGeometry;
 import org.locationtech.jts.geom.prep.PreparedGeometryFactory;
-import org.locationtech.jts.io.WKBReader;
 
 import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.GeometryFilter;
@@ -43,10 +42,9 @@ import io.tileverse.parquetry.schema.ColumnPath;
  * row without bbox pruning.
  *
  * <p>Thread safety: instances are thread-safe. {@link PreparedGeometry} is documented thread-safe for concurrent use
- * after construction, and each {@link #decode} call allocates its own {@link WKBReader} ({@code WKBReader} is stateful
- * and not safe to share). The factories that do not use {@link PreparedGeometry} ({@link #equalsExact} and
- * {@link #dwithin}) capture the query as an unmodified reference; the JTS read operations they call are safe to share
- * across threads.
+ * after construction, and {@link #decode} delegates to a shared thread-safe reader. The factories that do not use
+ * {@link PreparedGeometry} ({@link #equalsExact} and {@link #dwithin}) capture the query as an unmodified reference;
+ * the JTS read operations they call are safe to share across threads.
  */
 public final class JtsGeometryFilter implements GeometryFilter<Geometry> {
 
@@ -196,7 +194,7 @@ public final class JtsGeometryFilter implements GeometryFilter<Geometry> {
 
     @Override
     public Geometry decode(MemorySegment wkb) {
-        return JtsWkb.read(new WKBReader(), wkb);
+        return JtsWkb.read(wkb);
     }
 
     @Override
