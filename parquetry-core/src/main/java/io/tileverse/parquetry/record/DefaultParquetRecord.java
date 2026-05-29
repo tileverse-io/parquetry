@@ -109,18 +109,6 @@ final class DefaultParquetRecord implements ParquetRecord {
     }
 
     @Override
-    public byte[] getGeometryBytes(ColumnPath col) {
-        requireBinaryKind(col, "getGeometryBytes");
-        return copyBytes(col);
-    }
-
-    @Override
-    public byte[] getGeographyBytes(ColumnPath col) {
-        requireBinaryKind(col, "getGeographyBytes");
-        return copyBytes(col);
-    }
-
-    @Override
     public boolean isNull(ColumnPath col) {
         Object value = row.get(col);
         return value == null || row.isGroupNull(col);

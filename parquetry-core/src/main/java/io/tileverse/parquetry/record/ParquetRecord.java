@@ -64,22 +64,6 @@ public sealed interface ParquetRecord permits DefaultParquetRecord, BatchBackedP
     String getString(ColumnPath col);
 
     /**
-     * Returns the raw WKB bytes for a GeoParquet 2.0 {@code Geometry} column.
-     *
-     * <p>Currently this is a thin alias over {@link #getBinary(ColumnPath)}; logical-type detection that picks the
-     * right accessor automatically lands with the GeoParquet integration in a future release.
-     */
-    byte[] getGeometryBytes(ColumnPath col);
-
-    /**
-     * Returns the raw WKB bytes for a GeoParquet 2.0 {@code Geography} column.
-     *
-     * <p>Currently this is a thin alias over {@link #getBinary(ColumnPath)}; logical-type detection that picks the
-     * right accessor automatically lands with the GeoParquet integration in a future release.
-     */
-    byte[] getGeographyBytes(ColumnPath col);
-
-    /**
      * Returns {@code true} when the value at {@code col} is null, either because the leaf itself was null or because an
      * ancestor group was null in the source row.
      */

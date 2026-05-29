@@ -124,12 +124,6 @@ class DefaultParquetRecordTest {
     }
 
     @Test
-    void getGeometryAndGeographyReturnRawWkbBytes() {
-        assertThat(parquetRecord.getGeometryBytes(BINARY_COL)).containsExactly(BINARY_PAYLOAD);
-        assertThat(parquetRecord.getGeographyBytes(BINARY_COL)).containsExactly(BINARY_PAYLOAD);
-    }
-
-    @Test
     void isNullReportsTrueForNullLeafValue() {
         assertThat(parquetRecord.isNull(NULL_COL)).isTrue();
         assertThat(parquetRecord.isNull(INT_COL)).isFalse();

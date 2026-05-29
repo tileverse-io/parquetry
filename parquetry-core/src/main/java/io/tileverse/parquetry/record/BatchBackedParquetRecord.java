@@ -105,16 +105,6 @@ public final class BatchBackedParquetRecord implements ParquetRecord {
     }
 
     @Override
-    public byte[] getGeometryBytes(ColumnPath col) {
-        return getBinary(col);
-    }
-
-    @Override
-    public byte[] getGeographyBytes(ColumnPath col) {
-        return getBinary(col);
-    }
-
-    @Override
     public boolean isNull(ColumnPath col) {
         return BatchBackedRecords.isNull(batch.columns(), rowIndex, col);
     }

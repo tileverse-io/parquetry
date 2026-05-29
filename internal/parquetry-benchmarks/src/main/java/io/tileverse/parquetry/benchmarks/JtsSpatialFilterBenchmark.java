@@ -406,7 +406,7 @@ public class JtsSpatialFilterBenchmark {
      * wraps them in a read-only {@link MemorySegment}, and delegates to {@link JtsGeometryFilter#gate}.
      */
     private boolean appSideMatchesGeometry(ParquetRecord row) {
-        byte[] wkbBytes = row.getGeometryBytes(GEOMETRY_COL);
+        byte[] wkbBytes = row.getBinary(GEOMETRY_COL);
         MemorySegment wkb = MemorySegment.ofArray(wkbBytes).asReadOnly();
         return appSideFilter.gate(wkb).isPresent();
     }
