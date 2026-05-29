@@ -35,6 +35,31 @@ DataStore store = DataStoreFinder.getDataStore(params);
 SimpleFeatureSource roads = store.getFeatureSource(store.getTypeNames()[0]);
 ```
 
+## Cloud storage
+
+Reading from S3, Azure, GCS, or HTTP is configured through the tileverse
+`storage.*` parameters. The provider is auto-detected from the URI scheme; set
+`storage.provider` to force it. Each backend has its own key family:
+
+| Family             | Examples |
+|--------------------|----------|
+| `storage.s3.*`     | `storage.s3.region`, `storage.s3.aws-access-key-id`, `storage.s3.aws-secret-access-key`, `storage.s3.anonymous` |
+| `storage.azure.*`  | `storage.azure.account-key`, `storage.azure.sas-token`, `storage.azure.connection-string` |
+| `storage.gcs.*`    | `storage.gcs.project-id`, `storage.gcs.default-credentials-chain` |
+| `storage.http.*`   | `storage.http.username`, `storage.http.password`, `storage.http.bearer-token`, `storage.http.api-key` |
+| `storage.caching.enabled` | turn the storage memory cache on or off |
+
+```java
+Map<String, Object> params = Map.of(
+        "filetype", "geoparquet",
+        "uri", "s3://bucket/roads.parquet",
+        "storage.s3.region", "eu-central-1");
+DataStore store = DataStoreFinder.getDataStore(params);
+```
+
+Secret parameters (keys, tokens, passwords) are masked in the GeoServer store
+form. See the `parquetry-geoserver` module for the provider-driven edit panel.
+
 ## Query pushdown
 
 `GeoParquetFeatureSource` translates a GeoTools `Query` (`QueryTranslator`,

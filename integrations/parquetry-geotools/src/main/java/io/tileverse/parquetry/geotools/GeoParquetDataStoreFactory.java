@@ -53,7 +53,7 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
 
     @Override
     public Param[] getParametersInfo() {
-        return new Param[] {FILETYPE, URIP, NAMESPACE, FID};
+        return StorageParams.withStorageParams(FILETYPE, URIP, NAMESPACE, FID);
     }
 
     @Override
@@ -79,7 +79,7 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
 
         URI base = baseContainer(datasetUri);
         String pattern = filePattern(datasetUri);
-        Properties storageProps = storagePassthrough(params);
+        Properties storageProps = StorageParams.toProperties(params);
 
         StorageFileSource source = StorageFileSource.open(base, pattern, storageProps);
         ParquetDatasetCatalog catalog = ParquetDatasetCatalog.open(source, CatalogOptions.defaults());
@@ -126,20 +126,5 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
         }
         String fileName = path.substring(path.lastIndexOf('/') + 1);
         return "{" + fileName + "}";
-    }
-
-    /**
-     * Extracts any {@code storage.*} parameters as a Properties object to pass through to the storage backend. This
-     * allows callers to configure S3 credentials, Azure connection strings, etc. without the factory needing explicit
-     * awareness of each storage type.
-     */
-    private static Properties storagePassthrough(Map<String, ?> params) {
-        Properties props = new Properties();
-        for (Map.Entry<String, ?> entry : params.entrySet()) {
-            if (entry.getKey().startsWith("storage.") && entry.getValue() != null) {
-                props.setProperty(entry.getKey(), String.valueOf(entry.getValue()));
-            }
-        }
-        return props;
     }
 }
