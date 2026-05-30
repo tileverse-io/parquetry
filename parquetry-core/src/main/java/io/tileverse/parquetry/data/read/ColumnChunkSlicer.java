@@ -37,6 +37,7 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.LevelMaxima;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
+import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
  * Slices one column chunk out of a coalesced range segment and decodes its dictionary, producing a
@@ -53,7 +54,7 @@ final class ColumnChunkSlicer {
     static FetchedColumnChunk slice(
             MemorySegment chunkSegment, ColumnMetaData meta, ColumnPath path, ParquetSchema fileSchema)
             throws IOException {
-        DictionaryAndOffset dict = maybeDecodeDictionary(chunkSegment, meta, path);
+        DictionaryAndOffset dict = maybeDecodeDictionary(chunkSegment, meta, path, fileSchema);
         MemorySegment dataPages = chunkSegment
                 .asSlice(dict.dataPageOffset(), chunkSegment.byteSize() - dict.dataPageOffset())
                 .asReadOnly();
@@ -65,30 +66,65 @@ final class ColumnChunkSlicer {
     /** The decoded dictionary (if any) plus the offset of the first data page within the chunk segment. */
     private record DictionaryAndOffset(Optional<Dictionary<?>> dictionary, int dataPageOffset) {}
 
+    private static final DictionaryAndOffset NO_DICTIONARY = new DictionaryAndOffset(Optional.empty(), 0);
+
     /**
-     * Reads and decodes the dictionary page at the front of {@code chunkSegment} when {@code meta.dictionaryPageOffset}
-     * is set, returning the dictionary and the offset of the byte right after the dictionary page (the first data
-     * page). Returns an empty dictionary and offset {@code 0} when no dictionary page is declared.
+     * Decodes the dictionary page when one sits at the front of {@code chunkSegment}, returning the dictionary and the
+     * offset of the byte right after it (the first data page).
+     *
+     * <p>A dictionary page is the first page in a column chunk whenever the column is dictionary-encoded. The
+     * {@code dictionary_page_offset} field that would point at it is optional: writers such as Impala and the Hadoop
+     * LZ4 fixtures omit it and instead point {@code data_page_offset} at the dictionary page itself. The chunk
+     * therefore always begins at the dictionary page when one exists. This method inspects the first page header
+     * directly rather than trusting {@code dictionary_page_offset}; when the first page is a data page, the chunk has
+     * no dictionary and this returns {@link #NO_DICTIONARY}.
      *
      * <p>The dictionary is decompressed into a transient Arena segment that is closed before the method returns; the
      * resulting {@link Dictionary} holds heap-resident Java values referenced from the {@link FetchedColumnChunk}.
      */
     private static DictionaryAndOffset maybeDecodeDictionary(
-            MemorySegment chunkSegment, ColumnMetaData meta, ColumnPath path) throws IOException {
-        if (meta.dictionaryPageOffset().isEmpty()) {
-            return new DictionaryAndOffset(Optional.empty(), 0);
+            MemorySegment chunkSegment, ColumnMetaData meta, ColumnPath path, ParquetSchema fileSchema)
+            throws IOException {
+        if (chunkSegment.byteSize() == 0) {
+            return NO_DICTIONARY;
         }
         MemorySegmentInputStream stream = new MemorySegmentInputStream(chunkSegment, 0L, chunkSegment.byteSize());
         PageHeader header = readPageHeader(stream, path);
-        DictionaryPageHeader dictHeader = header.dictionaryPageHeader()
-                .orElseThrow(() -> new ParquetFormatException("Column " + path.dot()
-                        + " declares dictionaryPageOffset but its first page is not a dictionary page (type="
-                        + header.type() + ")"));
         if (header.type() != PageType.DICTIONARY_PAGE) {
-            throw new MalformedFileException(
-                    "Column " + path.dot() + " dictionary page header has unexpected type " + header.type());
+            if (declaresRealDictionaryPage(meta)) {
+                throw new MalformedFileException("Column " + path.dot()
+                        + " declares dictionaryPageOffset but its first page is not a dictionary page (type="
+                        + header.type() + ")");
+            }
+            return NO_DICTIONARY;
         }
-        long headerEnd = stream.position();
+        return decodeDictionaryPage(chunkSegment, stream.position(), header, meta, path, fileSchema);
+    }
+
+    /**
+     * Whether {@code dictionary_page_offset} points at a real dictionary page. Some writers store a literal {@code 0}
+     * for columns that have no dictionary; that value would point at the file's magic header rather than a page, and
+     * does not count as a declared dictionary page.
+     */
+    private static boolean declaresRealDictionaryPage(ColumnMetaData meta) {
+        return meta.dictionaryPageOffset().orElse(0L) > 0;
+    }
+
+    /**
+     * Decodes the dictionary page whose header has already been read, given {@code headerEnd}, the offset of the first
+     * payload byte within {@code chunkSegment}.
+     */
+    private static DictionaryAndOffset decodeDictionaryPage(
+            MemorySegment chunkSegment,
+            long headerEnd,
+            PageHeader header,
+            ColumnMetaData meta,
+            ColumnPath path,
+            ParquetSchema fileSchema)
+            throws IOException {
+        DictionaryPageHeader dictHeader = header.dictionaryPageHeader()
+                .orElseThrow(() -> new MalformedFileException(
+                        "Column " + path.dot() + " dictionary page is missing its dictionary page header"));
         if (headerEnd <= 0) {
             throw new MalformedFileException("Column " + path.dot() + " dictionary page advanced zero bytes");
         }
@@ -101,7 +137,7 @@ final class ColumnChunkSlicer {
         MemorySegment compressedPayload =
                 chunkSegment.asSlice(headerEnd, compressedSize).asReadOnly();
         Dictionary<?> dictionary =
-                decodeDictionary(meta, path, dictHeader, compressedPayload, header.uncompressedPageSize());
+                decodeDictionary(meta, path, fileSchema, dictHeader, compressedPayload, header.uncompressedPageSize());
         int dataPageOffset = Math.toIntExact(headerEnd + compressedSize);
         return new DictionaryAndOffset(Optional.of(dictionary), dataPageOffset);
     }
@@ -114,13 +150,14 @@ final class ColumnChunkSlicer {
     private static Dictionary<?> decodeDictionary(
             ColumnMetaData meta,
             ColumnPath path,
+            ParquetSchema fileSchema,
             DictionaryPageHeader dictHeader,
             MemorySegment compressedPayload,
             int uncompressedSize)
             throws IOException {
         Compression codec = Compression.forWireCodec(meta.codec());
-        PrimitiveKind kind = primitiveKindOf(meta.type(), path);
-        OptionalInt typeLength = OptionalInt.empty();
+        PrimitiveKind kind = primitiveKindOf(meta.type());
+        OptionalInt typeLength = typeLengthFor(kind, path, fileSchema);
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment dst = arena.allocate(uncompressedSize);
             codec.decompress(compressedPayload, dst);
@@ -128,7 +165,7 @@ final class ColumnChunkSlicer {
         }
     }
 
-    private static PrimitiveKind primitiveKindOf(PhysicalType type, ColumnPath path) {
+    private static PrimitiveKind primitiveKindOf(PhysicalType type) {
         return switch (type) {
             case BOOLEAN -> PrimitiveKind.BOOLEAN;
             case INT32 -> PrimitiveKind.INT32;
@@ -137,15 +174,27 @@ final class ColumnChunkSlicer {
             case FLOAT -> PrimitiveKind.FLOAT;
             case DOUBLE -> PrimitiveKind.DOUBLE;
             case BYTE_ARRAY -> PrimitiveKind.BYTE_ARRAY;
-            // FIXED_LEN_BYTE_ARRAY dictionaries are uncommon but legal; if we ever hit one we need typeLength from
-            // the schema. Throw a clear error rather than silently mis-decode, since the dictionary cache only ever
-            // sees the bytes from the page header's typeLength.
-            case FIXED_LEN_BYTE_ARRAY ->
-                throw new UnsupportedOperationException(
-                        "FIXED_LEN_BYTE_ARRAY dictionary decoding not yet supported (column "
-                                + path.dot()
-                                + "); typeLength must be sourced from the schema leaf Field.Primitive");
+            case FIXED_LEN_BYTE_ARRAY -> PrimitiveKind.FIXED_LEN_BYTE_ARRAY;
         };
+    }
+
+    /**
+     * The fixed byte width a {@link PrimitiveKind#FIXED_LEN_BYTE_ARRAY} dictionary needs to split its payload into
+     * values. The dictionary page header does not record it; it comes from the schema leaf instead. Every other kind
+     * has a self-describing layout and needs no length.
+     */
+    private static OptionalInt typeLengthFor(PrimitiveKind kind, ColumnPath path, ParquetSchema fileSchema) {
+        if (kind != PrimitiveKind.FIXED_LEN_BYTE_ARRAY) {
+            return OptionalInt.empty();
+        }
+        SchemaNode node = fileSchema
+                .find(path)
+                .orElseThrow(() -> new MalformedFileException(
+                        "Column " + path.dot() + " is dictionary-encoded but absent from the schema"));
+        if (!(node instanceof SchemaNode.Primitive primitive)) {
+            throw new MalformedFileException("Column " + path.dot() + " is not a primitive leaf in the schema");
+        }
+        return primitive.typeLength();
     }
 
     /**

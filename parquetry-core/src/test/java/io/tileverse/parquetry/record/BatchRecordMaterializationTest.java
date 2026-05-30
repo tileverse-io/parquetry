@@ -51,11 +51,11 @@ import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
- * Verifies that {@link BatchBackedParquetRecord} dispatches to the right {@link ColumnVector} subtype, honours
- * validity, copies bytes for binary accessors, materializes list and map cells, and returns
- * {@link BatchBackedSubRecord} views for nested struct cells.
+ * Verifies that the {@link ParquetRecord} materialized from a batch dispatches to the right {@link ColumnVector}
+ * subtype, honours validity, copies bytes for binary accessors, materializes list and map cells, and returns
+ * {@link DefaultParquetRecord} sub-record views for nested struct cells.
  */
-class BatchBackedParquetRecordTest {
+class BatchRecordMaterializationTest {
 
     private static final ColumnPath INT_COL = ColumnPath.of("col_int");
     private static final ColumnPath LONG_COL = ColumnPath.of("col_long");
@@ -202,7 +202,7 @@ class BatchBackedParquetRecordTest {
             ParquetRecord row = batch.materialize(0);
 
             ParquetRecord sub = row.getStruct(STRUCT_COL);
-            assertThat(sub).isInstanceOf(BatchBackedSubRecord.class);
+            assertThat(sub).isInstanceOf(DefaultParquetRecord.class);
             assertThat(sub.getInt(STRUCT_CHILD)).isEqualTo(123);
             assertThat(sub.get(STRUCT_CHILD)).isEqualTo(123);
             assertThat(sub.schema()).isEqualTo(batch.projectedSchema());

@@ -433,6 +433,27 @@ class CompressionTest {
         }
 
         /**
+         * The deprecated LZ4 codec is ambiguous: parquet-cpp writers emit raw LZ4 blocks with no Hadoop frame under the
+         * same wire code that parquet-mr uses for Hadoop-framed LZ4. The reader must accept both. Here the payload is
+         * raw-LZ4 compressed (no frame) and decoded through {@link Compression#lz4Hadoop()}, which has to fall back to
+         * raw decoding.
+         */
+        @ParameterizedTest(name = "lz4HadoopRawFallback/{0}")
+        @MethodSource("payloads")
+        void lz4HadoopFallsBackToRawLz4Blocks(String name, byte[] original) throws Exception {
+            Lz4Compressor compressor = Lz4Compressor.create();
+            byte[] compressed = new byte[compressor.maxCompressedLength(original.length)];
+            int compressedLen = compressor.compress(original, 0, original.length, compressed, 0, compressed.length);
+
+            Compression codec = Compression.lz4Hadoop();
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment out = arena.allocate(original.length);
+                codec.decompress(MemorySegment.ofBuffer(ByteBuffer.wrap(compressed, 0, compressedLen)), out);
+                assertThat(out.toArray(JAVA_BYTE)).isEqualTo(original);
+            }
+        }
+
+        /**
          * Brotli round-trip using a hardcoded fixture. The org.brotli:dec library is decoder-only; there is no encoder
          * available on the classpath. The fixture was produced by: {@code echo -n "hello world" | brotli --stdout | xxd
          * -i}

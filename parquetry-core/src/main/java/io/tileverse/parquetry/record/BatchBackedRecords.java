@@ -43,9 +43,9 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
- * Shared dispatch helpers for {@link BatchBackedParquetRecord} and {@link BatchBackedSubRecord}. Both classes view a
- * single row of a {@code Map<ColumnPath, ColumnVector>}; the helpers here implement the typed accessor surface in one
- * place so the two record classes stay thin.
+ * Shared dispatch helpers for the {@link io.tileverse.parquetry.materializer.RowAccessor} adapters over a batch
+ * ({@link BatchRowAccessor} and {@link StructRowAccessor}). Each views a single row of a {@code Map<ColumnPath,
+ * ColumnVector>}; the helpers here implement the typed accessors in one place to keep the adapters thin.
  */
 final class BatchBackedRecords {
 
@@ -53,8 +53,8 @@ final class BatchBackedRecords {
 
     /**
      * Returns the boxed value at row {@code rowIndex} in {@code vec}, or {@code null} when the vector is missing or the
-     * row's validity bit is clear. For {@link StructVector} cells, returns a {@link BatchBackedSubRecord} so callers
-     * can drill down through {@link ParquetRecord} accessors.
+     * row's validity bit is clear. For {@link StructVector} cells, returns a {@link DefaultParquetRecord} over a
+     * {@link StructRowAccessor} for the nested row, letting callers drill down through {@link ParquetRecord} accessors.
      */
     static Object get(Map<ColumnPath, ColumnVector> columns, int rowIndex, ColumnPath col, ParquetSchema schema) {
         ColumnVector vec = columns.get(col);
@@ -70,9 +70,10 @@ final class BatchBackedRecords {
             case BinaryVector bv -> bv.get(rowIndex);
             case FixedLenBinaryVector fb -> fb.get(rowIndex);
             case Int96Vector iv -> iv.get(rowIndex);
-            case ListVector list -> ListMaterializer.materializeAt(list, rowIndex);
-            case MapVector map -> MapMaterializer.materializeAt(map, rowIndex);
-            case StructVector struct -> new BatchBackedSubRecord(struct, rowIndex, schema);
+            case ListVector list -> ListMaterializer.materializeAt(list, rowIndex, schema);
+            case MapVector map -> MapMaterializer.materializeAt(map, rowIndex, schema);
+            case StructVector struct ->
+                new DefaultParquetRecord(schema, new StructRowAccessor(struct, rowIndex, schema));
         };
     }
 

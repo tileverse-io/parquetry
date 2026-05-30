@@ -43,4 +43,18 @@ public sealed interface ColumnVector
 
     /** Validity mask: bit i is set iff row i is non-null. */
     BitSet validity();
+
+    /**
+     * Returns the value at {@code row} as a boxed object, or {@code null} when the validity bit is clear. A leaf vector
+     * returns a boxed primitive, or a read-only {@link java.lang.foreign.MemorySegment} for the binary and INT96 kinds;
+     * a null row yields {@code null} even where a primitive backing array parks a default such as {@code 0}.
+     *
+     * <p>The nested {@link ListVector} / {@link MapVector} / {@link StructVector} do not implement this. A nested cell
+     * materializes through the materializer, which holds the schema context a sub-record or collection needs, and the
+     * nested vectors throw {@link UnsupportedOperationException} here.
+     */
+    default Object getOrNull(int row) {
+        throw new UnsupportedOperationException(
+                getClass().getSimpleName() + " materializes through the materializer rather than getOrNull");
+    }
 }

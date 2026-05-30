@@ -155,9 +155,25 @@ class DefaultParquetRecordTest {
     }
 
     @Test
-    void getListAndGetStructThrowUntilNestedAssemblyLands() {
-        assertThatThrownBy(() -> parquetRecord.getList(BINARY_COL)).isInstanceOf(UnsupportedOperationException.class);
-        assertThatThrownBy(() -> parquetRecord.getStruct(BINARY_COL)).isInstanceOf(UnsupportedOperationException.class);
+    void getListAndGetStructThrowOnNonNestedColumns() {
+        assertThatThrownBy(() -> parquetRecord.getList(BINARY_COL))
+                .as("getList on a primitive column")
+                .isInstanceOf(ParquetSchemaException.class)
+                .hasMessageContaining(BINARY_COL.dot())
+                .hasMessageContaining("not a list column");
+        assertThatThrownBy(() -> parquetRecord.getStruct(BINARY_COL))
+                .as("getStruct on a primitive column")
+                .isInstanceOf(ParquetSchemaException.class)
+                .hasMessageContaining(BINARY_COL.dot())
+                .hasMessageContaining("not a struct column");
+    }
+
+    @Test
+    void getListAndGetStructReturnNullForNullCells() {
+        assertThat(parquetRecord.getList(NULL_COL)).as("getList on a null cell").isNull();
+        assertThat(parquetRecord.getStruct(NULL_COL))
+                .as("getStruct on a null cell")
+                .isNull();
     }
 
     @Test

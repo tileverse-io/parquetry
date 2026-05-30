@@ -47,6 +47,11 @@ public final class DoubleVector implements ColumnVector {
         return values[row];
     }
 
+    @Override
+    public Object getOrNull(int row) {
+        return validity().get(row) ? get(row) : null;
+    }
+
     public double[] asArray() {
         return values;
     }

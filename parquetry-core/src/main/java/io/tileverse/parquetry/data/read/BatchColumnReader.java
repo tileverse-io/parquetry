@@ -78,6 +78,7 @@ import lombok.NonNull;
 final class BatchColumnReader {
 
     private static final int[] EMPTY_REP_LEVELS = new int[0];
+    private static final int[] EMPTY_DEF_LEVELS = new int[0];
 
     private final ColumnPath columnPath;
     private final SchemaNode.Primitive leaf;
@@ -97,6 +98,7 @@ final class BatchColumnReader {
     private int pageLogicalRowCount;
     private BitSet pageValidity;
     private int[] pageRepLevels; // null when maxRep == 0
+    private int[] pageDefLevels; // null when maxDef == 0
     private int[] pageInts;
     private long[] pageLongs;
     private float[] pageFloats;
@@ -184,6 +186,16 @@ final class BatchColumnReader {
         return pageRepLevels;
     }
 
+    /**
+     * Definition-level stream for the current page; one entry per leaf element. Null when the column has no optional
+     * ancestor ({@code maxDef == 0}). Unlike the present/absent bitmap from {@code decodeValidity}, this retains the
+     * intermediate def levels that distinguish a null list from an empty list from a null element.
+     */
+    int[] currentPageDefLevels() {
+        ensurePageLoaded();
+        return pageDefLevels;
+    }
+
     /** Position in the current page's value stream where the next {@link #readBatch} call will start. */
     int valuesConsumedInCurrentPage() {
         ensurePageLoaded();
@@ -268,6 +280,7 @@ final class BatchColumnReader {
         pageSize = page.valueCount();
         pageValidity = decodeValidity(page, pageSize);
         pageRepLevels = decodeRepLevels(page, pageSize);
+        pageDefLevels = decodeDefLevels(page, pageSize);
         pageLogicalRowCount = (pageRepLevels == null) ? pageSize : countRepZeroMarkers(pageRepLevels);
         clearTypedPayloads();
         if (skipDecode && survivingRows != null) {
@@ -289,6 +302,7 @@ final class BatchColumnReader {
         pageLogicalRowCount = 0;
         pageValidity = null;
         pageRepLevels = null;
+        pageDefLevels = null;
         clearTypedPayloads();
         valuesConsumedInCurrentPage = 0;
         logicalRowsConsumedInCurrentPage = 0;
@@ -332,6 +346,22 @@ final class BatchColumnReader {
         int[] repLevels = new int[values];
         repDecoder.decode(values, repLevels, 0);
         return repLevels;
+    }
+
+    // null marks "no optional ancestor, all values present" - the def-level section is absent from the page
+    @SuppressWarnings("java:S1168")
+    private int[] decodeDefLevels(DecodedPage page, int values) {
+        if (maxLevels.maxDefinitionLevel() == 0) {
+            return null;
+        }
+        if (values == 0) {
+            return EMPTY_DEF_LEVELS;
+        }
+        LevelDecoder defDecoder = new LevelDecoder(defBitWidth);
+        defDecoder.load(page.defLevelBytes());
+        int[] defLevels = new int[values];
+        defDecoder.decode(values, defLevels, 0);
+        return defLevels;
     }
 
     private static int countRepZeroMarkers(int[] repLevels) {
@@ -738,6 +768,9 @@ final class BatchColumnReader {
             sealBinaryPayloadIfNeeded(encoding);
         }
 
+        if (pageDefLevels != null) {
+            pageDefLevels = gatherInts(pageDefLevels, keep);
+        }
         pageValidity = keptValidity;
         pageSize = keep.length;
         pageLogicalRowCount = keep.length;
@@ -831,6 +864,9 @@ final class BatchColumnReader {
             return;
         }
         pageValidity = gatherValidity(pageValidity, keep);
+        if (pageDefLevels != null) {
+            pageDefLevels = gatherInts(pageDefLevels, keep);
+        }
         gatherTypedPayloads(keep);
         pageSize = keep.length;
         pageLogicalRowCount = keep.length;

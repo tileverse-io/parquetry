@@ -85,6 +85,9 @@ final class ColumnMetaDataDeserializer {
                 break;
             }
             lastFieldId = fh.fieldId();
+            if (skipsWriterSpecificField(r, fh)) {
+                continue;
+            }
             switch (fh.fieldId()) {
                 case 1 -> type = PhysicalType.valueOf(r.readI32());
                 case 2 -> encodings = readEncodingList(r);
@@ -124,6 +127,32 @@ final class ColumnMetaDataDeserializer {
                 bloomFilterLength,
                 sizeStatistics,
                 geospatialStatistics);
+    }
+
+    /**
+     * Skips an optional field whose wire type does not match what the parquet spec assigns its id. Some writers (for
+     * example Dremio) store private metadata under such an id; reading it with the spec-expected reader would desync
+     * the stream. Skipping by the actual wire type keeps the cursor aligned. Returns {@code false} for spec-typed
+     * fields, which the main switch then reads.
+     */
+    private static boolean skipsWriterSpecificField(CompactProtocolReader r, FieldHeader fh) throws IOException {
+        CompactType expected = expectedType(fh.fieldId());
+        if (expected == null || fh.type() == expected) {
+            return false;
+        }
+        r.skipField(fh.type());
+        return true;
+    }
+
+    /** The wire type the parquet spec assigns each optional field id, or {@code null} for required or unknown ids. */
+    private static CompactType expectedType(int fieldId) {
+        return switch (fieldId) {
+            case 8, 13 -> CompactType.LIST;
+            case 10, 11, 14 -> CompactType.I64;
+            case 15 -> CompactType.I32;
+            case 12, 16, 17 -> CompactType.STRUCT;
+            default -> null;
+        };
     }
 
     private static List<Encoding> readEncodingList(CompactProtocolReader r) throws IOException {

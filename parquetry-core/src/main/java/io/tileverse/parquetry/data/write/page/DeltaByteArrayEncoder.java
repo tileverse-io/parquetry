@@ -50,10 +50,11 @@ public final class DeltaByteArrayEncoder implements Encoder<byte[][]> {
             previous = values[i];
         }
 
-        // DeltaByteArrayDecoder explicitly drains the DELTA_BINARY_PACKED padding via skip() between the prefix and
-        // suffix length streams to land on the suffix-bytes section, so we have to emit the full padded block bytes.
-        int written = DeltaBinaryPackedWriter.writeFullyPadded(prefixLengths, n, dst);
-        written += DeltaBinaryPackedWriter.writeFullyPadded(suffixLengths, n, dst);
+        // The prefix and suffix length streams are DELTA_BINARY_PACKED. DeltaByteArrayDecoder drains the miniblock
+        // padding via skip() between them to reach the suffix bytes; the writer pads each used miniblock full-size,
+        // which is exactly what that drain consumes.
+        int written = DeltaBinaryPackedWriter.write(prefixLengths, n, dst);
+        written += DeltaBinaryPackedWriter.write(suffixLengths, n, dst);
         for (int i = 0; i < n; i++) {
             int common = (int) prefixLengths[i];
             int suffixLength = values[i].length - common;

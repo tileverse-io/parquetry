@@ -50,7 +50,7 @@ class ListMaterializerTest {
         ListVector vec = new ListVector(offsets, child, validity, 2);
 
         assertThat(asList(vec, 0)).containsExactly(7);
-        assertThat(ListMaterializer.materializeAt(vec, 1)).isNull();
+        assertThat(ListMaterializer.materializeAt(vec, 1, null)).isNull();
     }
 
     @Test
@@ -74,12 +74,28 @@ class ListMaterializerTest {
         assertThat(asList(row0, 1)).isEmpty();
         assertThat(asList(row0, 2)).containsExactly(30, 40, 50);
 
-        assertThat(ListMaterializer.materializeAt(outer, 1)).isEmpty();
+        assertThat(ListMaterializer.materializeAt(outer, 1, null)).isEmpty();
+    }
+
+    @Test
+    void nullPrimitiveElementMaterializesAsNull() {
+        // Child element 0 is null (validity bit clear); its backing slot parks the default 0.
+        BitSet childValidity = new BitSet(2);
+        childValidity.set(1);
+        IntVector child = IntVector.materialized(new int[] {0, 1}, childValidity);
+        int[] offsets = {0, 2};
+        BitSet validity = new BitSet(1);
+        validity.set(0);
+        ListVector vec = new ListVector(offsets, child, validity, 1);
+
+        assertThat(asList(vec, 0))
+                .as("a null list element reads back as null, not the primitive default 0")
+                .containsExactly(null, 1);
     }
 
     @SuppressWarnings("unchecked")
     private static List<Object> asList(ListVector vec, int row) {
-        return (List<Object>) ListMaterializer.materializeAt(vec, row);
+        return (List<Object>) ListMaterializer.materializeAt(vec, row, null);
     }
 
     @SuppressWarnings("unchecked")

@@ -28,47 +28,12 @@ class DeltaByteArrayDecoderTest {
 
     @Test
     void decodesPrefixSharedStrings() throws Exception {
-        // Classic example: ["car", "carpet", "carry"]
-        String[] values = {"car", "carpet", "carry"};
-        int[] prefixLens = {0, 3, 3};
-        String[] suffixes = {"car", "pet", "ry"};
-
-        // Both prefix-lengths and suffix-lengths are DELTA_BINARY_PACKED. Block size needs
-        // to be >= padded array size. Use block=4 / miniblocks=2 with 3 actual values.
-        int blockSize = 4;
-        int miniblocksPerBlock = 2;
-
-        int[] paddedPrefix = new int[blockSize];
-        System.arraycopy(prefixLens, 0, paddedPrefix, 0, prefixLens.length);
-        for (int i = prefixLens.length; i < paddedPrefix.length; i++) {
-            paddedPrefix[i] = prefixLens[prefixLens.length - 1];
-        }
-
-        int[] suffixLens = new int[blockSize];
-        for (int i = 0; i < suffixes.length; i++) {
-            suffixLens[i] = suffixes[i].length();
-        }
-        for (int i = suffixes.length; i < suffixLens.length; i++) {
-            suffixLens[i] = suffixes[suffixes.length - 1].length();
-        }
-
-        byte[] prefixBytes =
-                DeltaBinaryPackedDecoderTest.encodeInts(paddedPrefix, blockSize, miniblocksPerBlock, values.length);
-        byte[] suffixLenBytes =
-                DeltaBinaryPackedDecoderTest.encodeInts(suffixLens, blockSize, miniblocksPerBlock, values.length);
-
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        out.write(prefixBytes);
-        out.write(suffixLenBytes);
-        for (String suffix : suffixes) {
-            out.write(suffix.getBytes(StandardCharsets.UTF_8));
-        }
-        byte[] page = out.toByteArray();
+        byte[] page = encodePrefixSharedPage();
 
         PageDecoder<MemorySegment> decoder = new DeltaByteArrayDecoder();
-        decoder.load(MemorySegment.ofArray(page), values.length);
+        decoder.load(MemorySegment.ofArray(page), 3);
 
-        for (String expected : values) {
+        for (String expected : new String[] {"car", "carpet", "carry"}) {
             MemorySegment slice = decoder.next();
             byte[] buf = slice.toArray(JAVA_BYTE);
             assertThat(new String(buf, StandardCharsets.UTF_8)).isEqualTo(expected);
@@ -77,21 +42,11 @@ class DeltaByteArrayDecoderTest {
 
     @Test
     void firstValueHasZeroPrefix() throws Exception {
-        // Edge case: single-value page with prefix 0
-        String[] values = {"hello"};
+        // Single-value page: the only value has prefix 0 and the whole string as its suffix.
         int blockSize = 4;
         int miniblocksPerBlock = 2;
-
-        int[] prefixLens = new int[blockSize]; // all zeros (padding == 0)
-        int[] suffixLens = new int[blockSize];
-        suffixLens[0] = 5;
-        // pad with the last actual value (5)
-        for (int i = 1; i < suffixLens.length; i++) suffixLens[i] = 5;
-
-        byte[] prefixBytes =
-                DeltaBinaryPackedDecoderTest.encodeInts(prefixLens, blockSize, miniblocksPerBlock, values.length);
-        byte[] suffixLenBytes =
-                DeltaBinaryPackedDecoderTest.encodeInts(suffixLens, blockSize, miniblocksPerBlock, values.length);
+        byte[] prefixBytes = DeltaBinaryPackedDecoderTest.encodeInts(new int[] {0}, blockSize, miniblocksPerBlock);
+        byte[] suffixLenBytes = DeltaBinaryPackedDecoderTest.encodeInts(new int[] {5}, blockSize, miniblocksPerBlock);
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         out.write(prefixBytes);
@@ -108,31 +63,35 @@ class DeltaByteArrayDecoderTest {
 
     @Test
     void bulkDecodeBinaryFillsArray() throws Exception {
-        String[] values = {"car", "carpet", "carry"};
-        int[] prefixLens = {0, 3, 3};
-        String[] suffixes = {"car", "pet", "ry"};
+        byte[] page = encodePrefixSharedPage();
 
+        PageDecoder<MemorySegment> decoder = new DeltaByteArrayDecoder();
+        decoder.load(MemorySegment.ofArray(page), 3);
+
+        MemorySegment[] dst = new MemorySegment[3];
+        decoder.decodeBinary(3, dst, 0);
+
+        String[] values = {"car", "carpet", "carry"};
+        for (int i = 0; i < values.length; i++) {
+            byte[] buf = dst[i].toArray(JAVA_BYTE);
+            assertThat(new String(buf, StandardCharsets.UTF_8)).as("value " + i).isEqualTo(values[i]);
+        }
+    }
+
+    /**
+     * Encodes the classic ["car", "carpet", "carry"] DELTA_BYTE_ARRAY page. The prefix and suffix length arrays are
+     * passed at their real length (no block-boundary padding); the encoder then writes data only for the miniblocks
+     * that hold values, matching what real Parquet writers emit.
+     */
+    private static byte[] encodePrefixSharedPage() throws Exception {
         int blockSize = 4;
         int miniblocksPerBlock = 2;
+        int[] prefixLens = {0, 3, 3};
+        int[] suffixLens = {3, 3, 2};
+        String[] suffixes = {"car", "pet", "ry"};
 
-        int[] paddedPrefix = new int[blockSize];
-        System.arraycopy(prefixLens, 0, paddedPrefix, 0, prefixLens.length);
-        for (int i = prefixLens.length; i < paddedPrefix.length; i++) {
-            paddedPrefix[i] = prefixLens[prefixLens.length - 1];
-        }
-
-        int[] suffixLens = new int[blockSize];
-        for (int i = 0; i < suffixes.length; i++) {
-            suffixLens[i] = suffixes[i].length();
-        }
-        for (int i = suffixes.length; i < suffixLens.length; i++) {
-            suffixLens[i] = suffixes[suffixes.length - 1].length();
-        }
-
-        byte[] prefixBytes =
-                DeltaBinaryPackedDecoderTest.encodeInts(paddedPrefix, blockSize, miniblocksPerBlock, values.length);
-        byte[] suffixLenBytes =
-                DeltaBinaryPackedDecoderTest.encodeInts(suffixLens, blockSize, miniblocksPerBlock, values.length);
+        byte[] prefixBytes = DeltaBinaryPackedDecoderTest.encodeInts(prefixLens, blockSize, miniblocksPerBlock);
+        byte[] suffixLenBytes = DeltaBinaryPackedDecoderTest.encodeInts(suffixLens, blockSize, miniblocksPerBlock);
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         out.write(prefixBytes);
@@ -140,17 +99,6 @@ class DeltaByteArrayDecoderTest {
         for (String suffix : suffixes) {
             out.write(suffix.getBytes(StandardCharsets.UTF_8));
         }
-        byte[] page = out.toByteArray();
-
-        PageDecoder<MemorySegment> decoder = new DeltaByteArrayDecoder();
-        decoder.load(MemorySegment.ofArray(page), values.length);
-
-        MemorySegment[] dst = new MemorySegment[values.length];
-        decoder.decodeBinary(values.length, dst, 0);
-
-        for (int i = 0; i < values.length; i++) {
-            byte[] buf = dst[i].toArray(JAVA_BYTE);
-            assertThat(new String(buf, StandardCharsets.UTF_8)).as("value " + i).isEqualTo(values[i]);
-        }
+        return out.toByteArray();
     }
 }

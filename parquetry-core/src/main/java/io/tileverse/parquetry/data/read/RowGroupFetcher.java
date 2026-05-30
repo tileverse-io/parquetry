@@ -131,8 +131,17 @@ public final class RowGroupFetcher {
                         new ParquetFormatException("ColumnChunk for " + path.dot() + " is missing inline metaData"));
     }
 
+    /**
+     * The byte offset where the column chunk begins. A {@code dictionary_page_offset} only points at a real dictionary
+     * page when it is positive and precedes the first data page; some writers leave it unset or store a literal
+     * {@code 0} (which would otherwise point at the file's magic header). The chunk then starts at
+     * {@code data_page_offset}. This mirrors parquet-mr's {@code getStartingPos}.
+     */
     private static long chunkStart(ColumnMetaData meta) {
-        return meta.dictionaryPageOffset().orElse(meta.dataPageOffset());
+        long dataPageOffset = meta.dataPageOffset();
+        long dictionaryPageOffset = meta.dictionaryPageOffset().orElse(0L);
+        boolean dictionaryPagePrecedesData = dictionaryPageOffset > 0 && dictionaryPageOffset < dataPageOffset;
+        return dictionaryPagePrecedesData ? dictionaryPageOffset : dataPageOffset;
     }
 
     private static int chunkLength(ColumnMetaData meta, ColumnPath path) {

@@ -42,7 +42,7 @@ class MapMaterializerTest {
         validity.set(0, 2);
         MapVector vec = new MapVector(offsets, keys, values, validity, 2);
 
-        Map<?, ?> result = MapMaterializer.materializeAt(vec, 0);
+        Map<?, ?> result = MapMaterializer.materializeAt(vec, 0, null);
         assertThat(result).hasSize(2);
         Iterator<?> keyIt = result.keySet().iterator();
         MemorySegment k1 = (MemorySegment) keyIt.next();
@@ -62,8 +62,8 @@ class MapMaterializerTest {
 
         MapVector vec = new MapVector(offsets, keys, values, validity, 2);
 
-        assertThat(MapMaterializer.materializeAt(vec, 0)).hasSize(1);
-        assertThat(MapMaterializer.materializeAt(vec, 1)).isNull();
+        assertThat(MapMaterializer.materializeAt(vec, 0, null)).hasSize(1);
+        assertThat(MapMaterializer.materializeAt(vec, 1, null)).isNull();
     }
 
     @Test
@@ -76,8 +76,27 @@ class MapMaterializerTest {
 
         MapVector vec = new MapVector(offsets, keys, values, validity, 1);
 
-        Map<?, ?> result = MapMaterializer.materializeAt(vec, 0);
+        Map<?, ?> result = MapMaterializer.materializeAt(vec, 0, null);
         assertThat(result).isNotNull().isEmpty();
+    }
+
+    @Test
+    void nullPrimitiveValueMaterializesAsNull() {
+        BinaryVector keys =
+                BinaryVector.materialized(new MemorySegment[] {MemorySegment.ofArray("a".getBytes())}, allValid(1));
+        // The single value is null: validity bit clear, backing slot parks the default 0.
+        IntVector values = IntVector.materialized(new int[] {0}, new BitSet(1));
+        int[] offsets = {0, 1};
+        BitSet validity = new BitSet(1);
+        validity.set(0);
+        MapVector vec = new MapVector(offsets, keys, values, validity, 1);
+
+        Map<?, ?> result = MapMaterializer.materializeAt(vec, 0, null);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.entrySet().iterator().next().getValue())
+                .as("a null primitive map value reads back as null, not the default 0")
+                .isNull();
     }
 
     private static BitSet allValid(int n) {
