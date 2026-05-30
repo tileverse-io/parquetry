@@ -25,8 +25,7 @@ import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
  * <p>Sealed interface with one record per Thrift-union case. Records that need no payload (e.g. {@link StringType}) are
  * empty records to give every case the same shape.
  *
- * <p>Variant {@link VariantStub} is a stub initially; it gains the case type carrier later. Declared here so the
- * sealed-type list is final from the start.
+ * <p>Variant {@link Variant} is the Parquet Variant logical type, stored as a metadata + value binary group.
  */
 public sealed interface LogicalType
         permits LogicalType.StringType,
@@ -43,7 +42,7 @@ public sealed interface LogicalType
                 LogicalType.BsonType,
                 LogicalType.UuidType,
                 LogicalType.Float16Type,
-                LogicalType.VariantStub,
+                LogicalType.Variant,
                 LogicalType.Geometry,
                 LogicalType.Geography {
 
@@ -132,8 +131,8 @@ public sealed interface LogicalType
 
     record IntType(byte bitWidth, boolean isSigned) implements LogicalType {}
 
-    // Stub (filled in later)
-    record VariantStub() implements LogicalType {}
+    // Payload-free: the value lives in a metadata + value binary group, not in the logical-type annotation.
+    record Variant() implements LogicalType {}
 
     /**
      * GeoParquet 2.0 {@code GEOMETRY} logical type.

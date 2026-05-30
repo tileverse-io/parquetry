@@ -270,7 +270,7 @@ class ParquetFormatWriteTest {
                 new LogicalType.BsonType(),
                 new LogicalType.UuidType(),
                 new LogicalType.Float16Type(),
-                new LogicalType.VariantStub());
+                new LogicalType.Variant());
 
         for (LogicalType lt : variants) {
             FileMetaData original = footerWithLogicalType(lt);

@@ -59,7 +59,7 @@ class LogicalTypeTest {
             new LogicalType.BsonType(),
             new LogicalType.UuidType(),
             new LogicalType.Float16Type(),
-            new LogicalType.VariantStub(),
+            new LogicalType.Variant(),
             new LogicalType.Geometry(java.util.Optional.empty()),
             new LogicalType.Geography(java.util.Optional.empty(), java.util.Optional.empty())
         };

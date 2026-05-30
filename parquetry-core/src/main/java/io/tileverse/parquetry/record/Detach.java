@@ -24,6 +24,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import io.tileverse.parquetry.data.variant.Variant;
+
 /**
  * Turns a lazy batch-backed value into a self-contained copy that owns its data.
  *
@@ -59,6 +61,7 @@ final class Detach {
             case List<?> list -> detachList(list);
             case Map<?, ?> map -> detachMap(map);
             case ParquetRecord nested -> nested.detach();
+            case Variant variant -> variant.detach();
             default -> value;
         };
     }

@@ -147,7 +147,7 @@ final class LogicalTypeDeserializer {
             }
             case 16 -> {
                 r.skipStruct();
-                yield new LogicalType.VariantStub();
+                yield new LogicalType.Variant();
             }
             case 17 -> readGeometry(r);
             case 18 -> readGeography(r);

@@ -34,6 +34,7 @@ import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.MapVector;
 import io.tileverse.parquetry.batch.StructVector;
+import io.tileverse.parquetry.batch.VariantVector;
 import io.tileverse.parquetry.materializer.ListMaterializer;
 import io.tileverse.parquetry.materializer.MapMaterializer;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -74,6 +75,7 @@ final class BatchBackedRecords {
             case MapVector map -> MapMaterializer.materializeAt(map, rowIndex, schema);
             case StructVector struct ->
                 new DefaultParquetRecord(schema, new StructRowAccessor(struct, rowIndex, schema));
+            case VariantVector variant -> variant.variantAt(rowIndex);
         };
     }
 

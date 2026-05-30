@@ -163,7 +163,7 @@ class RoundTripCorpusIT {
                 return false;
             }
             if (prim.logicalType()
-                    .filter(lt -> lt instanceof LogicalType.VariantStub)
+                    .filter(lt -> lt instanceof LogicalType.Variant)
                     .isPresent()) {
                 return false;
             }

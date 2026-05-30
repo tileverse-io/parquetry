@@ -36,7 +36,8 @@ public sealed interface ColumnVector
                 Int96Vector,
                 ListVector,
                 MapVector,
-                StructVector {
+                StructVector,
+                VariantVector {
 
     /** Logical row count this vector carries. */
     int size();
