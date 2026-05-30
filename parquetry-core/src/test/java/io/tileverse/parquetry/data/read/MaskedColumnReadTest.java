@@ -90,7 +90,7 @@ class MaskedColumnReadTest {
             RowGroupChunks chunks = RowGroupChunks.of(rowGroup, schema, loader);
             RowGroupFetcher fetcher =
                     new RowGroupFetcher(source, schema, schema, SegmentPool.getDefault(), 1 << 20, 8 << 20);
-            RowGroupSurvivor survivor = new RowGroupSurvivor(chunks, Optional.of(surviving));
+            RowGroupSurvivor survivor = new RowGroupSurvivor(chunks, Optional.of(surviving), true);
             try (RowGroupFetch fetch = fetcher.fetch(survivor, fetcher.planFor(survivor), BudgetReservation.NONE)) {
                 FetchedColumnChunk chunk = fetch.columns().get(0);
                 BatchColumnReader colReader = new BatchColumnReader(chunk, leaf(schema), surviving, offsetIndex);

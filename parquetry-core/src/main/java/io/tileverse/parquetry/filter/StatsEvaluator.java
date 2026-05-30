@@ -143,12 +143,12 @@ final class StatsEvaluator {
     private static PruningDecision evalEq(
             ColumnPath col, Value v, FilterPipeline.ColumnStatsLookup cols, long rowCount) {
         return withRange(col, cols, range -> {
-            int cmpMin = compare(range.kind(), v, range.min());
-            int cmpMax = compare(range.kind(), v, range.max());
+            int cmpMin = ValueComparison.compareValues(v, range.min());
+            int cmpMax = ValueComparison.compareValues(v, range.max());
             if (cmpMin < 0 || cmpMax > 0) {
                 return new PruningDecision.Eliminated(TIER, OP_EQ + col.dot() + ": value outside [min, max]");
             }
-            if (cmpMin == 0 && cmpMax == 0 && range.nullCount() == 0 && rowCount > 0) {
+            if (cmpMin == 0 && cmpMax == 0 && rowCount > 0 && canProveAllMatch(range.kind(), range.nullCount())) {
                 return new PruningDecision.PassedAll(TIER, OP_EQ + col.dot() + ": single distinct value matches");
             }
             return new PruningDecision.NotApplied(TIER, OP_EQ + col.dot() + ": value within [min, max]");
@@ -158,10 +158,11 @@ final class StatsEvaluator {
     private static PruningDecision evalNotEq(
             ColumnPath col, Value v, FilterPipeline.ColumnStatsLookup cols, long rowCount) {
         return withRange(col, cols, range -> {
-            int cmpMin = compare(range.kind(), v, range.min());
-            int cmpMax = compare(range.kind(), v, range.max());
-            if (cmpMin < 0 || cmpMax > 0) {
-                return new PruningDecision.PassedAll(TIER, OP_NOT_EQ + col.dot() + ": value outside [min, max]");
+            int cmpMin = ValueComparison.compareValues(v, range.min());
+            int cmpMax = ValueComparison.compareValues(v, range.max());
+            if ((cmpMin < 0 || cmpMax > 0) && canProveAllMatch(range.kind(), range.nullCount())) {
+                return new PruningDecision.PassedAll(
+                        TIER, OP_NOT_EQ + col.dot() + ": value outside [min, max], no nulls");
             }
             if (cmpMin == 0 && cmpMax == 0 && range.nullCount() == 0 && rowCount > 0) {
                 return new PruningDecision.Eliminated(
@@ -173,11 +174,12 @@ final class StatsEvaluator {
 
     private static PruningDecision evalLt(ColumnPath col, Value v, FilterPipeline.ColumnStatsLookup cols) {
         return withRange(col, cols, range -> {
-            if (compare(range.kind(), v, range.min()) <= 0) {
+            if (ValueComparison.compareValues(v, range.min()) <= 0) {
                 return new PruningDecision.Eliminated(TIER, OP_LT + col.dot() + ": value <= min");
             }
-            if (compare(range.kind(), v, range.max()) > 0) {
-                return new PruningDecision.PassedAll(TIER, OP_LT + col.dot() + ": value > max");
+            if (ValueComparison.compareValues(v, range.max()) > 0
+                    && canProveAllMatch(range.kind(), range.nullCount())) {
+                return new PruningDecision.PassedAll(TIER, OP_LT + col.dot() + ": value > max, no nulls");
             }
             return new PruningDecision.NotApplied(TIER, OP_LT + col.dot() + ": value within (min, max]");
         });
@@ -185,11 +187,12 @@ final class StatsEvaluator {
 
     private static PruningDecision evalLtEq(ColumnPath col, Value v, FilterPipeline.ColumnStatsLookup cols) {
         return withRange(col, cols, range -> {
-            if (compare(range.kind(), v, range.min()) < 0) {
+            if (ValueComparison.compareValues(v, range.min()) < 0) {
                 return new PruningDecision.Eliminated(TIER, OP_LT_EQ + col.dot() + ": value < min");
             }
-            if (compare(range.kind(), v, range.max()) >= 0) {
-                return new PruningDecision.PassedAll(TIER, OP_LT_EQ + col.dot() + ": value >= max");
+            if (ValueComparison.compareValues(v, range.max()) >= 0
+                    && canProveAllMatch(range.kind(), range.nullCount())) {
+                return new PruningDecision.PassedAll(TIER, OP_LT_EQ + col.dot() + ": value >= max, no nulls");
             }
             return new PruningDecision.NotApplied(TIER, OP_LT_EQ + col.dot() + ": value within [min, max)");
         });
@@ -197,11 +200,12 @@ final class StatsEvaluator {
 
     private static PruningDecision evalGt(ColumnPath col, Value v, FilterPipeline.ColumnStatsLookup cols) {
         return withRange(col, cols, range -> {
-            if (compare(range.kind(), v, range.max()) >= 0) {
+            if (ValueComparison.compareValues(v, range.max()) >= 0) {
                 return new PruningDecision.Eliminated(TIER, OP_GT + col.dot() + ": value >= max");
             }
-            if (compare(range.kind(), v, range.min()) < 0) {
-                return new PruningDecision.PassedAll(TIER, OP_GT + col.dot() + ": value < min");
+            if (ValueComparison.compareValues(v, range.min()) < 0
+                    && canProveAllMatch(range.kind(), range.nullCount())) {
+                return new PruningDecision.PassedAll(TIER, OP_GT + col.dot() + ": value < min, no nulls");
             }
             return new PruningDecision.NotApplied(TIER, OP_GT + col.dot() + ": value within [min, max)");
         });
@@ -209,11 +213,12 @@ final class StatsEvaluator {
 
     private static PruningDecision evalGtEq(ColumnPath col, Value v, FilterPipeline.ColumnStatsLookup cols) {
         return withRange(col, cols, range -> {
-            if (compare(range.kind(), v, range.max()) > 0) {
+            if (ValueComparison.compareValues(v, range.max()) > 0) {
                 return new PruningDecision.Eliminated(TIER, OP_GT_EQ + col.dot() + ": value > max");
             }
-            if (compare(range.kind(), v, range.min()) <= 0) {
-                return new PruningDecision.PassedAll(TIER, OP_GT_EQ + col.dot() + ": value <= min");
+            if (ValueComparison.compareValues(v, range.min()) <= 0
+                    && canProveAllMatch(range.kind(), range.nullCount())) {
+                return new PruningDecision.PassedAll(TIER, OP_GT_EQ + col.dot() + ": value <= min, no nulls");
             }
             return new PruningDecision.NotApplied(TIER, OP_GT_EQ + col.dot() + ": value within (min, max]");
         });
@@ -222,8 +227,8 @@ final class StatsEvaluator {
     private static PruningDecision evalIn(ColumnPath col, List<Value> values, FilterPipeline.ColumnStatsLookup cols) {
         return withRange(col, cols, range -> {
             for (Value v : values) {
-                int cmpMin = compare(range.kind(), v, range.min());
-                int cmpMax = compare(range.kind(), v, range.max());
+                int cmpMin = ValueComparison.compareValues(v, range.min());
+                int cmpMax = ValueComparison.compareValues(v, range.max());
                 if (cmpMin >= 0 && cmpMax <= 0) {
                     return new PruningDecision.NotApplied(
                             TIER, OP_IN + col.dot() + ": at least one value within [min, max]");
@@ -261,6 +266,20 @@ final class StatsEvaluator {
             return new PruningDecision.PassedAll(TIER, OP_IS_NOT_NULL + col.dot() + ": no nulls");
         }
         return new PruningDecision.NotApplied(TIER, OP_IS_NOT_NULL + col.dot() + ": some nulls");
+    }
+
+    /**
+     * A min/max comparison can prove all-match only for exactly-bounded primitive kinds with no nulls. FLOAT/DOUBLE
+     * (NaN) and binary (possibly truncated stats) are excluded; INT96 has no stats path.
+     */
+    private static boolean canProveAllMatch(PrimitiveKind kind, long nullCount) {
+        if (nullCount != 0) {
+            return false;
+        }
+        return switch (kind) {
+            case BOOLEAN, INT32, INT64 -> true;
+            case FLOAT, DOUBLE, BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> false;
+        };
     }
 
     private static OptionalLong lookupNullCount(ColumnPath col, FilterPipeline.ColumnStatsLookup cols) {
@@ -314,50 +333,6 @@ final class StatsEvaluator {
             case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> Optional.of(new Value.BinaryVal(raw));
             case INT96 -> Optional.empty(); // legacy nanosecond timestamps; not handled at stats tier yet
         };
-    }
-
-    /**
-     * Compares the predicate-side value to a decoded min or max value. Returns negative if {@code query < bound}, zero
-     * if equal, positive if {@code query > bound}. Returns 0 for type mismatches (caller already had its chance via the
-     * schema validator).
-     */
-    // S3776: dispatch table; cyclomatic complexity is inherent.
-    // S7475: palantirJavaFormat 2.90 cannot parse bare _ in nested record patterns; see memory
-    // feedback-palantir-unnamed-pattern.
-    @SuppressWarnings({"java:S3776", "java:S7475"})
-    private static int compare(PrimitiveKind kind, Value query, Value bound) {
-        return switch (query) {
-            case Value.BoolVal(boolean qv) when bound instanceof Value.BoolVal(boolean bv) -> Boolean.compare(qv, bv);
-            case Value.IntVal(int qv) when bound instanceof Value.IntVal(int bv) -> Integer.compare(qv, bv);
-            case Value.LongVal(long qv) when bound instanceof Value.LongVal(long bv) -> Long.compare(qv, bv);
-            case Value.FloatVal(float qv) when bound instanceof Value.FloatVal(float bv) -> Float.compare(qv, bv);
-            case Value.DoubleVal(double qv) when bound instanceof Value.DoubleVal(double bv) -> Double.compare(qv, bv);
-            case Value.StringVal(String qv)
-            when bound instanceof Value.BinaryVal(MemorySegment bv) ->
-                compareBytes(MemorySegment.ofArray(qv.getBytes(java.nio.charset.StandardCharsets.UTF_8)), bv);
-            case Value.BinaryVal(MemorySegment qv)
-            when bound instanceof Value.BinaryVal(MemorySegment bv) -> compareBytes(qv, bv);
-            case Value.DateVal(java.time.LocalDate qv)
-            when bound instanceof Value.IntVal(int bv) -> Integer.compare((int) qv.toEpochDay(), bv);
-            case Value.TimestampVal(java.time.LocalDateTime qv, boolean _)
-            when bound instanceof Value.LongVal(long bv) ->
-                Long.compare(qv.toEpochSecond(java.time.ZoneOffset.UTC) * 1000L, bv);
-            default -> 0;
-        };
-    }
-
-    /** Lexicographic unsigned byte comparison, mirroring Parquet's default ColumnOrder for binary columns. */
-    private static int compareBytes(MemorySegment a, MemorySegment b) {
-        long aLen = a.byteSize();
-        long bLen = b.byteSize();
-        long common = Math.min(aLen, bLen);
-        for (long i = 0; i < common; i++) {
-            int diff = (a.get(JAVA_BYTE, i) & 0xff) - (b.get(JAVA_BYTE, i) & 0xff);
-            if (diff != 0) {
-                return diff;
-            }
-        }
-        return Long.compare(aLen, bLen);
     }
 
     /** Aggregate of a column's decoded min/max plus its null count (or {@code -1} if absent). */

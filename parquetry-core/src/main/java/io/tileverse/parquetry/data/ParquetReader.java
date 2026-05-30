@@ -48,6 +48,7 @@ import io.tileverse.parquetry.filter.FilterPipeline.DictionaryLookup;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.PruningDecision;
+import io.tileverse.parquetry.filter.RowGroupOutcome;
 import io.tileverse.parquetry.filter.RowGroupPlan;
 import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.filter.bloom.BloomFilterReader;
@@ -269,6 +270,80 @@ public class ParquetReader {
         return normalized;
     }
 
+    /**
+     * Counts rows matching {@code predicate} with no record materialization. Each row group routes by its filter-
+     * pipeline outcome: an eliminated group adds nothing, a MATCHED group (statistics proved every row matches) adds
+     * its row count with no decode, and a FULL or PARTIAL group decodes the predicate columns only and counts the
+     * matches via a columnar popcount. {@link Predicate#ALWAYS_TRUE} and {@link Predicate#ALWAYS_FALSE} short-circuit
+     * from metadata without touching the pipeline.
+     */
+    public long count(@NonNull Predicate rawPredicate, @NonNull ReadOptions options) {
+        Predicate predicate = lowerSpatialPredicates(rawPredicate);
+        // ALWAYS_TRUE / ALWAYS_FALSE are literals callers pass directly; fold them without running the pipeline.
+        if (predicate instanceof Predicate.Always(boolean value)) {
+            return value ? totalRows() : 0L;
+        }
+        Projection predicateProjection = Projection.of(Predicate.columns(predicate));
+        List<RowGroupChunks> rowGroupChunks = rowGroupChunks();
+        ExplainPlan plan = runFilterPipeline(predicate, predicateProjection, options, rowGroupChunks);
+
+        long matchedRows = matchedRowCount(plan);
+        List<RowGroupSurvivor> residual = residualSurvivors(plan, rowGroupChunks);
+        if (residual.isEmpty()) {
+            return matchedRows;
+        }
+        return matchedRows + countResidual(residual, plan, options);
+    }
+
+    /** Sum of row counts for the MATCHED row groups, added without any decode. */
+    private static long matchedRowCount(ExplainPlan plan) {
+        long matchedRows = 0L;
+        for (RowGroupPlan rgPlan : plan.rowGroups()) {
+            if (rgPlan.outcome() == RowGroupOutcome.MATCHED) {
+                matchedRows += rgPlan.rowCount();
+            }
+        }
+        return matchedRows;
+    }
+
+    /**
+     * The FULL and PARTIAL row groups, the only ones count still has to decode. ELIMINATED groups add nothing and
+     * MATCHED groups are added from metadata, hence both are excluded here.
+     */
+    private List<RowGroupSurvivor> residualSurvivors(ExplainPlan plan, List<RowGroupChunks> rowGroupChunks) {
+        List<RowGroupSurvivor> residual = new ArrayList<>();
+        for (RowGroupPlan rgPlan : plan.rowGroups()) {
+            RowGroupChunks chunks = rowGroupChunks.get(rgPlan.index());
+            switch (rgPlan.outcome()) {
+                case ELIMINATED, MATCHED -> {
+                    /* eliminated adds nothing; matched is added from metadata, never decoded */
+                }
+                case PARTIAL -> residual.add(new RowGroupSurvivor(chunks, rgPlan.survivingRows(), true));
+                case FULL -> residual.add(RowGroupSurvivor.full(chunks));
+            }
+        }
+        return residual;
+    }
+
+    /** Decodes the predicate columns of the residual row groups and counts the matches via a columnar popcount. */
+    private long countResidual(List<RowGroupSurvivor> residual, ExplainPlan plan, ReadOptions options) {
+        ParquetSchema scanSchema = plan.projectedSchema();
+        Predicate normalized = plan.normalizedPredicate();
+        List<Optional<RowMask>> masks = decodeMasksFor(residual, scanSchema, options);
+        ParallelDecodeCoordinator coordinator =
+                newDecodeCoordinator(residual, scanSchema, masks, options, Optional.empty());
+        return BatchPipeline.countMatching(coordinator, normalized);
+    }
+
+    /** Total rows across every row group, read from the per-row-group summaries with no I/O. */
+    private long totalRows() {
+        long sum = 0L;
+        for (RowGroupSummary rowGroup : rowGroupView) {
+            sum += rowGroup.rowCount();
+        }
+        return sum;
+    }
+
     /** Streams record batches matching {@code predicate} under {@code projection} via the default batch shape. */
     public Stream<ParquetRecordBatch> readBatches(Predicate predicate, Projection projection, ReadOptions options) {
         return readBatches(predicate, projection, BatchMaterializer.defaultBatch(), options);
@@ -338,6 +413,7 @@ public class ParquetReader {
             ReadOptions options,
             Optional<LateMaterialization> lateMat) {
         RowGroupPrefetcher prefetcher = newPrefetcher(survivors, projectedSchema, options);
+        List<Boolean> recordEvalRequired = recordEvalFlagsFor(survivors);
         return new ParallelDecodeCoordinator(
                 prefetcher,
                 options.decodeExecutor(),
@@ -346,7 +422,21 @@ public class ParquetReader {
                 fileSchema,
                 options.batchSize(),
                 decodeMasks,
+                recordEvalRequired,
                 lateMat);
+    }
+
+    /**
+     * Returns one flag per survivor, in survivor order: whether the read still has to test each decoded row against the
+     * predicate. A MATCHED survivor reports {@code false}; its statistics already proved every row matches, hence the
+     * row pipeline skips per-row evaluation for it.
+     */
+    private static List<Boolean> recordEvalFlagsFor(List<RowGroupSurvivor> survivors) {
+        List<Boolean> flags = new ArrayList<>(survivors.size());
+        for (RowGroupSurvivor survivor : survivors) {
+            flags.add(survivor.recordEvalRequired());
+        }
+        return flags;
     }
 
     /** Runs the filter pipeline without reading data and returns the explain plan. */
@@ -480,8 +570,9 @@ public class ParquetReader {
                 case ELIMINATED -> {
                     /* drop */
                 }
-                case PARTIAL -> survivors.add(new RowGroupSurvivor(chunks, rgPlan.survivingRows()));
+                case PARTIAL -> survivors.add(new RowGroupSurvivor(chunks, rgPlan.survivingRows(), true));
                 case FULL -> survivors.add(RowGroupSurvivor.full(chunks));
+                case MATCHED -> survivors.add(RowGroupSurvivor.matched(chunks));
             }
         }
         return survivors;

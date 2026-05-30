@@ -176,6 +176,11 @@ public final class FilterPipeline {
         if (statsDecision instanceof PruningDecision.Eliminated) {
             return new RowGroupPlan(index, inputs.rowCount(), tierDecisions, RowGroupOutcome.ELIMINATED, surviving);
         }
+        // An empty row group has no rows to match. Letting it fall through keeps the existing behavior, where a later
+        // tier eliminates it, instead of claiming MATCHED and fetching a chunk that should never be read.
+        if (statsDecision instanceof PruningDecision.PassedAll && inputs.rowCount() > 0) {
+            return new RowGroupPlan(index, inputs.rowCount(), tierDecisions, RowGroupOutcome.MATCHED, surviving);
+        }
 
         PruningDecision spatialDecision = SpatialBoundsEvaluator.evaluate(normalized, inputs.spatialBounds(), index);
         tierDecisions.add(spatialDecision);
@@ -213,7 +218,7 @@ public final class FilterPipeline {
         return switch (plan.outcome()) {
             case ELIMINATED -> 0L;
             case PARTIAL -> plan.survivingRows().map(RowRanges::totalRows).orElse(plan.rowCount());
-            case FULL -> plan.rowCount();
+            case FULL, MATCHED -> plan.rowCount();
         };
     }
 

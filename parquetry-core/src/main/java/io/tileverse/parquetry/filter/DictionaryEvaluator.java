@@ -15,8 +15,6 @@
  */
 package io.tileverse.parquetry.filter;
 
-import static java.lang.foreign.ValueLayout.JAVA_BYTE;
-
 import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -141,9 +139,9 @@ final class DictionaryEvaluator {
             case Value.DoubleVal(double qv) when dictValue instanceof Double dv -> Double.compare(qv, dv) == 0;
             case Value.StringVal(String qv)
             when dictValue instanceof MemorySegment dv ->
-                compareBytes(MemorySegment.ofArray(qv.getBytes(StandardCharsets.UTF_8)), dv) == 0;
+                ValueComparison.compareBytes(MemorySegment.ofArray(qv.getBytes(StandardCharsets.UTF_8)), dv) == 0;
             case Value.BinaryVal(MemorySegment qv)
-            when dictValue instanceof MemorySegment dv -> compareBytes(qv, dv) == 0;
+            when dictValue instanceof MemorySegment dv -> ValueComparison.compareBytes(qv, dv) == 0;
             case Value.DateVal(java.time.LocalDate qv)
             when dictValue instanceof Integer dv -> (int) qv.toEpochDay() == dv;
             case Value.TimestampVal(java.time.LocalDateTime qv, boolean _)
@@ -163,27 +161,14 @@ final class DictionaryEvaluator {
             case Value.DoubleVal(double qv) when dictValue instanceof Double dv -> Double.compare(dv, qv);
             case Value.StringVal(String qv)
             when dictValue instanceof MemorySegment dv ->
-                compareBytes(dv, MemorySegment.ofArray(qv.getBytes(StandardCharsets.UTF_8)));
-            case Value.BinaryVal(MemorySegment qv) when dictValue instanceof MemorySegment dv -> compareBytes(dv, qv);
+                ValueComparison.compareBytes(dv, MemorySegment.ofArray(qv.getBytes(StandardCharsets.UTF_8)));
+            case Value.BinaryVal(MemorySegment qv)
+            when dictValue instanceof MemorySegment dv -> ValueComparison.compareBytes(dv, qv);
             case Value.DateVal(java.time.LocalDate qv)
             when dictValue instanceof Integer dv -> Integer.compare(dv, (int) qv.toEpochDay());
             case Value.TimestampVal(java.time.LocalDateTime qv, boolean _)
             when dictValue instanceof Long dv -> Long.compare(dv, qv.toEpochSecond(java.time.ZoneOffset.UTC) * 1000L);
             default -> 0;
         };
-    }
-
-    /** Lexicographic unsigned byte comparison, matching Parquet's default binary ColumnOrder. */
-    private static int compareBytes(MemorySegment a, MemorySegment b) {
-        long aLen = a.byteSize();
-        long bLen = b.byteSize();
-        long common = Math.min(aLen, bLen);
-        for (long i = 0; i < common; i++) {
-            int diff = (a.get(JAVA_BYTE, i) & 0xff) - (b.get(JAVA_BYTE, i) & 0xff);
-            if (diff != 0) {
-                return diff;
-            }
-        }
-        return Long.compare(aLen, bLen);
     }
 }

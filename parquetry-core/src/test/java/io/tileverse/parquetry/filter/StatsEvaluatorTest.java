@@ -18,6 +18,7 @@ package io.tileverse.parquetry.filter;
 import static io.tileverse.parquetry.filter.Pred.col;
 import static io.tileverse.parquetry.format.ParquetLayouts.DOUBLE;
 import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
+import static io.tileverse.parquetry.format.ParquetLayouts.INT64;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.lang.foreign.MemorySegment;
@@ -230,6 +231,36 @@ class StatsEvaluatorTest {
         assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
     }
 
+    @Test
+    void gtNotProvenAllMatchWhenColumnHasNulls() {
+        FilterPipeline.ColumnStatsLookup cols = single("year", PrimitiveKind.INT32, intStats(2010, 2020, 3));
+        PruningDecision d = StatsEvaluator.evaluate(col("year").gt(2000), cols, ROW_COUNT);
+        // the guard routes this to NotApplied, not PassedAll
+        assertThat(d).isNotInstanceOf(PruningDecision.PassedAll.class);
+    }
+
+    @Test
+    void gtProvenAllMatchWhenNoNulls() {
+        FilterPipeline.ColumnStatsLookup cols = single("year", PrimitiveKind.INT32, intStats(2010, 2020, 0));
+        PruningDecision d = StatsEvaluator.evaluate(col("year").gt(2000), cols, ROW_COUNT);
+        assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
+    }
+
+    @Test
+    void gtProvenAllMatchForLongColumnWithoutNulls() {
+        FilterPipeline.ColumnStatsLookup cols = single("epoch", PrimitiveKind.INT64, longStats(2010L, 2020L, 0));
+        PruningDecision d = StatsEvaluator.evaluate(col("epoch").gt(2000L), cols, ROW_COUNT);
+        assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
+    }
+
+    @Test
+    void doubleComparisonNeverProvenAllMatch() {
+        FilterPipeline.ColumnStatsLookup cols = single("price", PrimitiveKind.DOUBLE, doubleStats(10.0, 20.0, 0));
+        PruningDecision d = StatsEvaluator.evaluate(col("price").gt(5.0), cols, ROW_COUNT);
+        // the guard routes this to NotApplied, not PassedAll
+        assertThat(d).isNotInstanceOf(PruningDecision.PassedAll.class);
+    }
+
     private static FilterPipeline.ColumnStatsLookup single(String name, PrimitiveKind kind, Statistics stats) {
         Map<ColumnPath, FilterPipeline.ColumnStats> map = new HashMap<>();
         map.put(ColumnPath.of(name), new FilterPipeline.ColumnStats(kind, stats));
@@ -245,6 +276,14 @@ class StatsEvaluatorTest {
                 .nullCount(OptionalLong.of(nullCount))
                 .maxValue(encodeInt(max))
                 .minValue(encodeInt(min))
+                .build();
+    }
+
+    private static Statistics longStats(long min, long max, long nullCount) {
+        return Statistics.builder()
+                .nullCount(OptionalLong.of(nullCount))
+                .maxValue(encodeLong(max))
+                .minValue(encodeLong(min))
                 .build();
     }
 
@@ -267,6 +306,12 @@ class StatsEvaluatorTest {
     private static MemorySegment encodeInt(int v) {
         MemorySegment segment = MemorySegment.ofArray(new byte[4]);
         segment.set(INT32, 0, v);
+        return segment.asReadOnly();
+    }
+
+    private static MemorySegment encodeLong(long v) {
+        MemorySegment segment = MemorySegment.ofArray(new byte[8]);
+        segment.set(INT64, 0, v);
         return segment.asReadOnly();
     }
 

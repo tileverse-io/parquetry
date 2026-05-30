@@ -22,7 +22,6 @@ import static io.tileverse.parquetry.format.ParquetLayouts.INT64;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 import java.lang.foreign.MemorySegment;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -302,41 +301,9 @@ final class ColumnIndexEvaluator {
         };
     }
 
-    // S7475 (bare _ in nested record patterns) is informational only - palantirJavaFormat 2.90 cannot
-    // parse the bare-underscore form Sonar suggests; see memory feedback-palantir-unnamed-pattern.
-    @SuppressWarnings({"java:S3776", "java:S7475"})
+    /** Orders two decoded {@link Value}s through the shared {@link ValueComparison} ordering. */
     private static int compare(Value a, Value b) {
-        return switch (a) {
-            case Value.BoolVal(boolean av) when b instanceof Value.BoolVal(boolean bv) -> Boolean.compare(av, bv);
-            case Value.IntVal(int av) when b instanceof Value.IntVal(int bv) -> Integer.compare(av, bv);
-            case Value.LongVal(long av) when b instanceof Value.LongVal(long bv) -> Long.compare(av, bv);
-            case Value.FloatVal(float av) when b instanceof Value.FloatVal(float bv) -> Float.compare(av, bv);
-            case Value.DoubleVal(double av) when b instanceof Value.DoubleVal(double bv) -> Double.compare(av, bv);
-            case Value.StringVal(String av)
-            when b instanceof Value.BinaryVal(MemorySegment bv) ->
-                compareBytes(MemorySegment.ofArray(av.getBytes(StandardCharsets.UTF_8)), bv);
-            case Value.BinaryVal(MemorySegment av)
-            when b instanceof Value.BinaryVal(MemorySegment bv) -> compareBytes(av, bv);
-            case Value.DateVal(java.time.LocalDate av)
-            when b instanceof Value.IntVal(int bv) -> Integer.compare((int) av.toEpochDay(), bv);
-            case Value.TimestampVal(java.time.LocalDateTime av, boolean _)
-            when b instanceof Value.LongVal(long bv) ->
-                Long.compare(av.toEpochSecond(java.time.ZoneOffset.UTC) * 1000L, bv);
-            default -> 0;
-        };
-    }
-
-    private static int compareBytes(MemorySegment a, MemorySegment b) {
-        long aLen = a.byteSize();
-        long bLen = b.byteSize();
-        long common = Math.min(aLen, bLen);
-        for (long i = 0; i < common; i++) {
-            int diff = (a.get(JAVA_BYTE, i) & 0xff) - (b.get(JAVA_BYTE, i) & 0xff);
-            if (diff != 0) {
-                return diff;
-            }
-        }
-        return Long.compare(aLen, bLen);
+        return ValueComparison.compareValues(a, b);
     }
 
     @FunctionalInterface

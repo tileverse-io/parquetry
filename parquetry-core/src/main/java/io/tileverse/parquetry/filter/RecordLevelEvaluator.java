@@ -15,12 +15,7 @@
  */
 package io.tileverse.parquetry.filter;
 
-import static java.lang.foreign.ValueLayout.JAVA_BYTE;
-
 import java.lang.foreign.MemorySegment;
-import java.nio.charset.StandardCharsets;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.List;
 
 import io.tileverse.parquetry.filter.spatial.WkbEnvelope;
@@ -61,30 +56,30 @@ public final class RecordLevelEvaluator {
             case Predicate.Not(Predicate.GeometryFilterPredicate(GeometryFilter<?> filter)) ->
                 negatedGeometryFilterHolds(filter, row);
             case Predicate.Not(Predicate child) -> !test(child, row);
-            case Predicate.Eq(ColumnPath col, Value v) -> compare(row.value(col), v) == 0;
+            case Predicate.Eq(ColumnPath col, Value v) -> ValueComparison.compareBoxed(row.value(col), v) == 0;
             case Predicate.NotEq(ColumnPath col, Value v) -> {
                 Object got = row.value(col);
-                yield got != null && compare(got, v) != 0;
+                yield got != null && ValueComparison.compareBoxed(got, v) != 0;
             }
             case Predicate.Lt(ColumnPath col, Value v) -> {
                 Object got = row.value(col);
-                yield got != null && compare(got, v) < 0;
+                yield got != null && ValueComparison.compareBoxed(got, v) < 0;
             }
             case Predicate.LtEq(ColumnPath col, Value v) -> {
                 Object got = row.value(col);
-                yield got != null && compare(got, v) <= 0;
+                yield got != null && ValueComparison.compareBoxed(got, v) <= 0;
             }
             case Predicate.Gt(ColumnPath col, Value v) -> {
                 Object got = row.value(col);
-                yield got != null && compare(got, v) > 0;
+                yield got != null && ValueComparison.compareBoxed(got, v) > 0;
             }
             case Predicate.GtEq(ColumnPath col, Value v) -> {
                 Object got = row.value(col);
-                yield got != null && compare(got, v) >= 0;
+                yield got != null && ValueComparison.compareBoxed(got, v) >= 0;
             }
             case Predicate.In(ColumnPath col, List<Value> values) -> {
                 Object got = row.value(col);
-                yield got != null && values.stream().anyMatch(v -> compare(got, v) == 0);
+                yield got != null && values.stream().anyMatch(v -> ValueComparison.compareBoxed(got, v) == 0);
             }
             case Predicate.IsNull(ColumnPath col) -> row.value(col) == null;
             case Predicate.IsNotNull(ColumnPath col) -> row.value(col) != null;
@@ -153,50 +148,5 @@ public final class RecordLevelEvaluator {
             return wkb;
         }
         return null;
-    }
-
-    /**
-     * Compares an actual record value (boxed) against a predicate-side {@link Value}. Returns 0 for unknown type
-     * combinations; the surrounding evaluator treats that as equality, but with NULL filtered upstream the typical path
-     * is well-typed.
-     */
-    // S7475 (bare _ in nested record patterns) is informational only - palantirJavaFormat 2.90 cannot
-    // parse the bare-underscore form Sonar suggests; see memory feedback-palantir-unnamed-pattern.
-    @SuppressWarnings({"java:S3776", "java:S7475"})
-    private static int compare(Object actual, Value bound) {
-        if (actual == null) {
-            return -1; // any comparison vs null returns "less than", but the caller already short-circuited on null
-        }
-        return switch (bound) {
-            case Value.BoolVal(boolean bv) when actual instanceof Boolean av -> Boolean.compare(av, bv);
-            case Value.IntVal(int bv) when actual instanceof Integer av -> Integer.compare(av, bv);
-            case Value.LongVal(long bv) when actual instanceof Long av -> Long.compare(av, bv);
-            case Value.FloatVal(float bv) when actual instanceof Float av -> Float.compare(av, bv);
-            case Value.DoubleVal(double bv) when actual instanceof Double av -> Double.compare(av, bv);
-            case Value.StringVal(String bv) when actual instanceof String av -> av.compareTo(bv);
-            case Value.StringVal(String bv)
-            when actual instanceof MemorySegment av ->
-                compareBytes(av, MemorySegment.ofArray(bv.getBytes(StandardCharsets.UTF_8)));
-            case Value.BinaryVal(MemorySegment bv) when actual instanceof MemorySegment av -> compareBytes(av, bv);
-            case Value.DateVal(LocalDate bv) when actual instanceof LocalDate av -> av.compareTo(bv);
-            case Value.DateVal(LocalDate bv)
-            when actual instanceof Integer av -> Integer.compare(av, (int) bv.toEpochDay());
-            case Value.TimestampVal(LocalDateTime bv, boolean _)
-            when actual instanceof LocalDateTime av -> av.compareTo(bv);
-            default -> 0;
-        };
-    }
-
-    private static int compareBytes(MemorySegment a, MemorySegment b) {
-        long aLen = a.byteSize();
-        long bLen = b.byteSize();
-        long common = Math.min(aLen, bLen);
-        for (long i = 0; i < common; i++) {
-            int diff = (a.get(JAVA_BYTE, i) & 0xff) - (b.get(JAVA_BYTE, i) & 0xff);
-            if (diff != 0) {
-                return diff;
-            }
-        }
-        return Long.compare(aLen, bLen);
     }
 }

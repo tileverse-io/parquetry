@@ -25,16 +25,23 @@ public final class CountingSegmentPool implements SegmentPool {
 
     private final SegmentPool delegate = SegmentPool.getDefault();
     private final AtomicLong outstanding = new AtomicLong();
+    private final AtomicLong totalBorrows = new AtomicLong();
 
     /** Borrows still open (incremented on borrow, decremented on the handle's first close). */
     public long outstanding() {
         return outstanding.get();
     }
 
+    /** Total borrows ever made, never decremented; zero proves no chunk fetch or decompression happened. */
+    public long totalBorrows() {
+        return totalBorrows.get();
+    }
+
     @Override
     public Pooled borrow(long byteSize) {
         Pooled delegated = delegate.borrow(byteSize);
         outstanding.incrementAndGet();
+        totalBorrows.incrementAndGet();
         return new Pooled() {
             private boolean closed;
 

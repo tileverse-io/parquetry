@@ -75,6 +75,7 @@ final class AsciiTableRenderer {
                     case PARTIAL ->
                         rg.survivingRows().map(r -> r.totalRows() + " rows").orElse("partial");
                     case FULL -> "all";
+                    case MATCHED -> "matched";
                 });
         return cells;
     }
