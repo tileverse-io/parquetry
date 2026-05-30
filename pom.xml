@@ -91,6 +91,9 @@
     <assertj.version>3.26.3</assertj.version>
     <testcontainers.version>1.21.4</testcontainers.version>
     <jts.version>1.20.0</jts.version>
+    <arrow.version>19.0.0</arrow.version>
+    <duckdb.version>1.5.3.0</duckdb.version>
+    <flatbuffers.version>25.2.10</flatbuffers.version>
     <parquet-avro.version>1.14.3</parquet-avro.version>
 
     <spotless.version>3.5.1</spotless.version>

@@ -14,6 +14,7 @@
   <description>Parent and aggregator for parquetry adapters to other ecosystems</description>
 
   <modules>
+    <module>parquetry-arrow</module>
     <module>parquetry-geo-jts</module>
     <module>parquetry-tileverse-storage</module>
   </modules>
