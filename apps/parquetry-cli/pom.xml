@@ -61,6 +61,11 @@
       <version>${project.version}</version>
     </dependency>
     <dependency>
+      <groupId>io.tileverse.parquetry</groupId>
+      <artifactId>parquetry-arrow</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
       <groupId>info.picocli</groupId>
       <artifactId>picocli</artifactId>
     </dependency>
@@ -82,6 +87,17 @@
     <dependency>
       <groupId>org.assertj</groupId>
       <artifactId>assertj-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!-- Canonical Arrow reader, used only to verify our hand-rolled output in tests. -->
+    <dependency>
+      <groupId>org.apache.arrow</groupId>
+      <artifactId>arrow-vector</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.arrow</groupId>
+      <artifactId>arrow-memory-unsafe</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -130,6 +146,26 @@
 
   <build>
     <plugins>
+      <!-- arrow-memory-unsafe (test-only, verifies our IPC output) reaches into java.nio via
+           sun.misc.Unsafe, which JDK 25 locks down by default; open it for the test JVM only. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <argLine>@{argLine} --enable-preview --enable-native-access=ALL-UNNAMED
+            --add-opens=java.base/java.nio=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow
+            ${extraArgLine}</argLine>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
+        <configuration>
+          <argLine>@{argLine} --enable-preview --enable-native-access=ALL-UNNAMED
+            --add-opens=java.base/java.nio=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow
+            ${extraArgLine}</argLine>
+        </configuration>
+      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>

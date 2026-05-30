@@ -18,9 +18,13 @@ package io.tileverse.parquetry.cli;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import java.io.ByteArrayInputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import org.apache.arrow.memory.RootAllocator;
+import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.ipc.ArrowStreamReader;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -77,6 +81,36 @@ class NativeImageSmokeIT {
         assertThat(code).as("output was: %s", output).isZero();
         assertThat(output).contains("Rosario").contains("Cordoba").contains("Buenos Aires");
         assertThat(output).doesNotContain("\"id\":4");
+    }
+
+    @Test
+    void nativeBinaryStreamsArrowIpc(@TempDir Path dir) throws Exception {
+        assumeTrue(Files.isExecutable(NATIVE_BINARY), "native binary not built; run -Pnative");
+        Path file = dir.resolve("cities.parquet");
+        Fixtures.writeCities(file);
+
+        Process process = new ProcessBuilder(
+                        NATIVE_BINARY.toAbsolutePath().toString(), "cat", "-o", "arrow", file.toString())
+                .start();
+        byte[] stdout = process.getInputStream().readAllBytes();
+        int code = process.waitFor();
+        assertThat(code)
+                .as("stderr was: %s", new String(process.getErrorStream().readAllBytes()))
+                .isZero();
+        assertThat(stdout).startsWith((byte) 0xFF, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF);
+        assertThat(arrowRowCount(stdout)).isEqualTo(4);
+    }
+
+    private static int arrowRowCount(byte[] bytes) throws Exception {
+        try (RootAllocator allocator = new RootAllocator();
+                ArrowStreamReader reader = new ArrowStreamReader(new ByteArrayInputStream(bytes), allocator)) {
+            int rowCount = 0;
+            while (reader.loadNextBatch()) {
+                VectorSchemaRoot root = reader.getVectorSchemaRoot();
+                rowCount += root.getRowCount();
+            }
+            return rowCount;
+        }
     }
 
     @Test

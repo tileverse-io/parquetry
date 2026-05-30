@@ -18,6 +18,7 @@ package io.tileverse.parquetry.cli;
 import io.tileverse.parquetry.cli.expr.FilterParseException;
 import io.tileverse.parquetry.data.ParquetWriteException;
 import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.format.UnsupportedFeatureException;
 import io.tileverse.parquetry.schema.ParquetSchemaException;
 
 import picocli.CommandLine;
@@ -69,6 +70,9 @@ final class ExitCodeExceptionHandler implements IExecutionExceptionHandler {
         }
         if (ex instanceof ParquetSchemaException) {
             return CliExitCode.SCHEMA;
+        }
+        if (ex instanceof UnsupportedFeatureException) {
+            return CliExitCode.FORMAT;
         }
         if (ex instanceof ParquetFormatException || ex instanceof ParquetWriteException) {
             return CliExitCode.FORMAT;

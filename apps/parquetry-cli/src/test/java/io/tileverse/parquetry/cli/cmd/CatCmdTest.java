@@ -17,6 +17,8 @@ package io.tileverse.parquetry.cli.cmd;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.nio.file.Path;
@@ -57,6 +59,35 @@ class CatCmdTest {
         int code = cmd.execute("cat", file.toString(), "--limit", "2");
         assertThat(code).isZero();
         assertThat(out.toString().strip().split("\n")).hasSize(2);
+    }
+
+    @Test
+    void arrowOutputWritesIpcStreamToStdout(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("cities.parquet");
+        Fixtures.writeCities(file);
+        byte[] bytes = captureStdout(() -> Par.newCommandLine().execute("cat", file.toString(), "-o", "arrow"));
+        assertThat(bytes).isNotEmpty();
+        assertThat(startsWithArrowContinuation(bytes)).isTrue();
+    }
+
+    private static byte[] captureStdout(Runnable action) {
+        PrintStream original = System.out;
+        ByteArrayOutputStream captured = new ByteArrayOutputStream();
+        System.setOut(new PrintStream(captured));
+        try {
+            action.run();
+        } finally {
+            System.setOut(original);
+        }
+        return captured.toByteArray();
+    }
+
+    /** Arrow IPC streams open with the continuation marker 0xFFFFFFFF. */
+    private static boolean startsWithArrowContinuation(byte[] bytes) {
+        if (bytes.length < 4) {
+            return false;
+        }
+        return bytes[0] == (byte) 0xFF && bytes[1] == (byte) 0xFF && bytes[2] == (byte) 0xFF && bytes[3] == (byte) 0xFF;
     }
 
     @Test

@@ -82,7 +82,7 @@ public final class ExplainCmd implements Callable<Integer> {
         }
         return switch (options.format) {
             case JSON -> plan.toJson();
-            case JSONL, CSV, TSV ->
+            case JSONL, CSV, TSV, ARROW ->
                 throw new ParameterException(
                         spec.commandLine(),
                         "explain does not support --format "

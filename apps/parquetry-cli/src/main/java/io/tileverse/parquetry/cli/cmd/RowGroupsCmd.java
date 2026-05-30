@@ -66,7 +66,7 @@ public final class RowGroupsCmd implements Callable<Integer> {
         }
         switch (options.format) {
             case JSON -> RowGroupsRenderer.writeJson(out, rowGroups);
-            case JSONL, CSV, TSV ->
+            case JSONL, CSV, TSV, ARROW ->
                 throw new ParameterException(
                         spec.commandLine(),
                         "row-groups does not support --format "

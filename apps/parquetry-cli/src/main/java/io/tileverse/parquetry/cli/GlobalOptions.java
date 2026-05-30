@@ -27,7 +27,8 @@ public final class GlobalOptions {
         JSON,
         JSONL,
         CSV,
-        TSV
+        TSV,
+        ARROW
     }
 
     @Option(
