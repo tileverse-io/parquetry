@@ -47,6 +47,11 @@ public final class IntVector implements ColumnVector {
         return values[row];
     }
 
+    @Override
+    public Object getOrNull(int row) {
+        return validity().get(row) ? get(row) : null;
+    }
+
     public int[] asArray() {
         return values;
     }

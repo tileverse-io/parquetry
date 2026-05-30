@@ -16,20 +16,16 @@
 package io.tileverse.parquetry.materializer;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
-import io.tileverse.parquetry.batch.BinaryVector;
-import io.tileverse.parquetry.batch.BooleanVector;
 import io.tileverse.parquetry.batch.ColumnVector;
-import io.tileverse.parquetry.batch.DoubleVector;
-import io.tileverse.parquetry.batch.FixedLenBinaryVector;
-import io.tileverse.parquetry.batch.FloatVector;
-import io.tileverse.parquetry.batch.Int96Vector;
-import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.ListVector;
-import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.MapVector;
 import io.tileverse.parquetry.batch.StructVector;
+import io.tileverse.parquetry.record.DefaultParquetRecord;
+import io.tileverse.parquetry.record.StructRowAccessor;
+import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
  * Builds a Java {@link List} from a row slice of a {@link ListVector}. Used by the row API view when a consumer reads a
@@ -46,10 +42,14 @@ public final class ListMaterializer {
      * Builds a Java {@link List} from row {@code rowIndex} of {@code vec}'s offset slice. Returns null when the row's
      * list is null per the vector's validity bitmap; an empty list materializes to {@link List#of()}.
      *
+     * <p>The {@code schema} is threaded through to struct element materialization. Pass {@code null} only when the list
+     * is known to contain no struct elements; a null schema on a struct element will propagate and cause a
+     * NullPointerException in any nested-struct accessor call.
+     *
      * <p>Null is intentional - distinguishes a null row from an empty list per the spec's empty-vs-null contract.
      */
     @SuppressWarnings({"java:S1452", "java:S1168"})
-    public static List<?> materializeAt(ListVector vec, int rowIndex) {
+    public static List<?> materializeAt(ListVector vec, int rowIndex, ParquetSchema schema) {
         if (!vec.validity().get(rowIndex)) {
             return null;
         }
@@ -61,30 +61,33 @@ public final class ListMaterializer {
         ColumnVector child = vec.child();
         List<Object> result = new ArrayList<>(end - start);
         for (int i = start; i < end; i++) {
-            result.add(valueAt(child, i));
+            result.add(valueAt(child, i, schema));
         }
-        return List.copyOf(result);
+        // An element may be null (a null nested list or a null primitive element); List.copyOf would reject it.
+        return Collections.unmodifiableList(result);
     }
 
     /**
      * Extracts the value at position {@code i} from {@code child}, dispatching by vector type.
      *
-     * <p>{@link StructVector} returns null here because sub-record access comes through the row API view, not through a
-     * flat materializer. Lists-of-structs are deferred to that layer.
+     * <p>A null element yields {@code null}. Leaf vectors delegate to {@link ColumnVector#getOrNull(int)}, which
+     * consults the validity bitmap and returns a boxed primitive (or {@code null}) for primitive kinds, and the
+     * {@link java.lang.foreign.MemorySegment} (or {@code null}) for binary and INT96 kinds.
+     *
+     * <p>The nested {@link ListVector}, {@link MapVector}, and {@link StructVector} arms are dispatched explicitly
+     * because they need the {@code schema} context that {@code getOrNull} does not accept. A null {@link StructVector}
+     * element yields {@code null}; a non-null element materializes to a {@link DefaultParquetRecord} backed by a
+     * {@link StructRowAccessor}.
      */
-    static Object valueAt(ColumnVector child, int i) {
+    static Object valueAt(ColumnVector child, int i, ParquetSchema schema) {
         return switch (child) {
-            case IntVector v -> v.get(i);
-            case LongVector v -> v.get(i);
-            case FloatVector v -> v.get(i);
-            case DoubleVector v -> v.get(i);
-            case BooleanVector v -> v.get(i);
-            case BinaryVector v -> v.get(i);
-            case FixedLenBinaryVector v -> v.get(i);
-            case Int96Vector v -> v.get(i);
-            case ListVector nested -> materializeAt(nested, i);
-            case MapVector nested -> MapMaterializer.materializeAt(nested, i);
-            case StructVector _ -> null;
+            case ListVector nested -> materializeAt(nested, i, schema);
+            case MapVector nested -> MapMaterializer.materializeAt(nested, i, schema);
+            case StructVector struct ->
+                struct.validity().get(i)
+                        ? new DefaultParquetRecord(schema, new StructRowAccessor(struct, i, schema))
+                        : null;
+            default -> child.getOrNull(i);
         };
     }
 }

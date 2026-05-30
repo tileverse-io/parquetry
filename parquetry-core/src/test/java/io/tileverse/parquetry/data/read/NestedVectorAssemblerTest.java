@@ -209,7 +209,8 @@ class NestedVectorAssemblerTest {
         Map<ColumnPath, ColumnVector> leafVectors = Map.of(ColumnPath.of("items", "list", "element"), childLeaf);
         Map<ColumnPath, int[]> repLevels = Map.of(ColumnPath.of("items", "list", "element"), new int[] {0, 1, 0});
 
-        Map<ColumnPath, ColumnVector> result = NestedVectorAssembler.assembleNested(schema, leafVectors, repLevels, 2);
+        Map<ColumnPath, ColumnVector> result =
+                NestedVectorAssembler.assembleNested(schema, leafVectors, repLevels, Map.of(), 2);
 
         assertThat(result).containsKey(ColumnPath.of("items"));
         assertThat(result.get(ColumnPath.of("items"))).isInstanceOf(ListVector.class);
@@ -243,7 +244,8 @@ class NestedVectorAssemblerTest {
         repLevels.put(keyPath, sharedRepLevels);
         repLevels.put(valuePath, sharedRepLevels);
 
-        Map<ColumnPath, ColumnVector> result = NestedVectorAssembler.assembleNested(schema, leafVectors, repLevels, 2);
+        Map<ColumnPath, ColumnVector> result =
+                NestedVectorAssembler.assembleNested(schema, leafVectors, repLevels, Map.of(), 2);
 
         assertThat(result).containsKey(ColumnPath.of("m"));
         assertThat(result.get(ColumnPath.of("m"))).isInstanceOf(MapVector.class);

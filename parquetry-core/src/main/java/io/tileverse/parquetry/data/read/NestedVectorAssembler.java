@@ -21,14 +21,12 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 
 import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.MapVector;
 import io.tileverse.parquetry.batch.StructVector;
-import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.Repetition;
@@ -47,15 +45,17 @@ import io.tileverse.parquetry.schema.SchemaNode;
  *       vectors (keys and values) plus the shared rep-level stream.
  * </ul>
  *
- * <p>The driver entry point {@link #assembleNested} walks the projected schema, wraps every LIST and MAP group node
- * into the appropriate vector, wraps every STRUCT group into a {@link StructVector}, and removes the leaf entries that
- * descend from a LIST or MAP wrapper from the top-level columns map. Hiding the leaves keeps the batch's per-column row
- * counts consistent: a leaf under a LIST is sized at element granularity, not logical-row granularity, so surfacing it
- * alongside flat columns would mismatch the batch's row count contract.
+ * <p>The driver entry point {@link #assembleNested} walks the projected schema, reconstructs every LIST / MAP / STRUCT
+ * group into its vector, and removes the element-granular leaf entries from the top-level columns map. Hiding the
+ * element-granular leaves keeps the batch's per-column row counts consistent: a leaf under a LIST is sized at element
+ * granularity, not logical-row granularity, and exposing it alongside flat columns would mismatch the batch's row count
+ * contract.
  *
- * <p>Null-vs-empty disambiguation via def levels is deferred: the validity bitmap produced by every wrapper is set
- * all-true. Def-level-driven null handling is not yet implemented; all wrapper vectors are constructed with
- * full-validity bitmaps.
+ * <p>The recursive reconstruction lives in {@link DremelAssembler}. It restores nesting at every depth: STRUCT wrappers
+ * recover per-row validity (null struct versus present struct with null fields), LIST and MAP wrappers recover both
+ * per-row validity and the empty-versus-populated distinction, and an explicit null element inside a populated list or
+ * map reads back as a present container with a null element in place. {@code List<List<T>>}, {@code Map<K,List<V>>},
+ * {@code List<Struct<...>>}, and {@code Struct<List<...>>} all read back fully.
  */
 public final class NestedVectorAssembler {
 
@@ -84,8 +84,8 @@ public final class NestedVectorAssembler {
      * Builds a {@link MapVector} from the two element-aligned child columns (keys and values) and the shared rep-level
      * stream that defines per-row map boundaries.
      *
-     * <p>Keys and values share offsets, so the rep-level stream of either child works as input. Callers typically pass
-     * the rep stream from the key leaf.
+     * <p>Keys and values share offsets; the rep-level stream of either child works as input. Callers typically pass the
+     * rep stream from the key leaf.
      *
      * @param keys per-element vector for the map keys
      * @param values per-element vector for the map values; must share the size of {@code keys}
@@ -104,8 +104,9 @@ public final class NestedVectorAssembler {
      *
      * <ul>
      *   <li>Each top-level primitive leaf (no LIST/MAP ancestor) keeps its entry from {@code leafVectors}.
-     *   <li>Each STRUCT group gets a {@link StructVector} wrapper at the group's path; its direct child leaves remain
-     *       addressable through their leaf paths because struct children share the parent's logical-row granularity.
+     *   <li>Each STRUCT group gets a {@link StructVector} wrapper at the group's path; its row-aligned child leaves
+     *       stay addressable through their leaf paths because struct children share the parent's logical-row
+     *       granularity.
      *   <li>Each LIST group gets a {@link ListVector} wrapper at the group's path. Every leaf descended from the LIST
      *       group is removed from the result map - those leaves are at element granularity and would mismatch the
      *       batch's logical-row count.
@@ -113,14 +114,15 @@ public final class NestedVectorAssembler {
      *       the same reason.
      * </ul>
      *
-     * <p>LIST and MAP offsets are computed from the rep-level stream of the first descendant leaf encountered. Deeply
-     * nested LIST-of-LIST or MAP-of-LIST structures wrap only at the OUTERMOST LIST / MAP path; the inner structure is
-     * not reconstructed in this release because the downstream row-API materializers only require the outer shape to be
-     * a {@link java.util.List} / {@link java.util.Map} for null-vs-non-null cell discrimination.
+     * <p>Nested LIST-of-LIST, MAP-of-LIST, LIST-of-STRUCT, and STRUCT-of-LIST structures are reconstructed at every
+     * level (see {@link DremelAssembler}).
      *
      * @param projectedSchema the projected schema describing the column shape
      * @param leafVectors per-leaf flat vectors keyed by their full column path (as produced by BatchRowGroupReader)
      * @param repLevelsByLeaf rep-level stream for every leaf with {@code maxRep > 0}; missing for flat leaves
+     * @param defLevelsByLeaf def-level stream for every leaf with {@code maxDef > 0}; missing for required-throughout
+     *     leaves. Drives wrapper validity: a leaf entry below a group's definition level marks that group null in the
+     *     row.
      * @param numRows logical row count for the batch
      * @return a new map containing the surviving leaves plus one wrapper per LIST / MAP / STRUCT group in the schema
      */
@@ -128,12 +130,13 @@ public final class NestedVectorAssembler {
             ParquetSchema projectedSchema,
             Map<ColumnPath, ColumnVector> leafVectors,
             Map<ColumnPath, int[]> repLevelsByLeaf,
+            Map<ColumnPath, int[]> defLevelsByLeaf,
             int numRows) {
         Map<ColumnPath, ColumnVector> result = new HashMap<>(leafVectors);
         Set<ColumnPath> hiddenLeaves = new HashSet<>();
-        List<String> prefix = new ArrayList<>();
+        DremelAssembler dremel = new DremelAssembler(projectedSchema, leafVectors, repLevelsByLeaf, defLevelsByLeaf);
         for (SchemaNode child : projectedSchema.root().children()) {
-            walkField(child, prefix, leafVectors, repLevelsByLeaf, numRows, result, hiddenLeaves);
+            walkField(child, new ArrayList<>(), dremel, result, leafVectors, hiddenLeaves, numRows);
         }
         for (ColumnPath leaf : hiddenLeaves) {
             result.remove(leaf);
@@ -142,184 +145,53 @@ public final class NestedVectorAssembler {
     }
 
     /**
-     * Legacy entry point. Equivalent to calling {@link #assembleNested} with an empty {@code repLevelsByLeaf} map; only
-     * STRUCT wrapping is performed since the LIST and MAP paths need rep-level streams. Kept for tests that exercise
-     * STRUCT wrapping in isolation.
+     * Legacy entry point. Equivalent to calling {@link #assembleNested} with empty level-stream maps; only STRUCT
+     * wrapping has any input to act on since the LIST and MAP paths need rep-level streams. Kept for tests that
+     * exercise STRUCT wrapping in isolation.
      */
     public static Map<ColumnPath, ColumnVector> wrapStructGroups(
             ParquetSchema projectedSchema, Map<ColumnPath, ColumnVector> leafVectors, int numRows) {
-        return assembleNested(projectedSchema, leafVectors, Map.of(), numRows);
+        return assembleNested(projectedSchema, leafVectors, Map.of(), Map.of(), numRows);
     }
 
     // --- schema walk ---
 
     /**
-     * Visits one field in the schema. Primitive leaves require no work (they are already in {@code result} at their
-     * full path). Group fields dispatch on their {@link GroupKind}:
+     * Visits one top-level field. Primitive leaves require no work (they are already in {@code result} at their full
+     * path). Group fields are reconstructed by {@link DremelAssembler}:
      *
      * <ul>
-     *   <li>LIST or MAP: build the wrapper, place it at the group's path, mark all descendant leaves as hidden, and do
-     *       not recurse further. Wrappers under a LIST/MAP are not reconstructed in this release.
-     *   <li>STRUCT: recurse into children, then collect the resulting child vectors and build a {@link StructVector}.
+     *   <li>LIST or MAP: place the wrapper at the group's path and hide every descendant leaf.
+     *   <li>STRUCT: place the {@link StructVector} at the group's path; row-aligned child leaves stay visible, while
+     *       leaves descending through a repeated child group are hidden.
      * </ul>
      */
     private static void walkField(
             SchemaNode field,
             List<String> prefix,
-            Map<ColumnPath, ColumnVector> leafVectors,
-            Map<ColumnPath, int[]> repLevelsByLeaf,
-            int numRows,
+            DremelAssembler dremel,
             Map<ColumnPath, ColumnVector> result,
-            Set<ColumnPath> hiddenLeaves) {
+            Map<ColumnPath, ColumnVector> leafVectors,
+            Set<ColumnPath> hiddenLeaves,
+            int numRows) {
         if (!(field instanceof SchemaNode.Group group)) {
             return;
         }
         List<String> groupPath = concatPath(prefix, group.name());
-        GroupKind kind = classify(group);
-        switch (kind) {
-            case LIST -> wrapListGroup(group, groupPath, leafVectors, repLevelsByLeaf, numRows, result, hiddenLeaves);
-            case MAP -> wrapMapGroup(group, groupPath, leafVectors, repLevelsByLeaf, numRows, result, hiddenLeaves);
-            case STRUCT ->
-                wrapStructGroup(group, groupPath, leafVectors, repLevelsByLeaf, numRows, result, hiddenLeaves);
-        }
-    }
-
-    private static void wrapListGroup(
-            SchemaNode.Group group,
-            List<String> groupPath,
-            Map<ColumnPath, ColumnVector> leafVectors,
-            Map<ColumnPath, int[]> repLevelsByLeaf,
-            int numRows,
-            Map<ColumnPath, ColumnVector> result,
-            Set<ColumnPath> hiddenLeaves) {
-        ColumnPath wrapperPath = new ColumnPath(groupPath);
-        ColumnPath firstLeafPath = findFirstDescendantLeafPath(group, groupPath, leafVectors);
-        if (firstLeafPath == null) {
+        ColumnVector vector = dremel.assembleField(group, groupPath, numRows);
+        if (vector == null) {
             return;
         }
-        ColumnVector childVec = leafVectors.get(firstLeafPath);
-        int[] repLevels = repLevelsByLeaf.get(firstLeafPath);
-        ListVector listVec = buildListFromMaybeMissingRepLevels(childVec, repLevels, numRows);
-        result.put(wrapperPath, listVec);
-        markDescendantLeavesHidden(group, groupPath, leafVectors, hiddenLeaves);
-    }
-
-    private static void wrapMapGroup(
-            SchemaNode.Group group,
-            List<String> groupPath,
-            Map<ColumnPath, ColumnVector> leafVectors,
-            Map<ColumnPath, int[]> repLevelsByLeaf,
-            int numRows,
-            Map<ColumnPath, ColumnVector> result,
-            Set<ColumnPath> hiddenLeaves) {
-        ColumnPath wrapperPath = new ColumnPath(groupPath);
-        MapKeyValuePaths kv = findMapKeyValuePaths(group, groupPath, leafVectors);
-        if (kv == null) {
-            return;
+        result.put(new ColumnPath(groupPath), vector);
+        switch (classify(group)) {
+            case LIST, MAP -> markDescendantLeavesHidden(group, groupPath, leafVectors, hiddenLeaves);
+            case STRUCT -> hideRepeatedDescendantLeaves(group, groupPath, leafVectors, hiddenLeaves);
         }
-        ColumnVector keysVec = leafVectors.get(kv.keyPath());
-        ColumnVector valuesVec = leafVectors.get(kv.valuePath());
-        int[] repLevels = firstNonNull(repLevelsByLeaf.get(kv.keyPath()), repLevelsByLeaf.get(kv.valuePath()));
-        MapVector mapVec = buildMapFromMaybeMissingRepLevels(keysVec, valuesVec, repLevels, numRows);
-        result.put(wrapperPath, mapVec);
-        markDescendantLeavesHidden(group, groupPath, leafVectors, hiddenLeaves);
-    }
-
-    private static void wrapStructGroup(
-            SchemaNode.Group group,
-            List<String> groupPath,
-            Map<ColumnPath, ColumnVector> leafVectors,
-            Map<ColumnPath, int[]> repLevelsByLeaf,
-            int numRows,
-            Map<ColumnPath, ColumnVector> result,
-            Set<ColumnPath> hiddenLeaves) {
-        for (SchemaNode child : group.children()) {
-            walkField(child, groupPath, leafVectors, repLevelsByLeaf, numRows, result, hiddenLeaves);
-        }
-        StructVector structVec = collectStructChildren(group, groupPath, leafVectors, result, numRows);
-        if (structVec != null) {
-            result.put(new ColumnPath(groupPath), structVec);
-        }
-    }
-
-    // --- vector construction helpers ---
-
-    /**
-     * Builds a {@link ListVector} from the child column and rep-level stream. When the rep-level stream is missing
-     * (e.g. the descendant leaf is REQUIRED with maxRep == 0, which is degenerate but technically possible for a
-     * projected-out shape), the offsets collapse to {@code [0, childSize]} so the wrapper still has the expected row
-     * count and a single all-elements list slice per row is impossible to distinguish from a single big list.
-     */
-    private static ListVector buildListFromMaybeMissingRepLevels(ColumnVector child, int[] repLevels, int numRows) {
-        if (repLevels == null) {
-            return new ListVector(degenerateOffsets(numRows, child.size()), child, allValid(numRows), numRows);
-        }
-        return buildList(child, repLevels, numRows);
-    }
-
-    private static MapVector buildMapFromMaybeMissingRepLevels(
-            ColumnVector keys, ColumnVector values, int[] repLevels, int numRows) {
-        if (repLevels == null) {
-            return new MapVector(degenerateOffsets(numRows, keys.size()), keys, values, allValid(numRows), numRows);
-        }
-        return buildMap(keys, values, repLevels, numRows);
     }
 
     /**
-     * Collects direct-child vectors for a STRUCT group from {@code result} (preferring wrapped versions) and falls back
-     * to {@code leafVectors} for primitive children. Returns {@code null} when none of the group's children resolve to
-     * a vector in the current batch (e.g. the struct was fully projected out).
-     */
-    private static StructVector collectStructChildren(
-            SchemaNode.Group group,
-            List<String> groupPath,
-            Map<ColumnPath, ColumnVector> leafVectors,
-            Map<ColumnPath, ColumnVector> result,
-            int numRows) {
-        Map<ColumnPath, ColumnVector> childVectors = new HashMap<>();
-        for (SchemaNode child : group.children()) {
-            ColumnPath childRelativePath = ColumnPath.of(child.name());
-            ColumnPath childFullPath = new ColumnPath(concatPath(groupPath, child.name()));
-            ColumnVector vec = result.getOrDefault(childFullPath, leafVectors.get(childFullPath));
-            if (vec != null) {
-                childVectors.put(childRelativePath, vec);
-            }
-        }
-        if (childVectors.isEmpty()) {
-            return null;
-        }
-        return new StructVector(childVectors, allValid(numRows), numRows);
-    }
-
-    // --- leaf-path helpers ---
-
-    /**
-     * Walks the schema subtree rooted at {@code group} and returns the first descendant leaf path that has an entry in
-     * {@code leafVectors}, or {@code null} if none of the group's leaves are projected.
-     */
-    private static ColumnPath findFirstDescendantLeafPath(
-            SchemaNode.Group group, List<String> groupPath, Map<ColumnPath, ColumnVector> leafVectors) {
-        for (SchemaNode child : group.children()) {
-            ColumnPath childPath = new ColumnPath(concatPath(groupPath, child.name()));
-            if (child instanceof SchemaNode.Primitive) {
-                if (leafVectors.containsKey(childPath)) {
-                    return childPath;
-                }
-                continue;
-            }
-            ColumnPath nested = findFirstDescendantLeafPath(
-                    (SchemaNode.Group) child, concatPath(groupPath, child.name()), leafVectors);
-            if (nested != null) {
-                return nested;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Adds every descendant leaf path of {@code group} that is present in {@code leafVectors} to the
-     * {@code hiddenLeaves} set. Used to drop leaf entries that descend from a LIST or MAP wrapper, which sizes its
-     * children at element granularity instead of logical-row granularity.
+     * Adds every descendant leaf path of {@code group} present in {@code leafVectors} to {@code hiddenLeaves}. Used for
+     * LIST and MAP wrappers, whose children are sized at element granularity rather than logical-row granularity.
      */
     private static void markDescendantLeavesHidden(
             SchemaNode.Group group,
@@ -340,45 +212,26 @@ public final class NestedVectorAssembler {
     }
 
     /**
-     * Resolves the key/value leaf paths for a MAP group. Parquet's canonical shape is {@code <map>.key_value.key} /
-     * {@code <map>.key_value.value} but Impala-style files use {@code <map>.map.key} / {@code <map>.map.value}; the
-     * middle group's actual child names are queried to handle both. Returns {@code null} if either child cannot be
-     * resolved (e.g. one was projected out).
+     * Within a STRUCT, hides only the leaves that descend through a repeated child group. Those leaves are
+     * element-granular and live inside the struct's nested LIST / MAP child vector; row-aligned struct leaves stay
+     * addressable at their own paths for flat-column access.
      */
-    private static MapKeyValuePaths findMapKeyValuePaths(
-            SchemaNode.Group mapGroup, List<String> mapGroupPath, Map<ColumnPath, ColumnVector> leafVectors) {
-        if (mapGroup.children().isEmpty()) {
-            return null;
+    private static void hideRepeatedDescendantLeaves(
+            SchemaNode.Group group,
+            List<String> groupPath,
+            Map<ColumnPath, ColumnVector> leafVectors,
+            Set<ColumnPath> hiddenLeaves) {
+        for (SchemaNode child : group.children()) {
+            if (!(child instanceof SchemaNode.Group childGroup)) {
+                continue;
+            }
+            List<String> childPath = concatPath(groupPath, child.name());
+            if (childGroup.repetition() == Repetition.REPEATED || isListOrMap(childGroup)) {
+                markDescendantLeavesHidden(childGroup, childPath, leafVectors, hiddenLeaves);
+                continue;
+            }
+            hideRepeatedDescendantLeaves(childGroup, childPath, leafVectors, hiddenLeaves);
         }
-        SchemaNode middleChild = mapGroup.children().get(0);
-        if (!(middleChild instanceof SchemaNode.Group middle)
-                || middle.children().size() < 2) {
-            return null;
-        }
-        List<String> middlePath = concatPath(mapGroupPath, middle.name());
-        SchemaNode keyField = middle.children().get(0);
-        SchemaNode valueField = middle.children().get(1);
-        ColumnPath keyPath = leafPathOrFirstDescendant(keyField, concatPath(middlePath, keyField.name()), leafVectors);
-        ColumnPath valuePath =
-                leafPathOrFirstDescendant(valueField, concatPath(middlePath, valueField.name()), leafVectors);
-        if (keyPath == null || valuePath == null) {
-            return null;
-        }
-        return new MapKeyValuePaths(keyPath, valuePath);
-    }
-
-    /**
-     * Returns the leaf path of {@code field} when it is a primitive, or its first descendant leaf path when it is a
-     * group. Used by MAP wrapping where the key or value may itself be a nested group (e.g. MAP&lt;String,
-     * Struct&lt;...&gt;&gt;).
-     */
-    private static ColumnPath leafPathOrFirstDescendant(
-            SchemaNode field, List<String> path, Map<ColumnPath, ColumnVector> leafVectors) {
-        if (field instanceof SchemaNode.Primitive) {
-            ColumnPath p = new ColumnPath(path);
-            return leafVectors.containsKey(p) ? p : null;
-        }
-        return findFirstDescendantLeafPath((SchemaNode.Group) field, path, leafVectors);
     }
 
     // --- ListVector offset computation ---
@@ -406,44 +259,16 @@ public final class NestedVectorAssembler {
         return offsets;
     }
 
-    /**
-     * Builds a degenerate offsets array where every row maps to an empty slice and the sentinel at position
-     * {@code numRows} is {@code childSize}. Reached only when the projected schema declares a LIST/MAP group with no
-     * rep-level information (rep-level array is empty); valid Parquet input does not exercise this path.
-     */
-    private static int[] degenerateOffsets(int numRows, int childSize) {
-        int[] offsets = new int[numRows + 1];
-        offsets[numRows] = childSize;
-        return offsets;
-    }
-
     // --- schema predicates ---
 
-    /**
-     * Classifies a {@link SchemaNode.Group} as LIST, MAP, or STRUCT.
-     *
-     * <p>A {@link LogicalType.ListType} annotation makes the group a LIST; a {@link LogicalType.MapType} makes it a
-     * MAP. A legacy REPEATED group without a LIST annotation is also treated as LIST-like, matching the Parquet
-     * convention used by Hive / older writers. Everything else is a STRUCT.
-     */
-    private static GroupKind classify(SchemaNode.Group group) {
-        Optional<LogicalType> annotation = group.logicalType();
-        if (annotation.isPresent()) {
-            LogicalType lt = annotation.get();
-            if (lt instanceof LogicalType.ListType) {
-                return GroupKind.LIST;
-            }
-            if (lt instanceof LogicalType.MapType) {
-                return GroupKind.MAP;
-            }
-        }
-        if (group.repetition() == Repetition.REPEATED) {
-            return GroupKind.LIST;
-        }
-        return GroupKind.STRUCT;
+    private static boolean isListOrMap(SchemaNode.Group group) {
+        DremelAssembler.GroupKind kind = classify(group);
+        return kind == DremelAssembler.GroupKind.LIST || kind == DremelAssembler.GroupKind.MAP;
     }
 
-    // --- validity helpers ---
+    private static DremelAssembler.GroupKind classify(SchemaNode.Group group) {
+        return DremelAssembler.classify(group);
+    }
 
     private static BitSet allValid(int n) {
         BitSet b = new BitSet(n);
@@ -451,26 +276,10 @@ public final class NestedVectorAssembler {
         return b;
     }
 
-    // --- path helpers ---
-
     private static List<String> concatPath(List<String> prefix, String segment) {
         List<String> result = new ArrayList<>(prefix.size() + 1);
         result.addAll(prefix);
         result.add(segment);
         return result;
     }
-
-    private static int[] firstNonNull(int[] a, int[] b) {
-        return a != null ? a : b;
-    }
-
-    // --- ADT ---
-
-    private enum GroupKind {
-        LIST,
-        MAP,
-        STRUCT
-    }
-
-    private record MapKeyValuePaths(ColumnPath keyPath, ColumnPath valuePath) {}
 }

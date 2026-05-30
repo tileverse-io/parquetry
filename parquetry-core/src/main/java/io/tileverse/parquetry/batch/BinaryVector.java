@@ -53,6 +53,11 @@ public final class BinaryVector implements ColumnVector {
         return values[row];
     }
 
+    @Override
+    public Object getOrNull(int row) {
+        return validity().get(row) ? get(row) : null;
+    }
+
     public MemorySegment[] asArray() {
         return values;
     }

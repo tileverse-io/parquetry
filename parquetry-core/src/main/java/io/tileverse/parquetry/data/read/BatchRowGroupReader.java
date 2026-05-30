@@ -45,11 +45,11 @@ import lombok.NonNull;
  *   <li>Computes the batch's logical row count as {@code min(logicalRowsRemainingInCurrentPage across all columns,
  *       batchSizeCap)}.
  *   <li>For each column derives the per-leaf value count covering that logical-row range and asks the reader for a
- *       vector at that value count, capturing the matching slice of the rep-level stream.
- *   <li>Feeds the per-leaf vectors and rep-level slices to {@link NestedVectorAssembler#assembleNested(ParquetSchema,
- *       Map, Map, int)} which produces {@link io.tileverse.parquetry.batch.ListVector} /
- *       {@link io.tileverse.parquetry.batch.MapVector} / {@link io.tileverse.parquetry.batch.StructVector} wrappers at
- *       the LIST / MAP / STRUCT group paths.
+ *       vector at that value count, capturing the matching slices of the rep-level and def-level streams.
+ *   <li>Feeds the per-leaf vectors and rep-/def-level slices to
+ *       {@link NestedVectorAssembler#assembleNested(ParquetSchema, Map, Map, Map, int)} which produces
+ *       {@link io.tileverse.parquetry.batch.ListVector} / {@link io.tileverse.parquetry.batch.MapVector} /
+ *       {@link io.tileverse.parquetry.batch.StructVector} wrappers at the LIST / MAP / STRUCT group paths.
  * </ol>
  *
  * <p>Vectors are heap-backed at construction (see {@link BatchColumnReader#readBatch}), so the batch carries no Arena
@@ -135,9 +135,10 @@ public final class BatchRowGroupReader implements AutoCloseable {
             ensureColumnReadersBuilt();
             int batchRows = computeBatchRows();
             Map<ColumnPath, int[]> repLevelsByLeaf = new HashMap<>();
-            Map<ColumnPath, ColumnVector> leafVectors = readVectors(batchRows, repLevelsByLeaf);
-            Map<ColumnPath, ColumnVector> vectors =
-                    NestedVectorAssembler.assembleNested(projectedSchema, leafVectors, repLevelsByLeaf, batchRows);
+            Map<ColumnPath, int[]> defLevelsByLeaf = new HashMap<>();
+            Map<ColumnPath, ColumnVector> leafVectors = readVectors(batchRows, repLevelsByLeaf, defLevelsByLeaf);
+            Map<ColumnPath, ColumnVector> vectors = NestedVectorAssembler.assembleNested(
+                    projectedSchema, leafVectors, repLevelsByLeaf, defLevelsByLeaf, batchRows);
             return new DefaultParquetRecordBatch(projectedSchema, vectors, batchRows, batchArena);
         } catch (RuntimeException e) {
             batchArena.close();
@@ -220,19 +221,28 @@ public final class BatchRowGroupReader implements AutoCloseable {
 
     /**
      * Asks each column reader for a vector covering {@code batchLogicalRows} logical rows. For repeated columns the
-     * actual leaf-value count is derived via {@link BatchColumnReader#valuesForLogicalRows(int)} and the matching slice
-     * of the rep-level stream is copied into {@code repLevelsByLeafOut} before the reader advances.
+     * actual leaf-value count is derived via {@link BatchColumnReader#valuesForLogicalRows(int)} and the matching
+     * slices of the rep-level and def-level streams are copied into {@code repLevelsByLeafOut} /
+     * {@code defLevelsByLeafOut} before the reader advances.
      */
-    private Map<ColumnPath, ColumnVector> readVectors(int batchLogicalRows, Map<ColumnPath, int[]> repLevelsByLeafOut) {
+    private Map<ColumnPath, ColumnVector> readVectors(
+            int batchLogicalRows,
+            Map<ColumnPath, int[]> repLevelsByLeafOut,
+            Map<ColumnPath, int[]> defLevelsByLeafOut) {
         Map<ColumnPath, ColumnVector> vectors = new HashMap<>();
         for (Map.Entry<ColumnPath, BatchColumnReader> entry : columnReaders.entrySet()) {
             BatchColumnReader reader = entry.getValue();
             int valuesThisBatch = reader.valuesForLogicalRows(batchLogicalRows);
+            int start = reader.valuesConsumedInCurrentPage();
             int[] pageRepLevels = reader.currentPageRepLevels();
             if (pageRepLevels != null) {
-                int start = reader.valuesConsumedInCurrentPage();
                 int[] repLevelsForBatch = Arrays.copyOfRange(pageRepLevels, start, start + valuesThisBatch);
                 repLevelsByLeafOut.put(entry.getKey(), repLevelsForBatch);
+            }
+            int[] pageDefLevels = reader.currentPageDefLevels();
+            if (pageDefLevels != null) {
+                int[] defLevelsForBatch = Arrays.copyOfRange(pageDefLevels, start, start + valuesThisBatch);
+                defLevelsByLeafOut.put(entry.getKey(), defLevelsForBatch);
             }
             ColumnVector vec = reader.readBatch(valuesThisBatch);
             vectors.put(entry.getKey(), vec);

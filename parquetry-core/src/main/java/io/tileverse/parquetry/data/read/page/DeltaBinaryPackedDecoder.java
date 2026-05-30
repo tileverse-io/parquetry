@@ -115,23 +115,28 @@ final class DeltaBinaryPackedDecoder {
     }
 
     /**
-     * Returns the number of values actually encoded in complete blocks, including any padding values appended to fill
-     * the last block. This is always {@code >= totalValueCount()}.
+     * The number of values whose deltas have actual bit-packed data in the stream, which is {@code >=
+     * totalValueCount()} because the last used miniblock is always written full-size (padded). Callers that pack
+     * several DELTA_BINARY_PACKED segments back-to-back (as in DELTA_BYTE_ARRAY) drain this many values to position the
+     * cursor at the start of the next segment.
      *
-     * <p>DELTA_BINARY_PACKED encoders always write at least one full block after the header value, even when
-     * {@code totalValueCount == 1}. Callers that pack several DELTA_BINARY_PACKED segments back-to-back (as in
-     * DELTA_BYTE_ARRAY) must drain this many values from each segment to leave the cursor positioned at the start of
-     * the next segment.
+     * <p>Only the miniblocks that contain values hold data. Trailing miniblocks of the last block have a bit-width byte
+     * but no data bytes; rounding the last block up to a full block (instead of to the last used miniblock) would drain
+     * past the end of the stream.
      */
     int paddedValueCount() {
-        if (totalValueCount == 0) {
-            return 0;
+        int valuesAfterHeader = totalValueCount - 1;
+        if (valuesAfterHeader <= 0) {
+            return totalValueCount;
         }
-        // Encoders always write at least one block; even a single-value encoding has block bytes
-        // appended when the source array was padded to blockSize.
-        int valuesAfterHeader = Math.max(blockSize, totalValueCount - 1);
-        int fullBlocks = (valuesAfterHeader + blockSize - 1) / blockSize;
-        return 1 + fullBlocks * blockSize;
+        int wholeBlocks = valuesAfterHeader / blockSize;
+        int remainder = valuesAfterHeader % blockSize;
+        int encodedValues = wholeBlocks * blockSize;
+        if (remainder > 0) {
+            int usedMiniblocks = (remainder + valuesPerMiniblock - 1) / valuesPerMiniblock;
+            encodedValues += usedMiniblocks * valuesPerMiniblock;
+        }
+        return 1 + encodedValues;
     }
 
     private void loadNextBlock() {
@@ -141,16 +146,26 @@ final class DeltaBinaryPackedDecoder {
         }
     }
 
+    /**
+     * Reads {@code width} bits (LSB-first) from the miniblock stream. The buffer holds at most one byte (8 bits) at a
+     * time and the gathered value accumulates separately; a width near 64 never shifts bits past the end of the 64-bit
+     * buffer. A single accumulator would silently drop the high bits of wide miniblocks.
+     */
     private long readBitPacked(int width) {
-        while (bitsInBuffer < width) {
-            int b = readByte();
-            bitBuffer |= ((long) b) << bitsInBuffer;
-            bitsInBuffer += 8;
+        long value = 0L;
+        int gathered = 0;
+        while (gathered < width) {
+            if (bitsInBuffer == 0) {
+                bitBuffer = readByte();
+                bitsInBuffer = 8;
+            }
+            int take = Math.min(width - gathered, bitsInBuffer);
+            long lowBits = bitBuffer & ((1L << take) - 1L);
+            value |= lowBits << gathered;
+            bitBuffer >>>= take;
+            bitsInBuffer -= take;
+            gathered += take;
         }
-        long mask = (width == 64) ? -1L : ((1L << width) - 1L);
-        long value = bitBuffer & mask;
-        bitBuffer >>>= width;
-        bitsInBuffer -= width;
         return value;
     }
 

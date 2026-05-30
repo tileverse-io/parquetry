@@ -47,6 +47,11 @@ public final class LongVector implements ColumnVector {
         return values[row];
     }
 
+    @Override
+    public Object getOrNull(int row) {
+        return validity().get(row) ? get(row) : null;
+    }
+
     public long[] asArray() {
         return values;
     }

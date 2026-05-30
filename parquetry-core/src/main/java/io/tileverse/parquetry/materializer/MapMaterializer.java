@@ -20,6 +20,7 @@ import java.util.Map;
 
 import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.MapVector;
+import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
  * Builds a Java {@link Map} (insertion-ordered) from a row slice of a {@link MapVector}. Used by the row API view when
@@ -28,8 +29,8 @@ import io.tileverse.parquetry.batch.MapVector;
  * <p>Null vs empty: a row is null iff {@code vec.validity().get(rowIndex) == false}; an empty map iff {@code offsets[i]
  * == offsets[i+1]} AND validity is set.
  *
- * <p>Key and value extraction reuses {@link ListMaterializer#valueAt(ColumnVector, int)} to avoid duplicating the
- * dispatch over {@link ColumnVector} subtypes.
+ * <p>Key and value extraction reuses {@link ListMaterializer#valueAt(ColumnVector, int, ParquetSchema)} to avoid
+ * duplicating the dispatch over {@link ColumnVector} subtypes.
  */
 public final class MapMaterializer {
 
@@ -41,11 +42,14 @@ public final class MapMaterializer {
      *
      * <p>Insertion order is preserved (Parquet's {@code key_value} record order) via {@link LinkedHashMap}.
      *
+     * <p>The {@code schema} is threaded through to struct value materialization. Pass {@code null} only when the map is
+     * known to contain no struct values.
+     *
      * <p>Null is intentional - distinguishes a null row from an empty map per the spec's empty-vs-null contract.
      */
     // wildcard intentional - keys and values are heterogeneous per ColumnVector subtype
     @SuppressWarnings({"java:S1452", "java:S1168"})
-    public static Map<?, ?> materializeAt(MapVector vec, int rowIndex) {
+    public static Map<?, ?> materializeAt(MapVector vec, int rowIndex, ParquetSchema schema) {
         if (!vec.validity().get(rowIndex)) {
             return null;
         }
@@ -58,7 +62,7 @@ public final class MapMaterializer {
         ColumnVector values = vec.values();
         LinkedHashMap<Object, Object> result = LinkedHashMap.newLinkedHashMap(end - start);
         for (int i = start; i < end; i++) {
-            result.put(ListMaterializer.valueAt(keys, i), ListMaterializer.valueAt(values, i));
+            result.put(ListMaterializer.valueAt(keys, i, schema), ListMaterializer.valueAt(values, i, schema));
         }
         return result;
     }

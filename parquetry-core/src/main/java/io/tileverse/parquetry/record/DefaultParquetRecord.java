@@ -19,7 +19,9 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import io.tileverse.parquetry.materializer.RowAccessor;
@@ -30,14 +32,15 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
- * Lazy, per-row {@link ParquetRecord} that adapts the column-keyed {@link RowAccessor} produced by the Dremel assembler
- * into the typed accessor surface used by readers.
+ * The single {@link ParquetRecord} implementation, backed by a {@link RowAccessor}. The same type represents a
+ * top-level row and a nested struct cell: {@link #getStruct(ColumnPath)} returns another {@code DefaultParquetRecord},
+ * this one over a {@code RowAccessor} for the nested struct row.
  *
  * <p>Instances are short-lived: one per row, owned by the iterator. Both the schema and row accessor are stored by
  * reference; the record never copies them.
  *
  * <p>Binary values arrive from {@link RowAccessor} as read-only {@link MemorySegment}s. {@link #getBinary(ColumnPath)}
- * and its UTF-8 / WKB siblings materialize a fresh {@code byte[]} every time so callers can mutate the returned array
+ * and its UTF-8 sibling materialize a fresh {@code byte[]} every time, letting callers mutate the returned array
  * without affecting the underlying page bytes.
  *
  * <p>Typed primitive and binary accessors require that the leaf value be non-null. Callers must guard with
@@ -45,13 +48,13 @@ import io.tileverse.parquetry.schema.SchemaNode;
  * primitive returns, or dereference of the underlying {@link MemorySegment} for binary returns). Only
  * {@link #get(ColumnPath)} returns {@code null} for null leaves.
  */
-final class DefaultParquetRecord implements ParquetRecord {
+public final class DefaultParquetRecord implements ParquetRecord {
 
     private final ParquetSchema schema;
     private final RowAccessor row;
 
-    /** Wraps the given row, exposing it through the {@link ParquetRecord} accessor surface. */
-    DefaultParquetRecord(ParquetSchema schema, RowAccessor row) {
+    /** Wraps the given row, exposing it through the {@link ParquetRecord} accessors. */
+    public DefaultParquetRecord(ParquetSchema schema, RowAccessor row) {
         this.schema = schema;
         this.row = row;
     }
@@ -59,6 +62,14 @@ final class DefaultParquetRecord implements ParquetRecord {
     @Override
     public ParquetSchema schema() {
         return schema;
+    }
+
+    @Override
+    public ParquetRecord detach() {
+        Map<ColumnPath, Object> snapshot = row.values();
+        Map<ColumnPath, Object> detached = LinkedHashMap.newLinkedHashMap(snapshot.size());
+        snapshot.forEach((path, value) -> detached.put(path, Detach.detach(value)));
+        return new DefaultParquetRecord(schema, new MaterializedRowAccessor(detached));
     }
 
     @Override
@@ -114,14 +125,30 @@ final class DefaultParquetRecord implements ParquetRecord {
         return value == null || row.isGroupNull(col);
     }
 
+    // null distinguishes a null row from an empty list per the empty-vs-null contract
     @Override
+    @SuppressWarnings({"unchecked", "java:S1168"})
     public List<ParquetRecord> getList(ColumnPath col) {
-        throw nestedNotYetSupported(col);
+        Object value = get(col);
+        if (value == null) {
+            return null;
+        }
+        if (!(value instanceof List<?> list)) {
+            throw new ParquetSchemaException("Column " + col.dot() + " is not a list column");
+        }
+        return (List<ParquetRecord>) list;
     }
 
     @Override
     public ParquetRecord getStruct(ColumnPath col) {
-        throw nestedNotYetSupported(col);
+        Object value = get(col);
+        if (value == null) {
+            return null;
+        }
+        if (!(value instanceof ParquetRecord nested)) {
+            throw new ParquetSchemaException("Column " + col.dot() + " is not a struct column");
+        }
+        return nested;
     }
 
     private byte[] copyBytes(ColumnPath col) {
@@ -158,10 +185,5 @@ final class DefaultParquetRecord implements ParquetRecord {
 
     private static ParquetSchemaException mismatch(ColumnPath col, PrimitiveKind actual, String accessor) {
         return new ParquetSchemaException("Column " + col.dot() + " is " + actual + "; requested " + accessor);
-    }
-
-    private static UnsupportedOperationException nestedNotYetSupported(ColumnPath col) {
-        return new UnsupportedOperationException(
-                "repeated/nested columns are not yet supported by the row-API path (column: " + col.dot() + ")");
     }
 }

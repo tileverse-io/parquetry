@@ -18,7 +18,8 @@ package io.tileverse.parquetry.batch;
 import java.lang.foreign.Arena;
 import java.util.Map;
 
-import io.tileverse.parquetry.record.BatchBackedParquetRecord;
+import io.tileverse.parquetry.record.BatchRowAccessor;
+import io.tileverse.parquetry.record.DefaultParquetRecord;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -69,7 +70,7 @@ public final class DefaultParquetRecordBatch implements ParquetRecordBatch {
         if (rowIndex < 0 || rowIndex >= rowCount) {
             throw new IndexOutOfBoundsException("rowIndex " + rowIndex + " out of bounds [0, " + rowCount + ")");
         }
-        return new BatchBackedParquetRecord(this, rowIndex);
+        return new DefaultParquetRecord(projectedSchema, new BatchRowAccessor(this, rowIndex));
     }
 
     @Override

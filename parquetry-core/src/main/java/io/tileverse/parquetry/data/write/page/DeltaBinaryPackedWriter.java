@@ -33,9 +33,9 @@ import java.nio.channels.WritableByteChannel;
  * </pre>
  *
  * <p>The Parquet 2 standard shape is used: 128-value blocks, 4 miniblocks of 32 values each. The {@code minDelta} and
- * per-miniblock bit-widths are computed only from the real deltas in each block; if the final block is short, the
- * trailing slots are treated as zero in both the width calculation and the bit-packed payload. The decoder reads the
- * complete block (including the padding zeros), so the same width across the miniblock applies.
+ * per-miniblock bit-widths are computed only from the real deltas in each block. A miniblock that holds at least one
+ * value is written full-size with its trailing slots zero-padded; a trailing miniblock of the last block that holds no
+ * value gets a bit-width byte (zero) but no data. The decoder consumes the same shape.
  */
 final class DeltaBinaryPackedWriter {
 
@@ -46,49 +46,28 @@ final class DeltaBinaryPackedWriter {
     private DeltaBinaryPackedWriter() {}
 
     /**
-     * Encode {@code n} values; emit only the bytes the decoder needs to consume to read {@code n} real values.
-     *
-     * <p>Used by {@code Int32}, {@code Int64}, and {@code DELTA_LENGTH_BYTE_ARRAY} encoders. The last block's partial
-     * miniblock is byte-trimmed - no padding bytes are emitted for slots beyond {@code n}.
+     * Encode {@code n} values as a DELTA_BINARY_PACKED stream. Each miniblock that holds at least one value is written
+     * full-size with its trailing slots zero-padded, per the parquet-format rule; trailing miniblocks of the last block
+     * that hold no values get a bit-width byte but no data. These are exactly the bytes the decoder consumes when it
+     * drains {@code paddedValueCount()} values. One encoding serves both the standalone readers (which stop after the
+     * {@code n} real values) and the DELTA_BYTE_ARRAY / DELTA_LENGTH_BYTE_ARRAY paths (which drain the padding to reach
+     * the bytes that follow).
      */
     static int write(long[] values, int n, WritableByteChannel dst) throws IOException {
-        return write(values, n, n, false, dst);
-    }
-
-    /**
-     * Encode {@code n} values and emit the full padded last block, so a consumer that calls
-     * {@code skip(paddedValueCount - n)} after reading the real values lands at the end of the encoded stream.
-     *
-     * <p>Used by {@code DELTA_BYTE_ARRAY}, which drains padding via {@code skip()} between the prefix-length and
-     * suffix-length streams to locate the suffix-bytes section.
-     */
-    static int writeFullyPadded(long[] values, int n, WritableByteChannel dst) throws IOException {
-        return write(values, n, n, true, dst);
-    }
-
-    private static int write(long[] values, int n, int totalValueCount, boolean padFullBlock, WritableByteChannel dst)
-            throws IOException {
         ByteArrayOutputStream scratch = new ByteArrayOutputStream();
-        writeHeader(scratch, totalValueCount);
+        writeHeader(scratch, n);
         if (n == 0) {
             // Spec leaves the first-value field present even when totalValueCount is zero.
             writeZigzagVarint(scratch, 0L);
-            byte[] empty = scratch.toByteArray();
-            ChannelWrites.writeFully(dst, ByteBuffer.wrap(empty));
-            return empty.length;
-        }
-        writeZigzagVarint(scratch, values[0]);
-
-        long previous = values[0];
-        int blockStart = 1;
-        // In fully-padded mode, emit at least one block even if n==1; the decoder reports
-        // paddedValueCount == 1 + BLOCK_SIZE and DeltaByteArrayDecoder will skip(BLOCK_SIZE) to drain it.
-        boolean needAtLeastOneBlock = padFullBlock && n == 1;
-        while (blockStart < n || needAtLeastOneBlock) {
-            needAtLeastOneBlock = false;
-            int blockEnd = Math.min(blockStart + BLOCK_SIZE, n);
-            previous = writeBlock(scratch, values, blockStart, blockEnd, previous, padFullBlock);
-            blockStart = blockEnd;
+        } else {
+            writeZigzagVarint(scratch, values[0]);
+            long previous = values[0];
+            int blockStart = 1;
+            while (blockStart < n) {
+                int blockEnd = Math.min(blockStart + BLOCK_SIZE, n);
+                previous = writeBlock(scratch, values, blockStart, blockEnd, previous);
+                blockStart = blockEnd;
+            }
         }
         byte[] payload = scratch.toByteArray();
         ChannelWrites.writeFully(dst, ByteBuffer.wrap(payload));
@@ -102,12 +81,7 @@ final class DeltaBinaryPackedWriter {
     }
 
     private static long writeBlock(
-            ByteArrayOutputStream scratch,
-            long[] values,
-            int blockStart,
-            int blockEnd,
-            long previous,
-            boolean padFullBlock) {
+            ByteArrayOutputStream scratch, long[] values, int blockStart, int blockEnd, long previous) {
         int valuesInBlock = blockEnd - blockStart;
         long[] deltas = new long[valuesInBlock];
         long minDelta = computeDeltas(values, blockStart, valuesInBlock, previous, deltas);
@@ -119,15 +93,15 @@ final class DeltaBinaryPackedWriter {
         for (int mb = 0; mb < MINIBLOCKS_PER_BLOCK; mb++) {
             scratch.write(widths[mb]);
         }
+        // A miniblock with a non-zero width holds at least one value; write it full-size (trailing slots zero-padded)
+        // per the parquet-format rule. Trailing miniblocks with no values have width 0 and contribute no data bytes.
         for (int mb = 0; mb < MINIBLOCKS_PER_BLOCK; mb++) {
             int width = widths[mb];
             if (width == 0) {
                 continue;
             }
             int start = mb * VALUES_PER_MINIBLOCK;
-            int valuesToWrite =
-                    padFullBlock ? VALUES_PER_MINIBLOCK : Math.min(VALUES_PER_MINIBLOCK, valuesInBlock - start);
-            writeMiniblock(scratch, adjusted, start, valuesInBlock, valuesToWrite, width);
+            writeMiniblock(scratch, adjusted, start, valuesInBlock, VALUES_PER_MINIBLOCK, width);
         }
         return (valuesInBlock > 0) ? values[blockEnd - 1] : previous;
     }
@@ -169,12 +143,7 @@ final class DeltaBinaryPackedWriter {
     /**
      * Write {@code valuesToWrite} values bit-packed at {@code width}. The first {@code Math.min(realCount-start,
      * valuesToWrite)} come from {@code adjusted}; the remainder are zero-padded so the miniblock fills the requested
-     * number of slots.
-     *
-     * <p>Only the bytes actually needed for {@code valuesToWrite} values are emitted, rounded up to a byte boundary.
-     * Consumers can ask for partial miniblocks (the {@code DeltaLengthByteArray} path) or full ones (the
-     * {@code DeltaByteArray} path, which drains padding values via {@code skip()} and therefore needs the bytes to
-     * exist).
+     * number of slots. The emitted bytes are rounded up to a byte boundary.
      */
     private static void writeMiniblock(
             ByteArrayOutputStream out, long[] adjusted, int start, int realCount, int valuesToWrite, int width) {

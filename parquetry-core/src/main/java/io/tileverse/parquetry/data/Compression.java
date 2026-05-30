@@ -21,6 +21,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.foreign.MemorySegment;
+import java.util.OptionalInt;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
@@ -448,9 +449,12 @@ public sealed interface Compression
     }
 
     /**
-     * Legacy LZ4 codec (Hadoop framing). The parquet-format spec deprecates this in favor of {@link Lz4Raw}, so the
-     * writer side throws {@link UnsupportedOperationException} -- the reader still accepts existing files via
-     * aircompressor's {@link Lz4HadoopStreams}.
+     * Legacy LZ4 codec. The parquet-format spec deprecates this in favor of {@link Lz4Raw}; the writer side throws
+     * {@link UnsupportedOperationException} while the reader still accepts existing files.
+     *
+     * <p>The deprecated {@code LZ4} wire code is ambiguous: parquet-mr writes Hadoop-framed blocks, while parquet-cpp
+     * writes raw LZ4 blocks with no frame. This reader tries the Hadoop frame first and falls back to raw decoding when
+     * the frame does not yield the expected number of bytes, matching how arrow and parquet-cpp read the codec.
      */
     record Lz4Hadoop() implements Compression {
 
@@ -466,11 +470,22 @@ public sealed interface Compression
         }
 
         @Override
-        public int decompress(MemorySegment src, MemorySegment output) throws IOException {
+        public int decompress(MemorySegment src, MemorySegment output) {
+            OptionalInt framed = tryHadoopFramed(src, output);
+            if (framed.isPresent()) {
+                return framed.getAsInt();
+            }
+            return Lz4Decompressor.create().decompress(src, output);
+        }
+
+        private static OptionalInt tryHadoopFramed(MemorySegment src, MemorySegment output) {
             byte[] in = src.toArray(JAVA_BYTE);
             InputStream wrapped = new ByteArrayInputStream(in);
             try (HadoopInputStream hadoop = new Lz4HadoopStreams().createInputStream(wrapped)) {
-                return CompressionSupport.streamToSegment(hadoop, output);
+                int written = CompressionSupport.streamToSegment(hadoop, output);
+                return written == output.byteSize() ? OptionalInt.of(written) : OptionalInt.empty();
+            } catch (IOException _) {
+                return OptionalInt.empty();
             }
         }
 

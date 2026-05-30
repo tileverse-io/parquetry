@@ -43,6 +43,12 @@ public final class DeltaLengthByteArrayDecoder implements PageDecoder<MemorySegm
         for (int i = 0; i < totalLengths; i++) {
             this.lengths[i] = (int) lengthDecoder.next();
         }
+        // DELTA_BINARY_PACKED pads its last block to a full block boundary. Draining the padding advances the cursor
+        // to the true end of the length stream, where the concatenated payload bytes begin.
+        int padding = lengthDecoder.paddedValueCount() - totalLengths;
+        if (padding > 0) {
+            lengthDecoder.skip(padding);
+        }
 
         this.cursor = 0;
         this.payload = page.asSlice(lengthDecoder.position());

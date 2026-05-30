@@ -29,27 +29,7 @@ class DeltaLengthByteArrayDecoderTest {
     @Test
     void decodesThreeStrings() throws Exception {
         String[] values = {"hi", "world", "parquetry"};
-
-        int[] lengths = {values[0].length(), values[1].length(), values[2].length()};
-
-        // DELTA_BINARY_PACKED requires values.length to be a multiple of blockSize.
-        // Pad to block size 4 with the last length, but record the actual count (3) in the header.
-        int blockSize = 4;
-        int miniblocksPerBlock = 2;
-        int[] paddedLengths = new int[blockSize];
-        System.arraycopy(lengths, 0, paddedLengths, 0, lengths.length);
-        for (int i = lengths.length; i < paddedLengths.length; i++) {
-            paddedLengths[i] = lengths[lengths.length - 1];
-        }
-        byte[] lengthsBytes =
-                DeltaBinaryPackedDecoderTest.encodeInts(paddedLengths, blockSize, miniblocksPerBlock, values.length);
-
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        out.write(lengthsBytes);
-        for (String v : values) {
-            out.write(v.getBytes(StandardCharsets.UTF_8));
-        }
-        byte[] page = out.toByteArray();
+        byte[] page = encodeStringPage(values);
 
         PageDecoder<MemorySegment> decoder = new DeltaLengthByteArrayDecoder();
         decoder.load(MemorySegment.ofArray(page), values.length);
@@ -92,25 +72,7 @@ class DeltaLengthByteArrayDecoderTest {
     @Test
     void bulkDecodeBinaryFillsArray() throws Exception {
         String[] values = {"hi", "world", "parquetry"};
-
-        int[] lengths = {values[0].length(), values[1].length(), values[2].length()};
-
-        int blockSize = 4;
-        int miniblocksPerBlock = 2;
-        int[] paddedLengths = new int[blockSize];
-        System.arraycopy(lengths, 0, paddedLengths, 0, lengths.length);
-        for (int i = lengths.length; i < paddedLengths.length; i++) {
-            paddedLengths[i] = lengths[lengths.length - 1];
-        }
-        byte[] lengthsBytes =
-                DeltaBinaryPackedDecoderTest.encodeInts(paddedLengths, blockSize, miniblocksPerBlock, values.length);
-
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        out.write(lengthsBytes);
-        for (String v : values) {
-            out.write(v.getBytes(StandardCharsets.UTF_8));
-        }
-        byte[] page = out.toByteArray();
+        byte[] page = encodeStringPage(values);
 
         PageDecoder<MemorySegment> decoder = new DeltaLengthByteArrayDecoder();
         decoder.load(MemorySegment.ofArray(page), values.length);
@@ -122,5 +84,25 @@ class DeltaLengthByteArrayDecoderTest {
             byte[] buf = dst[i].toArray(JAVA_BYTE);
             assertThat(new String(buf, StandardCharsets.UTF_8)).as("value " + i).isEqualTo(values[i]);
         }
+    }
+
+    /**
+     * Encodes a DELTA_LENGTH_BYTE_ARRAY page from the given strings. The length array is passed at its real length (no
+     * block-boundary padding); the encoder then writes data only for the miniblocks that hold values, matching what
+     * real Parquet writers emit.
+     */
+    private static byte[] encodeStringPage(String[] values) throws Exception {
+        int[] lengths = new int[values.length];
+        for (int i = 0; i < values.length; i++) {
+            lengths[i] = values[i].getBytes(StandardCharsets.UTF_8).length;
+        }
+        byte[] lengthsBytes = DeltaBinaryPackedDecoderTest.encodeInts(lengths, 4, 2);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        out.write(lengthsBytes);
+        for (String v : values) {
+            out.write(v.getBytes(StandardCharsets.UTF_8));
+        }
+        return out.toByteArray();
     }
 }

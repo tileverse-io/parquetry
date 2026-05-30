@@ -29,11 +29,11 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import lombok.NonNull;
 
 /**
- * Adapter that exposes one row of a {@link ParquetRecordBatch} through the {@link RowAccessor} surface that custom
+ * Adapter that exposes one row of a {@link ParquetRecordBatch} through the {@link RowAccessor} API that custom
  * {@link io.tileverse.parquetry.materializer.Materializer materializers} consume.
  *
- * <p>Calls dispatch to {@link BatchBackedRecords}, the same helper {@link BatchBackedParquetRecord} uses, so leaf
- * values, list / map cells, and struct sub-records all flow through one decoding path.
+ * <p>Calls dispatch to {@link BatchBackedRecords}, the same helper {@link StructRowAccessor} uses; leaf values, list /
+ * map cells, and struct sub-records all flow through one decoding path.
  *
  * <p>The view is short-lived: it holds the batch and the row index by reference, never copying. Once the producing
  * batch is closed, results from {@link #get(ColumnPath)} that exposed {@code MemorySegment}s become invalid; callers
@@ -60,9 +60,9 @@ public final class BatchRowAccessor implements RowAccessor {
     }
 
     /**
-     * Returns {@code true} when the column at {@code path} carries a struct group whose validity bit for this row is
-     * clear. Returns {@code false} for any non-struct column: leaf nullness lives in the vector's validity mask and is
-     * surfaced through {@link #get(ColumnPath)} returning {@code null}, not through this method.
+     * Returns {@code true} when the column at {@code path} is a struct group whose validity bit for this row is clear.
+     * Returns {@code false} for any non-struct column: leaf nullness lives in the vector's validity mask and shows up
+     * as {@link #get(ColumnPath)} returning {@code null}, not through this method.
      */
     @Override
     public boolean isGroupNull(ColumnPath path) {
@@ -78,7 +78,7 @@ public final class BatchRowAccessor implements RowAccessor {
      *
      * <p>Each entry's value is whatever {@link #get(ColumnPath)} would return for that path: a boxed primitive, a
      * {@code MemorySegment} for a binary leaf, {@code null} for a null leaf. The map iterates in the projected schema's
-     * leaf order so downstream materializers see deterministic column order.
+     * leaf order, giving downstream materializers a deterministic column order.
      */
     @Override
     public Map<ColumnPath, Object> values() {
