@@ -66,6 +66,11 @@
       <artifactId>assertj-core</artifactId>
       <scope>test</scope>
     </dependency>
+    <!--
+      Retained for the read/write tests that build or read fixtures through AvroParquetReader/AvroParquetWriter
+      (ParquetDatasetTest, EndToEndV2ReadTest, the V1 conformance and write-bridge tests, and others). The corpus
+      conformance test no longer uses it; ParquetTestingCorpusIT reads the oracle through parquet-java SimpleGroup.
+    -->
     <dependency>
       <groupId>org.apache.parquet</groupId>
       <artifactId>parquet-avro</artifactId>
@@ -89,8 +94,8 @@
       <scope>test</scope>
     </dependency>
     <!--
-      Required by the parquet-testing corpus oracle (ParquetTestingCorpusIT): parquet-avro reads
-      hadoop_lz4_compressed* fixtures via lz4-java's LZ4Factory at runtime. Test-scope only.
+      Required by the parquet-java oracle: its reader decompresses hadoop_lz4_compressed* fixtures via lz4-java's
+      LZ4Factory at runtime. Test-scope only.
     -->
     <dependency>
       <groupId>org.lz4</groupId>
