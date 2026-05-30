@@ -61,6 +61,20 @@ public final class Fixtures {
         return new ParquetSchema(root);
     }
 
+    /**
+     * Schema-only fixture exposing one OPTIONAL leaf of each numeric primitive kind ({@code i32}, {@code i64},
+     * {@code f32}, {@code f64}), used to exercise the per-kind literal coercion branches of the SQL filter translator.
+     */
+    public static ParquetSchema numericKindsSchema() {
+        SchemaNode.Primitive i32 = primitive("i32", Repetition.OPTIONAL, PrimitiveKind.INT32, Optional.empty());
+        SchemaNode.Primitive i64 = primitive("i64", Repetition.OPTIONAL, PrimitiveKind.INT64, Optional.empty());
+        SchemaNode.Primitive f32 = primitive("f32", Repetition.OPTIONAL, PrimitiveKind.FLOAT, Optional.empty());
+        SchemaNode.Primitive f64 = primitive("f64", Repetition.OPTIONAL, PrimitiveKind.DOUBLE, Optional.empty());
+        SchemaNode.Group root =
+                new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(i32, i64, f32, f64), Optional.empty(), -1);
+        return new ParquetSchema(root);
+    }
+
     public static void writeCities(Path file) throws Exception {
         writeCities(file, Map.of());
     }
@@ -88,13 +102,21 @@ public final class Fixtures {
      * WKB points. The writer emits GeoParquet {@code "geo"} metadata in the file footer, which exercises the
      * {@code GeoParquetMetadata.parse} path via Jackson record deserialization when reading the file back.
      */
-    public static void writeGeoCities(Path file) throws Exception {
+    public static ParquetSchema geoCitiesSchema() {
         SchemaNode.Primitive id = primitive("id", Repetition.REQUIRED, PrimitiveKind.INT32, Optional.empty());
         SchemaNode.Primitive geometry =
                 primitive("geometry", Repetition.REQUIRED, PrimitiveKind.BYTE_ARRAY, Optional.empty());
         SchemaNode.Group root =
                 new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(id, geometry), Optional.empty(), -1);
-        ParquetSchema schema = new ParquetSchema(root);
+        return new ParquetSchema(root);
+    }
+
+    public static MemorySegment wkbPointSegment(double x, double y) {
+        return MemorySegment.ofArray(wkbPoint(x, y));
+    }
+
+    public static void writeGeoCities(Path file) throws Exception {
+        ParquetSchema schema = geoCitiesSchema();
         WriteOptions options = WriteOptions.builder()
                 .tempDir(file.toAbsolutePath().getParent())
                 .crsEpsg("geometry", 4326)

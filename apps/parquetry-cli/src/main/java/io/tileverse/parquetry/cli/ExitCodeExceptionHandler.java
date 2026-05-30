@@ -33,9 +33,17 @@ final class ExitCodeExceptionHandler implements IExecutionExceptionHandler {
         if (isVerbose(parseResult)) {
             ex.printStackTrace(cmd.getErr());
         } else {
-            cmd.getErr().println("par: " + ex.getMessage());
+            cmd.getErr().println("par: " + describe(ex));
         }
         return mapToExitCode(ex);
+    }
+
+    /** A filter parse failure points the user at {@code --filter-help}; other failures show their message as-is. */
+    static String describe(Exception ex) {
+        if (ex instanceof FilterParseException) {
+            return ex.getMessage() + " (run with --filter-help to list the supported predicates)";
+        }
+        return ex.getMessage();
     }
 
     private static boolean isVerbose(ParseResult parseResult) {

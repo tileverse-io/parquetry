@@ -29,6 +29,7 @@ import io.tileverse.parquetry.cli.GlobalOptions;
 import io.tileverse.parquetry.cli.StorageOptions;
 import io.tileverse.parquetry.cli.UriResolver;
 import io.tileverse.parquetry.cli.expr.FilterParser;
+import io.tileverse.parquetry.cli.expr.GeometryColumns;
 import io.tileverse.parquetry.cli.render.Projections;
 import io.tileverse.parquetry.cli.render.RecordToWriteRow;
 import io.tileverse.parquetry.data.ParquetDataset;
@@ -88,7 +89,8 @@ public final class CpCmd implements Callable<Integer> {
             Projections.Resolved projection = Projections.resolve(options.columns, sourceSchema);
             ParquetSchema writeSchema = buildWriteSchema(sourceSchema, projection);
             RecordToWriteRow.requireWritable(writeSchema);
-            Predicate predicate = buildPredicate(sourceSchema);
+            Set<ColumnPath> geometryColumns = GeometryColumns.resolve(sourceSchema, dataset.keyValueMetadata());
+            Predicate predicate = buildPredicate(sourceSchema, geometryColumns);
             writeAll(dataset, writeSchema, projection, predicate, sourceFileName, dataset.keyValueMetadata());
         }
         return 0;
@@ -101,11 +103,11 @@ public final class CpCmd implements Callable<Integer> {
         return sourceSchema.project(Set.copyOf(projection.keptLeaves()));
     }
 
-    private Predicate buildPredicate(ParquetSchema schema) {
+    private Predicate buildPredicate(ParquetSchema schema, Set<ColumnPath> geometryColumns) {
         if (options.filter == null) {
             return Predicate.ALWAYS_TRUE;
         }
-        return FilterParser.parse(options.filter, schema);
+        return FilterParser.parse(options.filter, schema, geometryColumns);
     }
 
     private String sourceFileName() {

@@ -15,6 +15,7 @@
  */
 package io.tileverse.parquetry.cli.cmd;
 
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.stream.Stream;
 
@@ -22,6 +23,7 @@ import io.tileverse.parquetry.cli.GlobalOptions;
 import io.tileverse.parquetry.cli.StorageOptions;
 import io.tileverse.parquetry.cli.UriResolver;
 import io.tileverse.parquetry.cli.expr.FilterParser;
+import io.tileverse.parquetry.cli.expr.GeometryColumns;
 import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
@@ -30,6 +32,7 @@ import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
+import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 import picocli.CommandLine.Command;
@@ -84,7 +87,8 @@ public final class RowCountCmd implements Callable<Integer> {
     private long countMatching(ByteRangeSource source) {
         ParquetDataset dataset = ParquetDataset.open(source);
         ParquetSchema schema = dataset.schema();
-        Predicate predicate = FilterParser.parse(options.filter, schema);
+        Set<ColumnPath> geometryColumns = GeometryColumns.resolve(schema, dataset.keyValueMetadata());
+        Predicate predicate = FilterParser.parse(options.filter, schema, geometryColumns);
         try (Stream<ParquetRecord> rows = dataset.read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
             return rows.count();
         }

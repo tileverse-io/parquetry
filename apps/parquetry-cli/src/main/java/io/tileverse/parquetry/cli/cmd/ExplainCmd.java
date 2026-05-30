@@ -15,18 +15,21 @@
  */
 package io.tileverse.parquetry.cli.cmd;
 
+import java.util.Set;
 import java.util.concurrent.Callable;
 
 import io.tileverse.parquetry.cli.GlobalOptions;
 import io.tileverse.parquetry.cli.StorageOptions;
 import io.tileverse.parquetry.cli.UriResolver;
 import io.tileverse.parquetry.cli.expr.FilterParser;
+import io.tileverse.parquetry.cli.expr.GeometryColumns;
 import io.tileverse.parquetry.cli.render.Projections;
 import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.ExplainPlan;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 import picocli.CommandLine.Command;
@@ -56,7 +59,8 @@ public final class ExplainCmd implements Callable<Integer> {
         try (UriResolver.OpenFile open = UriResolver.open(uri, storage.toProperties())) {
             ParquetDataset dataset = ParquetDataset.open(open.source());
             ParquetSchema schema = dataset.schema();
-            Predicate predicate = buildPredicate(schema);
+            Set<ColumnPath> geometryColumns = GeometryColumns.resolve(schema, dataset.keyValueMetadata());
+            Predicate predicate = buildPredicate(schema, geometryColumns);
             Projection projection = Projections.resolve(options.columns, schema).projection();
             ExplainPlan plan = dataset.explain(predicate, projection, ReadOptions.DEFAULTS);
             String rendered = renderPlan(plan);
@@ -65,11 +69,11 @@ public final class ExplainCmd implements Callable<Integer> {
         }
     }
 
-    private Predicate buildPredicate(ParquetSchema schema) {
+    private Predicate buildPredicate(ParquetSchema schema, Set<ColumnPath> geometryColumns) {
         if (options.filter == null) {
             return Predicate.ALWAYS_TRUE;
         }
-        return FilterParser.parse(options.filter, schema);
+        return FilterParser.parse(options.filter, schema, geometryColumns);
     }
 
     private String renderPlan(ExplainPlan plan) {

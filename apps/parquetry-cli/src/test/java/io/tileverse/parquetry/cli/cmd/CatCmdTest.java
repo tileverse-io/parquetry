@@ -66,4 +66,16 @@ class CatCmdTest {
         int code = Par.newCommandLine().execute("cat", file.toString(), "-o", "json");
         assertThat(code).isEqualTo(CliExitCode.USAGE);
     }
+
+    @Test
+    void unsupportedFilterPointsAtFilterHelp(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("cities.parquet");
+        Fixtures.writeCities(file);
+        StringWriter err = new StringWriter();
+        CommandLine cmd = Par.newCommandLine();
+        cmd.setErr(new PrintWriter(err));
+        int code = cmd.execute("cat", file.toString(), "--filter", "name ILIKE 'ros%'");
+        assertThat(code).isEqualTo(CliExitCode.FILTER);
+        assertThat(err.toString()).contains("--filter-help");
+    }
 }

@@ -61,4 +61,44 @@ class NativeImageSmokeIT {
         assertThat(code).as("output was: %s", output).isZero();
         assertThat(output).contains("geometry");
     }
+
+    @Test
+    void nativeBinaryAppliesScalarSqlFilter(@TempDir Path dir) throws Exception {
+        assumeTrue(Files.isExecutable(NATIVE_BINARY), "native binary not built; run -Pnative");
+        Path file = dir.resolve("cities.parquet");
+        Fixtures.writeCities(file);
+
+        Process process = new ProcessBuilder(
+                        NATIVE_BINARY.toAbsolutePath().toString(), "cat", file.toString(), "--filter", "pop > 1000000")
+                .redirectErrorStream(true)
+                .start();
+        String output = new String(process.getInputStream().readAllBytes());
+        int code = process.waitFor();
+        assertThat(code).as("output was: %s", output).isZero();
+        assertThat(output).contains("Rosario").contains("Cordoba").contains("Buenos Aires");
+        assertThat(output).doesNotContain("\"id\":4");
+    }
+
+    @Test
+    void nativeBinaryAppliesSpatialSqlFilter(@TempDir Path dir) throws Exception {
+        assumeTrue(Files.isExecutable(NATIVE_BINARY), "native binary not built; run -Pnative");
+        Path file = dir.resolve("geo-cities.parquet");
+        Fixtures.writeGeoCities(file);
+
+        Process process = new ProcessBuilder(
+                        NATIVE_BINARY.toAbsolutePath().toString(),
+                        "cat",
+                        file.toString(),
+                        "--columns",
+                        "id",
+                        "--filter",
+                        "ST_Intersects(geometry, ST_MakeEnvelope(-61,-33.5,-60,-32.5))")
+                .redirectErrorStream(true)
+                .start();
+        String output = new String(process.getInputStream().readAllBytes());
+        int code = process.waitFor();
+        assertThat(code).as("output was: %s", output).isZero();
+        assertThat(output).contains("\"id\":1");
+        assertThat(output).doesNotContain("\"id\":2");
+    }
 }

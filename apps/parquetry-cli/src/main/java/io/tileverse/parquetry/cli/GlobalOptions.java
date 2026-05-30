@@ -39,9 +39,20 @@ public final class GlobalOptions {
 
     @Option(
             names = {"--filter"},
-            paramLabel = "<expr>",
-            description = "Predicate expression, e.g. \"pop > 1000 AND name = 'x'\".")
+            paramLabel = "<sql>",
+            description = {
+                "SQL WHERE predicate. Comparisons, AND/OR/NOT, IN, BETWEEN, IS [NOT] NULL,",
+                "and spatial ST_* functions (e.g. ST_Intersects(geom, ST_MakeEnvelope(...))).",
+                "Spatial tests run in the file's native CRS; the query geometry is assumed",
+                "to already be in that CRS (no reprojection)."
+            })
     public String filter;
+
+    @Option(
+            names = {"--filter-help"},
+            help = true,
+            description = "List the supported --filter predicates and exit.")
+    public boolean filterHelp;
 
     @Option(
             names = {"--limit"},

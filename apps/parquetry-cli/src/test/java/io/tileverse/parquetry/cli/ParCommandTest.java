@@ -41,4 +41,28 @@ class ParCommandTest {
         int code = Par.newCommandLine().execute("bogus");
         assertThat(code).isEqualTo(CliExitCode.USAGE);
     }
+
+    @Test
+    void filterHelpListsPredicatesAndExitsZeroWithoutAFile() {
+        StringWriter out = new StringWriter();
+        CommandLine cmd = Par.newCommandLine();
+        cmd.setOut(new PrintWriter(out));
+        int code = cmd.execute("cat", "--filter-help");
+        assertThat(code).isZero();
+        assertThat(out.toString())
+                .contains("Supported --filter predicates")
+                .contains("= != <> < <= > >=")
+                .contains("ST_Intersects")
+                .contains("ST_MakeEnvelope");
+    }
+
+    @Test
+    void filterHelpIsAvailableOnHeadToo() {
+        StringWriter out = new StringWriter();
+        CommandLine cmd = Par.newCommandLine();
+        cmd.setOut(new PrintWriter(out));
+        int code = cmd.execute("head", "--filter-help");
+        assertThat(code).isZero();
+        assertThat(out.toString()).contains("Supported --filter predicates");
+    }
 }

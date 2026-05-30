@@ -24,9 +24,11 @@ import io.tileverse.parquetry.cli.cmd.RowCountCmd;
 import io.tileverse.parquetry.cli.cmd.RowGroupsCmd;
 import io.tileverse.parquetry.cli.cmd.SchemaCmd;
 import io.tileverse.parquetry.cli.cmd.StatsCmd;
+import io.tileverse.parquetry.cli.expr.FilterSyntax;
 
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
+import picocli.CommandLine.ParseResult;
 
 @Command(
         name = "par",
@@ -50,9 +52,35 @@ public final class Par {
     public static CommandLine newCommandLine() {
         CommandLine commandLine = new CommandLine(new Par())
                 .setExecutionExceptionHandler(new ExitCodeExceptionHandler())
+                .setExecutionStrategy(Par::runOrShowFilterHelp)
                 .setCaseInsensitiveEnumValuesAllowed(true);
         abbreviateSynopsis(commandLine);
         return commandLine;
+    }
+
+    /**
+     * Intercepts {@code --filter-help} on any subcommand, printing the filter reference and exiting before the command
+     * runs; otherwise hands off to the default run-last strategy.
+     */
+    private static int runOrShowFilterHelp(ParseResult parseResult) {
+        CommandLine requestingCommand = commandRequestingFilterHelp(parseResult);
+        if (requestingCommand != null) {
+            requestingCommand.getOut().println(FilterSyntax.reference());
+            requestingCommand.getOut().flush();
+            return CliExitCode.OK;
+        }
+        return new CommandLine.RunLast().execute(parseResult);
+    }
+
+    private static CommandLine commandRequestingFilterHelp(ParseResult parseResult) {
+        ParseResult current = parseResult;
+        while (current != null) {
+            if (current.hasMatchedOption("--filter-help")) {
+                return current.commandSpec().commandLine();
+            }
+            current = current.subcommand();
+        }
+        return null;
     }
 
     private static void abbreviateSynopsis(CommandLine commandLine) {

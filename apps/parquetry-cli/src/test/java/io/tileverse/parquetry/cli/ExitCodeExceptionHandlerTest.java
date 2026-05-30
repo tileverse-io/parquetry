@@ -36,4 +36,16 @@ class ExitCodeExceptionHandlerTest {
         assertThat(ExitCodeExceptionHandler.mapToExitCode(new ParameterException(Par.newCommandLine(), "x")))
                 .isEqualTo(CliExitCode.USAGE);
     }
+
+    @Test
+    void describePointsFilterErrorsAtFilterHelp() {
+        assertThat(ExitCodeExceptionHandler.describe(new FilterParseException("unsupported in --filter: ILIKE")))
+                .isEqualTo("unsupported in --filter: ILIKE (run with --filter-help to list the supported predicates)");
+    }
+
+    @Test
+    void describeLeavesOtherMessagesUnchanged() {
+        assertThat(ExitCodeExceptionHandler.describe(new IllegalArgumentException("boom")))
+                .isEqualTo("boom");
+    }
 }
