@@ -33,11 +33,6 @@
         <artifactId>parquetry-encryption</artifactId>
         <version>${project.version}</version>
       </dependency>
-      <dependency>
-        <groupId>io.tileverse.parquetry</groupId>
-        <artifactId>parquetry-variant</artifactId>
-        <version>${project.version}</version>
-      </dependency>
     </dependencies>
   </dependencyManagement>
 </project>

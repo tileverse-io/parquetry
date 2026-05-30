@@ -35,7 +35,9 @@ import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.MapVector;
 import io.tileverse.parquetry.batch.StructVector;
+import io.tileverse.parquetry.batch.VariantVector;
 import io.tileverse.parquetry.format.LogicalType;
+import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.Repetition;
@@ -109,6 +111,7 @@ final class DremelAssembler {
             case LIST -> assembleList(group, groupPath, parentRepLevel, numSlots);
             case MAP -> assembleMap(group, groupPath, parentRepLevel, numSlots);
             case STRUCT -> assembleStruct(group, groupPath, parentRepLevel, numSlots);
+            case VARIANT -> assembleVariant(group, groupPath, parentRepLevel, numSlots);
         };
     }
 
@@ -166,6 +169,42 @@ final class DremelAssembler {
             }
         }
         return validity;
+    }
+
+    // --- VARIANT ---
+
+    private static final String VARIANT_METADATA_CHILD = "metadata";
+    private static final String VARIANT_VALUE_CHILD = "value";
+    private static final String VARIANT_TYPED_VALUE_CHILD = "typed_value";
+
+    private ColumnVector assembleVariant(
+            SchemaNode.Group group, List<String> groupPath, int parentRepLevel, int numSlots) {
+        rejectShreddedVariant(group);
+        SchemaNode metadataChild = requireChild(group, VARIANT_METADATA_CHILD);
+        SchemaNode valueChild = requireChild(group, VARIANT_VALUE_CHILD);
+        BinaryVector metadataVec = (BinaryVector)
+                assembleNode(metadataChild, concat(groupPath, metadataChild.name()), parentRepLevel, numSlots);
+        BinaryVector valueVec =
+                (BinaryVector) assembleNode(valueChild, concat(groupPath, valueChild.name()), parentRepLevel, numSlots);
+        BitSet validity = structValidity(group, groupPath, numSlots);
+        return new VariantVector(metadataVec, valueVec, validity, numSlots);
+    }
+
+    private void rejectShreddedVariant(SchemaNode.Group group) {
+        for (SchemaNode child : group.children()) {
+            if (child.name().equals(VARIANT_TYPED_VALUE_CHILD)) {
+                throw new ParquetFormatException("shredded variant is not yet supported");
+            }
+        }
+    }
+
+    private SchemaNode requireChild(SchemaNode.Group group, String name) {
+        for (SchemaNode child : group.children()) {
+            if (child.name().equals(name)) {
+                return child;
+            }
+        }
+        throw new ParquetFormatException("variant group is missing required child '" + name + "'");
     }
 
     // --- LIST ---
@@ -338,7 +377,14 @@ final class DremelAssembler {
             case ListVector v -> compactList(v, keptIndices);
             case MapVector v -> compactMap(v, keptIndices);
             case StructVector v -> compactStruct(v, keptIndices);
+            case VariantVector v -> compactVariant(v, keptIndices);
         };
+    }
+
+    private VariantVector compactVariant(VariantVector v, int[] keptIndices) {
+        BinaryVector metadata = (BinaryVector) compact(v.metadataColumn(), keptIndices);
+        BinaryVector value = (BinaryVector) compact(v.valueColumn(), keptIndices);
+        return new VariantVector(metadata, value, gatherValidity(v, keptIndices), keptIndices.length);
     }
 
     private ListVector compactList(ListVector v, int[] keptIndices) {
@@ -467,6 +513,9 @@ final class DremelAssembler {
         Optional<LogicalType> annotation = group.logicalType();
         if (annotation.isPresent()) {
             LogicalType lt = annotation.get();
+            if (lt instanceof LogicalType.Variant) {
+                return GroupKind.VARIANT;
+            }
             if (lt instanceof LogicalType.ListType) {
                 return GroupKind.LIST;
             }
@@ -483,7 +532,8 @@ final class DremelAssembler {
     enum GroupKind {
         LIST,
         MAP,
-        STRUCT
+        STRUCT,
+        VARIANT
     }
 
     // --- primitive gather helpers ---

@@ -60,7 +60,7 @@ final class LogicalTypeSerializer {
             case LogicalType.BsonType _ -> writeEmptyVariant(w, (short) 13);
             case LogicalType.UuidType _ -> writeEmptyVariant(w, (short) 14);
             case LogicalType.Float16Type _ -> writeEmptyVariant(w, (short) 15);
-            case LogicalType.VariantStub _ -> writeEmptyVariant(w, (short) 16);
+            case LogicalType.Variant _ -> writeEmptyVariant(w, (short) 16);
             case LogicalType.Geometry g -> writeGeometry(w, g);
             case LogicalType.Geography g -> writeGeography(w, g);
         }

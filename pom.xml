@@ -40,7 +40,6 @@
     <module>parquetry-format</module>
     <module>parquetry-core</module>
     <module>parquetry-encryption</module>
-    <module>parquetry-variant</module>
     <module>integrations</module>
     <module>internal</module>
   </modules>

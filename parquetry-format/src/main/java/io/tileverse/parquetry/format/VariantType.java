@@ -19,7 +19,7 @@ package io.tileverse.parquetry.format;
  * Logical-type marker for Parquet Variant columns; mirror of {@code VariantType} in {@code parquet.thrift}.
  *
  * <p>Empty placeholder; variant shredding metadata will be added. Referenced from {@link LogicalType} as the
- * {@code VariantStub} variant.
+ * {@code Variant} case.
  */
 @SuppressWarnings("java:S2094")
 public record VariantType() {}

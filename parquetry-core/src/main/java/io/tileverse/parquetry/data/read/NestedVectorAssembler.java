@@ -185,7 +185,7 @@ public final class NestedVectorAssembler {
         result.put(new ColumnPath(groupPath), vector);
         switch (classify(group)) {
             case LIST, MAP -> markDescendantLeavesHidden(group, groupPath, leafVectors, hiddenLeaves);
-            case STRUCT -> hideRepeatedDescendantLeaves(group, groupPath, leafVectors, hiddenLeaves);
+            case STRUCT, VARIANT -> hideRepeatedDescendantLeaves(group, groupPath, leafVectors, hiddenLeaves);
         }
     }
 
