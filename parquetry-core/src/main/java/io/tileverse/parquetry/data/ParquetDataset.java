@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.data;
 
 import java.nio.channels.FileChannel;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
@@ -142,6 +143,28 @@ public sealed interface ParquetDataset permits DefaultParquetDataset {
     ExplainPlan explain(Predicate predicate, Projection projection, ReadOptions options);
 
     /**
+     * Counts the rows matching {@code predicate} without assembling any record.
+     *
+     * <p>{@link Predicate.Always} (the no-predicate {@link #count()} and the always-false case) is answered from
+     * row-group metadata alone, decoding no column. For every other predicate the dataset delegates to each file's
+     * reader, which runs the filter pipeline over metadata: row groups and pages ruled out by statistics are pruned, a
+     * row group whose statistics prove every row matches contributes its row count with no decode, and only the
+     * remaining row groups decode the predicate's columns to count the matches columnar. Records are never assembled
+     * and the geometry column is never materialized.
+     */
+    long count(Predicate predicate, ReadOptions options);
+
+    /** Counts matching rows with default {@link ReadOptions}. */
+    default long count(Predicate predicate) {
+        return count(predicate, ReadOptions.DEFAULTS);
+    }
+
+    /** Counts every row in the dataset. */
+    default long count() {
+        return count(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
+    }
+
+    /**
      * Opens a {@code ParquetDataset} over {@code source}. Reads the footer (one positional read) and decodes the
      * schema; subsequent {@code read} calls reuse both.
      *
@@ -162,5 +185,26 @@ public sealed interface ParquetDataset permits DefaultParquetDataset {
      */
     static ParquetDataset open(FileChannel channel) {
         return open(ByteRangeSource.ofChannel(channel));
+    }
+
+    /**
+     * Opens a dataset over every file in {@code fileset}, in index order. Each file is opened immediately (its footer
+     * is read), and all files must agree on {@link ParquetSchema} by equality. The byte sources returned by
+     * {@link FilesetReader#openFile(int)} are borrowed; the caller owns and closes them.
+     *
+     * @throws IllegalArgumentException if {@code fileset} reports zero files
+     * @throws io.tileverse.parquetry.format.ParquetFormatException if any footer fails to conform to the spec
+     * @throws java.io.UncheckedIOException if any source fails to deliver bytes
+     */
+    static ParquetDataset open(FilesetReader fileset) {
+        int fileCount = fileset.fileCount();
+        if (fileCount <= 0) {
+            throw new IllegalArgumentException("fileset must contain at least one file");
+        }
+        List<ParquetReader> readers = new ArrayList<>(fileCount);
+        for (int index = 0; index < fileCount; index++) {
+            readers.add(ParquetReader.open(fileset.openFile(index)));
+        }
+        return new DefaultParquetDataset(readers);
     }
 }
