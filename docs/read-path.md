@@ -100,7 +100,7 @@ sequenceDiagram
     C->>R: read(predicate, projection, options)
     R->>R: rowGroupChunks() (one view per row group)
     R->>FP: runFilterPipeline(predicate, scanProjection)
-    FP-->>R: ExplainPlan (per row group: ELIMINATED / PARTIAL / FULL)
+    FP-->>R: ExplainPlan (per row group: ELIMINATED / PARTIAL / FULL / MATCHED)
     R->>R: survivorsFor(plan) -> survivors
     R->>R: decodeMasksFor(survivors) -> per-group RowMask (page skip)
     R->>DC: new coordinator(survivors, masks, lateMat?)
@@ -128,9 +128,11 @@ Key points the diagram encodes:
   *scan* projection is the caller's projection plus the predicate's columns, so
   the predicate can be evaluated even on columns the caller did not ask for. The
   *output* schema stays the caller's projection.
-- **Two outcomes carry forward.** Per row group, the plan yields `ELIMINATED`
-  (dropped), `FULL` (read every row), or `PARTIAL` (read only `survivingRows`).
-  `PARTIAL` becomes a `RowMask` that skips non-surviving pages during decode.
+- **Outcomes flow forward.** Per row group, the plan yields `ELIMINATED`
+  (dropped), `FULL` (read every row), `PARTIAL` (read only `survivingRows`), or
+  `MATCHED` (statistics proved every row matches - read every row, but skip the
+  per-row record filter). `PARTIAL` becomes a `RowMask` that skips non-surviving
+  pages during decode.
 
 `readBatches()` is the same spine without the last step: it returns the decoded
 batches directly (the page-pruned superset) and does not apply the record filter.
@@ -143,7 +145,8 @@ filtering.
 
 The filter pipeline runs on **metadata only** - no column data is decoded here.
 Each row group is run through five tiers in increasing cost; the pipeline
-short-circuits the moment a tier proves the row group cannot match.
+short-circuits the moment a tier proves the row group cannot match - or that every
+row matches.
 
 ```mermaid
 flowchart TD
@@ -169,6 +172,12 @@ flowchart TD
 - **COLUMN_INDEX is the lever for selective reads.** It narrows a row group to the
   pages whose min/max bounds overlap the predicate, producing `survivingRows` (a
   `RowRanges`). That is what lets decode skip whole pages.
+- **STATS also proves the positive.** When a row group's statistics prove *every*
+  row matches - not just that some might - the STATS tier short-circuits to the
+  `MATCHED` outcome. A `MATCHED` row group is read in full but skips the per-row
+  record filter, and [`count()`](counting.md) answers it from the row count with no
+  decode at all. [Counting](counting.md#3-proving-a-whole-row-group-matches)
+  explains the deliberately conservative proof that keeps this sound.
 - **The output is an `ExplainPlan`** - the same structure `explain()` returns and
   `toAsciiTable()` / `toJson()` render. `survivorsFor` turns it into the
   `RowGroupSurvivor` list the rest of the pipeline consumes.
@@ -266,6 +275,10 @@ flowchart TD
   record-level filter at materialization is skipped. Every ineligible case and
   `readBatches` take the unchanged full-decode path, with identical results.
 
+[`count()`](counting.md) pushes the same instinct to its limit: it materializes
+no records at all, answering proven row groups from metadata and counting the rest
+with a columnar popcount over the decoded predicate columns.
+
 ---
 
 ## 7. Key types
@@ -333,10 +346,12 @@ classDiagram
 | Column / page decode | `data/read/BatchColumnReader.java`, `data/read/page/PageCursor.java`, `data/read/page/PageDecoder.java` |
 | Late materialization | `data/read/LateMaterializingRowGroupReader.java`, `data/read/Selection.java` |
 | Materialize | `data/read/BatchPipeline.java`, `materializer/Materializer.java` |
+| Counting (no materialization) | `data/ParquetReader.java` (`count`), `data/read/BatchPipeline.java` (`countMatching`), `batch/VectorizedPredicateEvaluator.java` |
 
 ---
 
 *Scope: the row and batch read paths over flat columns. Nested/repeated columns
 take the full-decode path (late materialization and page-skip are flat-only).
-Spatial (bbox) filtering is covered in [spatial-filtering.md](spatial-filtering.md);
-writing, encryption, and the geometry materializer are documented separately.*
+Spatial (bbox) filtering is covered in [spatial-filtering.md](spatial-filtering.md),
+counting without materialization in [counting.md](counting.md). Writing, encryption,
+and the geometry materializer are documented separately.*

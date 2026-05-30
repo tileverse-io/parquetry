@@ -45,6 +45,14 @@ final class TestParquetFiles {
               {"name":"value","type":"double"}
             ]}""";
 
+    private static final String FIXED_LEN_SCHEMA = """
+            {"type":"record","name":"Row","fields":[
+              {"name":"id","type":"int"},
+              {"name":"uid","type":{"type":"fixed","name":"Uid","size":16}}
+            ]}""";
+
+    static final int FIXED_UID_WIDTH = 16;
+
     /**
      * Writes a Parquet 2.0 / Snappy file with three columns ({@code year}, {@code country}, {@code value}) and a tiny
      * row-group target so the given number of rows spans multiple row groups.
@@ -72,6 +80,46 @@ final class TestParquetFiles {
             }
         }
         return file;
+    }
+
+    /**
+     * Writes a Parquet 2.0 / Snappy file with an {@code id} INT32 column and a {@code uid} FIXED_LEN_BYTE_ARRAY(16)
+     * column, spanning multiple row groups. Each {@code uid} encodes its row's {@code id} in the last four bytes (see
+     * {@link #fixedUid(int)}), giving the column distinct, ordered values to filter on.
+     *
+     * @param dir directory in which to write the file
+     * @param rows total number of rows to write
+     * @return path to the written file
+     */
+    static Path writeFixedLenColumnFileMultiRowGroup(Path dir, int rows) throws IOException {
+        Path file = dir.resolve("fixed-len-multi-rg.parquet");
+        org.apache.avro.Schema schema = new org.apache.avro.Schema.Parser().parse(FIXED_LEN_SCHEMA);
+        org.apache.avro.Schema uidSchema = schema.getField("uid").schema();
+        try (ParquetWriter<GenericData.Record> writer = AvroParquetWriter.<GenericData.Record>builder(
+                        new LocalOutputFile(file))
+                .withSchema(schema)
+                .withCompressionCodec(CompressionCodecName.SNAPPY)
+                .withWriterVersion(WriterVersion.PARQUET_2_0)
+                .withRowGroupSize(8_192L)
+                .build()) {
+            for (int i = 0; i < rows; i++) {
+                GenericData.Record rec = new GenericData.Record(schema);
+                rec.put("id", i);
+                rec.put("uid", new GenericData.Fixed(uidSchema, fixedUid(i)));
+                writer.write(rec);
+            }
+        }
+        return file;
+    }
+
+    /** The 16-byte FIXED_LEN_BYTE_ARRAY value the multi-row-group fixture stores for row {@code id}. */
+    static byte[] fixedUid(int id) {
+        byte[] bytes = new byte[FIXED_UID_WIDTH];
+        bytes[FIXED_UID_WIDTH - 4] = (byte) (id >>> 24);
+        bytes[FIXED_UID_WIDTH - 3] = (byte) (id >>> 16);
+        bytes[FIXED_UID_WIDTH - 2] = (byte) (id >>> 8);
+        bytes[FIXED_UID_WIDTH - 1] = (byte) id;
+        return bytes;
     }
 
     /**

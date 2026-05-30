@@ -41,7 +41,7 @@ class DecodedRowGroupTest {
         Arena arena1 = Arena.ofConfined();
         ParquetRecordBatch b0 = batch(arena0);
         ParquetRecordBatch b1 = batch(arena1);
-        DecodedRowGroup rowGroup = new DecodedRowGroup(List.of(b0, b1));
+        DecodedRowGroup rowGroup = new DecodedRowGroup(List.of(b0, b1), true);
 
         assertThat(rowGroup.hasNext()).isTrue();
         assertThat(rowGroup.next()).isSameAs(b0);
@@ -58,7 +58,7 @@ class DecodedRowGroupTest {
         Arena arenaUnemitted = Arena.ofConfined();
         ParquetRecordBatch emitted = batch(arenaEmitted);
         ParquetRecordBatch unemitted = batch(arenaUnemitted);
-        DecodedRowGroup rowGroup = new DecodedRowGroup(List.of(emitted, unemitted));
+        DecodedRowGroup rowGroup = new DecodedRowGroup(List.of(emitted, unemitted), true);
 
         rowGroup.next(); // emit the first; the consumer now owns it
         rowGroup.close();
@@ -76,7 +76,7 @@ class DecodedRowGroupTest {
     void closeIsIdempotent() {
         Arena arena = Arena.ofConfined();
         ParquetRecordBatch only = batch(arena);
-        DecodedRowGroup rowGroup = new DecodedRowGroup(List.of(only));
+        DecodedRowGroup rowGroup = new DecodedRowGroup(List.of(only), true);
         rowGroup.close();
         rowGroup.close();
         // Arena must be closed exactly once (idempotent close does not throw).

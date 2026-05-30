@@ -22,10 +22,13 @@ package io.tileverse.parquetry.filter;
  *   <li>{@link #ELIMINATED} - no I/O for this row group; some tier proved no row can match.
  *   <li>{@link #PARTIAL} - a strict subset of rows survives; record-level evaluation still runs.
  *   <li>{@link #FULL} - every row survives the a-priori tiers; record-level evaluation still applies.
+ *   <li>{@link #MATCHED} - statistics proved every row matches the predicate; no decode and no record-level evaluation
+ *       are needed.
  * </ul>
  */
 public enum RowGroupOutcome {
     ELIMINATED,
     PARTIAL,
-    FULL
+    FULL,
+    MATCHED
 }

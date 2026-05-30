@@ -27,16 +27,26 @@ import lombok.NonNull;
  * inline fallback) and consumed on the read thread.
  *
  * <p>Batches are emitted via {@link #next()}; an emitted batch is owned by the consumer, which closes it when its rows
- * are drained. {@link #close()} closes only the batches not yet emitted, so closing the row group on advance (after all
+ * are drained. {@link #close()} closes only the batches not yet emitted. Closing the row group on advance (after all
  * batches were emitted) is a no-op, while closing it early releases the undelivered batches.
+ *
+ * <p>{@code recordEvalRequired} mirrors the owning survivor's flag of the same name: {@code true} when the read still
+ * has to test each decoded row against the predicate, {@code false} when statistics already proved every row matches
+ * (the MATCHED outcome) and the per-row evaluation can be skipped.
  */
 final class DecodedRowGroup implements AutoCloseable {
 
     private final List<ParquetRecordBatch> batches;
+    private final boolean recordEvalRequired;
     private int emitted;
 
-    DecodedRowGroup(@NonNull List<ParquetRecordBatch> batches) {
+    DecodedRowGroup(@NonNull List<ParquetRecordBatch> batches, boolean recordEvalRequired) {
         this.batches = List.copyOf(batches);
+        this.recordEvalRequired = recordEvalRequired;
+    }
+
+    boolean recordEvalRequired() {
+        return recordEvalRequired;
     }
 
     boolean hasNext() {

@@ -64,12 +64,41 @@ class FilterPipelineTest {
                 statsOf("year", PrimitiveKind.INT32, intStats(2010, 2030, 0)),
                 noDicts(),
                 noPageIndex());
-        Predicate p = col("year").lt(2050);
+        // min/max straddle the predicate value: stats can neither eliminate the row group nor prove every row matches.
+        // The row group survives to FULL and record-level evaluation still applies.
+        Predicate p = col("year").eq(2020);
 
         ExplainPlan plan = FilterPipeline.evaluate(schema, Projection.ALL, p, List.of(rg));
 
         assertThat(plan.rowGroups().get(0).outcome()).isEqualTo(RowGroupOutcome.FULL);
         assertThat(plan.estimatedRowsScanned()).isEqualTo(1000);
+    }
+
+    @Test
+    void statsProvenRowGroupIsMatchedAndShortCircuits() {
+        ParquetSchema schema = flatSchema();
+        FilterPipeline.RowGroupInputs rg = inputs(
+                /* rows */ 1000, statsOf("year", PrimitiveKind.INT32, intStats(10, 20, 0)), noDicts(), noPageIndex());
+        Predicate p = col("year").gt(5);
+
+        ExplainPlan plan = FilterPipeline.evaluate(schema, Projection.ALL, p, List.of(rg));
+
+        assertThat(plan.rowGroups().get(0).outcome()).isEqualTo(RowGroupOutcome.MATCHED);
+        assertThat(plan.rowGroups().get(0).tiers()).hasSize(1); // stats short-circuited
+        assertThat(plan.estimatedRowsScanned()).isEqualTo(1000);
+    }
+
+    @Test
+    void emptyRowGroupIsNotMatched() {
+        ParquetSchema schema = flatSchema();
+        FilterPipeline.RowGroupInputs rg = inputs(
+                /* rows */ 0, statsOf("year", PrimitiveKind.INT32, intStats(10, 20, 0)), noDicts(), noPageIndex());
+        Predicate p = col("year").gt(5);
+
+        ExplainPlan plan = FilterPipeline.evaluate(schema, Projection.ALL, p, List.of(rg));
+
+        // An empty row group has no rows to match; the all-rows-match short-circuit must not claim MATCHED for it.
+        assertThat(plan.rowGroups().get(0).outcome()).isNotEqualTo(RowGroupOutcome.MATCHED);
     }
 
     @Test

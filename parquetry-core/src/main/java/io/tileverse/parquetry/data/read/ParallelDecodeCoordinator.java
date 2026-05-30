@@ -52,6 +52,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     private final ParquetSchema fileSchema;
     private final OptionalInt batchSizeCap;
     private final List<Optional<RowMask>> rowMasks;
+    private final List<Boolean> recordEvalRequired;
     private final Optional<LateMaterialization> lateMat;
 
     private final Map<Integer, Future<DecodedRowGroup>> window = new HashMap<>();
@@ -69,6 +70,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
             @NonNull ParquetSchema fileSchema,
             @NonNull OptionalInt batchSizeCap,
             @NonNull List<Optional<RowMask>> rowMasks,
+            @NonNull List<Boolean> recordEvalRequired,
             @NonNull Optional<LateMaterialization> lateMat) {
         this.prefetcher = prefetcher;
         this.decodeExecutor = decodeExecutor;
@@ -77,6 +79,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
         this.fileSchema = fileSchema;
         this.batchSizeCap = batchSizeCap;
         this.rowMasks = List.copyOf(rowMasks);
+        this.recordEvalRequired = List.copyOf(recordEvalRequired);
         this.lateMat = lateMat;
         this.size = prefetcher.size();
     }
@@ -143,7 +146,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
             } finally {
                 reader.close();
             }
-            return new DecodedRowGroup(batches);
+            return new DecodedRowGroup(batches, recordEvalRequired.get(index));
         }
     }
 
@@ -165,7 +168,8 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
                 mask,
                 perRg.outputOffsetIndexes(),
                 perRg.numRows());
-        return new DecodedRowGroup(reader.decodeAll());
+        // Late-materialized batches already hold only the matching rows; no further per-row evaluation applies.
+        return new DecodedRowGroup(reader.decodeAll(), false);
     }
 
     private DecodedRowGroup join(Future<DecodedRowGroup> future) throws IOException {
