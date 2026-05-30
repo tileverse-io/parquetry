@@ -19,19 +19,24 @@ nation.dict-malformed.parquet                       # intentionally malformed di
 unknown-logical-type.parquet                        # intentionally unknown logical type
 incorrect_map_schema.parquet                        # intentionally malformed map schema per upstream README
 
-# parquet-avro (the oracle) cannot consume these; not a parquetry gap
-delta_encoding_required_column.parquet     # Avro schema parser rejects column name `c_customer_sk:`
-fixed_length_byte_array.parquet            # ParquetDecodingException from the oracle at block 0
-alltypes_tiny_pages.parquet                # ParquetDecodingException from the oracle at block -1
-large_string_map.brotli.parquet            # parquetry reads it (2 rows, verified manually); oracle (parquet-avro) trips on the bogus total_uncompressed_size = Integer.MAX_VALUE + 102 in the metadata
-hadoop_lz4_compressed.parquet              # parquetry reads it (matches pyarrow); oracle (parquet-avro) rejects the file's empty root schema name
-non_hadoop_lz4_compressed.parquet          # parquetry reads it (raw-LZ4 fallback, matches pyarrow); oracle (parquet-avro) can't decode this raw LZ4 framing
-map_no_value.parquet                       # Avro requires UTF8 map keys; this file uses int32 keys
-nested_maps.snappy.parquet                 # Avro requires UTF8 map keys; this file uses int32 keys for the inner map
-repeated_no_annotation.parquet             # parquet-avro can't read legacy repeated group without LIST annotation
-repeated_primitive_no_list.parquet         # parquet-avro can't read legacy repeated primitive without LIST annotation
+# Files no Java reader handles (golden-file follow-up): the parquet-java SimpleGroup oracle cannot read them.
+# large_string_map.brotli and non_hadoop_lz4_compressed are read correctly by parquetry; they lack a working oracle.
+fixed_length_byte_array.parquet            # parquet-java oracle throws ParquetDecodingException at block 0
+large_string_map.brotli.parquet            # parquet-java oracle trips on total_uncompressed_size = Integer.MAX_VALUE + 102; parquetry reads it (2 rows)
+non_hadoop_lz4_compressed.parquet          # parquet-java oracle cannot decode this raw LZ4 framing; parquetry reads it (raw-LZ4 fallback, matches pyarrow)
+
+# FOLLOW-UP parquetry read bugs: the parquet-java oracle reads these, parquetry does not yet match.
+map_no_value.parquet                       # FOLLOW-UP: parquetry read bug (oracle reads int32-keyed map; parquetry throws)
+nullable.impala.parquet                    # FOLLOW-UP: parquetry materializes an unannotated structural LIST/MAP group as a struct; oracle reads it as list/map
+nested_maps.snappy.parquet                 # FOLLOW-UP: parquetry materializes an unannotated structural MAP group as a struct; oracle reads it as a map
+repeated_no_annotation.parquet             # FOLLOW-UP: parquetry materializes a legacy repeated group with no LIST annotation as a struct; oracle reads it as a list
+repeated_primitive_no_list.parquet         # FOLLOW-UP: parquetry materializes a legacy repeated primitive with no LIST annotation as a scalar; oracle reads it as a list
+datapage_v2.snappy.parquet                 # FOLLOW-UP: parquetry materializes an unannotated structural LIST group as a struct ({list=[1,2,3]}); oracle reads it as a list
+nested_lists.snappy.parquet                # FOLLOW-UP: parquetry materializes an unannotated nested structural LIST group as a struct; oracle reads nested lists
+nonnullable.impala.parquet                 # FOLLOW-UP: parquetry materializes unannotated structural LIST/MAP groups as structs; oracle reads them as list/map
+old_list_structure.parquet                 # FOLLOW-UP: list-of-lists a=[[1,2],[3,4]] (pyarrow); both parquetry [1,2] and oracle [1,3] flatten it
 
 # BYTE_STREAM_SPLIT on FIXED_LEN_BYTE_ARRAY is a Parquet 2.x extension not in the current decoder table; future codec/encoding pass
 byte_stream_split_extended.gzip.parquet    # BYTE_STREAM_SPLIT + FIXED_LEN_BYTE_ARRAY
-# FOLLOW-UP parquetry bugs surfaced by the corpus, to be triaged and fixed before un-excluding
+# FOLLOW-UP parquetry bugs found by the corpus, to be triaged and fixed before un-excluding
 datapage_v2_empty_datapage.snappy.parquet  # FOLLOW-UP: Snappy MalformedInputException on V2 empty data page

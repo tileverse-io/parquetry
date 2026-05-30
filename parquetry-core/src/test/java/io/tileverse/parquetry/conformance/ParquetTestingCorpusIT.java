@@ -15,32 +15,20 @@
  */
 package io.tileverse.parquetry.conformance;
 
-import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.lang.foreign.MemorySegment;
-import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Optional;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.stream.Stream;
 
-import org.apache.avro.generic.GenericData;
-import org.apache.avro.generic.GenericRecord;
-import org.apache.avro.util.Utf8;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.parquet.avro.AvroParquetReader;
-import org.apache.parquet.avro.AvroReadSupport;
-import org.apache.parquet.hadoop.ParquetReader;
-import org.apache.parquet.io.LocalInputFile;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -52,17 +40,17 @@ import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
-import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
-import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.testsupport.CorpusFixtures;
 import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * Conformance integration test that reads every {@code .parquet} file under
  * {@code parquetry-core/src/test/resources/parquet-testing/data/} (the {@code apache/parquet-testing} git submodule
- * corpus) through the parquetry pipeline and asserts each row matches a {@code parquet-avro} oracle reading the same
- * bytes.
+ * corpus) through the parquetry pipeline and asserts each row matches a parquet-java {@code SimpleGroup} oracle reading
+ * the same bytes. The comparison is a full materialized-tree deep equality: both readers produce the same
+ * dependency-free canonical tree (nested maps for structs, lists for repeated columns, byte buffers for binary leaves)
+ * and the trees are compared cell by cell.
  *
  * <p>Files that exercise features parquetry doesn't yet support (Parquet Modular Encryption, repeated columns and other
  * nested shapes, intentionally-corrupt fixtures, exotic codecs) are listed in {@code parquet-testing-exclusions.txt}
@@ -84,19 +72,32 @@ class ParquetTestingCorpusIT {
                 .isDirectory();
     }
 
+    // Guards against an over-broad exclusion sweep silently emptying the corpus, which would let the parameterized
+    // deep-compare report zero invocations and pass vacuously.
+    @Test
+    void corpusHasFixturesToCompare() throws IOException {
+        assertThat(conformanceFixtures().toList())
+                .as("active conformance corpus must not be near-empty")
+                .hasSizeGreaterThan(30);
+    }
+
     @ParameterizedTest(name = "{0}")
     @MethodSource("conformanceFixtures")
-    void readMatchesParquetAvroOracle(String fixtureName) throws Exception {
+    void readMatchesParquetJavaOracle(String fixtureName) {
         Path fixture = DATA_DIR.resolve(fixtureName);
-        List<GenericRecord> expected = readAllViaParquetAvro(fixture);
+        List<Map<String, Object>> expected = ParquetJavaOracle.read(fixture);
 
         CountingSegmentPool pool = new CountingSegmentPool();
-        List<ParquetRecord> actual = readAllViaParquetry(fixture, pool);
+        List<Map<String, Object>> actual = readCanonicalViaParquetry(fixture, pool);
 
         assertThat(actual)
-                .as("%s row count must match parquet-avro oracle", fixtureName)
+                .as("%s row count must match parquet-java oracle", fixtureName)
                 .hasSameSizeAs(expected);
-        assertRowsMatchOracle(fixtureName, actual, expected);
+        for (int i = 0; i < actual.size(); i++) {
+            assertThat(CanonicalRow.deepEquals(actual.get(i), expected.get(i)))
+                    .as("%s row %d: parquetry %s vs oracle %s", fixtureName, i, actual.get(i), expected.get(i))
+                    .isTrue();
+        }
         assertThat(pool.outstanding())
                 .as("pooled buffers must drain after %s", fixtureName)
                 .isZero();
@@ -104,15 +105,15 @@ class ParquetTestingCorpusIT {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("conformanceFixtures")
-    void readBatchesMatchesOracleRowCount(String fixtureName) throws Exception {
+    void readBatchesMatchesOracleRowCount(String fixtureName) {
         Path fixture = DATA_DIR.resolve(fixtureName);
-        long expectedRows = readAllViaParquetAvro(fixture).size();
+        long expectedRows = ParquetJavaOracle.read(fixture).size();
 
         CountingSegmentPool pool = new CountingSegmentPool();
         long actualRows = totalRowsViaBatchApi(fixture, pool);
 
         assertThat(actualRows)
-                .as("%s batch row count must match parquet-avro oracle", fixtureName)
+                .as("%s batch row count must match parquet-java oracle", fixtureName)
                 .isEqualTo(expectedRows);
         assertThat(pool.outstanding())
                 .as("pooled buffers must drain after %s", fixtureName)
@@ -159,156 +160,16 @@ class ParquetTestingCorpusIT {
         return hash < 0 ? line : line.substring(0, hash);
     }
 
-    // --- row comparison ---
-
-    private static void assertRowsMatchOracle(
-            String fixtureName, List<ParquetRecord> actual, List<GenericRecord> expected) {
-        if (actual.isEmpty()) {
-            return;
-        }
-        ParquetSchema schema = actual.get(0).schema();
-        List<ColumnPath> leaves = schema.leafColumns();
-        for (int i = 0; i < actual.size(); i++) {
-            assertRowMatchesOracle(fixtureName, i, leaves, schema, actual.get(i), expected.get(i));
-        }
-    }
-
-    private static void assertRowMatchesOracle(
-            String fixtureName,
-            int row,
-            List<ColumnPath> leaves,
-            ParquetSchema schema,
-            ParquetRecord actual,
-            GenericRecord expected) {
-        for (ColumnPath col : leaves) {
-            assertCellMatchesOracle(fixtureName, row, col, schema, actual, expected);
-        }
-    }
-
-    private static void assertCellMatchesOracle(
-            String fixtureName,
-            int row,
-            ColumnPath col,
-            ParquetSchema schema,
-            ParquetRecord actual,
-            GenericRecord expected) {
-        SchemaNode.Primitive prim = primitiveAt(schema, col);
-        Object oracleValue = oracleValueAt(expected, col);
-        if (oracleValue == null) {
-            assertThat(actual.isNull(col))
-                    .as("%s @ row %d col %s should be null", fixtureName, row, col)
-                    .isTrue();
-            return;
-        }
-        assertThat(actual.isNull(col))
-                .as("%s @ row %d col %s should not be null", fixtureName, row, col)
-                .isFalse();
-        switch (prim.kind()) {
-            case BOOLEAN ->
-                assertThat(actual.getBoolean(col))
-                        .as("%s @ row %d col %s", fixtureName, row, col)
-                        .isEqualTo((boolean) oracleValue);
-            case INT32 ->
-                assertThat(actual.getInt(col))
-                        .as("%s @ row %d col %s", fixtureName, row, col)
-                        .isEqualTo(((Number) oracleValue).intValue());
-            case INT64 ->
-                assertThat(actual.getLong(col))
-                        .as("%s @ row %d col %s", fixtureName, row, col)
-                        .isEqualTo(((Number) oracleValue).longValue());
-            case FLOAT ->
-                assertFloatsMatch(fixtureName, row, col, actual.getFloat(col), ((Number) oracleValue).floatValue());
-            case DOUBLE ->
-                assertDoublesMatch(fixtureName, row, col, actual.getDouble(col), ((Number) oracleValue).doubleValue());
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY ->
-                assertThat(actual.getBinary(col))
-                        .as("%s @ row %d col %s", fixtureName, row, col)
-                        .isEqualTo(oracleBytes(oracleValue));
-            // INT96 has no typed accessor in parquetry (it's the deprecated 96-bit timestamp) and is therefore
-            // reached through the untyped get() method, which returns a read-only ByteBuffer matching what
-            // parquet-avro returns once READ_INT96_AS_FIXED is enabled on the oracle.
-            case INT96 ->
-                assertThat(oracleBytes(actual.get(col)))
-                        .as("%s @ row %d col %s", fixtureName, row, col)
-                        .isEqualTo(oracleBytes(oracleValue));
-        }
-    }
-
-    // FLOAT and DOUBLE need NaN-aware comparison: AssertJ's primitive isEqualTo uses ==, which is always false
-    // for NaN; the parquet-testing corpus has fixtures (e.g. single_nan, nan_in_stats) that legitimately store NaN.
-    private static void assertFloatsMatch(String fixtureName, int row, ColumnPath col, float actual, float expected) {
-        if (Float.isNaN(expected)) {
-            assertThat(Float.isNaN(actual))
-                    .as("%s @ row %d col %s: expected NaN", fixtureName, row, col)
-                    .isTrue();
-        } else {
-            assertThat(actual).as("%s @ row %d col %s", fixtureName, row, col).isEqualTo(expected);
-        }
-    }
-
-    private static void assertDoublesMatch(
-            String fixtureName, int row, ColumnPath col, double actual, double expected) {
-        if (Double.isNaN(expected)) {
-            assertThat(Double.isNaN(actual))
-                    .as("%s @ row %d col %s: expected NaN", fixtureName, row, col)
-                    .isTrue();
-        } else {
-            assertThat(actual).as("%s @ row %d col %s", fixtureName, row, col).isEqualTo(expected);
-        }
-    }
-
-    private static SchemaNode.Primitive primitiveAt(ParquetSchema schema, ColumnPath col) {
-        Optional<SchemaNode> field = schema.find(col);
-        return field.filter(SchemaNode.Primitive.class::isInstance)
-                .map(SchemaNode.Primitive.class::cast)
-                .orElseThrow(() -> new IllegalStateException(
-                        "Expected primitive leaf at " + col + " (corpus IT should not see nested columns)"));
-    }
-
-    // Walks a multi-part ColumnPath through nested GenericRecords. Returns null if any ancestor is null.
-    private static Object oracleValueAt(GenericRecord row, ColumnPath col) {
-        Object current = row;
-        for (String part : col.parts()) {
-            if (!(current instanceof GenericRecord g)) {
-                return null;
-            }
-            current = g.get(part);
-            if (current == null) {
-                return null;
-            }
-        }
-        return current;
-    }
-
-    private static byte[] oracleBytes(Object value) {
-        return switch (value) {
-            case Utf8 u -> u.getBytes();
-            case ByteBuffer bb -> bytesOf(bb);
-            case MemorySegment seg -> seg.toArray(JAVA_BYTE);
-            case byte[] b -> b;
-            case GenericData.Fixed f -> f.bytes();
-            case CharSequence cs -> cs.toString().getBytes(StandardCharsets.UTF_8);
-            default ->
-                throw new IllegalStateException(
-                        "Unhandled oracle value type: " + value.getClass().getName());
-        };
-    }
-
-    private static byte[] bytesOf(ByteBuffer bb) {
-        ByteBuffer dup = bb.duplicate();
-        byte[] bytes = new byte[dup.remaining()];
-        dup.get(bytes);
-        return bytes;
-    }
-
     // --- pipeline drivers ---
 
-    private static List<ParquetRecord> readAllViaParquetry(Path fixture, CountingSegmentPool pool) {
+    private static List<Map<String, Object>> readCanonicalViaParquetry(Path fixture, CountingSegmentPool pool) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixture)) {
             ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetSchema schema = dataset.schema();
             ReadOptions options = ReadOptions.builder().segmentPool(pool).build();
             try (Stream<ParquetRecord> records = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
-                return records.toList();
+                return records.map(parquetRecord -> CanonicalRow.fromParquetry(parquetRecord, schema))
+                        .toList();
             }
         }
     }
@@ -328,23 +189,5 @@ class ParquetTestingCorpusIT {
             }
         }
         return total[0];
-    }
-
-    private static List<GenericRecord> readAllViaParquetAvro(Path fixture) throws IOException {
-        Configuration conf = new Configuration(false);
-        // Avro deprecates INT96, so AvroParquetReader refuses fixtures whose schema has an INT96 column unless this
-        // flag is set; surfacing INT96 as a fixed-length byte array matches what parquetry returns through get().
-        conf.setBoolean(AvroReadSupport.READ_INT96_AS_FIXED, true);
-        List<GenericRecord> rows = new ArrayList<>();
-        try (ParquetReader<GenericData.Record> reader = AvroParquetReader.<GenericData.Record>builder(
-                        new LocalInputFile(fixture))
-                .withConf(conf)
-                .build()) {
-            GenericData.Record parquetRecord;
-            while ((parquetRecord = reader.read()) != null) {
-                rows.add(parquetRecord);
-            }
-        }
-        return rows;
     }
 }
