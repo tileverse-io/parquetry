@@ -24,8 +24,8 @@ import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.stream.Stream;
 
-import org.apache.parquet.format.converter.ParquetMetadataConverter;
-import org.apache.parquet.hadoop.metadata.ParquetMetadata;
+import org.apache.parquet.format.RowGroup;
+import org.apache.parquet.format.Util;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -42,9 +42,9 @@ import io.tileverse.parquetry.io.ByteRangeSource;
  * <p>The test verifies row counts, row group counts, per-group row count, total byte size, and column count - i.e. all
  * metadata that is structurally load-bearing for page reading.
  *
- * <p>The oracle reads the raw footer bytes directly (mirroring the Parquet file layout), then decodes them via
- * {@link ParquetMetadataConverter}. This avoids loading Hadoop's filesystem and mapreduce classes, which are
- * incompatible with Java 24+.
+ * <p>The oracle reads the raw footer bytes directly (mirroring the Parquet file layout), then decodes them with
+ * parquet-java's {@code parquet-format-structures} Thrift reader. This avoids loading Hadoop's filesystem and mapreduce
+ * classes, which are incompatible with Java 24+.
  */
 class FooterConformanceTest {
 
@@ -58,28 +58,26 @@ class FooterConformanceTest {
         }
 
         FileMetaData parquetryFooter = readParquetryFooter(file);
-        ParquetMetadata oracle = readOracleFooter(file);
+        org.apache.parquet.format.FileMetaData oracle = readOracleFooter(file);
 
-        long oracleRowCount =
-                oracle.getBlocks().stream().mapToLong(b -> b.getRowCount()).sum();
-        assertThat(parquetryFooter.numRows()).as("total row count for %s", name).isEqualTo(oracleRowCount);
+        assertThat(parquetryFooter.numRows()).as("total row count for %s", name).isEqualTo(oracle.getNum_rows());
 
         assertThat(parquetryFooter.rowGroups())
                 .as("row group count for %s", name)
-                .hasSize(oracle.getBlocks().size());
+                .hasSize(oracle.getRow_groupsSize());
 
         for (int i = 0; i < parquetryFooter.rowGroups().size(); i++) {
             var pBlock = parquetryFooter.rowGroups().get(i);
-            var oBlock = oracle.getBlocks().get(i);
+            RowGroup oBlock = oracle.getRow_groups().get(i);
             assertThat(pBlock.numRows())
                     .as("row group[%d] row count for %s", i, name)
-                    .isEqualTo(oBlock.getRowCount());
+                    .isEqualTo(oBlock.getNum_rows());
             assertThat(pBlock.totalByteSize())
                     .as("row group[%d] totalByteSize for %s", i, name)
-                    .isEqualTo(oBlock.getTotalByteSize());
+                    .isEqualTo(oBlock.getTotal_byte_size());
             assertThat(pBlock.columns())
                     .as("row group[%d] column count for %s", i, name)
-                    .hasSize(oBlock.getColumns().size());
+                    .hasSize(oBlock.getColumnsSize());
         }
     }
 
@@ -90,16 +88,17 @@ class FooterConformanceTest {
     }
 
     /**
-     * Reads the oracle {@link ParquetMetadata} by extracting the raw footer bytes from the Parquet file layout and
-     * decoding them via {@link ParquetMetadataConverter}.
+     * Reads the oracle footer by extracting the raw Thrift-encoded footer bytes from the Parquet file layout and
+     * decoding them with parquet-java's {@code parquet-format-structures} reader.
      *
-     * <p>Avoids Hadoop filesystem and mapreduce class loading, which is incompatible with Java 24+ (Subject.getSubject
-     * removed, FileInputFormat classloading issues).
+     * <p>Uses {@link Util#readFileMetaData(java.io.InputStream)} rather than {@code ParquetMetadataConverter}: it is
+     * Hadoop-free (no filesystem, no mapreduce class loading, both incompatible with Java 24+) and applies a positive
+     * default Thrift message-size limit, which parquet-java 1.17's no-options converter path does not.
      */
-    private ParquetMetadata readOracleFooter(Path file) throws Exception {
+    private org.apache.parquet.format.FileMetaData readOracleFooter(Path file) throws Exception {
         byte[] footerBytes = extractRawFooterBytes(file);
         ByteArrayInputStream stream = new ByteArrayInputStream(footerBytes);
-        return new ParquetMetadataConverter().readParquetMetadata(stream, ParquetMetadataConverter.NO_FILTER);
+        return Util.readFileMetaData(stream);
     }
 
     /**
