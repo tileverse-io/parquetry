@@ -89,6 +89,38 @@ smoke). CI splits the two phases into `make build-benchmarks` and
 | `JtsSpatialFilterBenchmark` | End-to-end cost of three query strategies using the real JTS geometry engine and a non-axis-aligned diamond query polygon whose bbox over-selects. `BBOX_ONLY` reads all bbox-candidates (coarse superset); `IN_CORE_GATE` pushes `JtsGeometryFilter.intersects` into the read pipeline and avoids materialising the other columns of rows the exact JTS test rejects; `APP_SIDE_FILTER` reads with `BBOX_ONLY` (full materialization of all candidates) and then re-applies the exact JTS test in the stream. `IN_CORE_GATE` and `APP_SIDE_FILTER` return the same exact rows; `BBOX_ONLY` returns a superset. The `layout` axis shows row-group pruning effectiveness; `selectivity` (HIGH small diamond, LOW large diamond) scales how many rows the exact test rejects; `geometrySize` scales per-row WKB decode cost; `output` (`WKB`/`JTS`) selects whether the geometry output column is kept as raw bytes or parsed into a JTS `Geometry` (the JTS-minus-WKB gap on `IN_CORE_GATE` is the surviving rows' output parse, bounding what reusing the gate's decoded geometry as output would save). | `mode` (`BBOX_ONLY`/`IN_CORE_GATE`/`APP_SIDE_FILTER`), `layout` (`CLUSTERED`/`SHUFFLED`), `selectivity` (`HIGH`/`LOW`), `geometrySize` (`SMALL`/`LARGE`), `output` (`WKB`/`JTS`) |
 | `CountBenchmark` | The optimized `ParquetReader.count(predicate)` path against the `read(predicate).count()` baseline over a sorted `id INT64 + value DOUBLE` table of several row groups. The two `@Benchmark` methods (`optimizedCount`, `readCountBaseline`) form the optimized-vs-baseline axis; the `path` parameter selects how the count resolves. `ALWAYS_TRUE` sums per-row-group counts from metadata; `MATCHED` (`id >= 0`, sorted non-null) proves every row group matches and again counts from metadata; `ELIMINATED` (`id` above every group's max) prunes all row groups; `RESIDUAL` (`id > rows / 2`) forces record-level evaluation on the undecided middle groups; `IS_NOT_NULL` settles from the metadata null counts. COMPARISON, SPATIAL, IS_NULL, and PARTIAL paths are deferred: they need non-sorted, nullable, or geometry fixtures that do not exist yet, and this class does not cover them. | `path` (`ALWAYS_TRUE`/`MATCHED`/`ELIMINATED`/`RESIDUAL`/`IS_NOT_NULL`) |
 
+## Probes
+
+Probes are not JMH benchmarks. They are sysprop-controlled JUnit tests that read
+a file you supply and print a comparison table; they are skipped under a normal
+build and never run in CI. They live under `src/test` (with their heavier read
+dependencies at test scope) rather than in the shaded JMH jar.
+
+| Class | Measures | Inputs |
+|-------|----------|--------|
+| `ReadComparisonProbe` | Read-path comparison of parquetry, parquet-java 1.17.0 (via `LocalInputFile`, no Hadoop filesystem), and DuckDB (in-process JDBC with `enable_profiling`) over one local file under four filter scenarios: `NO_FILTER`, `ATTRIBUTE` (`subtype='commercial'`), `SPATIAL` (exact geometry intersect with a diamond whose bbox over-selects), and `ATTRIBUTE_AND_SPATIAL`. Each engine materialises the full projection (nested columns included); parquetry uses `JtsGeometryFilter` (bbox prune + exact gate, the GeoTools path), parquet-java pushes a numeric `bbox` prefilter then re-checks JTS app-side, DuckDB uses `ST_Intersects`. Row counts must agree across engines (correctness check). Prints rows, end-to-end wall, JVM heap allocated during the run, JVM peak heap, and DuckDB's self-reported scan latency and peak buffer memory. | `-Dparquetry.probe.file` (required), `.subtype`, `.cx`/`.cy`/`.r` (query diamond), `.warmup`/`.measure` |
+
+Run it (give the test forks enough heap; a full unfiltered nested scan is memory-hungry):
+
+```bash
+./mvnw -pl :parquetry-benchmarks -am test -Dtest=ReadComparisonProbe \
+  -Dparquetry.probe.file=/path/to/buildings.parquet \
+  -DextraArgLine="-Xmx4g"
+```
+
+Caveats baked into the table: `wall` is the consumer-side cost -- every row
+materialised and every requested column read out (`ResultSet.getObject` per
+column for DuckDB, exactly what a row-oriented consumer such as a GeoTools
+datastore over DuckDB would pay). DuckDB's `duckScan` is its internal engine
+scan from the profiler, shown for context only: a JDBC consumer still pays the
+full `wall` to pull rows out, and cannot obtain results at the `duckScan` rate.
+`alloc` is heap allocated by all threads during the run (`-Xmx`-independent
+churn); for DuckDB it is the JDBC consumer's per-row boxing, while `duckMem` is
+DuckDB's native buffer pool. Peak heap reflects occupancy with uncollected
+garbage at a high `-Xmx`, and the decisive memory signal is whether a scenario
+completes at a pod-sized heap (`-Xmx2g`); the DuckDB spatial scenarios need its
+`spatial` extension and skip cleanly when it cannot be installed.
+
 ## Adding or changing a benchmark
 
 Keep this README's benchmark table in step with the code; a benchmark that is
