@@ -81,7 +81,12 @@
       <dependency>
         <groupId>org.apache.parquet</groupId>
         <artifactId>parquet-avro</artifactId>
-        <version>${parquet-avro.version}</version>
+        <version>${parquet-java.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.parquet</groupId>
+        <artifactId>parquet-hadoop</artifactId>
+        <version>${parquet-java.version}</version>
       </dependency>
       <dependency>
         <groupId>org.apache.arrow</groupId>
