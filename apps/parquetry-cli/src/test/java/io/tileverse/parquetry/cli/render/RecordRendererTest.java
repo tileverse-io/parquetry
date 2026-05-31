@@ -20,7 +20,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -36,9 +35,12 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.record.ParquetRecord;
-import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.testkit.TestCorpus;
 import io.tileverse.parquetry.tileverse.ByteRangeSources;
+
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 class RecordRendererTest {
 
@@ -64,14 +66,25 @@ class RecordRendererTest {
         assertThat(lines[1]).startsWith("1,Rosario,1300000,false");
     }
 
+    @Test
+    void jsonlRendersNestedMapAsObject(@TempDir Path dir) throws Exception {
+        Path file = TestCorpus.extractFile("parquet-testing/data/nested_maps.snappy.parquet", dir);
+        String out = renderAll(file, dir, RecordRenderer.Mode.JSONL);
+        String firstLine = out.strip().split("\n")[0];
+        JsonNode node = JsonMapper.shared().readTree(firstLine);
+        assertThat(node.get("a").isObject())
+                .as("string-keyed map renders as a JSON object")
+                .isTrue();
+        assertThat(firstLine).doesNotContain("a.key_value");
+    }
+
     private static String renderAll(Path file, Path dir, RecordRenderer.Mode mode) throws Exception {
         try (Storage storage = StorageFactory.open(dir.toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
             ParquetDataset dataset = ParquetDataset.open(ByteRangeSources.from(reader));
             ParquetSchema schema = dataset.schema();
-            List<ColumnPath> leaves = schema.leafColumns();
             StringWriter sw = new StringWriter();
-            RecordRenderer renderer = new RecordRenderer(mode, schema, leaves, new PrintWriter(sw));
+            RecordRenderer renderer = new RecordRenderer(mode, schema, new PrintWriter(sw));
             try (Stream<ParquetRecord> rows =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 renderer.begin();

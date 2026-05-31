@@ -15,12 +15,14 @@
  */
 package io.tileverse.parquetry.cli.render;
 
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
  * Turns {@code --columns} names into a {@link Projection} and the ordered list of kept leaf paths, validated against
@@ -38,8 +40,9 @@ public final class Projections {
      *
      * <p>An empty {@code columns} list means "keep all": returns {@link Projection#ALL} and the full depth-first leaf
      * list from the schema. Otherwise each name is split on {@code '.'} to form a {@link ColumnPath}, validated against
-     * the schema, and collected in the order the caller supplied. Duplicates are silently de-duplicated while
-     * preserving first-occurrence order.
+     * the schema, and collected in the order the caller supplied. A name that addresses a group expands to every leaf
+     * beneath it, because both {@link Projection} and {@link ParquetSchema#project(java.util.Set)} operate on leaf
+     * paths. Duplicates are silently de-duplicated while preserving first-occurrence order.
      *
      * @param columns dotted column names from {@code --columns}; empty means all
      * @param schema the file schema to validate against
@@ -52,11 +55,38 @@ public final class Projections {
         LinkedHashSet<ColumnPath> kept = new LinkedHashSet<>();
         for (String name : columns) {
             ColumnPath path = ColumnPath.of(name.split("\\."));
-            if (schema.find(path).isEmpty()) {
-                throw new IllegalArgumentException("unknown column '" + name + "'");
-            }
-            kept.add(path);
+            SchemaNode node =
+                    schema.find(path).orElseThrow(() -> new IllegalArgumentException("unknown column '" + name + "'"));
+            kept.addAll(leavesUnder(path, node));
         }
         return new Resolved(Projection.of(kept), List.copyOf(kept));
+    }
+
+    private static List<ColumnPath> leavesUnder(ColumnPath path, SchemaNode node) {
+        if (node instanceof SchemaNode.Primitive) {
+            return List.of(path);
+        }
+        List<ColumnPath> leaves = new ArrayList<>();
+        collectLeaves((SchemaNode.Group) node, segmentsOf(path), leaves);
+        return leaves;
+    }
+
+    private static List<String> segmentsOf(ColumnPath path) {
+        List<String> segments = new ArrayList<>(path.numParts());
+        for (int index = 0; index < path.numParts(); index++) {
+            segments.add(path.part(index));
+        }
+        return segments;
+    }
+
+    private static void collectLeaves(SchemaNode.Group group, List<String> prefix, List<ColumnPath> out) {
+        for (SchemaNode child : group.children()) {
+            List<String> childPath = new ArrayList<>(prefix);
+            childPath.add(child.name());
+            switch (child) {
+                case SchemaNode.Primitive _ -> out.add(ColumnPath.of(childPath));
+                case SchemaNode.Group nested -> collectLeaves(nested, childPath, out);
+            }
+        }
     }
 }

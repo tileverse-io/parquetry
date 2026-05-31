@@ -15,22 +15,26 @@
  */
 package io.tileverse.parquetry.cli.render;
 
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
+
 import java.io.PrintWriter;
+import java.lang.foreign.MemorySegment;
+import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
 
 import io.tileverse.parquetry.format.LogicalType;
+import io.tileverse.parquetry.jackson.JsonRecordEncoder;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaNode;
 
-import tools.jackson.core.JsonGenerator;
-
 /**
- * Streams projected records to stdout in one of four formats. Stateful: call {@link #begin}, then {@link #row} per
- * record, then {@link #end}.
+ * Streams decoded rows to a {@link PrintWriter} in one of the text output modes. jsonl emits true nested JSON via
+ * {@link JsonRecordEncoder}; csv/tsv/text emit one column per projected top-level field, with a compact-JSON cell for
+ * any struct/list/map/Variant field.
  */
 public final class RecordRenderer {
 
@@ -43,28 +47,28 @@ public final class RecordRenderer {
 
     private final Mode mode;
     private final ParquetSchema schema;
-    private final List<ColumnPath> leaves;
+    private final List<SchemaNode> fields;
     private final PrintWriter out;
 
-    public RecordRenderer(Mode mode, ParquetSchema schema, List<ColumnPath> leaves, PrintWriter out) {
+    public RecordRenderer(Mode mode, ParquetSchema schema, PrintWriter out) {
         this.mode = mode;
         this.schema = schema;
-        this.leaves = leaves;
+        this.fields = schema.root().children();
         this.out = out;
     }
 
     public void begin() {
         if (mode == Mode.CSV || mode == Mode.TSV) {
             out.println(String.join(
-                    delimiter(), leaves.stream().map(ColumnPath::dot).toList()));
+                    delimiter(), fields.stream().map(SchemaNode::name).toList()));
         }
     }
 
-    public void row(ParquetRecord record) {
+    public void row(ParquetRecord row) {
         switch (mode) {
-            case JSONL -> jsonRow(record);
-            case CSV, TSV -> delimitedRow(record);
-            case TEXT -> textRow(record);
+            case JSONL -> jsonRow(row);
+            case CSV, TSV -> delimitedRow(row);
+            case TEXT -> textRow(row);
         }
     }
 
@@ -72,84 +76,67 @@ public final class RecordRenderer {
         out.flush();
     }
 
-    private void jsonRow(ParquetRecord record) {
-        String line = Json.write(gen -> {
-            gen.writeStartObject();
-            for (ColumnPath leaf : leaves) {
-                writeJsonValue(gen, record, leaf);
-            }
-            gen.writeEndObject();
-        });
+    private void jsonRow(ParquetRecord row) {
+        String line = Json.write(generator -> JsonRecordEncoder.writeObject(generator, schema, row));
         out.println(line);
     }
 
-    private void writeJsonValue(JsonGenerator gen, ParquetRecord record, ColumnPath leaf) {
-        if (record.isNull(leaf)) {
-            return;
-        }
-        SchemaNode.Primitive prim = primitive(leaf);
-        String name = leaf.dot();
-        switch (prim.kind()) {
-            case BOOLEAN -> gen.writeBooleanProperty(name, record.getBoolean(leaf));
-            case INT32 -> gen.writeNumberProperty(name, record.getInt(leaf));
-            case INT64 -> gen.writeNumberProperty(name, record.getLong(leaf));
-            case FLOAT -> gen.writeNumberProperty(name, record.getFloat(leaf));
-            case DOUBLE -> gen.writeNumberProperty(name, record.getDouble(leaf));
-            default -> gen.writeStringProperty(name, binaryAsString(prim, record, leaf));
-        }
-    }
-
-    private void delimitedRow(ParquetRecord record) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < leaves.size(); i++) {
-            if (i > 0) {
-                sb.append(delimiter());
+    private void delimitedRow(ParquetRecord row) {
+        StringBuilder line = new StringBuilder();
+        for (int index = 0; index < fields.size(); index++) {
+            if (index > 0) {
+                line.append(delimiter());
             }
-            sb.append(scalar(record, leaves.get(i)));
+            line.append(cell(row, fields.get(index)));
         }
-        out.println(sb);
+        out.println(line);
     }
 
-    private void textRow(ParquetRecord record) {
-        StringBuilder sb = new StringBuilder();
-        for (ColumnPath leaf : leaves) {
-            sb.append(leaf.dot()).append('=').append(scalar(record, leaf)).append('\t');
+    private void textRow(ParquetRecord row) {
+        StringBuilder line = new StringBuilder();
+        for (SchemaNode field : fields) {
+            line.append(field.name()).append('=').append(cell(row, field)).append('\t');
         }
-        out.println(sb.toString().stripTrailing());
+        out.println(line.toString().stripTrailing());
     }
 
-    private String scalar(ParquetRecord record, ColumnPath leaf) {
-        if (record.isNull(leaf)) {
+    private String cell(ParquetRecord row, SchemaNode field) {
+        ColumnPath path = ColumnPath.of(field.name());
+        Object value = row.get(path);
+        if (value == null) {
             return "";
         }
-        SchemaNode.Primitive prim = primitive(leaf);
-        return switch (prim.kind()) {
-            case BOOLEAN -> Boolean.toString(record.getBoolean(leaf));
-            case INT32 -> Integer.toString(record.getInt(leaf));
-            case INT64 -> Long.toString(record.getLong(leaf));
-            case FLOAT -> Float.toString(record.getFloat(leaf));
-            case DOUBLE -> Double.toString(record.getDouble(leaf));
-            default -> binaryAsString(prim, record, leaf);
+        if (field instanceof SchemaNode.Primitive primitive) {
+            return scalar(primitive, value);
+        }
+        return Json.write(generator -> JsonRecordEncoder.writeValue(generator, field, value));
+    }
+
+    private String scalar(SchemaNode.Primitive primitive, Object value) {
+        return switch (primitive.kind()) {
+            case BOOLEAN -> Boolean.toString((Boolean) value);
+            case INT32 -> Integer.toString((Integer) value);
+            case INT64 -> Long.toString((Long) value);
+            case FLOAT -> Float.toString((Float) value);
+            case DOUBLE -> Double.toString((Double) value);
+            default -> binaryAsString(primitive, (MemorySegment) value);
         };
     }
 
-    private String binaryAsString(SchemaNode.Primitive prim, ParquetRecord record, ColumnPath leaf) {
-        if (isStringLike(prim.logicalType())) {
-            return record.getString(leaf);
+    private String binaryAsString(SchemaNode.Primitive primitive, MemorySegment value) {
+        byte[] raw = value.toArray(JAVA_BYTE);
+        if (isStringLike(primitive.logicalType())) {
+            return new String(raw, StandardCharsets.UTF_8);
         }
-        return Base64.getEncoder().encodeToString(record.getBinary(leaf));
+        return Base64.getEncoder().encodeToString(raw);
     }
 
     private static boolean isStringLike(Optional<LogicalType> logicalType) {
         return logicalType
-                .map(lt -> lt instanceof LogicalType.StringType
-                        || lt instanceof LogicalType.EnumType
-                        || lt instanceof LogicalType.JsonType)
+                .map(type -> type instanceof LogicalType.StringType
+                        || type instanceof LogicalType.EnumType
+                        || type instanceof LogicalType.JsonType)
                 .orElse(false);
-    }
-
-    private SchemaNode.Primitive primitive(ColumnPath leaf) {
-        return (SchemaNode.Primitive) schema.find(leaf).orElseThrow();
     }
 
     private String delimiter() {

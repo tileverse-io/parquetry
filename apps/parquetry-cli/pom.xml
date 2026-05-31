@@ -66,6 +66,11 @@
       <version>${project.version}</version>
     </dependency>
     <dependency>
+      <groupId>io.tileverse.parquetry</groupId>
+      <artifactId>parquetry-jackson</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
       <groupId>info.picocli</groupId>
       <artifactId>picocli</artifactId>
     </dependency>
@@ -87,6 +92,13 @@
     <dependency>
       <groupId>org.assertj</groupId>
       <artifactId>assertj-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!-- Bundled corpus + classpath extractor; reactor-only. -->
+    <dependency>
+      <groupId>io.tileverse.parquetry</groupId>
+      <artifactId>parquetry-testkit</artifactId>
+      <version>${project.version}</version>
       <scope>test</scope>
     </dependency>
     <!-- Canonical Arrow reader, used only to verify our hand-rolled output in tests. -->

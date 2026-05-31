@@ -79,7 +79,8 @@ public class CatCmd implements Callable<Integer> {
             }
             RecordRenderer.Mode mode = resolveMode();
             PrintWriter out = spec.commandLine().getOut();
-            RecordRenderer renderer = new RecordRenderer(mode, schema, projection.keptLeaves(), out);
+            ParquetSchema projectedSchema = projectedSchema(schema, projection);
+            RecordRenderer renderer = new RecordRenderer(mode, projectedSchema, out);
             renderer.begin();
             emitRows(dataset, predicate, projection, limit, renderer);
             renderer.end();

@@ -29,8 +29,11 @@ import org.junit.jupiter.api.io.TempDir;
 import io.tileverse.parquetry.cli.CliExitCode;
 import io.tileverse.parquetry.cli.Par;
 import io.tileverse.parquetry.cli.support.Fixtures;
+import io.tileverse.parquetry.testkit.TestCorpus;
 
 import picocli.CommandLine;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 class CatCmdTest {
 
@@ -88,6 +91,32 @@ class CatCmdTest {
             return false;
         }
         return bytes[0] == (byte) 0xFF && bytes[1] == (byte) 0xFF && bytes[2] == (byte) 0xFF && bytes[3] == (byte) 0xFF;
+    }
+
+    @Test
+    void catEmitsNestedJsonl(@TempDir Path dir) throws Exception {
+        Path file = TestCorpus.extractFile("parquet-testing/data/nested_maps.snappy.parquet", dir);
+        StringWriter out = new StringWriter();
+        CommandLine cmd = Par.newCommandLine();
+        cmd.setOut(new PrintWriter(out));
+        int code = cmd.execute("cat", file.toString());
+        assertThat(code).isZero();
+        String firstLine = out.toString().strip().split("\n")[0];
+        JsonNode node = JsonMapper.shared().readTree(firstLine);
+        assertThat(node.get("a").isObject()).isTrue();
+    }
+
+    @Test
+    void catEmitsNestedFieldAsCompactCsvCell(@TempDir Path dir) throws Exception {
+        Path file = TestCorpus.extractFile("parquet-testing/data/nested_maps.snappy.parquet", dir);
+        StringWriter out = new StringWriter();
+        CommandLine cmd = Par.newCommandLine();
+        cmd.setOut(new PrintWriter(out));
+        int code = cmd.execute("cat", file.toString(), "-o", "csv", "--columns", "a");
+        assertThat(code).isZero();
+        String[] lines = out.toString().strip().split("\n");
+        assertThat(lines[0]).isEqualTo("a");
+        assertThat(lines[1]).startsWith("{");
     }
 
     @Test
