@@ -17,7 +17,6 @@ package io.tileverse.parquetry.data.read;
 
 import java.util.HashMap;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -56,7 +55,7 @@ public final class RowGroupChunks {
     private final RowGroup rowGroup;
     private final ParquetSchema fileSchema;
     private final IndexSectionLoader loader;
-    private final Map<List<String>, ColumnChunk> chunkByPath;
+    private final Map<ColumnPath, ColumnChunk> chunkByPath;
 
     private final Map<ColumnPath, Optional<OffsetIndex>> offsetIndexMemo = new HashMap<>();
     private final Map<ColumnPath, Optional<ColumnIndex>> columnIndexMemo = new HashMap<>();
@@ -86,7 +85,7 @@ public final class RowGroupChunks {
 
     /** The column chunk for {@code path}, or empty when the row group has no such column. */
     public Optional<ColumnChunk> chunk(ColumnPath path) {
-        return Optional.ofNullable(chunkByPath.get(path.parts()));
+        return Optional.ofNullable(chunkByPath.get(path));
     }
 
     public Optional<ColumnMetaData> meta(ColumnPath path) {
@@ -144,7 +143,7 @@ public final class RowGroupChunks {
     }
 
     private Optional<OffsetIndex> loadOffsetIndex(ColumnPath path) {
-        ColumnChunk chunk = chunkByPath.get(path.parts());
+        ColumnChunk chunk = chunkByPath.get(path);
         if (chunk == null
                 || chunk.offsetIndexOffset().isEmpty()
                 || chunk.offsetIndexLength().isEmpty()) {
@@ -160,7 +159,7 @@ public final class RowGroupChunks {
     }
 
     private Optional<ColumnIndex> loadColumnIndex(ColumnPath path) {
-        ColumnChunk chunk = chunkByPath.get(path.parts());
+        ColumnChunk chunk = chunkByPath.get(path);
         if (chunk == null
                 || chunk.columnIndexOffset().isEmpty()
                 || chunk.columnIndexLength().isEmpty()) {
@@ -210,10 +209,10 @@ public final class RowGroupChunks {
         }
     }
 
-    private static Map<List<String>, ColumnChunk> indexChunksByPath(RowGroup rowGroup) {
-        Map<List<String>, ColumnChunk> index = new LinkedHashMap<>();
+    private static Map<ColumnPath, ColumnChunk> indexChunksByPath(RowGroup rowGroup) {
+        Map<ColumnPath, ColumnChunk> index = new LinkedHashMap<>();
         for (ColumnChunk chunk : rowGroup.columns()) {
-            chunk.metaData().ifPresent(meta -> index.put(meta.pathInSchema(), chunk));
+            chunk.metaData().ifPresent(meta -> index.put(ColumnPath.of(meta.pathInSchema()), chunk));
         }
         return index;
     }

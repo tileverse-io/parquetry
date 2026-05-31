@@ -132,7 +132,7 @@ final class DremelAssembler {
         if (node instanceof SchemaNode.Group group) {
             return assembleGroup(group, nodePath, parentRepLevel, numSlots);
         }
-        return leafVectors.get(new ColumnPath(nodePath));
+        return leafVectors.get(ColumnPath.of(nodePath));
     }
 
     /**
@@ -215,7 +215,7 @@ final class DremelAssembler {
 
         private ColumnPath leafPathOrFirstDescendant(SchemaNode field, List<String> path) {
             if (field instanceof SchemaNode.Primitive) {
-                ColumnPath p = new ColumnPath(path);
+                ColumnPath p = ColumnPath.of(path);
                 return leafVectors.containsKey(p) ? p : null;
             }
             return findFirstDescendantLeafPath((SchemaNode.Group) field, path);
@@ -406,11 +406,11 @@ final class DremelAssembler {
     // --- level / path helpers ---
 
     private int repLevel(List<String> groupPath) {
-        return schema.maxLevels(new ColumnPath(groupPath)).maxRepetitionLevel();
+        return schema.maxLevels(ColumnPath.of(groupPath)).maxRepetitionLevel();
     }
 
     private int maxDef(List<String> groupPath) {
-        return schema.maxLevels(new ColumnPath(groupPath)).maxDefinitionLevel();
+        return schema.maxLevels(ColumnPath.of(groupPath)).maxDefinitionLevel();
     }
 
     /**
@@ -420,7 +420,7 @@ final class DremelAssembler {
      * level reports whether at least one element is present.
      */
     private List<String> repeatedChildPath(List<String> listOrMapGroupPath) {
-        SchemaNode node = schema.find(new ColumnPath(listOrMapGroupPath)).orElseThrow();
+        SchemaNode node = schema.find(ColumnPath.of(listOrMapGroupPath)).orElseThrow();
         SchemaNode repeated = ((SchemaNode.Group) node).children().get(0);
         return concat(listOrMapGroupPath, repeated.name());
     }
@@ -429,7 +429,7 @@ final class DremelAssembler {
         for (SchemaNode child : group.children()) {
             List<String> childPath = concat(groupPath, child.name());
             if (child instanceof SchemaNode.Primitive) {
-                ColumnPath leafPath = new ColumnPath(childPath);
+                ColumnPath leafPath = ColumnPath.of(childPath);
                 if (leafVectors.containsKey(leafPath)) {
                     return leafPath;
                 }
@@ -459,7 +459,7 @@ final class DremelAssembler {
      */
     private ColumnPath rowAlignedLeafUnder(SchemaNode child, List<String> childPath) {
         if (child instanceof SchemaNode.Primitive) {
-            ColumnPath leafPath = new ColumnPath(childPath);
+            ColumnPath leafPath = ColumnPath.of(childPath);
             return leafVectors.containsKey(leafPath) ? leafPath : null;
         }
         SchemaNode.Group childGroup = (SchemaNode.Group) child;

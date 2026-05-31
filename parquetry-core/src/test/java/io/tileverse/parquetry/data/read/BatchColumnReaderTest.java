@@ -15,6 +15,7 @@
  */
 package io.tileverse.parquetry.data.read;
 
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -33,6 +34,7 @@ import org.apache.parquet.format.DataPageHeader;
 import org.apache.parquet.format.PageHeader;
 import org.apache.parquet.format.PageType;
 import org.apache.parquet.format.Util;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.batch.ColumnVector;
@@ -59,6 +61,121 @@ import io.tileverse.parquetry.schema.SchemaNode;
 class BatchColumnReaderTest {
 
     private static final ColumnPath PATH = ColumnPath.of("val");
+
+    /**
+     * Pins the contract of {@link BatchColumnReader#sliceBitSet}: extract bits {@code [start, start + n)} from the
+     * source and shift them down so source bit {@code start} maps to slice bit 0, with no bit set at or beyond index
+     * {@code n}.
+     */
+    @Nested
+    class SliceBitSet {
+
+        @Test
+        void copiesAllBitsWhenFullyValid() {
+            BitSet source = new BitSet(100);
+            source.set(0, 100);
+
+            BitSet slice = BatchColumnReader.sliceBitSet(source, 0, 100);
+
+            assertThat(slice.cardinality()).isEqualTo(100);
+            assertThat(slice.nextClearBit(0)).isEqualTo(100);
+        }
+
+        @Test
+        void shiftsByStartOffset() {
+            BitSet source = new BitSet(100);
+            source.set(10, 100);
+
+            BitSet slice = BatchColumnReader.sliceBitSet(source, 8, 50);
+
+            assertThat(slice.get(0)).isFalse();
+            assertThat(slice.get(1)).isFalse();
+            assertThat(slice.get(2)).isTrue();
+            assertThat(slice.cardinality()).isEqualTo(48);
+        }
+
+        @Test
+        void excludesBitsBeyondTheWindow() {
+            BitSet source = new BitSet(200);
+            source.set(0, 200);
+
+            BitSet slice = BatchColumnReader.sliceBitSet(source, 50, 64);
+
+            assertThat(slice.cardinality()).isEqualTo(64);
+            assertThat(slice.length()).isEqualTo(64);
+        }
+
+        @Test
+        void preservesSparsePattern() {
+            BitSet source = new BitSet(128);
+            source.set(65);
+            source.set(70);
+            source.set(127);
+
+            BitSet slice = BatchColumnReader.sliceBitSet(source, 64, 64);
+
+            assertThat(slice.get(1)).isTrue();
+            assertThat(slice.get(6)).isTrue();
+            assertThat(slice.get(63)).isTrue();
+            assertThat(slice.cardinality()).isEqualTo(3);
+        }
+
+        @Test
+        void emptyWhenNoBitsInWindow() {
+            BitSet source = new BitSet(100);
+            source.set(0, 10);
+
+            BitSet slice = BatchColumnReader.sliceBitSet(source, 20, 30);
+
+            assertThat(slice.isEmpty()).isTrue();
+        }
+    }
+
+    /**
+     * Pins the contract of {@link BatchColumnReader#copySegmentsToHeap}: every non-null entry is replaced by a
+     * read-only heap segment holding the same bytes, while null entries stay null. The values must survive a source
+     * Arena being closed; the result must not alias the source memory.
+     */
+    @Nested
+    class CopySegmentsToHeap {
+
+        @Test
+        void replacesEntriesWithReadOnlyCopiesPreservingBytes() {
+            byte[] first = {1, 2, 3};
+            byte[] second = {9, 8, 7, 6};
+            MemorySegment[] segments = {
+                MemorySegment.ofArray(first), null, MemorySegment.ofArray(second),
+            };
+
+            BatchColumnReader.copySegmentsToHeap(segments);
+
+            assertThat(segments[1]).isNull();
+            assertThat(segments[0].isReadOnly()).isTrue();
+            assertThat(segments[2].isReadOnly()).isTrue();
+            assertThat(segments[0].toArray(JAVA_BYTE)).containsExactly(1, 2, 3);
+            assertThat(segments[2].toArray(JAVA_BYTE)).containsExactly(9, 8, 7, 6);
+        }
+
+        @Test
+        void survivesSourceMutation() {
+            byte[] source = {5, 6, 7};
+            MemorySegment[] segments = {MemorySegment.ofArray(source)};
+
+            BatchColumnReader.copySegmentsToHeap(segments);
+            source[0] = 99;
+
+            assertThat(segments[0].toArray(JAVA_BYTE)).containsExactly(5, 6, 7);
+        }
+
+        @Test
+        void handlesAllNull() {
+            MemorySegment[] segments = {null, null};
+
+            BatchColumnReader.copySegmentsToHeap(segments);
+
+            assertThat(segments).containsExactly(null, null);
+        }
+    }
 
     // --- test 1: single page, no nulls, INT32 ---
 
@@ -285,6 +402,14 @@ class BatchColumnReaderTest {
         }
     }
 
+    private static List<String> pathSegments(ColumnPath path) {
+        String[] segments = new String[path.numParts()];
+        for (int i = 0; i < segments.length; i++) {
+            segments[i] = path.part(i);
+        }
+        return List.of(segments);
+    }
+
     /**
      * Wraps a byte array in a read-only heap {@link MemorySegment} and builds a {@link FetchedColumnChunk} around it.
      */
@@ -294,7 +419,7 @@ class BatchColumnReaderTest {
         ColumnMetaData meta = ColumnMetaData.builder()
                 .type(PhysicalType.INT32)
                 .encodings(java.util.List.of(Encoding.PLAIN))
-                .pathInSchema(path.parts())
+                .pathInSchema(pathSegments(path))
                 .codec(CompressionCodec.UNCOMPRESSED)
                 .numValues(numValues)
                 .totalUncompressedSize((long) data.length)
@@ -328,7 +453,7 @@ class BatchColumnReaderTest {
         ColumnMetaData meta = ColumnMetaData.builder()
                 .type(PhysicalType.INT32)
                 .encodings(List.of(Encoding.RLE_DICTIONARY))
-                .pathInSchema(PATH.parts())
+                .pathInSchema(pathSegments(PATH))
                 .codec(CompressionCodec.UNCOMPRESSED)
                 .numValues((long) indices.length)
                 .totalUncompressedSize((long) chunkBuffer.length)

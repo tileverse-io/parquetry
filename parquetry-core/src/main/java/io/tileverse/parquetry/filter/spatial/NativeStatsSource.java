@@ -107,7 +107,7 @@ final class NativeStatsSource implements SpatialBoundsSource {
         if (bbox.isEmpty()) {
             return;
         }
-        ColumnPath path = new ColumnPath(m.pathInSchema());
+        ColumnPath path = ColumnPath.of(m.pathInSchema());
         List<Optional<BoundingBox>> list = perColumn.computeIfAbsent(path, _ -> emptySlots(rowGroupCount));
         list.set(rowGroupIndex, bbox);
     }

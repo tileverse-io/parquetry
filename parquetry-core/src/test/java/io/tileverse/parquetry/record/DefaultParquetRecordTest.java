@@ -65,13 +65,13 @@ class DefaultParquetRecordTest {
                 "root",
                 Repetition.REQUIRED,
                 List.of(
-                        leaf(BOOL_COL.parts().get(0), PrimitiveKind.BOOLEAN),
-                        leaf(INT_COL.parts().get(0), PrimitiveKind.INT32),
-                        leaf(LONG_COL.parts().get(0), PrimitiveKind.INT64),
-                        leaf(FLOAT_COL.parts().get(0), PrimitiveKind.FLOAT),
-                        leaf(DOUBLE_COL.parts().get(0), PrimitiveKind.DOUBLE),
-                        leaf(BINARY_COL.parts().get(0), PrimitiveKind.BYTE_ARRAY),
-                        leaf(NULL_COL.parts().get(0), PrimitiveKind.INT32)),
+                        leaf(BOOL_COL.name(), PrimitiveKind.BOOLEAN),
+                        leaf(INT_COL.name(), PrimitiveKind.INT32),
+                        leaf(LONG_COL.name(), PrimitiveKind.INT64),
+                        leaf(FLOAT_COL.name(), PrimitiveKind.FLOAT),
+                        leaf(DOUBLE_COL.name(), PrimitiveKind.DOUBLE),
+                        leaf(BINARY_COL.name(), PrimitiveKind.BYTE_ARRAY),
+                        leaf(NULL_COL.name(), PrimitiveKind.INT32)),
                 Optional.empty(),
                 -1));
 

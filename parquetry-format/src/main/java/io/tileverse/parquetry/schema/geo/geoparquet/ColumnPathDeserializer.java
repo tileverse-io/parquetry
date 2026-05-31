@@ -43,6 +43,6 @@ final class ColumnPathDeserializer extends StdDeserializer<ColumnPath> {
         for (JsonNode node : root) {
             parts.add(node.asString());
         }
-        return new ColumnPath(parts);
+        return ColumnPath.of(parts);
     }
 }

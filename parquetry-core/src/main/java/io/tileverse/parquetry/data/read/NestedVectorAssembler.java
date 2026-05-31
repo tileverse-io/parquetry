@@ -182,7 +182,7 @@ public final class NestedVectorAssembler {
         if (vector == null) {
             return;
         }
-        result.put(new ColumnPath(groupPath), vector);
+        result.put(ColumnPath.of(groupPath), vector);
         switch (classify(group)) {
             case LIST, MAP -> markDescendantLeavesHidden(group, groupPath, leafVectors, hiddenLeaves);
             case STRUCT, VARIANT -> hideRepeatedDescendantLeaves(group, groupPath, leafVectors, hiddenLeaves);
@@ -201,7 +201,7 @@ public final class NestedVectorAssembler {
         for (SchemaNode child : group.children()) {
             List<String> childPath = concatPath(groupPath, child.name());
             if (child instanceof SchemaNode.Primitive) {
-                ColumnPath leafPath = new ColumnPath(childPath);
+                ColumnPath leafPath = ColumnPath.of(childPath);
                 if (leafVectors.containsKey(leafPath)) {
                     hiddenLeaves.add(leafPath);
                 }

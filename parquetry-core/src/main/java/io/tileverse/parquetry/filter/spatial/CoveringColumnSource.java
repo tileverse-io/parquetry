@@ -178,7 +178,7 @@ final class CoveringColumnSource implements SpatialBoundsSource {
     private static Map<ColumnPath, ColumnMetaData> indexColumnsInRowGroup(RowGroup rg) {
         Map<ColumnPath, ColumnMetaData> byPath = new LinkedHashMap<>();
         for (ColumnChunk chunk : rg.columns()) {
-            chunk.metaData().ifPresent(m -> byPath.put(new ColumnPath(m.pathInSchema()), m));
+            chunk.metaData().ifPresent(m -> byPath.put(ColumnPath.of(m.pathInSchema()), m));
         }
         return byPath;
     }

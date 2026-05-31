@@ -54,7 +54,7 @@ final class BatchFixture {
     }
 
     private static ParquetSchema singleColumnSchema(ColumnPath col) {
-        String leafName = col.parts().get(col.parts().size() - 1);
+        String leafName = col.name();
         SchemaNode.Primitive leaf = new SchemaNode.Primitive(
                 leafName, Repetition.OPTIONAL, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
         return new ParquetSchema(

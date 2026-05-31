@@ -590,8 +590,11 @@ final class BatchColumnReader {
      * Relocates every non-null entry in {@code segments} off the page Arena, letting the caller close it without
      * invalidating them. The page's binary values are packed into a single heap buffer and each entry becomes a
      * read-only slice of it - one allocation per page instead of one per value.
+     *
+     * <p>The buffer is sealed read-only once after the copy, then sliced; a slice of a read-only segment is itself
+     * read-only, which removes the per-value {@code asReadOnly()} wrapping.
      */
-    private static void copySegmentsToHeap(MemorySegment[] segments) {
+    static void copySegmentsToHeap(MemorySegment[] segments) {
         long total = 0;
         for (MemorySegment src : segments) {
             if (src != null) {
@@ -600,14 +603,23 @@ final class BatchColumnReader {
         }
         MemorySegment backing = MemorySegment.ofArray(new byte[Math.toIntExact(total)]);
         long offset = 0;
+        for (MemorySegment src : segments) {
+            if (src == null) {
+                continue;
+            }
+            long length = src.byteSize();
+            MemorySegment.copy(src, 0L, backing, offset, length);
+            offset += length;
+        }
+        MemorySegment sealed = backing.asReadOnly();
+        offset = 0;
         for (int i = 0; i < segments.length; i++) {
             MemorySegment src = segments[i];
             if (src == null) {
                 continue;
             }
             long length = src.byteSize();
-            MemorySegment.copy(src, 0L, backing, offset, length);
-            segments[i] = backing.asSlice(offset, length).asReadOnly();
+            segments[i] = sealed.asSlice(offset, length);
             offset += length;
         }
     }
@@ -983,12 +995,8 @@ final class BatchColumnReader {
         };
     }
 
-    private static BitSet sliceBitSet(BitSet source, int start, int n) {
-        BitSet slice = new BitSet(n);
-        for (int i = source.nextSetBit(start); i >= 0 && i < start + n; i = source.nextSetBit(i + 1)) {
-            slice.set(i - start);
-        }
-        return slice;
+    static BitSet sliceBitSet(BitSet source, int start, int n) {
+        return source.get(start, start + n);
     }
 
     // ---- close ----
