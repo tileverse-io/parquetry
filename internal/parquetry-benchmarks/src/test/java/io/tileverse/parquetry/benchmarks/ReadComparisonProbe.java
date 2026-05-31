@@ -164,6 +164,18 @@ public final class ReadComparisonProbe {
         return Arrays.stream(selected.split(",")).map(String::trim).anyMatch(engine::equals);
     }
 
+    /**
+     * Honors {@code parquetry.probe.scenarios} (comma-separated names) to run a subset, e.g. just the selective filters
+     * under a tight heap where the full scan would not fit.
+     */
+    private boolean scenarioEnabled(Scenario scenario) {
+        String selected = System.getProperty("parquetry.probe.scenarios");
+        if (selected == null || selected.isBlank()) {
+            return true;
+        }
+        return Arrays.stream(selected.split(",")).map(String::trim).anyMatch(scenario.name()::equals);
+    }
+
     private void configure(Config config) {
         this.file = config.file();
         this.subtypeValue = config.subtypeValue();
@@ -181,6 +193,9 @@ public final class ReadComparisonProbe {
 
         List<Row> rows = new ArrayList<>();
         for (Scenario scenario : Scenario.values()) {
+            if (!scenarioEnabled(scenario)) {
+                continue;
+            }
             if (engineEnabled("parquetry")) {
                 rows.add(measure("parquetry", scenario, () -> readParquetry(scenario)));
             }
