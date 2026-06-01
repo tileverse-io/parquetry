@@ -18,6 +18,7 @@ package io.tileverse.parquetry.data.read;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BooleanSupplier;
 
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 
@@ -39,6 +40,10 @@ final class StreamingBatchSource implements BatchSource {
     private final RowGroupBatchDriver driver;
     private final DecodeBudget budget;
     private final AtomicBoolean exempt;
+
+    // Created once and reused: the producer reserves on every batch, and a fresh capturing lambda per reservation was a
+    // top allocation site under a full scan.
+    private final BooleanSupplier giveUp = this::shouldGiveUp;
 
     // Producer-thread-confined: refined to the last decoded batch's actual heap bytes each iteration.
     private long estimatedBatchBytes = INITIAL_BATCH_ESTIMATE_BYTES;
@@ -102,8 +107,13 @@ final class StreamingBatchSource implements BatchSource {
             return 0L;
         }
         long estimate = estimatedBatchBytes;
-        boolean reserved = budget.reserve(estimate, () -> exempt.get() || handoff.isCancelled());
+        boolean reserved = budget.reserve(estimate, giveUp);
         return reserved ? estimate : 0L;
+    }
+
+    /** Abort condition for a budget reservation: the row group became exempt, or the consumer cancelled the handoff. */
+    private boolean shouldGiveUp() {
+        return exempt.get() || handoff.isCancelled();
     }
 
     /**
@@ -119,7 +129,7 @@ final class StreamingBatchSource implements BatchSource {
         }
         if (actual > reserved) {
             long deficit = actual - reserved;
-            boolean more = budget.reserve(deficit, () -> exempt.get() || handoff.isCancelled());
+            boolean more = budget.reserve(deficit, giveUp);
             return more ? actual : reserved;
         }
         if (actual < reserved) {

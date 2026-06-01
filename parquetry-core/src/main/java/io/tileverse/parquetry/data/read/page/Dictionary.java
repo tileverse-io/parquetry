@@ -60,6 +60,10 @@ public sealed interface Dictionary<T>
         public Boolean get(int index) {
             return values.get(index);
         }
+
+        public boolean getBoolean(int index) {
+            return values.get(index);
+        }
     }
 
     record IntDict(IntBuffer values) implements Dictionary<Integer> {
@@ -76,6 +80,10 @@ public sealed interface Dictionary<T>
 
         @Override
         public Integer get(int index) {
+            return values.get(index);
+        }
+
+        public int getInt(int index) {
             return values.get(index);
         }
     }
@@ -96,6 +104,10 @@ public sealed interface Dictionary<T>
         public Long get(int index) {
             return values.get(index);
         }
+
+        public long getLong(int index) {
+            return values.get(index);
+        }
     }
 
     record FloatDict(FloatBuffer values) implements Dictionary<Float> {
@@ -114,6 +126,10 @@ public sealed interface Dictionary<T>
         public Float get(int index) {
             return values.get(index);
         }
+
+        public float getFloat(int index) {
+            return values.get(index);
+        }
     }
 
     record DoubleDict(DoubleBuffer values) implements Dictionary<Double> {
@@ -130,6 +146,10 @@ public sealed interface Dictionary<T>
 
         @Override
         public Double get(int index) {
+            return values.get(index);
+        }
+
+        public double getDouble(int index) {
             return values.get(index);
         }
     }
