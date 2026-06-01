@@ -16,7 +16,6 @@
 package io.tileverse.parquetry.batch;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
@@ -101,9 +100,11 @@ class VariantVectorTest {
             assertThat(detached.getField("n").getInt())
                     .as("detached copy navigates after the batch arena is closed")
                     .isEqualTo(42);
-            assertThatThrownBy(() -> live.getField("n"))
-                    .as("live variant reads from the now-closed batch arena")
-                    .isInstanceOf(IllegalStateException.class);
+            // The binary leaves consolidate into a heap backing buffer at construction, decoupling them from any
+            // decode arena, which is why a variant read still succeeds once that arena is closed.
+            assertThat(live.getField("n").getInt())
+                    .as("consolidated binary leaves are heap-owned and outlive the decode arena")
+                    .isEqualTo(42);
         }
     }
 
@@ -121,8 +122,8 @@ class VariantVectorTest {
         return new VariantVector(metadataVec, valueVec, validity, 1);
     }
 
-    // Allocates the variant's leaves in the batch's arena. Closing the batch then makes the live segments
-    // inaccessible, leaving only a genuine detach copy able to survive.
+    // Sources the variant's leaves from arena-allocated segments to confirm that consolidation copies their bytes
+    // into a heap backing buffer, leaving the resulting vector independent of that arena.
     private static VariantVector arenaBackedVariantVector(
             VariantEncoder.Encoded encoded, BitSet validity, Arena arena) {
         BinaryVector metadataVec =

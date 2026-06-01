@@ -59,6 +59,15 @@ public final class RleDictionaryPageDecoder<T> implements PageDecoder<T> {
         indexDecoder.skip(n);
     }
 
+    /**
+     * Decodes {@code n} raw dictionary indexes into {@code dst} starting at {@code offset}, without dictionary lookup.
+     */
+    public void decodeIndices(int n, int[] dst, int offset) {
+        for (int i = 0; i < n; i++) {
+            dst[offset + i] = indexDecoder.nextValue();
+        }
+    }
+
     @Override
     public void decodeInts(int n, int[] dst, int offset) {
         for (int i = 0; i < n; i++) {

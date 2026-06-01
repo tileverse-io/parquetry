@@ -79,7 +79,7 @@ class RoundTripTypesTest {
     private static MemorySegment[] segments(byte[]... rows) {
         MemorySegment[] result = new MemorySegment[rows.length];
         for (int row = 0; row < rows.length; row++) {
-            result[row] = rows[row] == null ? MemorySegment.NULL : MemorySegment.ofArray(rows[row]);
+            result[row] = rows[row] == null ? null : MemorySegment.ofArray(rows[row]);
         }
         return result;
     }

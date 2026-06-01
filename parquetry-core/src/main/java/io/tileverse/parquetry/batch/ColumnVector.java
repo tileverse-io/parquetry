@@ -19,7 +19,7 @@ import java.util.BitSet;
 
 /**
  * One column's worth of values for a {@link ParquetRecordBatch}. Vectors are always-materialized: the typed payload
- * (primitive arrays for primitives, {@code MemorySegment[]} for binary kinds) is set at construction. Per-page decode
+ * (primitive arrays for primitives, a shared backing buffer for binary kinds) is set at construction. Per-page decode
  * happens once in {@code BatchColumnReader.loadNextPage}; each {@code readBatch} call slices the decoded page state
  * into a fresh vector.
  *

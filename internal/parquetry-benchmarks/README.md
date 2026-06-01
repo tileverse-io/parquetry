@@ -99,6 +99,7 @@ dependencies at test scope) rather than in the shaded JMH jar.
 | Class | Measures | Inputs |
 |-------|----------|--------|
 | `ReadComparisonProbe` | Read-path comparison of parquetry, parquet-java 1.17.0 (via `LocalInputFile`, no Hadoop filesystem), and DuckDB (in-process JDBC with `enable_profiling`) over one local file under four filter scenarios: `NO_FILTER`, `ATTRIBUTE` (`subtype='commercial'`), `SPATIAL` (exact geometry intersect with a diamond whose bbox over-selects), and `ATTRIBUTE_AND_SPATIAL`. Each engine materialises the full projection (nested columns included); parquetry uses `JtsGeometryFilter` (bbox prune + exact gate, the GeoTools path), parquet-java pushes a numeric `bbox` prefilter then re-checks JTS app-side, DuckDB uses `ST_Intersects`. Row counts must agree across engines (correctness check). Prints rows, end-to-end wall, JVM heap allocated during the run, JVM peak heap, and DuckDB's self-reported scan latency and peak buffer memory. | `-Dparquetry.probe.file` (required), `.subtype`, `.cx`/`.cy`/`.r` (query diamond), `.warmup`/`.measure`, `.engines` (comma-separated subset), `.scenarios` (comma-separated subset, e.g. to skip the memory-hungry `NO_FILTER` under a tight heap) |
+| `ColumnarReadComparisonProbe` | Columnar sibling of `ReadComparisonProbe`: compares only the columnar APIs to isolate raw decode throughput and memory, full scan only. parquetry reads `ParquetDataset.readBatches` (vectorized typed `ColumnVector`s); parquet-java reads each leaf `ColumnDescriptor` through `ColumnReadStoreImpl` + `ColumnReader` (column-major, no `Group`/record assembly, with a no-op `DummyRecordConverter`). Both touch every leaf value, recursing nested vectors down to their primitive and binary leaves. DuckDB is skipped (no columnar JDBC equivalent). Row counts must agree across engines. Prints rows, wall, JVM heap allocated during the run, JVM peak heap. | `-Dparquetry.probe.file` (required), `.warmup`/`.measure`, `.engines` (`parquetry,parquet-java`; `duckdb` ignored) |
 
 Run it (give the test forks enough heap; a full unfiltered nested scan is memory-hungry):
 
@@ -120,6 +121,16 @@ DuckDB's native buffer pool. Peak heap reflects occupancy with uncollected
 garbage at a high `-Xmx`, and the decisive memory signal is whether a scenario
 completes at a pod-sized heap (`-Xmx2g`); the DuckDB spatial scenarios need its
 `spatial` extension and skip cleanly when it cannot be installed.
+
+`ColumnarReadComparisonProbe` runs the same way (it shares the `parquetry.probe.*`
+properties), full scan only:
+
+```bash
+./mvnw -pl :parquetry-benchmarks -am test -Dtest=ColumnarReadComparisonProbe \
+  -Dparquetry.probe.file=/path/to/buildings.parquet \
+  -Dparquetry.probe.engines=parquetry,parquet-java \
+  -DextraArgLine="-Xmx4g"
+```
 
 ## Adding or changing a benchmark
 

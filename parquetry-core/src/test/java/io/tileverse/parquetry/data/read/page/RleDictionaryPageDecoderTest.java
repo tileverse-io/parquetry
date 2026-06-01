@@ -133,6 +133,28 @@ class RleDictionaryPageDecoderTest {
         assertThat(dst).containsExactly(10, 20, 30, 10, 20, 30);
     }
 
+    /** Verify that decodeIndices returns the raw dictionary indexes, not the dereferenced values. */
+    @Test
+    void decodeIndicesReturnsRawIndexesNotValues() {
+        Dictionary.IntDict dict = new Dictionary.IntDict(intBuf(10, 20, 30));
+
+        // byte 0: 0x24, byte 1: 0x09  (indexes [0, 1, 2, 0, 1, 2])
+        ByteBuffer page = ByteBuffer.wrap(new byte[] {
+            2, // bit width
+            3, // RLE header: bit-packed, 1 group of 8
+            (byte) 0x24, // byte 0 of packed indexes
+            (byte) 0x09 // byte 1 of packed indexes
+        });
+
+        RleDictionaryPageDecoder<Integer> decoder = new RleDictionaryPageDecoder<>(dict);
+        decoder.load(MemorySegment.ofBuffer(page), 6);
+
+        int[] dst = new int[6];
+        decoder.decodeIndices(6, dst, 0);
+
+        assertThat(dst).containsExactly(0, 1, 2, 0, 1, 2);
+    }
+
     private static IntBuffer intBuf(int... values) {
         return IntBuffer.wrap(values);
     }

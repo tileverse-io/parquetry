@@ -15,6 +15,7 @@
  */
 package io.tileverse.parquetry.batch;
 
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -44,7 +45,8 @@ class MapVectorTest {
         assertThat(vec.rowOffsetEnd(0)).isEqualTo(2);
         assertThat(vec.rowOffsetStart(1)).isEqualTo(2);
         assertThat(vec.rowOffsetEnd(1)).isEqualTo(2);
-        assertThat(((BinaryVector) vec.keys()).get(0)).isSameAs(keyBytes[0]);
+        MemorySegment firstKey = ((BinaryVector) vec.keys()).get(0);
+        assertThat(firstKey.toArray(JAVA_BYTE)).containsExactly('a');
     }
 
     @Test
