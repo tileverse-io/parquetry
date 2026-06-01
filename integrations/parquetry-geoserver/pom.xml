@@ -11,11 +11,22 @@
   <name>Parquetry :: Integrations :: GeoServer</name>
   <description>GeoServer plugin exposing the read-only GeoParquet DataStore as a vector store type.</description>
 
+  <licenses>
+    <license>
+      <name>GNU General Public License, version 2 or later</name>
+      <url>https://www.gnu.org/licenses/old-licenses/gpl-2.0.html</url>
+      <distribution>repo</distribution>
+      <comments>SPDX-License-Identifier: GPL-2.0-or-later</comments>
+    </license>
+  </licenses>
+
   <properties>
     <gs.version>3.0-RC</gs.version>
     <gt.version>35-RC</gt.version>
     <!-- Jetty used only by the test-scope embedded launcher (Start); matches GeoServer 3.0-RC's Jetty. -->
     <jetty.version>12.1.8</jetty.version>
+    <!-- The two Wicket widgets are verbatim GPL-2.0 code copied from GeoServer; we do not lint vendored sources. -->
+    <sonar.exclusions>src/main/java/io/tileverse/parquetry/geoserver/web/RadioGroupParamPanel.java,src/main/java/io/tileverse/parquetry/geoserver/web/Select2ChoiceParamPanel.java</sonar.exclusions>
   </properties>
 
   <dependencyManagement>
@@ -62,6 +73,11 @@
       <artifactId>gs-web-core</artifactId>
       <version>${gs.version}</version>
       <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.wicketstuff</groupId>
+      <artifactId>wicketstuff-select2</artifactId>
+      <version>10.7.0</version>
     </dependency>
 
     <dependency>
@@ -132,6 +148,63 @@
       <url>https://repo.osgeo.org/repository/snapshot/</url>
     </repository>
   </repositories>
+
+  <build>
+    <resources>
+      <resource>
+        <targetPath>META-INF</targetPath>
+        <directory>${project.basedir}</directory>
+        <includes>
+          <include>LICENSE</include>
+          <include>NOTICE</include>
+        </includes>
+      </resource>
+      <resource>
+        <directory>src/main/resources</directory>
+      </resource>
+    </resources>
+    <plugins>
+      <plugin>
+        <groupId>com.diffplug.spotless</groupId>
+        <artifactId>spotless-maven-plugin</artifactId>
+        <configuration combine.self="override">
+          <java>
+            <palantirJavaFormat>
+              <version>2.90.0</version>
+              <formatJavadoc>true</formatJavadoc>
+            </palantirJavaFormat>
+            <licenseHeader>
+              <content>/*
+ * Copyright (c) 2026 Multivers.io
+ *
+ * This program is free software; you can redistribute it and/or modify it under
+ * the terms of the GNU General Public License as published by the Free Software
+ * Foundation; either version 2 of the License, or (at your option) any later
+ * version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+ * FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+ */</content>
+            </licenseHeader>
+            <removeUnusedImports/>
+            <importOrder>
+              <order>java,javax,org,com,io.tileverse.storage,io.tileverse.parquetry,</order>
+            </importOrder>
+            <excludes>
+              <exclude>src/main/java/io/tileverse/parquetry/geoserver/web/RadioGroupParamPanel.java</exclude>
+              <exclude>src/main/java/io/tileverse/parquetry/geoserver/web/Select2ChoiceParamPanel.java</exclude>
+            </excludes>
+          </java>
+          <pom>
+            <sortPom>
+              <expandEmptyElements>false</expandEmptyElements>
+            </sortPom>
+          </pom>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
 
   <profiles>
     <profile>

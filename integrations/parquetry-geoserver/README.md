@@ -4,15 +4,24 @@ A thin GeoServer plugin that registers the read-only GeoParquet `DataStore`
 (from `parquetry-geotools`) as a vector store type in the GeoServer UI and REST
 configuration.
 
-The module ships only Spring wiring; the data-access code lives in
-`parquetry-geotools`, and GeoServer auto-discovers its `DataStoreFactorySpi`
-from that jar. The `applicationContext.xml` here declares:
+The data-access code lives in `parquetry-geotools`, and GeoServer auto-discovers
+its `DataStoreFactorySpi` from that jar. This module adds the Spring wiring and a
+custom store-edit panel. The `applicationContext.xml` here declares:
 
-- a `DataStorePanelInfo` binding `GeoParquetDataStoreFactory` to GeoServer's
-  generic store edit panel (the connection form is generated from the factory's
-  `Param[]`: `uri`, `namespace`, `fid`), and
+- a `DataStorePanelInfo` binding `GeoParquetDataStoreFactory` to the custom
+  `GeoParquetDataStoreEditPanel` (see below), and
 - a `ModuleStatusImpl` so the plugin appears under About > Server Status >
   Modules.
+
+## Cloud storage panel
+
+`GeoParquetDataStoreEditPanel` is a provider-driven store-edit panel. The factory
+declares the tileverse `storage.*` connection parameters (S3, Azure, GCS, HTTP
+auth plus a memory-cache toggle); the panel renders a `storage.provider` selector
+as a segmented toggle and reveals only the selected provider's fields, hiding the
+rest. The AWS region is a searchable Select2 dropdown, and secret fields (keys,
+tokens, passwords) are masked. The provider is auto-detected from the URI when
+left unset. Local files need no provider selection.
 
 ## Runtime requirement
 
@@ -72,3 +81,12 @@ VM arguments:
 GeoServer comes up at <http://localhost:8080/geoserver> (override the port with
 `-Djetty.port=...`); type `stop` in the console to shut down. Then add a
 "GeoParquet" store as in step 3 above.
+
+## License
+
+This module is licensed under the **GNU General Public License, version 2 or
+later** (`GPL-2.0-or-later`), because it is a GeoServer plugin and reuses
+GeoServer's GPL-2.0-or-later Wicket components. The full license text is in the
+`LICENSE` file and the third-party attribution is in `NOTICE`, both in this
+directory and bundled into the module jar under `META-INF`. The rest of
+parquetry is licensed under the Apache License, Version 2.0.
