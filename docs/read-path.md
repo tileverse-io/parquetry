@@ -54,7 +54,7 @@ flowchart LR
         pre["coalesce + prefetch byte ranges<br/>RowGroupFetcher / RowGroupPrefetcher"]
     end
     subgraph decode["4. Decode (per read, CPU)"]
-        dec["decode row groups in parallel<br/>ParallelDecodeCoordinator"]
+        dec["stream page-batches in file order<br/>ParallelDecodeCoordinator"]
     end
     subgraph mat["5. Materialize"]
         out["batches -> rows<br/>BatchPipeline + Materializer"]
@@ -69,7 +69,7 @@ flowchart LR
 | Open | decode the footer once, build the schema | footer bytes | `ParquetReader`, `FileMetaData`, `ParquetSchema` |
 | Filter | drop row groups and pages that cannot match, using metadata only | footer + index sections | `FilterPipeline`, `ExplainPlan`, `RowGroupSurvivor`, `RowMask` |
 | Fetch | turn the surviving column chunks into a few coalesced range reads, prefetched | column-chunk bytes | `RowGroupFetcher`, `RowGroupPrefetcher`, `FetchedColumnChunk` |
-| Decode | decompress + decode pages into columnar batches, in parallel, in file order | (in memory) | `ParallelDecodeCoordinator`, `BatchRowGroupReader`, `BatchColumnReader` |
+| Decode | decompress + decode pages into columnar batches, streamed in file order, decoding upcoming row groups ahead within a heap budget | (in memory) | `ParallelDecodeCoordinator`, `DecodeBudget`, `BatchRowGroupReader`, `BatchColumnReader` |
 | Materialize | flatten batches into the caller's record shape, apply the row filter | (in memory) | `BatchPipeline`, `Materializer`, `ParquetRecord` |
 
 Two cross-cutting helpers thread through filter, fetch, and decode:
@@ -78,7 +78,8 @@ Two cross-cutting helpers thread through filter, fetch, and decode:
   memoizes its index sections (offset index, column index, bloom filter); each is
   read at most once no matter how many stages ask.
 - **`ReadOptions`** - the tunables: which filter tiers run, the buffer pool, the
-  fetch budget, prefetch depth, decode parallelism, late materialization.
+  off-heap fetch budget, the on-heap decode budget, prefetch depth, decode
+  parallelism, late materialization.
 
 ---
 
@@ -208,7 +209,7 @@ flowchart TD
     end
 
     subgraph decsub["Decode (CPU, shared pool)"]
-        coord["ParallelDecodeCoordinator<br/>decode N row groups ahead, reorder to file order"]
+        coord["ParallelDecodeCoordinator<br/>stream page-batches in file order;<br/>decode ahead within DecodeBudget"]
         rg["BatchRowGroupReader<br/>one BatchColumnReader per projected leaf"]
         col["BatchColumnReader<br/>page-by-page via PageCursor"]
         page["PageDecoder<br/>PLAIN / RLE_DICTIONARY / DELTA / ..."]
@@ -224,18 +225,37 @@ What each piece guarantees:
 - **`RowGroupFetcher`** issues one read per coalesced range, not one per column,
   and hands out zero-copy `FetchedColumnChunk` views into pooled buffers.
 - **`RowGroupPrefetcher`** fetches upcoming row groups ahead of consumption on a
-  per-read virtual-thread pool, bounded by a process-wide `FetchBudget` so a read
-  cannot blow the heap.
+  per-read virtual-thread pool, bounded by a process-wide `FetchBudget` that caps
+  the off-heap bytes a read may speculatively prefetch.
 - **`ParallelDecodeCoordinator`** decodes several row groups concurrently on a
-  shared CPU pool but returns them in file order; the stream stays ordered.
+  shared CPU pool but returns them in file order; the stream stays ordered. A
+  decode worker streams one page-batch at a time into a small bounded hand-off
+  (currently two batches) and parks under backpressure when the consumer is slow.
+  A single row group is never fully resident; only the in-flight window of its
+  batches is.
 - **`BatchColumnReader`** is page-at-a-time. Each page is decompressed into a
   short-lived confined `Arena`, decoded into heap arrays, and the arena is closed
   before the next page. With a `RowMask`, `PageCursor` skips non-surviving pages
   outright, and surviving pages are compacted to the surviving rows.
 
-**Memory contract.** Pooled buffers for fetch, per-page arenas for decode, and
-row-group-at-a-time materialization keep peak memory bounded - the design target
-is a GeoServer pod with 1-2 GB for parquetry, not "load the file."
+**Memory contract.** Two budgets bound a read. `FetchBudget` caps the *off-heap*
+bytes a read may speculatively prefetch for column-chunk fetches; off-heap memory
+counts against a container's limit and is invisible to `-Xmx`. `DecodeBudget`
+(`ReadOptions.decodeBudget`) caps the *on-heap* bytes a read may hold in
+speculatively decoded batches, inside `-Xmx`. Only speculative decode-ahead is
+controlled by `DecodeBudget`: the in-order current row group (the one the consumer
+is reading) never reserves budget, which is what prevents deadlock. When the
+consumer advances to a row group that was decoding ahead, the coordinator promotes
+it, and it stops reserving. `maxDecodeAheadPerRead` is a concurrency cap on decode
+worker slots, not a memory bound; a speculative row group decodes ahead only when a
+slot is free and budget headroom exists, and under slot contention a read degrades
+to inline (synchronous, still memory-bounded) decode on the consumer thread.
+
+Peak process memory is approximately `maxHeap (-Xmx, includes the on-heap
+DecodeBudget) + FetchBudget (off-heap) + retained segment pool (off-heap) + JVM
+native baseline`. The design target is a GeoServer pod with 1-2 GB for parquetry,
+not "load the file." Sizing both budgets against a container limit is covered in
+[Memory and tuning](memory-and-tuning.md).
 
 ---
 
@@ -316,7 +336,7 @@ classDiagram
     ParquetReader --> FilterPipeline : runs
     FilterPipeline --> ExplainPlan : produces
     ParquetReader --> RowGroupSurvivor : survivorsFor
-    RowGroupSurvivor --> RowGroupChunks : carries
+    RowGroupSurvivor --> RowGroupChunks : holds
     ParquetReader --> RowMask : page-skip mask
     ParquetReader --> ParallelDecodeCoordinator : per read
     ParallelDecodeCoordinator --> RowGroupPrefetcher : pulls fetched bytes
@@ -342,7 +362,7 @@ classDiagram
 | Per-call chunk view | `data/read/RowGroupChunks.java` |
 | Survivors + page-skip mask | `data/read/RowGroupSurvivor.java`, `data/read/RowMask.java`, `data/read/page/PageSelection.java` |
 | Fetch | `data/read/RowGroupFetcher.java`, `data/read/RowGroupPrefetcher.java`, `data/read/CoalescingFetchPlanner.java` |
-| Parallel decode | `data/read/ParallelDecodeCoordinator.java`, `data/read/BatchRowGroupReader.java` |
+| Parallel decode + budgets | `data/read/ParallelDecodeCoordinator.java`, `data/read/StreamingBatchSource.java`, `data/read/DecodeBudget.java`, `data/read/BatchRowGroupReader.java` |
 | Column / page decode | `data/read/BatchColumnReader.java`, `data/read/page/PageCursor.java`, `data/read/page/PageDecoder.java` |
 | Late materialization | `data/read/LateMaterializingRowGroupReader.java`, `data/read/Selection.java` |
 | Materialize | `data/read/BatchPipeline.java`, `materializer/Materializer.java` |

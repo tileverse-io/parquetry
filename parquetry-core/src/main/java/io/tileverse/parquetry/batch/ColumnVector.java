@@ -46,6 +46,17 @@ public sealed interface ColumnVector
     BitSet validity();
 
     /**
+     * Approximate heap bytes this vector's backing holds. Used as a soft budget signal, not an exact allocator: leaf
+     * vectors count their typed backing plus validity; nested vectors add their children's bytes.
+     */
+    long approximateHeapBytes();
+
+    /** Approximate heap cost of a validity bitmap covering {@code rowCount} rows. */
+    static long validityBytes(int rowCount) {
+        return (long) rowCount / Byte.SIZE + 1;
+    }
+
+    /**
      * Returns the value at {@code row} as a boxed object, or {@code null} when the validity bit is clear. A leaf vector
      * returns a boxed primitive, or a read-only {@link java.lang.foreign.MemorySegment} for the binary and INT96 kinds;
      * a null row yields {@code null} even where a primitive backing array parks a default such as {@code 0}.

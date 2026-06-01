@@ -38,4 +38,13 @@ public record StructVector(
     public StructVector {
         children = Map.copyOf(children);
     }
+
+    @Override
+    public long approximateHeapBytes() {
+        long total = ColumnVector.validityBytes(size);
+        for (ColumnVector child : children.values()) {
+            total += child.approximateHeapBytes();
+        }
+        return total;
+    }
 }

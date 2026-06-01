@@ -19,6 +19,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.function.Consumer;
 
+import io.tileverse.parquetry.data.read.DecodeBudget;
 import io.tileverse.parquetry.data.read.DecodeExecutor;
 import io.tileverse.parquetry.data.read.DecryptionKeyRetriever;
 import io.tileverse.parquetry.data.read.FetchBudget;
@@ -37,6 +38,14 @@ import lombok.NonNull;
  * <p>The {@code segmentPool} backs every column-chunk fetch and every per-page decompression buffer; defaults to
  * {@link SegmentPool#getDefault()}. See the package documentation for the streaming memory contract that motivates the
  * pool.
+ *
+ * <p>Two memory dials bound a read. {@code fetchBudget} caps the off-heap bytes a read may speculatively prefetch
+ * (counted against the container's memory limit, outside {@code -Xmx}); {@code decodeBudget} caps the on-heap bytes a
+ * read may hold in speculatively decoded batches (inside {@code -Xmx}). The in-order current row group is exempt from
+ * both; a read therefore always makes progress, and only decode-ahead is bounded. Peak process memory is approximately
+ * {@code maxHeap + fetchBudget + retained pool + JVM native baseline}. The recommended way to set both on a container
+ * is {@link DecodeBudget#ofMaxMemoryFraction(double)} / {@link FetchBudget#ofMaxMemoryFraction(double)}: one fraction
+ * policy auto-scales across pods of different sizes.
  *
  * <p>Reads execute synchronously on the caller's thread. Callers that want parallelism issue concurrent
  * {@code read(...)} calls against the dataset (which is thread-safe), or wrap the returned
@@ -58,6 +67,7 @@ import lombok.NonNull;
  * @param batchSize maximum row count per emitted batch on the {@code readBatches(...)} path; empty means each batch is
  *     bounded only by the natural page row count
  * @param fetchBudget shared, process-wide cap on the in-flight bytes a read may speculatively prefetch
+ * @param decodeBudget shared, process-wide cap on the on-heap bytes a read may hold in speculatively decoded batches
  * @param maxCoalesceGap largest byte gap between adjacent column chunks that the planner will bridge into one read
  * @param maxCoalescedSpan largest byte span a single coalesced range may grow to before the planner opens a new range
  * @param prefetchDepth how many upcoming row groups the prefetcher tries to fetch ahead of the consumed one
@@ -77,6 +87,7 @@ public record ReadOptions(
         @NonNull SegmentPool segmentPool,
         @NonNull OptionalInt batchSize,
         @NonNull FetchBudget fetchBudget,
+        @NonNull DecodeBudget decodeBudget,
         int maxCoalesceGap,
         int maxCoalescedSpan,
         int prefetchDepth,
@@ -127,6 +138,7 @@ public record ReadOptions(
         private SegmentPool segmentPool = SegmentPool.getDefault();
         private OptionalInt batchSize = OptionalInt.empty();
         private FetchBudget fetchBudget = FetchBudget.defaultBudget();
+        private DecodeBudget decodeBudget = DecodeBudget.defaultBudget();
         private int maxCoalesceGap = 1 << 20;
         private int maxCoalescedSpan = 8 << 20;
         private int prefetchDepth = 2;
@@ -199,6 +211,11 @@ public record ReadOptions(
             return this;
         }
 
+        public Builder decodeBudget(@NonNull DecodeBudget v) {
+            this.decodeBudget = v;
+            return this;
+        }
+
         public Builder maxCoalesceGap(int v) {
             if (v < 0) {
                 throw new IllegalArgumentException("maxCoalesceGap must be >= 0, got " + v);
@@ -257,6 +274,7 @@ public record ReadOptions(
                     segmentPool,
                     batchSize,
                     fetchBudget,
+                    decodeBudget,
                     maxCoalesceGap,
                     maxCoalescedSpan,
                     prefetchDepth,

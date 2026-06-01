@@ -61,4 +61,15 @@ public final class BinaryVector implements ColumnVector {
     public MemorySegment[] asArray() {
         return values;
     }
+
+    @Override
+    public long approximateHeapBytes() {
+        long total = (long) values.length * Long.BYTES + ColumnVector.validityBytes(values.length);
+        for (MemorySegment value : values) {
+            if (value != null) {
+                total += value.byteSize();
+            }
+        }
+        return total;
+    }
 }

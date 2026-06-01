@@ -417,6 +417,7 @@ public class ParquetReader {
         return new ParallelDecodeCoordinator(
                 prefetcher,
                 options.decodeExecutor(),
+                options.decodeBudget(),
                 options.maxDecodeAheadPerRead(),
                 projectedSchema,
                 fileSchema,

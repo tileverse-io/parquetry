@@ -16,19 +16,14 @@
 package io.tileverse.parquetry.data.read;
 
 import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 import lombok.NonNull;
@@ -38,15 +33,24 @@ import lombok.NonNull;
  * while the consumer drains the current one. Pulls fetched row groups from the {@link RowGroupPrefetcher} (fetch path
  * unchanged) and reorders out-of-order worker completions via an index-keyed window.
  *
- * <p>The single consumer thread calls {@link #next()} in order. Up to {@code maxDecodeAheadPerRead} decode tasks are in
- * flight per read (the window bound); the shared executor bounds total decodes across reads. When no decode slot is
- * free, the row group is decoded inline on the consumer thread (serial fallback). {@code maxDecodeAheadPerRead == 0}
- * decodes every row group inline - the serial path.
+ * <p>The single consumer thread calls {@link #next()} in order. Up to {@code maxDecodeAheadPerRead} speculative decodes
+ * run on worker threads, each draining into a bounded hand-off whose live batches a shared {@link DecodeBudget}
+ * controls; the shared executor bounds total decodes across reads. When no decode slot is free, the row group is
+ * decoded inline on the consumer thread (serial fallback). {@code maxDecodeAheadPerRead == 0} decodes every row group
+ * inline - the serial path.
+ *
+ * <p>The in-order current row group is never budget-controlled: when the consumer reaches a speculatively decoded row
+ * group, the coordinator promotes it off the budget, which releases a worker parked on a reservation. That promotion is
+ * what keeps the read live even under a budget too small for a single batch.
  */
 public final class ParallelDecodeCoordinator implements AutoCloseable {
 
+    /** Live batches a single row group may hold in its hand-off; the per-row-group memory bound (internal). */
+    private static final int HANDOFF_CAPACITY = 2;
+
     private final RowGroupPrefetcher prefetcher;
     private final DecodeExecutor decodeExecutor;
+    private final DecodeBudget decodeBudget;
     private final int maxDecodeAheadPerRead;
     private final ParquetSchema projectedSchema;
     private final ParquetSchema fileSchema;
@@ -55,7 +59,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     private final List<Boolean> recordEvalRequired;
     private final Optional<LateMaterialization> lateMat;
 
-    private final Map<Integer, Future<DecodedRowGroup>> window = new HashMap<>();
+    private final Map<Integer, DecodedRowGroup> window = new HashMap<>();
     private final int size;
     private int nextToConsume;
     private int nextToSubmit;
@@ -65,6 +69,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     public ParallelDecodeCoordinator(
             @NonNull RowGroupPrefetcher prefetcher,
             @NonNull DecodeExecutor decodeExecutor,
+            @NonNull DecodeBudget decodeBudget,
             int maxDecodeAheadPerRead,
             @NonNull ParquetSchema projectedSchema,
             @NonNull ParquetSchema fileSchema,
@@ -74,6 +79,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
             @NonNull Optional<LateMaterialization> lateMat) {
         this.prefetcher = prefetcher;
         this.decodeExecutor = decodeExecutor;
+        this.decodeBudget = decodeBudget;
         this.maxDecodeAheadPerRead = maxDecodeAheadPerRead;
         this.projectedSchema = projectedSchema;
         this.fileSchema = fileSchema;
@@ -92,13 +98,12 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
         submitAhead();
         int index = nextToConsume;
         nextToConsume++;
-        Future<DecodedRowGroup> future = window.remove(index);
-        if (future != null) {
-            return join(future);
+        DecodedRowGroup windowed = window.remove(index);
+        if (windowed != null) {
+            windowed.promote();
+            return windowed;
         }
-        RowGroupFetch fetch = prefetcher.take(index);
-        nextToSubmit = Math.max(nextToSubmit, index + 1);
-        return decode(fetch, rowMasks.get(index), index);
+        return decodeInline(index);
     }
 
     private void submitAhead() throws IOException {
@@ -106,56 +111,55 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
             if (!decodeExecutor.tryAcquire()) {
                 return;
             }
+            int index = nextToSubmit;
             RowGroupFetch fetch;
             try {
-                fetch = prefetcher.take(nextToSubmit);
+                fetch = prefetcher.take(index);
             } catch (IOException | RuntimeException e) {
                 decodeExecutor.release();
                 throw e;
             }
-            window.put(nextToSubmit, submitDecode(fetch, rowMasks.get(nextToSubmit), nextToSubmit));
+            window.put(index, submitSpeculative(fetch, index));
             nextToSubmit++;
         }
     }
 
-    private Future<DecodedRowGroup> submitDecode(RowGroupFetch fetch, Optional<RowMask> mask, int index) {
+    // S2095: ownership of the row group transfers to the caller (the window, drained or closed by the coordinator); on
+    // rejection nothing was started, the empty hand-off needs no close, and the driver moves to the inline fallback.
+    @SuppressWarnings("java:S2095")
+    private DecodedRowGroup submitSpeculative(RowGroupFetch fetch, int index) {
+        RowGroupBatchDriver driver = buildDriver(fetch, rowMasks.get(index), index);
+        BatchHandoff handoff = new BatchHandoff(HANDOFF_CAPACITY);
+        StreamingBatchSource source = new StreamingBatchSource(handoff, driver, decodeBudget, /*exempt*/ false);
+        DecodedRowGroup rowGroup = new DecodedRowGroup(source, evalRequiredFor(index));
         try {
-            return decodeExecutor.submitAcquired(() -> decode(fetch, mask, index));
+            Future<Void> task = decodeExecutor.submitAcquired(() -> {
+                source.runProducer();
+                return null;
+            });
+            source.attachProducerTask(task);
         } catch (RejectedExecutionException _) {
-            // The slot was released by submitAcquired; decode inline now and hand back a completed future.
-            return CompletableFuture.completedFuture(decode(fetch, mask, index));
+            // The slot was released by submitAcquired; fall back to inline streaming over the same driver.
+            return new DecodedRowGroup(new InlineBatchSource(driver), evalRequiredFor(index));
         }
+        return rowGroup;
     }
 
-    @SuppressWarnings("MustBeClosed")
-    private DecodedRowGroup decode(RowGroupFetch fetch, Optional<RowMask> mask, int index) {
-        try (fetch) {
-            if (lateMat.isPresent()) {
-                return decodeLateMaterialized(fetch, mask, index);
-            }
-            List<ParquetRecordBatch> batches = new ArrayList<>();
-            BatchRowGroupReader reader =
-                    new BatchRowGroupReader(fetch.columns(), projectedSchema, fileSchema, batchSizeCap, mask);
-            try {
-                while (reader.hasMore()) {
-                    batches.add(reader.nextBatch());
-                }
-            } catch (RuntimeException e) {
-                closeAll(batches);
-                throw e;
-            } finally {
-                reader.close();
-            }
-            return new DecodedRowGroup(batches, recordEvalRequired.get(index));
-        }
+    private DecodedRowGroup decodeInline(int index) throws IOException {
+        RowGroupFetch fetch = prefetcher.take(index);
+        nextToSubmit = Math.max(nextToSubmit, index + 1);
+        RowGroupBatchDriver driver = buildDriver(fetch, rowMasks.get(index), index);
+        return new DecodedRowGroup(new InlineBatchSource(driver), evalRequiredFor(index));
     }
 
-    /**
-     * Decodes one row group two-phase: evaluate the predicate over its columns, then materialize the output columns
-     * only for the matching rows. The returned batches are already filtered, hence the row pipeline applies no further
-     * record filter on this path.
-     */
-    private DecodedRowGroup decodeLateMaterialized(RowGroupFetch fetch, Optional<RowMask> mask, int index) {
+    private RowGroupBatchDriver buildDriver(RowGroupFetch fetch, Optional<RowMask> mask, int index) {
+        if (lateMat.isPresent()) {
+            return buildLateMaterializedDriver(fetch, mask, index);
+        }
+        return new ClassicRowGroupDriver(fetch, projectedSchema, fileSchema, batchSizeCap, mask);
+    }
+
+    private RowGroupBatchDriver buildLateMaterializedDriver(RowGroupFetch fetch, Optional<RowMask> mask, int index) {
         LateMaterialization lm = lateMat.orElseThrow();
         LateMaterialization.PerRowGroup perRg = lm.perRowGroup().get(index);
         LateMaterializingRowGroupReader reader = new LateMaterializingRowGroupReader(
@@ -168,58 +172,23 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
                 mask,
                 perRg.outputOffsetIndexes(),
                 perRg.numRows());
-        // Late-materialized batches already hold only the matching rows; no further per-row evaluation applies.
-        return new DecodedRowGroup(reader.decodeAll(), false);
+        return new LateMaterializedRowGroupDriver(fetch, reader);
     }
 
-    private DecodedRowGroup join(Future<DecodedRowGroup> future) throws IOException {
-        try {
-            return future.get();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Interrupted while awaiting a decoded row group", e);
-        } catch (ExecutionException e) {
-            Throwable cause = e.getCause();
-            if (cause instanceof IOException io) {
-                throw io;
-            }
-            if (cause instanceof UncheckedIOException uio) {
-                throw uio;
-            }
-            if (cause instanceof RuntimeException re) {
-                throw re;
-            }
-            throw new IOException("Row group decode failed", cause);
-        }
+    private boolean evalRequiredFor(int index) {
+        return !lateMat.isPresent() && recordEvalRequired.get(index);
     }
 
     @Override
     public void close() {
-        for (Future<DecodedRowGroup> future : window.values()) {
-            drainAndClose(future);
+        for (DecodedRowGroup rowGroup : window.values()) {
+            try {
+                rowGroup.close();
+            } catch (RuntimeException _) {
+                // best-effort; close the remaining row groups even if one throws
+            }
         }
         window.clear();
         prefetcher.close();
-    }
-
-    private static void drainAndClose(Future<DecodedRowGroup> future) {
-        try {
-            DecodedRowGroup rowGroup = future.get();
-            rowGroup.close();
-        } catch (InterruptedException _) {
-            Thread.currentThread().interrupt();
-        } catch (ExecutionException _) {
-            // The decode failed and already released its own batches and fetch.
-        }
-    }
-
-    private static void closeAll(List<ParquetRecordBatch> batches) {
-        for (ParquetRecordBatch batch : batches) {
-            try {
-                batch.close();
-            } catch (RuntimeException _) {
-                // best-effort
-            }
-        }
     }
 }

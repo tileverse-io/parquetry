@@ -20,18 +20,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.Arena;
 import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.OptionalInt;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
-import io.tileverse.parquetry.schema.ParquetSchema;
-import io.tileverse.parquetry.schema.PrimitiveKind;
-import io.tileverse.parquetry.schema.Repetition;
-import io.tileverse.parquetry.schema.SchemaNode;
 
 class DecodedRowGroupTest {
 
@@ -41,7 +33,8 @@ class DecodedRowGroupTest {
         Arena arena1 = Arena.ofConfined();
         ParquetRecordBatch b0 = batch(arena0);
         ParquetRecordBatch b1 = batch(arena1);
-        DecodedRowGroup rowGroup = new DecodedRowGroup(List.of(b0, b1), true);
+        DecodedRowGroup rowGroup =
+                new DecodedRowGroup(new InlineBatchSource(new ListRowGroupDriver(List.of(b0, b1))), true);
 
         assertThat(rowGroup.hasNext()).isTrue();
         assertThat(rowGroup.next()).isSameAs(b0);
@@ -58,7 +51,8 @@ class DecodedRowGroupTest {
         Arena arenaUnemitted = Arena.ofConfined();
         ParquetRecordBatch emitted = batch(arenaEmitted);
         ParquetRecordBatch unemitted = batch(arenaUnemitted);
-        DecodedRowGroup rowGroup = new DecodedRowGroup(List.of(emitted, unemitted), true);
+        DecodedRowGroup rowGroup =
+                new DecodedRowGroup(new InlineBatchSource(new ListRowGroupDriver(List.of(emitted, unemitted))), true);
 
         rowGroup.next(); // emit the first; the consumer now owns it
         rowGroup.close();
@@ -76,7 +70,8 @@ class DecodedRowGroupTest {
     void closeIsIdempotent() {
         Arena arena = Arena.ofConfined();
         ParquetRecordBatch only = batch(arena);
-        DecodedRowGroup rowGroup = new DecodedRowGroup(List.of(only), true);
+        DecodedRowGroup rowGroup =
+                new DecodedRowGroup(new InlineBatchSource(new ListRowGroupDriver(List.of(only))), true);
         rowGroup.close();
         rowGroup.close();
         // Arena must be closed exactly once (idempotent close does not throw).
@@ -88,16 +83,6 @@ class DecodedRowGroupTest {
     // ------------------------------------------------------------------
 
     private static ParquetRecordBatch batch(Arena arena) {
-        return new DefaultParquetRecordBatch(minimalSchema(), Map.of(), 0, arena);
-    }
-
-    private static ParquetSchema minimalSchema() {
-        return new ParquetSchema(new SchemaNode.Group(
-                "root",
-                Repetition.REQUIRED,
-                List.of(new SchemaNode.Primitive(
-                        "value", Repetition.REQUIRED, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1)),
-                Optional.empty(),
-                -1));
+        return TestBatches.emptyBatch(arena);
     }
 }

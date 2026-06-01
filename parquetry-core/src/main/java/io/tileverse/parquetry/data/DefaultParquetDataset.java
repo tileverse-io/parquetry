@@ -18,11 +18,17 @@ package io.tileverse.parquetry.data;
 import java.io.InterruptedIOException;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
+import java.util.Spliterator;
+import java.util.Spliterators;
 import java.util.concurrent.StructuredTaskScope;
 import java.util.concurrent.StructuredTaskScope.Subtask;
+import java.util.function.Function;
 import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 import io.tileverse.parquetry.batch.BatchMaterializer;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
@@ -35,8 +41,10 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
  * Default {@link ParquetDataset} implementation: a collection of 1..N {@link ParquetReader} instances over files that
- * share the same schema. The read overloads concatenate per-reader streams; {@code rowGroups()} aggregates all row
- * groups and re-assigns sequential indices across readers. {@code count} over more than one file fans the per-file
+ * share the same schema. The read overloads concatenate per-reader streams lazily, opening one reader's stream at a
+ * time and closing it before the next one opens, which keeps the working set bounded by a single file's pipeline rather
+ * than letting a buffering stream stage hold every file's decoded batches at once. {@code rowGroups()} aggregates all
+ * row groups and re-assigns sequential indices across readers. {@code count} over more than one file fans the per-file
  * counts out across virtual threads, bounded by the shared fetch and decode budgets in {@link ReadOptions}.
  * {@code explain} remains single-reader only and throws {@link UnsupportedOperationException} when more than one reader
  * is present.
@@ -94,24 +102,37 @@ final class DefaultParquetDataset implements ParquetDataset {
 
     @Override
     public Stream<ParquetRecord> read(Predicate predicate, Projection projection, ReadOptions options) {
-        return readers.stream().flatMap(reader -> reader.read(predicate, projection, options));
+        return concatLazily(reader -> reader.read(predicate, projection, options));
     }
 
     @Override
     public <T> Stream<T> read(
             Predicate predicate, Projection projection, Materializer<T> materializer, ReadOptions options) {
-        return readers.stream().flatMap(reader -> reader.read(predicate, projection, materializer, options));
+        return concatLazily(reader -> reader.read(predicate, projection, materializer, options));
     }
 
     @Override
     public Stream<ParquetRecordBatch> readBatches(Predicate predicate, Projection projection, ReadOptions options) {
-        return readers.stream().flatMap(reader -> reader.readBatches(predicate, projection, options));
+        return concatLazily(reader -> reader.readBatches(predicate, projection, options));
     }
 
     @Override
     public <T> Stream<T> readBatches(
             Predicate predicate, Projection projection, BatchMaterializer<T> materializer, ReadOptions options) {
-        return readers.stream().flatMap(reader -> reader.readBatches(predicate, projection, materializer, options));
+        return concatLazily(reader -> reader.readBatches(predicate, projection, materializer, options));
+    }
+
+    /**
+     * Concatenates each reader's stream in order, holding exactly one reader's stream open at a time and closing it
+     * before the next is opened. Closing the returned stream closes the open per-reader stream. This avoids the
+     * {@code Stream.flatMap} behaviour that, when pulled lazily through {@code iterator()}, buffers the inner stream's
+     * emitted elements (and the decoded batches each one pins) into a {@code SpinedBuffer}.
+     */
+    private <R> Stream<R> concatLazily(Function<ParquetReader, Stream<R>> open) {
+        ReaderStreamIterator<R> iterator = new ReaderStreamIterator<>(readers, open);
+        Spliterator<R> spliterator =
+                Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED | Spliterator.NONNULL);
+        return StreamSupport.stream(spliterator, /*parallel*/ false).onClose(iterator::close);
     }
 
     @Override
@@ -177,6 +198,62 @@ final class DefaultParquetDataset implements ParquetDataset {
     private void ensureSingleReader() {
         if (readers.size() > 1) {
             throw new UnsupportedOperationException("explain over multi-file datasets is not implemented yet");
+        }
+    }
+
+    /**
+     * Walks the readers in order, opening each one's stream only when the previous is drained and closing the drained
+     * one first. At most one reader's pipeline is resident at a time. {@link #close()} closes the open per-reader
+     * stream.
+     */
+    private static final class ReaderStreamIterator<R> implements Iterator<R>, AutoCloseable {
+
+        private final Iterator<ParquetReader> readers;
+        private final Function<ParquetReader, Stream<R>> open;
+
+        @SuppressWarnings("java:S2095") // the stream is closed when drained, by close(), or when its iterator advances
+        private Stream<R> currentStream;
+
+        private Iterator<R> currentRows;
+
+        ReaderStreamIterator(List<ParquetReader> readers, Function<ParquetReader, Stream<R>> open) {
+            this.readers = readers.iterator();
+            this.open = open;
+        }
+
+        @Override
+        public boolean hasNext() {
+            while (currentRows == null || !currentRows.hasNext()) {
+                closeCurrentStream();
+                if (!readers.hasNext()) {
+                    return false;
+                }
+                currentStream = open.apply(readers.next());
+                currentRows = currentStream.iterator();
+            }
+            return true;
+        }
+
+        @Override
+        public R next() {
+            if (!hasNext()) {
+                throw new NoSuchElementException();
+            }
+            return currentRows.next();
+        }
+
+        @Override
+        public void close() {
+            closeCurrentStream();
+        }
+
+        private void closeCurrentStream() {
+            Stream<R> stream = currentStream;
+            currentStream = null;
+            currentRows = null;
+            if (stream != null) {
+                stream.close();
+            }
         }
     }
 }

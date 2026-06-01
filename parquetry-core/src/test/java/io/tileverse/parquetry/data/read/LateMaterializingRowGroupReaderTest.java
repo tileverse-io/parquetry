@@ -90,7 +90,7 @@ class LateMaterializingRowGroupReaderTest {
                         fixture.offsetIndexes(),
                         fixture.numRows());
 
-                List<MaterializedRow> actual = drain(lateReader.decodeAll(), outputSchema);
+                List<MaterializedRow> actual = drain(decodeMatching(lateReader), outputSchema);
                 List<MaterializedRow> expected = bruteForce(predicate, outputSchema);
 
                 assertThat(actual)
@@ -122,7 +122,7 @@ class LateMaterializingRowGroupReaderTest {
                         fixture.offsetIndexes(),
                         fixture.numRows());
 
-                List<MaterializedRow> actual = drain(lateReader.decodeAll(), outputSchema);
+                List<MaterializedRow> actual = drain(decodeMatching(lateReader), outputSchema);
                 List<MaterializedRow> expected = bruteForce(predicate, outputSchema);
 
                 assertThat(actual)
@@ -157,8 +157,12 @@ class LateMaterializingRowGroupReaderTest {
                         fixture.offsetIndexes(),
                         fixture.numRows());
 
-                List<ParquetRecordBatch> batches = lateReader.decodeAll();
+                Selection selection = lateReader.selectMatching();
+                List<ParquetRecordBatch> batches = decodeMatching(lateReader);
 
+                assertThat(selection.isEmpty())
+                        .as("no surviving row satisfies the predicate")
+                        .isTrue();
                 assertThat(batches)
                         .as("no matching row yields zero output batches")
                         .isEmpty();
@@ -227,6 +231,20 @@ class LateMaterializingRowGroupReaderTest {
     }
 
     // --- materialization helpers ---
+
+    /** Runs both phases and collects the matching output batches; the caller owns and closes them. */
+    private static List<ParquetRecordBatch> decodeMatching(LateMaterializingRowGroupReader reader) {
+        Selection selection = reader.selectMatching();
+        List<ParquetRecordBatch> batches = new ArrayList<>();
+        if (!selection.isEmpty()) {
+            try (BatchRowGroupReader outputReader = reader.outputReader(selection)) {
+                while (outputReader.hasMore()) {
+                    batches.add(outputReader.nextBatch());
+                }
+            }
+        }
+        return batches;
+    }
 
     private static List<MaterializedRow> drain(List<ParquetRecordBatch> batches, ParquetSchema outputSchema) {
         List<MaterializedRow> rows = new ArrayList<>();

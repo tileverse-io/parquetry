@@ -55,4 +55,9 @@ public final class LongVector implements ColumnVector {
     public long[] asArray() {
         return values;
     }
+
+    @Override
+    public long approximateHeapBytes() {
+        return (long) values.length * Long.BYTES + ColumnVector.validityBytes(values.length);
+    }
 }

@@ -15,7 +15,6 @@
  */
 package io.tileverse.parquetry.data.read;
 
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -91,16 +90,27 @@ public final class LateMaterializingRowGroupReader {
     }
 
     /**
-     * Runs both phases and returns the output batches over the matching rows. Returns an empty list when no surviving
-     * row satisfies the predicate. The caller owns the returned batches and must close each one.
+     * Phase 1: decodes the predicate columns over the surviving rows, evaluates the predicate per row, and returns the
+     * matching rows as a {@link Selection}. An empty selection means no surviving row satisfied the predicate.
      */
-    public List<ParquetRecordBatch> decodeAll() {
+    public Selection selectMatching() {
         RowRanges surviving = rowMask.map(RowMask::survivingRows).orElseGet(() -> RowRanges.all(numRows));
-        Selection selection = phase1Selection(surviving);
-        if (selection.isEmpty()) {
-            return List.of();
-        }
-        return decodeOutputColumns(selection);
+        return phase1Selection(surviving);
+    }
+
+    /**
+     * Phase 2: returns a reader that, under {@code selection}, decodes the output columns with skip-decode on,
+     * materializing values only for the matching rows. The caller drains and closes the reader. Returns a reader over
+     * an empty selection only when the caller passes one; callers should check {@link Selection#isEmpty()} first.
+     */
+    public BatchRowGroupReader outputReader(Selection selection) {
+        List<ColumnPath> outputLeaves = outputSchema.leafColumns();
+        List<FetchedColumnChunk> outputChunks = chunks.stream()
+                .filter(chunk -> outputLeaves.contains(chunk.path()))
+                .toList();
+        RowMask selectionMask = new RowMask(selection.rows(), outputOffsetIndexes(outputLeaves));
+        return new BatchRowGroupReader(
+                outputChunks, outputSchema, fileSchema, batchSizeCap, Optional.of(selectionMask), true);
     }
 
     /**
@@ -135,45 +145,12 @@ public final class LateMaterializingRowGroupReader {
         }
     }
 
-    /**
-     * Phase 2: decodes the output columns under {@code selection} with skip-decode on, materializing values only for
-     * the matching rows. On failure, closes every batch drained so far before propagating.
-     */
-    private List<ParquetRecordBatch> decodeOutputColumns(Selection selection) {
-        List<ColumnPath> outputLeaves = outputSchema.leafColumns();
-        List<FetchedColumnChunk> outputChunks = chunks.stream()
-                .filter(chunk -> outputLeaves.contains(chunk.path()))
-                .toList();
-        RowMask selectionMask = new RowMask(selection.rows(), outputOffsetIndexes(outputLeaves));
-        List<ParquetRecordBatch> batches = new ArrayList<>();
-        try (BatchRowGroupReader phase2 = new BatchRowGroupReader(
-                outputChunks, outputSchema, fileSchema, batchSizeCap, Optional.of(selectionMask), true)) {
-            while (phase2.hasMore()) {
-                batches.add(phase2.nextBatch());
-            }
-        } catch (RuntimeException e) {
-            closeQuietly(batches);
-            throw e;
-        }
-        return batches;
-    }
-
     private Map<ColumnPath, OffsetIndex> outputOffsetIndexes(List<ColumnPath> outputLeaves) {
         Map<ColumnPath, OffsetIndex> result = LinkedHashMap.newLinkedHashMap(outputLeaves.size());
         for (ColumnPath leaf : outputLeaves) {
             result.put(leaf, offsetIndexes.get(leaf));
         }
         return result;
-    }
-
-    private static void closeQuietly(List<ParquetRecordBatch> batches) {
-        for (ParquetRecordBatch batch : batches) {
-            try {
-                batch.close();
-            } catch (RuntimeException _) {
-                // Best-effort cleanup while propagating the original failure.
-            }
-        }
     }
 
     /**

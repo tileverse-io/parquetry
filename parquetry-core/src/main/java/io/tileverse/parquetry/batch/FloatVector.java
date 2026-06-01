@@ -55,4 +55,9 @@ public final class FloatVector implements ColumnVector {
     public float[] asArray() {
         return values;
     }
+
+    @Override
+    public long approximateHeapBytes() {
+        return (long) values.length * Integer.BYTES + ColumnVector.validityBytes(values.length);
+    }
 }

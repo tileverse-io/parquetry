@@ -61,4 +61,9 @@ public final class ListVector implements ColumnVector {
     public ColumnVector child() {
         return child;
     }
+
+    @Override
+    public long approximateHeapBytes() {
+        return (long) offsets.length * Integer.BYTES + ColumnVector.validityBytes(size) + child.approximateHeapBytes();
+    }
 }

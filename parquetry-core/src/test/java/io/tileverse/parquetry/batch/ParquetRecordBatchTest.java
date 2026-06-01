@@ -24,6 +24,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
 
@@ -110,6 +112,57 @@ class ParquetRecordBatchTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("rowCount must be >= 0");
         arena.close();
+    }
+
+    @Test
+    void approximateHeapBytesSumsColumns() {
+        Arena arena = Arena.ofConfined();
+        ColumnPath aPath = ColumnPath.of("value");
+        BitSet validity = new BitSet(3);
+        validity.set(0, 3);
+        Map<ColumnPath, ColumnVector> cols = Map.of(aPath, IntVector.materialized(new int[] {1, 2, 3}, validity));
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), cols, 3, arena);
+
+        assertThat(batch.approximateHeapBytes()).isGreaterThanOrEqualTo(12L);
+
+        batch.close();
+    }
+
+    @Test
+    void closeRunsReleaseActionExactlyOnce() {
+        Arena arena = Arena.ofConfined();
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), Map.of(), 0, arena);
+        AtomicInteger releases = new AtomicInteger();
+        batch.attachReleaseAction(releases::incrementAndGet);
+
+        batch.close();
+        batch.close();
+
+        assertThat(releases.get())
+                .as("release action runs once despite double close")
+                .isEqualTo(1);
+    }
+
+    @Test
+    void releaseActionRunsAfterArenaClose() {
+        Arena arena = Arena.ofConfined();
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), Map.of(), 0, arena);
+        AtomicBoolean arenaAliveAtRelease = new AtomicBoolean();
+        batch.attachReleaseAction(() -> arenaAliveAtRelease.set(arena.scope().isAlive()));
+
+        batch.close();
+
+        assertThat(arenaAliveAtRelease.get())
+                .as("Arena is closed before the release action runs")
+                .isFalse();
+    }
+
+    @Test
+    void closeWithoutReleaseActionStillClosesArena() {
+        Arena arena = Arena.ofConfined();
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), Map.of(), 0, arena);
+        batch.close();
+        assertThatThrownBy(() -> arena.allocate(8)).isInstanceOf(IllegalStateException.class);
     }
 
     /**
