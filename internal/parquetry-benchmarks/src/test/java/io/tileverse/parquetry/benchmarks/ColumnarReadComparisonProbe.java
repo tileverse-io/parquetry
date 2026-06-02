@@ -17,9 +17,6 @@ package io.tileverse.parquetry.benchmarks;
 
 import java.io.IOException;
 import java.lang.foreign.MemorySegment;
-import java.lang.management.ManagementFactory;
-import java.lang.management.MemoryPoolMXBean;
-import java.lang.management.MemoryType;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -38,8 +35,6 @@ import org.apache.parquet.schema.MessageType;
 import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
-
-import com.sun.management.ThreadMXBean;
 
 import io.tileverse.parquetry.batch.BinaryVector;
 import io.tileverse.parquetry.batch.BooleanVector;
@@ -109,6 +104,10 @@ import io.tileverse.parquetry.io.ByteRangeSource;
  *       {@code duckdb} has no columnar JDBC equivalent here and is ignored).
  *   <li>{@code parquetry.probe.warmup} / {@code .measure}: warmup and measured run counts (defaults {@code 1} /
  *       {@code 3}).
+ *   <li>{@code parquetry.probe.concurrency}: number of full scans to run at once (default {@code 1}). When greater than
+ *       {@code 1} each engine instead launches that many scans simultaneously per wave and the probe reports
+ *       throughput, latency percentiles, and an OK/OOM/ERROR status, modelling a server pod that admits {@code 2 x
+ *       cores} concurrent requests. Pair it with {@code -XX:ActiveProcessorCount=N} to simulate an N-core pod.
  * </ul>
  */
 // S2699: characterization probe; it prints a comparison table and only asserts the run completes for every engine.
@@ -119,6 +118,7 @@ public final class ColumnarReadComparisonProbe {
     private Path file;
     private int warmupRuns;
     private int measuredRuns;
+    private int concurrency;
 
     /** A sink touched by every consumed value to keep the JIT from eliminating the decode work. */
     private long sink;
@@ -133,6 +133,7 @@ public final class ColumnarReadComparisonProbe {
         this.file = config.file();
         this.warmupRuns = config.warmupRuns();
         this.measuredRuns = config.measuredRuns();
+        this.concurrency = config.concurrency();
     }
 
     private void run() throws Exception {
@@ -140,6 +141,15 @@ public final class ColumnarReadComparisonProbe {
                 "Columnar read-path comparison over %s (%.1f MiB), full scan%n%n",
                 file, Files.size(file) / (1024.0 * 1024.0));
 
+        if (concurrency > 1) {
+            runConcurrent();
+        } else {
+            runSequential();
+        }
+        System.out.printf("%n(consumed checksum %d)%n", sink);
+    }
+
+    private void runSequential() {
         List<Row> rows = new ArrayList<>();
         if (engineEnabled("parquetry")) {
             rows.add(measure("parquetry", this::readParquetryColumnar));
@@ -148,7 +158,47 @@ public final class ColumnarReadComparisonProbe {
             rows.add(measure("parquet-java", this::readParquetJavaColumnar));
         }
         printTable(rows);
-        System.out.printf("%n(consumed checksum %d)%n", sink);
+    }
+
+    /**
+     * Runs each engine at the configured concurrency. parquetry shares one open dataset across the concurrent scans
+     * (the long-lived server model); parquet-java opens a file reader per scan (its per-query model).
+     */
+    private void runConcurrent() {
+        System.out.printf("Concurrency: %d full scans in flight per engine%n%n", concurrency);
+        List<ConcurrentRow> rows = new ArrayList<>();
+        if (engineEnabled("parquetry")) {
+            rows.add(measureParquetryConcurrent());
+        }
+        if (engineEnabled("parquet-java")) {
+            rows.add(measureParquetJavaConcurrent());
+        }
+        printConcurrentTable(rows);
+    }
+
+    private ConcurrentRow measureParquetryConcurrent() {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
+            ProbeMeasurement.Outcome outcome = ProbeMeasurement.runConcurrent(
+                    concurrency, warmupRuns, measuredRuns, () -> readParquetryColumnar(dataset));
+            return new ConcurrentRow("parquetry", outcome, null);
+        } catch (InterruptedException _) {
+            Thread.currentThread().interrupt();
+            return ConcurrentRow.failed("parquetry", "interrupted");
+        } catch (RuntimeException e) {
+            return ConcurrentRow.failed("parquetry", e.getMessage());
+        }
+    }
+
+    private ConcurrentRow measureParquetJavaConcurrent() {
+        try {
+            ProbeMeasurement.Outcome outcome = ProbeMeasurement.runConcurrent(
+                    concurrency, warmupRuns, measuredRuns, this::readParquetJavaColumnar);
+            return new ConcurrentRow("parquet-java", outcome, null);
+        } catch (InterruptedException _) {
+            Thread.currentThread().interrupt();
+            return ConcurrentRow.failed("parquet-java", "interrupted");
+        }
     }
 
     /**
@@ -177,18 +227,21 @@ public final class ColumnarReadComparisonProbe {
      */
     private long readParquetryColumnar() {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
-            try (Stream<ParquetRecordBatch> batches =
-                    dataset.readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
-                long rows = 0L;
-                for (ParquetRecordBatch batch : (Iterable<ParquetRecordBatch>) batches::iterator) {
-                    try (batch) {
-                        touchBatch(batch);
-                        rows += batch.rowCount();
-                    }
+            return readParquetryColumnar(ParquetDataset.open(source));
+        }
+    }
+
+    private long readParquetryColumnar(ParquetDataset dataset) {
+        try (Stream<ParquetRecordBatch> batches =
+                dataset.readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
+            long rows = 0L;
+            for (ParquetRecordBatch batch : (Iterable<ParquetRecordBatch>) batches::iterator) {
+                try (batch) {
+                    touchBatch(batch);
+                    rows += batch.rowCount();
                 }
-                return rows;
             }
+            return rows;
         }
     }
 
@@ -345,51 +398,20 @@ public final class ColumnarReadComparisonProbe {
             long peakHeapBytes = 0L;
             long allocBytes = 0L;
             for (int i = 0; i < measuredRuns; i++) {
-                resetPeakHeap();
-                long allocBefore = totalAllocatedBytes();
+                ProbeMeasurement.resetPeakHeap();
+                long allocBefore = ProbeMeasurement.totalAllocatedBytes();
                 long start = System.nanoTime();
                 rows = body.getAsLong();
                 wallNanos.add(System.nanoTime() - start);
-                allocBytes = totalAllocatedBytes() - allocBefore;
-                peakHeapBytes = Math.max(peakHeapBytes, peakHeapBytes());
+                allocBytes = ProbeMeasurement.totalAllocatedBytes() - allocBefore;
+                peakHeapBytes = Math.max(peakHeapBytes, ProbeMeasurement.peakHeapBytes());
             }
-            return Row.jvm(engine, rows, medianMillis(wallNanos), peakHeapBytes, allocBytes);
+            return Row.jvm(engine, rows, ProbeMeasurement.medianMillis(wallNanos), peakHeapBytes, allocBytes);
         } catch (Exception e) {
             System.err.printf("%n[%s] failed:%n", engine);
             e.printStackTrace();
             return Row.skipped(engine, e.getMessage());
         }
-    }
-
-    private static double medianMillis(List<Long> nanos) {
-        List<Long> sorted = new ArrayList<>(nanos);
-        sorted.sort(Long::compareTo);
-        long median = sorted.get(sorted.size() / 2);
-        return median / 1_000_000.0;
-    }
-
-    private static void resetPeakHeap() {
-        for (MemoryPoolMXBean pool : ManagementFactory.getMemoryPoolMXBeans()) {
-            if (pool.getType() == MemoryType.HEAP) {
-                pool.resetPeakUsage();
-            }
-        }
-    }
-
-    private static long peakHeapBytes() {
-        long peak = 0L;
-        for (MemoryPoolMXBean pool : ManagementFactory.getMemoryPoolMXBeans()) {
-            if (pool.getType() == MemoryType.HEAP) {
-                peak += pool.getPeakUsage().getUsed();
-            }
-        }
-        return peak;
-    }
-
-    /** Bytes allocated on the heap by all threads (including terminated decode workers) since JVM start. */
-    private static long totalAllocatedBytes() {
-        ThreadMXBean bean = (ThreadMXBean) ManagementFactory.getThreadMXBean();
-        return bean.getTotalThreadAllocatedBytes();
     }
 
     // --- output ---
@@ -409,6 +431,23 @@ public final class ColumnarReadComparisonProbe {
         System.out.println("alloc(MB) is heap allocated by all threads during the run (-Xmx-independent churn).");
         System.out.println(
                 "peakHeap(MB) is heap occupancy incl. uncollected garbage at the run's -Xmx; an upper bound.");
+    }
+
+    private void printConcurrentTable(List<ConcurrentRow> rows) {
+        String header = String.format(
+                "%-14s %8s %12s %10s %10s %10s %12s %12s %8s",
+                "engine", "rows", "req/s", "p50(ms)", "p95(ms)", "max(ms)", "peakHeap(MB)", "alloc(MB)", "status");
+        System.out.println(header);
+        System.out.println("-".repeat(header.length()));
+        for (ConcurrentRow row : rows) {
+            System.out.println(row.format());
+        }
+        System.out.println();
+        System.out.printf("All scans ran %d at once, released together; metrics aggregate every scan.%n", concurrency);
+        System.out.println("req/s is measured scans / summed wave wall; p50/p95/max are per-scan latencies.");
+        System.out.println(
+                "peakHeap(MB) is heap occupancy incl. uncollected garbage at the run's -Xmx; the decisive signal is");
+        System.out.println("  whether status stays OK (not OOM) at a pod-sized heap. alloc(MB) is total churn.");
     }
 
     // --- supporting types ---
@@ -440,8 +479,43 @@ public final class ColumnarReadComparisonProbe {
         }
     }
 
+    /** One printed line of the concurrency table: an engine's aggregate full-scan result. */
+    private record ConcurrentRow(String engine, ProbeMeasurement.Outcome outcome, String skipReason) {
+
+        static ConcurrentRow failed(String engine, String reason) {
+            return new ConcurrentRow(engine, null, reason);
+        }
+
+        String format() {
+            if (skipReason != null) {
+                return String.format("%-14s   skipped: %s", engine, skipReason);
+            }
+            String peakHeap = String.format("%.1f", outcome.peakHeapBytes() / (1024.0 * 1024.0));
+            String alloc = String.format("%.1f", outcome.allocBytes() / (1024.0 * 1024.0));
+            return String.format(
+                    "%-14s %8d %12.1f %10.1f %10.1f %10.1f %12s %12s %8s",
+                    engine,
+                    outcome.rowsPerRead(),
+                    outcome.throughputPerSecond(),
+                    outcome.p50Millis(),
+                    outcome.p95Millis(),
+                    outcome.maxMillis(),
+                    peakHeap,
+                    alloc,
+                    statusLabel());
+        }
+
+        /** OK, or the failure kind annotated with how many scans failed. */
+        private String statusLabel() {
+            if (outcome.status() == ProbeMeasurement.Status.OK) {
+                return "OK";
+            }
+            return String.format("%s(%d failed)", outcome.status(), outcome.failed());
+        }
+    }
+
     /** Resolved probe inputs. */
-    private record Config(Path file, int warmupRuns, int measuredRuns) {
+    private record Config(Path file, int warmupRuns, int measuredRuns, int concurrency) {
 
         static Config fromSystemProperties() {
             String path = System.getProperty("parquetry.probe.file");
@@ -450,7 +524,10 @@ public final class ColumnarReadComparisonProbe {
                 throw new IllegalArgumentException("parquetry.probe.file is not a regular file: " + path);
             }
             return new Config(
-                    file, intProperty("parquetry.probe.warmup", 1), intProperty("parquetry.probe.measure", 3));
+                    file,
+                    intProperty("parquetry.probe.warmup", 1),
+                    intProperty("parquetry.probe.measure", 3),
+                    intProperty("parquetry.probe.concurrency", 1));
         }
 
         private static int intProperty(String key, int fallback) {

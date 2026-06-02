@@ -17,9 +17,6 @@ package io.tileverse.parquetry.benchmarks;
 
 import java.io.IOException;
 import java.lang.foreign.MemorySegment;
-import java.lang.management.ManagementFactory;
-import java.lang.management.MemoryPoolMXBean;
-import java.lang.management.MemoryType;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -51,8 +48,6 @@ import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.GeometryFactory;
-
-import com.sun.management.ThreadMXBean;
 
 import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.ReadOptions;
@@ -125,6 +120,11 @@ import io.tileverse.parquetry.schema.SchemaNode;
  *       (defaults centre San Salvador, {@code -89.2 13.7}, half-diagonal {@code 0.15}).
  *   <li>{@code parquetry.probe.warmup} / {@code .measure}: warmup and measured run counts (defaults {@code 1} /
  *       {@code 3}).
+ *   <li>{@code parquetry.probe.concurrency}: number of reads to run at once (default {@code 1}). When greater than
+ *       {@code 1} each engine/scenario pass instead launches that many reads simultaneously per wave (DuckDB is
+ *       skipped) and the probe reports throughput, latency percentiles, and an OK/OOM/ERROR status, modelling a server
+ *       pod that admits {@code 2 x cores} concurrent requests. Pair it with {@code -XX:ActiveProcessorCount=N} to
+ *       simulate an N-core pod.
  * </ul>
  */
 // S2699: characterization probe; it prints a comparison table and only asserts the run completes for every engine.
@@ -143,6 +143,7 @@ public final class ReadComparisonProbe {
     private Bbox queryEnvelope;
     private int warmupRuns;
     private int measuredRuns;
+    private int concurrency;
 
     /** A sink touched by every consumed value to keep the JIT from eliminating the materialization work. */
     private long sink;
@@ -184,6 +185,7 @@ public final class ReadComparisonProbe {
                 config.cx() - config.r(), config.cy() - config.r(), config.cx() + config.r(), config.cy() + config.r());
         this.warmupRuns = config.warmupRuns();
         this.measuredRuns = config.measuredRuns();
+        this.concurrency = config.concurrency();
     }
 
     private void run() throws Exception {
@@ -191,6 +193,15 @@ public final class ReadComparisonProbe {
         System.out.printf(
                 "Attribute filter: %s = '%s'   Spatial filter: intersects %s%n%n", SUBTYPE, subtypeValue, queryDiamond);
 
+        if (concurrency > 1) {
+            runConcurrent();
+        } else {
+            runSequential();
+        }
+        System.out.printf("%n(consumed checksum %d)%n", sink);
+    }
+
+    private void runSequential() {
         List<Row> rows = new ArrayList<>();
         for (Scenario scenario : Scenario.values()) {
             if (!scenarioEnabled(scenario)) {
@@ -207,23 +218,73 @@ public final class ReadComparisonProbe {
             }
         }
         printTable(rows);
-        System.out.printf("%n(consumed checksum %d)%n", sink);
+    }
+
+    /**
+     * Runs each engine/scenario pass at the configured concurrency. DuckDB is skipped: its JDBC arm shares one in-
+     * process connection and its native engine parallelises internally, which would not measure the same thing as
+     * independent concurrent reads. parquetry shares one open dataset across the concurrent reads (the long-lived
+     * server model); parquet-java opens a reader per read (its per-query model).
+     */
+    private void runConcurrent() {
+        System.out.printf("Concurrency: %d reads in flight per engine/scenario pass (DuckDB skipped)%n%n", concurrency);
+        List<ConcurrentRow> rows = new ArrayList<>();
+        for (Scenario scenario : Scenario.values()) {
+            if (!scenarioEnabled(scenario)) {
+                continue;
+            }
+            if (engineEnabled("parquetry")) {
+                rows.add(measureParquetryConcurrent(scenario));
+            }
+            if (engineEnabled("parquet-java")) {
+                rows.add(measureParquetJavaConcurrent(scenario));
+            }
+        }
+        printConcurrentTable(rows);
+    }
+
+    private ConcurrentRow measureParquetryConcurrent(Scenario scenario) {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetDataset dataset = ParquetDataset.open(source);
+            ProbeMeasurement.Outcome outcome = ProbeMeasurement.runConcurrent(
+                    concurrency, warmupRuns, measuredRuns, () -> readParquetry(dataset, scenario));
+            return new ConcurrentRow("parquetry", scenario, outcome, null);
+        } catch (InterruptedException _) {
+            Thread.currentThread().interrupt();
+            return ConcurrentRow.failed("parquetry", scenario, "interrupted");
+        } catch (RuntimeException e) {
+            return ConcurrentRow.failed("parquetry", scenario, e.getMessage());
+        }
+    }
+
+    private ConcurrentRow measureParquetJavaConcurrent(Scenario scenario) {
+        try {
+            ProbeMeasurement.Outcome outcome = ProbeMeasurement.runConcurrent(
+                    concurrency, warmupRuns, measuredRuns, () -> readParquetJava(scenario));
+            return new ConcurrentRow("parquet-java", scenario, outcome, null);
+        } catch (InterruptedException _) {
+            Thread.currentThread().interrupt();
+            return ConcurrentRow.failed("parquet-java", scenario, "interrupted");
+        }
     }
 
     // --- parquetry arm ---
 
     private long readParquetry(Scenario scenario) {
-        Predicate predicate = parquetryPredicate(scenario);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
-            try (Stream<ParquetRecord> records = dataset.read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
-                long count = 0L;
-                for (ParquetRecord record : (Iterable<ParquetRecord>) records::iterator) {
-                    consumeParquetry(record);
-                    count++;
-                }
-                return count;
+            return readParquetry(ParquetDataset.open(source), scenario);
+        }
+    }
+
+    private long readParquetry(ParquetDataset dataset, Scenario scenario) {
+        Predicate predicate = parquetryPredicate(scenario);
+        try (Stream<ParquetRecord> records = dataset.read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
+            long count = 0L;
+            for (ParquetRecord record : (Iterable<ParquetRecord>) records::iterator) {
+                consumeParquetry(record);
+                count++;
             }
+            return count;
         }
     }
 
@@ -438,14 +499,14 @@ public final class ReadComparisonProbe {
         long rows = 0L;
         long allocBytes = 0L;
         for (int i = 0; i < measuredRuns; i++) {
-            long allocBefore = totalAllocatedBytes();
+            long allocBefore = ProbeMeasurement.totalAllocatedBytes();
             long start = System.nanoTime();
             rows = executeAndConsume(connection, sql);
             wallNanos.add(System.nanoTime() - start);
-            allocBytes = totalAllocatedBytes() - allocBefore;
+            allocBytes = ProbeMeasurement.totalAllocatedBytes() - allocBefore;
         }
         DuckDbProfile parsed = DuckDbProfile.read(profile);
-        return Row.duckDb(scenario, rows, medianMillis(wallNanos), allocBytes, parsed);
+        return Row.duckDb(scenario, rows, ProbeMeasurement.medianMillis(wallNanos), allocBytes, parsed);
     }
 
     private void enableProfiling(Connection connection, Path profile) throws SQLException {
@@ -500,51 +561,20 @@ public final class ReadComparisonProbe {
             long peakHeapBytes = 0L;
             long allocBytes = 0L;
             for (int i = 0; i < measuredRuns; i++) {
-                resetPeakHeap();
-                long allocBefore = totalAllocatedBytes();
+                ProbeMeasurement.resetPeakHeap();
+                long allocBefore = ProbeMeasurement.totalAllocatedBytes();
                 long start = System.nanoTime();
                 rows = body.getAsLong();
                 wallNanos.add(System.nanoTime() - start);
-                allocBytes = totalAllocatedBytes() - allocBefore;
-                peakHeapBytes = Math.max(peakHeapBytes, peakHeapBytes());
+                allocBytes = ProbeMeasurement.totalAllocatedBytes() - allocBefore;
+                peakHeapBytes = Math.max(peakHeapBytes, ProbeMeasurement.peakHeapBytes());
             }
-            return Row.jvm(engine, scenario, rows, medianMillis(wallNanos), peakHeapBytes, allocBytes);
+            return Row.jvm(engine, scenario, rows, ProbeMeasurement.medianMillis(wallNanos), peakHeapBytes, allocBytes);
         } catch (Exception e) {
             System.err.printf("%n[%s / %s] failed:%n", engine, scenario);
             e.printStackTrace();
             return Row.skipped(engine, scenario, e.getMessage());
         }
-    }
-
-    private static double medianMillis(List<Long> nanos) {
-        List<Long> sorted = new ArrayList<>(nanos);
-        sorted.sort(Long::compareTo);
-        long median = sorted.get(sorted.size() / 2);
-        return median / 1_000_000.0;
-    }
-
-    private static void resetPeakHeap() {
-        for (MemoryPoolMXBean pool : ManagementFactory.getMemoryPoolMXBeans()) {
-            if (pool.getType() == MemoryType.HEAP) {
-                pool.resetPeakUsage();
-            }
-        }
-    }
-
-    private static long peakHeapBytes() {
-        long peak = 0L;
-        for (MemoryPoolMXBean pool : ManagementFactory.getMemoryPoolMXBeans()) {
-            if (pool.getType() == MemoryType.HEAP) {
-                peak += pool.getPeakUsage().getUsed();
-            }
-        }
-        return peak;
-    }
-
-    /** Bytes allocated on the heap by all threads (including terminated decode workers) since JVM start. */
-    private static long totalAllocatedBytes() {
-        ThreadMXBean bean = (ThreadMXBean) ManagementFactory.getThreadMXBean();
-        return bean.getTotalThreadAllocatedBytes();
     }
 
     // --- query geometry ---
@@ -602,6 +632,33 @@ public final class ReadComparisonProbe {
                 "duckMem(MB) is DuckDB's self-reported peak buffer memory; its native footprint is off-heap.");
     }
 
+    private void printConcurrentTable(List<ConcurrentRow> rows) {
+        String header = String.format(
+                "%-22s %-12s %8s %12s %10s %10s %10s %12s %12s %8s",
+                "scenario",
+                "engine",
+                "rows",
+                "req/s",
+                "p50(ms)",
+                "p95(ms)",
+                "max(ms)",
+                "peakHeap(MB)",
+                "alloc(MB)",
+                "status");
+        System.out.println(header);
+        System.out.println("-".repeat(header.length()));
+        for (ConcurrentRow row : rows) {
+            System.out.println(row.format());
+        }
+        System.out.println();
+        System.out.printf(
+                "All passes ran %d reads at once, released together; metrics aggregate every read.%n", concurrency);
+        System.out.println("req/s is measured reads / summed wave wall; p50/p95/max are per-read latencies.");
+        System.out.println(
+                "peakHeap(MB) is heap occupancy incl. uncollected garbage at the run's -Xmx; the decisive signal is");
+        System.out.println("  whether status stays OK (not OOM) at a pod-sized heap. alloc(MB) is total churn.");
+    }
+
     // --- supporting types ---
 
     private enum Scenario {
@@ -654,6 +711,43 @@ public final class ReadComparisonProbe {
         }
     }
 
+    /** One printed line of the concurrency table: an engine's aggregate result for one scenario. */
+    private record ConcurrentRow(
+            String engine, Scenario scenario, ProbeMeasurement.Outcome outcome, String skipReason) {
+
+        static ConcurrentRow failed(String engine, Scenario scenario, String reason) {
+            return new ConcurrentRow(engine, scenario, null, reason);
+        }
+
+        String format() {
+            if (skipReason != null) {
+                return String.format("%-22s %-12s   skipped: %s", scenario, engine, skipReason);
+            }
+            String peakHeap = String.format("%.1f", outcome.peakHeapBytes() / (1024.0 * 1024.0));
+            String alloc = String.format("%.1f", outcome.allocBytes() / (1024.0 * 1024.0));
+            return String.format(
+                    "%-22s %-12s %8d %12.1f %10.1f %10.1f %10.1f %12s %12s %8s",
+                    scenario,
+                    engine,
+                    outcome.rowsPerRead(),
+                    outcome.throughputPerSecond(),
+                    outcome.p50Millis(),
+                    outcome.p95Millis(),
+                    outcome.maxMillis(),
+                    peakHeap,
+                    alloc,
+                    statusLabel());
+        }
+
+        /** OK, or the failure kind annotated with how many reads failed. */
+        private String statusLabel() {
+            if (outcome.status() == ProbeMeasurement.Status.OK) {
+                return "OK";
+            }
+            return String.format("%s(%d failed)", outcome.status(), outcome.failed());
+        }
+    }
+
     /** The subset of DuckDB's profile JSON this probe reports. */
     private record DuckDbProfile(double latencySeconds, long peakBufferBytes) {
 
@@ -689,7 +783,14 @@ public final class ReadComparisonProbe {
 
     /** Resolved probe inputs. */
     private record Config(
-            Path file, String subtypeValue, double cx, double cy, double r, int warmupRuns, int measuredRuns) {
+            Path file,
+            String subtypeValue,
+            double cx,
+            double cy,
+            double r,
+            int warmupRuns,
+            int measuredRuns,
+            int concurrency) {
 
         static Config fromSystemProperties() {
             String path = System.getProperty("parquetry.probe.file");
@@ -704,7 +805,8 @@ public final class ReadComparisonProbe {
                     doubleProperty("parquetry.probe.cy", 13.7),
                     doubleProperty("parquetry.probe.r", 0.15),
                     intProperty("parquetry.probe.warmup", 1),
-                    intProperty("parquetry.probe.measure", 3));
+                    intProperty("parquetry.probe.measure", 3),
+                    intProperty("parquetry.probe.concurrency", 1));
         }
 
         private static double doubleProperty(String key, double fallback) {
