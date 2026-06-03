@@ -59,7 +59,7 @@ public final class RecordRenderer {
 
     public void begin() {
         if (mode == Mode.CSV || mode == Mode.TSV) {
-            out.println(String.join(
+            writeLine(String.join(
                     delimiter(), fields.stream().map(SchemaNode::name).toList()));
         }
     }
@@ -78,7 +78,7 @@ public final class RecordRenderer {
 
     private void jsonRow(ParquetRecord row) {
         String line = Json.write(generator -> JsonRecordEncoder.writeObject(generator, schema, row));
-        out.println(line);
+        writeLine(line);
     }
 
     private void delimitedRow(ParquetRecord row) {
@@ -89,7 +89,7 @@ public final class RecordRenderer {
             }
             line.append(cell(row, fields.get(index)));
         }
-        out.println(line);
+        writeLine(line.toString());
     }
 
     private void textRow(ParquetRecord row) {
@@ -97,7 +97,13 @@ public final class RecordRenderer {
         for (SchemaNode field : fields) {
             line.append(field.name()).append('=').append(cell(row, field)).append('\t');
         }
-        out.println(line.toString().stripTrailing());
+        writeLine(line.toString().stripTrailing());
+    }
+
+    private void writeLine(String text) {
+        out.print(text);
+        out.print('\n');
+        out.flush();
     }
 
     private String cell(ParquetRecord row, SchemaNode field) {

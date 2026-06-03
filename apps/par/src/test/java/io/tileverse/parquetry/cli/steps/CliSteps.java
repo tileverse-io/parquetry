@@ -18,6 +18,7 @@ package io.tileverse.parquetry.cli.steps;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -127,11 +128,28 @@ public class CliSteps {
         List<String> args = tokenize(commandLine);
         List<String> resolved = new ArrayList<>(args.size());
         for (String arg : args) {
-            Path candidate = workDir.resolve(arg);
-            boolean looksLikeFile = Files.exists(candidate) || arg.endsWith(".parquet");
-            resolved.add(looksLikeFile ? candidate.toString() : arg);
+            resolved.add(resolveAgainstWorkDir(arg));
         }
         return resolved.toArray(new String[0]);
+    }
+
+    private String resolveAgainstWorkDir(String arg) {
+        if (arg.endsWith(".parquet")) {
+            return workDir.resolve(arg).toString();
+        }
+        Path candidate = asWorkDirPath(arg);
+        if (candidate != null && Files.exists(candidate)) {
+            return candidate.toString();
+        }
+        return arg;
+    }
+
+    private Path asWorkDirPath(String arg) {
+        try {
+            return workDir.resolve(arg);
+        } catch (InvalidPathException notAPath) {
+            return null;
+        }
     }
 
     private static List<String> tokenize(String line) {
