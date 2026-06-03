@@ -272,6 +272,14 @@ class BatchRowGroupReaderTest {
         return out.toByteArray();
     }
 
+    private static List<String> pathSegments(ColumnPath path) {
+        String[] segments = new String[path.numParts()];
+        for (int i = 0; i < segments.length; i++) {
+            segments[i] = path.part(i);
+        }
+        return List.of(segments);
+    }
+
     /**
      * Wraps {@code data} in a read-only heap {@link MemorySegment} and builds a {@link FetchedColumnChunk} around it.
      * The chunk is uncompressed with maxRep=0, maxDef=0 (required column).
@@ -282,7 +290,7 @@ class BatchRowGroupReaderTest {
         ColumnMetaData meta = ColumnMetaData.builder()
                 .type(PhysicalType.INT32)
                 .encodings(List.of(Encoding.PLAIN))
-                .pathInSchema(path.parts())
+                .pathInSchema(pathSegments(path))
                 .codec(CompressionCodec.UNCOMPRESSED)
                 .numValues(numValues)
                 .totalUncompressedSize((long) data.length)

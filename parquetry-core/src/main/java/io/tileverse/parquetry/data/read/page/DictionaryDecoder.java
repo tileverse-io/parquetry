@@ -37,11 +37,11 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
 /**
  * Reads a dictionary page into a {@link Dictionary}.
  *
- * <p>Dictionary pages carry all unique values for a column chunk in PLAIN encoding. For fixed-width primitives the
+ * <p>Dictionary pages hold all unique values for a column chunk in PLAIN encoding. For fixed-width primitives the
  * decoder bulk-copies the page bytes into an owned primitive buffer (no boxing, single allocation); for variable-length
- * binary it copies each value into an owned heap {@link MemorySegment}. Either way, the resulting {@link Dictionary}
- * outlives the source page bytes, so its values must own their storage to survive the dictionary-page scratch buffer
- * being returned to its pool.
+ * binary it copies every value into one owned heap backing buffer and exposes each entry as a read-only slice of it.
+ * Either way, the resulting {@link Dictionary} outlives the source page bytes, which is why its values own their
+ * storage and survive the dictionary-page scratch buffer being returned to its pool.
  */
 public final class DictionaryDecoder {
 
@@ -110,41 +110,56 @@ public final class DictionaryDecoder {
     private static Dictionary.Int96Dict readInt96s(MemorySegment page, int n) {
         PlainInt96Decoder decoder = new PlainInt96Decoder();
         decoder.load(page, n);
-        List<MemorySegment> values = new ArrayList<>(n);
-        for (int i = 0; i < n; i++) {
-            values.add(copyToOwnedSegment(decoder.next()));
-        }
-        return new Dictionary.Int96Dict(values);
+        return new Dictionary.Int96Dict(consolidate(decoder, n));
     }
 
     private static Dictionary.BinaryDict readBinary(MemorySegment page, int n) {
         PlainBinaryDecoder decoder = new PlainBinaryDecoder();
         decoder.load(page, n);
-        List<MemorySegment> values = new ArrayList<>(n);
-        for (int i = 0; i < n; i++) {
-            values.add(copyToOwnedSegment(decoder.next()));
-        }
-        return new Dictionary.BinaryDict(values);
+        return new Dictionary.BinaryDict(consolidate(decoder, n));
     }
 
     private static Dictionary.FixedLenBinaryDict readFixedLenBinary(MemorySegment page, int n, int length) {
         PlainFixedLenBinaryDecoder decoder = new PlainFixedLenBinaryDecoder(length);
         decoder.load(page, n);
-        List<MemorySegment> values = new ArrayList<>(n);
-        for (int i = 0; i < n; i++) {
-            values.add(copyToOwnedSegment(decoder.next()));
-        }
-        return new Dictionary.FixedLenBinaryDict(values, length);
+        return new Dictionary.FixedLenBinaryDict(consolidate(decoder, n), length);
     }
 
     /**
-     * Copies the bytes of {@code source} into a freshly-allocated heap {@link MemorySegment} and returns it read-only.
-     * The {@code PlainBinaryDecoder} family returns zero-copy views of the source page; dictionaries outlive that page
-     * (the dictionary-page scratch buffer is returned to the pool right after decode), so dictionary values must own
-     * their bytes to avoid dangling references into recycled pool memory.
+     * Copies the {@code n} decoded binary entries into a single heap backing buffer and returns each entry as a
+     * read-only slice of that backing.
+     *
+     * <p>The {@code PlainBinaryDecoder} family returns zero-copy views of the source page; dictionaries outlive that
+     * page (the dictionary-page scratch buffer is returned to the pool right after decode), which is why the bytes are
+     * copied out into heap-owned storage. Consolidating all entries into one backing replaces one heap allocation plus
+     * two segment objects per entry with a single allocation and one read-only seal for the whole dictionary; a slice
+     * of a read-only segment is itself read-only, and every slice keeps the shared backing reachable.
      */
-    private static MemorySegment copyToOwnedSegment(MemorySegment source) {
-        byte[] copy = source.toArray(JAVA_BYTE);
-        return MemorySegment.ofArray(copy).asReadOnly();
+    private static List<MemorySegment> consolidate(PageDecoder<MemorySegment> decoder, int n) {
+        MemorySegment[] views = new MemorySegment[n];
+        int totalBytes = 0;
+        for (int i = 0; i < n; i++) {
+            MemorySegment view = decoder.next();
+            views[i] = view;
+            totalBytes += (int) view.byteSize();
+        }
+
+        byte[] backingBytes = new byte[totalBytes];
+        MemorySegment backing = MemorySegment.ofArray(backingBytes);
+        List<MemorySegment> entries = new ArrayList<>(n);
+        long offset = 0L;
+        for (MemorySegment view : views) {
+            long length = view.byteSize();
+            MemorySegment.copy(view, 0L, backing, offset, length);
+            offset += length;
+        }
+        MemorySegment sealed = backing.asReadOnly();
+        offset = 0L;
+        for (MemorySegment view : views) {
+            long length = view.byteSize();
+            entries.add(sealed.asSlice(offset, length));
+            offset += length;
+        }
+        return entries;
     }
 }

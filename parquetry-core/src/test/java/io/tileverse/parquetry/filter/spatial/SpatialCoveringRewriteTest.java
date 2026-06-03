@@ -44,17 +44,17 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 class SpatialCoveringRewriteTest {
 
-    private static final ColumnPath XMIN = ColumnPath.of("bbox.xmin");
-    private static final ColumnPath XMAX = ColumnPath.of("bbox.xmax");
-    private static final ColumnPath YMIN = ColumnPath.of("bbox.ymin");
-    private static final ColumnPath YMAX = ColumnPath.of("bbox.ymax");
+    private static final ColumnPath XMIN = ColumnPath.of("xmin");
+    private static final ColumnPath XMAX = ColumnPath.of("xmax");
+    private static final ColumnPath YMIN = ColumnPath.of("ymin");
+    private static final ColumnPath YMAX = ColumnPath.of("ymax");
 
     private final ParquetSchema schema = flatSchema(
             requiredBinary("geometry"),
-            requiredDouble("bbox.xmin"),
-            requiredDouble("bbox.xmax"),
-            requiredDouble("bbox.ymin"),
-            requiredDouble("bbox.ymax"));
+            requiredDouble("xmin"),
+            requiredDouble("xmax"),
+            requiredDouble("ymin"),
+            requiredDouble("ymax"));
 
     private final Optional<GeoParquetMetadata> geoWithCovering = Optional.of(geoWithCovering());
 

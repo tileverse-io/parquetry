@@ -47,7 +47,7 @@ public final class Pred {
     }
 
     public static ColumnRef col(String... parts) {
-        return new ColumnRef(new ColumnPath(List.of(parts)));
+        return new ColumnRef(ColumnPath.of(parts));
     }
 
     public static Predicate and(Predicate... children) {

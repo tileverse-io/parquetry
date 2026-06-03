@@ -61,6 +61,7 @@ import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.LevelMaxima;
+import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 import lombok.NonNull;
@@ -70,15 +71,16 @@ import lombok.NonNull;
  * the current page's pre-decoded values.
  *
  * <p>Page lifecycle: {@link #loadNextPage()} decompresses the next page into a transient {@link Arena#ofConfined()
- * confined Arena}, fully decodes rep-levels / def-levels / values into heap-backed Java arrays (or
- * {@link MemorySegment}[] of heap-backed segments for binary kinds), and closes the Arena before returning. Once a page
- * is loaded, every {@link #readBatch} call is array slicing - no Arena-backed memory escapes the load step, and
+ * confined Arena}, fully decodes rep-levels / def-levels / values into heap-backed Java arrays (or, for PLAIN/DELTA
+ * binary kinds, a single heap-backed {@link MemorySegment} the slices view), and closes the Arena before returning.
+ * Once a page is loaded, every {@link #readBatch} call is slicing - no Arena-backed memory escapes the load step, and
  * within-page splitting is naturally correct because page state lives on the heap.
  */
 final class BatchColumnReader {
 
     private static final int[] EMPTY_REP_LEVELS = new int[0];
     private static final int[] EMPTY_DEF_LEVELS = new int[0];
+    private static final int INT96_WIDTH = 12;
 
     private final ColumnPath columnPath;
     private final SchemaNode.Primitive leaf;
@@ -92,6 +94,9 @@ final class BatchColumnReader {
     private final RowRanges survivingRows; // null when this column is not masked
     private final boolean skipDecode;
 
+    // Reused across pages; the direct binary decode path appends straight into its freshly sized backing per page.
+    private final BinaryValueSink binarySink = new BinaryValueSink();
+
     // Per-page state. Populated by loadNextPage; cleared on advance.
     private boolean pageLoaded;
     private int pageSize;
@@ -104,7 +109,21 @@ final class BatchColumnReader {
     private float[] pageFloats;
     private double[] pageDoubles;
     private boolean[] pageBooleans;
+
+    // Scratch holder for PLAIN/DELTA binary between value decode and the freeze step that consolidates it into the
+    // shared backing. Never populated for dictionary-encoded binary, which decodes into pageIndices instead.
     private MemorySegment[] pageSegments;
+    // PLAIN/DELTA binary is frozen into one shared heap backing; offsets are meaningful only for the variable kind.
+    private MemorySegment pageBinaryBacking;
+    private int[] pageBinaryOffsets;
+    private boolean pageWasDictionary;
+
+    // One row-positioned dictionary index per row for dictionary-encoded binary, resolved through the chunk-level
+    // dictEntries array. A null row holds the harmless placeholder index zero and its nullness lives in pageValidity.
+    private int[] pageIndices;
+    // Chunk-level dictionary entries (shared heap-owned segments), built once from this.dictionary and reused across
+    // pages.
+    private MemorySegment[] dictEntries;
 
     private int valuesConsumedInCurrentPage;
     private int logicalRowsConsumedInCurrentPage;
@@ -188,7 +207,7 @@ final class BatchColumnReader {
 
     /**
      * Definition-level stream for the current page; one entry per leaf element. Null when the column has no optional
-     * ancestor ({@code maxDef == 0}). Unlike the present/absent bitmap from {@code decodeValidity}, this retains the
+     * ancestor ({@code maxDef == 0}). Unlike the present/absent bitmap derived from these levels, this retains the
      * intermediate def levels that distinguish a null list from an empty list from a null element.
      */
     int[] currentPageDefLevels() {
@@ -278,11 +297,12 @@ final class BatchColumnReader {
 
     private void decodeIntoHeap(DecodedPage page) {
         pageSize = page.valueCount();
-        pageValidity = decodeValidity(page, pageSize);
         pageRepLevels = decodeRepLevels(page, pageSize);
         pageDefLevels = decodeDefLevels(page, pageSize);
+        pageValidity = deriveValidity(pageDefLevels, pageSize);
         pageLogicalRowCount = (pageRepLevels == null) ? pageSize : countRepZeroMarkers(pageRepLevels);
         clearTypedPayloads();
+        pageWasDictionary = isDictionaryEncoded(page.valuesEncoding());
         if (skipDecode && survivingRows != null) {
             decodeSelectedRows(page, pageCursor.currentPageFirstRowIndex());
         } else {
@@ -291,6 +311,7 @@ final class BatchColumnReader {
                 compactToSurvivingRows(pageCursor.currentPageFirstRowIndex());
             }
         }
+        freezeBinaryPageIfNeeded();
         valuesConsumedInCurrentPage = 0;
         logicalRowsConsumedInCurrentPage = 0;
         pageLoaded = true;
@@ -315,20 +336,30 @@ final class BatchColumnReader {
         pageDoubles = null;
         pageBooleans = null;
         pageSegments = null;
+        pageBinaryBacking = null;
+        pageBinaryOffsets = null;
+        pageIndices = null;
     }
 
     // ---- level decoding ----
 
-    private BitSet decodeValidity(DecodedPage page, int values) {
+    /**
+     * Derives the present/absent bitmap from the already-decoded definition levels: bit {@code i} is set when value
+     * {@code i} is defined at the leaf, i.e. its definition level equals {@code maxDef}. A column with no optional
+     * ancestor ({@code maxDef == 0}, def levels absent and {@code defLevels == null}) has every value present.
+     */
+    private BitSet deriveValidity(int[] defLevels, int values) {
         BitSet validity = new BitSet(values);
-        int maxDef = maxLevels.maxDefinitionLevel();
-        if (maxDef == 0) {
+        if (defLevels == null) {
             validity.set(0, values);
             return validity;
         }
-        LevelDecoder defDecoder = new LevelDecoder(defBitWidth);
-        defDecoder.load(page.defLevelBytes());
-        defDecoder.decodeEquals(values, maxDef, validity, 0);
+        int maxDef = maxLevels.maxDefinitionLevel();
+        for (int i = 0; i < values; i++) {
+            if (defLevels[i] == maxDef) {
+                validity.set(i);
+            }
+        }
         return validity;
     }
 
@@ -411,16 +442,43 @@ final class BatchColumnReader {
         Encoding encoding = page.valuesEncoding();
         MemorySegment valueBuf = page.valueBytes();
         Dictionary<?> dict = dictionary.orElse(null);
+        if (isDictionaryBinaryPage()) {
+            pageIndices = decodeDictionaryIndices(valueBuf, encoding, nonNullCount, dict);
+            return;
+        }
         switch (leaf.kind()) {
             case INT32 -> pageInts = decodeInts(valueBuf, encoding, nonNullCount, dict);
             case INT64 -> pageLongs = decodeLongs(valueBuf, encoding, nonNullCount, dict);
             case FLOAT -> pageFloats = decodeFloats(valueBuf, encoding, nonNullCount, dict);
             case DOUBLE -> pageDoubles = decodeDoubles(valueBuf, encoding, nonNullCount, dict);
             case BOOLEAN -> pageBooleans = decodeBooleans(valueBuf, encoding, nonNullCount);
-            case BYTE_ARRAY -> pageSegments = decodeBinary(valueBuf, encoding, nonNullCount, dict);
+            case BYTE_ARRAY -> decodeByteArray(valueBuf, encoding, nonNullCount, dict);
             case FIXED_LEN_BYTE_ARRAY -> pageSegments = decodeFixedLenBinary(valueBuf, encoding, nonNullCount, dict);
             case INT96 -> pageSegments = decodeInt96(valueBuf, encoding, nonNullCount, dict);
         }
+    }
+
+    /**
+     * Decodes a dictionary binary page into a row-positioned {@code int[]} of dictionary indexes. Null rows keep the
+     * harmless placeholder index 0; their nullness lives in {@code pageValidity}. The chunk-level {@link #dictEntries}
+     * is materialized here on first use.
+     */
+    private int[] decodeDictionaryIndices(MemorySegment buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
+        dictionaryEntries();
+        int[] indices = new int[pageSize];
+        if (nonNullCount == 0) {
+            return indices;
+        }
+        RleDictionaryPageDecoder<?> decoder = dictionaryDecoderFor(encoding, dict);
+        decoder.load(buf, nonNullCount);
+        if (nonNullCount == pageSize) {
+            decoder.decodeIndices(pageSize, indices, 0);
+            return indices;
+        }
+        int[] dense = new int[nonNullCount];
+        decoder.decodeIndices(nonNullCount, dense, 0);
+        spreadInts(dense, indices);
+        return indices;
     }
 
     private int[] decodeInts(MemorySegment buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
@@ -508,6 +566,55 @@ final class BatchColumnReader {
         return out;
     }
 
+    /**
+     * Decodes a {@code BYTE_ARRAY} page. Contiguous PLAIN/DELTA_LENGTH pages decode straight into the shared backing
+     * via the sink; every other case (dictionary, DELTA_BYTE_ARRAY, surviving-rows compaction) keeps the scratch path
+     * that fills {@code pageSegments} and freezes afterward.
+     */
+    private void decodeByteArray(MemorySegment buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
+        if (canDecodeBinaryDirect(encoding)) {
+            decodeBinaryDirect(buf, encoding, nonNullCount);
+        } else {
+            pageSegments = decodeBinary(buf, encoding, nonNullCount, dict);
+        }
+    }
+
+    /**
+     * True when a {@code BYTE_ARRAY} page can decode straight into the backing buffer with no per-value segment. Holds
+     * only for contiguous PLAIN and DELTA_LENGTH_BYTE_ARRAY pages whose values are not later compacted to surviving
+     * rows.
+     */
+    private boolean canDecodeBinaryDirect(Encoding encoding) {
+        if (pageWasDictionary || survivingRows != null) {
+            return false; // dictionary uses indexes; surviving-rows pages compact through the scratch path
+        }
+        if (leaf.kind() != PrimitiveKind.BYTE_ARRAY) {
+            return false; // fixed-width kinds handled elsewhere; DELTA_BYTE_ARRAY is non-contiguous
+        }
+        return encoding == Encoding.PLAIN || encoding == Encoding.DELTA_LENGTH_BYTE_ARRAY;
+    }
+
+    /**
+     * Decodes a contiguous PLAIN/DELTA_LENGTH binary page directly into {@code pageBinaryBacking} and
+     * {@code pageBinaryOffsets} through the sink, producing the same layout the freeze step would have. Leaves
+     * {@code pageSegments} null because the layout is already final.
+     */
+    private void decodeBinaryDirect(MemorySegment buf, Encoding encoding, int nonNullCount) {
+        if (nonNullCount == 0) {
+            binarySink.reset(0, 0);
+        } else {
+            PageDecoder<?> decoder = binaryDecoderFor(encoding, null); // PLAIN/DELTA need no dictionary
+            decoder.load(buf, nonNullCount);
+            decoder.decodeBinaryInto(nonNullCount, binarySink);
+        }
+        int[] denseOffsets = binarySink.offsets();
+        pageBinaryBacking = binarySink.backing();
+        pageBinaryOffsets = (nonNullCount == pageSize)
+                ? denseOffsets
+                : BinaryValueSink.spreadOffsets(denseOffsets, pageValidity, pageSize);
+        pageSegments = null;
+    }
+
     private MemorySegment[] decodeBinary(MemorySegment buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
         MemorySegment[] out = new MemorySegment[pageSize];
         if (nonNullCount == 0) {
@@ -521,9 +628,6 @@ final class BatchColumnReader {
             MemorySegment[] dense = new MemorySegment[nonNullCount];
             decoder.decodeBinary(nonNullCount, dense, 0);
             spreadSegments(dense, out);
-        }
-        if (!isDictionaryEncoded(encoding)) {
-            copySegmentsToHeap(out);
         }
         return out;
     }
@@ -544,9 +648,6 @@ final class BatchColumnReader {
             decoder.decodeBinary(nonNullCount, dense, 0);
             spreadSegments(dense, out);
         }
-        if (!isDictionaryEncoded(encoding)) {
-            copySegmentsToHeap(out);
-        }
         return out;
     }
 
@@ -563,9 +664,6 @@ final class BatchColumnReader {
             MemorySegment[] dense = new MemorySegment[nonNullCount];
             decoder.decodeBinary(nonNullCount, dense, 0);
             spreadSegments(dense, out);
-        }
-        if (!isDictionaryEncoded(encoding)) {
-            copySegmentsToHeap(out);
         }
         return out;
     }
@@ -587,29 +685,82 @@ final class BatchColumnReader {
     }
 
     /**
-     * Relocates every non-null entry in {@code segments} off the page Arena, letting the caller close it without
-     * invalidating them. The page's binary values are packed into a single heap buffer and each entry becomes a
-     * read-only slice of it - one allocation per page instead of one per value.
+     * True when the current page is dictionary-encoded and the column is one of the binary kinds. These pages decode
+     * into {@code pageIndices} over the shared {@code dictEntries} rather than per-value segments.
      */
-    private static void copySegmentsToHeap(MemorySegment[] segments) {
-        long total = 0;
-        for (MemorySegment src : segments) {
-            if (src != null) {
-                total += src.byteSize();
+    private boolean isDictionaryBinaryPage() {
+        if (!pageWasDictionary) {
+            return false;
+        }
+        return switch (leaf.kind()) {
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> true;
+            default -> false;
+        };
+    }
+
+    /**
+     * Builds the chunk-level array of dictionary entries the first time a dictionary binary page is decoded, then
+     * caches it. Each entry is a heap-owned, read-only {@link MemorySegment} the rows index into.
+     */
+    private MemorySegment[] dictionaryEntries() {
+        if (dictEntries != null) {
+            return dictEntries;
+        }
+        Dictionary<?> dict = dictionary.orElseThrow(() -> new IllegalStateException(
+                "Dictionary-encoded data page requires a loaded Dictionary; none supplied for column "
+                        + columnPath.dot()));
+        MemorySegment[] entries = new MemorySegment[dict.size()];
+        for (int k = 0; k < entries.length; k++) {
+            entries[k] = (MemorySegment) dict.get(k);
+        }
+        dictEntries = entries;
+        return dictEntries;
+    }
+
+    /**
+     * Converts the just-decoded PLAIN/DELTA binary page from per-value slice objects (views into the page Arena) into a
+     * single heap-owned backing buffer the page Arena can no longer invalidate. Dictionary-encoded binary pages do not
+     * reach the freeze: they decode into row-positioned {@code pageIndices} over the heap-owned {@code dictEntries},
+     * which outlive the Arena on their own.
+     *
+     * <p>The scratch {@code MemorySegment[]} that the decoders, compaction, and selected-rows decode filled is read
+     * once here, then released; from this point on the page's binary values live only in {@code pageBinaryBacking}
+     * (plus {@code pageBinaryOffsets} for the variable kind). One allocation per page replaces one wrapper per value.
+     *
+     * <p>A null {@code pageSegments} also means the contiguous-binary direct path already produced the final layout;
+     * nothing remains to freeze.
+     */
+    private void freezeBinaryPageIfNeeded() {
+        if (pageSegments == null || pageWasDictionary) {
+            return;
+        }
+        switch (leaf.kind()) {
+            case BYTE_ARRAY -> freezeVariableBinary(pageSegments);
+            case FIXED_LEN_BYTE_ARRAY -> freezeFixedBinary(pageSegments, requiredByteWidth());
+            case INT96 -> freezeFixedBinary(pageSegments, INT96_WIDTH);
+            default -> {
+                /* non-binary kinds keep their primitive arrays */
             }
         }
-        MemorySegment backing = MemorySegment.ofArray(new byte[Math.toIntExact(total)]);
-        long offset = 0;
-        for (int i = 0; i < segments.length; i++) {
-            MemorySegment src = segments[i];
-            if (src == null) {
-                continue;
-            }
-            long length = src.byteSize();
-            MemorySegment.copy(src, 0L, backing, offset, length);
-            segments[i] = backing.asSlice(offset, length).asReadOnly();
-            offset += length;
-        }
+        pageSegments = null;
+    }
+
+    /**
+     * Concatenates the non-null values into one heap backing plus a row-indexed {@code int[]} of absolute byte offsets,
+     * reusing the same packing the consolidating vector factory uses so the two layouts cannot drift.
+     */
+    private void freezeVariableBinary(MemorySegment[] values) {
+        BinaryVector.VariableLayout layout = BinaryVector.consolidate(values);
+        pageBinaryBacking = layout.backing();
+        pageBinaryOffsets = layout.offsets();
+    }
+
+    /**
+     * Packs the full-width slots into one heap backing of {@code size * byteWidth} (null rows zeroed), reusing the same
+     * packing the fixed-width vector factories use so the two layouts cannot drift.
+     */
+    private void freezeFixedBinary(MemorySegment[] values, int byteWidth) {
+        pageBinaryBacking = FixedLenBinaryVector.packFullSlots(values, byteWidth);
     }
 
     // ---- spread (dense -> validity-positioned) ----
@@ -736,6 +887,15 @@ final class BatchColumnReader {
         return new RleDictionaryPageDecoder<>(dict);
     }
 
+    /** The index decoder for a dictionary binary page; raw indexes are read with {@code decodeIndices}. */
+    private RleDictionaryPageDecoder<?> dictionaryDecoderFor(Encoding encoding, Dictionary<?> dict) {
+        if (!isDictionaryEncoded(encoding)) {
+            throw unsupported(encoding, leaf.kind().name());
+        }
+        return (RleDictionaryPageDecoder<?>)
+                requireDictionaryDecoder(dict, leaf.kind().name());
+    }
+
     private static UnsupportedOperationException unsupported(Encoding encoding, String kindLabel) {
         return new UnsupportedOperationException(
                 "BatchColumnReader has no decoder wired for encoding " + encoding + " on " + kindLabel);
@@ -765,7 +925,6 @@ final class BatchColumnReader {
             PageDecoder<?> decoder = decoderFor(encoding, dict);
             decoder.load(page.valueBytes(), nonNullCount);
             gatherSelectedValues(decoder, keep, keptValidity);
-            sealBinaryPayloadIfNeeded(encoding);
         }
 
         if (pageDefLevels != null) {
@@ -804,6 +963,11 @@ final class BatchColumnReader {
     }
 
     private void allocateCompactedPayload(int size) {
+        if (isDictionaryBinaryPage()) {
+            dictionaryEntries();
+            pageIndices = new int[size];
+            return;
+        }
         switch (leaf.kind()) {
             case INT32 -> pageInts = new int[size];
             case INT64 -> pageLongs = new long[size];
@@ -815,6 +979,10 @@ final class BatchColumnReader {
     }
 
     private void decodeOneInto(PageDecoder<?> decoder, int index) {
+        if (isDictionaryBinaryPage()) {
+            ((RleDictionaryPageDecoder<?>) decoder).decodeIndices(1, pageIndices, index);
+            return;
+        }
         switch (leaf.kind()) {
             case INT32 -> decoder.decodeInts(1, pageInts, index);
             case INT64 -> decoder.decodeLongs(1, pageLongs, index);
@@ -822,20 +990,6 @@ final class BatchColumnReader {
             case DOUBLE -> decoder.decodeDoubles(1, pageDoubles, index);
             case BOOLEAN -> decoder.decodeBooleans(1, pageBooleans, index);
             case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> decoder.decodeBinary(1, pageSegments, index);
-        }
-    }
-
-    /**
-     * Decoded binary values are zero-copy views into the page Arena for non-dictionary encodings and must be copied to
-     * the heap before that Arena closes, mirroring the full decode path. Dictionary-encoded values are heap-owned and
-     * need no copy.
-     */
-    private void sealBinaryPayloadIfNeeded(Encoding encoding) {
-        if (pageSegments == null) {
-            return;
-        }
-        if (!isDictionaryEncoded(encoding)) {
-            copySegmentsToHeap(pageSegments);
         }
     }
 
@@ -891,7 +1045,9 @@ final class BatchColumnReader {
     }
 
     private void gatherTypedPayloads(int[] keep) {
-        if (pageInts != null) {
+        if (pageIndices != null) {
+            pageIndices = gatherInts(pageIndices, keep);
+        } else if (pageInts != null) {
             pageInts = gatherInts(pageInts, keep);
         } else if (pageLongs != null) {
             pageLongs = gatherLongs(pageLongs, keep);
@@ -975,20 +1131,41 @@ final class BatchColumnReader {
             case FLOAT -> FloatVector.materialized(Arrays.copyOfRange(pageFloats, start, end), sliceValidity);
             case DOUBLE -> DoubleVector.materialized(Arrays.copyOfRange(pageDoubles, start, end), sliceValidity);
             case BOOLEAN -> BooleanVector.materialized(Arrays.copyOfRange(pageBooleans, start, end), sliceValidity);
-            case BYTE_ARRAY -> BinaryVector.materialized(Arrays.copyOfRange(pageSegments, start, end), sliceValidity);
-            case FIXED_LEN_BYTE_ARRAY ->
-                FixedLenBinaryVector.materialized(
-                        Arrays.copyOfRange(pageSegments, start, end), requiredByteWidth(), sliceValidity);
-            case INT96 -> Int96Vector.materialized(Arrays.copyOfRange(pageSegments, start, end), sliceValidity);
+            case BYTE_ARRAY -> sliceVariableBinary(start, n, sliceValidity);
+            case FIXED_LEN_BYTE_ARRAY -> sliceFixedBinary(start, n, requiredByteWidth(), sliceValidity);
+            case INT96 -> sliceInt96(start, n, sliceValidity);
         };
     }
 
-    private static BitSet sliceBitSet(BitSet source, int start, int n) {
-        BitSet slice = new BitSet(n);
-        for (int i = source.nextSetBit(start); i >= 0 && i < start + n; i = source.nextSetBit(i + 1)) {
-            slice.set(i - start);
+    private BinaryVector sliceVariableBinary(int start, int n, BitSet sliceValidity) {
+        if (isDictionaryBinaryPage()) {
+            int[] sliceIndices = Arrays.copyOfRange(pageIndices, start, start + n);
+            return BinaryVector.dictionary(dictEntries, sliceIndices, sliceValidity);
         }
-        return slice;
+        int[] sliceOffsets = Arrays.copyOfRange(pageBinaryOffsets, start, start + n + 1);
+        return BinaryVector.of(pageBinaryBacking, sliceOffsets, sliceValidity);
+    }
+
+    private FixedLenBinaryVector sliceFixedBinary(int start, int n, int width, BitSet sliceValidity) {
+        if (isDictionaryBinaryPage()) {
+            int[] sliceIndices = Arrays.copyOfRange(pageIndices, start, start + n);
+            return FixedLenBinaryVector.dictionary(dictEntries, sliceIndices, width, sliceValidity);
+        }
+        MemorySegment slot = pageBinaryBacking.asSlice((long) start * width, (long) n * width);
+        return FixedLenBinaryVector.of(slot, width, sliceValidity);
+    }
+
+    private Int96Vector sliceInt96(int start, int n, BitSet sliceValidity) {
+        if (isDictionaryBinaryPage()) {
+            int[] sliceIndices = Arrays.copyOfRange(pageIndices, start, start + n);
+            return Int96Vector.dictionary(dictEntries, sliceIndices, sliceValidity);
+        }
+        MemorySegment slot = pageBinaryBacking.asSlice((long) start * INT96_WIDTH, (long) n * INT96_WIDTH);
+        return Int96Vector.of(slot, sliceValidity);
+    }
+
+    static BitSet sliceBitSet(BitSet source, int start, int n) {
+        return source.get(start, start + n);
     }
 
     // ---- close ----

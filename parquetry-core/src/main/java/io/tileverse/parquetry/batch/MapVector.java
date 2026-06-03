@@ -84,4 +84,12 @@ public final class MapVector implements ColumnVector {
     public ColumnVector values() {
         return values;
     }
+
+    @Override
+    public long approximateHeapBytes() {
+        return (long) offsets.length * Integer.BYTES
+                + ColumnVector.validityBytes(size)
+                + keys.approximateHeapBytes()
+                + values.approximateHeapBytes();
+    }
 }

@@ -36,4 +36,11 @@ public record VariantVector(
         VariantMetadata metadata = new VariantMetadata(metadataColumn.get(row));
         return Variant.of(valueColumn.get(row), metadata);
     }
+
+    @Override
+    public long approximateHeapBytes() {
+        return ColumnVector.validityBytes(size)
+                + metadataColumn.approximateHeapBytes()
+                + valueColumn.approximateHeapBytes();
+    }
 }

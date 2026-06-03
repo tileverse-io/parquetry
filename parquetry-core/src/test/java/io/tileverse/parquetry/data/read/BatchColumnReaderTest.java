@@ -15,6 +15,7 @@
  */
 package io.tileverse.parquetry.data.read;
 
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -24,6 +25,7 @@ import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.BitSet;
 import java.util.List;
 import java.util.Optional;
@@ -33,8 +35,10 @@ import org.apache.parquet.format.DataPageHeader;
 import org.apache.parquet.format.PageHeader;
 import org.apache.parquet.format.PageType;
 import org.apache.parquet.format.Util;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.batch.BinaryVector;
 import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.data.read.page.Dictionary;
@@ -59,6 +63,75 @@ import io.tileverse.parquetry.schema.SchemaNode;
 class BatchColumnReaderTest {
 
     private static final ColumnPath PATH = ColumnPath.of("val");
+
+    /**
+     * Pins the contract of {@link BatchColumnReader#sliceBitSet}: extract bits {@code [start, start + n)} from the
+     * source and shift them down so source bit {@code start} maps to slice bit 0, with no bit set at or beyond index
+     * {@code n}.
+     */
+    @Nested
+    class SliceBitSet {
+
+        @Test
+        void copiesAllBitsWhenFullyValid() {
+            BitSet source = new BitSet(100);
+            source.set(0, 100);
+
+            BitSet slice = BatchColumnReader.sliceBitSet(source, 0, 100);
+
+            assertThat(slice.cardinality()).isEqualTo(100);
+            assertThat(slice.nextClearBit(0)).isEqualTo(100);
+        }
+
+        @Test
+        void shiftsByStartOffset() {
+            BitSet source = new BitSet(100);
+            source.set(10, 100);
+
+            BitSet slice = BatchColumnReader.sliceBitSet(source, 8, 50);
+
+            assertThat(slice.get(0)).isFalse();
+            assertThat(slice.get(1)).isFalse();
+            assertThat(slice.get(2)).isTrue();
+            assertThat(slice.cardinality()).isEqualTo(48);
+        }
+
+        @Test
+        void excludesBitsBeyondTheWindow() {
+            BitSet source = new BitSet(200);
+            source.set(0, 200);
+
+            BitSet slice = BatchColumnReader.sliceBitSet(source, 50, 64);
+
+            assertThat(slice.cardinality()).isEqualTo(64);
+            assertThat(slice.length()).isEqualTo(64);
+        }
+
+        @Test
+        void preservesSparsePattern() {
+            BitSet source = new BitSet(128);
+            source.set(65);
+            source.set(70);
+            source.set(127);
+
+            BitSet slice = BatchColumnReader.sliceBitSet(source, 64, 64);
+
+            assertThat(slice.get(1)).isTrue();
+            assertThat(slice.get(6)).isTrue();
+            assertThat(slice.get(63)).isTrue();
+            assertThat(slice.cardinality()).isEqualTo(3);
+        }
+
+        @Test
+        void emptyWhenNoBitsInWindow() {
+            BitSet source = new BitSet(100);
+            source.set(0, 10);
+
+            BitSet slice = BatchColumnReader.sliceBitSet(source, 20, 30);
+
+            assertThat(slice.isEmpty()).isTrue();
+        }
+    }
 
     // --- test 1: single page, no nulls, INT32 ---
 
@@ -174,7 +247,194 @@ class BatchColumnReaderTest {
         assertThat(reader.hasMore()).isFalse();
     }
 
+    // --- test 6: PLAIN BYTE_ARRAY with nulls, split across batches and a page boundary ---
+
+    /**
+     * Locks the behavior the shared-buffer freeze must preserve: a non-dictionary BYTE_ARRAY column with interleaved
+     * nulls, read in several {@link BatchColumnReader#readBatch} calls that split a single page and cross a page
+     * boundary, must return exactly the original bytes and null pattern per slice.
+     */
+    @Nested
+    class PlainByteArrayWithNulls {
+
+        @Test
+        void splitsWithinAPageAndAcrossThePageBoundary() throws IOException {
+            // Page 1: 5 rows, present pattern 1,0,1,0,1 -> values "aa", null, "bbbb", null, "c".
+            // Page 2: 3 rows, present pattern 0,1,1 -> null, "dd", "eee".
+            byte[][] page1 = {bytes("aa"), null, bytes("bbbb"), null, bytes("c")};
+            byte[][] page2 = {null, bytes("dd"), bytes("eee")};
+            FetchedColumnChunk chunk = twoPageNullableByteArrayChunk(page1, page2);
+
+            BatchColumnReader reader = new BatchColumnReader(chunk, optionalByteArrayLeaf());
+
+            // First batch: 3 of page 1's rows.
+            ColumnVector batch1 = reader.readBatch(3);
+            assertByteArraySlice(batch1, new byte[][] {bytes("aa"), null, bytes("bbbb")});
+
+            // Second batch asks for 5 but only 2 remain in page 1.
+            ColumnVector batch2 = reader.readBatch(5);
+            assertByteArraySlice(batch2, new byte[][] {null, bytes("c")});
+
+            assertThat(reader.hasMore()).isTrue();
+
+            // Third batch drains page 2.
+            ColumnVector batch3 = reader.readBatch(10);
+            assertByteArraySlice(batch3, new byte[][] {null, bytes("dd"), bytes("eee")});
+
+            assertThat(reader.hasMore()).isFalse();
+        }
+
+        /**
+         * Exercises the direct-decode branches the interleaved-null test leaves untouched: an all-present page whose
+         * dense offsets become the row offsets unchanged, and an all-null page whose backing is empty. Both cross a
+         * page boundary across more than one {@link BatchColumnReader#readBatch} call.
+         */
+        @Test
+        void handlesAllPresentAndAllNullPages() throws IOException {
+            byte[][] page1 = {bytes("aa"), bytes("bbbb"), bytes("c")};
+            byte[][] page2 = {null, null};
+            FetchedColumnChunk chunk = twoPageNullableByteArrayChunk(page1, page2);
+
+            BatchColumnReader reader = new BatchColumnReader(chunk, optionalByteArrayLeaf());
+
+            // Page 1 is all-present: first batch takes 2 of its 3 rows.
+            ColumnVector batch1 = reader.readBatch(2);
+            assertByteArraySlice(batch1, new byte[][] {bytes("aa"), bytes("bbbb")});
+
+            // Second batch asks for 2 but only page 1's last row remains; readBatch never crosses a page.
+            ColumnVector batch2 = reader.readBatch(2);
+            assertByteArraySlice(batch2, new byte[][] {bytes("c")});
+
+            assertThat(reader.hasMore()).isTrue();
+
+            // Page 2 is all-null: an empty backing with two null rows.
+            ColumnVector batch3 = reader.readBatch(2);
+            assertByteArraySlice(batch3, new byte[][] {null, null});
+
+            assertThat(reader.hasMore()).isFalse();
+        }
+
+        private void assertByteArraySlice(ColumnVector vec, byte[][] expected) {
+            assertThat(vec).isInstanceOf(BinaryVector.class);
+            assertThat(vec.size()).isEqualTo(expected.length);
+            BinaryVector binary = (BinaryVector) vec;
+            for (int row = 0; row < expected.length; row++) {
+                if (expected[row] == null) {
+                    assertThat(binary.validity().get(row))
+                            .as("row %d is null", row)
+                            .isFalse();
+                } else {
+                    assertThat(binary.validity().get(row))
+                            .as("row %d is present", row)
+                            .isTrue();
+                    assertThat(binary.get(row).toArray(JAVA_BYTE))
+                            .as("row %d bytes", row)
+                            .containsExactly(expected[row]);
+                }
+            }
+        }
+    }
+
+    // --- test 7: dictionary-encoded BYTE_ARRAY with nulls, repeated values, split across batches ---
+
+    /**
+     * Locks the shared-entries dictionary layout for BYTE_ARRAY: a dictionary-encoded column with interleaved nulls and
+     * repeated values, read across more than one {@link BatchColumnReader#readBatch} call, must return exactly the
+     * original bytes and null pattern, and two rows that reference the same dictionary entry must return the SAME
+     * segment instance (proving the values share the dictionary rather than being copied per row).
+     */
+    @Nested
+    class DictionaryByteArrayWithNulls {
+
+        @Test
+        void sharesDictionaryEntriesAcrossRowsAndBatches() throws IOException {
+            // Dictionary: ["alpha", "beta"]. Six rows, present pattern 1,0,1,1,0,1.
+            // Indices for the four non-null rows: 0, 1, 0, 1 -> "alpha", "beta", "alpha", "beta".
+            byte[][] dictValues = {bytes("alpha"), bytes("beta")};
+            int[] indices = {0, 1, 0, 1};
+            int[] defLevels = {1, 0, 1, 1, 0, 1};
+            FetchedColumnChunk chunk = dictionaryEncodedByteArrayChunk(dictValues, indices, defLevels);
+
+            BatchColumnReader reader = new BatchColumnReader(chunk, optionalByteArrayLeaf());
+
+            // First batch: rows 0..2 -> "alpha", null, "beta".
+            ColumnVector batch1 = reader.readBatch(3);
+            assertByteArraySlice(batch1, new byte[][] {bytes("alpha"), null, bytes("beta")});
+
+            // Second batch: rows 3..5 -> "alpha", null, "beta".
+            ColumnVector batch2 = reader.readBatch(3);
+            assertByteArraySlice(batch2, new byte[][] {bytes("alpha"), null, bytes("beta")});
+
+            assertThat(reader.hasMore()).isFalse();
+
+            // The two "alpha" rows (batch1 row 0, batch2 row 0) reference the same dictionary entry instance.
+            MemorySegment firstAlpha = ((BinaryVector) batch1).get(0);
+            MemorySegment secondAlpha = ((BinaryVector) batch2).get(0);
+            assertThat(firstAlpha).isSameAs(secondAlpha);
+        }
+
+        private void assertByteArraySlice(ColumnVector vec, byte[][] expected) {
+            assertThat(vec).isInstanceOf(BinaryVector.class);
+            assertThat(vec.size()).isEqualTo(expected.length);
+            BinaryVector binary = (BinaryVector) vec;
+            for (int row = 0; row < expected.length; row++) {
+                if (expected[row] == null) {
+                    assertThat(binary.validity().get(row))
+                            .as("row %d is null", row)
+                            .isFalse();
+                } else {
+                    assertThat(binary.validity().get(row))
+                            .as("row %d is present", row)
+                            .isTrue();
+                    assertThat(binary.get(row).toArray(JAVA_BYTE))
+                            .as("row %d bytes", row)
+                            .containsExactly(expected[row]);
+                }
+            }
+        }
+    }
+
     // --- fixture helpers ---
+
+    /**
+     * Builds a {@link FetchedColumnChunk} for a nullable dictionary-encoded BYTE_ARRAY column in a single V1 page. The
+     * V1 payload is a def-level section (length-prefixed) followed by the RLE-dictionary index page: one bit-width byte
+     * then the bit-packed indexes for the non-null rows.
+     *
+     * @param dictValues the unique byte-array values held by the dictionary
+     * @param indices the per-non-null-row index references into the dictionary
+     * @param defLevels one def level per row (1 = present, 0 = null), one index per present row
+     */
+    private static FetchedColumnChunk dictionaryEncodedByteArrayChunk(
+            byte[][] dictValues, int[] indices, int[] defLevels) throws IOException {
+        Dictionary.BinaryDict dictionary = new Dictionary.BinaryDict(toSegments(dictValues));
+
+        byte[] defLevelBytes = rleEncodeBits(defLevels, /*maxLevel*/ 1);
+        byte[] indexPage = encodeRleDictionaryIndexPage(indices, dictValues.length);
+        byte[] payload = buildV1PayloadWithDefLevels(defLevelBytes, indexPage);
+        byte[] chunkBuffer = encodeV1Page(defLevels.length, payload, org.apache.parquet.format.Encoding.RLE_DICTIONARY);
+
+        MemorySegment segment = MemorySegment.ofArray(chunkBuffer).asReadOnly();
+
+        ColumnMetaData meta = ColumnMetaData.builder()
+                .type(PhysicalType.BYTE_ARRAY)
+                .encodings(List.of(Encoding.RLE_DICTIONARY))
+                .pathInSchema(pathSegments(PATH))
+                .codec(CompressionCodec.UNCOMPRESSED)
+                .numValues((long) defLevels.length)
+                .totalUncompressedSize((long) chunkBuffer.length)
+                .totalCompressedSize((long) chunkBuffer.length)
+                .dataPageOffset(0L)
+                .build();
+
+        return new FetchedColumnChunk(PATH, meta, /*maxRep*/ 0, /*maxDef*/ 1, segment, Optional.of(dictionary));
+    }
+
+    private static List<MemorySegment> toSegments(byte[][] values) {
+        return java.util.Arrays.stream(values)
+                .map(value -> MemorySegment.ofArray(value).asReadOnly())
+                .toList();
+    }
 
     /**
      * Builds a {@link FetchedColumnChunk} containing a single PLAIN INT32 page with no def/rep levels (required
@@ -285,6 +545,14 @@ class BatchColumnReaderTest {
         }
     }
 
+    private static List<String> pathSegments(ColumnPath path) {
+        String[] segments = new String[path.numParts()];
+        for (int i = 0; i < segments.length; i++) {
+            segments[i] = path.part(i);
+        }
+        return List.of(segments);
+    }
+
     /**
      * Wraps a byte array in a read-only heap {@link MemorySegment} and builds a {@link FetchedColumnChunk} around it.
      */
@@ -294,7 +562,7 @@ class BatchColumnReaderTest {
         ColumnMetaData meta = ColumnMetaData.builder()
                 .type(PhysicalType.INT32)
                 .encodings(java.util.List.of(Encoding.PLAIN))
-                .pathInSchema(path.parts())
+                .pathInSchema(pathSegments(path))
                 .codec(CompressionCodec.UNCOMPRESSED)
                 .numValues(numValues)
                 .totalUncompressedSize((long) data.length)
@@ -328,7 +596,7 @@ class BatchColumnReaderTest {
         ColumnMetaData meta = ColumnMetaData.builder()
                 .type(PhysicalType.INT32)
                 .encodings(List.of(Encoding.RLE_DICTIONARY))
-                .pathInSchema(PATH.parts())
+                .pathInSchema(pathSegments(PATH))
                 .codec(CompressionCodec.UNCOMPRESSED)
                 .numValues((long) indices.length)
                 .totalUncompressedSize((long) chunkBuffer.length)
@@ -389,6 +657,70 @@ class BatchColumnReaderTest {
     private static SchemaNode.Primitive optionalInt32Leaf() {
         return new SchemaNode.Primitive(
                 "val", Repetition.OPTIONAL, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
+    }
+
+    private static SchemaNode.Primitive optionalByteArrayLeaf() {
+        return new SchemaNode.Primitive(
+                "val", Repetition.OPTIONAL, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1);
+    }
+
+    private static byte[] bytes(String text) {
+        return text.getBytes(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Builds a two-page nullable BYTE_ARRAY chunk. Each page row that is non-null becomes a PLAIN byte-array value
+     * (4-byte LE length prefix followed by the bytes); a {@code null} row contributes a def level of 0 and no value.
+     */
+    private static FetchedColumnChunk twoPageNullableByteArrayChunk(byte[][] page1Rows, byte[][] page2Rows)
+            throws IOException {
+        byte[] page1 = encodeNullableByteArrayPage(page1Rows);
+        byte[] page2 = encodeNullableByteArrayPage(page2Rows);
+        byte[] chunkBuffer = concat(page1, page2);
+        long totalValues = (long) page1Rows.length + page2Rows.length;
+        return byteArrayHeapChunk(chunkBuffer, totalValues, /*maxDef*/ 1);
+    }
+
+    private static byte[] encodeNullableByteArrayPage(byte[][] rows) throws IOException {
+        int[] defLevels = new int[rows.length];
+        for (int row = 0; row < rows.length; row++) {
+            defLevels[row] = (rows[row] == null) ? 0 : 1;
+        }
+        byte[] defLevelBytes = rleEncodeBits(defLevels, /*maxLevel*/ 1);
+        byte[] valueBytes = encodePlainByteArrays(rows);
+        byte[] payload = buildV1PayloadWithDefLevels(defLevelBytes, valueBytes);
+        return encodeV1Page(rows.length, payload, org.apache.parquet.format.Encoding.PLAIN);
+    }
+
+    private static byte[] encodePlainByteArrays(byte[][] rows) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        for (byte[] row : rows) {
+            if (row == null) {
+                continue;
+            }
+            ByteBuffer lengthPrefix = ByteBuffer.allocate(4).order(LITTLE_ENDIAN);
+            lengthPrefix.putInt(row.length);
+            out.writeBytes(lengthPrefix.array());
+            out.writeBytes(row);
+        }
+        return out.toByteArray();
+    }
+
+    private static FetchedColumnChunk byteArrayHeapChunk(byte[] data, long numValues, int maxDef) {
+        MemorySegment segment = MemorySegment.ofArray(data).asReadOnly();
+
+        ColumnMetaData meta = ColumnMetaData.builder()
+                .type(PhysicalType.BYTE_ARRAY)
+                .encodings(List.of(Encoding.PLAIN))
+                .pathInSchema(pathSegments(PATH))
+                .codec(CompressionCodec.UNCOMPRESSED)
+                .numValues(numValues)
+                .totalUncompressedSize((long) data.length)
+                .totalCompressedSize((long) data.length)
+                .dataPageOffset(0L)
+                .build();
+
+        return new FetchedColumnChunk(PATH, meta, /*maxRep*/ 0, maxDef, segment, Optional.empty());
     }
 
     private static byte[] encodeInt32sLittleEndian(int[] values) {

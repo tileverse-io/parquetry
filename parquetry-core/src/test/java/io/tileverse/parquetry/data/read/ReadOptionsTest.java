@@ -124,4 +124,17 @@ class ReadOptionsTest {
         assertThatIllegalArgumentException()
                 .isThrownBy(() -> ReadOptions.builder().maxDecodeAheadPerRead(-1));
     }
+
+    @Test
+    void defaultDecodeBudgetIsTheSharedDefault() {
+        assertThat(ReadOptions.DEFAULTS.decodeBudget().capacity())
+                .isEqualTo(DecodeBudget.defaultBudget().capacity());
+    }
+
+    @Test
+    void decodeBudgetOverrideIsHonored() {
+        DecodeBudget custom = DecodeBudget.ofBytes(123_456);
+        ReadOptions options = ReadOptions.builder().decodeBudget(custom).build();
+        assertThat(options.decodeBudget()).isSameAs(custom);
+    }
 }

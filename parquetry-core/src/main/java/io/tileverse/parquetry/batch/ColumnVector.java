@@ -19,7 +19,7 @@ import java.util.BitSet;
 
 /**
  * One column's worth of values for a {@link ParquetRecordBatch}. Vectors are always-materialized: the typed payload
- * (primitive arrays for primitives, {@code MemorySegment[]} for binary kinds) is set at construction. Per-page decode
+ * (primitive arrays for primitives, a shared backing buffer for binary kinds) is set at construction. Per-page decode
  * happens once in {@code BatchColumnReader.loadNextPage}; each {@code readBatch} call slices the decoded page state
  * into a fresh vector.
  *
@@ -44,6 +44,17 @@ public sealed interface ColumnVector
 
     /** Validity mask: bit i is set iff row i is non-null. */
     BitSet validity();
+
+    /**
+     * Approximate heap bytes this vector's backing holds. Used as a soft budget signal, not an exact allocator: leaf
+     * vectors count their typed backing plus validity; nested vectors add their children's bytes.
+     */
+    long approximateHeapBytes();
+
+    /** Approximate heap cost of a validity bitmap covering {@code rowCount} rows. */
+    static long validityBytes(int rowCount) {
+        return (long) rowCount / Byte.SIZE + 1;
+    }
 
     /**
      * Returns the value at {@code row} as a boxed object, or {@code null} when the validity bit is clear. A leaf vector

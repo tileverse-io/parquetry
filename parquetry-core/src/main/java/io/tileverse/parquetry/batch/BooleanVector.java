@@ -55,4 +55,9 @@ public final class BooleanVector implements ColumnVector {
     public boolean[] asArray() {
         return values;
     }
+
+    @Override
+    public long approximateHeapBytes() {
+        return values.length + ColumnVector.validityBytes(values.length);
+    }
 }

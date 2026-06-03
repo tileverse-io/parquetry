@@ -55,4 +55,9 @@ public final class DoubleVector implements ColumnVector {
     public double[] asArray() {
         return values;
     }
+
+    @Override
+    public long approximateHeapBytes() {
+        return (long) values.length * Long.BYTES + ColumnVector.validityBytes(values.length);
+    }
 }

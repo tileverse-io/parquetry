@@ -274,7 +274,7 @@ public final class RowGroupWriter implements AutoCloseable {
         return ColumnMetaData.builder()
                 .type(toPhysicalType(binding.leaf.kind()))
                 .encodings(result.encodings())
-                .pathInSchema(binding.path.parts())
+                .pathInSchema(pathInSchema(binding.path))
                 .codec(binding.compression.wireCodec())
                 .numValues(result.numValues())
                 .totalUncompressedSize(result.uncompressedBytes())
@@ -287,6 +287,14 @@ public final class RowGroupWriter implements AutoCloseable {
                 .statistics(Optional.ofNullable(result.chunkStatistics()))
                 .geospatialStatistics(Optional.ofNullable(result.geospatialStatistics()))
                 .build();
+    }
+
+    private static List<String> pathInSchema(ColumnPath path) {
+        List<String> segments = new ArrayList<>(path.numParts());
+        for (int i = 0; i < path.numParts(); i++) {
+            segments.add(path.part(i));
+        }
+        return segments;
     }
 
     private void copyTempFileTo(Path tempFile, WritableByteChannel out, long expectedBytes) throws IOException {

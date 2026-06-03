@@ -167,13 +167,21 @@ class DefLevelRetentionTest {
         }
     }
 
+    private static List<String> pathSegments(ColumnPath path) {
+        String[] segments = new String[path.numParts()];
+        for (int i = 0; i < segments.length; i++) {
+            segments[i] = path.part(i);
+        }
+        return List.of(segments);
+    }
+
     private static FetchedColumnChunk heapChunk(byte[] data, long numValues, int maxRep, int maxDef) {
         MemorySegment segment = MemorySegment.ofArray(data).asReadOnly();
 
         ColumnMetaData meta = ColumnMetaData.builder()
                 .type(PhysicalType.INT32)
                 .encodings(List.of(Encoding.PLAIN))
-                .pathInSchema(ELEMENT_PATH.parts())
+                .pathInSchema(pathSegments(ELEMENT_PATH))
                 .codec(CompressionCodec.UNCOMPRESSED)
                 .numValues(numValues)
                 .totalUncompressedSize((long) data.length)

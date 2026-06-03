@@ -57,7 +57,7 @@ public record ParquetSchema(SchemaNode.Group root) {
             case SchemaNode.Primitive p -> {
                 List<String> path = new ArrayList<>(prefix);
                 path.add(p.name());
-                out.add(new ColumnPath(path));
+                out.add(ColumnPath.of(path));
             }
             case SchemaNode.Group g -> {
                 List<String> next = new ArrayList<>(prefix);
@@ -90,7 +90,8 @@ public record ParquetSchema(SchemaNode.Group root) {
         int maxRep = 0;
         int maxDef = 0;
         SchemaNode current = root;
-        for (String part : path.parts()) {
+        for (int i = 0; i < path.numParts(); i++) {
+            String part = path.part(i);
             if (!(current instanceof SchemaNode.Group group)) {
                 throw new ParquetSchemaException("Path traversal hit a non-group at " + path.dot());
             }
@@ -128,7 +129,8 @@ public record ParquetSchema(SchemaNode.Group root) {
      */
     public Optional<SchemaNode> find(ColumnPath path) {
         SchemaNode current = root;
-        for (String part : path.parts()) {
+        for (int i = 0; i < path.numParts(); i++) {
+            String part = path.part(i);
             if (!(current instanceof SchemaNode.Group g)) {
                 return Optional.empty();
             }
@@ -173,7 +175,7 @@ public record ParquetSchema(SchemaNode.Group root) {
                 case SchemaNode.Primitive p -> {
                     List<String> childPath = new ArrayList<>(groupPath);
                     childPath.add(p.name());
-                    io.tileverse.parquetry.format.LogicalType override = overrides.get(new ColumnPath(childPath));
+                    io.tileverse.parquetry.format.LogicalType override = overrides.get(ColumnPath.of(childPath));
                     if (override != null) {
                         children.add(new SchemaNode.Primitive(
                                 p.name(),
@@ -214,7 +216,7 @@ public record ParquetSchema(SchemaNode.Group root) {
                 case SchemaNode.Primitive p -> {
                     List<String> childPath = new ArrayList<>(groupPath);
                     childPath.add(p.name());
-                    if (kept.contains(new ColumnPath(childPath))) {
+                    if (kept.contains(ColumnPath.of(childPath))) {
                         projected.add(p);
                     }
                 }

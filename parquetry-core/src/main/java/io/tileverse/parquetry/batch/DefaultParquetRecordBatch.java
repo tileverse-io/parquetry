@@ -33,6 +33,7 @@ public final class DefaultParquetRecordBatch implements ParquetRecordBatch {
     private final int rowCount;
     private final Arena arena;
     private boolean closed;
+    private Runnable releaseAction;
 
     public DefaultParquetRecordBatch(
             @NonNull ParquetSchema projectedSchema,
@@ -74,11 +75,28 @@ public final class DefaultParquetRecordBatch implements ParquetRecordBatch {
     }
 
     @Override
+    public long approximateHeapBytes() {
+        long total = 0L;
+        for (ColumnVector vector : columns.values()) {
+            total += vector.approximateHeapBytes();
+        }
+        return total;
+    }
+
+    @Override
+    public void attachReleaseAction(Runnable releaseAction) {
+        this.releaseAction = releaseAction;
+    }
+
+    @Override
     public void close() {
         if (closed) {
             return;
         }
         closed = true;
         arena.close();
+        if (releaseAction != null) {
+            releaseAction.run();
+        }
     }
 }

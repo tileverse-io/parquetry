@@ -64,6 +64,6 @@ class PredBuilderTest {
     void nestedColumnPath() {
         Predicate p = Pred.col("address", "city").eq("Buenos Aires");
         Predicate.Eq eq = (Predicate.Eq) p;
-        assertThat(eq.col().parts()).containsExactly("address", "city");
+        assertThat(eq.col().dot()).isEqualTo("address.city");
     }
 }

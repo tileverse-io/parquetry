@@ -413,11 +413,9 @@ public final class ColumnChunkWriter implements AutoCloseable {
             java.util.BitSet validity,
             int size,
             int defLevelForValue) {
-        MemorySegment[] values = vector.asArray();
         for (int i = 0; i < size; i++) {
             if (validity.get(i)) {
-                MemorySegment cell = values[i];
-                appendBinary(cell.isReadOnly() ? cell : cell.asReadOnly(), 0, defLevelForValue);
+                appendBinary(vector.get(i), 0, defLevelForValue);
             } else {
                 appendNull(0, 0);
             }
@@ -429,11 +427,9 @@ public final class ColumnChunkWriter implements AutoCloseable {
             java.util.BitSet validity,
             int size,
             int defLevelForValue) {
-        MemorySegment[] values = vector.asArray();
         for (int i = 0; i < size; i++) {
             if (validity.get(i)) {
-                MemorySegment cell = values[i];
-                appendFixedLenBinary(cell.isReadOnly() ? cell : cell.asReadOnly(), 0, defLevelForValue);
+                appendFixedLenBinary(vector.get(i), 0, defLevelForValue);
             } else {
                 appendNull(0, 0);
             }

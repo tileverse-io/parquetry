@@ -17,6 +17,8 @@ package io.tileverse.parquetry.data.read.page;
 
 import java.lang.foreign.MemorySegment;
 
+import io.tileverse.parquetry.data.read.BinaryValueSink;
+
 /**
  * DELTA_LENGTH_BYTE_ARRAY page decoder.
  *
@@ -67,6 +69,20 @@ public final class DeltaLengthByteArrayDecoder implements PageDecoder<MemorySegm
     public void decodeBinary(int n, MemorySegment[] dst, int offset) {
         for (int i = 0; i < n; i++) {
             dst[offset + i] = next();
+        }
+    }
+
+    @Override
+    public void decodeBinaryInto(int n, BinaryValueSink sink) {
+        int total = 0;
+        for (int i = 0; i < n; i++) {
+            total += lengths[cursor + i];
+        }
+        sink.reset(n, total);
+        for (int i = 0; i < n; i++) {
+            int len = lengths[cursor++];
+            sink.appendValue(payload, payloadOffset, len);
+            payloadOffset += len;
         }
     }
 

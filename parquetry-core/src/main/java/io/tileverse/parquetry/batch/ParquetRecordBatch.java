@@ -42,6 +42,15 @@ public sealed interface ParquetRecordBatch extends AutoCloseable permits Default
      */
     ParquetRecord materialize(int rowIndex);
 
+    /** Approximate heap bytes this batch's vectors hold; a soft budget signal, not an exact figure. */
+    long approximateHeapBytes();
+
+    /**
+     * Registers an action to run once when this batch is closed, after its Arena is released. Used to return a decode
+     * budget reservation when the consumer is done with the batch. At most one action is registered per batch.
+     */
+    void attachReleaseAction(Runnable releaseAction);
+
     /** Releases the batch's token Arena. Idempotent. Vectors remain accessible after close. */
     @Override
     void close();

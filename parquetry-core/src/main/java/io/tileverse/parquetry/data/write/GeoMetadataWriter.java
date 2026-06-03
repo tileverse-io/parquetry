@@ -108,7 +108,7 @@ public final class GeoMetadataWriter {
         if (dotted.isEmpty()) {
             throw new ParquetWriteException("Empty column path in WriteOptions.crs()");
         }
-        return new ColumnPath(List.of(dotted.split("\\.", -1)));
+        return ColumnPath.parse(dotted);
     }
 
     /**

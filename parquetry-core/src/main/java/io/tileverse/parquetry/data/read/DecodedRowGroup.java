@@ -15,33 +15,26 @@
  */
 package io.tileverse.parquetry.data.read;
 
-import java.util.List;
-import java.util.NoSuchElementException;
-
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 
 import lombok.NonNull;
 
 /**
- * The heap-backed batches of one fully decoded row group, emitted in file order. Produced by a decode worker (or the
- * inline fallback) and consumed on the read thread.
+ * One row group's batches, emitted in file order from a {@link BatchSource}. An inline source decodes on the consumer
+ * thread; a streaming source drains a worker-fed hand-off. {@link #close()} releases undelivered batches and the
+ * underlying fetch.
  *
- * <p>Batches are emitted via {@link #next()}; an emitted batch is owned by the consumer, which closes it when its rows
- * are drained. {@link #close()} closes only the batches not yet emitted. Closing the row group on advance (after all
- * batches were emitted) is a no-op, while closing it early releases the undelivered batches.
- *
- * <p>{@code recordEvalRequired} mirrors the owning survivor's flag of the same name: {@code true} when the read still
- * has to test each decoded row against the predicate, {@code false} when statistics already proved every row matches
- * (the MATCHED outcome) and the per-row evaluation can be skipped.
+ * <p>{@code recordEvalRequired} mirrors the owning survivor's flag: {@code true} when the read still has to test each
+ * decoded row against the predicate, {@code false} when statistics already proved every row matches (the MATCHED
+ * outcome) and per-row evaluation can be skipped.
  */
 final class DecodedRowGroup implements AutoCloseable {
 
-    private final List<ParquetRecordBatch> batches;
+    private final BatchSource source;
     private final boolean recordEvalRequired;
-    private int emitted;
 
-    DecodedRowGroup(@NonNull List<ParquetRecordBatch> batches, boolean recordEvalRequired) {
-        this.batches = List.copyOf(batches);
+    DecodedRowGroup(@NonNull BatchSource source, boolean recordEvalRequired) {
+        this.source = source;
         this.recordEvalRequired = recordEvalRequired;
     }
 
@@ -49,28 +42,20 @@ final class DecodedRowGroup implements AutoCloseable {
         return recordEvalRequired;
     }
 
+    void promote() {
+        source.promote();
+    }
+
     boolean hasNext() {
-        return emitted < batches.size();
+        return source.hasNext();
     }
 
     ParquetRecordBatch next() {
-        if (!hasNext()) {
-            throw new NoSuchElementException("No more batches in this row group");
-        }
-        ParquetRecordBatch batch = batches.get(emitted);
-        emitted++;
-        return batch;
+        return source.next();
     }
 
     @Override
     public void close() {
-        while (emitted < batches.size()) {
-            try {
-                batches.get(emitted).close();
-            } catch (RuntimeException _) {
-                // best-effort; close remaining batches even if one throws
-            }
-            emitted++;
-        }
+        source.close();
     }
 }

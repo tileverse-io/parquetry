@@ -95,7 +95,7 @@ class DictionaryOverflowReadbackTest {
     }
 
     private Path writeOverflowChunk(ColumnPath col, PrimitiveKind kind, IntFunction<Object> valueAt) throws Exception {
-        ParquetSchema schema = flatSchema(required(col.parts().get(0), kind));
+        ParquetSchema schema = flatSchema(required(col.name(), kind));
         // A tiny dictionary budget plus small pages forces the overflow after a few RLE_DICTIONARY pages, with the
         // default Auto encoding and ZSTD compression - the shape a caller hits without tuning anything.
         WriteOptions options = WriteOptions.builder()
@@ -134,7 +134,7 @@ class DictionaryOverflowReadbackTest {
                 for (ColumnChunk chunk : rg.columns()) {
                     ColumnMetaData meta = chunk.metaData().orElse(null);
                     if (meta != null
-                            && meta.pathInSchema().equals(col.parts())
+                            && ColumnPath.of(meta.pathInSchema()).equals(col)
                             && meta.dictionaryPageOffset().isPresent()) {
                         return true;
                     }
