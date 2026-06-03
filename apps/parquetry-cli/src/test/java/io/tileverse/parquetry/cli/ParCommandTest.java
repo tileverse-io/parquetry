@@ -75,4 +75,16 @@ class ParCommandTest {
         assertThat(code).isZero();
         assertThat(out.toString()).contains("_complete_par").contains("complete -F");
     }
+
+    @Test
+    void helpListsCommandOptionsBeforeTheStorageSections() {
+        String help = Par.newCommandLine().getSubcommands().get("cp").getUsageMessage(CommandLine.Help.Ansi.OFF);
+        assertThat(help).contains("Storage options:").contains("Destination storage options:");
+        assertThat(help.indexOf("--overwrite"))
+                .as("command options precede the storage section")
+                .isLessThan(help.indexOf("Storage options:"));
+        assertThat(help.indexOf("Storage options:"))
+                .as("source storage precedes destination storage")
+                .isLessThan(help.indexOf("Destination storage options:"));
+    }
 }

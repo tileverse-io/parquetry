@@ -26,6 +26,7 @@ import io.tileverse.parquetry.cli.render.RowGroupsRenderer;
 import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.RowGroupSummary;
 
+import picocli.CommandLine.ArgGroup;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Mixin;
 import picocli.CommandLine.Model.CommandSpec;
@@ -42,8 +43,8 @@ public final class RowGroupsCmd implements Callable<Integer> {
     @Mixin
     private GlobalOptions options;
 
-    @Mixin
-    private StorageOptions storage;
+    @ArgGroup(validate = false, heading = StorageOptions.HEADING)
+    private StorageOptions storage = new StorageOptions();
 
     @Spec
     private CommandSpec spec;

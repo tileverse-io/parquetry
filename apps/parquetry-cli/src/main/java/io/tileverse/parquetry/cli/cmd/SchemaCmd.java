@@ -25,6 +25,7 @@ import io.tileverse.parquetry.cli.render.SchemaRenderer;
 import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
+import picocli.CommandLine.ArgGroup;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Mixin;
 import picocli.CommandLine.Model.CommandSpec;
@@ -40,8 +41,8 @@ public final class SchemaCmd implements Callable<Integer> {
     @Mixin
     private GlobalOptions options;
 
-    @Mixin
-    private StorageOptions storage;
+    @ArgGroup(validate = false, heading = StorageOptions.HEADING)
+    private StorageOptions storage = new StorageOptions();
 
     @Spec
     private CommandSpec spec;

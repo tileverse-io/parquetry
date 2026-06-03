@@ -25,6 +25,9 @@ import picocli.CommandLine.Option;
  */
 public final class StorageOptions {
 
+    /** Usage-help heading that renders these shared flags as their own section, after the command's own options. */
+    public static final String HEADING = "%nStorage options:%n";
+
     @Option(
             names = {"--provider"},
             paramLabel = "<id>",

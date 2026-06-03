@@ -27,6 +27,9 @@ import picocli.CommandLine.Option;
  */
 public final class DstStorageOptions {
 
+    /** Usage-help heading that renders the destination flags as their own section, after the source storage section. */
+    public static final String HEADING = "%nDestination storage options:%n";
+
     @Option(
             names = {"--dst-provider"},
             paramLabel = "<id>",

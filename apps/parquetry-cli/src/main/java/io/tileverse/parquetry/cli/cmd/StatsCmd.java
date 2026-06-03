@@ -36,6 +36,7 @@ import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.format.Statistics;
 
+import picocli.CommandLine.ArgGroup;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Mixin;
 import picocli.CommandLine.Model.CommandSpec;
@@ -52,8 +53,8 @@ public final class StatsCmd implements Callable<Integer> {
     @Mixin
     private GlobalOptions options;
 
-    @Mixin
-    private StorageOptions storage;
+    @ArgGroup(validate = false, heading = StorageOptions.HEADING)
+    private StorageOptions storage = new StorageOptions();
 
     @Spec
     private CommandSpec spec;

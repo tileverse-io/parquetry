@@ -48,6 +48,7 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystems;
 
+import picocli.CommandLine.ArgGroup;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Mixin;
 import picocli.CommandLine.Option;
@@ -73,11 +74,11 @@ public final class CpCmd implements Callable<Integer> {
     @Mixin
     private GlobalOptions options;
 
-    @Mixin
-    private StorageOptions storage;
+    @ArgGroup(validate = false, heading = StorageOptions.HEADING)
+    private StorageOptions storage = new StorageOptions();
 
-    @Mixin
-    private DstStorageOptions dstStorage;
+    @ArgGroup(validate = false, heading = DstStorageOptions.HEADING)
+    private DstStorageOptions dstStorage = new DstStorageOptions();
 
     @Override
     public Integer call() throws Exception {
