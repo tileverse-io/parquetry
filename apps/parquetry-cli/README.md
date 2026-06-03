@@ -94,13 +94,14 @@ The `<uri>` argument is a local path or a URI; the backend is chosen from the sc
 - a bare path or `file://...` for the local filesystem,
 - `s3://bucket/key` for Amazon S3 and S3-compatible stores,
 - `gs://bucket/key` for Google Cloud Storage,
+- `az://account/container/blob` (or an `https://account.blob.core.windows.net/...` URL) for Azure Blob Storage, and `abfs(s)://` for ADLS Gen2,
 - `http(s)://host/path` for HTTP range-request servers.
 
 Connection settings for the source come from these options (when not using ambient credentials / default chains):
 
 | Option | Meaning |
 | --- | --- |
-| `--provider <id>` | Force the storage provider: `s3`, `gcs`, `http`, `file`. |
+| `--provider <id>` | Force the storage provider: `s3`, `gcs`, `azure`, `http`, `file`. |
 | `--region <region>` | S3 region. |
 | `--access-key <key>` / `--secret-key <key>` | S3 credentials. |
 | `--path-style` | S3 path-style addressing (for MinIO / S3-compatible endpoints). |

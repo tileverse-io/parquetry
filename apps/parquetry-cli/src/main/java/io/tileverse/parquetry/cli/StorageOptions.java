@@ -31,7 +31,7 @@ public final class StorageOptions {
     @Option(
             names = {"--provider"},
             paramLabel = "<id>",
-            description = "Force the storage provider: s3, gcs, http, file.")
+            description = "Force the storage provider: s3, gcs, azure, http, file.")
     public String provider;
 
     @Option(
