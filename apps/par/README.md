@@ -1,4 +1,4 @@
-# parquetry-cli (`par`)
+# par
 
 `par` is a command-line tool for inspecting and transforming Parquet and GeoParquet files, built on the clean-room
 parquetry reader/writer. It reads from local paths and cloud object stores, pushes column projection and SQL-style

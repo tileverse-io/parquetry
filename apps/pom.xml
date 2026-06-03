@@ -8,13 +8,14 @@
     <version>${revision}</version>
   </parent>
 
-  <artifactId>parquetry-apps</artifactId>
+  <groupId>io.tileverse.parquetry.apps</groupId>
+  <artifactId>apps</artifactId>
   <packaging>pom</packaging>
   <name>Parquetry :: Apps</name>
   <description>Parent and aggregator for end-user applications built on parquetry, such as the par command-line tool.</description>
 
   <modules>
-    <module>parquetry-cli</module>
+    <module>par</module>
   </modules>
 
   <properties>

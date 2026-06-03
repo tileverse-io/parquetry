@@ -2,13 +2,13 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0">
   <modelVersion>4.0.0</modelVersion>
   <parent>
-    <groupId>io.tileverse.parquetry</groupId>
-    <artifactId>parquetry-apps</artifactId>
+    <groupId>io.tileverse.parquetry.apps</groupId>
+    <artifactId>apps</artifactId>
     <version>${revision}</version>
   </parent>
 
-  <artifactId>parquetry-cli</artifactId>
-  <name>Parquetry :: CLI</name>
+  <artifactId>par</artifactId>
+  <name>Parquetry :: Apps :: par</name>
   <description>The `par` command-line front end for parquetry.</description>
 
   <properties>
@@ -349,7 +349,7 @@
       <!--
         Runs the acceptance suite (cucumber RunCliTest + cloud *IT) against the built native binary instead of
         in-process, via CliRunner reading -Dpar.bin. Combine with -Pnative so the binary exists:
-        ./mvnw -Pnative,native-acceptance verify -pl :parquetry-cli
+        ./mvnw -Pnative,native-acceptance verify -pl :par
       -->
       <id>native-acceptance</id>
       <build>

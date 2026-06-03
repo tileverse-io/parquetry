@@ -380,8 +380,8 @@
             <excludeArtifact>parquetry-testkit</excludeArtifact>
             <excludeArtifact>parquetry-benchmarks</excludeArtifact>
             <excludeArtifact>parquetry-coverage-report</excludeArtifact>
-            <excludeArtifact>parquetry-apps</excludeArtifact>
-            <excludeArtifact>parquetry-cli</excludeArtifact>
+            <excludeArtifact>apps</excludeArtifact>
+            <excludeArtifact>par</excludeArtifact>
           </excludeArtifacts>
         </configuration>
       </plugin>
