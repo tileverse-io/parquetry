@@ -1,0 +1,170 @@
+[
+  {
+    "name": "io.airlift.compress.v3.zstd.ZstdNative$MethodHandles",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allRecordComponents": true
+  },
+  {
+    "name": "io.airlift.compress.v3.lz4.Lz4Native$MethodHandles",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allRecordComponents": true
+  },
+  {
+    "name": "io.airlift.compress.v3.snappy.SnappyNative$MethodHandles",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allRecordComponents": true
+  },
+  {
+    "name": "io.airlift.compress.v3.deflate.DeflateNative$MethodHandles",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allRecordComponents": true
+  },
+  {
+    "name": "io.airlift.compress.v3.xxhash.XxHash64Bindings$MethodHandles",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allRecordComponents": true
+  },
+  {
+    "name": "io.airlift.compress.v3.xxhash.XxHash3Bindings$MethodHandles",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allRecordComponents": true
+  },
+  {
+    "name": "io.tileverse.parquetry.schema.geo.geoparquet.BboxCovering",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allRecordComponents": true
+  },
+  {
+    "name": "io.tileverse.parquetry.schema.geo.geoparquet.Covering",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allRecordComponents": true
+  },
+  {
+    "name": "io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allRecordComponents": true
+  },
+  {
+    "name": "io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata$V1_0",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allRecordComponents": true
+  },
+  {
+    "name": "io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata$V1_1",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allRecordComponents": true
+  },
+  {
+    "name": "io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata$V2",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allRecordComponents": true
+  },
+  {
+    "name": "io.tileverse.parquetry.schema.geo.projjson.Axis",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allRecordComponents": true
+  },
+  {
+    "name": "io.tileverse.parquetry.schema.geo.projjson.BoundCRS",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allRecordComponents": true
+  },
+  {
+    "name": "io.tileverse.parquetry.schema.geo.projjson.CompoundCRS",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allRecordComponents": true
+  },
+  {
+    "name": "io.tileverse.parquetry.schema.geo.projjson.Conversion",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allRecordComponents": true
+  },
+  {
+    "name": "io.tileverse.parquetry.schema.geo.projjson.Conversion$Method",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allRecordComponents": true
+  },
+  {
+    "name": "io.tileverse.parquetry.schema.geo.projjson.Conversion$Parameter",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allRecordComponents": true
+  },
+  {
+    "name": "io.tileverse.parquetry.schema.geo.projjson.CoordinateSystem",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allRecordComponents": true
+  },
+  {
+    "name": "io.tileverse.parquetry.schema.geo.projjson.Ellipsoid",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allRecordComponents": true
+  },
+  {
+    "name": "io.tileverse.parquetry.schema.geo.projjson.GeodeticCRS",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allRecordComponents": true
+  },
+  {
+    "name": "io.tileverse.parquetry.schema.geo.projjson.GeodeticReferenceFrame",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allRecordComponents": true
+  },
+  {
+    "name": "io.tileverse.parquetry.schema.geo.projjson.GeographicCRS",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allRecordComponents": true
+  },
+  {
+    "name": "io.tileverse.parquetry.schema.geo.projjson.Identifier",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allRecordComponents": true
+  },
+  {
+    "name": "io.tileverse.parquetry.schema.geo.projjson.PrimeMeridian",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allRecordComponents": true
+  },
+  {
+    "name": "io.tileverse.parquetry.schema.geo.projjson.ProjectedCRS",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allRecordComponents": true
+  },
+  {
+    "name": "io.tileverse.parquetry.schema.geo.projjson.Transformation",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allRecordComponents": true
+  },
+  {
+    "name": "io.tileverse.parquetry.schema.geo.projjson.VerticalCRS",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allRecordComponents": true
+  }
+]
