@@ -1,0 +1,300 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>io.tileverse.parquetry</groupId>
+    <artifactId>parquetry-integrations</artifactId>
+    <version>${revision}</version>
+  </parent>
+
+  <artifactId>parquetry-geoserver</artifactId>
+  <name>Parquetry :: Integrations :: GeoServer</name>
+  <description>GeoServer plugin exposing the read-only GeoParquet DataStore as a vector store type.</description>
+
+  <licenses>
+    <license>
+      <name>GNU General Public License, version 2 or later</name>
+      <url>https://www.gnu.org/licenses/old-licenses/gpl-2.0.html</url>
+      <distribution>repo</distribution>
+      <comments>SPDX-License-Identifier: GPL-2.0-or-later</comments>
+    </license>
+  </licenses>
+
+  <properties>
+    <gs.version>3.0-RC</gs.version>
+    <gt.version>35-RC</gt.version>
+    <!-- Jetty used only by the test-scope embedded launcher (Start); matches GeoServer 3.0-RC's Jetty. -->
+    <jetty.version>12.1.8</jetty.version>
+    <!-- The two Wicket widgets are verbatim GPL-2.0 code copied from GeoServer; we do not lint vendored sources. -->
+    <sonar.exclusions>src/main/java/io/tileverse/parquetry/geoserver/web/RadioGroupParamPanel.java,src/main/java/io/tileverse/parquetry/geoserver/web/Select2ChoiceParamPanel.java</sonar.exclusions>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>io.tileverse.parquetry</groupId>
+        <artifactId>parquetry-dependencies</artifactId>
+        <version>${project.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <!-- Manages tileverse-storage module versions and converges its transitive deps (Jackson, JNA, etc.). -->
+      <dependency>
+        <groupId>io.tileverse</groupId>
+        <artifactId>tileverse-bom</artifactId>
+        <version>${tileverse-storage.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <dependency>
+      <groupId>io.tileverse.parquetry</groupId>
+      <artifactId>parquetry-geotools</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>org.geoserver</groupId>
+      <artifactId>gs-main</artifactId>
+      <version>${gs.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.geoserver</groupId>
+      <artifactId>gs-platform</artifactId>
+      <version>${gs.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.geoserver.web</groupId>
+      <artifactId>gs-web-core</artifactId>
+      <version>${gs.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.wicketstuff</groupId>
+      <artifactId>wicketstuff-select2</artifactId>
+      <version>10.7.0</version>
+    </dependency>
+
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+
+    <!--
+      Test-scope only: the embedded GeoServer launcher (Start) runs the full GeoServer web app with this plugin on the
+      classpath, for IDE "Run as Application" development. gs-web-app pulls the complete GeoServer web stack; the Jetty
+      artifacts host it. None of this is on the published plugin's classpath.
+    -->
+    <dependency>
+      <groupId>org.geoserver.web</groupId>
+      <artifactId>gs-web-app</artifactId>
+      <version>${gs.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.jetty</groupId>
+      <artifactId>jetty-server</artifactId>
+      <version>${jetty.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.jetty.ee10</groupId>
+      <artifactId>jetty-ee10-webapp</artifactId>
+      <version>${jetty.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.jetty.ee10</groupId>
+      <artifactId>jetty-ee10-servlet</artifactId>
+      <version>${jetty.version}</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <repositories>
+    <!-- GeoServer 3.0-RC / GeoTools 35-RC live in the OSGeo release repo until released. -->
+    <repository>
+      <releases>
+        <enabled>true</enabled>
+      </releases>
+      <snapshots>
+        <enabled>false</enabled>
+      </snapshots>
+      <id>osgeo-release</id>
+      <name>OSGeo Release Repository</name>
+      <url>https://repo.osgeo.org/repository/release/</url>
+    </repository>
+    <!-- Keep the OSGeo snapshot repo for development builds against GeoServer/GeoTools snapshots. -->
+    <repository>
+      <releases>
+        <enabled>false</enabled>
+      </releases>
+      <snapshots>
+        <enabled>true</enabled>
+      </snapshots>
+      <id>osgeo-snapshot</id>
+      <name>OSGeo Snapshot Repository</name>
+      <url>https://repo.osgeo.org/repository/snapshot/</url>
+    </repository>
+  </repositories>
+
+  <build>
+    <resources>
+      <resource>
+        <targetPath>META-INF</targetPath>
+        <directory>${project.basedir}</directory>
+        <includes>
+          <include>LICENSE</include>
+          <include>NOTICE</include>
+        </includes>
+      </resource>
+      <resource>
+        <directory>src/main/resources</directory>
+      </resource>
+    </resources>
+    <plugins>
+      <plugin>
+        <groupId>com.diffplug.spotless</groupId>
+        <artifactId>spotless-maven-plugin</artifactId>
+        <configuration combine.self="override">
+          <java>
+            <palantirJavaFormat>
+              <version>2.90.0</version>
+              <formatJavadoc>true</formatJavadoc>
+            </palantirJavaFormat>
+            <licenseHeader>
+              <content>/*
+ * Copyright (c) 2026 Multivers.io
+ *
+ * This program is free software; you can redistribute it and/or modify it under
+ * the terms of the GNU General Public License as published by the Free Software
+ * Foundation; either version 2 of the License, or (at your option) any later
+ * version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+ * FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+ */</content>
+            </licenseHeader>
+            <removeUnusedImports/>
+            <importOrder>
+              <order>java,javax,org,com,io.tileverse.storage,io.tileverse.parquetry,</order>
+            </importOrder>
+            <excludes>
+              <exclude>src/main/java/io/tileverse/parquetry/geoserver/web/RadioGroupParamPanel.java</exclude>
+              <exclude>src/main/java/io/tileverse/parquetry/geoserver/web/Select2ChoiceParamPanel.java</exclude>
+            </excludes>
+          </java>
+          <pom>
+            <sortPom>
+              <expandEmptyElements>false</expandEmptyElements>
+            </sortPom>
+          </pom>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+
+  <profiles>
+    <profile>
+      <!--
+        Converges the GeoServer/GeoTools provided tree (and its collisions with parquetry's compile tree) for the
+        enforcer dependencyConvergence rule. Overrides live here, mirroring the root POM, and are only paid when
+        convergence is actually being checked. Active by default; opt out with -DskipDependencyConvergence.
+      -->
+      <id>dependencyConvergence</id>
+      <activation>
+        <activeByDefault>false</activeByDefault>
+        <property>
+          <name>!skipDependencyConvergence</name>
+        </property>
+      </activation>
+      <dependencyManagement>
+        <dependencies>
+          <!-- GeoServer 3.0-RC mixes Spring 7.0.6 and 7.0.7 across its modules; the Spring BOM converges them. -->
+          <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-framework-bom</artifactId>
+            <version>7.0.7</version>
+            <type>pom</type>
+            <scope>import</scope>
+          </dependency>
+          <!-- GeoServer/GeoTools bring two versions of commons-lang3 transitively; pin to the higher one. -->
+          <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-lang3</artifactId>
+            <version>3.18.0</version>
+          </dependency>
+          <!-- GeoTools pulls javax.measure:unit-api 2.1.2 (via systems.uom) and 2.2 (via indriya); pin to 2.2. -->
+          <dependency>
+            <groupId>javax.measure</groupId>
+            <artifactId>unit-api</artifactId>
+            <version>2.2</version>
+          </dependency>
+          <!--
+            The GeoServer/GeoTools provided tree collides with parquetry's compile tree (and itself) on a handful of
+            common XML/jakarta/commons libraries. Pin each to the higher version to converge the dependency graph.
+          -->
+          <dependency>
+            <groupId>com.fasterxml.woodstox</groupId>
+            <artifactId>woodstox-core</artifactId>
+            <version>7.1.1</version>
+          </dependency>
+          <dependency>
+            <groupId>commons-codec</groupId>
+            <artifactId>commons-codec</artifactId>
+            <version>1.22.0</version>
+          </dependency>
+          <dependency>
+            <groupId>commons-io</groupId>
+            <artifactId>commons-io</artifactId>
+            <version>2.21.0</version>
+          </dependency>
+          <dependency>
+            <groupId>jakarta.activation</groupId>
+            <artifactId>jakarta.activation-api</artifactId>
+            <version>2.1.4</version>
+          </dependency>
+          <dependency>
+            <groupId>jakarta.xml.bind</groupId>
+            <artifactId>jakarta.xml.bind-api</artifactId>
+            <version>4.0.5</version>
+          </dependency>
+          <dependency>
+            <groupId>org.apache.httpcomponents.core5</groupId>
+            <artifactId>httpcore5</artifactId>
+            <version>5.3.6</version>
+          </dependency>
+          <dependency>
+            <groupId>org.glassfish.jaxb</groupId>
+            <artifactId>jaxb-runtime</artifactId>
+            <version>4.0.7</version>
+          </dependency>
+          <!-- google-cloud-storage pulls checker-qual 3.49.0; gt-jdbc-postgis 35-RC pulls 3.52.0; pin to the higher. -->
+          <dependency>
+            <groupId>org.checkerframework</groupId>
+            <artifactId>checker-qual</artifactId>
+            <version>3.52.0</version>
+          </dependency>
+          <!-- spring-security 7.0.4 pulls micrometer-observation 1.16.4; spring-context 7.0.7 pulls 1.16.5; pin higher. -->
+          <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-observation</artifactId>
+            <version>1.16.5</version>
+          </dependency>
+        </dependencies>
+      </dependencyManagement>
+    </profile>
+  </profiles>
+</project>

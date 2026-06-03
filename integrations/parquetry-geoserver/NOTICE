@@ -1,0 +1,19 @@
+parquetry-geoserver
+Copyright 2026 Multiversio LLC.
+
+This module is licensed under the GNU General Public License, version 2 or
+later (GPL-2.0-or-later). See the LICENSE file in this directory for the full
+license text. The rest of the parquetry project is licensed under the Apache
+License, Version 2.0.
+
+-----------------------------------------------------------------------
+
+This module reuses code from GeoServer, licensed under the GNU General Public
+License, version 2 or later, Copyright Open Source Geospatial Foundation:
+
+  - the Wicket widgets RadioGroupParamPanel and Select2ChoiceParamPanel
+    (copied verbatim), and
+  - the design of the store edit panel GeoParquetDataStoreEditPanel
+    (adapted from PMTilesDataStoreEditPanel).
+
+(https://github.com/geoserver/geoserver)
