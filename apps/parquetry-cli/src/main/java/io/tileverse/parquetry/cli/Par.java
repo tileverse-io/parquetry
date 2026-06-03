@@ -26,6 +26,7 @@ import io.tileverse.parquetry.cli.cmd.SchemaCmd;
 import io.tileverse.parquetry.cli.cmd.StatsCmd;
 import io.tileverse.parquetry.cli.expr.FilterSyntax;
 
+import picocli.AutoComplete.GenerateCompletion;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.ParseResult;
@@ -44,7 +45,8 @@ import picocli.CommandLine.ParseResult;
             ExplainCmd.class,
             RowGroupsCmd.class,
             RowCountCmd.class,
-            StatsCmd.class
+            StatsCmd.class,
+            GenerateCompletion.class
         },
         description = "Inspect and transform Parquet files.")
 public final class Par {

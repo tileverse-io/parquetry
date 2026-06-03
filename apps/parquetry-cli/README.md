@@ -118,6 +118,25 @@ move data between two different stores in one command.
 The write path currently handles flat columns (primitives, including WKB geometry); copying a file whose schema
 contains nested list/map/struct or Variant columns is not yet supported and fails with a clear error.
 
+## Shell completion
+
+`par generate-completion` prints a bash completion script (also usable from zsh). Source it for the current shell, or install it to persist:
+
+```bash
+# bash, current shell
+source <(par generate-completion)
+
+# bash, persistent (bash-completion v2)
+par generate-completion > ~/.local/share/bash-completion/completions/par
+
+# zsh, current shell (enable bash-style completion first)
+autoload -Uz compinit && compinit
+autoload -Uz bashcompinit && bashcompinit
+source <(par generate-completion)
+```
+
+This works the same for the JVM launcher and the native binary, since `generate-completion` is a built-in subcommand.
+
 ## Exit codes
 
 | Code | Name | Meaning |

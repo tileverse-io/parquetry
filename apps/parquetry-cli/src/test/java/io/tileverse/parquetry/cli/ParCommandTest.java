@@ -65,4 +65,14 @@ class ParCommandTest {
         assertThat(code).isZero();
         assertThat(out.toString()).contains("Supported --filter predicates");
     }
+
+    @Test
+    void generateCompletionEmitsAShellCompletionScript() {
+        StringWriter out = new StringWriter();
+        CommandLine cmd = Par.newCommandLine();
+        cmd.setOut(new PrintWriter(out));
+        int code = cmd.execute("generate-completion");
+        assertThat(code).isZero();
+        assertThat(out.toString()).contains("_complete_par").contains("complete -F");
+    }
 }
