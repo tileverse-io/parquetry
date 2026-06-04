@@ -25,9 +25,9 @@ import com.google.errorprone.annotations.MustBeClosed;
 
 import io.tileverse.parquetry.batch.BatchMaterializer;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
-import io.tileverse.parquetry.filter.ExplainPlan;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -40,7 +40,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
  * factory opens a one-file dataset over the supplied {@link ByteRangeSource}; a future release will add factories for
  * partitioned datasets where every file agrees on {@link ParquetSchema} by equality. Concurrent {@code read()} calls on
  * a shared instance are safe; each call constructs its own column readers, filter-pipeline state, and single-use
- * {@link io.tileverse.parquetry.data.read.BatchPipeline} stream.
+ * {@link io.tileverse.parquetry.internal.read.BatchPipeline} stream.
  *
  * <p>The default {@link #read()} overload reads every record through the canonical {@link ParquetRecord} materializer
  * with no predicate or projection. The expressive overloads expose predicate push-down (via the 5-tier filter

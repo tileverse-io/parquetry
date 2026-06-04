@@ -18,8 +18,8 @@ package io.tileverse.parquetry.data;
 import java.lang.foreign.MemorySegment;
 import java.util.Map;
 
-import io.tileverse.parquetry.data.write.ColumnChunkWriter;
-import io.tileverse.parquetry.data.write.RowGroupWriter;
+import io.tileverse.parquetry.internal.write.ColumnChunkWriter;
+import io.tileverse.parquetry.internal.write.RowGroupWriter;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
