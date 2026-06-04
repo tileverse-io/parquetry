@@ -71,8 +71,8 @@ public final class StorageOptions {
     @Option(
             names = {"--endpoint"},
             paramLabel = "<url>",
-            description = "GCS host override, e.g. http://localhost:4443. "
-                    + "For S3-compatible endpoints, pass the full https URL as the argument and use --provider s3.")
+            description = "Service endpoint override for S3, GCS, and Azure "
+                    + "(e.g. http://localhost:9000 for MinIO, http://localhost:4443 for fake-gcs-server).")
     public String endpoint;
 
     /**

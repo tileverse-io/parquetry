@@ -70,8 +70,10 @@ class StorageOptionsTest {
         assertThat(props).containsEntry("storage.s3.force-path-style", "true");
         assertThat(props).containsEntry("storage.s3.anonymous", "true");
         assertThat(props).containsEntry("storage.gcs.project-id", "proj");
-        assertThat(props).containsEntry("storage.gcs.host", "http://localhost:4443");
-        assertThat(props).hasSize(8);
+        assertThat(props).containsEntry("storage.s3.endpoint", "http://localhost:4443");
+        assertThat(props).containsEntry("storage.gcs.endpoint", "http://localhost:4443");
+        assertThat(props).containsEntry("storage.azure.endpoint", "http://localhost:4443");
+        assertThat(props).hasSize(10);
     }
 
     @Test

@@ -107,7 +107,7 @@ Connection settings for the source come from these options (when not using ambie
 | `--path-style` | S3 path-style addressing (for MinIO / S3-compatible endpoints). |
 | `--anonymous` | Access the store without credentials. |
 | `--gcs-project <project>` | Google Cloud project id. |
-| `--endpoint <url>` | GCS host override (e.g. `http://localhost:4443`). For an S3-compatible endpoint, pass the full `https` URL here and add `--provider s3`. |
+| `--endpoint <url>` | Service endpoint override for S3, GCS, and Azure (e.g. `http://localhost:9000` for MinIO, `http://localhost:4443` for fake-gcs-server). |
 
 `cp` writes a new Parquet file to a local path or a cloud URI, regenerating GeoParquet metadata on the destination and
 forwarding other key-value metadata. A destination ending in `/` (or an existing local directory) writes the source
