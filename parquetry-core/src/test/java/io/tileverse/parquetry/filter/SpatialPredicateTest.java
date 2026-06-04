@@ -24,7 +24,6 @@ import java.util.OptionalInt;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.filter.spatial.SpatialBoundsSource;
 import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
@@ -34,6 +33,7 @@ import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.GeospatialStatistics;
 import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.RowGroup;
+import io.tileverse.parquetry.internal.filter.spatial.SpatialBoundsSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;

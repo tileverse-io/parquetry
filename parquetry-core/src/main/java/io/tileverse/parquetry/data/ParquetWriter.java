@@ -46,10 +46,6 @@ import java.util.OptionalLong;
 import java.util.stream.Stream;
 
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
-import io.tileverse.parquetry.data.write.GeoColumnSummary;
-import io.tileverse.parquetry.data.write.GeoMetadataWriter;
-import io.tileverse.parquetry.data.write.RowGroupFlushResult;
-import io.tileverse.parquetry.data.write.RowGroupWriter;
 import io.tileverse.parquetry.format.BloomFilterHeader;
 import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.format.ColumnChunk;
@@ -61,6 +57,10 @@ import io.tileverse.parquetry.format.KeyValue;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.format.SchemaElement;
+import io.tileverse.parquetry.internal.write.GeoColumnSummary;
+import io.tileverse.parquetry.internal.write.GeoMetadataWriter;
+import io.tileverse.parquetry.internal.write.RowGroupFlushResult;
+import io.tileverse.parquetry.internal.write.RowGroupWriter;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 

@@ -20,13 +20,13 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
-import io.tileverse.parquetry.data.read.page.Dictionary;
-import io.tileverse.parquetry.filter.bloom.SplitBlockBloomFilter;
-import io.tileverse.parquetry.filter.spatial.EmptyBoundsSource;
-import io.tileverse.parquetry.filter.spatial.SpatialBoundsSource;
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.Statistics;
+import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
+import io.tileverse.parquetry.internal.filter.spatial.EmptyBoundsSource;
+import io.tileverse.parquetry.internal.filter.spatial.SpatialBoundsSource;
+import io.tileverse.parquetry.internal.read.page.Dictionary;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;

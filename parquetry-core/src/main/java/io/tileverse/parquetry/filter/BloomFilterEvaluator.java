@@ -23,7 +23,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
 
-import io.tileverse.parquetry.filter.bloom.SplitBlockBloomFilter;
+import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 

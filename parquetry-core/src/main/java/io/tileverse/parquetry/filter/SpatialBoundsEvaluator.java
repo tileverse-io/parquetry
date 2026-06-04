@@ -18,8 +18,8 @@ package io.tileverse.parquetry.filter;
 import java.util.List;
 import java.util.Optional;
 
-import io.tileverse.parquetry.filter.spatial.SpatialBoundsSource;
 import io.tileverse.parquetry.format.BoundingBox;
+import io.tileverse.parquetry.internal.filter.spatial.SpatialBoundsSource;
 
 /**
  * Eliminates a row group when the geometry column's native per-row-group bounding box proves no row can satisfy a

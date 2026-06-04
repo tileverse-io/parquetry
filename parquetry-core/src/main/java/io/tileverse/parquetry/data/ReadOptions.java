@@ -19,11 +19,11 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.function.Consumer;
 
-import io.tileverse.parquetry.data.read.DecodeBudget;
-import io.tileverse.parquetry.data.read.DecodeExecutor;
-import io.tileverse.parquetry.data.read.DecryptionKeyRetriever;
-import io.tileverse.parquetry.data.read.FetchBudget;
 import io.tileverse.parquetry.filter.PruningDecision;
+import io.tileverse.parquetry.internal.read.DecodeBudget;
+import io.tileverse.parquetry.internal.read.DecodeExecutor;
+import io.tileverse.parquetry.internal.read.DecryptionKeyRetriever;
+import io.tileverse.parquetry.internal.read.FetchBudget;
 import io.tileverse.parquetry.io.SegmentPool;
 
 import lombok.NonNull;

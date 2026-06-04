@@ -27,7 +27,7 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.filter.bloom.SplitBlockBloomFilter;
+import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 

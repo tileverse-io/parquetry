@@ -18,7 +18,7 @@ package io.tileverse.parquetry.filter;
 import java.lang.foreign.MemorySegment;
 import java.util.List;
 
-import io.tileverse.parquetry.filter.spatial.WkbEnvelope;
+import io.tileverse.parquetry.internal.filter.spatial.WkbEnvelope;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**

@@ -24,7 +24,7 @@ import io.tileverse.parquetry.filter.GeometryFilter;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.ValueComparison;
-import io.tileverse.parquetry.filter.spatial.WkbEnvelope;
+import io.tileverse.parquetry.internal.filter.spatial.WkbEnvelope;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
