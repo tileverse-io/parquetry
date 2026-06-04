@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.filter;
+package io.tileverse.parquetry.filter.explain;
 
 /**
  * The end-of-pipeline outcome for a single row group:

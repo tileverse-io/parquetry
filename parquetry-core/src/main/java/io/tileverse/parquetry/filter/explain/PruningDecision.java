@@ -13,7 +13,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.filter;
+package io.tileverse.parquetry.filter.explain;
+
+import io.tileverse.parquetry.filter.RowRanges;
 
 /**
  * The outcome of applying a single filter {@link Tier} to a row group.

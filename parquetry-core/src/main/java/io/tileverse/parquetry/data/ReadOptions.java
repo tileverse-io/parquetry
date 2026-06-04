@@ -19,7 +19,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.function.Consumer;
 
-import io.tileverse.parquetry.filter.PruningDecision;
+import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.internal.read.DecodeBudget;
 import io.tileverse.parquetry.internal.read.DecodeExecutor;
 import io.tileverse.parquetry.internal.read.DecryptionKeyRetriever;

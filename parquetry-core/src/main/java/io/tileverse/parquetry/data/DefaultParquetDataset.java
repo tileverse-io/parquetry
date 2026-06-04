@@ -32,9 +32,9 @@ import java.util.stream.StreamSupport;
 
 import io.tileverse.parquetry.batch.BatchMaterializer;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
-import io.tileverse.parquetry.filter.ExplainPlan;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ParquetSchema;

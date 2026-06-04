@@ -13,13 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.filter;
+package io.tileverse.parquetry.internal.filter;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
+import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.filter.RowRanges;
+import io.tileverse.parquetry.filter.explain.ExplainPlan;
+import io.tileverse.parquetry.filter.explain.PruningDecision;
+import io.tileverse.parquetry.filter.explain.RowGroupOutcome;
+import io.tileverse.parquetry.filter.explain.RowGroupPlan;
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.Statistics;

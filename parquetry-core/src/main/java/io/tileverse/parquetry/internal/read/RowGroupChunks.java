@@ -20,14 +20,14 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 
-import io.tileverse.parquetry.filter.FilterPipeline.ColumnBloom;
-import io.tileverse.parquetry.filter.FilterPipeline.ColumnPageStats;
-import io.tileverse.parquetry.filter.FilterPipeline.ColumnStats;
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.RowGroup;
+import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnBloom;
+import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnPageStats;
+import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnStats;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;

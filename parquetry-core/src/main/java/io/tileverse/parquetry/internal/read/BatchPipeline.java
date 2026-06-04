@@ -30,7 +30,7 @@ import com.google.errorprone.annotations.MustBeClosed;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.batch.VectorizedPredicateEvaluator;
 import io.tileverse.parquetry.filter.Predicate;
-import io.tileverse.parquetry.filter.RecordLevelEvaluator;
+import io.tileverse.parquetry.internal.filter.RecordLevelEvaluator;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.BatchRowAccessor;
 import io.tileverse.parquetry.schema.ParquetSchema;

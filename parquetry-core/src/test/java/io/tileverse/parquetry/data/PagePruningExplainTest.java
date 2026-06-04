@@ -29,10 +29,10 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.filter.ExplainPlan;
 import io.tileverse.parquetry.filter.Projection;
-import io.tileverse.parquetry.filter.RowGroupOutcome;
-import io.tileverse.parquetry.filter.RowGroupPlan;
+import io.tileverse.parquetry.filter.explain.ExplainPlan;
+import io.tileverse.parquetry.filter.explain.RowGroupOutcome;
+import io.tileverse.parquetry.filter.explain.RowGroupPlan;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;

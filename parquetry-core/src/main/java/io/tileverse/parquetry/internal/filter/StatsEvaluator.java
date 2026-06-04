@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.filter;
+package io.tileverse.parquetry.internal.filter;
 
 import static io.tileverse.parquetry.format.ParquetLayouts.DOUBLE;
 import static io.tileverse.parquetry.format.ParquetLayouts.FLOAT;
@@ -26,6 +26,10 @@ import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
 
+import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.filter.Value;
+import io.tileverse.parquetry.filter.explain.PruningDecision;
+import io.tileverse.parquetry.filter.explain.Tier;
 import io.tileverse.parquetry.format.Statistics;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.PrimitiveKind;

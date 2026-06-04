@@ -23,7 +23,7 @@ import java.util.function.IntPredicate;
 import io.tileverse.parquetry.filter.GeometryFilter;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Value;
-import io.tileverse.parquetry.filter.ValueComparison;
+import io.tileverse.parquetry.internal.filter.ValueComparison;
 import io.tileverse.parquetry.internal.filter.spatial.WkbEnvelope;
 import io.tileverse.parquetry.schema.ColumnPath;
 
@@ -32,10 +32,11 @@ import io.tileverse.parquetry.schema.ColumnPath;
  * of matching rows. Calling {@code cardinality()} on the result yields the match count with no row materialization.
  * Null-only predicates resolve to validity-mask popcounts; comparisons scan a typed array and intersect with validity.
  *
- * <p>Semantics match {@link io.tileverse.parquetry.filter.RecordLevelEvaluator} exactly: a value comparison against a
- * null row never matches, {@link Predicate.IsNull} / {@link Predicate.IsNotNull} are the only predicates whose result
- * depends on null presence, and a null geometry has no spatial truth value (excluded from both a spatial predicate and
- * its negation). The predicate must already be normalized (Not pushed to leaves, Always folded, And/Or flattened).
+ * <p>Semantics match {@link io.tileverse.parquetry.internal.filter.RecordLevelEvaluator} exactly: a value comparison
+ * against a null row never matches, {@link Predicate.IsNull} / {@link Predicate.IsNotNull} are the only predicates
+ * whose result depends on null presence, and a null geometry has no spatial truth value (excluded from both a spatial
+ * predicate and its negation). The predicate must already be normalized (Not pushed to leaves, Always folded, And/Or
+ * flattened).
  */
 public final class VectorizedPredicateEvaluator {
 

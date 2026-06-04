@@ -25,8 +25,8 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.filter.PruningDecision;
-import io.tileverse.parquetry.filter.Tier;
+import io.tileverse.parquetry.filter.explain.PruningDecision;
+import io.tileverse.parquetry.filter.explain.Tier;
 
 class ReadOptionsTest {
 

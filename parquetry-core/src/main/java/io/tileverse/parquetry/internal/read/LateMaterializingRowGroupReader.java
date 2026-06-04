@@ -24,9 +24,9 @@ import java.util.Set;
 
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.filter.Predicate;
-import io.tileverse.parquetry.filter.RecordLevelEvaluator;
 import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.format.OffsetIndex;
+import io.tileverse.parquetry.internal.filter.RecordLevelEvaluator;
 import io.tileverse.parquetry.record.BatchRowAccessor;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;

@@ -21,13 +21,13 @@ import java.nio.file.Path;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.filter.ExplainPlan;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
-import io.tileverse.parquetry.filter.PruningDecision;
-import io.tileverse.parquetry.filter.RowGroupOutcome;
-import io.tileverse.parquetry.filter.Tier;
+import io.tileverse.parquetry.filter.explain.ExplainPlan;
+import io.tileverse.parquetry.filter.explain.PruningDecision;
+import io.tileverse.parquetry.filter.explain.RowGroupOutcome;
+import io.tileverse.parquetry.filter.explain.Tier;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.testsupport.CorpusFixtures;
 

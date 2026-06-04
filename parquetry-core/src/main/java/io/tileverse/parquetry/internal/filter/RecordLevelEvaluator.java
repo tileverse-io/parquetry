@@ -13,11 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.filter;
+package io.tileverse.parquetry.internal.filter;
 
 import java.lang.foreign.MemorySegment;
 import java.util.List;
 
+import io.tileverse.parquetry.filter.GeometryFilter;
+import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.internal.filter.spatial.WkbEnvelope;
 import io.tileverse.parquetry.schema.ColumnPath;
 

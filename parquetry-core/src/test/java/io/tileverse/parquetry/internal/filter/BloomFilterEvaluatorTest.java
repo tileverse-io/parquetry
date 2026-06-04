@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.filter;
+package io.tileverse.parquetry.internal.filter;
 
 import static io.tileverse.parquetry.filter.Pred.col;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
@@ -27,6 +27,9 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.filter.Pred;
+import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.PrimitiveKind;

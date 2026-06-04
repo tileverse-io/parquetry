@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.filter;
+package io.tileverse.parquetry.internal.filter;
 
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
@@ -22,6 +22,8 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+
+import io.tileverse.parquetry.filter.Value;
 
 /**
  * Shared comparison and ordering core for the filter evaluators. The record-level, statistics, and column-index

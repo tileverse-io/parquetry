@@ -13,7 +13,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.filter;
+package io.tileverse.parquetry.filter.explain;
+
+import io.tileverse.parquetry.filter.RowRanges;
 
 /** Minimal hand-rolled JSON emitter for {@link ExplainPlan}. Avoids pulling Jackson into core's runtime classpath. */
 final class JsonRenderer {

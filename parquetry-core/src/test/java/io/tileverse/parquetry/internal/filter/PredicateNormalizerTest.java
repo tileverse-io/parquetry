@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.filter;
+package io.tileverse.parquetry.internal.filter;
 
 import static io.tileverse.parquetry.filter.Pred.col;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -25,6 +25,9 @@ import java.util.OptionalInt;
 
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.filter.Bbox;
+import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.ParquetSchemaException;

@@ -13,10 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.filter;
+package io.tileverse.parquetry.filter.explain;
 
 import java.util.List;
 
+import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**

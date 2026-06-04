@@ -13,11 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.filter;
+package io.tileverse.parquetry.internal.filter;
 
 import java.util.List;
 import java.util.Optional;
 
+import io.tileverse.parquetry.filter.Bbox;
+import io.tileverse.parquetry.filter.GeometryFilter;
+import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.filter.explain.PruningDecision;
+import io.tileverse.parquetry.filter.explain.Tier;
 import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.internal.filter.spatial.SpatialBoundsSource;
 

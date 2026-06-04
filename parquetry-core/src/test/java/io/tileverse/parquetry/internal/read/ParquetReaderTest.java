@@ -28,12 +28,12 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.filter.ExplainPlan;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
-import io.tileverse.parquetry.filter.RowGroupOutcome;
-import io.tileverse.parquetry.filter.RowGroupPlan;
+import io.tileverse.parquetry.filter.explain.ExplainPlan;
+import io.tileverse.parquetry.filter.explain.RowGroupOutcome;
+import io.tileverse.parquetry.filter.explain.RowGroupPlan;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.testsupport.CountingSegmentPool;
