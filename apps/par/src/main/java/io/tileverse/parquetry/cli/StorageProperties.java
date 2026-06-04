@@ -32,10 +32,11 @@ final class StorageProperties {
     private static final String KEY_S3_PATH_STYLE = "storage.s3.force-path-style";
     private static final String KEY_S3_ANONYMOUS = "storage.s3.anonymous";
     private static final String KEY_GCS_PROJECT = "storage.gcs.project-id";
-    // GCS uses a "host" parameter to redirect requests to a local server (e.g. fake-gcs-server).
-    // S3-compatible custom endpoints are handled differently: the user encodes the endpoint in the
-    // argument URI itself (http://host:port/bucket/key) and passes --provider s3.
-    private static final String KEY_GCS_HOST = "storage.gcs.host";
+    // Each provider exposes its own endpoint-override key. The single --endpoint flag sets all of them;
+    // only the key for the resolved provider is read, the others are ignored.
+    private static final String KEY_S3_ENDPOINT = "storage.s3.endpoint";
+    private static final String KEY_GCS_ENDPOINT = "storage.gcs.endpoint";
+    private static final String KEY_AZURE_ENDPOINT = "storage.azure.endpoint";
 
     private StorageProperties() {}
 
@@ -78,7 +79,9 @@ final class StorageProperties {
             props.setProperty(KEY_GCS_PROJECT, gcsProject);
         }
         if (endpoint != null) {
-            props.setProperty(KEY_GCS_HOST, endpoint);
+            props.setProperty(KEY_S3_ENDPOINT, endpoint);
+            props.setProperty(KEY_GCS_ENDPOINT, endpoint);
+            props.setProperty(KEY_AZURE_ENDPOINT, endpoint);
         }
         return props;
     }

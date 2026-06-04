@@ -42,8 +42,8 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 /**
  * Drives the {@code par} CLI against an S3 bucket served by LocalStack, exercising the cloud-storage configuration
  * flags ({@code --provider}, {@code --region}, {@code --access-key}, {@code --secret-key}, {@code --path-style}) end to
- * end. A custom S3 endpoint is addressed by passing the full {@code http://host:port/bucket/key} URL, the
- * tileverse-storage convention for S3-compatible servers.
+ * end. A custom S3 endpoint is addressed either by passing the full {@code http://host:port/bucket/key} URL or by
+ * passing a canonical {@code s3://bucket/key} URI together with the {@code --endpoint} flag.
  */
 @Testcontainers(disabledWithoutDocker = true)
 class S3CloudIT {
@@ -152,6 +152,33 @@ class S3CloudIT {
                 .as("par row-count exit code; stderr was: %s", count.stderr())
                 .isZero();
         assertThat(count.stdout().strip()).isEqualTo("4");
+    }
+
+    @Test
+    void metaReadsFromS3ViaEndpointFlag() {
+        String canonicalUri = "s3://" + BUCKET + "/" + KEY;
+        String endpoint = localstack.getEndpoint().toString().replaceAll("/+$", "");
+
+        // No --path-style: setting --endpoint defaults storage.s3.force-path-style to true, which
+        // resolves a canonical s3://bucket/key URI to endpoint/bucket/key path-style addressing.
+        CliRunner.Result result = CliRunner.run(
+                "meta",
+                canonicalUri,
+                "--provider",
+                "s3",
+                "--region",
+                localstack.getRegion(),
+                "--access-key",
+                localstack.getAccessKey(),
+                "--secret-key",
+                localstack.getSecretKey(),
+                "--endpoint",
+                endpoint);
+
+        assertThat(result.exitCode())
+                .as("par meta via --endpoint exit code; stderr was: %s", result.stderr())
+                .isZero();
+        assertThat(result.stdout()).contains("rows", "4");
     }
 
     private static String objectUrl() {
