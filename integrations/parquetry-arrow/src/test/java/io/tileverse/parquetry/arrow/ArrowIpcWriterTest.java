@@ -39,6 +39,7 @@ import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.format.UnsupportedFeatureException;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -58,8 +59,9 @@ class ArrowIpcWriterTest {
         SchemaNode.Primitive id = new SchemaNode.Primitive(
                 "id", Repetition.OPTIONAL, PrimitiveKind.INT64, OptionalInt.empty(), Optional.empty(), 0);
         ParquetSchema schema = schema(id);
-        BitSet validity = new BitSet();
-        validity.set(0, 3);
+        BitSet validBits = new BitSet();
+        validBits.set(0, 3);
+        Validity validity = Validity.of(validBits, 3);
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         columns.put(ColumnPath.of("id"), LongVector.materialized(new long[] {7, 8, 9}, validity));
         ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 3, Arena.ofShared());

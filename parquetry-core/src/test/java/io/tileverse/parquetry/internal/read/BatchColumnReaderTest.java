@@ -41,6 +41,7 @@ import org.junit.jupiter.api.Test;
 import io.tileverse.parquetry.batch.BinaryVector;
 import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.IntVector;
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.CompressionCodec;
 import io.tileverse.parquetry.format.Encoding;
@@ -133,6 +134,40 @@ class BatchColumnReaderTest {
         }
     }
 
+    /**
+     * Pins the contract of {@link BatchColumnReader#sliceValidity}: a fully-valid range yields the no-bitmap all-valid
+     * mask, while a range with a clear bit mirrors the null pattern shifted to the slice's local indices.
+     */
+    @Nested
+    class SliceValidity {
+
+        @Test
+        void fullyValidRangeYieldsAllValidWithoutNulls() {
+            BitSet source = new BitSet();
+            source.set(0, 10); // rows 0..9 all valid
+
+            Validity mask = BatchColumnReader.sliceValidity(source, 3, 4); // slice rows 3..6
+
+            assertThat(mask.size()).as("slice row count").isEqualTo(4);
+            assertThat(mask.hasNulls()).as("a fully valid range has no nulls").isFalse();
+        }
+
+        @Test
+        void rangeWithAClearBitMirrorsTheNulls() {
+            BitSet source = new BitSet();
+            source.set(0, 10);
+            source.clear(5); // row 5 null
+
+            Validity mask = BatchColumnReader.sliceValidity(source, 3, 4); // slice rows 3..6 -> local index 2 is null
+
+            assertThat(mask.size()).as("slice row count").isEqualTo(4);
+            assertThat(mask.hasNulls()).as("the slice includes a null row").isTrue();
+            assertThat(mask.isNull(2)).as("row 5 maps to local index 2").isTrue();
+            assertThat(mask.isValid(0)).as("row 3 is valid").isTrue();
+            assertThat(mask.nullCount()).as("exactly one null in the slice").isEqualTo(1);
+        }
+    }
+
     // --- test 1: single page, no nulls, INT32 ---
 
     @Test
@@ -149,7 +184,7 @@ class BatchColumnReaderTest {
         assertThat(vec).isInstanceOf(IntVector.class);
         assertThat(vec.size()).isEqualTo(4);
 
-        BitSet validity = vec.validity();
+        Validity validity = vec.validity();
         assertThat(validity.cardinality()).isEqualTo(4);
 
         IntVector intVec = (IntVector) vec;
@@ -202,13 +237,13 @@ class BatchColumnReaderTest {
         ColumnVector vec = reader.readBatch(10);
 
         assertThat(vec.size()).isEqualTo(5);
-        BitSet validity = vec.validity();
+        Validity validity = vec.validity();
         // Rows 0, 2, 4 are non-null.
-        assertThat(validity.get(0)).isTrue();
-        assertThat(validity.get(1)).isFalse();
-        assertThat(validity.get(2)).isTrue();
-        assertThat(validity.get(3)).isFalse();
-        assertThat(validity.get(4)).isTrue();
+        assertThat(validity.isValid(0)).isTrue();
+        assertThat(validity.isValid(1)).isFalse();
+        assertThat(validity.isValid(2)).isTrue();
+        assertThat(validity.isValid(3)).isFalse();
+        assertThat(validity.isValid(4)).isTrue();
     }
 
     // --- test 4: hasMore false after all pages consumed ---
@@ -320,11 +355,11 @@ class BatchColumnReaderTest {
             BinaryVector binary = (BinaryVector) vec;
             for (int row = 0; row < expected.length; row++) {
                 if (expected[row] == null) {
-                    assertThat(binary.validity().get(row))
+                    assertThat(binary.validity().isValid(row))
                             .as("row %d is null", row)
                             .isFalse();
                 } else {
-                    assertThat(binary.validity().get(row))
+                    assertThat(binary.validity().isValid(row))
                             .as("row %d is present", row)
                             .isTrue();
                     assertThat(binary.get(row).toArray(JAVA_BYTE))
@@ -379,11 +414,11 @@ class BatchColumnReaderTest {
             BinaryVector binary = (BinaryVector) vec;
             for (int row = 0; row < expected.length; row++) {
                 if (expected[row] == null) {
-                    assertThat(binary.validity().get(row))
+                    assertThat(binary.validity().isValid(row))
                             .as("row %d is null", row)
                             .isFalse();
                 } else {
-                    assertThat(binary.validity().get(row))
+                    assertThat(binary.validity().isValid(row))
                             .as("row %d is present", row)
                             .isTrue();
                     assertThat(binary.get(row).toArray(JAVA_BYTE))

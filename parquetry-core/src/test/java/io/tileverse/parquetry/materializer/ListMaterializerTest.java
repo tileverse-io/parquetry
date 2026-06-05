@@ -24,6 +24,7 @@ import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.ListVector;
+import io.tileverse.parquetry.batch.Validity;
 
 class ListMaterializerTest {
 
@@ -33,7 +34,7 @@ class ListMaterializerTest {
         int[] offsets = {0, 2, 2, 5};
         BitSet validity = new BitSet(3);
         validity.set(0, 3);
-        ListVector vec = new ListVector(offsets, child, validity, 3);
+        ListVector vec = new ListVector(offsets, child, Validity.of(validity, 3), 3);
 
         assertThat(asList(vec, 0)).containsExactly(10, 20);
         assertThat(asList(vec, 1)).isEmpty();
@@ -47,7 +48,7 @@ class ListMaterializerTest {
         BitSet validity = new BitSet(2);
         validity.set(0);
 
-        ListVector vec = new ListVector(offsets, child, validity, 2);
+        ListVector vec = new ListVector(offsets, child, Validity.of(validity, 2), 2);
 
         assertThat(asList(vec, 0)).containsExactly(7);
         assertThat(ListMaterializer.materializeAt(vec, 1, null)).isNull();
@@ -60,13 +61,13 @@ class ListMaterializerTest {
         int[] innerOffsets = {0, 2, 2, 5};
         BitSet innerValidity = new BitSet(3);
         innerValidity.set(0, 3);
-        ListVector inner = new ListVector(innerOffsets, innerChild, innerValidity, 3);
+        ListVector inner = new ListVector(innerOffsets, innerChild, Validity.of(innerValidity, 3), 3);
 
         // Outer: row 0 spans all 3 inner lists; row 1 is empty.
         int[] outerOffsets = {0, 3, 3};
         BitSet outerValidity = new BitSet(2);
         outerValidity.set(0, 2);
-        ListVector outer = new ListVector(outerOffsets, inner, outerValidity, 2);
+        ListVector outer = new ListVector(outerOffsets, inner, Validity.of(outerValidity, 2), 2);
 
         List<Object> row0 = asList(outer, 0);
         assertThat(row0).hasSize(3);
@@ -82,11 +83,11 @@ class ListMaterializerTest {
         // Child element 0 is null (validity bit clear); its backing slot parks the default 0.
         BitSet childValidity = new BitSet(2);
         childValidity.set(1);
-        IntVector child = IntVector.materialized(new int[] {0, 1}, childValidity);
+        IntVector child = IntVector.materialized(new int[] {0, 1}, Validity.of(childValidity, 2));
         int[] offsets = {0, 2};
         BitSet validity = new BitSet(1);
         validity.set(0);
-        ListVector vec = new ListVector(offsets, child, validity, 1);
+        ListVector vec = new ListVector(offsets, child, Validity.of(validity, 1), 1);
 
         assertThat(asList(vec, 0))
                 .as("a null list element reads back as null, not the primitive default 0")
@@ -103,9 +104,7 @@ class ListMaterializerTest {
         return (List<Object>) outer.get(index);
     }
 
-    private static BitSet allValid(int n) {
-        BitSet b = new BitSet(n);
-        b.set(0, n);
-        return b;
+    private static Validity allValid(int n) {
+        return Validity.allValid(n);
     }
 }

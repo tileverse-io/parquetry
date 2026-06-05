@@ -65,7 +65,7 @@ class VariantVectorTest {
         @Test
         void nullRowReturnsNull() {
             VariantEncoder.Encoded encoded = singleFieldObject("n", 42);
-            VariantVector variantVec = variantVector(encoded, new BitSet(1));
+            VariantVector variantVec = variantVector(encoded, Validity.of(new BitSet(1), 1));
 
             ParquetSchema schema = variantSchema();
             Map<ColumnPath, ColumnVector> columns = Map.of(VARIANT_COLUMN, variantVec);
@@ -116,7 +116,7 @@ class VariantVectorTest {
         return encoder.encode();
     }
 
-    private static VariantVector variantVector(VariantEncoder.Encoded encoded, BitSet validity) {
+    private static VariantVector variantVector(VariantEncoder.Encoded encoded, Validity validity) {
         BinaryVector metadataVec = BinaryVector.materialized(new MemorySegment[] {encoded.metadata()}, validity);
         BinaryVector valueVec = BinaryVector.materialized(new MemorySegment[] {encoded.value()}, validity);
         return new VariantVector(metadataVec, valueVec, validity, 1);
@@ -125,7 +125,7 @@ class VariantVectorTest {
     // Sources the variant's leaves from arena-allocated segments to confirm that consolidation copies their bytes
     // into a heap backing buffer, leaving the resulting vector independent of that arena.
     private static VariantVector arenaBackedVariantVector(
-            VariantEncoder.Encoded encoded, BitSet validity, Arena arena) {
+            VariantEncoder.Encoded encoded, Validity validity, Arena arena) {
         BinaryVector metadataVec =
                 BinaryVector.materialized(new MemorySegment[] {copyInto(arena, encoded.metadata())}, validity);
         BinaryVector valueVec =
@@ -139,10 +139,8 @@ class VariantVectorTest {
         return target.asReadOnly();
     }
 
-    private static BitSet validBit() {
-        BitSet valid = new BitSet(1);
-        valid.set(0);
-        return valid;
+    private static Validity validBit() {
+        return Validity.allValid(1);
     }
 
     private static ParquetSchema variantSchema() {

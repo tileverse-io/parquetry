@@ -53,6 +53,7 @@ import io.tileverse.parquetry.batch.FixedLenBinaryVector;
 import io.tileverse.parquetry.batch.FloatVector;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -98,9 +99,10 @@ class RoundTripTypesTest {
     void roundTripsBooleanColumnWithNull() throws Exception {
         SchemaNode.Primitive flag = leaf("flag", PrimitiveKind.BOOLEAN, OptionalInt.empty(), Optional.empty(), 0);
         ParquetSchema schema = schema(flag);
-        BitSet validity = new BitSet();
-        validity.set(0);
-        validity.set(2);
+        BitSet validBits = new BitSet();
+        validBits.set(0);
+        validBits.set(2);
+        Validity validity = Validity.of(validBits, 3);
         BooleanVector column = BooleanVector.materialized(new boolean[] {true, false, true}, validity);
 
         byte[] ipc = writeSingleColumn(schema, "flag", column, 3);
@@ -122,8 +124,9 @@ class RoundTripTypesTest {
         SchemaNode.Primitive f = leaf("f", PrimitiveKind.FLOAT, OptionalInt.empty(), Optional.empty(), 0);
         SchemaNode.Primitive d = leaf("d", PrimitiveKind.DOUBLE, OptionalInt.empty(), Optional.empty(), 1);
         ParquetSchema schema = schema(f, d);
-        BitSet validity = new BitSet();
-        validity.set(0, 3);
+        BitSet validBits = new BitSet();
+        validBits.set(0, 3);
+        Validity validity = Validity.of(validBits, 3);
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         columns.put(ColumnPath.of("f"), FloatVector.materialized(new float[] {1.5f, 2.25f, 4.75f}, validity));
         columns.put(ColumnPath.of("d"), DoubleVector.materialized(new double[] {1.5, 2.25, 4.75}, validity));
@@ -153,9 +156,10 @@ class RoundTripTypesTest {
         SchemaNode.Primitive name = leaf(
                 "name", PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.of(new LogicalType.StringType()), 0);
         ParquetSchema schema = schema(name);
-        BitSet validity = new BitSet();
-        validity.set(0);
-        validity.set(2);
+        BitSet validBits = new BitSet();
+        validBits.set(0);
+        validBits.set(2);
+        Validity validity = Validity.of(validBits, 3);
         BinaryVector column = BinaryVector.materialized(
                 segments("alpha".getBytes(StandardCharsets.UTF_8), null, "gamma".getBytes(StandardCharsets.UTF_8)),
                 validity);
@@ -180,9 +184,10 @@ class RoundTripTypesTest {
         ParquetSchema schema = schema(blob);
         byte[] first = {1, 2, 3};
         byte[] third = {9, 8, 7, 6};
-        BitSet validity = new BitSet();
-        validity.set(0);
-        validity.set(2);
+        BitSet validBits = new BitSet();
+        validBits.set(0);
+        validBits.set(2);
+        Validity validity = Validity.of(validBits, 3);
         BinaryVector column = BinaryVector.materialized(segments(first, null, third), validity);
 
         byte[] ipc = writeSingleColumn(schema, "blob", column, 3);
@@ -207,9 +212,10 @@ class RoundTripTypesTest {
         ParquetSchema schema = schema(key);
         byte[] first = {10, 11, 12, 13};
         byte[] second = {20, 21, 22, 23};
-        BitSet validity = new BitSet();
-        validity.set(0);
-        validity.set(1);
+        BitSet validBits = new BitSet();
+        validBits.set(0);
+        validBits.set(1);
+        Validity validity = Validity.of(validBits, 3);
         FixedLenBinaryVector column = FixedLenBinaryVector.materialized(segments(first, second, null), width, validity);
 
         byte[] ipc = writeSingleColumn(schema, "key", column, 3);
@@ -237,8 +243,9 @@ class RoundTripTypesTest {
                 Optional.of(new LogicalType.Timestamp(true, LogicalType.TimeUnit.MICROS)),
                 1);
         ParquetSchema schema = schema(day, ts);
-        BitSet validity = new BitSet();
-        validity.set(0, 2);
+        BitSet validBits = new BitSet();
+        validBits.set(0, 2);
+        Validity validity = Validity.of(validBits, 2);
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         columns.put(
                 ColumnPath.of("day"),
@@ -270,16 +277,18 @@ class RoundTripTypesTest {
         SchemaNode.Primitive count = leaf("count", PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), 0);
         ParquetSchema schema = schema(count);
 
-        BitSet firstValidity = new BitSet();
-        firstValidity.set(0, 2);
+        BitSet firstValidBits = new BitSet();
+        firstValidBits.set(0, 2);
+        Validity firstValidity = Validity.of(firstValidBits, 2);
         Map<ColumnPath, ColumnVector> firstColumns = new LinkedHashMap<>();
         firstColumns.put(
                 ColumnPath.of("count"),
                 io.tileverse.parquetry.batch.IntVector.materialized(new int[] {10, 20}, firstValidity));
         ParquetRecordBatch firstBatch = new DefaultParquetRecordBatch(schema, firstColumns, 2, Arena.ofShared());
 
-        BitSet secondValidity = new BitSet();
-        secondValidity.set(0, 3);
+        BitSet secondValidBits = new BitSet();
+        secondValidBits.set(0, 3);
+        Validity secondValidity = Validity.of(secondValidBits, 3);
         Map<ColumnPath, ColumnVector> secondColumns = new LinkedHashMap<>();
         secondColumns.put(
                 ColumnPath.of("count"),
@@ -314,9 +323,10 @@ class RoundTripTypesTest {
     void roundTripsColumnWhoseTrailingRowsAreAllNull() throws Exception {
         SchemaNode.Primitive value = leaf("value", PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), 0);
         ParquetSchema schema = schema(value);
-        BitSet validity = new BitSet();
-        validity.set(0);
-        validity.set(1);
+        BitSet validBits = new BitSet();
+        validBits.set(0);
+        validBits.set(1);
+        Validity validity = Validity.of(validBits, 4);
         io.tileverse.parquetry.batch.IntVector column =
                 io.tileverse.parquetry.batch.IntVector.materialized(new int[] {100, 200, 0, 0}, validity);
 

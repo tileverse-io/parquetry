@@ -15,8 +15,6 @@
  */
 package io.tileverse.parquetry.batch;
 
-import java.util.BitSet;
-
 /**
  * One column's worth of values for a {@link ParquetRecordBatch}. Vectors are always-materialized: the typed payload
  * (primitive arrays for primitives, a shared backing buffer for binary kinds) is set at construction. Per-page decode
@@ -39,11 +37,31 @@ public sealed interface ColumnVector
                 StructVector,
                 VariantVector {
 
-    /** Logical row count this vector carries. */
+    /** Logical row count this vector holds. */
     int size();
 
-    /** Validity mask: bit i is set iff row i is non-null. */
-    BitSet validity();
+    /** The immutable per-row null mask. */
+    Validity validity();
+
+    /** Whether row {@code row} is null. */
+    default boolean isNull(int row) {
+        return validity().isNull(row);
+    }
+
+    /** Whether row {@code row} is non-null. */
+    default boolean isValid(int row) {
+        return validity().isValid(row);
+    }
+
+    /** Whether any row in this vector is null. */
+    default boolean hasNulls() {
+        return validity().hasNulls();
+    }
+
+    /** Number of null rows in this vector. */
+    default int nullCount() {
+        return validity().nullCount();
+    }
 
     /**
      * Approximate heap bytes this vector's backing holds. Used as a soft budget signal, not an exact allocator: leaf
@@ -51,22 +69,19 @@ public sealed interface ColumnVector
      */
     long approximateHeapBytes();
 
-    /** Approximate heap cost of a validity bitmap covering {@code rowCount} rows. */
-    static long validityBytes(int rowCount) {
-        return (long) rowCount / Byte.SIZE + 1;
-    }
-
     /**
-     * Returns the value at {@code row} as a boxed object, or {@code null} when the validity bit is clear. A leaf vector
-     * returns a boxed primitive, or a read-only {@link java.lang.foreign.MemorySegment} for the binary and INT96 kinds;
-     * a null row yields {@code null} even where a primitive backing array parks a default such as {@code 0}.
+     * Type-agnostic accessor: the value at {@code row} as a boxed primitive (for the primitive leaves) or a reference
+     * value such as a read-only {@link java.lang.foreign.MemorySegment} (for the binary kinds), or {@code null} on a
+     * null row. The compiler inserts a {@code checkcast} at a concrete reference target: {@code Integer x = vec.get(r)}
+     * on a long vector throws {@link ClassCastException} at the assignment. There is no such check at a
+     * {@code var}/{@code Object} target. The boxing-free accessors are {@code getInt}/{@code getLong}/... and
+     * {@code isNull}/{@code hasNulls}.
      *
-     * <p>The nested {@link ListVector} / {@link MapVector} / {@link StructVector} do not implement this. A nested cell
-     * materializes through the materializer, which holds the schema context a sub-record or collection needs, and the
-     * nested vectors throw {@link UnsupportedOperationException} here.
+     * <p>The nested {@link ListVector} / {@link MapVector} / {@link StructVector} materialize through the materializer
+     * (which holds the schema context a sub-record or collection needs) and throw here.
      */
-    default Object getOrNull(int row) {
+    default <T> T get(int row) {
         throw new UnsupportedOperationException(
-                getClass().getSimpleName() + " materializes through the materializer rather than getOrNull");
+                getClass().getSimpleName() + " materializes through the materializer rather than get");
     }
 }

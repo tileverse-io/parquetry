@@ -44,6 +44,7 @@ import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.MapVector;
 import io.tileverse.parquetry.batch.StructVector;
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.batch.VariantVector;
 import io.tileverse.parquetry.data.variant.VariantEncoder;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -81,8 +82,8 @@ class JsonRecordEncoderTest {
                 stringLeaf("absent"));
         ParquetSchema schema = new ParquetSchema(rootGroup);
 
-        BitSet present = validBits(1);
-        BitSet missing = new BitSet(1);
+        Validity present = validBits(1);
+        Validity missing = Validity.of(new BitSet(1), 1);
         byte[] rawBlob = {1, 2, 3};
         Map<ColumnPath, ColumnVector> columns = Map.of(
                 ColumnPath.of("flag"), BooleanVector.materialized(new boolean[] {true}, present),
@@ -109,7 +110,7 @@ class JsonRecordEncoderTest {
         SchemaNode.Group rootGroup = root(primitive("id", PrimitiveKind.INT32), addr);
         ParquetSchema schema = new ParquetSchema(rootGroup);
 
-        BitSet present = validBits(1);
+        Validity present = validBits(1);
         StructVector addrVector = new StructVector(
                 Map.of(
                         ColumnPath.of("zip"), IntVector.materialized(new int[] {2000}, present),
@@ -134,10 +135,11 @@ class JsonRecordEncoderTest {
         SchemaNode.Group rootGroup = root(nums);
         ParquetSchema schema = new ParquetSchema(rootGroup);
 
-        BitSet rowValid = validBits(1);
-        BitSet elementValid = new BitSet(3);
-        elementValid.set(0);
-        elementValid.set(2);
+        Validity rowValid = validBits(1);
+        BitSet elementValidBits = new BitSet(3);
+        elementValidBits.set(0);
+        elementValidBits.set(2);
+        Validity elementValid = Validity.of(elementValidBits, 3);
         IntVector elements = IntVector.materialized(new int[] {10, 0, 30}, elementValid);
         ListVector listVector = new ListVector(new int[] {0, 3}, elements, rowValid, 1);
         Map<ColumnPath, ColumnVector> columns = Map.of(ColumnPath.of("nums"), listVector);
@@ -160,8 +162,8 @@ class JsonRecordEncoderTest {
         SchemaNode.Group rootGroup = root(strMap, intMap);
         ParquetSchema schema = new ParquetSchema(rootGroup);
 
-        BitSet rowValid = validBits(1);
-        BitSet two = validBits(2);
+        Validity rowValid = validBits(1);
+        Validity two = validBits(2);
         MapVector labels = new MapVector(
                 new int[] {0, 2},
                 BinaryVector.materialized(new MemorySegment[] {utf8("a"), utf8("b")}, two),
@@ -201,7 +203,7 @@ class JsonRecordEncoderTest {
         encoder.endObject();
         VariantEncoder.Encoded encoded = encoder.encode();
 
-        BitSet present = validBits(1);
+        Validity present = validBits(1);
         VariantVector variantVector = new VariantVector(
                 BinaryVector.materialized(new MemorySegment[] {encoded.metadata()}, present),
                 BinaryVector.materialized(new MemorySegment[] {encoded.value()}, present),

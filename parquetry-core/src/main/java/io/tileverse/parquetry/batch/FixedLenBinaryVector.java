@@ -16,7 +16,6 @@
 package io.tileverse.parquetry.batch;
 
 import java.lang.foreign.MemorySegment;
-import java.util.BitSet;
 
 import lombok.NonNull;
 
@@ -40,9 +39,9 @@ public final class FixedLenBinaryVector implements ColumnVector {
     private final MemorySegment[] dictEntries;
     private final int[] indices;
     private final int byteWidth;
-    private final BitSet validity;
+    private final Validity validity;
 
-    private FixedLenBinaryVector(@NonNull MemorySegment backing, int byteWidth, @NonNull BitSet validity) {
+    private FixedLenBinaryVector(@NonNull MemorySegment backing, int byteWidth, @NonNull Validity validity) {
         this.backing = backing;
         this.dictEntries = null;
         this.indices = null;
@@ -51,7 +50,7 @@ public final class FixedLenBinaryVector implements ColumnVector {
     }
 
     private FixedLenBinaryVector(
-            @NonNull MemorySegment[] dictEntries, @NonNull int[] indices, int byteWidth, @NonNull BitSet validity) {
+            @NonNull MemorySegment[] dictEntries, @NonNull int[] indices, int byteWidth, @NonNull Validity validity) {
         this.backing = null;
         this.dictEntries = dictEntries;
         this.indices = indices;
@@ -60,7 +59,7 @@ public final class FixedLenBinaryVector implements ColumnVector {
     }
 
     /** Builds a vector over a backing buffer whose length is an exact multiple of {@code byteWidth}. */
-    public static FixedLenBinaryVector of(@NonNull MemorySegment backing, int byteWidth, @NonNull BitSet validity) {
+    public static FixedLenBinaryVector of(@NonNull MemorySegment backing, int byteWidth, @NonNull Validity validity) {
         return new FixedLenBinaryVector(backing.asReadOnly(), byteWidth, validity);
     }
 
@@ -69,7 +68,7 @@ public final class FixedLenBinaryVector implements ColumnVector {
      * fills its fixed-width slot in row order; null rows leave their slot zeroed.
      */
     public static FixedLenBinaryVector materialized(
-            @NonNull MemorySegment[] values, int byteWidth, @NonNull BitSet validity) {
+            @NonNull MemorySegment[] values, int byteWidth, @NonNull Validity validity) {
         return new FixedLenBinaryVector(packFullSlots(values, byteWidth), byteWidth, validity);
     }
 
@@ -91,7 +90,7 @@ public final class FixedLenBinaryVector implements ColumnVector {
 
     /** Builds a dictionary-encoded vector: each row indexes a shared fixed-width dictionary entry. */
     public static FixedLenBinaryVector dictionary(
-            @NonNull MemorySegment[] dictEntries, @NonNull int[] indices, int byteWidth, @NonNull BitSet validity) {
+            @NonNull MemorySegment[] dictEntries, @NonNull int[] indices, int byteWidth, @NonNull Validity validity) {
         return new FixedLenBinaryVector(dictEntries, indices, byteWidth, validity);
     }
 
@@ -104,7 +103,7 @@ public final class FixedLenBinaryVector implements ColumnVector {
     }
 
     @Override
-    public BitSet validity() {
+    public Validity validity() {
         return validity;
     }
 
@@ -113,7 +112,16 @@ public final class FixedLenBinaryVector implements ColumnVector {
         return byteWidth;
     }
 
+    /**
+     * Returns the value at {@code row}, or {@code null} when the row is null. A null row has no entry to read; an
+     * all-null dictionary page has an empty entry array, and indexing it would throw.
+     */
+    @Override
+    @SuppressWarnings("unchecked")
     public MemorySegment get(int row) {
+        if (validity.isNull(row)) {
+            return null;
+        }
         if (indices != null) {
             return dictEntries[indices[row]];
         }
@@ -121,16 +129,11 @@ public final class FixedLenBinaryVector implements ColumnVector {
     }
 
     @Override
-    public Object getOrNull(int row) {
-        return validity.get(row) ? get(row) : null;
-    }
-
-    @Override
     public long approximateHeapBytes() {
         if (indices != null) {
-            return (long) indices.length * Integer.BYTES + dictionaryEntryBytes() + ColumnVector.validityBytes(size());
+            return (long) indices.length * Integer.BYTES + dictionaryEntryBytes() + validity.heapBytes();
         }
-        return backing.byteSize() + ColumnVector.validityBytes(size());
+        return backing.byteSize() + validity.heapBytes();
     }
 
     private long dictionaryEntryBytes() {

@@ -15,12 +15,7 @@
  */
 package io.tileverse.parquetry.record;
 
-import static java.lang.foreign.ValueLayout.JAVA_BYTE;
-
-import java.lang.foreign.MemorySegment;
-import java.nio.charset.StandardCharsets;
 import java.util.Map;
-import java.util.Optional;
 
 import io.tileverse.parquetry.batch.BinaryVector;
 import io.tileverse.parquetry.batch.BooleanVector;
@@ -39,14 +34,12 @@ import io.tileverse.parquetry.materializer.ListMaterializer;
 import io.tileverse.parquetry.materializer.MapMaterializer;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
-import io.tileverse.parquetry.schema.ParquetSchemaException;
-import io.tileverse.parquetry.schema.PrimitiveKind;
-import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
- * Shared dispatch helpers for the {@link io.tileverse.parquetry.materializer.RowAccessor} adapters over a batch
+ * Shared dispatch helper for the {@link io.tileverse.parquetry.materializer.RowAccessor} adapters over a batch
  * ({@link BatchRowAccessor} and {@link StructRowAccessor}). Each views a single row of a {@code Map<ColumnPath,
- * ColumnVector>}; the helpers here implement the typed accessors in one place to keep the adapters thin.
+ * ColumnVector>}; {@link #get} dispatches on the vector type to box the cell value in one place to keep the adapters
+ * thin.
  */
 final class BatchBackedRecords {
 
@@ -59,15 +52,15 @@ final class BatchBackedRecords {
      */
     static Object get(Map<ColumnPath, ColumnVector> columns, int rowIndex, ColumnPath col, ParquetSchema schema) {
         ColumnVector vec = columns.get(col);
-        if (vec == null || !vec.validity().get(rowIndex)) {
+        if (vec == null || vec.isNull(rowIndex)) {
             return null;
         }
         return switch (vec) {
-            case IntVector iv -> iv.get(rowIndex);
-            case LongVector lv -> lv.get(rowIndex);
-            case FloatVector fv -> fv.get(rowIndex);
-            case DoubleVector dv -> dv.get(rowIndex);
-            case BooleanVector bv -> bv.get(rowIndex);
+            case IntVector iv -> iv.getInt(rowIndex);
+            case LongVector lv -> lv.getLong(rowIndex);
+            case FloatVector fv -> fv.getFloat(rowIndex);
+            case DoubleVector dv -> dv.getDouble(rowIndex);
+            case BooleanVector bv -> bv.getBoolean(rowIndex);
             case BinaryVector bv -> bv.get(rowIndex);
             case FixedLenBinaryVector fb -> fb.get(rowIndex);
             case Int96Vector iv -> iv.get(rowIndex);
@@ -75,106 +68,7 @@ final class BatchBackedRecords {
             case MapVector map -> MapMaterializer.materializeAt(map, rowIndex, schema);
             case StructVector struct ->
                 new DefaultParquetRecord(schema, new StructRowAccessor(struct, rowIndex, schema));
-            case VariantVector variant -> variant.variantAt(rowIndex);
+            case VariantVector variant -> variant.get(rowIndex);
         };
-    }
-
-    static boolean getBoolean(
-            Map<ColumnPath, ColumnVector> columns, int rowIndex, ColumnPath col, ParquetSchema schema) {
-        requireKind(schema, col, PrimitiveKind.BOOLEAN, "getBoolean");
-        BooleanVector vec = (BooleanVector) requireVector(columns, col);
-        return vec.get(rowIndex);
-    }
-
-    static int getInt(Map<ColumnPath, ColumnVector> columns, int rowIndex, ColumnPath col, ParquetSchema schema) {
-        requireKind(schema, col, PrimitiveKind.INT32, "getInt");
-        IntVector vec = (IntVector) requireVector(columns, col);
-        return vec.get(rowIndex);
-    }
-
-    static long getLong(Map<ColumnPath, ColumnVector> columns, int rowIndex, ColumnPath col, ParquetSchema schema) {
-        requireKind(schema, col, PrimitiveKind.INT64, "getLong");
-        LongVector vec = (LongVector) requireVector(columns, col);
-        return vec.get(rowIndex);
-    }
-
-    static float getFloat(Map<ColumnPath, ColumnVector> columns, int rowIndex, ColumnPath col, ParquetSchema schema) {
-        requireKind(schema, col, PrimitiveKind.FLOAT, "getFloat");
-        FloatVector vec = (FloatVector) requireVector(columns, col);
-        return vec.get(rowIndex);
-    }
-
-    static double getDouble(Map<ColumnPath, ColumnVector> columns, int rowIndex, ColumnPath col, ParquetSchema schema) {
-        requireKind(schema, col, PrimitiveKind.DOUBLE, "getDouble");
-        DoubleVector vec = (DoubleVector) requireVector(columns, col);
-        return vec.get(rowIndex);
-    }
-
-    static byte[] getBinary(Map<ColumnPath, ColumnVector> columns, int rowIndex, ColumnPath col, ParquetSchema schema) {
-        requireBinaryKind(schema, col, "getBinary");
-        return copyBytes(columns, col, rowIndex);
-    }
-
-    static String getString(Map<ColumnPath, ColumnVector> columns, int rowIndex, ColumnPath col, ParquetSchema schema) {
-        requireBinaryKind(schema, col, "getString");
-        return new String(copyBytes(columns, col, rowIndex), StandardCharsets.UTF_8);
-    }
-
-    static boolean isNull(Map<ColumnPath, ColumnVector> columns, int rowIndex, ColumnPath col) {
-        ColumnVector vec = columns.get(col);
-        return vec == null || !vec.validity().get(rowIndex);
-    }
-
-    private static byte[] copyBytes(Map<ColumnPath, ColumnVector> columns, ColumnPath col, int rowIndex) {
-        ColumnVector vec = requireVector(columns, col);
-        MemorySegment segment =
-                switch (vec) {
-                    case BinaryVector bv -> bv.get(rowIndex);
-                    case FixedLenBinaryVector fb -> fb.get(rowIndex);
-                    case Int96Vector iv -> iv.get(rowIndex);
-                    default ->
-                        throw new IllegalStateException("Column " + col.dot() + " has non-binary vector type "
-                                + vec.getClass().getSimpleName());
-                };
-        return segment.toArray(JAVA_BYTE);
-    }
-
-    private static ColumnVector requireVector(Map<ColumnPath, ColumnVector> columns, ColumnPath col) {
-        ColumnVector vec = columns.get(col);
-        if (vec == null) {
-            throw new ParquetSchemaException("Column " + col.dot() + " is not present in this record");
-        }
-        return vec;
-    }
-
-    private static void requireKind(ParquetSchema schema, ColumnPath col, PrimitiveKind expected, String accessor) {
-        PrimitiveKind actual = lookupKind(schema, col, accessor);
-        if (actual != expected) {
-            throw mismatch(col, actual, accessor);
-        }
-    }
-
-    private static void requireBinaryKind(ParquetSchema schema, ColumnPath col, String accessor) {
-        PrimitiveKind actual = lookupKind(schema, col, accessor);
-        if (actual != PrimitiveKind.BYTE_ARRAY && actual != PrimitiveKind.FIXED_LEN_BYTE_ARRAY) {
-            throw mismatch(col, actual, accessor);
-        }
-    }
-
-    private static PrimitiveKind lookupKind(ParquetSchema schema, ColumnPath col, String accessor) {
-        Optional<SchemaNode> field = schema.find(col);
-        if (field.isEmpty()) {
-            throw new ParquetSchemaException(
-                    "Column " + col.dot() + " is not present in the projected schema (accessor " + accessor + ")");
-        }
-        if (!(field.get() instanceof SchemaNode.Primitive primitive)) {
-            throw new ParquetSchemaException(
-                    "Column " + col.dot() + " is a group column; accessor " + accessor + " requires a primitive leaf");
-        }
-        return primitive.kind();
-    }
-
-    private static ParquetSchemaException mismatch(ColumnPath col, PrimitiveKind actual, String accessor) {
-        return new ParquetSchemaException("Column " + col.dot() + " is " + actual + "; requested " + accessor);
     }
 }

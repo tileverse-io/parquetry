@@ -95,7 +95,7 @@ final class ArrowBatchEncoder {
     }
 
     private static long nullCount(ColumnVector vector) {
-        return (long) vector.size() - vector.validity().cardinality();
+        return vector.nullCount();
     }
 
     private record FieldNodeData(long length, long nullCount) {}

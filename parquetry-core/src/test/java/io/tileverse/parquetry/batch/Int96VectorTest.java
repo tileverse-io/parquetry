@@ -40,8 +40,9 @@ class Int96VectorTest {
         void readsThroughIndicesAndSharesEntries() {
             MemorySegment[] dict = {twelveBytes(7), twelveBytes(9)};
             int[] indices = {0, 1, 0};
-            BitSet validity = new BitSet(3);
-            validity.set(0, 3);
+            BitSet validBits = new BitSet(3);
+            validBits.set(0, 3);
+            Validity validity = Validity.of(validBits, 3);
 
             Int96Vector vec = Int96Vector.dictionary(dict, indices, validity);
 
@@ -55,21 +56,23 @@ class Int96VectorTest {
         void nullRowReturnsNull() {
             MemorySegment[] dict = {twelveBytes(7)};
             int[] indices = {0, 0};
-            BitSet validity = new BitSet(2);
-            validity.set(0);
+            BitSet validBits = new BitSet(2);
+            validBits.set(0);
+            Validity validity = Validity.of(validBits, 2);
 
             Int96Vector vec = Int96Vector.dictionary(dict, indices, validity);
 
-            assertThat(vec.getOrNull(1)).isNull();
+            assertThat(vec.get(1)).isNull();
             assertThat(vec.get(0).toArray(JAVA_BYTE)[0]).isEqualTo((byte) 7);
         }
     }
 
     @Test
     void readsTwelveByteRowsWithNullSlot() {
-        BitSet validity = new BitSet(3);
-        validity.set(0);
-        validity.set(2);
+        BitSet validBits = new BitSet(3);
+        validBits.set(0);
+        validBits.set(2);
+        Validity validity = Validity.of(validBits, 3);
         MemorySegment[] values = {twelveBytes(7), null, twelveBytes(9)};
 
         Int96Vector vec = Int96Vector.materialized(values, validity);
@@ -79,18 +82,19 @@ class Int96VectorTest {
         assertThat(vec.get(0).toArray(JAVA_BYTE)[0]).isEqualTo((byte) 7);
         assertThat(vec.get(0).toArray(JAVA_BYTE)[11]).isEqualTo((byte) 8);
         assertThat(vec.get(2).toArray(JAVA_BYTE)[0]).isEqualTo((byte) 9);
-        assertThat(vec.getOrNull(1)).isNull();
+        assertThat(vec.get(1)).isNull();
         assertThat(vec.get(0).isReadOnly()).isTrue();
     }
 
     @Test
     void approximateHeapBytesIsBackingPlusValidity() {
-        BitSet validity = new BitSet(2);
-        validity.set(0, 2);
+        BitSet validBits = new BitSet(2);
+        validBits.set(0, 2);
+        Validity validity = Validity.of(validBits, 2);
         MemorySegment[] values = {twelveBytes(1), twelveBytes(2)};
 
         Int96Vector vec = Int96Vector.materialized(values, validity);
 
-        assertThat(vec.approximateHeapBytes()).isEqualTo(24L + ColumnVector.validityBytes(2));
+        assertThat(vec.approximateHeapBytes()).isEqualTo(24L + vec.validity().heapBytes());
     }
 }

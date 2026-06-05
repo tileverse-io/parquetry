@@ -66,7 +66,8 @@ class ParquetRecordBatchTest {
         ColumnPath aPath = ColumnPath.of("a");
         BitSet validity = new BitSet(2);
         validity.set(0, 2);
-        Map<ColumnPath, ColumnVector> cols = Map.of(aPath, IntVector.materialized(new int[] {1, 2}, validity));
+        Map<ColumnPath, ColumnVector> cols =
+                Map.of(aPath, IntVector.materialized(new int[] {1, 2}, Validity.of(validity, 2)));
         ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), cols, 2, arena);
 
         assertThat(batch.columns()).containsKey(aPath);
@@ -81,7 +82,8 @@ class ParquetRecordBatchTest {
         ColumnPath aPath = ColumnPath.of("value");
         BitSet validity = new BitSet(1);
         validity.set(0);
-        Map<ColumnPath, ColumnVector> cols = Map.of(aPath, IntVector.materialized(new int[] {42}, validity));
+        Map<ColumnPath, ColumnVector> cols =
+                Map.of(aPath, IntVector.materialized(new int[] {42}, Validity.of(validity, 1)));
         ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), cols, 1, arena);
 
         ParquetRecord row = batch.materialize(0);
@@ -120,7 +122,8 @@ class ParquetRecordBatchTest {
         ColumnPath aPath = ColumnPath.of("value");
         BitSet validity = new BitSet(3);
         validity.set(0, 3);
-        Map<ColumnPath, ColumnVector> cols = Map.of(aPath, IntVector.materialized(new int[] {1, 2, 3}, validity));
+        Map<ColumnPath, ColumnVector> cols =
+                Map.of(aPath, IntVector.materialized(new int[] {1, 2, 3}, Validity.of(validity, 3)));
         ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), cols, 3, arena);
 
         assertThat(batch.approximateHeapBytes()).isGreaterThanOrEqualTo(12L);

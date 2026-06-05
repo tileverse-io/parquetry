@@ -15,8 +15,6 @@
  */
 package io.tileverse.parquetry.batch;
 
-import java.util.BitSet;
-
 import io.tileverse.parquetry.data.variant.Variant;
 import io.tileverse.parquetry.data.variant.VariantMetadata;
 
@@ -29,18 +27,21 @@ import lombok.NonNull;
 public record VariantVector(
         @NonNull BinaryVector metadataColumn,
         @NonNull BinaryVector valueColumn,
-        @NonNull BitSet validity,
+        @NonNull Validity validity,
         int size) implements ColumnVector {
 
-    public Variant variantAt(int row) {
+    @Override
+    @SuppressWarnings("unchecked")
+    public Variant get(int row) {
+        if (validity.isNull(row)) {
+            return null;
+        }
         VariantMetadata metadata = new VariantMetadata(metadataColumn.get(row));
         return Variant.of(valueColumn.get(row), metadata);
     }
 
     @Override
     public long approximateHeapBytes() {
-        return ColumnVector.validityBytes(size)
-                + metadataColumn.approximateHeapBytes()
-                + valueColumn.approximateHeapBytes();
+        return validity.heapBytes() + metadataColumn.approximateHeapBytes() + valueColumn.approximateHeapBytes();
     }
 }

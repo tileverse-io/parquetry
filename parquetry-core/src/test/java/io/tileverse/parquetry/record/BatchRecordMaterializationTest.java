@@ -43,6 +43,7 @@ import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.MapVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.batch.StructVector;
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.ParquetSchemaException;
@@ -70,7 +71,7 @@ class BatchRecordMaterializationTest {
 
     @Test
     void primitiveAccessorsReturnBoxedValuesPerVectorSubtype() {
-        BitSet validity = allValid(2);
+        Validity validity = allValid(2);
         Map<ColumnPath, ColumnVector> cols = new LinkedHashMap<>();
         cols.put(INT_COL, IntVector.materialized(new int[] {7, 11}, validity));
         cols.put(LONG_COL, LongVector.materialized(new long[] {100L, 200L}, validity));
@@ -94,8 +95,9 @@ class BatchRecordMaterializationTest {
 
     @Test
     void nullValidityReturnsNullOnGetAndTrueOnIsNull() {
-        BitSet validity = new BitSet(2);
-        validity.set(0);
+        BitSet validBits = new BitSet(2);
+        validBits.set(0);
+        Validity validity = Validity.of(validBits, 2);
         IntVector vec = IntVector.materialized(new int[] {42, 0}, validity);
 
         try (ParquetRecordBatch batch =
@@ -152,8 +154,8 @@ class BatchRecordMaterializationTest {
 
     @Test
     void listCellMaterializesThroughHelper() {
-        BitSet listValidity = allValid(2);
-        BitSet childValidity = allValid(3);
+        Validity listValidity = allValid(2);
+        Validity childValidity = allValid(3);
         IntVector child = IntVector.materialized(new int[] {10, 20, 30}, childValidity);
         ListVector listVec = new ListVector(new int[] {0, 2, 3}, child, listValidity, 2);
 
@@ -169,9 +171,9 @@ class BatchRecordMaterializationTest {
 
     @Test
     void mapCellMaterializesAsLinkedHashMap() {
-        BitSet mapValidity = allValid(1);
-        BitSet keyValidity = allValid(2);
-        BitSet valueValidity = allValid(2);
+        Validity mapValidity = allValid(1);
+        Validity keyValidity = allValid(2);
+        Validity valueValidity = allValid(2);
         IntVector keys = IntVector.materialized(new int[] {1, 2}, keyValidity);
         IntVector values = IntVector.materialized(new int[] {10, 20}, valueValidity);
         MapVector mapVec = new MapVector(new int[] {0, 2}, keys, values, mapValidity, 1);
@@ -192,8 +194,8 @@ class BatchRecordMaterializationTest {
 
     @Test
     void structCellReturnsSubRecordWithDrillDownAccess() {
-        BitSet structValidity = allValid(1);
-        BitSet childValidity = allValid(1);
+        Validity structValidity = allValid(1);
+        Validity childValidity = allValid(1);
         IntVector childInt = IntVector.materialized(new int[] {123}, childValidity);
         StructVector structVec = new StructVector(Map.of(STRUCT_CHILD, childInt), structValidity, 1);
 
@@ -211,8 +213,8 @@ class BatchRecordMaterializationTest {
 
     @Test
     void structCellReturnsNullWhenValidityClear() {
-        BitSet structValidity = new BitSet(1);
-        IntVector childInt = IntVector.materialized(new int[] {0}, new BitSet(1));
+        Validity structValidity = Validity.of(new BitSet(1), 1);
+        IntVector childInt = IntVector.materialized(new int[] {0}, Validity.of(new BitSet(1), 1));
         StructVector structVec = new StructVector(Map.of(STRUCT_CHILD, childInt), structValidity, 1);
 
         try (ParquetRecordBatch batch =
@@ -264,10 +266,8 @@ class BatchRecordMaterializationTest {
         }
     }
 
-    private static BitSet allValid(int size) {
-        BitSet bits = new BitSet(size);
-        bits.set(0, size);
-        return bits;
+    private static Validity allValid(int size) {
+        return Validity.allValid(size);
     }
 
     private static ParquetSchema primitiveSchema() {

@@ -16,7 +16,6 @@
 package io.tileverse.parquetry.batch;
 
 import java.lang.foreign.MemorySegment;
-import java.util.BitSet;
 
 import lombok.NonNull;
 
@@ -41,16 +40,16 @@ public final class Int96Vector implements ColumnVector {
     private final MemorySegment backing;
     private final MemorySegment[] dictEntries;
     private final int[] indices;
-    private final BitSet validity;
+    private final Validity validity;
 
-    private Int96Vector(@NonNull MemorySegment backing, @NonNull BitSet validity) {
+    private Int96Vector(@NonNull MemorySegment backing, @NonNull Validity validity) {
         this.backing = backing;
         this.dictEntries = null;
         this.indices = null;
         this.validity = validity;
     }
 
-    private Int96Vector(@NonNull MemorySegment[] dictEntries, @NonNull int[] indices, @NonNull BitSet validity) {
+    private Int96Vector(@NonNull MemorySegment[] dictEntries, @NonNull int[] indices, @NonNull Validity validity) {
         this.backing = null;
         this.dictEntries = dictEntries;
         this.indices = indices;
@@ -58,7 +57,7 @@ public final class Int96Vector implements ColumnVector {
     }
 
     /** Builds a vector over a backing buffer whose length is an exact multiple of 12 bytes. */
-    public static Int96Vector of(@NonNull MemorySegment backing, @NonNull BitSet validity) {
+    public static Int96Vector of(@NonNull MemorySegment backing, @NonNull Validity validity) {
         return new Int96Vector(backing.asReadOnly(), validity);
     }
 
@@ -66,13 +65,13 @@ public final class Int96Vector implements ColumnVector {
      * Consolidates per-value segments into a single backing buffer, dropping the per-value wrapper objects. Each value
      * fills its 12-byte slot in row order; null rows leave their slot zeroed.
      */
-    public static Int96Vector materialized(@NonNull MemorySegment[] values, @NonNull BitSet validity) {
+    public static Int96Vector materialized(@NonNull MemorySegment[] values, @NonNull Validity validity) {
         return new Int96Vector(FixedLenBinaryVector.packFullSlots(values, WIDTH), validity);
     }
 
     /** Builds a dictionary-encoded vector: each row indexes a shared 12-byte dictionary entry. */
     public static Int96Vector dictionary(
-            @NonNull MemorySegment[] dictEntries, @NonNull int[] indices, @NonNull BitSet validity) {
+            @NonNull MemorySegment[] dictEntries, @NonNull int[] indices, @NonNull Validity validity) {
         return new Int96Vector(dictEntries, indices, validity);
     }
 
@@ -82,11 +81,20 @@ public final class Int96Vector implements ColumnVector {
     }
 
     @Override
-    public BitSet validity() {
+    public Validity validity() {
         return validity;
     }
 
+    /**
+     * Returns the value at {@code row}, or {@code null} when the row is null. A null row has no entry to read; an
+     * all-null dictionary page has an empty entry array, and indexing it would throw.
+     */
+    @Override
+    @SuppressWarnings("unchecked")
     public MemorySegment get(int row) {
+        if (validity.isNull(row)) {
+            return null;
+        }
         if (indices != null) {
             return dictEntries[indices[row]];
         }
@@ -94,16 +102,11 @@ public final class Int96Vector implements ColumnVector {
     }
 
     @Override
-    public Object getOrNull(int row) {
-        return validity.get(row) ? get(row) : null;
-    }
-
-    @Override
     public long approximateHeapBytes() {
         if (indices != null) {
-            return (long) indices.length * Integer.BYTES + dictionaryEntryBytes() + ColumnVector.validityBytes(size());
+            return (long) indices.length * Integer.BYTES + dictionaryEntryBytes() + validity.heapBytes();
         }
-        return backing.byteSize() + ColumnVector.validityBytes(size());
+        return backing.byteSize() + validity.heapBytes();
     }
 
     private long dictionaryEntryBytes() {

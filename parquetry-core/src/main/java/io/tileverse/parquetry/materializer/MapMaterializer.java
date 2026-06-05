@@ -26,8 +26,8 @@ import io.tileverse.parquetry.schema.ParquetSchema;
  * Builds a Java {@link Map} (insertion-ordered) from a row slice of a {@link MapVector}. Used by the row API view when
  * a consumer reads a map cell via {@code record.get(path)} or {@code record.getMap(path)}.
  *
- * <p>Null vs empty: a row is null iff {@code vec.validity().get(rowIndex) == false}; an empty map iff {@code offsets[i]
- * == offsets[i+1]} AND validity is set.
+ * <p>Null vs empty: a row is null iff {@code vec.validity().isValid(rowIndex) == false}; an empty map iff
+ * {@code offsets[i] == offsets[i+1]} AND validity is set.
  *
  * <p>Key and value extraction reuses {@link ListMaterializer#valueAt(ColumnVector, int, ParquetSchema)} to avoid
  * duplicating the dispatch over {@link ColumnVector} subtypes.
@@ -50,7 +50,7 @@ public final class MapMaterializer {
     // wildcard intentional - keys and values are heterogeneous per ColumnVector subtype
     @SuppressWarnings({"java:S1452", "java:S1168"})
     public static Map<?, ?> materializeAt(MapVector vec, int rowIndex, ParquetSchema schema) {
-        if (!vec.validity().get(rowIndex)) {
+        if (vec.isNull(rowIndex)) {
             return null;
         }
         int start = vec.rowOffsetStart(rowIndex);

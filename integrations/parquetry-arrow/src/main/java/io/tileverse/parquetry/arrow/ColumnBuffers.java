@@ -32,6 +32,7 @@ import io.tileverse.parquetry.batch.FixedLenBinaryVector;
 import io.tileverse.parquetry.batch.FloatVector;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.LongVector;
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.format.UnsupportedFeatureException;
 
 /** Lays out the Arrow body buffers for one {@link ColumnVector}, each padded to an 8-byte boundary. */
@@ -59,19 +60,23 @@ final class ColumnBuffers {
         return buffers;
     }
 
-    private static byte[] validityBuffer(BitSet validity, int size) {
+    private static byte[] validityBuffer(Validity validity, int size) {
         int byteLength = (size + 7) / 8;
+        BitSet validBits = validity.copy();
         // BitSet.toByteArray() is LSB-first within each byte, which is exactly the Arrow validity bitmap format.
-        byte[] raw = validity.toByteArray();
+        byte[] raw = validBits.toByteArray();
         byte[] padded = new byte[align(Math.max(byteLength, 1))];
         System.arraycopy(raw, 0, padded, 0, Math.min(raw.length, padded.length));
         return padded;
     }
 
     private static byte[] booleanData(BooleanVector vector) {
+        // Arrow stores a value for every slot, null rows included; the separate validity buffer marks nulls.
+        // Read the backing array directly to keep the parked value for null rows instead of failing fast.
+        boolean[] values = vector.asArray();
         BitSet bits = new BitSet();
         for (int row = 0; row < vector.size(); row++) {
-            if (vector.get(row)) {
+            if (values[row]) {
                 bits.set(row);
             }
         }
@@ -103,8 +108,10 @@ final class ColumnBuffers {
     private static byte[] floatData(FloatVector vector) {
         ByteBuffer buffer =
                 ByteBuffer.allocate(align(vector.size() * Float.BYTES)).order(ByteOrder.LITTLE_ENDIAN);
+        // Arrow keeps a value per slot, null rows included; the validity buffer marks nulls separately.
+        float[] values = vector.asArray();
         for (int row = 0; row < vector.size(); row++) {
-            buffer.putFloat(vector.get(row));
+            buffer.putFloat(values[row]);
         }
         return buffer.array();
     }
@@ -112,8 +119,10 @@ final class ColumnBuffers {
     private static byte[] doubleData(DoubleVector vector) {
         ByteBuffer buffer =
                 ByteBuffer.allocate(align(vector.size() * Double.BYTES)).order(ByteOrder.LITTLE_ENDIAN);
+        // Arrow keeps a value per slot, null rows included; the validity buffer marks nulls separately.
+        double[] values = vector.asArray();
         for (int row = 0; row < vector.size(); row++) {
-            buffer.putDouble(vector.get(row));
+            buffer.putDouble(values[row]);
         }
         return buffer.array();
     }
@@ -127,7 +136,7 @@ final class ColumnBuffers {
         int running = 0;
         offsets.putInt(0);
         for (int row = 0; row < size; row++) {
-            if (vector.validity().get(row)) {
+            if (vector.isValid(row)) {
                 byte[] bytes = segmentToBytes(vector.get(row));
                 data.writeBytes(bytes);
                 running += bytes.length;
@@ -142,7 +151,7 @@ final class ColumnBuffers {
         int width = vector.byteWidth();
         ByteArrayOutputStream data = new ByteArrayOutputStream();
         for (int row = 0; row < vector.size(); row++) {
-            if (vector.validity().get(row)) {
+            if (vector.isValid(row)) {
                 data.writeBytes(segmentToBytes(vector.get(row)));
             } else {
                 // Null slots are written as zero bytes to keep fixed stride intact.

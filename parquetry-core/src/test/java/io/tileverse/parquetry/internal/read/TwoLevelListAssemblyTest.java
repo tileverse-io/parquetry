@@ -31,6 +31,7 @@ import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -75,8 +76,8 @@ class TwoLevelListAssemblyTest {
         assertThat(listVec.rowOffsetEnd(0) - listVec.rowOffsetStart(0))
                 .as("row 0 list has two elements")
                 .isEqualTo(2);
-        assertThat(listVec.validity().get(1)).as("row 1 list is null").isFalse();
-        assertThat(listVec.validity().get(2)).as("row 2 list is present").isTrue();
+        assertThat(listVec.validity().isValid(1)).as("row 1 list is null").isFalse();
+        assertThat(listVec.validity().isValid(2)).as("row 2 list is present").isTrue();
         assertThat(listVec.rowOffsetEnd(2) - listVec.rowOffsetStart(2))
                 .as("row 2 list is empty")
                 .isZero();
@@ -103,13 +104,13 @@ class TwoLevelListAssemblyTest {
                 new SchemaNode.Group("root", Repetition.REQUIRED, List.of(nums), Optional.empty(), -1));
     }
 
-    private static BitSet bits(boolean... values) {
+    private static Validity bits(boolean... values) {
         BitSet b = new BitSet(values.length);
         for (int i = 0; i < values.length; i++) {
             if (values[i]) {
                 b.set(i);
             }
         }
-        return b;
+        return Validity.of(b, values.length);
     }
 }

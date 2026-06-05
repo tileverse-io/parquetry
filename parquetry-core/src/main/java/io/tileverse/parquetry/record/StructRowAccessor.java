@@ -78,7 +78,7 @@ public final class StructRowAccessor implements RowAccessor {
     public boolean isGroupNull(ColumnPath path) {
         ColumnVector vec = struct.children().get(path);
         if (vec instanceof StructVector inner) {
-            return !inner.validity().get(rowIndex);
+            return inner.isNull(rowIndex);
         }
         return false;
     }

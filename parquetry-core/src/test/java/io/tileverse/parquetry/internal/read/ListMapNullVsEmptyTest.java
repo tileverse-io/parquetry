@@ -35,6 +35,7 @@ import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.MapVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -85,13 +86,13 @@ class ListMapNullVsEmptyTest {
                 NestedVectorAssembler.assembleNested(schema, leafVectors, repLevelsByLeaf, defLevelsByLeaf, 3);
 
         ListVector listVec = (ListVector) assembled.get(ITEMS);
-        assertThat(listVec.validity().get(0))
+        assertThat(listVec.validity().isValid(0))
                 .as("row 0 list is null, validity bit must be clear")
                 .isFalse();
-        assertThat(listVec.validity().get(1))
+        assertThat(listVec.validity().isValid(1))
                 .as("row 1 list is empty but present, validity bit must be set")
                 .isTrue();
-        assertThat(listVec.validity().get(2))
+        assertThat(listVec.validity().isValid(2))
                 .as("row 2 list is populated, validity bit must be set")
                 .isTrue();
 
@@ -136,13 +137,13 @@ class ListMapNullVsEmptyTest {
                 NestedVectorAssembler.assembleNested(schema, leafVectors, repLevelsByLeaf, defLevelsByLeaf, 3);
 
         MapVector mapVec = (MapVector) assembled.get(MAP);
-        assertThat(mapVec.validity().get(0))
+        assertThat(mapVec.validity().isValid(0))
                 .as("row 0 map is null, validity bit must be clear")
                 .isFalse();
-        assertThat(mapVec.validity().get(1))
+        assertThat(mapVec.validity().isValid(1))
                 .as("row 1 map is empty but present, validity bit must be set")
                 .isTrue();
-        assertThat(mapVec.validity().get(2))
+        assertThat(mapVec.validity().isValid(2))
                 .as("row 2 map is populated, validity bit must be set")
                 .isTrue();
 
@@ -171,6 +172,64 @@ class ListMapNullVsEmptyTest {
                     .as("row 2 populated map value is 7")
                     .isEqualTo(7);
         }
+    }
+
+    @Test
+    void listOfStructWithNullBinaryFieldFromAllNullDictionaryPageReconstructs() {
+        ParquetSchema schema = listOfStructWithBinarySchema();
+        ColumnPath idField = ColumnPath.of("items", "list", "element", "n");
+        ColumnPath binaryField = ColumnPath.of("items", "list", "element", "s");
+
+        // Row 0 is a null list (one phantom leaf entry); row 1 is a present list of one struct element whose INT32
+        // field is set and whose BYTE_ARRAY field is null. An all-null BYTE_ARRAY page decodes to a dictionary vector
+        // with zero entries; reading the null binary field at the kept row must return null, not index the empty entry
+        // array (which previously threw ArrayIndexOutOfBoundsException and crashed the filtered count path).
+        IntVector idLeaf = IntVector.materialized(new int[] {0, 42}, validity(false, true));
+        BinaryVector binaryLeaf =
+                BinaryVector.dictionary(new MemorySegment[0], new int[] {0, 0}, validity(false, false));
+        Map<ColumnPath, ColumnVector> leafVectors = Map.of(idField, idLeaf, binaryField, binaryLeaf);
+
+        Map<ColumnPath, int[]> repLevelsByLeaf = Map.of(idField, new int[] {0, 0}, binaryField, new int[] {0, 0});
+        Map<ColumnPath, int[]> defLevelsByLeaf = Map.of(idField, new int[] {0, 4}, binaryField, new int[] {0, 3});
+
+        Map<ColumnPath, ColumnVector> assembled =
+                NestedVectorAssembler.assembleNested(schema, leafVectors, repLevelsByLeaf, defLevelsByLeaf, 2);
+
+        ListVector listVec = (ListVector) assembled.get(ITEMS);
+        assertThat(listVec.isNull(0)).as("row 0 list is null").isTrue();
+        assertThat(listVec.isValid(1)).as("row 1 list is present").isTrue();
+        assertThat(listVec.rowOffsetEnd(1) - listVec.rowOffsetStart(1))
+                .as("row 1 list holds one struct element")
+                .isEqualTo(1);
+
+        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, assembled, 2, Arena.ofConfined())) {
+            assertThat(batch.materialize(0).get(ITEMS)).as("row 0 list is null").isNull();
+            List<?> row1 = (List<?>) batch.materialize(1).get(ITEMS);
+            assertThat(row1).as("row 1 holds one struct element").hasSize(1);
+            ParquetRecord element = (ParquetRecord) row1.get(0);
+            assertThat(element.get(ColumnPath.of("n")))
+                    .as("the struct's INT32 field is 42")
+                    .isEqualTo(42);
+            assertThat(element.get(ColumnPath.of("s")))
+                    .as("the struct's binary field is null")
+                    .isNull();
+        }
+    }
+
+    private static ParquetSchema listOfStructWithBinarySchema() {
+        SchemaNode.Primitive idField = new SchemaNode.Primitive(
+                "n", Repetition.OPTIONAL, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
+        SchemaNode.Primitive binaryField = new SchemaNode.Primitive(
+                "s", Repetition.OPTIONAL, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1);
+        SchemaNode.Group element = new SchemaNode.Group(
+                "element", Repetition.OPTIONAL, List.of(idField, binaryField), Optional.empty(), -1);
+        SchemaNode.Group middle =
+                new SchemaNode.Group("list", Repetition.REPEATED, List.of(element), Optional.empty(), -1);
+        SchemaNode.Group listGroup = new SchemaNode.Group(
+                "items", Repetition.OPTIONAL, List.of(middle), Optional.of(new LogicalType.ListType()), -1);
+        SchemaNode.Group root =
+                new SchemaNode.Group("root", Repetition.REQUIRED, List.of(listGroup), Optional.empty(), -1);
+        return new ParquetSchema(root);
     }
 
     private static ParquetSchema listOfInt32Schema() {
@@ -208,13 +267,13 @@ class ListMapNullVsEmptyTest {
         return new String(segment.toArray(java.lang.foreign.ValueLayout.JAVA_BYTE), StandardCharsets.UTF_8);
     }
 
-    private static BitSet validity(boolean... bits) {
+    private static Validity validity(boolean... bits) {
         BitSet b = new BitSet(bits.length);
         for (int i = 0; i < bits.length; i++) {
             if (bits[i]) {
                 b.set(i);
             }
         }
-        return b;
+        return Validity.of(b, bits.length);
     }
 }

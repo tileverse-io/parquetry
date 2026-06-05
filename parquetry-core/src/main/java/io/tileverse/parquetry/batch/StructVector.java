@@ -15,7 +15,6 @@
  */
 package io.tileverse.parquetry.batch;
 
-import java.util.BitSet;
 import java.util.Map;
 
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -23,15 +22,14 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import lombok.NonNull;
 
 /**
- * A column vector carrying nested struct rows. Each row is a named map of child vectors keyed by their relative column
- * path. The {@code validity} bitmap marks which rows are non-null structs; children may still be null at their own
- * level.
+ * A column vector holding nested struct rows. Each row is a named map of child vectors keyed by their relative column
+ * path. The {@code validity} mask marks which rows are non-null structs; children may still be null at their own level.
  *
  * <p>The {@code children} map is copied on construction to guarantee immutability of the record's state.
  */
 public record StructVector(
         @NonNull Map<ColumnPath, ColumnVector> children,
-        @NonNull BitSet validity,
+        @NonNull Validity validity,
         int size) implements ColumnVector {
 
     /** Compact canonical constructor: validates inputs and defensively copies the children map. */
@@ -41,7 +39,7 @@ public record StructVector(
 
     @Override
     public long approximateHeapBytes() {
-        long total = ColumnVector.validityBytes(size);
+        long total = validity.heapBytes();
         for (ColumnVector child : children.values()) {
             total += child.approximateHeapBytes();
         }

@@ -41,6 +41,7 @@ import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
@@ -72,8 +73,9 @@ class ParquetWriterBatchTest {
         int[] ids = new int[rows];
         long[] timestamps = new long[rows];
         MemorySegment[] names = new MemorySegment[rows];
-        BitSet allValid = new BitSet(rows);
-        allValid.set(0, rows);
+        BitSet allValidBits = new BitSet(rows);
+        allValidBits.set(0, rows);
+        Validity allValid = Validity.of(allValidBits, rows);
         for (int i = 0; i < rows; i++) {
             ids[i] = i;
             timestamps[i] = 1_000_000L + i;
@@ -112,8 +114,9 @@ class ParquetWriterBatchTest {
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
             for (int b = 0; b < batches; b++) {
                 int[] values = new int[rowsPerBatch];
-                BitSet valid = new BitSet(rowsPerBatch);
-                valid.set(0, rowsPerBatch);
+                BitSet validBits = new BitSet(rowsPerBatch);
+                validBits.set(0, rowsPerBatch);
+                Validity valid = Validity.of(validBits, rowsPerBatch);
                 for (int i = 0; i < rowsPerBatch; i++) {
                     values[i] = b * rowsPerBatch + i;
                 }
@@ -141,13 +144,14 @@ class ParquetWriterBatchTest {
 
         int rows = 8;
         int[] ids = new int[rows];
-        BitSet valid = new BitSet(rows);
+        BitSet validBits = new BitSet(rows);
         for (int i = 0; i < rows; i++) {
             ids[i] = i * 10;
             if (i % 2 == 0) {
-                valid.set(i);
+                validBits.set(i);
             }
         }
+        Validity valid = Validity.of(validBits, rows);
 
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema, options);
                 ParquetRecordBatch batch =
@@ -182,8 +186,9 @@ class ParquetWriterBatchTest {
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
             writer.write(row(Map.of(ColumnPath.of("id"), 100)));
             int[] batchValues = {200, 201, 202};
-            BitSet valid = new BitSet(3);
-            valid.set(0, 3);
+            BitSet validBits = new BitSet(3);
+            validBits.set(0, 3);
+            Validity valid = Validity.of(validBits, 3);
             try (ParquetRecordBatch batch =
                     buildBatch(schema, 3, Map.of(ColumnPath.of("id"), IntVector.materialized(batchValues, valid)))) {
                 writer.writeBatch(batch);

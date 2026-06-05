@@ -28,16 +28,18 @@ class ColumnVectorHeapBytesTest {
 
     @Test
     void intVectorCountsFourBytesPerElement() {
-        BitSet validity = new BitSet(3);
-        validity.set(0, 3);
+        BitSet validBits = new BitSet(3);
+        validBits.set(0, 3);
+        Validity validity = Validity.of(validBits, 3);
         IntVector vector = IntVector.materialized(new int[] {1, 2, 3}, validity);
         assertThat(vector.approximateHeapBytes()).isGreaterThanOrEqualTo(12L);
     }
 
     @Test
     void longVectorCountsEightBytesPerElement() {
-        BitSet validity = new BitSet(2);
-        validity.set(0, 2);
+        BitSet validBits = new BitSet(2);
+        validBits.set(0, 2);
+        Validity validity = Validity.of(validBits, 2);
         LongVector vector = LongVector.materialized(new long[] {1L, 2L}, validity);
         assertThat(vector.approximateHeapBytes()).isGreaterThanOrEqualTo(16L);
     }
@@ -47,8 +49,9 @@ class ColumnVectorHeapBytesTest {
         Arena arena = Arena.ofConfined();
         MemorySegment a = arena.allocate(10);
         MemorySegment b = arena.allocate(20);
-        BitSet validity = new BitSet(2);
-        validity.set(0, 2);
+        BitSet validBits = new BitSet(2);
+        validBits.set(0, 2);
+        Validity validity = Validity.of(validBits, 2);
         BinaryVector vector = BinaryVector.materialized(new MemorySegment[] {a, b}, validity);
         assertThat(vector.approximateHeapBytes()).isGreaterThanOrEqualTo(30L);
         arena.close();
@@ -56,18 +59,20 @@ class ColumnVectorHeapBytesTest {
 
     @Test
     void binaryVectorIgnoresNullSegments() {
-        BitSet validity = new BitSet(1);
+        Validity validity = Validity.of(new BitSet(1), 1);
         BinaryVector vector = BinaryVector.materialized(new MemorySegment[] {null}, validity);
         assertThat(vector.approximateHeapBytes()).isGreaterThanOrEqualTo(0L);
     }
 
     @Test
     void listVectorIncludesChildBytes() {
-        BitSet childValidity = new BitSet(3);
-        childValidity.set(0, 3);
+        BitSet childValidBits = new BitSet(3);
+        childValidBits.set(0, 3);
+        Validity childValidity = Validity.of(childValidBits, 3);
         IntVector child = IntVector.materialized(new int[] {1, 2, 3}, childValidity);
-        BitSet validity = new BitSet(2);
-        validity.set(0, 2);
+        BitSet validBits = new BitSet(2);
+        validBits.set(0, 2);
+        Validity validity = Validity.of(validBits, 2);
         ListVector list = new ListVector(new int[] {0, 2, 3}, child, validity, 2);
         assertThat(list.approximateHeapBytes()).isGreaterThanOrEqualTo(child.approximateHeapBytes());
     }
@@ -77,8 +82,9 @@ class ColumnVectorHeapBytesTest {
         Arena arena = Arena.ofConfined();
         MemorySegment a = arena.allocate(4);
         MemorySegment b = arena.allocate(4);
-        BitSet validity = new BitSet(2);
-        validity.set(0, 2);
+        BitSet validBits = new BitSet(2);
+        validBits.set(0, 2);
+        Validity validity = Validity.of(validBits, 2);
         a.set(JAVA_BYTE, 0, (byte) 1);
         b.set(JAVA_BYTE, 0, (byte) 2);
         FixedLenBinaryVector vector = FixedLenBinaryVector.materialized(new MemorySegment[] {a, b}, 4, validity);

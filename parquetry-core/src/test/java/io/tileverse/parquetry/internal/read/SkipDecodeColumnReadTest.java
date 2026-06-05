@@ -20,7 +20,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.BitSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,6 +32,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.LongVector;
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteRow;
@@ -157,11 +157,11 @@ class SkipDecodeColumnReadTest {
             int n = colReader.rowsRemainingInCurrentPage();
             ColumnVector vec = colReader.readBatch(n);
             LongVector longs = (LongVector) vec;
-            BitSet validity = longs.validity();
+            Validity validity = longs.validity();
             for (int i = 0; i < longs.size(); i++) {
-                boolean isNull = !validity.get(i);
+                boolean isNull = !validity.isValid(i);
                 nulls.add(isNull);
-                values.add(isNull ? null : longs.get(i));
+                values.add(isNull ? null : longs.getLong(i));
             }
         }
         return new DrainResult(values, nulls, colReader.decodedValueCount());

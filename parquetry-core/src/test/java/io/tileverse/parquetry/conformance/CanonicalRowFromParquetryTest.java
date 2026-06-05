@@ -36,6 +36,7 @@ import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.MapVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.batch.StructVector;
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -58,9 +59,10 @@ class CanonicalRowFromParquetryTest {
                 new SchemaNode.Group("root", Repetition.REQUIRED, List.of(i, s, opt), Optional.empty(), -1);
         ParquetSchema schema = new ParquetSchema(root);
 
-        BitSet present = new BitSet(1);
-        present.set(0);
-        BitSet absent = new BitSet(1);
+        BitSet presentBits = new BitSet(1);
+        presentBits.set(0);
+        Validity present = Validity.of(presentBits, 1);
+        Validity absent = Validity.of(new BitSet(1), 1);
         IntVector iVec = IntVector.materialized(new int[] {7}, present);
         BinaryVector sVec =
                 BinaryVector.materialized(new MemorySegment[] {MemorySegment.ofArray("hi".getBytes())}, present);
@@ -92,8 +94,9 @@ class CanonicalRowFromParquetryTest {
         SchemaNode.Group root = new SchemaNode.Group("root", Repetition.REQUIRED, List.of(point), Optional.empty(), -1);
         ParquetSchema schema = new ParquetSchema(root);
 
-        BitSet present = new BitSet(1);
-        present.set(0);
+        BitSet presentBits = new BitSet(1);
+        presentBits.set(0);
+        Validity present = Validity.of(presentBits, 1);
         IntVector xVec = IntVector.materialized(new int[] {3}, present);
         IntVector yVec = IntVector.materialized(new int[] {4}, present);
         StructVector pointVec =
@@ -120,10 +123,12 @@ class CanonicalRowFromParquetryTest {
                 new SchemaNode.Group("root", Repetition.REQUIRED, List.of(mapNode), Optional.empty(), -1);
         ParquetSchema schema = new ParquetSchema(root);
 
-        BitSet rowValid = new BitSet(1);
-        rowValid.set(0);
-        BitSet entryValid = new BitSet(2);
-        entryValid.set(0, 2);
+        BitSet rowValidBits = new BitSet(1);
+        rowValidBits.set(0);
+        Validity rowValid = Validity.of(rowValidBits, 1);
+        BitSet entryValidBits = new BitSet(2);
+        entryValidBits.set(0, 2);
+        Validity entryValid = Validity.of(entryValidBits, 2);
         IntVector keys = IntVector.materialized(new int[] {1, 2}, entryValid);
         IntVector values = IntVector.materialized(new int[] {10, 20}, entryValid);
         MapVector mapVec = new MapVector(new int[] {0, 2}, keys, values, rowValid, 1);
@@ -154,11 +159,13 @@ class CanonicalRowFromParquetryTest {
         SchemaNode.Group root = new SchemaNode.Group("root", Repetition.REQUIRED, List.of(nums), Optional.empty(), -1);
         ParquetSchema schema = new ParquetSchema(root);
 
-        BitSet rowValid = new BitSet(3);
-        rowValid.set(0);
-        rowValid.set(1);
-        BitSet elemValid = new BitSet(2);
-        elemValid.set(0, 2);
+        BitSet rowValidBits = new BitSet(3);
+        rowValidBits.set(0);
+        rowValidBits.set(1);
+        Validity rowValid = Validity.of(rowValidBits, 3);
+        BitSet elemValidBits = new BitSet(2);
+        elemValidBits.set(0, 2);
+        Validity elemValid = Validity.of(elemValidBits, 2);
         IntVector elems = IntVector.materialized(new int[] {10, 20}, elemValid);
         ListVector listVec = new ListVector(new int[] {0, 2, 2, 2}, elems, rowValid, 3);
         Map<ColumnPath, ColumnVector> cols = Map.of(ColumnPath.of("nums"), listVec);

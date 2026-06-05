@@ -29,8 +29,9 @@ class ListVectorTest {
         // 3 rows: row 0 = [10, 20], row 1 = [] (empty), row 2 = [30, 40, 50].
         IntVector child = IntVector.materialized(new int[] {10, 20, 30, 40, 50}, allValid(5));
         int[] offsets = {0, 2, 2, 5};
-        BitSet validity = new BitSet(3);
-        validity.set(0, 3);
+        BitSet validBits = new BitSet(3);
+        validBits.set(0, 3);
+        Validity validity = Validity.of(validBits, 3);
 
         ListVector vec = new ListVector(offsets, child, validity, 3);
 
@@ -48,13 +49,14 @@ class ListVectorTest {
     void nullRowsCarryNullValidity() {
         IntVector child = IntVector.materialized(new int[] {7, 8}, allValid(2));
         int[] offsets = {0, 2, 2};
-        BitSet validity = new BitSet(2);
-        validity.set(0);
+        BitSet validBits = new BitSet(2);
+        validBits.set(0);
+        Validity validity = Validity.of(validBits, 2);
 
         ListVector vec = new ListVector(offsets, child, validity, 2);
 
-        assertThat(vec.validity().get(0)).isTrue();
-        assertThat(vec.validity().get(1)).isFalse();
+        assertThat(vec.validity().isValid(0)).isTrue();
+        assertThat(vec.validity().isValid(1)).isFalse();
     }
 
     @Test
@@ -62,13 +64,14 @@ class ListVectorTest {
         // row 0 = [10, 20], row 1 = [] (empty, NOT null), row 2 = [30].
         IntVector child = IntVector.materialized(new int[] {10, 20, 30}, allValid(3));
         int[] offsets = {0, 2, 2, 3};
-        BitSet validity = new BitSet(3);
-        validity.set(0, 3); // all rows non-null, including the empty one
+        BitSet validBits = new BitSet(3);
+        validBits.set(0, 3);
+        Validity validity = Validity.of(validBits, 3); // all rows non-null, including the empty one
 
         ListVector vec = new ListVector(offsets, child, validity, 3);
 
         // Row 1 is non-null but zero-width
-        assertThat(vec.validity().get(1)).isTrue();
+        assertThat(vec.validity().isValid(1)).isTrue();
         assertThat(vec.rowOffsetEnd(1) - vec.rowOffsetStart(1)).isZero();
     }
 
@@ -76,17 +79,16 @@ class ListVectorTest {
     void constructorValidatesOffsetsLength() {
         IntVector child = IntVector.materialized(new int[] {1, 2}, allValid(2));
         int[] wrongOffsets = {0, 2}; // length 2, but size 3 needs length 4
-        BitSet validity = new BitSet(3);
-        validity.set(0, 3);
+        BitSet validBits = new BitSet(3);
+        validBits.set(0, 3);
+        Validity validity = Validity.of(validBits, 3);
 
         assertThatThrownBy(() -> new ListVector(wrongOffsets, child, validity, 3))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("offsets length must be size + 1");
     }
 
-    private static BitSet allValid(int n) {
-        BitSet b = new BitSet(n);
-        b.set(0, n);
-        return b;
+    private static Validity allValid(int n) {
+        return Validity.allValid(n);
     }
 }

@@ -26,7 +26,6 @@ import java.io.ByteArrayOutputStream;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
-import java.util.BitSet;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
@@ -37,6 +36,7 @@ import io.tileverse.parquetry.batch.BinaryVector;
 import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.batch.IntVector;
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.BatchRowAccessor;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -50,7 +50,7 @@ import tools.jackson.databind.JsonNode;
 class JacksonMaterializersTest {
 
     private static DefaultParquetRecordBatch citiesBatch(ParquetSchema schema) {
-        BitSet present = validBits(1);
+        Validity present = validBits(1);
         Map<ColumnPath, ColumnVector> columns = Map.of(
                 ColumnPath.of("id"), IntVector.materialized(new int[] {1}, present),
                 ColumnPath.of("name"), BinaryVector.materialized(new MemorySegment[] {utf8("Rosario")}, present));

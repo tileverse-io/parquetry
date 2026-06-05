@@ -17,7 +17,6 @@ package io.tileverse.parquetry.internal.read;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.util.BitSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,6 +31,7 @@ import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.MapVector;
 import io.tileverse.parquetry.batch.StructVector;
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -97,8 +97,8 @@ class NestedVectorAssemblerTest {
 
         ListVector vec = NestedVectorAssembler.buildList(child, repLevels, 2);
 
-        assertThat(vec.validity().get(0)).isTrue();
-        assertThat(vec.validity().get(1)).isTrue();
+        assertThat(vec.validity().isValid(0)).isTrue();
+        assertThat(vec.validity().isValid(1)).isTrue();
     }
 
     @Test
@@ -171,8 +171,8 @@ class NestedVectorAssemblerTest {
         Map<ColumnPath, ColumnVector> result = NestedVectorAssembler.wrapStructGroups(schema, leafVectors, 2);
 
         StructVector sv = (StructVector) result.get(ColumnPath.of("s"));
-        assertThat(sv.validity().get(0)).isTrue();
-        assertThat(sv.validity().get(1)).isTrue();
+        assertThat(sv.validity().isValid(0)).isTrue();
+        assertThat(sv.validity().isValid(1)).isTrue();
     }
 
     // --- buildMap ---
@@ -302,10 +302,8 @@ class NestedVectorAssemblerTest {
 
     // --- fixture helpers ---
 
-    private static BitSet allValid(int n) {
-        BitSet b = new BitSet(n);
-        b.set(0, n);
-        return b;
+    private static Validity allValid(int n) {
+        return Validity.allValid(n);
     }
 
     /** Builds a flat schema with the given required INT32 leaf column names under a root group. */

@@ -32,6 +32,7 @@ import io.tileverse.parquetry.batch.FloatVector;
 import io.tileverse.parquetry.batch.Int96Vector;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.LongVector;
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.data.Compression;
 import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.format.Encoding;
@@ -1124,20 +1125,20 @@ final class BatchColumnReader {
 
     private ColumnVector sliceVector(int start, int n) {
         int end = start + n;
-        BitSet sliceValidity = sliceBitSet(pageValidity, start, n);
+        Validity sliceValidityMask = sliceValidity(pageValidity, start, n);
         return switch (leaf.kind()) {
-            case INT32 -> IntVector.materialized(Arrays.copyOfRange(pageInts, start, end), sliceValidity);
-            case INT64 -> LongVector.materialized(Arrays.copyOfRange(pageLongs, start, end), sliceValidity);
-            case FLOAT -> FloatVector.materialized(Arrays.copyOfRange(pageFloats, start, end), sliceValidity);
-            case DOUBLE -> DoubleVector.materialized(Arrays.copyOfRange(pageDoubles, start, end), sliceValidity);
-            case BOOLEAN -> BooleanVector.materialized(Arrays.copyOfRange(pageBooleans, start, end), sliceValidity);
-            case BYTE_ARRAY -> sliceVariableBinary(start, n, sliceValidity);
-            case FIXED_LEN_BYTE_ARRAY -> sliceFixedBinary(start, n, requiredByteWidth(), sliceValidity);
-            case INT96 -> sliceInt96(start, n, sliceValidity);
+            case INT32 -> IntVector.materialized(Arrays.copyOfRange(pageInts, start, end), sliceValidityMask);
+            case INT64 -> LongVector.materialized(Arrays.copyOfRange(pageLongs, start, end), sliceValidityMask);
+            case FLOAT -> FloatVector.materialized(Arrays.copyOfRange(pageFloats, start, end), sliceValidityMask);
+            case DOUBLE -> DoubleVector.materialized(Arrays.copyOfRange(pageDoubles, start, end), sliceValidityMask);
+            case BOOLEAN -> BooleanVector.materialized(Arrays.copyOfRange(pageBooleans, start, end), sliceValidityMask);
+            case BYTE_ARRAY -> sliceVariableBinary(start, n, sliceValidityMask);
+            case FIXED_LEN_BYTE_ARRAY -> sliceFixedBinary(start, n, requiredByteWidth(), sliceValidityMask);
+            case INT96 -> sliceInt96(start, n, sliceValidityMask);
         };
     }
 
-    private BinaryVector sliceVariableBinary(int start, int n, BitSet sliceValidity) {
+    private BinaryVector sliceVariableBinary(int start, int n, Validity sliceValidity) {
         if (isDictionaryBinaryPage()) {
             int[] sliceIndices = Arrays.copyOfRange(pageIndices, start, start + n);
             return BinaryVector.dictionary(dictEntries, sliceIndices, sliceValidity);
@@ -1146,7 +1147,7 @@ final class BatchColumnReader {
         return BinaryVector.of(pageBinaryBacking, sliceOffsets, sliceValidity);
     }
 
-    private FixedLenBinaryVector sliceFixedBinary(int start, int n, int width, BitSet sliceValidity) {
+    private FixedLenBinaryVector sliceFixedBinary(int start, int n, int width, Validity sliceValidity) {
         if (isDictionaryBinaryPage()) {
             int[] sliceIndices = Arrays.copyOfRange(pageIndices, start, start + n);
             return FixedLenBinaryVector.dictionary(dictEntries, sliceIndices, width, sliceValidity);
@@ -1155,7 +1156,7 @@ final class BatchColumnReader {
         return FixedLenBinaryVector.of(slot, width, sliceValidity);
     }
 
-    private Int96Vector sliceInt96(int start, int n, BitSet sliceValidity) {
+    private Int96Vector sliceInt96(int start, int n, Validity sliceValidity) {
         if (isDictionaryBinaryPage()) {
             int[] sliceIndices = Arrays.copyOfRange(pageIndices, start, start + n);
             return Int96Vector.dictionary(dictEntries, sliceIndices, sliceValidity);
@@ -1166,6 +1167,18 @@ final class BatchColumnReader {
 
     static BitSet sliceBitSet(BitSet source, int start, int n) {
         return source.get(start, start + n);
+    }
+
+    /**
+     * The validity mask for the page slice {@code [start, start + n)}. A range with no null row needs no bitmap, which
+     * skips the per-slice {@link BitSet} copy that {@link Validity#of} would otherwise collapse away.
+     */
+    static Validity sliceValidity(BitSet source, int start, int n) {
+        boolean rangeFullyValid = source.nextClearBit(start) >= start + n;
+        if (rangeFullyValid) {
+            return Validity.allValid(n);
+        }
+        return Validity.of(sliceBitSet(source, start, n), n);
     }
 
     // ---- close ----
