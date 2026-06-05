@@ -101,6 +101,23 @@ class ReadOptionsTest {
     void defaultsProvideParallelDecodeTunables() {
         ReadOptions options = ReadOptions.DEFAULTS;
         assertThat(options.decodeExecutor()).isSameAs(DecodeExecutor.shared());
+        assertThat(options.maxDecodeAheadPerRead()).isGreaterThanOrEqualTo(2);
+    }
+
+    @Test
+    void defaultDecodeAheadExceedsTwoOnAMultiCoreBoxWithRoomyBudget() {
+        DecodeBudget roomy = DecodeBudget.ofBytes(2048L << 20); // heapTerm 64
+        ReadOptions options = ReadOptions.builder().decodeBudget(roomy).build();
+        int cores = Runtime.getRuntime().availableProcessors();
+        if (cores > 2) {
+            assertThat(options.maxDecodeAheadPerRead()).isGreaterThan(2);
+        }
+    }
+
+    @Test
+    void customDecodeBudgetReshapesTheDecodeAheadDefault() {
+        DecodeBudget tiny = DecodeBudget.ofBytes(1L);
+        ReadOptions options = ReadOptions.builder().decodeBudget(tiny).build();
         assertThat(options.maxDecodeAheadPerRead()).isEqualTo(2);
     }
 

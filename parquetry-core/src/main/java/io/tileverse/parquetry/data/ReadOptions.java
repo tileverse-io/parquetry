@@ -47,6 +47,11 @@ import lombok.NonNull;
  * is {@link DecodeBudget#ofMaxMemoryFraction(double)} / {@link FetchBudget#ofMaxMemoryFraction(double)}: one fraction
  * policy auto-scales across pods of different sizes.
  *
+ * <p>Per-read decode parallelism ({@code maxDecodeAheadPerRead}) defaults to a cores/heap-adaptive value: the processor
+ * count clamped into {@code [2, decodeBudget capacity / 32 MiB]}. It is concurrency-agnostic - sized against the whole
+ * shared budget, which balances real concurrency at runtime - and the host application's request pool, not parquetry,
+ * bounds how many reads run at once.
+ *
  * <p>Reads execute synchronously on the caller's thread. Callers that want parallelism issue concurrent
  * {@code read(...)} calls against the dataset (which is thread-safe), or wrap the returned
  * {@link java.util.stream.Stream} themselves. Caching or prefetching of column-chunk bytes belongs to the
@@ -73,7 +78,9 @@ import lombok.NonNull;
  * @param prefetchDepth how many upcoming row groups the prefetcher tries to fetch ahead of the consumed one
  * @param maxConcurrentFetchesPerRead upper bound on row-group fetches running concurrently within one read
  * @param decodeExecutor shared, process-wide CPU pool that decodes row groups in parallel
- * @param maxDecodeAheadPerRead row groups one read may decode ahead of consumption; 0 decodes serially inline
+ * @param maxDecodeAheadPerRead row groups one read may decode ahead of consumption; 0 decodes serially inline. When
+ *     left unset, the builder defaults it to a cores/heap-adaptive value (see the memory-contract note above):
+ *     processor count clamped into [2, decodeBudget capacity / 32 MiB].
  */
 public record ReadOptions(
         boolean useStatsFilter,
@@ -117,6 +124,30 @@ public record ReadOptions(
         }
     }
 
+    /**
+     * Estimated heap one decode-ahead slot holds (a {@code HANDOFF_CAPACITY} run of batches); the divisor that turns
+     * the decode budget into a "how many speculative slots could the whole budget possibly hold" term. A tunable
+     * constant, validated empirically rather than derived from first principles.
+     */
+    private static final long NOMINAL_AHEAD_SLOT_BYTES = 32L << 20;
+
+    /**
+     * The adaptive default for {@code maxDecodeAheadPerRead}: scale per-read decode parallelism to the box by clamping
+     * the processor count into {@code [2, heapTerm]}, where {@code heapTerm} is how many nominal decode-ahead slots the
+     * whole decode budget could hold. The heap term is sized against the entire budget and divided by no assumed
+     * concurrency: the budget is a dynamic shared resource that balances real concurrency at runtime, and a lone read
+     * may speculate against all of it. The floor of 2 keeps at least one row group decoding ahead of consumption.
+     *
+     * @param availableProcessors {@link Runtime#availableProcessors()} (cgroup /
+     *     {@code -XX:ActiveProcessorCount}-aware)
+     * @param decodeBudgetCapacity the read's {@link DecodeBudget#capacity()} in bytes
+     */
+    static int decodeAheadDefault(int availableProcessors, long decodeBudgetCapacity) {
+        long heapTerm = Math.max(2L, decodeBudgetCapacity / NOMINAL_AHEAD_SLOT_BYTES);
+        long clamped = Math.clamp(availableProcessors, 2L, heapTerm);
+        return (int) clamped;
+    }
+
     /** Sensible defaults: all tiers on, no listener, no decryption, shared {@link SegmentPool#getDefault()}. */
     public static final ReadOptions DEFAULTS = builder().build();
 
@@ -126,6 +157,8 @@ public record ReadOptions(
 
     /** Fluent builder for {@link ReadOptions}. */
     public static final class Builder {
+
+        private static final int UNSET_DECODE_AHEAD = -1;
 
         private boolean useStatsFilter = true;
         private boolean useDictionaryFilter = true;
@@ -144,7 +177,7 @@ public record ReadOptions(
         private int prefetchDepth = 2;
         private int maxConcurrentFetchesPerRead = 4;
         private DecodeExecutor decodeExecutor = DecodeExecutor.shared();
-        private int maxDecodeAheadPerRead = 2;
+        private int maxDecodeAheadPerRead = UNSET_DECODE_AHEAD;
 
         private Builder() {}
 
@@ -253,6 +286,10 @@ public record ReadOptions(
             return this;
         }
 
+        /**
+         * Row groups one read may decode ahead of consumption. Leave unset for the cores/heap-adaptive default; pass 0
+         * to decode serially inline. Must be {@code >= 0}.
+         */
         public Builder maxDecodeAheadPerRead(int v) {
             if (v < 0) {
                 throw new IllegalArgumentException("maxDecodeAheadPerRead must be >= 0, got " + v);
@@ -262,6 +299,9 @@ public record ReadOptions(
         }
 
         public ReadOptions build() {
+            int resolvedDecodeAhead = maxDecodeAheadPerRead == UNSET_DECODE_AHEAD
+                    ? decodeAheadDefault(Runtime.getRuntime().availableProcessors(), decodeBudget.capacity())
+                    : maxDecodeAheadPerRead;
             return new ReadOptions(
                     useStatsFilter,
                     useDictionaryFilter,
@@ -280,7 +320,7 @@ public record ReadOptions(
                     prefetchDepth,
                     maxConcurrentFetchesPerRead,
                     decodeExecutor,
-                    maxDecodeAheadPerRead);
+                    resolvedDecodeAhead);
         }
     }
 }
