@@ -28,6 +28,7 @@ import org.junit.jupiter.api.Test;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.StructVector;
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -50,13 +51,13 @@ class ListOfStructMaterializeTest {
     @Test
     void structElementsMaterializeAsParquetRecords() {
         // Two struct elements, ages 7 and 8.
-        BitSet elemValidity = allValid(2);
+        Validity elemValidity = allValid(2);
         IntVector ageVec = IntVector.materialized(new int[] {7, 8}, elemValidity);
         StructVector child = new StructVector(Map.of(AGE, ageVec), elemValidity, 2);
 
         // One list row spanning both struct elements: offsets [0, 2].
         int[] offsets = {0, 2};
-        BitSet listValidity = allValid(1);
+        Validity listValidity = allValid(1);
         ListVector list = new ListVector(offsets, child, listValidity, 1);
 
         ParquetSchema schema = listOfStructSchema();
@@ -78,13 +79,14 @@ class ListOfStructMaterializeTest {
     @Test
     void nullStructElementRemainsNull() {
         // Two elements: first valid (age 42), second null.
-        BitSet elemValidity = new BitSet(2);
-        elemValidity.set(0); // element 1 is null
+        BitSet elemValidBits = new BitSet(2);
+        elemValidBits.set(0); // element 1 is null
+        Validity elemValidity = Validity.of(elemValidBits, 2);
         IntVector ageVec = IntVector.materialized(new int[] {42, 0}, elemValidity);
         StructVector child = new StructVector(Map.of(AGE, ageVec), elemValidity, 2);
 
         int[] offsets = {0, 2};
-        BitSet listValidity = allValid(1);
+        Validity listValidity = allValid(1);
         ListVector list = new ListVector(offsets, child, listValidity, 1);
 
         ParquetSchema schema = listOfStructSchema();
@@ -104,9 +106,7 @@ class ListOfStructMaterializeTest {
         return new ParquetSchema(root);
     }
 
-    private static BitSet allValid(int n) {
-        BitSet b = new BitSet(n);
-        b.set(0, n);
-        return b;
+    private static Validity allValid(int n) {
+        return Validity.allValid(n);
     }
 }

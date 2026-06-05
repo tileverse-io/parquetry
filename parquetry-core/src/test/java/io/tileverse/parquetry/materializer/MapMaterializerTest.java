@@ -28,6 +28,7 @@ import org.junit.jupiter.api.Test;
 import io.tileverse.parquetry.batch.BinaryVector;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.MapVector;
+import io.tileverse.parquetry.batch.Validity;
 
 class MapMaterializerTest {
 
@@ -40,7 +41,7 @@ class MapMaterializerTest {
         int[] offsets = {0, 2, 2};
         BitSet validity = new BitSet(2);
         validity.set(0, 2);
-        MapVector vec = new MapVector(offsets, keys, values, validity, 2);
+        MapVector vec = new MapVector(offsets, keys, values, Validity.of(validity, 2), 2);
 
         Map<?, ?> result = MapMaterializer.materializeAt(vec, 0, null);
         assertThat(result).hasSize(2);
@@ -60,7 +61,7 @@ class MapMaterializerTest {
         BitSet validity = new BitSet(2);
         validity.set(0); // row 1 null
 
-        MapVector vec = new MapVector(offsets, keys, values, validity, 2);
+        MapVector vec = new MapVector(offsets, keys, values, Validity.of(validity, 2), 2);
 
         assertThat(MapMaterializer.materializeAt(vec, 0, null)).hasSize(1);
         assertThat(MapMaterializer.materializeAt(vec, 1, null)).isNull();
@@ -68,13 +69,13 @@ class MapMaterializerTest {
 
     @Test
     void emptyMapDistinguishedFromNull() {
-        BinaryVector keys = BinaryVector.materialized(new MemorySegment[0], new BitSet(0));
-        IntVector values = IntVector.materialized(new int[0], new BitSet(0));
+        BinaryVector keys = BinaryVector.materialized(new MemorySegment[0], Validity.of(new BitSet(0), 0));
+        IntVector values = IntVector.materialized(new int[0], Validity.of(new BitSet(0), 0));
         int[] offsets = {0, 0};
         BitSet validity = new BitSet(1);
         validity.set(0); // non-null but empty
 
-        MapVector vec = new MapVector(offsets, keys, values, validity, 1);
+        MapVector vec = new MapVector(offsets, keys, values, Validity.of(validity, 1), 1);
 
         Map<?, ?> result = MapMaterializer.materializeAt(vec, 0, null);
         assertThat(result).isNotNull().isEmpty();
@@ -85,11 +86,11 @@ class MapMaterializerTest {
         BinaryVector keys =
                 BinaryVector.materialized(new MemorySegment[] {MemorySegment.ofArray("a".getBytes())}, allValid(1));
         // The single value is null: validity bit clear, backing slot parks the default 0.
-        IntVector values = IntVector.materialized(new int[] {0}, new BitSet(1));
+        IntVector values = IntVector.materialized(new int[] {0}, Validity.of(new BitSet(1), 1));
         int[] offsets = {0, 1};
         BitSet validity = new BitSet(1);
         validity.set(0);
-        MapVector vec = new MapVector(offsets, keys, values, validity, 1);
+        MapVector vec = new MapVector(offsets, keys, values, Validity.of(validity, 1), 1);
 
         Map<?, ?> result = MapMaterializer.materializeAt(vec, 0, null);
 
@@ -99,9 +100,7 @@ class MapMaterializerTest {
                 .isNull();
     }
 
-    private static BitSet allValid(int n) {
-        BitSet b = new BitSet(n);
-        b.set(0, n);
-        return b;
+    private static Validity allValid(int n) {
+        return Validity.allValid(n);
     }
 }

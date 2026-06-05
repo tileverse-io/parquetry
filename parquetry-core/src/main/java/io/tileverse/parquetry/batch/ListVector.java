@@ -15,18 +15,16 @@
  */
 package io.tileverse.parquetry.batch;
 
-import java.util.BitSet;
-
 import lombok.NonNull;
 
 public final class ListVector implements ColumnVector {
 
     private final int[] offsets; // length = size + 1
     private final ColumnVector child;
-    private final BitSet validity;
+    private final Validity validity;
     private final int size;
 
-    public ListVector(@NonNull int[] offsets, @NonNull ColumnVector child, @NonNull BitSet validity, int size) {
+    public ListVector(@NonNull int[] offsets, @NonNull ColumnVector child, @NonNull Validity validity, int size) {
         if (offsets.length != size + 1) {
             throw new IllegalArgumentException(
                     "offsets length must be size + 1; got offsets.length=%d, size=%d".formatted(offsets.length, size));
@@ -43,7 +41,7 @@ public final class ListVector implements ColumnVector {
     }
 
     @Override
-    public BitSet validity() {
+    public Validity validity() {
         return validity;
     }
 
@@ -64,6 +62,6 @@ public final class ListVector implements ColumnVector {
 
     @Override
     public long approximateHeapBytes() {
-        return (long) offsets.length * Integer.BYTES + ColumnVector.validityBytes(size) + child.approximateHeapBytes();
+        return (long) offsets.length * Integer.BYTES + validity.heapBytes() + child.approximateHeapBytes();
     }
 }

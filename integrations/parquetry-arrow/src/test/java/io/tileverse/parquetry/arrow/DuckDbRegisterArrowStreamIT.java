@@ -45,6 +45,7 @@ import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -106,8 +107,9 @@ class DuckDbRegisterArrowStreamIT {
     }
 
     private static ParquetRecordBatch idAndNameBatch(ParquetSchema schema) {
-        BitSet validity = new BitSet();
-        validity.set(0, 3);
+        BitSet validBits = new BitSet();
+        validBits.set(0, 3);
+        Validity validity = Validity.of(validBits, 3);
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         columns.put(ColumnPath.of("id"), LongVector.materialized(new long[] {1L, 2L, 3L}, validity));
         columns.put(ColumnPath.of("name"), BinaryVector.materialized(utf8Segments("alpha", "beta", "gamma"), validity));

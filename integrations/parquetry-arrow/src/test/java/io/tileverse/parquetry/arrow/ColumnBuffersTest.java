@@ -25,14 +25,16 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.batch.IntVector;
+import io.tileverse.parquetry.batch.Validity;
 
 class ColumnBuffersTest {
 
     @Test
     void fixedWidthIntHasValidityThenLittleEndianData() {
-        BitSet validity = new BitSet();
-        validity.set(0);
-        validity.set(2); // row 1 null
+        BitSet validBits = new BitSet();
+        validBits.set(0);
+        validBits.set(2); // row 1 null
+        Validity validity = Validity.of(validBits, 3);
         IntVector vector = IntVector.materialized(new int[] {10, 0, 30}, validity);
 
         List<byte[]> buffers = ColumnBuffers.forVector(vector);

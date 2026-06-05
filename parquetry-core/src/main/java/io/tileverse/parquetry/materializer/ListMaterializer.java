@@ -31,7 +31,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
  * Builds a Java {@link List} from a row slice of a {@link ListVector}. Used by the row API view when a consumer reads a
  * list cell via {@code record.get(path)} or {@code record.getList(path)}.
  *
- * <p>Null vs empty: a row is null iff {@code vec.validity().get(rowIndex) == false}; an empty list iff
+ * <p>Null vs empty: a row is null iff {@code vec.validity().isValid(rowIndex) == false}; an empty list iff
  * {@code offsets[i] == offsets[i+1]} AND validity is set.
  */
 public final class ListMaterializer {
@@ -50,7 +50,7 @@ public final class ListMaterializer {
      */
     @SuppressWarnings({"java:S1452", "java:S1168"})
     public static List<?> materializeAt(ListVector vec, int rowIndex, ParquetSchema schema) {
-        if (!vec.validity().get(rowIndex)) {
+        if (vec.isNull(rowIndex)) {
             return null;
         }
         int start = vec.rowOffsetStart(rowIndex);
@@ -70,12 +70,12 @@ public final class ListMaterializer {
     /**
      * Extracts the value at position {@code i} from {@code child}, dispatching by vector type.
      *
-     * <p>A null element yields {@code null}. Leaf vectors delegate to {@link ColumnVector#getOrNull(int)}, which
-     * consults the validity bitmap and returns a boxed primitive (or {@code null}) for primitive kinds, and the
+     * <p>A null element yields {@code null}. Leaf vectors delegate to {@link ColumnVector#get(int)}, which consults the
+     * validity bitmap and returns a boxed primitive (or {@code null}) for primitive kinds, and the
      * {@link java.lang.foreign.MemorySegment} (or {@code null}) for binary and INT96 kinds.
      *
      * <p>The nested {@link ListVector}, {@link MapVector}, and {@link StructVector} arms are dispatched explicitly
-     * because they need the {@code schema} context that {@code getOrNull} does not accept. A null {@link StructVector}
+     * because they need the {@code schema} context that {@code get} does not accept. A null {@link StructVector}
      * element yields {@code null}; a non-null element materializes to a {@link DefaultParquetRecord} backed by a
      * {@link StructRowAccessor}.
      */
@@ -84,10 +84,8 @@ public final class ListMaterializer {
             case ListVector nested -> materializeAt(nested, i, schema);
             case MapVector nested -> MapMaterializer.materializeAt(nested, i, schema);
             case StructVector struct ->
-                struct.validity().get(i)
-                        ? new DefaultParquetRecord(schema, new StructRowAccessor(struct, i, schema))
-                        : null;
-            default -> child.getOrNull(i);
+                struct.isValid(i) ? new DefaultParquetRecord(schema, new StructRowAccessor(struct, i, schema)) : null;
+            default -> child.get(i);
         };
     }
 }

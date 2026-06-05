@@ -15,21 +15,19 @@
  */
 package io.tileverse.parquetry.batch;
 
-import java.util.BitSet;
-
 import lombok.NonNull;
 
 public final class LongVector implements ColumnVector {
 
     private final long[] values;
-    private final BitSet validity;
+    private final Validity validity;
 
-    private LongVector(@NonNull long[] values, @NonNull BitSet validity) {
+    private LongVector(@NonNull long[] values, @NonNull Validity validity) {
         this.values = values;
         this.validity = validity;
     }
 
-    public static LongVector materialized(@NonNull long[] values, @NonNull BitSet validity) {
+    public static LongVector materialized(@NonNull long[] values, @NonNull Validity validity) {
         return new LongVector(values, validity);
     }
 
@@ -39,17 +37,25 @@ public final class LongVector implements ColumnVector {
     }
 
     @Override
-    public BitSet validity() {
+    public Validity validity() {
         return validity;
     }
 
-    public long get(int row) {
+    /**
+     * Returns the value at {@code row}; throws {@link IllegalStateException} when the row is null. Guard with
+     * {@link #isNull(int)} / {@link #hasNulls()}, or use {@link #get(int)} for a null-aware boxed read.
+     */
+    public long getLong(int row) {
+        if (validity.isNull(row)) {
+            throw new IllegalStateException("row %d is null; guard with isNull(row) or hasNulls()".formatted(row));
+        }
         return values[row];
     }
 
     @Override
-    public Object getOrNull(int row) {
-        return validity().get(row) ? get(row) : null;
+    @SuppressWarnings("unchecked")
+    public <T> T get(int row) {
+        return validity.isNull(row) ? null : (T) Long.valueOf(values[row]);
     }
 
     public long[] asArray() {
@@ -58,6 +64,6 @@ public final class LongVector implements ColumnVector {
 
     @Override
     public long approximateHeapBytes() {
-        return (long) values.length * Long.BYTES + ColumnVector.validityBytes(values.length);
+        return (long) values.length * Long.BYTES + validity.heapBytes();
     }
 }

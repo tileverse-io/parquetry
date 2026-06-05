@@ -34,6 +34,7 @@ import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -260,13 +261,13 @@ class DeepNestingShapesTest {
         return map.values().iterator().next();
     }
 
-    private static BitSet bits(boolean... values) {
+    private static Validity bits(boolean... values) {
         BitSet b = new BitSet(values.length);
         for (int i = 0; i < values.length; i++) {
             if (values[i]) {
                 b.set(i);
             }
         }
-        return b;
+        return Validity.of(b, values.length);
     }
 }

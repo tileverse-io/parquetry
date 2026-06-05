@@ -15,21 +15,19 @@
  */
 package io.tileverse.parquetry.batch;
 
-import java.util.BitSet;
-
 import lombok.NonNull;
 
 public final class IntVector implements ColumnVector {
 
     private final int[] values;
-    private final BitSet validity;
+    private final Validity validity;
 
-    private IntVector(@NonNull int[] values, @NonNull BitSet validity) {
+    private IntVector(@NonNull int[] values, @NonNull Validity validity) {
         this.values = values;
         this.validity = validity;
     }
 
-    public static IntVector materialized(@NonNull int[] values, @NonNull BitSet validity) {
+    public static IntVector materialized(@NonNull int[] values, @NonNull Validity validity) {
         return new IntVector(values, validity);
     }
 
@@ -39,17 +37,25 @@ public final class IntVector implements ColumnVector {
     }
 
     @Override
-    public BitSet validity() {
+    public Validity validity() {
         return validity;
     }
 
-    public int get(int row) {
+    /**
+     * Returns the value at {@code row}; throws {@link IllegalStateException} when the row is null. Guard with
+     * {@link #isNull(int)} / {@link #hasNulls()}, or use {@link #get(int)} for a null-aware boxed read.
+     */
+    public int getInt(int row) {
+        if (validity.isNull(row)) {
+            throw new IllegalStateException("row %d is null; guard with isNull(row) or hasNulls()".formatted(row));
+        }
         return values[row];
     }
 
     @Override
-    public Object getOrNull(int row) {
-        return validity().get(row) ? get(row) : null;
+    @SuppressWarnings("unchecked")
+    public <T> T get(int row) {
+        return validity.isNull(row) ? null : (T) Integer.valueOf(values[row]);
     }
 
     public int[] asArray() {
@@ -58,6 +64,6 @@ public final class IntVector implements ColumnVector {
 
     @Override
     public long approximateHeapBytes() {
-        return (long) values.length * Integer.BYTES + ColumnVector.validityBytes(values.length);
+        return (long) values.length * Integer.BYTES + validity.heapBytes();
     }
 }

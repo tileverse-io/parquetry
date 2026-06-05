@@ -39,6 +39,7 @@ import io.tileverse.parquetry.batch.FloatVector;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.format.UnsupportedFeatureException;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -144,7 +145,7 @@ public final class RecordBatchPacker {
             validity.set(row);
             values[row] = r.getBoolean(path);
         }
-        return BooleanVector.materialized(values, validity);
+        return BooleanVector.materialized(values, Validity.of(validity, chunk.size()));
     }
 
     private static ColumnVector intVector(ColumnPath path, List<ParquetRecord> chunk) {
@@ -158,7 +159,7 @@ public final class RecordBatchPacker {
             validity.set(row);
             values[row] = r.getInt(path);
         }
-        return IntVector.materialized(values, validity);
+        return IntVector.materialized(values, Validity.of(validity, chunk.size()));
     }
 
     private static ColumnVector longVector(ColumnPath path, List<ParquetRecord> chunk) {
@@ -172,7 +173,7 @@ public final class RecordBatchPacker {
             validity.set(row);
             values[row] = r.getLong(path);
         }
-        return LongVector.materialized(values, validity);
+        return LongVector.materialized(values, Validity.of(validity, chunk.size()));
     }
 
     private static ColumnVector floatVector(ColumnPath path, List<ParquetRecord> chunk) {
@@ -186,7 +187,7 @@ public final class RecordBatchPacker {
             validity.set(row);
             values[row] = r.getFloat(path);
         }
-        return FloatVector.materialized(values, validity);
+        return FloatVector.materialized(values, Validity.of(validity, chunk.size()));
     }
 
     private static ColumnVector doubleVector(ColumnPath path, List<ParquetRecord> chunk) {
@@ -200,7 +201,7 @@ public final class RecordBatchPacker {
             validity.set(row);
             values[row] = r.getDouble(path);
         }
-        return DoubleVector.materialized(values, validity);
+        return DoubleVector.materialized(values, Validity.of(validity, chunk.size()));
     }
 
     private static ColumnVector binaryVector(ColumnPath path, List<ParquetRecord> chunk) {
@@ -214,7 +215,7 @@ public final class RecordBatchPacker {
             validity.set(row);
             values[row] = MemorySegment.ofArray(r.getBinary(path));
         }
-        return BinaryVector.materialized(values, validity);
+        return BinaryVector.materialized(values, Validity.of(validity, chunk.size()));
     }
 
     private static ColumnVector fixedLenBinaryVector(LeafColumn leaf, List<ParquetRecord> chunk) {
@@ -233,7 +234,7 @@ public final class RecordBatchPacker {
             validity.set(row);
             values[row] = MemorySegment.ofArray(r.getBinary(path));
         }
-        return FixedLenBinaryVector.materialized(values, byteWidth, validity);
+        return FixedLenBinaryVector.materialized(values, byteWidth, Validity.of(validity, chunk.size()));
     }
 
     private record LeafColumn(ColumnPath path, SchemaNode.Primitive primitive) {}

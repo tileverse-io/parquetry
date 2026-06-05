@@ -38,6 +38,7 @@ import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.MapVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.batch.StructVector;
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -198,10 +199,10 @@ class DeepNestingAssemblyTest {
         StructVector child = (StructVector) listVec.child();
         IntVector childX = (IntVector) child.children().get(ColumnPath.of("x"));
         IntVector childY = (IntVector) child.children().get(ColumnPath.of("y"));
-        assertThat(childX.get(0)).as("element 0 x").isEqualTo(1);
-        assertThat(childY.get(0)).as("element 0 y").isEqualTo(2);
-        assertThat(childX.get(2)).as("element 2 x").isEqualTo(5);
-        assertThat(childY.get(2)).as("element 2 y").isEqualTo(6);
+        assertThat(childX.getInt(0)).as("element 0 x").isEqualTo(1);
+        assertThat(childY.getInt(0)).as("element 0 y").isEqualTo(2);
+        assertThat(childX.getInt(2)).as("element 2 x").isEqualTo(5);
+        assertThat(childY.getInt(2)).as("element 2 y").isEqualTo(6);
     }
 
     @Test
@@ -354,13 +355,13 @@ class DeepNestingAssemblyTest {
         return map.values().iterator().next();
     }
 
-    private static BitSet bits(boolean... values) {
+    private static Validity bits(boolean... values) {
         BitSet b = new BitSet(values.length);
         for (int i = 0; i < values.length; i++) {
             if (values[i]) {
                 b.set(i);
             }
         }
-        return b;
+        return Validity.of(b, values.length);
     }
 }

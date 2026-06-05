@@ -33,8 +33,9 @@ class StructVectorTest {
         IntVector a = IntVector.materialized(new int[] {1, 2, 3}, allValid(3));
         IntVector b = IntVector.materialized(new int[] {10, 20, 30}, allValid(3));
         Map<ColumnPath, ColumnVector> children = Map.of(aPath, a, bPath, b);
-        BitSet validity = new BitSet(3);
-        validity.set(0, 3);
+        BitSet validBits = new BitSet(3);
+        validBits.set(0, 3);
+        Validity validity = Validity.of(validBits, 3);
 
         StructVector vec = new StructVector(children, validity, 3);
 
@@ -45,21 +46,20 @@ class StructVectorTest {
     @Test
     void nullGroupVsAllNullChildren() {
         // Both rows have null children; row 0 is a non-null group, row 1 is a null group.
-        IntVector a = IntVector.materialized(new int[] {0, 0}, new BitSet(2));
+        IntVector a = IntVector.materialized(new int[] {0, 0}, Validity.of(new BitSet(2), 2));
         Map<ColumnPath, ColumnVector> children = Map.of(ColumnPath.of("s", "a"), a);
 
-        BitSet groupValidity = new BitSet(2);
-        groupValidity.set(0); // only row 0 group is non-null
+        BitSet groupValidBits = new BitSet(2);
+        groupValidBits.set(0); // only row 0 group is non-null
+        Validity groupValidity = Validity.of(groupValidBits, 2);
 
         StructVector vec = new StructVector(children, groupValidity, 2);
 
-        assertThat(vec.validity().get(0)).isTrue();
-        assertThat(vec.validity().get(1)).isFalse();
+        assertThat(vec.validity().isValid(0)).isTrue();
+        assertThat(vec.validity().isValid(1)).isFalse();
     }
 
-    private static BitSet allValid(int n) {
-        BitSet b = new BitSet(n);
-        b.set(0, n);
-        return b;
+    private static Validity allValid(int n) {
+        return Validity.allValid(n);
     }
 }

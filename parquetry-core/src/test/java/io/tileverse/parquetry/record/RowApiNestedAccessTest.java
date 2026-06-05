@@ -25,13 +25,15 @@ import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.StructVector;
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 class RowApiNestedAccessTest {
     @Test
     void getStructIsSupportedOnTheUnifiedRecord() {
-        BitSet valid = new BitSet();
-        valid.set(0, 1);
+        BitSet validBits = new BitSet();
+        validBits.set(0, 1);
+        Validity valid = Validity.of(validBits, 1);
         IntVector age = IntVector.materialized(new int[] {52}, valid);
         StructVector person = new StructVector(Map.of(ColumnPath.of("age"), age), valid, 1);
         ParquetRecord unified = new DefaultParquetRecord(null, new StructRowAccessor(person, 0, null));

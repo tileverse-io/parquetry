@@ -39,9 +39,10 @@ class BinaryVectorTest {
 
         @Test
         void roundTripsValuesAndDropsNulls() {
-            BitSet validity = new BitSet(3);
-            validity.set(0);
-            validity.set(2);
+            BitSet validBits = new BitSet(3);
+            validBits.set(0);
+            validBits.set(2);
+            Validity validity = Validity.of(validBits, 3);
             MemorySegment[] values = {seg("alpha"), null, seg("gamma")};
 
             BinaryVector vec = BinaryVector.materialized(values, validity);
@@ -50,31 +51,36 @@ class BinaryVectorTest {
             assertThat(text(vec.get(0))).isEqualTo("alpha");
             assertThat(vec.get(0).isReadOnly()).isTrue();
             assertThat(text(vec.get(2))).isEqualTo("gamma");
-            assertThat(vec.getOrNull(1)).isNull();
-            assertThat(vec.getOrNull(0)).isInstanceOf(MemorySegment.class);
+            assertThat(vec.get(1)).isNull();
+            assertThat(vec.get(0)).isInstanceOf(MemorySegment.class);
         }
 
         @Test
-        void nullRowHasZeroLengthSlice() {
-            BitSet validity = new BitSet(2);
-            validity.set(1);
+        void getReturnsNullOnNullRow() {
+            BitSet validBits = new BitSet(2);
+            validBits.set(1);
+            Validity validity = Validity.of(validBits, 2);
             MemorySegment[] values = {null, seg("x")};
 
             BinaryVector vec = BinaryVector.materialized(values, validity);
 
-            assertThat(vec.get(0).byteSize()).isZero();
+            assertThat(vec.get(0))
+                    .as("null row returns null, not a zero-length slice")
+                    .isNull();
             assertThat(text(vec.get(1))).isEqualTo("x");
         }
 
         @Test
         void approximateHeapBytesCountsBackingAndOffsetsNotPerValueObjects() {
-            BitSet validity = new BitSet(2);
-            validity.set(0, 2);
+            BitSet validBits = new BitSet(2);
+            validBits.set(0, 2);
+            Validity validity = Validity.of(validBits, 2);
             MemorySegment[] values = {seg("ab"), seg("cde")}; // 5 backing bytes
 
             BinaryVector vec = BinaryVector.materialized(values, validity);
 
-            assertThat(vec.approximateHeapBytes()).isEqualTo(5L + 12L + ColumnVector.validityBytes(2));
+            assertThat(vec.approximateHeapBytes())
+                    .isEqualTo(5L + 12L + vec.validity().heapBytes());
         }
     }
 
@@ -85,8 +91,9 @@ class BinaryVectorTest {
         void readsThroughIndicesAndSharesEntries() {
             MemorySegment[] dict = {seg("red"), seg("green")};
             int[] indices = {0, 1, 0};
-            BitSet validity = new BitSet(3);
-            validity.set(0, 3);
+            BitSet validBits = new BitSet(3);
+            validBits.set(0, 3);
+            Validity validity = Validity.of(validBits, 3);
 
             BinaryVector vec = BinaryVector.dictionary(dict, indices, validity);
 
@@ -100,12 +107,13 @@ class BinaryVectorTest {
         void nullRowReturnsNull() {
             MemorySegment[] dict = {seg("red")};
             int[] indices = {0, 0};
-            BitSet validity = new BitSet(2);
-            validity.set(0);
+            BitSet validBits = new BitSet(2);
+            validBits.set(0);
+            Validity validity = Validity.of(validBits, 2);
 
             BinaryVector vec = BinaryVector.dictionary(dict, indices, validity);
 
-            assertThat(vec.getOrNull(1)).isNull();
+            assertThat(vec.get(1)).isNull();
             assertThat(text(vec.get(0))).isEqualTo("red");
         }
     }
@@ -118,8 +126,9 @@ class BinaryVectorTest {
             MemorySegment backing =
                     MemorySegment.ofArray("alphagamma".getBytes()).asReadOnly();
             int[] offsets = {0, 5, 10};
-            BitSet validity = new BitSet(2);
-            validity.set(0, 2);
+            BitSet validBits = new BitSet(2);
+            validBits.set(0, 2);
+            Validity validity = Validity.of(validBits, 2);
 
             BinaryVector vec = BinaryVector.of(backing, offsets, validity);
 
@@ -134,13 +143,16 @@ class BinaryVectorTest {
             MemorySegment backing =
                     MemorySegment.ofArray("alphagamma".getBytes()).asReadOnly();
             int[] offsets = {5, 10};
-            BitSet validity = new BitSet(1);
-            validity.set(0);
+            BitSet validBits = new BitSet(1);
+            validBits.set(0);
+            Validity validity = Validity.of(validBits, 1);
 
             BinaryVector vec = BinaryVector.of(backing, offsets, validity);
 
             assertThat(vec.approximateHeapBytes())
-                    .isEqualTo(5L + (long) offsets.length * Integer.BYTES + ColumnVector.validityBytes(1));
+                    .isEqualTo(5L
+                            + (long) offsets.length * Integer.BYTES
+                            + vec.validity().heapBytes());
         }
     }
 }

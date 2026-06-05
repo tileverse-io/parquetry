@@ -37,8 +37,9 @@ class FixedLenBinaryVectorTest {
         void readsThroughIndicesAndSharesEntries() {
             MemorySegment[] dict = {seg((byte) 1, (byte) 2), seg((byte) 3, (byte) 4)};
             int[] indices = {0, 1, 0};
-            BitSet validity = new BitSet(3);
-            validity.set(0, 3);
+            BitSet validBits = new BitSet(3);
+            validBits.set(0, 3);
+            Validity validity = Validity.of(validBits, 3);
 
             FixedLenBinaryVector vec = FixedLenBinaryVector.dictionary(dict, indices, 2, validity);
 
@@ -53,21 +54,23 @@ class FixedLenBinaryVectorTest {
         void nullRowReturnsNull() {
             MemorySegment[] dict = {seg((byte) 1, (byte) 2)};
             int[] indices = {0, 0};
-            BitSet validity = new BitSet(2);
-            validity.set(0);
+            BitSet validBits = new BitSet(2);
+            validBits.set(0);
+            Validity validity = Validity.of(validBits, 2);
 
             FixedLenBinaryVector vec = FixedLenBinaryVector.dictionary(dict, indices, 2, validity);
 
-            assertThat(vec.getOrNull(1)).isNull();
+            assertThat(vec.get(1)).isNull();
             assertThat(vec.get(0).toArray(JAVA_BYTE)).containsExactly(1, 2);
         }
     }
 
     @Test
     void readsFixedWidthRowsWithNullSlot() {
-        BitSet validity = new BitSet(3);
-        validity.set(0);
-        validity.set(2);
+        BitSet validBits = new BitSet(3);
+        validBits.set(0);
+        validBits.set(2);
+        Validity validity = Validity.of(validBits, 3);
         MemorySegment[] values = {seg((byte) 1, (byte) 2), null, seg((byte) 5, (byte) 6)};
 
         FixedLenBinaryVector vec = FixedLenBinaryVector.materialized(values, 2, validity);
@@ -76,26 +79,28 @@ class FixedLenBinaryVectorTest {
         assertThat(vec.byteWidth()).isEqualTo(2);
         assertThat(vec.get(0).toArray(JAVA_BYTE)).containsExactly(1, 2);
         assertThat(vec.get(2).toArray(JAVA_BYTE)).containsExactly(5, 6);
-        assertThat(vec.getOrNull(1)).isNull();
+        assertThat(vec.get(1)).isNull();
         assertThat(vec.get(0).isReadOnly()).isTrue();
     }
 
     @Test
     void approximateHeapBytesIsBackingPlusValidity() {
-        BitSet validity = new BitSet(2);
-        validity.set(0, 2);
+        BitSet validBits = new BitSet(2);
+        validBits.set(0, 2);
+        Validity validity = Validity.of(validBits, 2);
         MemorySegment[] values = {seg((byte) 1, (byte) 2), seg((byte) 3, (byte) 4)};
 
         FixedLenBinaryVector vec = FixedLenBinaryVector.materialized(values, 2, validity);
 
-        assertThat(vec.approximateHeapBytes()).isEqualTo(4L + ColumnVector.validityBytes(2));
+        assertThat(vec.approximateHeapBytes()).isEqualTo(4L + vec.validity().heapBytes());
     }
 
     @Test
     void ofBackingReadsRows() {
         MemorySegment backing = MemorySegment.ofArray(new byte[] {1, 2, 3, 4}).asReadOnly();
-        BitSet validity = new BitSet(2);
-        validity.set(0, 2);
+        BitSet validBits = new BitSet(2);
+        validBits.set(0, 2);
+        Validity validity = Validity.of(validBits, 2);
 
         FixedLenBinaryVector vec = FixedLenBinaryVector.of(backing, 2, validity);
 

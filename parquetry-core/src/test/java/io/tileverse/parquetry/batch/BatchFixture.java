@@ -38,19 +38,19 @@ final class BatchFixture {
      * {@code validityBits} (a string of '1'/'0' where index i is row i's non-null flag).
      */
     static ParquetRecordBatch intColumn(ColumnPath col, int[] values, String validityBits) {
-        BitSet validity = validity(validityBits);
+        Validity validity = validity(validityBits);
         Map<ColumnPath, ColumnVector> columns = Map.of(col, IntVector.materialized(values, validity));
         return new DefaultParquetRecordBatch(singleColumnSchema(col), columns, values.length, Arena.ofConfined());
     }
 
-    private static BitSet validity(String validityBits) {
+    private static Validity validity(String validityBits) {
         BitSet validity = new BitSet(validityBits.length());
         for (int i = 0; i < validityBits.length(); i++) {
             if (validityBits.charAt(i) == '1') {
                 validity.set(i);
             }
         }
-        return validity;
+        return Validity.of(validity, validityBits.length());
     }
 
     private static ParquetSchema singleColumnSchema(ColumnPath col) {

@@ -114,7 +114,7 @@ class MaskedColumnReadTest {
             ColumnVector vec = colReader.readBatch(n);
             IntVector ints = (IntVector) vec;
             for (int i = 0; i < ints.size(); i++) {
-                out.add(ints.get(i));
+                out.add(ints.getInt(i));
             }
         }
         return out;

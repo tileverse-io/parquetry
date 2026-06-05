@@ -54,6 +54,7 @@ import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Pred;
@@ -152,8 +153,9 @@ class DuckDbCorpusRoundTripIT {
         int[] ids = new int[rowCount];
         int[] intCols = new int[rowCount];
         MemorySegment[] strings = new MemorySegment[rowCount];
-        BitSet allValid = new BitSet();
-        allValid.set(0, rowCount);
+        BitSet allValidBits = new BitSet();
+        allValidBits.set(0, rowCount);
+        Validity allValid = Validity.of(allValidBits, rowCount);
         for (int i = 0; i < rowCount; i++) {
             Row row = rows.get(i);
             ids[i] = row.id();

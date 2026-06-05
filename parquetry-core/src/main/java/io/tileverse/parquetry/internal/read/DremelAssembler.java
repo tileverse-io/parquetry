@@ -36,6 +36,7 @@ import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.MapVector;
 import io.tileverse.parquetry.batch.StructVector;
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.batch.VariantVector;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.ParquetFormatException;
@@ -237,7 +238,7 @@ final class DremelAssembler {
             if (children.isEmpty()) {
                 return null;
             }
-            BitSet validity = structValidity(group, groupPath, numSlots);
+            Validity validity = structValidity(group, groupPath, numSlots);
             return new StructVector(children, validity, numSlots);
         }
     }
@@ -257,7 +258,7 @@ final class DremelAssembler {
                     assembleNode(metadataChild, concat(groupPath, metadataChild.name()), parentRepLevel, numSlots);
             BinaryVector valueVec = (BinaryVector)
                     assembleNode(valueChild, concat(groupPath, valueChild.name()), parentRepLevel, numSlots);
-            BitSet validity = structValidity(group, groupPath, numSlots);
+            Validity validity = structValidity(group, groupPath, numSlots);
             return new VariantVector(metadataVec, valueVec, validity, numSlots);
         }
 
@@ -285,15 +286,15 @@ final class DremelAssembler {
      * level. A struct whose only descendants live under a repeated child cannot be addressed by slot index here and
      * stays all present; the enclosing list/map already restores its element-level validity.
      */
-    private BitSet structValidity(SchemaNode.Group group, List<String> groupPath, int numSlots) {
+    private Validity structValidity(SchemaNode.Group group, List<String> groupPath, int numSlots) {
         int structDefLevel = maxDef(groupPath);
         if (structDefLevel == 0) {
-            return allValid(numSlots);
+            return Validity.allValid(numSlots);
         }
         ColumnPath descendant = firstRowAlignedDescendantLeafPath(group, groupPath);
         int[] defLevels = descendant == null ? null : defLevelsByLeaf.get(descendant);
         if (defLevels == null) {
-            return allValid(numSlots);
+            return Validity.allValid(numSlots);
         }
         BitSet validity = new BitSet(numSlots);
         int limit = Math.min(numSlots, defLevels.length);
@@ -302,7 +303,7 @@ final class DremelAssembler {
                 validity.set(slot);
             }
         }
-        return validity;
+        return Validity.of(validity, numSlots);
     }
 
     // --- repeated layout: offsets, validity, phantom removal (shared by lists and maps) ---
@@ -350,7 +351,7 @@ final class DremelAssembler {
      * vector down to the elements an enclosing container keeps.
      */
     @SuppressWarnings("java:S6218") // internal layout carrier, never compared by value
-    private record RepeatedLayout(int[] offsets, BitSet validity, int[] keptElementIndices, int elementCount) {}
+    private record RepeatedLayout(int[] offsets, Validity validity, int[] keptElementIndices, int elementCount) {}
 
     /**
      * Accumulates the per-slot offsets, validity, and surviving element indices for one repeated group in a single pass
@@ -399,7 +400,8 @@ final class DremelAssembler {
             for (int s = slot + 1; s <= numSlots; s++) {
                 offsets[s] = elementCount;
             }
-            return new RepeatedLayout(offsets, validity, java.util.Arrays.copyOf(kept, keptCount), elementOrdinal);
+            return new RepeatedLayout(
+                    offsets, Validity.of(validity, numSlots), java.util.Arrays.copyOf(kept, keptCount), elementOrdinal);
         }
     }
 
@@ -469,12 +471,6 @@ final class DremelAssembler {
         return firstRowAlignedDescendantLeafPath(childGroup, childPath);
     }
 
-    private static BitSet allValid(int n) {
-        BitSet b = new BitSet(n);
-        b.set(0, n);
-        return b;
-    }
-
     private static List<String> concat(List<String> prefix, String segment) {
         List<String> result = new ArrayList<>(prefix.size() + 1);
         result.addAll(prefix);
@@ -531,43 +527,43 @@ final class DremelAssembler {
             return switch (child) {
                 case IntVector v -> {
                     int[] ints = gatherInts(v, keptIndices);
-                    BitSet validity = gatherValidity(v, keptIndices);
+                    Validity validity = gatherValidity(v, keptIndices);
                     yield IntVector.materialized(ints, validity);
                 }
                 case LongVector v -> {
                     long[] longs = gatherLongs(v, keptIndices);
-                    BitSet validity = gatherValidity(v, keptIndices);
+                    Validity validity = gatherValidity(v, keptIndices);
                     yield LongVector.materialized(longs, validity);
                 }
                 case FloatVector v -> {
                     float[] floats = gatherFloats(v, keptIndices);
-                    BitSet validity = gatherValidity(v, keptIndices);
+                    Validity validity = gatherValidity(v, keptIndices);
                     yield FloatVector.materialized(floats, validity);
                 }
                 case DoubleVector v -> {
                     double[] doubles = gatherDoubles(v, keptIndices);
-                    BitSet validity = gatherValidity(v, keptIndices);
+                    Validity validity = gatherValidity(v, keptIndices);
                     yield DoubleVector.materialized(doubles, validity);
                 }
                 case BooleanVector v -> {
                     boolean[] booleans = gatherBooleans(v, keptIndices);
-                    BitSet validity = gatherValidity(v, keptIndices);
+                    Validity validity = gatherValidity(v, keptIndices);
                     yield BooleanVector.materialized(booleans, validity);
                 }
                 case BinaryVector v -> {
                     MemorySegment[] segments = gatherSegments(v::get, keptIndices);
-                    BitSet validity = gatherValidity(v, keptIndices);
+                    Validity validity = gatherValidity(v, keptIndices);
                     yield BinaryVector.materialized(segments, validity);
                 }
                 case FixedLenBinaryVector v -> {
                     MemorySegment[] segments = gatherSegments(v::get, keptIndices);
                     int byteWidth = v.byteWidth();
-                    BitSet validity = gatherValidity(v, keptIndices);
+                    Validity validity = gatherValidity(v, keptIndices);
                     yield FixedLenBinaryVector.materialized(segments, byteWidth, validity);
                 }
                 case Int96Vector v -> {
                     MemorySegment[] segments = gatherSegments(v::get, keptIndices);
-                    BitSet validity = gatherValidity(v, keptIndices);
+                    Validity validity = gatherValidity(v, keptIndices);
                     yield Int96Vector.materialized(segments, validity);
                 }
                 case ListVector v -> compactList(v, keptIndices);
@@ -640,42 +636,50 @@ final class DremelAssembler {
         @SuppressWarnings("java:S6218") // internal gather carrier, never compared by value
         private record ChildGather(int[] offsets, int[] childIndices) {}
 
+        // Compaction keeps a value for every kept index, null rows included; the gathered validity preserves the
+        // null mask. Read the backing array directly to keep the parked value for kept null rows instead of failing
+        // fast.
         private static int[] gatherInts(IntVector v, int[] keptIndices) {
+            int[] values = v.asArray();
             int[] out = new int[keptIndices.length];
             for (int i = 0; i < keptIndices.length; i++) {
-                out[i] = v.get(keptIndices[i]);
+                out[i] = values[keptIndices[i]];
             }
             return out;
         }
 
         private static long[] gatherLongs(LongVector v, int[] keptIndices) {
+            long[] values = v.asArray();
             long[] out = new long[keptIndices.length];
             for (int i = 0; i < keptIndices.length; i++) {
-                out[i] = v.get(keptIndices[i]);
+                out[i] = values[keptIndices[i]];
             }
             return out;
         }
 
         private static float[] gatherFloats(FloatVector v, int[] keptIndices) {
+            float[] values = v.asArray();
             float[] out = new float[keptIndices.length];
             for (int i = 0; i < keptIndices.length; i++) {
-                out[i] = v.get(keptIndices[i]);
+                out[i] = values[keptIndices[i]];
             }
             return out;
         }
 
         private static double[] gatherDoubles(DoubleVector v, int[] keptIndices) {
+            double[] values = v.asArray();
             double[] out = new double[keptIndices.length];
             for (int i = 0; i < keptIndices.length; i++) {
-                out[i] = v.get(keptIndices[i]);
+                out[i] = values[keptIndices[i]];
             }
             return out;
         }
 
         private static boolean[] gatherBooleans(BooleanVector v, int[] keptIndices) {
+            boolean[] values = v.asArray();
             boolean[] out = new boolean[keptIndices.length];
             for (int i = 0; i < keptIndices.length; i++) {
-                out[i] = v.get(keptIndices[i]);
+                out[i] = values[keptIndices[i]];
             }
             return out;
         }
@@ -688,15 +692,15 @@ final class DremelAssembler {
             return out;
         }
 
-        private static BitSet gatherValidity(ColumnVector v, int[] keptIndices) {
-            BitSet source = v.validity();
+        private static Validity gatherValidity(ColumnVector v, int[] keptIndices) {
+            Validity source = v.validity();
             BitSet out = new BitSet(keptIndices.length);
             for (int i = 0; i < keptIndices.length; i++) {
-                if (source.get(keptIndices[i])) {
+                if (source.isValid(keptIndices[i])) {
                     out.set(i);
                 }
             }
-            return out;
+            return Validity.of(out, keptIndices.length);
         }
     }
 }

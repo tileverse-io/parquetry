@@ -35,8 +35,9 @@ class MapVectorTest {
         BinaryVector keys = BinaryVector.materialized(keyBytes, allValid(2));
         IntVector values = IntVector.materialized(new int[] {1, 2}, allValid(2));
         int[] offsets = {0, 2, 2};
-        BitSet validity = new BitSet(2);
-        validity.set(0, 2);
+        BitSet validBits = new BitSet(2);
+        validBits.set(0, 2);
+        Validity validity = Validity.of(validBits, 2);
 
         MapVector vec = new MapVector(offsets, keys, values, validity, 2);
 
@@ -56,13 +57,14 @@ class MapVectorTest {
                 BinaryVector.materialized(new MemorySegment[] {MemorySegment.ofArray(new byte[] {'a'})}, allValid(1));
         IntVector values = IntVector.materialized(new int[] {1}, allValid(1));
         int[] offsets = {0, 1, 1};
-        BitSet validity = new BitSet(2);
-        validity.set(0); // row 1 invalid (null map)
+        BitSet validBits = new BitSet(2);
+        validBits.set(0); // row 1 invalid (null map)
+        Validity validity = Validity.of(validBits, 2);
 
         MapVector vec = new MapVector(offsets, keys, values, validity, 2);
 
-        assertThat(vec.validity().get(0)).isTrue();
-        assertThat(vec.validity().get(1)).isFalse();
+        assertThat(vec.validity().isValid(0)).isTrue();
+        assertThat(vec.validity().isValid(1)).isFalse();
     }
 
     @Test
@@ -71,17 +73,16 @@ class MapVectorTest {
                 BinaryVector.materialized(new MemorySegment[] {MemorySegment.ofArray(new byte[] {'a'})}, allValid(1));
         IntVector values = IntVector.materialized(new int[] {1}, allValid(1));
         int[] wrongOffsets = {0, 1};
-        BitSet validity = new BitSet(3);
-        validity.set(0, 3);
+        BitSet validBits = new BitSet(3);
+        validBits.set(0, 3);
+        Validity validity = Validity.of(validBits, 3);
 
         assertThatThrownBy(() -> new MapVector(wrongOffsets, keys, values, validity, 3))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("offsets length must be size + 1");
     }
 
-    private static BitSet allValid(int n) {
-        BitSet b = new BitSet(n);
-        b.set(0, n);
-        return b;
+    private static Validity allValid(int n) {
+        return Validity.allValid(n);
     }
 }

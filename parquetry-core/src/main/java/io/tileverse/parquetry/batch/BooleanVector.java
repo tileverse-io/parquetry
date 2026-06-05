@@ -15,21 +15,19 @@
  */
 package io.tileverse.parquetry.batch;
 
-import java.util.BitSet;
-
 import lombok.NonNull;
 
 public final class BooleanVector implements ColumnVector {
 
     private final boolean[] values;
-    private final BitSet validity;
+    private final Validity validity;
 
-    private BooleanVector(@NonNull boolean[] values, @NonNull BitSet validity) {
+    private BooleanVector(@NonNull boolean[] values, @NonNull Validity validity) {
         this.values = values;
         this.validity = validity;
     }
 
-    public static BooleanVector materialized(@NonNull boolean[] values, @NonNull BitSet validity) {
+    public static BooleanVector materialized(@NonNull boolean[] values, @NonNull Validity validity) {
         return new BooleanVector(values, validity);
     }
 
@@ -39,17 +37,25 @@ public final class BooleanVector implements ColumnVector {
     }
 
     @Override
-    public BitSet validity() {
+    public Validity validity() {
         return validity;
     }
 
-    public boolean get(int row) {
+    /**
+     * Returns the value at {@code row}; throws {@link IllegalStateException} when the row is null. Guard with
+     * {@link #isNull(int)} / {@link #hasNulls()}, or use {@link #get(int)} for a null-aware boxed read.
+     */
+    public boolean getBoolean(int row) {
+        if (validity.isNull(row)) {
+            throw new IllegalStateException("row %d is null; guard with isNull(row) or hasNulls()".formatted(row));
+        }
         return values[row];
     }
 
     @Override
-    public Object getOrNull(int row) {
-        return validity().get(row) ? get(row) : null;
+    @SuppressWarnings("unchecked")
+    public <T> T get(int row) {
+        return validity.isNull(row) ? null : (T) Boolean.valueOf(values[row]);
     }
 
     public boolean[] asArray() {
@@ -58,6 +64,6 @@ public final class BooleanVector implements ColumnVector {
 
     @Override
     public long approximateHeapBytes() {
-        return values.length + ColumnVector.validityBytes(values.length);
+        return values.length + validity.heapBytes();
     }
 }

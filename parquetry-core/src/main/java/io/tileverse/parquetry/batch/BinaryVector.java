@@ -16,7 +16,6 @@
 package io.tileverse.parquetry.batch;
 
 import java.lang.foreign.MemorySegment;
-import java.util.BitSet;
 
 import lombok.NonNull;
 
@@ -25,7 +24,8 @@ import lombok.NonNull;
  *
  * <p>Consolidated mode: the values share one read-only heap backing buffer; an {@code int[]} of length {@code size()+1}
  * delimits each row's bytes as {@code [offsets[i], offsets[i+1])}. Null cells (validity bit clear) are stored as
- * zero-length runs. {@link #get(int)} returns a read-only slice of the backing on demand.
+ * zero-length runs; {@link #get(int)} consults validity and returns {@code null} for a null cell, reserving a
+ * zero-length slice for a present-but-empty value.
  *
  * <p>Dictionary mode (low-cardinality columns): the distinct values live once in a shared {@code dictEntries} array,
  * and an {@code int[]} of per-row indexes selects an entry for each row. This holds {@code 4} bytes per row over the
@@ -40,9 +40,9 @@ public final class BinaryVector implements ColumnVector {
     private final int[] offsets;
     private final MemorySegment[] dictEntries;
     private final int[] indices;
-    private final BitSet validity;
+    private final Validity validity;
 
-    private BinaryVector(@NonNull MemorySegment backing, @NonNull int[] offsets, @NonNull BitSet validity) {
+    private BinaryVector(@NonNull MemorySegment backing, @NonNull int[] offsets, @NonNull Validity validity) {
         this.backing = backing;
         this.offsets = offsets;
         this.dictEntries = null;
@@ -50,7 +50,7 @@ public final class BinaryVector implements ColumnVector {
         this.validity = validity;
     }
 
-    private BinaryVector(@NonNull MemorySegment[] dictEntries, @NonNull int[] indices, @NonNull BitSet validity) {
+    private BinaryVector(@NonNull MemorySegment[] dictEntries, @NonNull int[] indices, @NonNull Validity validity) {
         this.backing = null;
         this.offsets = null;
         this.dictEntries = dictEntries;
@@ -59,7 +59,7 @@ public final class BinaryVector implements ColumnVector {
     }
 
     /** Builds a vector over a backing buffer and its row offsets ({@code offsets.length == values + 1}). */
-    public static BinaryVector of(@NonNull MemorySegment backing, @NonNull int[] offsets, @NonNull BitSet validity) {
+    public static BinaryVector of(@NonNull MemorySegment backing, @NonNull int[] offsets, @NonNull Validity validity) {
         return new BinaryVector(backing.asReadOnly(), offsets, validity);
     }
 
@@ -67,7 +67,7 @@ public final class BinaryVector implements ColumnVector {
      * Consolidates per-value segments into a single backing buffer, dropping the per-value wrapper objects. Non-null
      * values are concatenated in row order; null rows become zero-length runs.
      */
-    public static BinaryVector materialized(@NonNull MemorySegment[] values, @NonNull BitSet validity) {
+    public static BinaryVector materialized(@NonNull MemorySegment[] values, @NonNull Validity validity) {
         VariableLayout layout = consolidate(values);
         return new BinaryVector(layout.backing(), layout.offsets(), validity);
     }
@@ -106,7 +106,7 @@ public final class BinaryVector implements ColumnVector {
 
     /** Builds a dictionary-encoded vector: each row indexes a shared dictionary entry. */
     public static BinaryVector dictionary(
-            @NonNull MemorySegment[] dictEntries, @NonNull int[] indices, @NonNull BitSet validity) {
+            @NonNull MemorySegment[] dictEntries, @NonNull int[] indices, @NonNull Validity validity) {
         return new BinaryVector(dictEntries, indices, validity);
     }
 
@@ -116,11 +116,20 @@ public final class BinaryVector implements ColumnVector {
     }
 
     @Override
-    public BitSet validity() {
+    public Validity validity() {
         return validity;
     }
 
+    /**
+     * Returns the value at {@code row}, or {@code null} when the row is null. A null row has no entry to read; an
+     * all-null dictionary page has an empty entry array, and indexing it would throw.
+     */
+    @Override
+    @SuppressWarnings("unchecked")
     public MemorySegment get(int row) {
+        if (validity.isNull(row)) {
+            return null;
+        }
         if (indices != null) {
             return dictEntries[indices[row]];
         }
@@ -130,19 +139,14 @@ public final class BinaryVector implements ColumnVector {
     }
 
     @Override
-    public Object getOrNull(int row) {
-        return validity.get(row) ? get(row) : null;
-    }
-
-    @Override
     public long approximateHeapBytes() {
         if (indices != null) {
-            return (long) indices.length * Integer.BYTES + dictionaryEntryBytes() + ColumnVector.validityBytes(size());
+            return (long) indices.length * Integer.BYTES + dictionaryEntryBytes() + validity.heapBytes();
         }
         // Count only this vector's window into the shared page backing. Sibling slices each count their own window,
         // which keeps the page bytes from being multiplied across the batches the page was split into.
         long windowBytes = offsets[offsets.length - 1] - offsets[0];
-        return windowBytes + (long) offsets.length * Integer.BYTES + ColumnVector.validityBytes(size());
+        return windowBytes + (long) offsets.length * Integer.BYTES + validity.heapBytes();
     }
 
     private long dictionaryEntryBytes() {

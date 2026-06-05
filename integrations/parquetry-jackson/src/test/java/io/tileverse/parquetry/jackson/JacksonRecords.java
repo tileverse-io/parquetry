@@ -17,10 +17,10 @@ package io.tileverse.parquetry.jackson;
 
 import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
-import java.util.BitSet;
 import java.util.Optional;
 import java.util.OptionalInt;
 
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
@@ -77,10 +77,8 @@ final class JacksonRecords {
                 -1);
     }
 
-    static BitSet validBits(int size) {
-        BitSet bits = new BitSet(size);
-        bits.set(0, size);
-        return bits;
+    static Validity validBits(int size) {
+        return Validity.allValid(size);
     }
 
     static MemorySegment utf8(String text) {

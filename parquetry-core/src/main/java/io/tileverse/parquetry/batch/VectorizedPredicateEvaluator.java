@@ -102,11 +102,13 @@ public final class VectorizedPredicateEvaluator {
     }
 
     private static BitSet validityOf(ParquetRecordBatch batch, ColumnPath col) {
-        return (BitSet) batch.columns().get(col).validity().clone();
+        return batch.columns().get(col).validity().copy();
     }
 
     private static BitSet nulls(ParquetRecordBatch batch, ColumnPath col, int rowCount) {
-        return negate(batch.columns().get(col).validity(), rowCount);
+        BitSet nullMask = batch.columns().get(col).validity().copy();
+        nullMask.flip(0, rowCount);
+        return nullMask;
     }
 
     // S6541 (Brain Method): the per-vector-type loops are an intentional dispatch table on the hot count path;
@@ -114,7 +116,7 @@ public final class VectorizedPredicateEvaluator {
     @SuppressWarnings({"java:S3776", "java:S6541"})
     private static BitSet compareMask(ParquetRecordBatch batch, ColumnPath col, Value v, IntPredicate accept) {
         ColumnVector vec = batch.columns().get(col);
-        BitSet validity = vec.validity();
+        Validity validity = vec.validity();
         BitSet out = new BitSet(batch.rowCount());
         // The per-vector-type loops below are intentional: this is the hot row-counting path, and monomorphic loops
         // keep each comparison boxing-free and avoid a per-row megamorphic functional-interface call. Do not collapse
@@ -122,35 +124,35 @@ public final class VectorizedPredicateEvaluator {
         switch (vec) {
             case IntVector iv -> {
                 for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
-                    if (accept.test(ValueComparison.compareInt(iv.get(r), v))) {
+                    if (accept.test(ValueComparison.compareInt(iv.getInt(r), v))) {
                         out.set(r);
                     }
                 }
             }
             case LongVector lv -> {
                 for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
-                    if (accept.test(ValueComparison.compareLong(lv.get(r), v))) {
+                    if (accept.test(ValueComparison.compareLong(lv.getLong(r), v))) {
                         out.set(r);
                     }
                 }
             }
             case DoubleVector dv -> {
                 for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
-                    if (accept.test(ValueComparison.compareDouble(dv.get(r), v))) {
+                    if (accept.test(ValueComparison.compareDouble(dv.getDouble(r), v))) {
                         out.set(r);
                     }
                 }
             }
             case FloatVector fv -> {
                 for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
-                    if (accept.test(ValueComparison.compareFloat(fv.get(r), v))) {
+                    if (accept.test(ValueComparison.compareFloat(fv.getFloat(r), v))) {
                         out.set(r);
                     }
                 }
             }
             case BooleanVector bvec -> {
                 for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
-                    if (accept.test(ValueComparison.compareBoolean(bvec.get(r), v))) {
+                    if (accept.test(ValueComparison.compareBoolean(bvec.getBoolean(r), v))) {
                         out.set(r);
                     }
                 }
@@ -194,7 +196,7 @@ public final class VectorizedPredicateEvaluator {
     private static BitSet spatialMask(
             ParquetRecordBatch batch, Predicate.Spatial spatial, int rowCount, boolean negated) {
         ColumnVector vec = batch.columns().get(spatial.col());
-        BitSet validity = vec.validity();
+        Validity validity = vec.validity();
         BitSet out = new BitSet(rowCount);
         if (vec instanceof BinaryVector wkb) {
             for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
@@ -210,7 +212,7 @@ public final class VectorizedPredicateEvaluator {
     private static BitSet geometryMask(
             ParquetRecordBatch batch, GeometryFilter<?> filter, int rowCount, boolean negated) {
         ColumnVector vec = batch.columns().get(filter.column());
-        BitSet validity = vec.validity();
+        Validity validity = vec.validity();
         BitSet out = new BitSet(rowCount);
         if (vec instanceof BinaryVector wkb) {
             for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {

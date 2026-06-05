@@ -31,6 +31,7 @@ import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.batch.StructVector;
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -81,13 +82,13 @@ class StructNullReconstructionTest {
                 NestedVectorAssembler.assembleNested(schema, leafVectors, Map.of(), defLevelsByLeaf, 3);
 
         StructVector structVec = (StructVector) assembled.get(INFO);
-        assertThat(structVec.validity().get(0))
+        assertThat(structVec.validity().isValid(0))
                 .as("row 0 struct is null, validity bit must be clear")
                 .isFalse();
-        assertThat(structVec.validity().get(1))
+        assertThat(structVec.validity().isValid(1))
                 .as("row 1 struct is present, validity bit must be set")
                 .isTrue();
-        assertThat(structVec.validity().get(2))
+        assertThat(structVec.validity().isValid(2))
                 .as("row 2 struct is present, validity bit must be set")
                 .isTrue();
 
@@ -130,13 +131,13 @@ class StructNullReconstructionTest {
         return new ParquetSchema(root);
     }
 
-    private static BitSet validity(boolean... bits) {
+    private static Validity validity(boolean... bits) {
         BitSet b = new BitSet(bits.length);
         for (int i = 0; i < bits.length; i++) {
             if (bits[i]) {
                 b.set(i);
             }
         }
-        return b;
+        return Validity.of(b, bits.length);
     }
 }

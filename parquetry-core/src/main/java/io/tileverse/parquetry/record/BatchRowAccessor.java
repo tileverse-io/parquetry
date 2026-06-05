@@ -68,7 +68,7 @@ public final class BatchRowAccessor implements RowAccessor {
     public boolean isGroupNull(ColumnPath path) {
         ColumnVector vec = batch.columns().get(path);
         if (vec instanceof StructVector struct) {
-            return !struct.validity().get(rowIndex);
+            return struct.isNull(rowIndex);
         }
         return false;
     }

@@ -29,6 +29,7 @@ import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.batch.BinaryVector;
 import io.tileverse.parquetry.batch.ColumnVector;
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.batch.VariantVector;
 import io.tileverse.parquetry.data.variant.Variant;
 import io.tileverse.parquetry.data.variant.VariantEncoder;
@@ -54,7 +55,7 @@ class VariantAssemblyTest {
 
         ColumnVector wrapper = assembled.get(ColumnPath.of("v"));
         assertThat(wrapper).as("assembled wrapper kind").isInstanceOf(VariantVector.class);
-        Variant value = ((VariantVector) wrapper).variantAt(0);
+        Variant value = ((VariantVector) wrapper).get(0);
         assertThat(value.getField("n").getInt())
                 .as("navigated value through the assembled wrapper")
                 .isEqualTo(7);
@@ -89,7 +90,7 @@ class VariantAssemblyTest {
     private static BinaryVector oneRow(MemorySegment bytes) {
         BitSet valid = new BitSet(1);
         valid.set(0);
-        return BinaryVector.materialized(new MemorySegment[] {bytes}, valid);
+        return BinaryVector.materialized(new MemorySegment[] {bytes}, Validity.of(valid, 1));
     }
 
     private static ParquetSchema variantSchema() {

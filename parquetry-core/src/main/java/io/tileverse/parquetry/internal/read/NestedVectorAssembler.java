@@ -16,7 +16,6 @@
 package io.tileverse.parquetry.internal.read;
 
 import java.util.ArrayList;
-import java.util.BitSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -27,6 +26,7 @@ import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.MapVector;
 import io.tileverse.parquetry.batch.StructVector;
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.Repetition;
@@ -76,8 +76,7 @@ public final class NestedVectorAssembler {
      */
     public static ListVector buildList(ColumnVector child, int[] repLevels, int numRows) {
         int[] offsets = computeTopLevelListOffsets(repLevels, numRows);
-        BitSet validity = allValid(numRows);
-        return new ListVector(offsets, child, validity, numRows);
+        return new ListVector(offsets, child, Validity.allValid(numRows), numRows);
     }
 
     /**
@@ -95,8 +94,7 @@ public final class NestedVectorAssembler {
      */
     public static MapVector buildMap(ColumnVector keys, ColumnVector values, int[] repLevels, int numRows) {
         int[] offsets = computeTopLevelListOffsets(repLevels, numRows);
-        BitSet validity = allValid(numRows);
-        return new MapVector(offsets, keys, values, validity, numRows);
+        return new MapVector(offsets, keys, values, Validity.allValid(numRows), numRows);
     }
 
     /**
@@ -268,12 +266,6 @@ public final class NestedVectorAssembler {
 
     private static DremelAssembler.GroupKind classify(SchemaNode.Group group) {
         return DremelAssembler.classify(group);
-    }
-
-    private static BitSet allValid(int n) {
-        BitSet b = new BitSet(n);
-        b.set(0, n);
-        return b;
     }
 
     private static List<String> concatPath(List<String> prefix, String segment) {

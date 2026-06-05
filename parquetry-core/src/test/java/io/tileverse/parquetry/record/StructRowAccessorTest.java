@@ -25,6 +25,7 @@ import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.StructVector;
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.materializer.RowAccessor;
 import io.tileverse.parquetry.schema.ColumnPath;
 
@@ -32,8 +33,7 @@ class StructRowAccessorTest {
 
     @Test
     void readsChildLeafByRelativePath() {
-        BitSet allValid = new BitSet();
-        allValid.set(0, 2);
+        Validity allValid = Validity.allValid(2);
         IntVector ages = IntVector.materialized(new int[] {30, 41}, allValid);
         StructVector person = new StructVector(Map.of(ColumnPath.of("age"), ages), allValid, 2);
 
@@ -46,8 +46,9 @@ class StructRowAccessorTest {
 
     @Test
     void reportsNullChildLeafThroughValidity() {
-        BitSet validity = new BitSet();
-        validity.set(0); // row 0 valid, row 1 null
+        BitSet validBits = new BitSet();
+        validBits.set(0); // row 0 valid, row 1 null
+        Validity validity = Validity.of(validBits, 2);
         IntVector ages = IntVector.materialized(new int[] {30, 0}, validity);
         StructVector person = new StructVector(Map.of(ColumnPath.of("age"), ages), validity, 2);
 
@@ -58,8 +59,7 @@ class StructRowAccessorTest {
 
     @Test
     void valuesSnapshotContainsAllChildren() {
-        BitSet allValid = new BitSet();
-        allValid.set(0, 2);
+        Validity allValid = Validity.allValid(2);
         IntVector ages = IntVector.materialized(new int[] {30, 41}, allValid);
         StructVector person = new StructVector(Map.of(ColumnPath.of("age"), ages), allValid, 2);
 
@@ -72,10 +72,12 @@ class StructRowAccessorTest {
 
     @Test
     void isGroupNullReturnsTrueWhenStructChildIsNull() {
-        BitSet outerValid = new BitSet();
-        outerValid.set(0, 2);
-        BitSet innerValid = new BitSet();
-        innerValid.set(0); // row 0 valid, row 1 null inner struct
+        BitSet outerValidBits = new BitSet();
+        outerValidBits.set(0, 2);
+        Validity outerValid = Validity.of(outerValidBits, 2);
+        BitSet innerValidBits = new BitSet();
+        innerValidBits.set(0); // row 0 valid, row 1 null inner struct
+        Validity innerValid = Validity.of(innerValidBits, 2);
 
         IntVector ages = IntVector.materialized(new int[] {30, 41}, outerValid);
         StructVector inner = new StructVector(Map.of(ColumnPath.of("x"), ages), innerValid, 2);
@@ -90,8 +92,7 @@ class StructRowAccessorTest {
 
     @Test
     void isGroupNullReturnsFalseForPrimitiveChild() {
-        BitSet allValid = new BitSet();
-        allValid.set(0, 2);
+        Validity allValid = Validity.allValid(2);
         IntVector ages = IntVector.materialized(new int[] {30, 41}, allValid);
         StructVector person = new StructVector(Map.of(ColumnPath.of("age"), ages), allValid, 2);
 
@@ -104,8 +105,9 @@ class StructRowAccessorTest {
 
     @Test
     void constructorRejectsOutOfBoundsRowIndex() {
-        BitSet validity = new BitSet();
-        validity.set(0, 2);
+        BitSet validBits = new BitSet();
+        validBits.set(0, 2);
+        Validity validity = Validity.of(validBits, 2);
         IntVector ages = IntVector.materialized(new int[] {30, 41}, validity);
         StructVector person = new StructVector(Map.of(ColumnPath.of("age"), ages), validity, 2);
 
@@ -120,8 +122,7 @@ class StructRowAccessorTest {
 
     @Test
     void valuesSnapshotIsUnmodifiable() {
-        BitSet allValid = new BitSet();
-        allValid.set(0, 2);
+        Validity allValid = Validity.allValid(2);
         IntVector ages = IntVector.materialized(new int[] {30, 41}, allValid);
         StructVector person = new StructVector(Map.of(ColumnPath.of("age"), ages), allValid, 2);
 
