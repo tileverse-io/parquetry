@@ -17,6 +17,8 @@ package io.tileverse.parquetry.batch;
 
 import lombok.NonNull;
 
+// Not a record: holds an int[] needing custom equality and read-only cloning accessors a record cannot provide.
+@SuppressWarnings("java:S6206")
 public final class ListVector implements ColumnVector {
 
     private final int[] offsets; // length = size + 1
@@ -58,6 +60,14 @@ public final class ListVector implements ColumnVector {
     /** The child vector this list points into. */
     public ColumnVector child() {
         return child;
+    }
+
+    /**
+     * The {@code size + 1} row offsets into the child vector, returned directly without copying; the array is read-only
+     * by contract and callers must not mutate it.
+     */
+    public int[] offsets() {
+        return offsets;
     }
 
     @Override

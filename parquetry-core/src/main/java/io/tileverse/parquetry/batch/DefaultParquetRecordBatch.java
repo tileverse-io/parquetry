@@ -35,6 +35,16 @@ public final class DefaultParquetRecordBatch implements ParquetRecordBatch {
     private boolean closed;
     private Runnable releaseAction;
 
+    /**
+     * Builds a heap-backed batch around vectors that own their bytes outright. Used when a batch is rebuilt from a
+     * detached representation rather than decoded from a row group: the vectors already hold heap-owned values, and the
+     * batch only needs a token Arena to satisfy the close contract. Vectors remain accessible after {@link #close()}.
+     */
+    public static DefaultParquetRecordBatch ofHeap(
+            @NonNull ParquetSchema projectedSchema, @NonNull Map<ColumnPath, ColumnVector> columns, int rowCount) {
+        return new DefaultParquetRecordBatch(projectedSchema, columns, rowCount, Arena.ofShared());
+    }
+
     public DefaultParquetRecordBatch(
             @NonNull ParquetSchema projectedSchema,
             @NonNull Map<ColumnPath, ColumnVector> columns,
