@@ -22,31 +22,49 @@ import java.util.List;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * Bounded native-segment pool, the JDK-only {@link SegmentPool#getDefault() default}. Free segments are held in a
- * capacity-sorted list under a lock; a borrow reuses the smallest segment large enough, or allocates a fresh one from
- * an auto arena (an evicted segment then becomes garbage-collectable). Capacities are rounded up to a block size to
- * make reuse across slightly different request sizes likely, mirroring the direct-buffer pooling the reader relied on.
+ * Bounded native-segment pool, the JDK-only {@link SegmentPool#getDefault() default}. Retention is split by size to
+ * keep a long-lived process from ratcheting native memory to its burst high-water:
+ *
+ * <ul>
+ *   <li><b>Small buffers</b> (rounded capacity at most {@code largeBufferThreshold}) are pooled in a capacity-sorted
+ *       free list and reused; a borrow takes the smallest segment large enough, or allocates a fresh one from an auto
+ *       arena. Total retained bytes never exceed {@code maxPooledBytes}; a return that would breach the cap is dropped
+ *       and becomes garbage-collectable.
+ *   <li><b>Large buffers</b> (above the threshold) are never pooled. Each is allocated in its own shared arena and
+ *       freed deterministically when the borrower closes, with no dependency on garbage collection (which runs on heap,
+ *       not native, pressure). This keeps one heavy burst from pinning large backings for the JVM lifetime.
+ * </ul>
+ *
+ * <p>Capacities are rounded up to a block size to make reuse across slightly different request sizes likely.
  */
 final class DefaultSegmentPool implements SegmentPool {
 
-    static final int DEFAULT_MAX_POOLED_SEGMENTS = 32;
+    static final long DEFAULT_LARGE_BUFFER_THRESHOLD = 256L * 1024;
+    static final long DEFAULT_MAX_POOLED_BYTES = 4L * 1024 * 1024;
     static final int DEFAULT_BLOCK_SIZE = 8192;
 
-    static final DefaultSegmentPool INSTANCE = new DefaultSegmentPool(DEFAULT_MAX_POOLED_SEGMENTS, DEFAULT_BLOCK_SIZE);
+    static final DefaultSegmentPool INSTANCE =
+            new DefaultSegmentPool(DEFAULT_LARGE_BUFFER_THRESHOLD, DEFAULT_MAX_POOLED_BYTES, DEFAULT_BLOCK_SIZE);
 
-    private final int maxPooledSegments;
+    private final long largeBufferThreshold;
+    private final long maxPooledBytes;
     private final int blockSize;
     private final ReentrantLock lock = new ReentrantLock();
     private final List<MemorySegment> free = new ArrayList<>();
+    private long retainedBytes;
 
-    DefaultSegmentPool(int maxPooledSegments, int blockSize) {
-        if (maxPooledSegments <= 0) {
-            throw new IllegalArgumentException("maxPooledSegments must be > 0, got " + maxPooledSegments);
+    DefaultSegmentPool(long largeBufferThreshold, long maxPooledBytes, int blockSize) {
+        if (largeBufferThreshold <= 0) {
+            throw new IllegalArgumentException("largeBufferThreshold must be > 0, got " + largeBufferThreshold);
+        }
+        if (maxPooledBytes < 0) {
+            throw new IllegalArgumentException("maxPooledBytes must be >= 0, got " + maxPooledBytes);
         }
         if (blockSize <= 0) {
             throw new IllegalArgumentException("blockSize must be > 0, got " + blockSize);
         }
-        this.maxPooledSegments = maxPooledSegments;
+        this.largeBufferThreshold = largeBufferThreshold;
+        this.maxPooledBytes = maxPooledBytes;
         this.blockSize = blockSize;
     }
 
@@ -56,6 +74,20 @@ final class DefaultSegmentPool implements SegmentPool {
             throw new IllegalArgumentException("byteSize must be >= 0, got " + byteSize);
         }
         long capacity = roundUpToBlockSize(byteSize);
+        if (capacity > largeBufferThreshold) {
+            return borrowUnpooled(byteSize, capacity);
+        }
+        return borrowPooled(byteSize, capacity);
+    }
+
+    private Pooled borrowUnpooled(long byteSize, long capacity) {
+        Arena arena = Arena.ofShared();
+        MemorySegment backing = arena.allocate(capacity);
+        MemorySegment view = backing.asSlice(0, byteSize);
+        return new UnpooledSegment(arena, view);
+    }
+
+    private Pooled borrowPooled(long byteSize, long capacity) {
         MemorySegment backing = takeFree(capacity);
         if (backing == null) {
             backing = Arena.ofAuto().allocate(capacity);
@@ -65,13 +97,15 @@ final class DefaultSegmentPool implements SegmentPool {
     }
 
     void giveBack(MemorySegment backing) {
+        long size = backing.byteSize();
         lock.lock();
         try {
-            if (free.size() >= maxPooledSegments) {
+            if (retainedBytes + size > maxPooledBytes) {
                 return;
             }
-            int index = insertionPoint(backing.byteSize());
+            int index = insertionPoint(size);
             free.add(index, backing);
+            retainedBytes += size;
         } finally {
             lock.unlock();
         }
@@ -83,6 +117,7 @@ final class DefaultSegmentPool implements SegmentPool {
             for (int i = 0; i < free.size(); i++) {
                 MemorySegment candidate = free.get(i);
                 if (candidate.byteSize() >= capacity) {
+                    retainedBytes -= candidate.byteSize();
                     return free.remove(i);
                 }
             }
@@ -118,6 +153,16 @@ final class DefaultSegmentPool implements SegmentPool {
         lock.lock();
         try {
             return free.size();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    // visible for testing
+    long pooledBytes() {
+        lock.lock();
+        try {
+            return retainedBytes;
         } finally {
             lock.unlock();
         }
