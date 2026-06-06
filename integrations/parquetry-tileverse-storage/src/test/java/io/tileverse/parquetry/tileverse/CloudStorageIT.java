@@ -52,7 +52,6 @@ import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
-import io.tileverse.io.ByteBufferPool;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.core.sync.RequestBody;
@@ -66,11 +65,9 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
  * specifically tileverse-storage's S3 reader pointed at a LocalStack container, opened through the
  * {@link ByteRangeSources} adapter.
  *
- * <p>Each read wires a fresh {@link ByteBufferPool} into the parquetry pipeline via {@link SegmentPools#backedBy},
- * exercising the ByteBufferPool-backed {@code SegmentPool} adapter. Column values are materialized into heap-owned
- * {@code byte[]} <em>inside</em> the stream's try-with-resources scope, while the pool-backed buffers are still live.
- * That lets the assertions safely compare results across threads and across calls without depending on the lifetime of
- * pool-backed buffers.
+ * <p>Each read opens with the default runtime. Column values are materialized into heap-owned {@code byte[]}
+ * <em>inside</em> the stream's try-with-resources scope, while the decode buffers are still live. That lets the
+ * assertions safely compare results across threads and across calls without depending on the lifetime of those buffers.
  *
  * <p>Disabled automatically when no Docker daemon is reachable (see {@link Testcontainers#disabledWithoutDocker()}).
  */
@@ -159,18 +156,15 @@ class CloudStorageIT {
     /**
      * Reads the {@code foo} column of {@code binary.parquet} into heap-owned {@code byte[]}s (one entry per row; null
      * for the absent rows). The materialization happens <em>inside</em> the stream's try-with-resources block while the
-     * per-call {@link ByteBufferPool} buffers are still live; the returned list survives any subsequent pool release.
+     * decode buffers are still live; the returned list survives any subsequent buffer release.
      */
     private static List<byte[]> readFooColumn(Storage storage, String key) throws IOException {
-        ByteBufferPool backing = new ByteBufferPool();
-        ReadOptions opts = ReadOptions.builder()
-                .segmentPool(SegmentPools.backedBy(backing))
-                .build();
         try (storage;
                 RangeReader reader = storage.openRangeReader(key);
                 ByteRangeSource source = ByteRangeSources.from(reader)) {
             ParquetDataset dataset = ParquetDataset.open(source);
-            try (Stream<ParquetRecord> stream = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, opts)) {
+            try (Stream<ParquetRecord> stream =
+                    dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 return stream.map(CloudStorageIT::fooOf).toList();
             }
         }
