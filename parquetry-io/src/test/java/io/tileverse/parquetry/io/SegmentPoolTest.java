@@ -28,6 +28,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 class SegmentPoolTest {
@@ -76,36 +77,6 @@ class SegmentPoolTest {
     }
 
     @Test
-    void closedSegmentIsReturnedAndReused() {
-        DefaultSegmentPool pool = new DefaultSegmentPool(4, 8192);
-        assertThat(pool.freeCount()).isZero();
-        SegmentPool.Pooled first = pool.borrow(100);
-        long firstAddress = first.segment().address();
-        first.close();
-        assertThat(pool.freeCount()).isEqualTo(1);
-        try (SegmentPool.Pooled second = pool.borrow(100)) {
-            assertThat(second.segment().address()).isEqualTo(firstAddress);
-            assertThat(pool.freeCount()).isZero();
-        }
-        assertThat(pool.freeCount()).isEqualTo(1);
-        pool.borrow(100).close();
-        assertThat(pool.freeCount()).isEqualTo(1);
-    }
-
-    @Test
-    void poolStaysBounded() {
-        DefaultSegmentPool pool = new DefaultSegmentPool(4, 8192);
-        List<SegmentPool.Pooled> held = new ArrayList<>();
-        for (int i = 0; i < 10; i++) {
-            held.add(pool.borrow(128));
-        }
-        for (SegmentPool.Pooled pooled : held) {
-            pooled.close();
-        }
-        assertThat(pool.freeCount()).isEqualTo(4);
-    }
-
-    @Test
     void closeIsIdempotent() {
         SegmentPool.Pooled pooled = SegmentPool.getDefault().borrow(16);
         pooled.close();
@@ -114,7 +85,8 @@ class SegmentPoolTest {
 
     @Test
     void concurrentBorrowAndReturnStayConsistent() throws Exception {
-        DefaultSegmentPool pool = new DefaultSegmentPool(8, 8192);
+        long maxPooledBytes = 8L * 8192;
+        DefaultSegmentPool pool = new DefaultSegmentPool(1 << 20, maxPooledBytes, 8192);
         AtomicBoolean failed = new AtomicBoolean(false);
         try (ExecutorService executor = Executors.newFixedThreadPool(8)) {
             for (int t = 0; t < 8; t++) {
@@ -136,6 +108,82 @@ class SegmentPoolTest {
             assertThat(executor.awaitTermination(60, TimeUnit.SECONDS)).isTrue();
         }
         assertThat(failed).isFalse();
-        assertThat(pool.freeCount()).isLessThanOrEqualTo(8);
+        assertThat(pool.pooledBytes()).isLessThanOrEqualTo(maxPooledBytes);
+    }
+
+    /**
+     * Retention policy: small buffers are pooled and reused under a byte cap; large buffers are never retained and are
+     * freed deterministically when the borrower closes, instead of ratcheting native memory for the JVM lifetime.
+     */
+    @Nested
+    class Retention {
+
+        @Test
+        void smallBuffersArePooledAndReused() {
+            DefaultSegmentPool pool = new DefaultSegmentPool(8192, 1 << 20, 1024);
+            SegmentPool.Pooled first = pool.borrow(512);
+            long address = first.segment().address();
+            first.close();
+            assertThat(pool.freeCount()).isEqualTo(1);
+            try (SegmentPool.Pooled second = pool.borrow(512)) {
+                assertThat(second.segment().address()).as("reused backing").isEqualTo(address);
+                assertThat(pool.freeCount()).isZero();
+            }
+            assertThat(pool.freeCount()).isEqualTo(1);
+        }
+
+        @Test
+        void pooledRetentionIsBoundedByBytes() {
+            long maxPooledBytes = 4096;
+            DefaultSegmentPool pool = new DefaultSegmentPool(8192, maxPooledBytes, 1024);
+            List<SegmentPool.Pooled> held = new ArrayList<>();
+            for (int i = 0; i < 10; i++) {
+                held.add(pool.borrow(512));
+            }
+            for (SegmentPool.Pooled pooled : held) {
+                pooled.close();
+            }
+            assertThat(pool.pooledBytes()).as("retained bytes").isLessThanOrEqualTo(maxPooledBytes);
+            assertThat(pool.freeCount())
+                    .as("1024-byte backings retained under a 4096 cap")
+                    .isEqualTo(4);
+        }
+
+        @Test
+        void largeBuffersAreNeverPooled() {
+            DefaultSegmentPool pool = new DefaultSegmentPool(1024, 1 << 20, 1024);
+            pool.borrow(8192).close();
+            assertThat(pool.freeCount()).isZero();
+            assertThat(pool.pooledBytes()).isZero();
+        }
+
+        @Test
+        void repeatedLargeBorrowsDoNotRatchet() {
+            DefaultSegmentPool pool = new DefaultSegmentPool(1024, 1 << 20, 1024);
+            for (int i = 0; i < 100; i++) {
+                pool.borrow(64 * 1024).close();
+                assertThat(pool.freeCount())
+                        .as("retained after large borrow %d", i)
+                        .isZero();
+            }
+            assertThat(pool.pooledBytes()).isZero();
+        }
+
+        @Test
+        void largeBufferIsFreedOnClose() {
+            DefaultSegmentPool pool = new DefaultSegmentPool(1024, 1 << 20, 1024);
+            SegmentPool.Pooled pooled = pool.borrow(8192);
+            MemorySegment segment = pooled.segment();
+            pooled.close();
+            assertThatThrownBy(() -> segment.get(ValueLayout.JAVA_BYTE, 0)).isInstanceOf(IllegalStateException.class);
+        }
+
+        @Test
+        void largeBufferCloseIsIdempotent() {
+            DefaultSegmentPool pool = new DefaultSegmentPool(1024, 1 << 20, 1024);
+            SegmentPool.Pooled pooled = pool.borrow(8192);
+            pooled.close();
+            assertThatCode(pooled::close).doesNotThrowAnyException();
+        }
     }
 }
