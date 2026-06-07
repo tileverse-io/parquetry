@@ -140,7 +140,8 @@ class SkipDecodeColumnReadTest {
             RowGroupSurvivor survivor = new RowGroupSurvivor(chunks, Optional.of(mask), true);
             try (RowGroupFetch fetch = fetcher.fetch(survivor, fetcher.planFor(survivor), BudgetReservation.NONE)) {
                 FetchedColumnChunk chunk = fetch.columns().get(0);
-                BatchColumnReader colReader = new BatchColumnReader(chunk, leaf(schema), mask, offsetIndex, skipDecode);
+                BatchColumnReader colReader = new BatchColumnReader(
+                        TestDecodeBuffers.ample(), chunk, leaf(schema), mask, offsetIndex, skipDecode);
 
                 DrainResult result = drainLongs(colReader);
                 colReader.close();
@@ -152,9 +153,10 @@ class SkipDecodeColumnReadTest {
     private static DrainResult drainLongs(BatchColumnReader colReader) {
         List<Long> values = new ArrayList<>();
         List<Boolean> nulls = new ArrayList<>();
+        List<AutoCloseable> acquiredBuffers = new ArrayList<>();
         while (colReader.hasMore()) {
             int n = colReader.rowsRemainingInCurrentPage();
-            ColumnVector vec = colReader.readBatch(n);
+            ColumnVector vec = colReader.readBatch(n, acquiredBuffers);
             LongVector longs = (LongVector) vec;
             Validity validity = longs.validity();
             for (int i = 0; i < longs.size(); i++) {

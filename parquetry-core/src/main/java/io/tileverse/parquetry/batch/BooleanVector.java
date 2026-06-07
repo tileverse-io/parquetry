@@ -15,25 +15,38 @@
  */
 package io.tileverse.parquetry.batch;
 
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
+
 import lombok.NonNull;
 
 public final class BooleanVector implements ColumnVector {
 
-    private final boolean[] values;
+    private final boolean[] values; // null when segment-backed
+    private final MemorySegment segmentBitmap; // null when heap-backed; LSB-first, one bit per row
+    private final int segmentSize; // row count for the segment mode
     private final Validity validity;
 
-    private BooleanVector(@NonNull boolean[] values, @NonNull Validity validity) {
+    private BooleanVector(boolean[] values, MemorySegment segmentBitmap, int segmentSize, @NonNull Validity validity) {
         this.values = values;
+        this.segmentBitmap = segmentBitmap;
+        this.segmentSize = segmentSize;
         this.validity = validity;
     }
 
     public static BooleanVector materialized(@NonNull boolean[] values, @NonNull Validity validity) {
-        return new BooleanVector(values, validity);
+        return new BooleanVector(values, null, 0, validity);
+    }
+
+    /** Reads values from an off-heap LSB-first bit-packed segment; the segment's owner controls its lifetime. */
+    public static BooleanVector segmentBacked(
+            @NonNull MemorySegment segmentBitmap, int size, @NonNull Validity validity) {
+        return new BooleanVector(null, segmentBitmap, size, validity);
     }
 
     @Override
     public int size() {
-        return values.length;
+        return segmentBitmap != null ? segmentSize : values.length;
     }
 
     @Override
@@ -49,21 +62,35 @@ public final class BooleanVector implements ColumnVector {
         if (validity.isNull(row)) {
             throw new IllegalStateException("row %d is null; guard with isNull(row) or hasNulls()".formatted(row));
         }
-        return values[row];
+        return segmentBitmap != null ? bitAt(row) : values[row];
     }
 
     @Override
     @SuppressWarnings("unchecked")
     public <T> T get(int row) {
-        return validity.isNull(row) ? null : (T) Boolean.valueOf(values[row]);
+        return validity.isNull(row) ? null : (T) Boolean.valueOf(getBoolean(row));
     }
 
     public boolean[] asArray() {
-        return values;
+        if (segmentBitmap == null) {
+            return values;
+        }
+        boolean[] out = new boolean[size()];
+        for (int row = 0; row < out.length; row++) {
+            out[row] = bitAt(row);
+        }
+        return out;
     }
 
     @Override
     public long approximateHeapBytes() {
-        return values.length + validity.heapBytes();
+        return segmentBitmap != null ? validity.heapBytes() : values.length + validity.heapBytes();
+    }
+
+    private boolean bitAt(int row) {
+        int byteIndex = row >>> 3;
+        int bitIndex = row & 7;
+        int bits = segmentBitmap.get(ValueLayout.JAVA_BYTE, byteIndex) & 0xFF;
+        return ((bits >>> bitIndex) & 1) != 0;
     }
 }

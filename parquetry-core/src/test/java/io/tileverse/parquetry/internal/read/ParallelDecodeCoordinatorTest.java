@@ -227,6 +227,7 @@ class ParallelDecodeCoordinatorTest {
                     prefetcher,
                     executor,
                     budget,
+                    TestDecodeBuffers.ample(),
                     DiskBudget.defaultBudget(),
                     Path.of(System.getProperty("java.io.tmpdir")),
                     true,

@@ -29,6 +29,8 @@ import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.FixedLenBinaryVector;
 import io.tileverse.parquetry.batch.Int96Vector;
 import io.tileverse.parquetry.batch.Validity;
+import io.tileverse.parquetry.internal.arrow.buffer.EncodedNode;
+import io.tileverse.parquetry.internal.arrow.buffer.LeafType;
 
 class ArrowBufferCodecDictionaryTest {
 

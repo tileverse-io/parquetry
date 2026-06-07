@@ -52,8 +52,9 @@ import lombok.NonNull;
  *       {@link io.tileverse.parquetry.batch.StructVector} wrappers at the LIST / MAP / STRUCT group paths.
  * </ol>
  *
- * <p>Vectors are heap-backed at construction (see {@link BatchColumnReader#readBatch}), so the batch carries no Arena
- * state across thread boundaries.
+ * <p>Most vectors are heap-backed at construction (see {@link BatchColumnReader#readBatch}); DOUBLE columns are decoded
+ * into batch-owned off-heap buffers acquired through the decode allocator. The batch holds no Arena state across thread
+ * boundaries.
  */
 public final class BatchRowGroupReader implements AutoCloseable {
 
@@ -62,17 +63,19 @@ public final class BatchRowGroupReader implements AutoCloseable {
     private final List<ProjectedLeaf> projectedLeaves;
     private final Optional<RowMask> rowMask;
     private final boolean skipDecode;
+    private final DecodeBufferAllocator decodeBufferAllocator;
 
     // Lazily built on first nextBatch() call; keyed by column path in declaration order.
     private Map<ColumnPath, BatchColumnReader> columnReaders;
 
     public BatchRowGroupReader(
+            @NonNull DecodeBufferAllocator decodeBufferAllocator,
             @NonNull List<FetchedColumnChunk> chunks,
             @NonNull ParquetSchema projectedSchema,
             @NonNull ParquetSchema fileSchema,
             @NonNull OptionalInt batchSizeCap,
             @NonNull Optional<RowMask> rowMask) {
-        this(chunks, projectedSchema, fileSchema, batchSizeCap, rowMask, false);
+        this(decodeBufferAllocator, chunks, projectedSchema, fileSchema, batchSizeCap, rowMask, false);
     }
 
     /**
@@ -82,12 +85,14 @@ public final class BatchRowGroupReader implements AutoCloseable {
      * every masked column is flat.
      */
     public BatchRowGroupReader(
+            @NonNull DecodeBufferAllocator decodeBufferAllocator,
             @NonNull List<FetchedColumnChunk> chunks,
             @NonNull ParquetSchema projectedSchema,
             @NonNull ParquetSchema fileSchema,
             @NonNull OptionalInt batchSizeCap,
             @NonNull Optional<RowMask> rowMask,
             boolean skipDecode) {
+        this.decodeBufferAllocator = decodeBufferAllocator;
         this.projectedSchema = projectedSchema;
         this.batchSizeCap = batchSizeCap;
         this.projectedLeaves = resolveProjectedLeaves(chunks, fileSchema);
@@ -131,18 +136,37 @@ public final class BatchRowGroupReader implements AutoCloseable {
         // Shared arena: vectors are heap-backed, but the batch may be decoded on a worker thread
         // and closed by the consumer thread, so its arena must not be confined to a single thread.
         Arena batchArena = Arena.ofShared();
+        List<AutoCloseable> acquiredBuffers = new ArrayList<>();
         try {
             ensureColumnReadersBuilt();
             int batchRows = computeBatchRows();
             Map<ColumnPath, int[]> repLevelsByLeaf = new HashMap<>();
             Map<ColumnPath, int[]> defLevelsByLeaf = new HashMap<>();
-            Map<ColumnPath, ColumnVector> leafVectors = readVectors(batchRows, repLevelsByLeaf, defLevelsByLeaf);
+            Map<ColumnPath, ColumnVector> leafVectors =
+                    readVectors(batchRows, repLevelsByLeaf, defLevelsByLeaf, acquiredBuffers);
             Map<ColumnPath, ColumnVector> vectors = NestedVectorAssembler.assembleNested(
                     projectedSchema, leafVectors, repLevelsByLeaf, defLevelsByLeaf, batchRows);
-            return new DefaultParquetRecordBatch(projectedSchema, vectors, batchRows, batchArena);
+            DefaultParquetRecordBatch batch =
+                    new DefaultParquetRecordBatch(projectedSchema, vectors, batchRows, batchArena);
+            for (AutoCloseable buffer : acquiredBuffers) {
+                batch.registerBuffer(buffer);
+            }
+            return batch;
         } catch (RuntimeException e) {
+            closeQuietly(acquiredBuffers);
             batchArena.close();
             throw e;
+        }
+    }
+
+    /** Closes the buffers acquired for a batch that failed to assemble, in reverse order, best-effort. */
+    private static void closeQuietly(List<AutoCloseable> acquiredBuffers) {
+        for (int i = acquiredBuffers.size() - 1; i >= 0; i--) {
+            try {
+                acquiredBuffers.get(i).close();
+            } catch (Exception _) {
+                // best-effort release; one failure must not strand the others
+            }
         }
     }
 
@@ -191,11 +215,12 @@ public final class BatchRowGroupReader implements AutoCloseable {
 
     private BatchColumnReader buildColumnReader(ProjectedLeaf leaf) {
         if (rowMask.isEmpty()) {
-            return new BatchColumnReader(leaf.chunk(), leaf.leaf());
+            return new BatchColumnReader(decodeBufferAllocator, leaf.chunk(), leaf.leaf());
         }
         RowMask mask = rowMask.orElseThrow();
         OffsetIndex offsetIndex = mask.offsetIndexes().get(leaf.path());
-        return new BatchColumnReader(leaf.chunk(), leaf.leaf(), mask.survivingRows(), offsetIndex, skipDecode);
+        return new BatchColumnReader(
+                decodeBufferAllocator, leaf.chunk(), leaf.leaf(), mask.survivingRows(), offsetIndex, skipDecode);
     }
 
     // --- batch row count computation ---
@@ -228,7 +253,8 @@ public final class BatchRowGroupReader implements AutoCloseable {
     private Map<ColumnPath, ColumnVector> readVectors(
             int batchLogicalRows,
             Map<ColumnPath, int[]> repLevelsByLeafOut,
-            Map<ColumnPath, int[]> defLevelsByLeafOut) {
+            Map<ColumnPath, int[]> defLevelsByLeafOut,
+            List<AutoCloseable> acquiredBuffers) {
         Map<ColumnPath, ColumnVector> vectors = new HashMap<>();
         for (Map.Entry<ColumnPath, BatchColumnReader> entry : columnReaders.entrySet()) {
             BatchColumnReader reader = entry.getValue();
@@ -244,7 +270,7 @@ public final class BatchRowGroupReader implements AutoCloseable {
                 int[] defLevelsForBatch = Arrays.copyOfRange(pageDefLevels, start, start + valuesThisBatch);
                 defLevelsByLeafOut.put(entry.getKey(), defLevelsForBatch);
             }
-            ColumnVector vec = reader.readBatch(valuesThisBatch);
+            ColumnVector vec = reader.readBatch(valuesThisBatch, acquiredBuffers);
             vectors.put(entry.getKey(), vec);
         }
         return vectors;

@@ -13,15 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.internal.batch;
+package io.tileverse.parquetry.internal.arrow.buffer;
 
 /**
- * Tells {@link ArrowBufferCodec#decode} which {@code ColumnVector} type to rebuild from an {@link EncodedNode}. This is
- * the codec's own discriminator over the column-vector kinds, distinct from the physical Parquet type: several vector
- * kinds share one physical type, and the decoder selects among the vectors, not the wire types. Constants grow one per
+ * Tells the Arrow-buffer codec which {@code ColumnVector} type to rebuild from an {@link EncodedNode}. This is the
+ * codec's own discriminator over the column-vector kinds, distinct from the physical Parquet type: several vector kinds
+ * share one physical type, and the decoder selects among the vectors, not the wire types. Constants grow one per
  * supported vector kind as the codec learns to handle more of them.
  */
-enum LeafType {
+public enum LeafType {
     INT32,
     INT64,
     FLOAT,

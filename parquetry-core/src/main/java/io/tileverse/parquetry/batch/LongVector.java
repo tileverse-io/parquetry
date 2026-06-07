@@ -15,25 +15,36 @@
  */
 package io.tileverse.parquetry.batch;
 
+import static io.tileverse.parquetry.format.ParquetLayouts.INT64;
+
+import java.lang.foreign.MemorySegment;
+
 import lombok.NonNull;
 
 public final class LongVector implements ColumnVector {
 
     private final long[] values;
+    private final MemorySegment segmentValues;
     private final Validity validity;
 
-    private LongVector(@NonNull long[] values, @NonNull Validity validity) {
+    private LongVector(long[] values, MemorySegment segmentValues, @NonNull Validity validity) {
         this.values = values;
+        this.segmentValues = segmentValues;
         this.validity = validity;
     }
 
     public static LongVector materialized(@NonNull long[] values, @NonNull Validity validity) {
-        return new LongVector(values, validity);
+        return new LongVector(values, null, validity);
+    }
+
+    /** Reads values from an off-heap little-endian segment; the segment's owner controls its lifetime. */
+    public static LongVector segmentBacked(@NonNull MemorySegment segmentValues, @NonNull Validity validity) {
+        return new LongVector(null, segmentValues, validity);
     }
 
     @Override
     public int size() {
-        return values.length;
+        return segmentValues != null ? (int) (segmentValues.byteSize() / Long.BYTES) : values.length;
     }
 
     @Override
@@ -49,21 +60,29 @@ public final class LongVector implements ColumnVector {
         if (validity.isNull(row)) {
             throw new IllegalStateException("row %d is null; guard with isNull(row) or hasNulls()".formatted(row));
         }
-        return values[row];
+        return segmentValues != null ? segmentValues.getAtIndex(INT64, row) : values[row];
     }
 
     @Override
     @SuppressWarnings("unchecked")
     public <T> T get(int row) {
-        return validity.isNull(row) ? null : (T) Long.valueOf(values[row]);
+        return validity.isNull(row) ? null : (T) Long.valueOf(getLong(row));
     }
 
     public long[] asArray() {
-        return values;
+        if (segmentValues == null) {
+            return values;
+        }
+        long[] out = new long[size()];
+        MemorySegment.copy(segmentValues, INT64, 0L, out, 0, out.length);
+        return out;
     }
 
     @Override
     public long approximateHeapBytes() {
+        if (segmentValues != null) {
+            return validity.heapBytes();
+        }
         return (long) values.length * Long.BYTES + validity.heapBytes();
     }
 }

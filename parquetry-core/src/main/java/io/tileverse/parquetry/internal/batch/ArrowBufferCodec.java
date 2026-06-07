@@ -38,7 +38,12 @@ import io.tileverse.parquetry.batch.MapVector;
 import io.tileverse.parquetry.batch.StructVector;
 import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.batch.VariantVector;
-import io.tileverse.parquetry.internal.batch.EncodedBuffer.BufferRole;
+import io.tileverse.parquetry.internal.arrow.buffer.ArrowBuffers;
+import io.tileverse.parquetry.internal.arrow.buffer.EncodedBuffer;
+import io.tileverse.parquetry.internal.arrow.buffer.EncodedBuffer.BufferRole;
+import io.tileverse.parquetry.internal.arrow.buffer.EncodedNode;
+import io.tileverse.parquetry.internal.arrow.buffer.LeafType;
+import io.tileverse.parquetry.internal.arrow.buffer.NodeEncoding;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**

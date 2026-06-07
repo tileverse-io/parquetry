@@ -80,6 +80,7 @@ class LateMaterializingRowGroupReaderTest {
             ReaderFixture fixture = openFixture(source, fileSchema, predicate);
             try (RowGroupFetch fetch = fixture.fetch()) {
                 LateMaterializingRowGroupReader lateReader = new LateMaterializingRowGroupReader(
+                        TestDecodeBuffers.ample(),
                         fetch.columns(),
                         fileSchema,
                         outputSchema,
@@ -112,6 +113,7 @@ class LateMaterializingRowGroupReaderTest {
             ReaderFixture fixture = openFixture(source, fileSchema, predicate);
             try (RowGroupFetch fetch = fixture.fetch()) {
                 LateMaterializingRowGroupReader lateReader = new LateMaterializingRowGroupReader(
+                        TestDecodeBuffers.ample(),
                         fetch.columns(),
                         fileSchema,
                         outputSchema,
@@ -147,6 +149,7 @@ class LateMaterializingRowGroupReaderTest {
             ReaderFixture fixture = openFixture(source, fileSchema, predicate);
             try (RowGroupFetch fetch = fixture.fetch()) {
                 LateMaterializingRowGroupReader lateReader = new LateMaterializingRowGroupReader(
+                        TestDecodeBuffers.ample(),
                         fetch.columns(),
                         fileSchema,
                         outputSchema,

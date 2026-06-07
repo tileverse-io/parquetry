@@ -18,7 +18,9 @@ package io.tileverse.parquetry.batch;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.util.BitSet;
 
 import org.junit.jupiter.api.Nested;
@@ -84,6 +86,26 @@ class Int96VectorTest {
         assertThat(vec.get(2).toArray(JAVA_BYTE)[0]).isEqualTo((byte) 9);
         assertThat(vec.get(1)).isNull();
         assertThat(vec.get(0).isReadOnly()).isTrue();
+    }
+
+    @Test
+    void consolidatedOffHeapBackingIsNotCountedAsHeap() {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment backing = arena.allocate(24); // two 12-byte values
+            byte[] bytes = new byte[24];
+            for (int i = 0; i < 24; i++) {
+                bytes[i] = (byte) i;
+            }
+            MemorySegment.copy(MemorySegment.ofArray(bytes), 0L, backing, 0L, 24L);
+            Int96Vector vector = Int96Vector.of(backing, Validity.allValid(2));
+            assertThat(vector.size()).as("size").isEqualTo(2);
+            assertThat(vector.get(0).toArray(ValueLayout.JAVA_BYTE)).hasSize(12);
+            assertThat(vector.get(1).toArray(ValueLayout.JAVA_BYTE)).hasSize(12);
+            assertThat(vector.get(1).toArray(ValueLayout.JAVA_BYTE)[0]).isEqualTo((byte) 12);
+            assertThat(vector.approximateHeapBytes())
+                    .as("a native consolidated backing is off-heap")
+                    .isEqualTo(vector.validity().heapBytes());
+        }
     }
 
     @Test

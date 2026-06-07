@@ -17,8 +17,6 @@ package io.tileverse.parquetry.internal.read.page;
 
 import java.lang.foreign.MemorySegment;
 
-import io.tileverse.parquetry.internal.read.BinaryValueSink;
-
 /**
  * Lazily materializes column values from one decompressed data-page payload.
  *
@@ -87,19 +85,13 @@ public interface PageDecoder<T> {
     }
 
     /**
-     * Decode {@code n} values into {@code sink} in dense order. The default materializes via {@link #decodeBinary}; the
-     * contiguous binary decoders override this to copy page bytes with no per-value segment.
+     * Records, for {@code n} dense (non-null) values, each value's absolute byte offset within the loaded page value
+     * buffer (into {@code positions}) and its byte length (into {@code lengths}), starting at {@code offset}, without
+     * copying any value bytes. A caller copies the bytes later straight from the page. Only the contiguous binary
+     * decoders (PLAIN, DELTA_LENGTH_BYTE_ARRAY) implement this.
      */
-    default void decodeBinaryInto(int n, BinaryValueSink sink) {
-        MemorySegment[] values = new MemorySegment[n];
-        decodeBinary(n, values, 0);
-        int total = 0;
-        for (MemorySegment value : values) {
-            total += Math.toIntExact(value.byteSize());
-        }
-        sink.reset(n, total);
-        for (MemorySegment value : values) {
-            sink.appendValue(value, 0L, Math.toIntExact(value.byteSize()));
-        }
+    default void decodeBinaryLayout(int n, int[] positions, int[] lengths, int offset) {
+        throw new UnsupportedOperationException(
+                getClass().getSimpleName() + " does not support direct binary layout decoding");
     }
 }

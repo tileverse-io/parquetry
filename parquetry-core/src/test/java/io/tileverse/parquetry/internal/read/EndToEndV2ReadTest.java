@@ -216,7 +216,9 @@ class EndToEndV2ReadTest {
             List<ParquetRecord> collected = new ArrayList<>();
             try (Stream<ParquetRecord> stream =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
-                stream.forEach(collected::add);
+                // The records are read after the stream closes; detach copies their values out of the
+                // batch (whose segment-backed vectors are released on close) so they stay readable.
+                stream.map(ParquetRecord::detach).forEach(collected::add);
             }
             return collected;
         }

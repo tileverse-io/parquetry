@@ -17,6 +17,7 @@ package io.tileverse.parquetry.batch;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.lang.foreign.MemorySegment;
 import java.util.BitSet;
 
 import org.junit.jupiter.api.Test;
@@ -94,5 +95,39 @@ class ValidityTest {
         assertThat(v.isValid(1)).as("row 1 valid").isTrue();
         assertThat(v.isNull(0)).as("row 0 null").isTrue();
         assertThat(v.isNull(2)).as("row 2 null").isTrue();
+    }
+
+    @Test
+    void segmentBackedReadsValidityBitsAndNullCount() {
+        // rows 0..7; rows 2 and 5 null -> bits 0,1,3,4,6,7 set, bits 2,5 clear
+        byte bitmap = (byte) 0b1101_1011; // LSB-first: bit0=1,bit1=1,bit2=0,bit3=1,bit4=1,bit5=0,bit6=1,bit7=1
+        MemorySegment seg = MemorySegment.ofArray(new byte[] {bitmap});
+        Validity validity = Validity.ofSegment(seg, 2, 8);
+        assertThat(validity.size()).as("size").isEqualTo(8);
+        assertThat(validity.nullCount()).as("nullCount").isEqualTo(2);
+        assertThat(validity.hasNulls()).as("hasNulls").isTrue();
+        assertThat(validity.isNull(2)).as("row 2 null").isTrue();
+        assertThat(validity.isNull(5)).as("row 5 null").isTrue();
+        assertThat(validity.isValid(0)).as("row 0 valid").isTrue();
+        assertThat(validity.isValid(7)).as("row 7 valid").isTrue();
+    }
+
+    @Test
+    void segmentBackedCopyMaterializesEquivalentBitSet() {
+        byte bitmap = (byte) 0b1101_1011;
+        MemorySegment seg = MemorySegment.ofArray(new byte[] {bitmap});
+        Validity validity = Validity.ofSegment(seg, 2, 8);
+        BitSet copy = validity.copy();
+        assertThat(copy.get(0)).isTrue();
+        assertThat(copy.get(2)).isFalse();
+        assertThat(copy.get(5)).isFalse();
+        assertThat(copy.cardinality()).as("valid rows").isEqualTo(6);
+    }
+
+    @Test
+    void segmentBackedReportsNoHeapBytes() {
+        MemorySegment seg = MemorySegment.ofArray(new byte[] {(byte) 0xFF});
+        Validity validity = Validity.ofSegment(seg, 0, 8);
+        assertThat(validity.heapBytes()).as("off-heap bitmap is not heap").isZero();
     }
 }

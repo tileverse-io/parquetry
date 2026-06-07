@@ -36,20 +36,33 @@ class IoLimitsTest {
     }
 
     @Test
+    void derivesDecodeBudgetAtTwentyFivePercentOfMemory() {
+        ResourceLimits limits = ResourceLimits.fixed(2_000_000_000L, 100_000_000_000L, 8, Path.of("/tmp"));
+        IoLimits ioLimits = IoLimits.from(limits);
+        assertThat(ioLimits.maxDecodeBytes())
+                .as("decode ceiling is 25% of available memory")
+                .isEqualTo(500_000_000L);
+    }
+
+    @Test
     void capsAreAtLeastOneByte() {
         ResourceLimits tiny = ResourceLimits.fixed(1L, 1L, 1, DIR);
         IoLimits limits = IoLimits.from(tiny);
         assertThat(limits.maxOffHeapBytes()).as("off-heap floor").isEqualTo(1L);
         assertThat(limits.maxSpillBytes()).as("spill floor").isEqualTo(1L);
+        assertThat(limits.maxDecodeBytes()).as("decode floor").isEqualTo(1L);
     }
 
     @Test
     void rejectsNonPositiveCaps() {
         assertThatIllegalArgumentException()
-                .isThrownBy(() -> new IoLimits(0, 1, DIR))
+                .isThrownBy(() -> new IoLimits(0, 1, 1, DIR))
                 .withMessageContaining("maxOffHeapBytes");
         assertThatIllegalArgumentException()
-                .isThrownBy(() -> new IoLimits(1, 0, DIR))
+                .isThrownBy(() -> new IoLimits(1, 0, 1, DIR))
                 .withMessageContaining("maxSpillBytes");
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> new IoLimits(1, 1, 0, DIR))
+                .withMessageContaining("maxDecodeBytes");
     }
 }

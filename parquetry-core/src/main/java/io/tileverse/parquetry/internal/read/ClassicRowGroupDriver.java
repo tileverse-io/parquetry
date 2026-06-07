@@ -30,13 +30,15 @@ final class ClassicRowGroupDriver implements RowGroupBatchDriver {
     private final BatchRowGroupReader reader;
 
     ClassicRowGroupDriver(
+            @NonNull DecodeBufferAllocator decodeBufferAllocator,
             @NonNull RowGroupFetch fetch,
             @NonNull ParquetSchema projectedSchema,
             @NonNull ParquetSchema fileSchema,
             @NonNull OptionalInt batchSizeCap,
             @NonNull Optional<RowMask> rowMask) {
         this.fetch = fetch;
-        this.reader = new BatchRowGroupReader(fetch.columns(), projectedSchema, fileSchema, batchSizeCap, rowMask);
+        this.reader = new BatchRowGroupReader(
+                decodeBufferAllocator, fetch.columns(), projectedSchema, fileSchema, batchSizeCap, rowMask);
     }
 
     @Override

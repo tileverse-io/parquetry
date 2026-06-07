@@ -16,6 +16,8 @@
 package io.tileverse.parquetry.batch;
 
 import java.lang.foreign.Arena;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 import io.tileverse.parquetry.record.BatchRowAccessor;
@@ -32,6 +34,7 @@ public final class DefaultParquetRecordBatch implements ParquetRecordBatch {
     private final Map<ColumnPath, ColumnVector> columns;
     private final int rowCount;
     private final Arena arena;
+    private final List<AutoCloseable> ownedBuffers = new ArrayList<>();
     private boolean closed;
     private Runnable releaseAction;
 
@@ -99,14 +102,30 @@ public final class DefaultParquetRecordBatch implements ParquetRecordBatch {
     }
 
     @Override
+    public void registerBuffer(AutoCloseable buffer) {
+        ownedBuffers.add(buffer);
+    }
+
+    @Override
     public void close() {
         if (closed) {
             return;
         }
         closed = true;
+        closeOwnedBuffers();
         arena.close();
         if (releaseAction != null) {
             releaseAction.run();
+        }
+    }
+
+    private void closeOwnedBuffers() {
+        for (int i = ownedBuffers.size() - 1; i >= 0; i--) {
+            try {
+                ownedBuffers.get(i).close();
+            } catch (Exception _) {
+                // best-effort release; one failure must not strand the others
+            }
         }
     }
 }

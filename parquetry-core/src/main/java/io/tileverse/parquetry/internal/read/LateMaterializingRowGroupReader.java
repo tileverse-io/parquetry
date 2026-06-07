@@ -65,10 +65,12 @@ public final class LateMaterializingRowGroupReader {
     private final Optional<RowMask> rowMask;
     private final Map<ColumnPath, OffsetIndex> offsetIndexes;
     private final long numRows;
+    private final DecodeBufferAllocator decodeBufferAllocator;
 
     // S107: aggregates the late-materialization decode inputs; a parameter object would only relocate the arity.
     @SuppressWarnings("java:S107")
     public LateMaterializingRowGroupReader(
+            @NonNull DecodeBufferAllocator decodeBufferAllocator,
             @NonNull List<FetchedColumnChunk> chunks,
             @NonNull ParquetSchema fileSchema,
             @NonNull ParquetSchema outputSchema,
@@ -78,6 +80,7 @@ public final class LateMaterializingRowGroupReader {
             @NonNull Optional<RowMask> rowMask,
             @NonNull Map<ColumnPath, OffsetIndex> offsetIndexes,
             long numRows) {
+        this.decodeBufferAllocator = decodeBufferAllocator;
         this.chunks = List.copyOf(chunks);
         this.fileSchema = fileSchema;
         this.outputSchema = outputSchema;
@@ -110,7 +113,13 @@ public final class LateMaterializingRowGroupReader {
                 .toList();
         RowMask selectionMask = new RowMask(selection.rows(), outputOffsetIndexes(outputLeaves));
         return new BatchRowGroupReader(
-                outputChunks, outputSchema, fileSchema, batchSizeCap, Optional.of(selectionMask), true);
+                decodeBufferAllocator,
+                outputChunks,
+                outputSchema,
+                fileSchema,
+                batchSizeCap,
+                Optional.of(selectionMask),
+                true);
     }
 
     /**
@@ -125,8 +134,8 @@ public final class LateMaterializingRowGroupReader {
                 .toList();
         Selection.Builder selectionBuilder = Selection.builder();
         RowRangeCursor cursor = new RowRangeCursor(surviving);
-        try (BatchRowGroupReader phase1 =
-                new BatchRowGroupReader(predicateChunks, predicateSchema, fileSchema, batchSizeCap, rowMask)) {
+        try (BatchRowGroupReader phase1 = new BatchRowGroupReader(
+                decodeBufferAllocator, predicateChunks, predicateSchema, fileSchema, batchSizeCap, rowMask)) {
             while (phase1.hasMore()) {
                 try (ParquetRecordBatch batch = phase1.nextBatch()) {
                     evaluateBatch(batch, cursor, selectionBuilder);

@@ -18,7 +18,9 @@ package io.tileverse.parquetry.batch;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.util.BitSet;
 
 import org.junit.jupiter.api.Nested;
@@ -153,6 +155,23 @@ class BinaryVectorTest {
                     .isEqualTo(5L
                             + (long) offsets.length * Integer.BYTES
                             + vec.validity().heapBytes());
+        }
+
+        @Test
+        void consolidatedOffHeapBackingIsNotCountedAsHeap() {
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment data = arena.allocate(5); // two values, ab and cde, five bytes total
+                MemorySegment.copy(MemorySegment.ofArray(new byte[] {'a', 'b', 'c', 'd', 'e'}), 0L, data, 0L, 5L);
+                int[] offsets = {0, 2, 5};
+                BinaryVector vector = BinaryVector.of(data, offsets, Validity.allValid(2));
+                assertThat(vector.size()).as("size").isEqualTo(2);
+                assertThat(vector.get(0).toArray(ValueLayout.JAVA_BYTE)).containsExactly('a', 'b');
+                assertThat(vector.get(1).toArray(ValueLayout.JAVA_BYTE)).containsExactly('c', 'd', 'e');
+                assertThat(vector.approximateHeapBytes())
+                        .as("off-heap data is not counted as heap")
+                        .isEqualTo((long) offsets.length * Integer.BYTES
+                                + vector.validity().heapBytes());
+            }
         }
     }
 }

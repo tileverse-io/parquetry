@@ -23,46 +23,45 @@ import java.io.ByteArrayOutputStream;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.util.function.Supplier;
+import java.util.function.Function;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.internal.read.BinaryValueSink;
-
-class BinaryDecodeIntoTest {
+class BinaryLayoutTest {
 
     private static final String[] VALUES = {"alpha", "", "gamma", "delta"};
 
     @Test
-    void plainBinaryAppendsValuesIntoSink() {
-        assertDecodeIntoMatchesNext(BinaryDecodeIntoTest::loadPlainPage, VALUES);
+    void plainLayoutPositionsAndLengthsMatchNext() {
+        MemorySegment page = plainPage(VALUES);
+        assertLayoutMatchesNext(page, p -> new PlainBinaryDecoder(), VALUES);
     }
 
     @Test
-    void deltaLengthAppendsValuesIntoSink() throws Exception {
-        byte[] page = encodeDeltaLengthPage(VALUES);
-        assertDecodeIntoMatchesNext(() -> loadDeltaLengthDecoder(page), VALUES);
+    void deltaLengthLayoutPositionsAndLengthsMatchNext() throws Exception {
+        MemorySegment page = MemorySegment.ofArray(deltaLengthPage(VALUES));
+        assertLayoutMatchesNext(page, p -> new DeltaLengthByteArrayDecoder(), VALUES);
     }
 
-    /**
-     * Drives {@code next()} on one decoder instance as the oracle, then {@code decodeBinaryInto} on a fresh decoder
-     * over the same page, and verifies the sink reproduces every value's bytes exactly.
-     */
-    private static void assertDecodeIntoMatchesNext(
-            Supplier<PageDecoder<MemorySegment>> decoderFactory, String[] expected) {
-        byte[][] oracle = readEachValue(decoderFactory.get(), expected.length);
+    private static void assertLayoutMatchesNext(
+            MemorySegment page, Function<MemorySegment, PageDecoder<MemorySegment>> decoderFactory, String[] expected) {
+        byte[][] oracle = readEachValue(loaded(page, decoderFactory), expected.length);
 
-        BinaryValueSink sink = new BinaryValueSink();
-        decoderFactory.get().decodeBinaryInto(expected.length, sink);
+        int[] positions = new int[expected.length];
+        int[] lengths = new int[expected.length];
+        loaded(page, decoderFactory).decodeBinaryLayout(expected.length, positions, lengths, 0);
 
-        assertThat(sink.count()).isEqualTo(expected.length);
-        int[] offsets = sink.offsets();
-        MemorySegment backing = sink.backing();
         for (int i = 0; i < expected.length; i++) {
-            byte[] actual =
-                    backing.asSlice(offsets[i], offsets[i + 1] - offsets[i]).toArray(JAVA_BYTE);
-            assertThat(actual).as("value " + i).isEqualTo(oracle[i]);
+            byte[] actual = page.asSlice(positions[i], lengths[i]).toArray(JAVA_BYTE);
+            assertThat(actual).as("value %d bytes", i).isEqualTo(oracle[i]);
         }
+    }
+
+    private static PageDecoder<MemorySegment> loaded(
+            MemorySegment page, Function<MemorySegment, PageDecoder<MemorySegment>> decoderFactory) {
+        PageDecoder<MemorySegment> decoder = decoderFactory.apply(page);
+        decoder.load(page, VALUES.length);
+        return decoder;
     }
 
     private static byte[][] readEachValue(PageDecoder<MemorySegment> decoder, int n) {
@@ -73,31 +72,22 @@ class BinaryDecodeIntoTest {
         return values;
     }
 
-    private static PageDecoder<MemorySegment> loadPlainPage() {
+    private static MemorySegment plainPage(String[] values) {
         int totalSize = 0;
-        for (String value : VALUES) {
+        for (String value : values) {
             totalSize += Integer.BYTES + value.getBytes(StandardCharsets.UTF_8).length;
         }
         ByteBuffer page = ByteBuffer.allocate(totalSize).order(LITTLE_ENDIAN);
-        for (String value : VALUES) {
-            byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
-            page.putInt(bytes.length);
-            page.put(bytes);
+        for (String value : values) {
+            byte[] valueBytes = value.getBytes(StandardCharsets.UTF_8);
+            page.putInt(valueBytes.length);
+            page.put(valueBytes);
         }
         page.flip();
-
-        PlainBinaryDecoder decoder = new PlainBinaryDecoder();
-        decoder.load(MemorySegment.ofBuffer(page), VALUES.length);
-        return decoder;
+        return MemorySegment.ofBuffer(page);
     }
 
-    private static PageDecoder<MemorySegment> loadDeltaLengthDecoder(byte[] page) {
-        DeltaLengthByteArrayDecoder decoder = new DeltaLengthByteArrayDecoder();
-        decoder.load(MemorySegment.ofArray(page), VALUES.length);
-        return decoder;
-    }
-
-    private static byte[] encodeDeltaLengthPage(String[] values) throws Exception {
+    private static byte[] deltaLengthPage(String[] values) throws Exception {
         int[] lengths = new int[values.length];
         for (int i = 0; i < values.length; i++) {
             lengths[i] = values[i].getBytes(StandardCharsets.UTF_8).length;

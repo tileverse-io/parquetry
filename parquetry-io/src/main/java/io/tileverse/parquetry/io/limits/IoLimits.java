@@ -21,10 +21,11 @@ import java.nio.file.Path;
  * The derived caps the read path honors, computed from a {@link ResourceLimits} by applying conservative fractions.
  * This is the one place those fractions live; the budgets that consume the caps own no sizing of their own.
  */
-public record IoLimits(long maxOffHeapBytes, long maxSpillBytes, Path spillDir) {
+public record IoLimits(long maxOffHeapBytes, long maxSpillBytes, long maxDecodeBytes, Path spillDir) {
 
     private static final double OFF_HEAP_FRACTION = 0.1;
     private static final double SPILL_FRACTION = 0.5;
+    private static final double DECODE_FRACTION = 0.25;
 
     public IoLimits {
         if (maxOffHeapBytes <= 0) {
@@ -33,14 +34,18 @@ public record IoLimits(long maxOffHeapBytes, long maxSpillBytes, Path spillDir) 
         if (maxSpillBytes <= 0) {
             throw new IllegalArgumentException("maxSpillBytes must be > 0, got " + maxSpillBytes);
         }
+        if (maxDecodeBytes <= 0) {
+            throw new IllegalArgumentException("maxDecodeBytes must be > 0, got " + maxDecodeBytes);
+        }
     }
 
-    /** Derives the caps from {@code limits}, applying the off-heap and spill fractions. */
+    /** Derives the caps from {@code limits}, applying the off-heap, spill, and decode fractions. */
     public static IoLimits from(ResourceLimits limits) {
         Path dir = limits.spillDir();
         long offHeap = atLeastOneByte(limits.availableMemoryBytes() * OFF_HEAP_FRACTION);
         long spill = atLeastOneByte(limits.usableDiskBytes(dir) * SPILL_FRACTION);
-        return new IoLimits(offHeap, spill, dir);
+        long decode = atLeastOneByte(limits.availableMemoryBytes() * DECODE_FRACTION);
+        return new IoLimits(offHeap, spill, decode, dir);
     }
 
     private static long atLeastOneByte(double bytes) {

@@ -27,7 +27,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
-import io.tileverse.parquetry.internal.batch.EncodedBuffer.BufferRole;
+import io.tileverse.parquetry.internal.arrow.buffer.EncodedBuffer;
+import io.tileverse.parquetry.internal.arrow.buffer.EncodedBuffer.BufferRole;
+import io.tileverse.parquetry.internal.arrow.buffer.EncodedNode;
+import io.tileverse.parquetry.internal.arrow.buffer.NodeEncoding;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**

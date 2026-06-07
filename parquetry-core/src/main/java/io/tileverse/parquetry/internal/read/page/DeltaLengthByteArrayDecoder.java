@@ -17,8 +17,6 @@ package io.tileverse.parquetry.internal.read.page;
 
 import java.lang.foreign.MemorySegment;
 
-import io.tileverse.parquetry.internal.read.BinaryValueSink;
-
 /**
  * DELTA_LENGTH_BYTE_ARRAY page decoder.
  *
@@ -34,6 +32,7 @@ public final class DeltaLengthByteArrayDecoder implements PageDecoder<MemorySegm
     private int cursor;
     private MemorySegment payload;
     private long payloadOffset;
+    private long payloadStart;
 
     @Override
     public void load(MemorySegment page, int valueCount) {
@@ -53,7 +52,8 @@ public final class DeltaLengthByteArrayDecoder implements PageDecoder<MemorySegm
         }
 
         this.cursor = 0;
-        this.payload = page.asSlice(lengthDecoder.position());
+        this.payloadStart = lengthDecoder.position();
+        this.payload = page.asSlice(payloadStart);
         this.payloadOffset = 0L;
     }
 
@@ -73,15 +73,11 @@ public final class DeltaLengthByteArrayDecoder implements PageDecoder<MemorySegm
     }
 
     @Override
-    public void decodeBinaryInto(int n, BinaryValueSink sink) {
-        int total = 0;
-        for (int i = 0; i < n; i++) {
-            total += lengths[cursor + i];
-        }
-        sink.reset(n, total);
+    public void decodeBinaryLayout(int n, int[] positions, int[] valueLengths, int dst) {
         for (int i = 0; i < n; i++) {
             int len = lengths[cursor++];
-            sink.appendValue(payload, payloadOffset, len);
+            positions[dst + i] = Math.toIntExact(payloadStart + payloadOffset);
+            valueLengths[dst + i] = len;
             payloadOffset += len;
         }
     }

@@ -237,6 +237,7 @@ class BatchPipelineRowsTest {
                     prefetcher,
                     DecodeExecutor.shared(),
                     DecodeBudget.defaultBudget(),
+                    TestDecodeBuffers.ample(),
                     DiskBudget.defaultBudget(),
                     Path.of(System.getProperty("java.io.tmpdir")),
                     true,

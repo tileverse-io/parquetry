@@ -185,9 +185,10 @@ public final class BinaryVector implements ColumnVector {
         if (indices != null) {
             return (long) indices.length * Integer.BYTES + dictionaryEntryBytes() + validity.heapBytes();
         }
-        // Count only this vector's window into the shared page backing. Sibling slices each count their own window,
-        // which keeps the page bytes from being multiplied across the batches the page was split into.
-        long windowBytes = offsets[offsets.length - 1] - offsets[0];
+        // A native backing lives off-heap and is not counted. A heap backing counts only this vector's window into the
+        // shared page backing; sibling slices each count their own window, which keeps the page bytes from being
+        // multiplied across the batches the page was split into.
+        long windowBytes = backing.isNative() ? 0L : (offsets[offsets.length - 1] - offsets[0]);
         return windowBytes + (long) offsets.length * Integer.BYTES + validity.heapBytes();
     }
 

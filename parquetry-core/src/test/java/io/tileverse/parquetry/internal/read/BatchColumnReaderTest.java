@@ -26,6 +26,7 @@ import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.List;
 import java.util.Optional;
@@ -176,11 +177,11 @@ class BatchColumnReaderTest {
         FetchedColumnChunk chunk = singlePageInt32Chunk(values, /*maxDef*/ 0);
         SchemaNode.Primitive leaf = requiredInt32Leaf();
 
-        BatchColumnReader reader = new BatchColumnReader(chunk, leaf);
+        BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, leaf);
 
         assertThat(reader.hasMore()).isTrue();
 
-        ColumnVector vec = reader.readBatch(10);
+        ColumnVector vec = reader.readBatch(10, new ArrayList<>());
         assertThat(vec).isInstanceOf(IntVector.class);
         assertThat(vec.size()).isEqualTo(4);
 
@@ -202,10 +203,10 @@ class BatchColumnReaderTest {
         FetchedColumnChunk chunk = twoPageInt32Chunk(page1, page2);
         SchemaNode.Primitive leaf = requiredInt32Leaf();
 
-        BatchColumnReader reader = new BatchColumnReader(chunk, leaf);
+        BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, leaf);
 
         // Ask for 7 rows - should only get 4 (page 1 has only 4)
-        ColumnVector vec1 = reader.readBatch(7);
+        ColumnVector vec1 = reader.readBatch(7, new ArrayList<>());
         assertThat(vec1.size()).isEqualTo(4);
         assertThat(((IntVector) vec1).asArray()).containsExactly(1, 2, 3, 4);
 
@@ -213,7 +214,7 @@ class BatchColumnReaderTest {
         assertThat(reader.hasMore()).isTrue();
 
         // Ask for 7 again - gets all 6 from page 2
-        ColumnVector vec2 = reader.readBatch(7);
+        ColumnVector vec2 = reader.readBatch(7, new ArrayList<>());
         assertThat(vec2.size()).isEqualTo(6);
         assertThat(((IntVector) vec2).asArray()).containsExactly(5, 6, 7, 8, 9, 10);
 
@@ -233,8 +234,8 @@ class BatchColumnReaderTest {
         FetchedColumnChunk chunk = singlePageNullableChunk(nonNullValues, defLevelBytes, /*numValues*/ 5);
         SchemaNode.Primitive leaf = optionalInt32Leaf();
 
-        BatchColumnReader reader = new BatchColumnReader(chunk, leaf);
-        ColumnVector vec = reader.readBatch(10);
+        BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, leaf);
+        ColumnVector vec = reader.readBatch(10, new ArrayList<>());
 
         assertThat(vec.size()).isEqualTo(5);
         Validity validity = vec.validity();
@@ -255,12 +256,12 @@ class BatchColumnReaderTest {
         FetchedColumnChunk chunk = twoPageInt32Chunk(page1, page2);
         SchemaNode.Primitive leaf = requiredInt32Leaf();
 
-        BatchColumnReader reader = new BatchColumnReader(chunk, leaf);
+        BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, leaf);
 
         assertThat(reader.hasMore()).isTrue();
-        reader.readBatch(10); // drains page 1
+        reader.readBatch(10, new ArrayList<>()); // drains page 1
         assertThat(reader.hasMore()).isTrue();
-        reader.readBatch(10); // drains page 2
+        reader.readBatch(10, new ArrayList<>()); // drains page 2
         assertThat(reader.hasMore()).isFalse();
     }
 
@@ -272,9 +273,9 @@ class BatchColumnReaderTest {
         // Expected materialized output: 100, 200, 300, 200, 100.
         FetchedColumnChunk chunk = dictionaryEncodedInt32Chunk(new int[] {100, 200, 300}, new int[] {0, 1, 2, 1, 0});
 
-        BatchColumnReader reader = new BatchColumnReader(chunk, requiredInt32Leaf());
+        BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, requiredInt32Leaf());
 
-        ColumnVector vec = reader.readBatch(10);
+        ColumnVector vec = reader.readBatch(10, new ArrayList<>());
         assertThat(vec).isInstanceOf(IntVector.class);
         assertThat(vec.size()).isEqualTo(5);
         assertThat(((IntVector) vec).asArray()).containsExactly(100, 200, 300, 200, 100);
@@ -300,20 +301,20 @@ class BatchColumnReaderTest {
             byte[][] page2 = {null, bytes("dd"), bytes("eee")};
             FetchedColumnChunk chunk = twoPageNullableByteArrayChunk(page1, page2);
 
-            BatchColumnReader reader = new BatchColumnReader(chunk, optionalByteArrayLeaf());
+            BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, optionalByteArrayLeaf());
 
             // First batch: 3 of page 1's rows.
-            ColumnVector batch1 = reader.readBatch(3);
+            ColumnVector batch1 = reader.readBatch(3, new ArrayList<>());
             assertByteArraySlice(batch1, new byte[][] {bytes("aa"), null, bytes("bbbb")});
 
             // Second batch asks for 5 but only 2 remain in page 1.
-            ColumnVector batch2 = reader.readBatch(5);
+            ColumnVector batch2 = reader.readBatch(5, new ArrayList<>());
             assertByteArraySlice(batch2, new byte[][] {null, bytes("c")});
 
             assertThat(reader.hasMore()).isTrue();
 
             // Third batch drains page 2.
-            ColumnVector batch3 = reader.readBatch(10);
+            ColumnVector batch3 = reader.readBatch(10, new ArrayList<>());
             assertByteArraySlice(batch3, new byte[][] {null, bytes("dd"), bytes("eee")});
 
             assertThat(reader.hasMore()).isFalse();
@@ -330,23 +331,38 @@ class BatchColumnReaderTest {
             byte[][] page2 = {null, null};
             FetchedColumnChunk chunk = twoPageNullableByteArrayChunk(page1, page2);
 
-            BatchColumnReader reader = new BatchColumnReader(chunk, optionalByteArrayLeaf());
+            BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, optionalByteArrayLeaf());
 
             // Page 1 is all-present: first batch takes 2 of its 3 rows.
-            ColumnVector batch1 = reader.readBatch(2);
+            ColumnVector batch1 = reader.readBatch(2, new ArrayList<>());
             assertByteArraySlice(batch1, new byte[][] {bytes("aa"), bytes("bbbb")});
 
             // Second batch asks for 2 but only page 1's last row remains; readBatch never crosses a page.
-            ColumnVector batch2 = reader.readBatch(2);
+            ColumnVector batch2 = reader.readBatch(2, new ArrayList<>());
             assertByteArraySlice(batch2, new byte[][] {bytes("c")});
 
             assertThat(reader.hasMore()).isTrue();
 
             // Page 2 is all-null: an empty backing with two null rows.
-            ColumnVector batch3 = reader.readBatch(2);
+            ColumnVector batch3 = reader.readBatch(2, new ArrayList<>());
             assertByteArraySlice(batch3, new byte[][] {null, null});
 
             assertThat(reader.hasMore()).isFalse();
+        }
+
+        @Test
+        void decodesValueBytesOffHeap() throws IOException {
+            byte[][] rows = {bytes("aa"), bytes("bbbb"), bytes("c")};
+            FetchedColumnChunk chunk = twoPageNullableByteArrayChunk(rows, new byte[][] {bytes("z")});
+
+            BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, optionalByteArrayLeaf());
+            BinaryVector vec = (BinaryVector) reader.readBatch(3, new ArrayList<>());
+
+            assertThat(vec.size()).isEqualTo(3);
+            long offsetsBytes = (vec.size() + 1L) * Integer.BYTES;
+            assertThat(vec.approximateHeapBytes())
+                    .as("value bytes live off-heap; only offsets and validity are heap")
+                    .isEqualTo(offsetsBytes + vec.validity().heapBytes());
         }
 
         private void assertByteArraySlice(ColumnVector vec, byte[][] expected) {
@@ -390,14 +406,14 @@ class BatchColumnReaderTest {
             int[] defLevels = {1, 0, 1, 1, 0, 1};
             FetchedColumnChunk chunk = dictionaryEncodedByteArrayChunk(dictValues, indices, defLevels);
 
-            BatchColumnReader reader = new BatchColumnReader(chunk, optionalByteArrayLeaf());
+            BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, optionalByteArrayLeaf());
 
             // First batch: rows 0..2 -> "alpha", null, "beta".
-            ColumnVector batch1 = reader.readBatch(3);
+            ColumnVector batch1 = reader.readBatch(3, new ArrayList<>());
             assertByteArraySlice(batch1, new byte[][] {bytes("alpha"), null, bytes("beta")});
 
             // Second batch: rows 3..5 -> "alpha", null, "beta".
-            ColumnVector batch2 = reader.readBatch(3);
+            ColumnVector batch2 = reader.readBatch(3, new ArrayList<>());
             assertByteArraySlice(batch2, new byte[][] {bytes("alpha"), null, bytes("beta")});
 
             assertThat(reader.hasMore()).isFalse();

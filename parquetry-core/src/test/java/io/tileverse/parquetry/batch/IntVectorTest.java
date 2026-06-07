@@ -15,14 +15,42 @@
  */
 package io.tileverse.parquetry.batch;
 
+import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
 import java.util.BitSet;
 
 import org.junit.jupiter.api.Test;
 
 class IntVectorTest {
+
+    @Test
+    void segmentBackedReadsValuesWithoutHeapValues() {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment values = arena.allocate(3L * Integer.BYTES);
+            values.setAtIndex(INT32, 0, 10);
+            values.setAtIndex(INT32, 1, 20);
+            values.setAtIndex(INT32, 2, 30);
+            IntVector vector = IntVector.segmentBacked(values, Validity.allValid(3));
+            assertThat(vector.size()).as("size").isEqualTo(3);
+            assertThat(vector.getInt(0)).isEqualTo(10);
+            assertThat(vector.getInt(2)).isEqualTo(30);
+            assertThat(vector.<Integer>get(1)).isEqualTo(20);
+            assertThat(vector.approximateHeapBytes())
+                    .as("off-heap values are not counted as heap")
+                    .isEqualTo(vector.validity().heapBytes());
+        }
+    }
+
+    @Test
+    void materializedHeapModeStillWorks() {
+        IntVector vector = IntVector.materialized(new int[] {4, 5}, Validity.allValid(2));
+        assertThat(vector.getInt(1)).isEqualTo(5);
+        assertThat(vector.asArray()).containsExactly(4, 5);
+    }
 
     @Test
     void getIntReturnsTheValueForAValidRow() {

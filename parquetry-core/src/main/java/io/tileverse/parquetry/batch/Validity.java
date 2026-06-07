@@ -15,6 +15,8 @@
  */
 package io.tileverse.parquetry.batch;
 
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.util.BitSet;
 
 /**
@@ -31,17 +33,21 @@ import java.util.BitSet;
  */
 public final class Validity {
 
-    private final BitSet validBits; // null == all rows valid
+    private final BitSet validBits; // null == no heap bitmap
+    private final MemorySegment validBitmap; // null == no off-heap bitmap; LSB-first, bit set == valid
+    private final int nullCount;
     private final int size;
 
-    private Validity(BitSet validBits, int size) {
+    private Validity(BitSet validBits, MemorySegment validBitmap, int nullCount, int size) {
         this.validBits = validBits;
+        this.validBitmap = validBitmap;
+        this.nullCount = nullCount;
         this.size = size;
     }
 
     /** Every row valid; allocates no bitmap. */
     public static Validity allValid(int size) {
-        return new Validity(null, size);
+        return new Validity(null, null, 0, size);
     }
 
     /**
@@ -55,9 +61,20 @@ public final class Validity {
         }
         boolean everyRowValid = validBits.nextClearBit(0) >= size;
         if (everyRowValid) {
-            return new Validity(null, size);
+            return new Validity(null, null, 0, size);
         }
-        return new Validity(validBits, size);
+        return new Validity(validBits, null, size - validBits.cardinality(), size);
+    }
+
+    /**
+     * A validity mask reading an off-heap LSB-first Arrow bitmap (bit set == valid). The caller retains ownership of
+     * the segment for the lifetime of this mask.
+     */
+    public static Validity ofSegment(MemorySegment validBitmap, int nullCount, int size) {
+        if (nullCount == 0) {
+            return new Validity(null, null, 0, size);
+        }
+        return new Validity(null, validBitmap, nullCount, size);
     }
 
     /** Logical row count this mask covers. */
@@ -67,6 +84,12 @@ public final class Validity {
 
     /** Whether row {@code row} is non-null. */
     public boolean isValid(int row) {
+        if (validBitmap != null) {
+            int byteIndex = row >>> 3;
+            int bitIndex = row & 7;
+            int bits = validBitmap.get(ValueLayout.JAVA_BYTE, byteIndex) & 0xFF;
+            return ((bits >>> bitIndex) & 1) != 0;
+        }
         return validBits == null || validBits.get(row);
     }
 
@@ -77,16 +100,24 @@ public final class Validity {
 
     /** Whether any row is null. O(1): the all-valid representation answers without scanning. */
     public boolean hasNulls() {
-        return validBits != null;
+        return nullCount > 0;
     }
 
     /** Number of null rows. */
     public int nullCount() {
-        return validBits == null ? 0 : size - validBits.cardinality();
+        return nullCount;
     }
 
     /** Index of the next valid row at or after {@code fromRow}, or {@code -1} when none remains. */
     public int nextSetBit(int fromRow) {
+        if (validBitmap != null) {
+            for (int row = fromRow; row < size; row++) {
+                if (isValid(row)) {
+                    return row;
+                }
+            }
+            return -1;
+        }
         if (validBits == null) {
             return fromRow < size ? fromRow : -1;
         }
@@ -95,13 +126,19 @@ public final class Validity {
 
     /** Count of valid rows. */
     public int cardinality() {
-        return validBits == null ? size : validBits.cardinality();
+        return size - nullCount;
     }
 
     /** A fresh mutable copy of the valid-bit mask, independent of this instance. */
     public BitSet copy() {
         BitSet out = new BitSet(size);
-        if (validBits == null) {
+        if (validBitmap != null) {
+            for (int row = 0; row < size; row++) {
+                if (isValid(row)) {
+                    out.set(row);
+                }
+            }
+        } else if (validBits == null) {
             out.set(0, size);
         } else {
             out.or(validBits);
@@ -109,7 +146,7 @@ public final class Validity {
         return out;
     }
 
-    /** Approximate heap bytes this mask holds; the all-valid representation holds none. */
+    /** Approximate heap bytes this mask holds; the all-valid and off-heap representations hold none. */
     public long heapBytes() {
         return validBits == null ? 0L : (long) size / Byte.SIZE + 1L;
     }

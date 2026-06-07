@@ -28,6 +28,8 @@ import io.tileverse.parquetry.batch.FloatVector;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.Validity;
+import io.tileverse.parquetry.internal.arrow.buffer.EncodedNode;
+import io.tileverse.parquetry.internal.arrow.buffer.LeafType;
 
 class ArrowBufferCodecPrimitivesTest {
 

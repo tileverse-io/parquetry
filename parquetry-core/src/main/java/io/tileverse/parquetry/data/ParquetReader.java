@@ -53,6 +53,7 @@ import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.filter.spatial.SpatialBoundsSource;
 import io.tileverse.parquetry.internal.filter.spatial.SpatialCoveringRewrite;
 import io.tileverse.parquetry.internal.read.BatchPipeline;
+import io.tileverse.parquetry.internal.read.DecodeBufferAllocator;
 import io.tileverse.parquetry.internal.read.DecryptionKeyRetriever;
 import io.tileverse.parquetry.internal.read.FetchBufferAllocator;
 import io.tileverse.parquetry.internal.read.FetchSpillStore;
@@ -443,10 +444,12 @@ public class ParquetReader {
             Optional<LateMaterialization> lateMat) {
         RowGroupPrefetcher prefetcher = newPrefetcher(survivors, projectedSchema);
         List<Boolean> recordEvalRequired = recordEvalFlagsFor(survivors);
+        DecodeBufferAllocator decodeBufferAllocator = newDecodeBufferAllocator();
         return new ParallelDecodeCoordinator(
                 prefetcher,
                 runtime.decodeExecutor(),
                 runtime.decodeBudget(),
+                decodeBufferAllocator,
                 runtime.diskBudget(),
                 runtime.spillDir(),
                 runtime.spillEnabled(),
@@ -457,6 +460,16 @@ public class ParquetReader {
                 decodeMasks,
                 recordEvalRequired,
                 lateMat);
+    }
+
+    /**
+     * The RAM-or-mmap valve a decode reserves its off-heap value buffers through. The RAM path reserves against the
+     * runtime's off-heap decode budget; the spill path maps an on-disk file under the runtime's disk budget while the
+     * native decode budget has no room.
+     */
+    private DecodeBufferAllocator newDecodeBufferAllocator() {
+        FetchSpillStore decodeSpillStore = new FetchSpillStore(runtime.spillDir(), runtime.diskBudget());
+        return new DecodeBufferAllocator(runtime.segmentPool(), runtime.offHeapDecodeBudget(), decodeSpillStore);
     }
 
     /**

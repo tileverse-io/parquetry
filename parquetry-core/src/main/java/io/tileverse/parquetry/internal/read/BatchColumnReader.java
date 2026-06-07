@@ -15,12 +15,19 @@
  */
 package io.tileverse.parquetry.internal.read;
 
+import static io.tileverse.parquetry.format.ParquetLayouts.DOUBLE;
+import static io.tileverse.parquetry.format.ParquetLayouts.FLOAT;
+import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
+import static io.tileverse.parquetry.format.ParquetLayouts.INT64;
+
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.util.Arrays;
 import java.util.BitSet;
+import java.util.List;
 import java.util.Optional;
 
 import io.tileverse.parquetry.batch.BinaryVector;
@@ -60,6 +67,7 @@ import io.tileverse.parquetry.internal.read.page.PlainInt64Decoder;
 import io.tileverse.parquetry.internal.read.page.PlainInt96Decoder;
 import io.tileverse.parquetry.internal.read.page.RleBooleanDecoder;
 import io.tileverse.parquetry.internal.read.page.RleDictionaryPageDecoder;
+import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.LevelMaxima;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -68,14 +76,16 @@ import io.tileverse.parquetry.schema.SchemaNode;
 import lombok.NonNull;
 
 /**
- * Per-column reader for the batch API. Each call to {@link #readBatch(int)} returns a {@link ColumnVector} sliced from
- * the current page's pre-decoded values.
+ * Per-column reader for the batch API. Each call to {@link #readBatch} returns a {@link ColumnVector} sliced from the
+ * current page's pre-decoded values.
  *
- * <p>Page lifecycle: {@link #loadNextPage()} decompresses the next page into a transient {@link Arena#ofConfined()
- * confined Arena}, fully decodes rep-levels / def-levels / values into heap-backed Java arrays (or, for PLAIN/DELTA
- * binary kinds, a single heap-backed {@link MemorySegment} the slices view), and closes the Arena before returning.
- * Once a page is loaded, every {@link #readBatch} call is slicing - no Arena-backed memory escapes the load step, and
- * within-page splitting is naturally correct because page state lives on the heap.
+ * <p>Page lifecycle: {@link #loadNextPage()} decompresses the next page into a confined {@link Arena}, fully decodes
+ * rep-levels / def-levels into heap arrays, and decodes values either into heap arrays (fixed-width and dictionary
+ * kinds) or, for contiguous PLAIN / DELTA_LENGTH binary, into row-indexed positions over the still-open page. For the
+ * heap kinds the Arena is closed before {@link #loadNextPage()} returns; for the live-binary kind the Arena is kept
+ * open across the page's batches and closed at page-advance, because the per-batch slices copy their bytes straight
+ * from the page. Each {@link #readBatch} call then slices the current page; within-page splitting is correct because
+ * the page state (heap arrays, or the live page plus its offsets) outlives every slice of the page.
  */
 final class BatchColumnReader {
 
@@ -94,9 +104,7 @@ final class BatchColumnReader {
     private final Optional<Dictionary<?>> dictionary;
     private final RowRanges survivingRows; // null when this column is not masked
     private final boolean skipDecode;
-
-    // Reused across pages; the direct binary decode path appends straight into its freshly sized backing per page.
-    private final BinaryValueSink binarySink = new BinaryValueSink();
+    private final DecodeBufferAllocator decodeBufferAllocator;
 
     // Per-page state. Populated by loadNextPage; cleared on advance.
     private boolean pageLoaded;
@@ -119,6 +127,16 @@ final class BatchColumnReader {
     private int[] pageBinaryOffsets;
     private boolean pageWasDictionary;
 
+    // Per-row source positions for the direct off-heap binary path: pageValuePos[row] is the absolute byte offset of
+    // the row's value bytes within the live page value segment (pageBinaryBacking). Null rows hold 0 and are never
+    // read.
+    private int[] pageValuePos;
+    // True while pageBinaryBacking points into a still-open page Arena the binary slices read from directly. The Arena
+    // is then kept alive across the page's batches and closed at page-advance.
+    private boolean pageBackingIsLivePage;
+    // The page Arena kept alive across the page's batches when pageBackingIsLivePage; closed at advance / reader close.
+    private Arena livePageArena;
+
     // One row-positioned dictionary index per row for dictionary-encoded binary, resolved through the chunk-level
     // dictEntries array. A null row holds the harmless placeholder index zero and its nullness lives in pageValidity.
     private int[] pageIndices;
@@ -132,24 +150,30 @@ final class BatchColumnReader {
     private long survivingRowsConsumedTotal;
     private long decodedValueCount;
 
-    BatchColumnReader(@NonNull FetchedColumnChunk chunk, @NonNull SchemaNode.Primitive leaf) {
-        this(chunk, leaf, null, null, false);
+    BatchColumnReader(
+            @NonNull DecodeBufferAllocator decodeBufferAllocator,
+            @NonNull FetchedColumnChunk chunk,
+            @NonNull SchemaNode.Primitive leaf) {
+        this(decodeBufferAllocator, chunk, leaf, null, null, false);
     }
 
     BatchColumnReader(
+            @NonNull DecodeBufferAllocator decodeBufferAllocator,
             @NonNull FetchedColumnChunk chunk,
             @NonNull SchemaNode.Primitive leaf,
             RowRanges survivingRows,
             OffsetIndex offsetIndex) {
-        this(chunk, leaf, survivingRows, offsetIndex, false);
+        this(decodeBufferAllocator, chunk, leaf, survivingRows, offsetIndex, false);
     }
 
     BatchColumnReader(
+            @NonNull DecodeBufferAllocator decodeBufferAllocator,
             @NonNull FetchedColumnChunk chunk,
             @NonNull SchemaNode.Primitive leaf,
             RowRanges survivingRows,
             OffsetIndex offsetIndex,
             boolean skipDecode) {
+        this.decodeBufferAllocator = decodeBufferAllocator;
         this.skipDecode = skipDecode;
         this.columnPath = chunk.path();
         this.leaf = leaf;
@@ -243,7 +267,7 @@ final class BatchColumnReader {
      * {@code min(maxValues, pageSize - valuesConsumedInCurrentPage)}. Subsequent calls continue within the same page
      * until it is exhausted, then advance to the next page on demand.
      */
-    ColumnVector readBatch(int maxValues) {
+    ColumnVector readBatch(int maxValues, List<AutoCloseable> acquiredBuffers) {
         if (maxValues <= 0) {
             throw new IllegalArgumentException("maxValues must be positive; got " + maxValues);
         }
@@ -255,7 +279,7 @@ final class BatchColumnReader {
         int start = valuesConsumedInCurrentPage;
         int n = Math.min(maxValues, pageSize - start);
 
-        ColumnVector vec = sliceVector(start, n);
+        ColumnVector vec = sliceVector(start, n, acquiredBuffers);
 
         valuesConsumedInCurrentPage += n;
         logicalRowsConsumedInCurrentPage += countLogicalRowsInSlice(start, n);
@@ -278,22 +302,33 @@ final class BatchColumnReader {
     }
 
     private void loadNextPage() {
-        Arena pageArena = Arena.ofConfined();
+        Arena arena = Arena.ofConfined();
         try {
-            DecodedPage page;
-            try {
-                page = pageCursor.nextDataPage(maxLevels, codec, pageArena);
-            } catch (IOException e) {
-                throw new UncheckedIOException("Failed to read next page for column " + columnPath.dot(), e);
-            }
-            if (page == null) {
-                throw new MalformedFileException("Column " + columnPath.dot() + " exhausted page stream after "
-                        + valuesConsumedTotal + " values; expected " + totalValues);
-            }
+            DecodedPage page = readNextDataPage(arena);
             decodeIntoHeap(page);
-        } finally {
-            pageArena.close();
+        } catch (RuntimeException e) {
+            arena.close();
+            throw e;
         }
+        if (pageBackingIsLivePage) {
+            livePageArena = arena;
+        } else {
+            arena.close();
+        }
+    }
+
+    private DecodedPage readNextDataPage(Arena arena) {
+        DecodedPage page;
+        try {
+            page = pageCursor.nextDataPage(maxLevels, codec, arena);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to read next page for column " + columnPath.dot(), e);
+        }
+        if (page == null) {
+            throw new MalformedFileException("Column " + columnPath.dot() + " exhausted page stream after "
+                    + valuesConsumedTotal + " values; expected " + totalValues);
+        }
+        return page;
     }
 
     private void decodeIntoHeap(DecodedPage page) {
@@ -326,8 +361,16 @@ final class BatchColumnReader {
         pageRepLevels = null;
         pageDefLevels = null;
         clearTypedPayloads();
+        closeLivePageArena();
         valuesConsumedInCurrentPage = 0;
         logicalRowsConsumedInCurrentPage = 0;
+    }
+
+    private void closeLivePageArena() {
+        if (livePageArena != null) {
+            livePageArena.close();
+            livePageArena = null;
+        }
     }
 
     private void clearTypedPayloads() {
@@ -339,6 +382,8 @@ final class BatchColumnReader {
         pageSegments = null;
         pageBinaryBacking = null;
         pageBinaryOffsets = null;
+        pageValuePos = null;
+        pageBackingIsLivePage = false;
         pageIndices = null;
     }
 
@@ -596,24 +641,51 @@ final class BatchColumnReader {
     }
 
     /**
-     * Decodes a contiguous PLAIN/DELTA_LENGTH binary page directly into {@code pageBinaryBacking} and
-     * {@code pageBinaryOffsets} through the sink, producing the same layout the freeze step would have. Leaves
-     * {@code pageSegments} null because the layout is already final.
+     * Points the page binary backing at the live decompressed page value segment and records each row's source byte
+     * position and the row-indexed byte offsets, copying no value bytes. The page Arena is kept alive across the page's
+     * batches (see {@link #loadNextPage()}); each batch copies its rows' bytes straight from the page at slice time.
+     * Leaves {@code pageSegments} null because no per-value scratch segments are produced.
      */
     private void decodeBinaryDirect(MemorySegment buf, Encoding encoding, int nonNullCount) {
-        if (nonNullCount == 0) {
-            binarySink.reset(0, 0);
-        } else {
+        pageBinaryBacking = buf.asReadOnly();
+        pageBackingIsLivePage = true;
+        int[] densePositions = new int[nonNullCount];
+        int[] denseLengths = new int[nonNullCount];
+        if (nonNullCount > 0) {
             PageDecoder<?> decoder = binaryDecoderFor(encoding, null); // PLAIN/DELTA need no dictionary
             decoder.load(buf, nonNullCount);
-            decoder.decodeBinaryInto(nonNullCount, binarySink);
+            decoder.decodeBinaryLayout(nonNullCount, densePositions, denseLengths, 0);
         }
-        int[] denseOffsets = binarySink.offsets();
-        pageBinaryBacking = binarySink.backing();
-        pageBinaryOffsets = (nonNullCount == pageSize)
-                ? denseOffsets
-                : BinaryValueSink.spreadOffsets(denseOffsets, pageValidity, pageSize);
+        pageValuePos = spreadPositions(densePositions, pageValidity, pageSize);
+        pageBinaryOffsets = rowOffsetsFromDenseLengths(denseLengths, pageValidity, pageSize);
         pageSegments = null;
+    }
+
+    /** Row-indexed source positions: present rows take the next dense position; null rows stay zero (never read). */
+    private static int[] spreadPositions(int[] densePositions, BitSet validity, int rowCount) {
+        int[] positions = new int[rowCount];
+        int dense = 0;
+        for (int row = 0; row < rowCount; row++) {
+            if (validity.get(row)) {
+                positions[row] = densePositions[dense++];
+            }
+        }
+        return positions;
+    }
+
+    /** Row-indexed cumulative value-byte offsets (length {@code rowCount + 1}); null rows are zero-length runs. */
+    private static int[] rowOffsetsFromDenseLengths(int[] denseLengths, BitSet validity, int rowCount) {
+        int[] offsets = new int[rowCount + 1];
+        int dense = 0;
+        int acc = 0;
+        for (int row = 0; row < rowCount; row++) {
+            offsets[row] = acc;
+            if (validity.get(row)) {
+                acc += denseLengths[dense++];
+            }
+        }
+        offsets[rowCount] = acc;
+        return offsets;
     }
 
     private MemorySegment[] decodeBinary(MemorySegment buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
@@ -1123,46 +1195,180 @@ final class BatchColumnReader {
 
     // ---- vector slicing ----
 
-    private ColumnVector sliceVector(int start, int n) {
-        int end = start + n;
+    private ColumnVector sliceVector(int start, int n, List<AutoCloseable> acquiredBuffers) {
         Validity sliceValidityMask = sliceValidity(pageValidity, start, n);
         return switch (leaf.kind()) {
-            case INT32 -> IntVector.materialized(Arrays.copyOfRange(pageInts, start, end), sliceValidityMask);
-            case INT64 -> LongVector.materialized(Arrays.copyOfRange(pageLongs, start, end), sliceValidityMask);
-            case FLOAT -> FloatVector.materialized(Arrays.copyOfRange(pageFloats, start, end), sliceValidityMask);
-            case DOUBLE -> DoubleVector.materialized(Arrays.copyOfRange(pageDoubles, start, end), sliceValidityMask);
-            case BOOLEAN -> BooleanVector.materialized(Arrays.copyOfRange(pageBooleans, start, end), sliceValidityMask);
-            case BYTE_ARRAY -> sliceVariableBinary(start, n, sliceValidityMask);
-            case FIXED_LEN_BYTE_ARRAY -> sliceFixedBinary(start, n, requiredByteWidth(), sliceValidityMask);
-            case INT96 -> sliceInt96(start, n, sliceValidityMask);
+            case INT32 -> sliceInt(start, n, sliceValidityMask, acquiredBuffers);
+            case INT64 -> sliceLong(start, n, sliceValidityMask, acquiredBuffers);
+            case FLOAT -> sliceFloat(start, n, sliceValidityMask, acquiredBuffers);
+            case DOUBLE -> sliceDouble(start, n, sliceValidityMask, acquiredBuffers);
+            case BOOLEAN -> sliceBoolean(start, n, sliceValidityMask, acquiredBuffers);
+            case BYTE_ARRAY -> sliceVariableBinary(start, n, sliceValidityMask, acquiredBuffers);
+            case FIXED_LEN_BYTE_ARRAY ->
+                sliceFixedBinary(start, n, requiredByteWidth(), sliceValidityMask, acquiredBuffers);
+            case INT96 -> sliceInt96(start, n, sliceValidityMask, acquiredBuffers);
         };
     }
 
-    private BinaryVector sliceVariableBinary(int start, int n, Validity sliceValidity) {
+    /**
+     * Copies the page's double values for the slice into a buffer the decode valve hands out (a native segment while
+     * the off-heap decode budget has room, an mmap of an on-disk file otherwise). The owning batch closes the buffer on
+     * {@link io.tileverse.parquetry.batch.ParquetRecordBatch#close()}; the resulting vector holds no heap value array.
+     */
+    private DoubleVector sliceDouble(int start, int n, Validity sliceValidity, List<AutoCloseable> acquiredBuffers) {
+        long byteSize = (long) n * Double.BYTES;
+        SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
+        acquiredBuffers.add(pooled);
+        MemorySegment dst = pooled.segment().asSlice(0L, byteSize);
+        MemorySegment.copy(pageDoubles, start, dst, DOUBLE, 0L, n);
+        return DoubleVector.segmentBacked(dst, sliceValidity);
+    }
+
+    /**
+     * Copies the page's int values for the slice into a buffer the decode valve hands out (a native segment while the
+     * off-heap decode budget has room, an mmap of an on-disk file otherwise). The owning batch closes the buffer on
+     * {@link io.tileverse.parquetry.batch.ParquetRecordBatch#close()}; the resulting vector holds no heap value array.
+     */
+    private IntVector sliceInt(int start, int n, Validity sliceValidity, List<AutoCloseable> acquiredBuffers) {
+        long byteSize = (long) n * Integer.BYTES;
+        SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
+        acquiredBuffers.add(pooled);
+        MemorySegment dst = pooled.segment().asSlice(0L, byteSize);
+        MemorySegment.copy(pageInts, start, dst, INT32, 0L, n);
+        return IntVector.segmentBacked(dst, sliceValidity);
+    }
+
+    private LongVector sliceLong(int start, int n, Validity sliceValidity, List<AutoCloseable> acquiredBuffers) {
+        long byteSize = (long) n * Long.BYTES;
+        SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
+        acquiredBuffers.add(pooled);
+        MemorySegment dst = pooled.segment().asSlice(0L, byteSize);
+        MemorySegment.copy(pageLongs, start, dst, INT64, 0L, n);
+        return LongVector.segmentBacked(dst, sliceValidity);
+    }
+
+    private FloatVector sliceFloat(int start, int n, Validity sliceValidity, List<AutoCloseable> acquiredBuffers) {
+        long byteSize = (long) n * Integer.BYTES;
+        SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
+        acquiredBuffers.add(pooled);
+        MemorySegment dst = pooled.segment().asSlice(0L, byteSize);
+        MemorySegment.copy(pageFloats, start, dst, FLOAT, 0L, n);
+        return FloatVector.segmentBacked(dst, sliceValidity);
+    }
+
+    /**
+     * Packs the page's boolean values for the slice into an LSB-first bit-packed buffer the decode valve hands out (a
+     * native segment while the off-heap decode budget has room, an mmap of an on-disk file otherwise). The owning batch
+     * closes the buffer on {@link io.tileverse.parquetry.batch.ParquetRecordBatch#close()}; the resulting vector holds
+     * no heap value array. The bit layout matches the Arrow validity bitmap convention.
+     */
+    private BooleanVector sliceBoolean(int start, int n, Validity sliceValidity, List<AutoCloseable> acquiredBuffers) {
+        long byteSize = Math.max(1L, (n + 7) / 8);
+        SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
+        acquiredBuffers.add(pooled);
+        MemorySegment dst = pooled.segment().asSlice(0L, byteSize);
+        packBooleanBitmap(pageBooleans, start, n, dst);
+        return BooleanVector.segmentBacked(dst, n, sliceValidity);
+    }
+
+    private static void packBooleanBitmap(boolean[] source, int start, int n, MemorySegment dst) {
+        long byteCount = (n + 7) / 8;
+        for (long byteIndex = 0; byteIndex < byteCount; byteIndex++) {
+            int packed = 0;
+            for (int bit = 0; bit < 8; bit++) {
+                int row = (int) (byteIndex * 8 + bit);
+                if (row < n && source[start + row]) {
+                    packed |= 1 << bit;
+                }
+            }
+            dst.set(ValueLayout.JAVA_BYTE, byteIndex, (byte) packed);
+        }
+    }
+
+    private BinaryVector sliceVariableBinary(
+            int start, int n, Validity sliceValidity, List<AutoCloseable> acquiredBuffers) {
         if (isDictionaryBinaryPage()) {
             int[] sliceIndices = Arrays.copyOfRange(pageIndices, start, start + n);
             return BinaryVector.dictionary(dictEntries, sliceIndices, sliceValidity);
         }
-        int[] sliceOffsets = Arrays.copyOfRange(pageBinaryOffsets, start, start + n + 1);
-        return BinaryVector.of(pageBinaryBacking, sliceOffsets, sliceValidity);
+        return sliceConsolidatedBinary(start, n, sliceValidity, acquiredBuffers);
     }
 
-    private FixedLenBinaryVector sliceFixedBinary(int start, int n, int width, Validity sliceValidity) {
+    /**
+     * Copies the slice's variable-length value bytes into a buffer the decode valve hands out (a native segment while
+     * the off-heap decode budget has room, an mmap of an on-disk file otherwise) and rebases the row offsets to that
+     * window. The bytes come straight from the live decompressed page for the direct path, or in one contiguous run
+     * from the frozen page backing for DELTA_BYTE_ARRAY and surviving-rows pages. The owning batch closes the buffer on
+     * {@link io.tileverse.parquetry.batch.ParquetRecordBatch#close()}; the resulting vector holds no heap value bytes,
+     * only the offsets and validity.
+     */
+    private BinaryVector sliceConsolidatedBinary(
+            int start, int n, Validity sliceValidity, List<AutoCloseable> acquiredBuffers) {
+        int base = pageBinaryOffsets[start];
+        long windowBytes = (long) pageBinaryOffsets[start + n] - base;
+        SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(Math.max(1L, windowBytes));
+        acquiredBuffers.add(pooled);
+        MemorySegment dst = pooled.segment().asSlice(0L, windowBytes);
+        if (pageBackingIsLivePage) {
+            copyRowsFromLivePage(start, n, dst);
+        } else if (windowBytes > 0) {
+            MemorySegment.copy(pageBinaryBacking, base, dst, 0L, windowBytes);
+        }
+        int[] rebasedOffsets = new int[n + 1];
+        for (int i = 0; i <= n; i++) {
+            rebasedOffsets[i] = pageBinaryOffsets[start + i] - base;
+        }
+        return BinaryVector.of(dst, rebasedOffsets, sliceValidity);
+    }
+
+    /**
+     * Copies each slice row's value bytes straight from the live page into {@code dst}, packed contiguously. The live
+     * page's bytes are not concatenated (PLAIN interleaves a length prefix per value), hence the per-row copy keyed by
+     * {@link #pageValuePos}; null rows are zero-length and skipped.
+     */
+    private void copyRowsFromLivePage(int start, int n, MemorySegment dst) {
+        long writePos = 0L;
+        for (int i = 0; i < n; i++) {
+            int row = start + i;
+            int len = pageBinaryOffsets[row + 1] - pageBinaryOffsets[row];
+            if (len > 0) {
+                MemorySegment.copy(pageBinaryBacking, pageValuePos[row], dst, writePos, len);
+                writePos += len;
+            }
+        }
+    }
+
+    /**
+     * Copies the page's fixed-width binary slots for the slice into a buffer the decode valve hands out (a native
+     * segment while the off-heap decode budget has room, an mmap of an on-disk file otherwise). The owning batch closes
+     * the buffer on {@link io.tileverse.parquetry.batch.ParquetRecordBatch#close()}. The dictionary branch reuses
+     * shared heap entries and acquires nothing.
+     */
+    private FixedLenBinaryVector sliceFixedBinary(
+            int start, int n, int width, Validity sliceValidity, List<AutoCloseable> acquiredBuffers) {
         if (isDictionaryBinaryPage()) {
             int[] sliceIndices = Arrays.copyOfRange(pageIndices, start, start + n);
             return FixedLenBinaryVector.dictionary(dictEntries, sliceIndices, width, sliceValidity);
         }
-        MemorySegment slot = pageBinaryBacking.asSlice((long) start * width, (long) n * width);
-        return FixedLenBinaryVector.of(slot, width, sliceValidity);
+        long byteSize = (long) n * width;
+        SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
+        acquiredBuffers.add(pooled);
+        MemorySegment dst = pooled.segment().asSlice(0L, byteSize);
+        MemorySegment.copy(pageBinaryBacking, (long) start * width, dst, 0L, byteSize);
+        return FixedLenBinaryVector.of(dst, width, sliceValidity);
     }
 
-    private Int96Vector sliceInt96(int start, int n, Validity sliceValidity) {
+    private Int96Vector sliceInt96(int start, int n, Validity sliceValidity, List<AutoCloseable> acquiredBuffers) {
         if (isDictionaryBinaryPage()) {
             int[] sliceIndices = Arrays.copyOfRange(pageIndices, start, start + n);
             return Int96Vector.dictionary(dictEntries, sliceIndices, sliceValidity);
         }
-        MemorySegment slot = pageBinaryBacking.asSlice((long) start * INT96_WIDTH, (long) n * INT96_WIDTH);
-        return Int96Vector.of(slot, sliceValidity);
+        long byteSize = (long) n * INT96_WIDTH;
+        SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
+        acquiredBuffers.add(pooled);
+        MemorySegment dst = pooled.segment().asSlice(0L, byteSize);
+        MemorySegment.copy(pageBinaryBacking, (long) start * INT96_WIDTH, dst, 0L, byteSize);
+        return Int96Vector.of(dst, sliceValidity);
     }
 
     static BitSet sliceBitSet(BitSet source, int start, int n) {
@@ -1183,7 +1389,7 @@ final class BatchColumnReader {
 
     // ---- close ----
 
-    /** No native memory to release; page Arenas are closed inside {@link #loadNextPage()}. */
+    /** Releases the page Arena retained for a directly-read binary page, if any; idempotent via {@code advance}. */
     void close() {
         advancePastCurrentPage();
     }

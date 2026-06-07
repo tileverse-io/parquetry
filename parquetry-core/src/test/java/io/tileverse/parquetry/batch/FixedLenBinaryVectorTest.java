@@ -18,7 +18,9 @@ package io.tileverse.parquetry.batch;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.util.BitSet;
 
 import org.junit.jupiter.api.Nested;
@@ -93,6 +95,22 @@ class FixedLenBinaryVectorTest {
         FixedLenBinaryVector vec = FixedLenBinaryVector.materialized(values, 2, validity);
 
         assertThat(vec.approximateHeapBytes()).isEqualTo(4L + vec.validity().heapBytes());
+    }
+
+    @Test
+    void consolidatedOffHeapBackingIsNotCountedAsHeap() {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment backing = arena.allocate(6); // two 3-byte values
+            byte[] bytes = {1, 2, 3, 4, 5, 6};
+            MemorySegment.copy(MemorySegment.ofArray(bytes), 0L, backing, 0L, 6L);
+            FixedLenBinaryVector vector = FixedLenBinaryVector.of(backing, 3, Validity.allValid(2));
+            assertThat(vector.size()).as("size").isEqualTo(2);
+            assertThat(vector.get(0).toArray(ValueLayout.JAVA_BYTE)).containsExactly(1, 2, 3);
+            assertThat(vector.get(1).toArray(ValueLayout.JAVA_BYTE)).containsExactly(4, 5, 6);
+            assertThat(vector.approximateHeapBytes())
+                    .as("a native consolidated backing is off-heap")
+                    .isEqualTo(vector.validity().heapBytes());
+        }
     }
 
     @Test

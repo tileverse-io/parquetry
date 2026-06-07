@@ -25,6 +25,9 @@ import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.Validity;
+import io.tileverse.parquetry.internal.arrow.buffer.EncodedBuffer;
+import io.tileverse.parquetry.internal.arrow.buffer.EncodedNode;
+import io.tileverse.parquetry.internal.arrow.buffer.NodeEncoding;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 class EncodedBatchSerializerTest {

@@ -33,6 +33,8 @@ import org.apache.parquet.format.PageType;
 import org.apache.parquet.format.Util;
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.batch.BinaryVector;
+import io.tileverse.parquetry.batch.DoubleVector;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.format.ColumnMetaData;
@@ -65,8 +67,8 @@ class BatchRowGroupReaderTest {
         ParquetSchema schema = flatSchema("a");
         ParquetSchema fileSchema = schema;
 
-        try (BatchRowGroupReader reader =
-                new BatchRowGroupReader(List.of(chunk), schema, fileSchema, OptionalInt.empty(), Optional.empty())) {
+        try (BatchRowGroupReader reader = new BatchRowGroupReader(
+                TestDecodeBuffers.ample(), List.of(chunk), schema, fileSchema, OptionalInt.empty(), Optional.empty())) {
             assertThat(reader.hasMore()).isTrue();
 
             try (ParquetRecordBatch batch = reader.nextBatch()) {
@@ -97,7 +99,12 @@ class BatchRowGroupReaderTest {
         ParquetSchema fileSchema = schema;
 
         try (BatchRowGroupReader reader = new BatchRowGroupReader(
-                List.of(chunkA, chunkB), schema, fileSchema, OptionalInt.empty(), Optional.empty())) {
+                TestDecodeBuffers.ample(),
+                List.of(chunkA, chunkB),
+                schema,
+                fileSchema,
+                OptionalInt.empty(),
+                Optional.empty())) {
             assertThat(reader.hasMore()).isTrue();
 
             // First batch: capped at page 1 boundary (4 rows)
@@ -141,8 +148,8 @@ class BatchRowGroupReaderTest {
         ParquetSchema schema = flatSchema("a");
 
         // Cap at 3 rows; the page has 8 rows, so we should get ceil(8/3) = 3 batches: 3, 3, 2
-        try (BatchRowGroupReader reader =
-                new BatchRowGroupReader(List.of(chunk), schema, schema, OptionalInt.of(3), Optional.empty())) {
+        try (BatchRowGroupReader reader = new BatchRowGroupReader(
+                TestDecodeBuffers.ample(), List.of(chunk), schema, schema, OptionalInt.of(3), Optional.empty())) {
             try (ParquetRecordBatch b1 = reader.nextBatch()) {
                 assertThat(b1.rowCount()).isEqualTo(3);
             }
@@ -165,8 +172,8 @@ class BatchRowGroupReaderTest {
     @Test
     void hasMoreFalseWhenNoProjectedLeaves() {
         ParquetSchema schema = flatSchema(); // empty schema
-        try (BatchRowGroupReader reader =
-                new BatchRowGroupReader(List.of(), schema, schema, OptionalInt.empty(), Optional.empty())) {
+        try (BatchRowGroupReader reader = new BatchRowGroupReader(
+                TestDecodeBuffers.ample(), List.of(), schema, schema, OptionalInt.empty(), Optional.empty())) {
             assertThat(reader.hasMore()).isFalse();
         }
     }
@@ -179,8 +186,8 @@ class BatchRowGroupReaderTest {
         FetchedColumnChunk chunk = singlePageInt32Chunk(PATH_A, values);
         ParquetSchema schema = flatSchema("a");
 
-        try (BatchRowGroupReader reader =
-                new BatchRowGroupReader(List.of(chunk), schema, schema, OptionalInt.empty(), Optional.empty())) {
+        try (BatchRowGroupReader reader = new BatchRowGroupReader(
+                TestDecodeBuffers.ample(), List.of(chunk), schema, schema, OptionalInt.empty(), Optional.empty())) {
             try (ParquetRecordBatch batch = reader.nextBatch()) {
                 assertThat(batch.rowCount()).isEqualTo(1);
             }
@@ -206,8 +213,13 @@ class BatchRowGroupReaderTest {
         FetchedColumnChunk chunkB = twoPageInt32Chunk(PATH_B, colBPage1, colBPage2);
 
         ParquetSchema schema = flatSchema("a", "b");
-        BatchRowGroupReader reader =
-                new BatchRowGroupReader(List.of(chunkA, chunkB), schema, schema, OptionalInt.empty(), Optional.empty());
+        BatchRowGroupReader reader = new BatchRowGroupReader(
+                TestDecodeBuffers.ample(),
+                List.of(chunkA, chunkB),
+                schema,
+                schema,
+                OptionalInt.empty(),
+                Optional.empty());
 
         // Consume only the first batch (page 1). The reader still has page 2 loaded in each column.
         try (ParquetRecordBatch batch = reader.nextBatch()) {
@@ -222,6 +234,58 @@ class BatchRowGroupReaderTest {
         // Calling close() a second time must be safe: BatchColumnReader.close() nulls out its arena refs,
         // so a second iteration over the same column readers is a no-op.
         reader.close();
+    }
+
+    // --- test 8: decoded DOUBLE column lives off-heap ---
+
+    @Test
+    void doubleColumnIsSegmentBacked() throws IOException {
+        double[] values = {1.5, 2.5, 3.5, 4.5};
+        FetchedColumnChunk chunk = singlePageDoubleChunk(PATH_A, values);
+        ParquetSchema schema = flatDoubleSchema("a");
+
+        try (BatchRowGroupReader reader = new BatchRowGroupReader(
+                TestDecodeBuffers.ample(), List.of(chunk), schema, schema, OptionalInt.empty(), Optional.empty())) {
+            try (ParquetRecordBatch batch = reader.nextBatch()) {
+                DoubleVector vec = (DoubleVector) batch.columns().get(PATH_A);
+
+                assertThat(vec.approximateHeapBytes())
+                        .as("double values are off-heap; only the validity bitmap counts as heap")
+                        .isEqualTo(vec.validity().heapBytes());
+                assertThat(vec.getDouble(0))
+                        .as("first value reads back through the off-heap buffer")
+                        .isEqualTo(1.5);
+                assertThat(vec.asArray()).containsExactly(1.5, 2.5, 3.5, 4.5);
+            }
+        }
+    }
+
+    // --- test 9: decoded BYTE_ARRAY column lives off-heap ---
+
+    @Test
+    void byteArrayColumnIsSegmentBacked() throws IOException {
+        byte[][] values = {"ab".getBytes(), "cde".getBytes(), "f".getBytes()};
+        FetchedColumnChunk chunk = singlePageByteArrayChunk(PATH_A, values);
+        ParquetSchema schema = flatByteArraySchema("a");
+
+        try (BatchRowGroupReader reader = new BatchRowGroupReader(
+                TestDecodeBuffers.ample(), List.of(chunk), schema, schema, OptionalInt.empty(), Optional.empty())) {
+            try (ParquetRecordBatch batch = reader.nextBatch()) {
+                BinaryVector binary = (BinaryVector) batch.columns().get(PATH_A);
+
+                assertThat(binary).as("BYTE_ARRAY decodes to a BinaryVector").isInstanceOf(BinaryVector.class);
+                assertThat(binary.approximateHeapBytes())
+                        .as("value bytes are off-heap; only offsets and validity count as heap")
+                        .isEqualTo((long) (binary.size() + 1) * Integer.BYTES
+                                + binary.validity().heapBytes());
+                assertThat(binary.get(0))
+                        .as("first value reads back through the off-heap buffer")
+                        .isNotNull();
+                assertThat(binary.get(0).toArray(java.lang.foreign.ValueLayout.JAVA_BYTE))
+                        .as("first value bytes")
+                        .containsExactly('a', 'b');
+            }
+        }
     }
 
     // --- fixture helpers ---
@@ -242,6 +306,50 @@ class BatchRowGroupReaderTest {
         byte[] payload = encodeInt32sLittleEndian(values);
         byte[] chunkBytes = encodeV1Page(values.length, payload, org.apache.parquet.format.Encoding.PLAIN);
         return heapChunk(path, chunkBytes, values.length);
+    }
+
+    /** Builds a {@link ParquetSchema} with one required DOUBLE leaf column, under a synthetic root group. */
+    private static ParquetSchema flatDoubleSchema(String name) {
+        SchemaNode.Primitive leaf = new SchemaNode.Primitive(
+                name, Repetition.REQUIRED, PrimitiveKind.DOUBLE, OptionalInt.empty(), Optional.empty(), -1);
+        SchemaNode.Group root = new SchemaNode.Group("root", Repetition.REQUIRED, List.of(leaf), Optional.empty(), -1);
+        return new ParquetSchema(root);
+    }
+
+    /** Builds a {@link FetchedColumnChunk} containing a single uncompressed PLAIN DOUBLE data page. */
+    private static FetchedColumnChunk singlePageDoubleChunk(ColumnPath path, double[] values) throws IOException {
+        byte[] payload = encodeDoublesLittleEndian(values);
+        byte[] chunkBytes = encodeV1Page(values.length, payload, org.apache.parquet.format.Encoding.PLAIN);
+        return heapChunk(path, PhysicalType.DOUBLE, chunkBytes, values.length);
+    }
+
+    /** Builds a {@link ParquetSchema} with one required BYTE_ARRAY leaf column, under a synthetic root group. */
+    private static ParquetSchema flatByteArraySchema(String name) {
+        SchemaNode.Primitive leaf = new SchemaNode.Primitive(
+                name, Repetition.REQUIRED, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1);
+        SchemaNode.Group root = new SchemaNode.Group("root", Repetition.REQUIRED, List.of(leaf), Optional.empty(), -1);
+        return new ParquetSchema(root);
+    }
+
+    /**
+     * Builds a {@link FetchedColumnChunk} containing a single uncompressed PLAIN BYTE_ARRAY data page. Each value is a
+     * 4-byte little-endian length prefix followed by its bytes (required column: no def levels).
+     */
+    private static FetchedColumnChunk singlePageByteArrayChunk(ColumnPath path, byte[][] values) throws IOException {
+        byte[] payload = encodePlainByteArrays(values);
+        byte[] chunkBytes = encodeV1Page(values.length, payload, org.apache.parquet.format.Encoding.PLAIN);
+        return heapChunk(path, PhysicalType.BYTE_ARRAY, chunkBytes, values.length);
+    }
+
+    private static byte[] encodePlainByteArrays(byte[][] rows) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        for (byte[] row : rows) {
+            ByteBuffer lengthPrefix = ByteBuffer.allocate(4).order(LITTLE_ENDIAN);
+            lengthPrefix.putInt(row.length);
+            out.writeBytes(lengthPrefix.array());
+            out.writeBytes(row);
+        }
+        return out.toByteArray();
     }
 
     /** Builds a {@link FetchedColumnChunk} containing two uncompressed PLAIN INT32 data pages concatenated. */
@@ -285,10 +393,14 @@ class BatchRowGroupReaderTest {
      * The chunk is uncompressed with maxRep=0, maxDef=0 (required column).
      */
     private static FetchedColumnChunk heapChunk(ColumnPath path, byte[] data, long numValues) {
+        return heapChunk(path, PhysicalType.INT32, data, numValues);
+    }
+
+    private static FetchedColumnChunk heapChunk(ColumnPath path, PhysicalType type, byte[] data, long numValues) {
         MemorySegment segment = MemorySegment.ofArray(data).asReadOnly();
 
         ColumnMetaData meta = ColumnMetaData.builder()
-                .type(PhysicalType.INT32)
+                .type(type)
                 .encodings(List.of(Encoding.PLAIN))
                 .pathInSchema(pathSegments(path))
                 .codec(CompressionCodec.UNCOMPRESSED)
@@ -305,6 +417,14 @@ class BatchRowGroupReaderTest {
         ByteBuffer buf = ByteBuffer.allocate(values.length * 4).order(LITTLE_ENDIAN);
         for (int v : values) {
             buf.putInt(v);
+        }
+        return buf.array();
+    }
+
+    private static byte[] encodeDoublesLittleEndian(double[] values) {
+        ByteBuffer buf = ByteBuffer.allocate(values.length * Double.BYTES).order(LITTLE_ENDIAN);
+        for (double v : values) {
+            buf.putDouble(v);
         }
         return buf.array();
     }

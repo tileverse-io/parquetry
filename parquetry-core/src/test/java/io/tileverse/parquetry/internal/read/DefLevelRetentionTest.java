@@ -68,7 +68,7 @@ class DefLevelRetentionTest {
         FetchedColumnChunk chunk = repeatedOptionalInt32Chunk(presentValues, repLevels, defLevels, maxRep, maxDef);
         SchemaNode.Primitive leaf = optionalInt32Element();
 
-        BatchColumnReader reader = new BatchColumnReader(chunk, leaf);
+        BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, leaf);
 
         int[] elementDefs = reader.currentPageDefLevels();
 

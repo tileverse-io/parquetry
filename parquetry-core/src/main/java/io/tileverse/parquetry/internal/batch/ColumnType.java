@@ -17,6 +17,8 @@ package io.tileverse.parquetry.internal.batch;
 
 import java.util.SequencedMap;
 
+import io.tileverse.parquetry.internal.arrow.buffer.EncodedNode;
+import io.tileverse.parquetry.internal.arrow.buffer.LeafType;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**

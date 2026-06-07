@@ -52,6 +52,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     private final RowGroupPrefetcher prefetcher;
     private final DecodeExecutor decodeExecutor;
     private final DecodeBudget decodeBudget;
+    private final DecodeBufferAllocator decodeBufferAllocator;
     private final DiskBudget diskBudget;
     private final Path spillDir;
     private final boolean spillEnabled;
@@ -74,6 +75,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
             @NonNull RowGroupPrefetcher prefetcher,
             @NonNull DecodeExecutor decodeExecutor,
             @NonNull DecodeBudget decodeBudget,
+            @NonNull DecodeBufferAllocator decodeBufferAllocator,
             @NonNull DiskBudget diskBudget,
             @NonNull Path spillDir,
             boolean spillEnabled,
@@ -87,6 +89,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
         this.prefetcher = prefetcher;
         this.decodeExecutor = decodeExecutor;
         this.decodeBudget = decodeBudget;
+        this.decodeBufferAllocator = decodeBufferAllocator;
         this.diskBudget = diskBudget;
         this.spillDir = spillDir;
         this.spillEnabled = spillEnabled;
@@ -166,13 +169,14 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
         if (lateMat.isPresent()) {
             return buildLateMaterializedDriver(fetch, mask, index);
         }
-        return new ClassicRowGroupDriver(fetch, projectedSchema, fileSchema, batchSizeCap, mask);
+        return new ClassicRowGroupDriver(decodeBufferAllocator, fetch, projectedSchema, fileSchema, batchSizeCap, mask);
     }
 
     private RowGroupBatchDriver buildLateMaterializedDriver(RowGroupFetch fetch, Optional<RowMask> mask, int index) {
         LateMaterialization lm = lateMat.orElseThrow();
         LateMaterialization.PerRowGroup perRg = lm.perRowGroup().get(index);
         LateMaterializingRowGroupReader reader = new LateMaterializingRowGroupReader(
+                decodeBufferAllocator,
                 fetch.columns(),
                 fileSchema,
                 lm.outputSchema(),

@@ -22,16 +22,17 @@ import lombok.NonNull;
 /**
  * Column vector for INT96 (deprecated 12-byte timestamp) values, in one of two layouts. INT96 is a fixed 12-byte value.
  *
- * <p>Consolidated mode: the rows are stored full-slot in a single read-only heap backing buffer of {@code size() * 12}
+ * <p>Consolidated mode: the rows are stored full-slot in a single read-only backing buffer of {@code size() * 12}
  * bytes, with row {@code i} occupying the slot at {@code i * 12}. Null cells (validity bit clear) keep a zeroed slot;
- * the layout has no holes. {@link #get(int)} returns a read-only slice of the backing on demand.
+ * the layout has no holes. {@link #get(int)} returns a read-only slice of the backing on demand. The decode path hands
+ * out an off-heap (native) backing; materialized and dictionary-built vectors use a heap backing.
  *
  * <p>Dictionary mode (low-cardinality columns): the distinct values live once in a shared {@code dictEntries} array,
  * and an {@code int[]} of per-row indexes selects an entry for each row. This holds {@code 4} bytes per row over the
  * shared entries instead of one slice per row. {@link #get(int)} returns the shared entry directly, with no slice.
  *
  * <p>The mode is chosen by which fields are populated: {@code indices != null} means dictionary mode. Either way the
- * returned segments are read-only and heap-owned, which outlives any decode Arena.
+ * returned segments are read-only; a native consolidated backing is owned by the batch and released on its close.
  */
 public final class Int96Vector implements ColumnVector {
 
@@ -139,7 +140,8 @@ public final class Int96Vector implements ColumnVector {
         if (indices != null) {
             return (long) indices.length * Integer.BYTES + dictionaryEntryBytes() + validity.heapBytes();
         }
-        return backing.byteSize() + validity.heapBytes();
+        long backingBytes = backing.isNative() ? 0L : backing.byteSize();
+        return backingBytes + validity.heapBytes();
     }
 
     private long dictionaryEntryBytes() {

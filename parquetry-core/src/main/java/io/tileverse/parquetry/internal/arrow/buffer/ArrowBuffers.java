@@ -13,15 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.internal.batch;
-
-import static io.tileverse.parquetry.format.ParquetLayouts.DOUBLE;
-import static io.tileverse.parquetry.format.ParquetLayouts.FLOAT;
-import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
-import static io.tileverse.parquetry.format.ParquetLayouts.INT64;
+package io.tileverse.parquetry.internal.arrow.buffer;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
+import java.nio.ByteOrder;
 import java.util.BitSet;
 
 import io.tileverse.parquetry.batch.Validity;
@@ -46,6 +42,13 @@ public final class ArrowBuffers {
     private static final int FLOAT_BYTES = Float.BYTES;
     private static final int DOUBLE_BYTES = Double.BYTES;
     private static final int BITS_PER_BYTE = 8;
+
+    private static final ValueLayout.OfInt INT32 = ValueLayout.JAVA_INT_UNALIGNED.withOrder(ByteOrder.LITTLE_ENDIAN);
+    private static final ValueLayout.OfLong INT64 = ValueLayout.JAVA_LONG_UNALIGNED.withOrder(ByteOrder.LITTLE_ENDIAN);
+    private static final ValueLayout.OfFloat FLOAT =
+            ValueLayout.JAVA_FLOAT_UNALIGNED.withOrder(ByteOrder.LITTLE_ENDIAN);
+    private static final ValueLayout.OfDouble DOUBLE =
+            ValueLayout.JAVA_DOUBLE_UNALIGNED.withOrder(ByteOrder.LITTLE_ENDIAN);
 
     private ArrowBuffers() {
         // utility

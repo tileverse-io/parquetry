@@ -60,8 +60,8 @@ class RowGroupBatchDriverTest {
         ParquetSchema schema = flatSchema("a");
 
         List<int[]> decoded = new ArrayList<>();
-        try (ClassicRowGroupDriver driver =
-                new ClassicRowGroupDriver(fetch, schema, schema, OptionalInt.empty(), Optional.empty())) {
+        try (ClassicRowGroupDriver driver = new ClassicRowGroupDriver(
+                TestDecodeBuffers.ample(), fetch, schema, schema, OptionalInt.empty(), Optional.empty())) {
             while (driver.hasMore()) {
                 try (ParquetRecordBatch batch = driver.nextBatch()) {
                     IntVector vec = (IntVector) batch.columns().get(PATH_A);
@@ -82,8 +82,8 @@ class RowGroupBatchDriverTest {
         RowGroupFetch fetch = fetchOf(singlePageInt32Chunk(PATH_A, new int[] {1, 2, 3}));
         ParquetSchema schema = flatSchema("a");
 
-        ClassicRowGroupDriver driver =
-                new ClassicRowGroupDriver(fetch, schema, schema, OptionalInt.empty(), Optional.empty());
+        ClassicRowGroupDriver driver = new ClassicRowGroupDriver(
+                TestDecodeBuffers.ample(), fetch, schema, schema, OptionalInt.empty(), Optional.empty());
         try (ParquetRecordBatch batch = driver.nextBatch()) {
             assertThat(batch.rowCount()).isEqualTo(3);
         }

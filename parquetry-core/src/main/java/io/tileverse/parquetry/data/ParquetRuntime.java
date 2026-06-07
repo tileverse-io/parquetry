@@ -42,6 +42,7 @@ public record ParquetRuntime(
         @NonNull SegmentPool segmentPool,
         @NonNull FetchBudget fetchBudget,
         @NonNull DecodeBudget decodeBudget,
+        @NonNull DecodeBudget offHeapDecodeBudget,
         @NonNull DiskBudget diskBudget,
         @NonNull Path spillDir,
         boolean spillEnabled,
@@ -88,6 +89,7 @@ public record ParquetRuntime(
                 segmentPool,
                 fetchBudget,
                 decodeBudget,
+                offHeapDecodeBudget,
                 diskBudget,
                 spillDir,
                 spillEnabled,
@@ -105,6 +107,7 @@ public record ParquetRuntime(
                 segmentPool,
                 fetchBudget,
                 decodeBudget,
+                offHeapDecodeBudget,
                 diskBudget,
                 spillDir,
                 spillEnabled,
@@ -122,6 +125,7 @@ public record ParquetRuntime(
                 segmentPool,
                 fetchBudget,
                 decodeBudget,
+                offHeapDecodeBudget,
                 diskBudget,
                 spillDir,
                 spillEnabled,
@@ -148,6 +152,7 @@ public record ParquetRuntime(
         private ResourceLimits resourceLimits = ResourceLimits.getDefault();
         private FetchBudget fetchBudget;
         private DecodeBudget decodeBudget = DecodeBudget.defaultBudget();
+        private DecodeBudget offHeapDecodeBudget;
         private DiskBudget diskBudget;
         private Path spillDir;
         private boolean spillEnabled = true;
@@ -181,6 +186,11 @@ public record ParquetRuntime(
 
         public Builder decodeBudget(@NonNull DecodeBudget decodeBudget) {
             this.decodeBudget = decodeBudget;
+            return this;
+        }
+
+        public Builder offHeapDecodeBudget(@NonNull DecodeBudget offHeapDecodeBudget) {
+            this.offHeapDecodeBudget = offHeapDecodeBudget;
             return this;
         }
 
@@ -236,6 +246,8 @@ public record ParquetRuntime(
             IoLimits limits = IoLimits.from(resourceLimits);
             FetchBudget resolvedFetchBudget =
                     fetchBudget != null ? fetchBudget : FetchBudget.ofBytes(limits.maxOffHeapBytes());
+            DecodeBudget resolvedOffHeapDecodeBudget =
+                    offHeapDecodeBudget != null ? offHeapDecodeBudget : DecodeBudget.ofBytes(limits.maxDecodeBytes());
             DiskBudget resolvedDiskBudget =
                     diskBudget != null ? diskBudget : DiskBudget.ofBytes(limits.maxSpillBytes());
             Path resolvedSpillDir = spillDir != null ? spillDir : limits.spillDir();
@@ -246,6 +258,7 @@ public record ParquetRuntime(
                     segmentPool,
                     resolvedFetchBudget,
                     decodeBudget,
+                    resolvedOffHeapDecodeBudget,
                     resolvedDiskBudget,
                     resolvedSpillDir,
                     spillEnabled,

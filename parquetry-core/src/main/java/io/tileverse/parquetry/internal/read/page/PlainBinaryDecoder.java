@@ -19,8 +19,6 @@ import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
 
 import java.lang.foreign.MemorySegment;
 
-import io.tileverse.parquetry.internal.read.BinaryValueSink;
-
 /**
  * PLAIN decoder for BYTE_ARRAY: a 4-byte little-endian length prefix followed by that many bytes per value.
  *
@@ -55,20 +53,13 @@ public final class PlainBinaryDecoder implements PageDecoder<MemorySegment> {
     }
 
     @Override
-    public void decodeBinaryInto(int n, BinaryValueSink sink) {
-        long scan = offset;
-        int total = 0;
+    public void decodeBinaryLayout(int n, int[] positions, int[] lengths, int dst) {
         for (int i = 0; i < n; i++) {
-            int len = segment.get(INT32, scan);
-            scan += Integer.BYTES + len;
-            total += len;
-        }
-        sink.reset(n, total);
-        for (int i = 0; i < n; i++) {
-            int len = segment.get(INT32, offset);
+            int length = segment.get(INT32, offset);
             offset += Integer.BYTES;
-            sink.appendValue(segment, offset, len);
-            offset += len;
+            positions[dst + i] = Math.toIntExact(offset);
+            lengths[dst + i] = length;
+            offset += length;
         }
     }
 

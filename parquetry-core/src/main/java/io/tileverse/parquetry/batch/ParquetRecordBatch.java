@@ -22,8 +22,10 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
- * One batch of rows from a Parquet read. Holds one {@link ColumnVector} per projected leaf. Vectors are heap-backed at
- * construction; their values remain valid even after {@link #close()}.
+ * One batch of rows from a Parquet read. Holds one {@link ColumnVector} per projected leaf. Most vectors are
+ * heap-backed and their values remain valid after {@link #close()}. Segment-backed vectors are decoded into off-heap
+ * buffers this batch owns (registered via {@link #registerBuffer(AutoCloseable)}); those buffers are released by
+ * {@link #close()} and their values must not be read afterward.
  */
 public sealed interface ParquetRecordBatch extends AutoCloseable permits DefaultParquetRecordBatch {
 
@@ -51,7 +53,17 @@ public sealed interface ParquetRecordBatch extends AutoCloseable permits Default
      */
     void attachReleaseAction(Runnable releaseAction);
 
-    /** Releases the batch's token Arena. Idempotent. Vectors remain accessible after close. */
+    /**
+     * Registers an off-heap buffer this batch owns; the batch closes it when the batch closes. A segment-backed vector
+     * reads through such a buffer, which must outlive the vector's accessors and is released exactly once on
+     * {@link #close()}.
+     */
+    void registerBuffer(AutoCloseable buffer);
+
+    /**
+     * Releases the batch's owned off-heap buffers and its Arena. Idempotent. Heap-backed vector values remain readable
+     * after close; segment-backed vector values do not.
+     */
     @Override
     void close();
 }

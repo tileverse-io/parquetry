@@ -15,25 +15,36 @@
  */
 package io.tileverse.parquetry.batch;
 
+import static io.tileverse.parquetry.format.ParquetLayouts.DOUBLE;
+
+import java.lang.foreign.MemorySegment;
+
 import lombok.NonNull;
 
 public final class DoubleVector implements ColumnVector {
 
     private final double[] values;
+    private final MemorySegment segmentValues;
     private final Validity validity;
 
-    private DoubleVector(@NonNull double[] values, @NonNull Validity validity) {
+    private DoubleVector(double[] values, MemorySegment segmentValues, @NonNull Validity validity) {
         this.values = values;
+        this.segmentValues = segmentValues;
         this.validity = validity;
     }
 
     public static DoubleVector materialized(@NonNull double[] values, @NonNull Validity validity) {
-        return new DoubleVector(values, validity);
+        return new DoubleVector(values, null, validity);
+    }
+
+    /** Reads values from an off-heap little-endian segment; the segment's owner controls its lifetime. */
+    public static DoubleVector segmentBacked(@NonNull MemorySegment segmentValues, @NonNull Validity validity) {
+        return new DoubleVector(null, segmentValues, validity);
     }
 
     @Override
     public int size() {
-        return values.length;
+        return segmentValues != null ? (int) (segmentValues.byteSize() / Double.BYTES) : values.length;
     }
 
     @Override
@@ -49,21 +60,29 @@ public final class DoubleVector implements ColumnVector {
         if (validity.isNull(row)) {
             throw new IllegalStateException("row %d is null; guard with isNull(row) or hasNulls()".formatted(row));
         }
-        return values[row];
+        return segmentValues != null ? segmentValues.getAtIndex(DOUBLE, row) : values[row];
     }
 
     @Override
     @SuppressWarnings("unchecked")
     public <T> T get(int row) {
-        return validity.isNull(row) ? null : (T) Double.valueOf(values[row]);
+        return validity.isNull(row) ? null : (T) Double.valueOf(getDouble(row));
     }
 
     public double[] asArray() {
-        return values;
+        if (segmentValues == null) {
+            return values;
+        }
+        double[] out = new double[size()];
+        MemorySegment.copy(segmentValues, DOUBLE, 0L, out, 0, out.length);
+        return out;
     }
 
     @Override
     public long approximateHeapBytes() {
+        if (segmentValues != null) {
+            return validity.heapBytes();
+        }
         return (long) values.length * Long.BYTES + validity.heapBytes();
     }
 }
