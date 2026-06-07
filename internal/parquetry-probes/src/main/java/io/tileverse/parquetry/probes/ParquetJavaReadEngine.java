@@ -1,0 +1,172 @@
+/*
+ * Copyright (c) 2026 Multivers.io
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.tileverse.parquetry.probes;
+
+import java.io.IOException;
+import java.lang.foreign.MemorySegment;
+
+import org.apache.parquet.example.data.Group;
+import org.apache.parquet.filter2.compat.FilterCompat;
+import org.apache.parquet.filter2.predicate.FilterApi;
+import org.apache.parquet.filter2.predicate.FilterPredicate;
+import org.apache.parquet.hadoop.ParquetReader;
+import org.apache.parquet.hadoop.api.ReadSupport;
+import org.apache.parquet.hadoop.example.GroupReadSupport;
+import org.apache.parquet.io.LocalInputFile;
+import org.apache.parquet.io.api.Binary;
+import org.apache.parquet.schema.GroupType;
+import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName;
+import org.apache.parquet.schema.Type;
+
+import io.tileverse.parquetry.geo.jts.JtsGeometryFilter;
+
+/**
+ * parquet-java 1.17.0's read arm: a {@link ParquetReader} over {@link LocalInputFile} (no Hadoop filesystem), opened
+ * per read. parquet-java has no spatial concept. The spatial filter pushes a numeric prefilter on the {@code bbox}
+ * covering columns (row-group and page pruning) and applies the exact geometry test app-side with the same JTS gate
+ * parquetry uses. Every {@code Group} is read out in full, mirroring a consumer that materializes each row.
+ */
+final class ParquetJavaReadEngine implements ReadEngine {
+
+    private final ReadContext context;
+    private long sink;
+
+    ParquetJavaReadEngine(ReadContext context) {
+        this.context = context;
+    }
+
+    @Override
+    public String name() {
+        return "parquet-java";
+    }
+
+    @Override
+    public long read(Scenario scenario) throws IOException {
+        FilterCompat.Filter filter = filter(scenario);
+        boolean exactGateNeeded = scenario == Scenario.SPATIAL || scenario == Scenario.ATTRIBUTE_AND_SPATIAL;
+        JtsGeometryFilter exactGate = JtsGeometryFilter.intersects(context.geometryColumn(), context.queryDiamond());
+        try (ParquetReader<Group> reader = groupReader(filter)) {
+            long count = 0L;
+            Group group = reader.read();
+            while (group != null) {
+                if (!exactGateNeeded || passesExactGate(group, exactGate)) {
+                    consumeGroup(group);
+                    count++;
+                }
+                group = reader.read();
+            }
+            return count;
+        }
+    }
+
+    @Override
+    public long checksum() {
+        return sink;
+    }
+
+    private ParquetReader<Group> groupReader(FilterCompat.Filter filter) throws IOException {
+        ParquetReader.Builder<Group> builder = new ParquetReader.Builder<>(new LocalInputFile(context.file())) {
+            @Override
+            protected ReadSupport<Group> getReadSupport() {
+                return new GroupReadSupport();
+            }
+        };
+        if (filter != FilterCompat.NOOP) {
+            builder = builder.withFilter(filter);
+        }
+        return builder.build();
+    }
+
+    private FilterCompat.Filter filter(Scenario scenario) {
+        return switch (scenario) {
+            case NO_FILTER -> FilterCompat.NOOP;
+            case ATTRIBUTE -> FilterCompat.get(attributeFilterPredicate());
+            case SPATIAL -> spatialPrefilter() == null ? FilterCompat.NOOP : FilterCompat.get(spatialPrefilter());
+            case ATTRIBUTE_AND_SPATIAL -> {
+                FilterPredicate attribute = attributeFilterPredicate();
+                FilterPredicate bbox = spatialPrefilter();
+                yield FilterCompat.get(bbox == null ? attribute : FilterApi.and(attribute, bbox));
+            }
+        };
+    }
+
+    private FilterPredicate attributeFilterPredicate() {
+        return FilterApi.eq(
+                FilterApi.binaryColumn(context.attributeColumnName()), Binary.fromString(context.attributeValue()));
+    }
+
+    private FilterPredicate spatialPrefilter() {
+        return context.bboxCoveringAvailable() ? bboxIntersectsPredicate() : null;
+    }
+
+    /**
+     * A row's bbox [xmin,xmax,ymin,ymax] overlaps the query envelope iff {@code xmin <= qMaxX and xmax >= qMinX and
+     * ymin <= qMaxY and ymax >= qMinY}. This is the lowering parquetry's spatial covering rewrite does internally.
+     */
+    private FilterPredicate bboxIntersectsPredicate() {
+        String bbox = context.bboxColumn();
+        FilterPredicate xOverlap = FilterApi.and(
+                FilterApi.ltEq(
+                        FilterApi.doubleColumn(bbox + ".xmin"),
+                        context.queryEnvelope().maxX()),
+                FilterApi.gtEq(
+                        FilterApi.doubleColumn(bbox + ".xmax"),
+                        context.queryEnvelope().minX()));
+        FilterPredicate yOverlap = FilterApi.and(
+                FilterApi.ltEq(
+                        FilterApi.doubleColumn(bbox + ".ymin"),
+                        context.queryEnvelope().maxY()),
+                FilterApi.gtEq(
+                        FilterApi.doubleColumn(bbox + ".ymax"),
+                        context.queryEnvelope().minY()));
+        return FilterApi.and(xOverlap, yOverlap);
+    }
+
+    private boolean passesExactGate(Group group, JtsGeometryFilter exactGate) {
+        Binary wkb = group.getBinary(context.geometryColumnName(), 0);
+        MemorySegment segment = MemorySegment.ofArray(wkb.getBytes()).asReadOnly();
+        return exactGate.gate(segment).isPresent();
+    }
+
+    /** Recursively reads every value of {@code group}, materializing each primitive, and folds it into the sink. */
+    private void consumeGroup(Group group) {
+        GroupType type = group.getType();
+        for (int field = 0; field < type.getFieldCount(); field++) {
+            int repetitions = group.getFieldRepetitionCount(field);
+            Type fieldType = type.getType(field);
+            for (int i = 0; i < repetitions; i++) {
+                if (fieldType.isPrimitive()) {
+                    consumePrimitive(
+                            group, field, i, fieldType.asPrimitiveType().getPrimitiveTypeName());
+                } else {
+                    consumeGroup(group.getGroup(field, i));
+                }
+            }
+        }
+    }
+
+    private void consumePrimitive(Group group, int field, int index, PrimitiveTypeName kind) {
+        switch (kind) {
+            case BOOLEAN -> sink += group.getBoolean(field, index) ? 1 : 0;
+            case INT32 -> sink += group.getInteger(field, index);
+            case INT64 -> sink += group.getLong(field, index);
+            case FLOAT -> sink += (long) group.getFloat(field, index);
+            case DOUBLE -> sink += (long) group.getDouble(field, index);
+            case INT96, BINARY, FIXED_LEN_BYTE_ARRAY ->
+                sink += group.getBinary(field, index).length();
+        }
+    }
+}

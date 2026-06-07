@@ -1,0 +1,191 @@
+/*
+ * Copyright (c) 2026 Multivers.io
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.tileverse.parquetry.probes;
+
+import java.lang.foreign.MemorySegment;
+import java.nio.file.Path;
+import java.util.stream.Stream;
+
+import io.tileverse.parquetry.batch.BinaryVector;
+import io.tileverse.parquetry.batch.BooleanVector;
+import io.tileverse.parquetry.batch.ColumnVector;
+import io.tileverse.parquetry.batch.DoubleVector;
+import io.tileverse.parquetry.batch.FixedLenBinaryVector;
+import io.tileverse.parquetry.batch.FloatVector;
+import io.tileverse.parquetry.batch.Int96Vector;
+import io.tileverse.parquetry.batch.IntVector;
+import io.tileverse.parquetry.batch.ListVector;
+import io.tileverse.parquetry.batch.LongVector;
+import io.tileverse.parquetry.batch.MapVector;
+import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.batch.StructVector;
+import io.tileverse.parquetry.batch.VariantVector;
+import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ReadOptions;
+import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.io.ByteRangeSource;
+
+/**
+ * parquetry's columnar arm: reads the file as vectorized {@link ParquetRecordBatch}es and touches every leaf value with
+ * the typed leaf accessors, recursing through {@link ListVector}, {@link MapVector}, {@link StructVector}, and
+ * {@link VariantVector} down to the primitive and binary leaves. No records are assembled. The dataset is opened once
+ * and reused across scans (the long-lived server model); each batch is closed after it is touched.
+ */
+final class ParquetryColumnarEngine implements ColumnarEngine {
+
+    private final Path file;
+    private ByteRangeSource source;
+    private ParquetDataset dataset;
+    private long sink;
+
+    ParquetryColumnarEngine(Path file) {
+        this.file = file;
+    }
+
+    @Override
+    public String name() {
+        return "parquetry";
+    }
+
+    @Override
+    public long scan() {
+        try (Stream<ParquetRecordBatch> batches =
+                dataset().readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
+            long rows = 0L;
+            for (ParquetRecordBatch batch : (Iterable<ParquetRecordBatch>) batches::iterator) {
+                try (batch) {
+                    touchBatch(batch);
+                    rows += batch.rowCount();
+                }
+            }
+            return rows;
+        }
+    }
+
+    @Override
+    public long checksum() {
+        return sink;
+    }
+
+    @Override
+    public void close() {
+        if (source == null) {
+            return;
+        }
+        source.close();
+        source = null;
+        dataset = null;
+    }
+
+    /** Opened once and reused across scans; synchronized so concurrent scans share a single open dataset. */
+    private synchronized ParquetDataset dataset() {
+        if (dataset == null) {
+            source = ByteRangeSource.ofFile(file);
+            dataset = ParquetDataset.open(source);
+        }
+        return dataset;
+    }
+
+    private void touchBatch(ParquetRecordBatch batch) {
+        for (ColumnVector column : batch.columns().values()) {
+            touchVector(column);
+        }
+    }
+
+    /** Folds every value of {@code vector} into the sink, descending nested vectors to their leaves. */
+    private void touchVector(ColumnVector vector) {
+        switch (vector) {
+            case IntVector ints -> touchInts(ints);
+            case LongVector longs -> touchLongs(longs);
+            case FloatVector floats -> touchFloats(floats);
+            case DoubleVector doubles -> touchDoubles(doubles);
+            case BooleanVector booleans -> touchBooleans(booleans);
+            case BinaryVector binaries -> touchBinaries(binaries);
+            case FixedLenBinaryVector fixed -> touchFixedLenBinaries(fixed);
+            case Int96Vector int96s -> touchInt96s(int96s);
+            case ListVector list -> touchVector(list.child());
+            case MapVector map -> {
+                touchVector(map.keys());
+                touchVector(map.values());
+            }
+            case StructVector struct -> {
+                for (ColumnVector child : struct.children().values()) {
+                    touchVector(child);
+                }
+            }
+            case VariantVector variantVector -> {
+                touchBinaries(variantVector.metadataColumn());
+                touchBinaries(variantVector.valueColumn());
+            }
+        }
+    }
+
+    private void touchInts(IntVector vector) {
+        for (int value : vector.asArray()) {
+            sink += value;
+        }
+    }
+
+    private void touchLongs(LongVector vector) {
+        for (long value : vector.asArray()) {
+            sink += value;
+        }
+    }
+
+    private void touchFloats(FloatVector vector) {
+        for (float value : vector.asArray()) {
+            sink += (long) value;
+        }
+    }
+
+    private void touchDoubles(DoubleVector vector) {
+        for (double value : vector.asArray()) {
+            sink += (long) value;
+        }
+    }
+
+    private void touchBooleans(BooleanVector vector) {
+        for (boolean value : vector.asArray()) {
+            sink += value ? 1L : 0L;
+        }
+    }
+
+    private void touchBinaries(BinaryVector vector) {
+        int size = vector.size();
+        for (int row = 0; row < size; row++) {
+            sink += segmentByteSize(vector.get(row));
+        }
+    }
+
+    private void touchFixedLenBinaries(FixedLenBinaryVector vector) {
+        int size = vector.size();
+        for (int row = 0; row < size; row++) {
+            sink += segmentByteSize(vector.get(row));
+        }
+    }
+
+    private void touchInt96s(Int96Vector vector) {
+        int size = vector.size();
+        for (int row = 0; row < size; row++) {
+            sink += segmentByteSize(vector.get(row));
+        }
+    }
+
+    private static long segmentByteSize(MemorySegment segment) {
+        return segment == null ? 0L : segment.byteSize();
+    }
+}
