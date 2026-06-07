@@ -130,6 +130,20 @@ public final class NestedVectorAssembler {
             Map<ColumnPath, int[]> repLevelsByLeaf,
             Map<ColumnPath, int[]> defLevelsByLeaf,
             int numRows) {
+        return assembleNestedViews(
+                projectedSchema, leafVectors, wholeSlices(repLevelsByLeaf), wholeSlices(defLevelsByLeaf), numRows);
+    }
+
+    /**
+     * The primary entry point. Each level map is a window view over the producer's page level arrays; callers that hold
+     * exactly-sized whole arrays use {@link #assembleNested} instead, which wraps them.
+     */
+    public static Map<ColumnPath, ColumnVector> assembleNestedViews(
+            ParquetSchema projectedSchema,
+            Map<ColumnPath, ColumnVector> leafVectors,
+            Map<ColumnPath, LevelSlice> repLevelsByLeaf,
+            Map<ColumnPath, LevelSlice> defLevelsByLeaf,
+            int numRows) {
         Map<ColumnPath, ColumnVector> result = new HashMap<>(leafVectors);
         Set<ColumnPath> hiddenLeaves = new HashSet<>();
         DremelAssembler dremel = new DremelAssembler(projectedSchema, leafVectors, repLevelsByLeaf, defLevelsByLeaf);
@@ -140,6 +154,14 @@ public final class NestedVectorAssembler {
             result.remove(leaf);
         }
         return result;
+    }
+
+    private static Map<ColumnPath, LevelSlice> wholeSlices(Map<ColumnPath, int[]> levelsByLeaf) {
+        Map<ColumnPath, LevelSlice> slices = HashMap.newHashMap(levelsByLeaf.size());
+        for (Map.Entry<ColumnPath, int[]> entry : levelsByLeaf.entrySet()) {
+            slices.put(entry.getKey(), LevelSlice.ofWhole(entry.getValue()));
+        }
+        return slices;
     }
 
     /**

@@ -83,8 +83,8 @@ final class DremelAssembler {
 
     private final ParquetSchema schema;
     private final Map<ColumnPath, ColumnVector> leafVectors;
-    private final Map<ColumnPath, int[]> repLevelsByLeaf;
-    private final Map<ColumnPath, int[]> defLevelsByLeaf;
+    private final Map<ColumnPath, LevelSlice> repLevelsByLeaf;
+    private final Map<ColumnPath, LevelSlice> defLevelsByLeaf;
 
     private final Lists lists = new Lists();
     private final Maps maps = new Maps();
@@ -94,8 +94,8 @@ final class DremelAssembler {
     DremelAssembler(
             ParquetSchema schema,
             Map<ColumnPath, ColumnVector> leafVectors,
-            Map<ColumnPath, int[]> repLevelsByLeaf,
-            Map<ColumnPath, int[]> defLevelsByLeaf) {
+            Map<ColumnPath, LevelSlice> repLevelsByLeaf,
+            Map<ColumnPath, LevelSlice> defLevelsByLeaf) {
         this.schema = schema;
         this.leafVectors = leafVectors;
         this.repLevelsByLeaf = repLevelsByLeaf;
@@ -292,14 +292,14 @@ final class DremelAssembler {
             return Validity.allValid(numSlots);
         }
         ColumnPath descendant = firstRowAlignedDescendantLeafPath(group, groupPath);
-        int[] defLevels = descendant == null ? null : defLevelsByLeaf.get(descendant);
+        LevelSlice defLevels = descendant == null ? null : defLevelsByLeaf.get(descendant);
         if (defLevels == null) {
             return Validity.allValid(numSlots);
         }
         BitSet validity = new BitSet(numSlots);
-        int limit = Math.min(numSlots, defLevels.length);
+        int limit = Math.min(numSlots, defLevels.length());
         for (int slot = 0; slot < limit; slot++) {
-            if (defLevels[slot] >= structDefLevel) {
+            if (defLevels.at(slot) >= structDefLevel) {
                 validity.set(slot);
             }
         }
@@ -329,17 +329,17 @@ final class DremelAssembler {
         int thisRepLevel = repLevel(repeatedChildPath);
         int groupDefLevel = maxDef(groupPath);
         int elementDefLevel = maxDef(repeatedChildPath);
-        int[] rep = repLevelsByLeaf.get(structureLeaf);
-        int[] def = defLevelsByLeaf.get(structureLeaf);
-        int streamLength = rep == null ? 0 : rep.length;
+        LevelSlice rep = repLevelsByLeaf.get(structureLeaf);
+        LevelSlice def = defLevelsByLeaf.get(structureLeaf);
+        int streamLength = rep == null ? 0 : rep.length();
 
         RepeatedLayoutBuilder builder = new RepeatedLayoutBuilder(numSlots, streamLength);
         for (int i = 0; i < streamLength; i++) {
-            if (rep[i] <= parentRepLevel && !builder.openSlot(def == null || def[i] >= groupDefLevel)) {
+            if (rep.at(i) <= parentRepLevel && !builder.openSlot(def == null || def.at(i) >= groupDefLevel)) {
                 break;
             }
-            if (rep[i] <= thisRepLevel) {
-                builder.addElement(def == null || def[i] >= elementDefLevel);
+            if (rep.at(i) <= thisRepLevel) {
+                builder.addElement(def == null || def.at(i) >= elementDefLevel);
             }
         }
         return builder.build();
