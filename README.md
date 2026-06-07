@@ -136,6 +136,15 @@ internal/                                # not published; build and dev only
 
 Directories are for navigation; published artifact ids stay flat regardless (`io.tileverse.parquetry:parquetry-core`). Select a module by id with `-pl :parquetry-core`.
 
+## Documentation
+
+- [Why pure-JVM GeoParquet access](docs/why-pure-jvm.md) - off-heap memory and why an embedded-native-engine reader (e.g. DuckDB) can OOM-kill a pod that a pure-JVM reader keeps within its limit.
+- [The read path](docs/read-path.md) - fetch and decode stages of a read.
+- [Memory and tuning](docs/memory-and-tuning.md) - the two budgets a read is bounded by and how to size them against a container limit.
+- [Native memory and spill](docs/native-memory-and-spill.md) - how parquetry bounds its off-heap fetch/decompression term, and the spill design.
+- [Spatial filtering](docs/spatial-filtering.md) - the bbox predicate family, covering-column and native-bounds pruning, and the exact gate.
+- [Counting](docs/counting.md) - count pushdown.
+
 ## Building
 
 The test corpora (`apache/parquet-testing` and `opengeospatial/geoparquet`) are git submodules under `parquetry-testkit`. Clone with them, or the conformance tests cannot run:
