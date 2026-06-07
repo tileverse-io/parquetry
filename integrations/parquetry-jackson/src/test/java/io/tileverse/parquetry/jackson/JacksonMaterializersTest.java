@@ -38,7 +38,6 @@ import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.materializer.Materializer;
-import io.tileverse.parquetry.record.BatchRowAccessor;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -63,7 +62,7 @@ class JacksonMaterializersTest {
         ParquetSchema schema = new ParquetSchema(rootGroup);
         Materializer<JsonNode> materializer = JacksonMaterializers.jsonNode();
         try (DefaultParquetRecordBatch batch = citiesBatch(schema)) {
-            JsonNode node = materializer.materialize(schema, new BatchRowAccessor(batch, 0));
+            JsonNode node = materializer.materialize(schema, batch.materialize(0));
             assertThat(node.get("id").intValue()).isEqualTo(1);
             assertThat(node.get("name").stringValue()).isEqualTo("Rosario");
         }
@@ -75,7 +74,7 @@ class JacksonMaterializersTest {
         ParquetSchema schema = new ParquetSchema(rootGroup);
         Materializer<String> materializer = JacksonMaterializers.jsonString();
         try (DefaultParquetRecordBatch batch = citiesBatch(schema)) {
-            String json = materializer.materialize(schema, new BatchRowAccessor(batch, 0));
+            String json = materializer.materialize(schema, batch.materialize(0));
             assertThat(json).isEqualTo("{\"id\":1,\"name\":\"Rosario\"}");
         }
     }

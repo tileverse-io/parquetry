@@ -162,6 +162,32 @@ public final class FixedLenBinaryVector implements ColumnVector {
         return backing.asSlice((long) row * byteWidth, byteWidth);
     }
 
+    /** Byte length of the value at {@code row}: the fixed width for a present row, {@code -1} for a null row. */
+    public int valueLength(int row) {
+        if (validity.isNull(row)) {
+            return -1;
+        }
+        return byteWidth;
+    }
+
+    /**
+     * Copies the value at {@code row} into {@code target} starting at {@code targetOffset}, returning the byte count
+     * written, or {@code -1} for a null row (nothing written). The caller reuses one target across rows by advancing
+     * {@code targetOffset} by the returned count.
+     */
+    public int getInto(int row, MemorySegment target, long targetOffset) {
+        if (validity.isNull(row)) {
+            return -1;
+        }
+        if (indices != null) {
+            MemorySegment entry = dictEntries[indices[row]];
+            MemorySegment.copy(entry, 0L, target, targetOffset, byteWidth);
+            return byteWidth;
+        }
+        MemorySegment.copy(backing, (long) row * byteWidth, target, targetOffset, byteWidth);
+        return byteWidth;
+    }
+
     @Override
     public long approximateHeapBytes() {
         if (indices != null) {

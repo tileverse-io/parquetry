@@ -107,6 +107,22 @@ class MemorySegmentWkbReaderTest {
         assertSameSrid(label, expected, actual);
     }
 
+    @Test
+    void readsGeometryFromNonZeroBackingOffset() throws ParseException {
+        Geometry geometry = new WKTReader(PACKED_FACTORY).read("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))");
+        byte[] wkb = new WKBWriter(2, ByteOrderValues.LITTLE_ENDIAN).write(geometry);
+        byte[] padded = new byte[7 + wkb.length];
+        System.arraycopy(wkb, 0, padded, 7, wkb.length);
+        MemorySegment backing = MemorySegment.ofArray(padded).asReadOnly();
+
+        Geometry atOffset = reader.read(backing, 7L, wkb.length);
+        Geometry atZero = reader.read(MemorySegment.ofArray(wkb).asReadOnly());
+
+        assertThat(atOffset.equalsExact(atZero))
+                .as("decode from a non-zero backing offset must equal the offset-0 decode")
+                .isTrue();
+    }
+
     /**
      * Compares the SRID at every geometry node. EWKB encodes the SRID once on the top geometry, but JTS WKBReader
      * builds every member with that SRID; the custom reader must produce the same SRID throughout the tree (plain WKB

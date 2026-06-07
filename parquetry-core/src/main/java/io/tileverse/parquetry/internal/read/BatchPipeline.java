@@ -32,7 +32,7 @@ import io.tileverse.parquetry.batch.VectorizedPredicateEvaluator;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.internal.filter.RecordLevelEvaluator;
 import io.tileverse.parquetry.materializer.Materializer;
-import io.tileverse.parquetry.record.BatchRowAccessor;
+import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 import lombok.NonNull;
@@ -255,10 +255,10 @@ public final class BatchPipeline {
         /** Materializes the next surviving row in the current batch, or {@code null} once its rows are exhausted. */
         private T scanCurrentBatch() {
             while (rowIndex < batchRowCount) {
-                BatchRowAccessor accessor = new BatchRowAccessor(currentBatch, rowIndex);
+                ParquetRecord row = currentBatch.materialize(rowIndex);
                 rowIndex++;
-                if (currentFilter == null || RecordLevelEvaluator.test(currentFilter, accessor::get)) {
-                    return materializer.materialize(outputSchema, accessor);
+                if (currentFilter == null || RecordLevelEvaluator.test(currentFilter, row::get)) {
+                    return materializer.materialize(outputSchema, row);
                 }
             }
             return null;

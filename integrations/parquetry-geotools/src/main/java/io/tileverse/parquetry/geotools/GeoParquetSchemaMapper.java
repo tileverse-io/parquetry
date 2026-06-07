@@ -16,9 +16,11 @@
 package io.tileverse.parquetry.geotools;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 
 import org.geotools.api.feature.simple.SimpleFeatureType;
 import org.geotools.api.referencing.crs.CoordinateReferenceSystem;
@@ -33,6 +35,7 @@ import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
+import io.tileverse.parquetry.schema.geo.projjson.Identifier;
 
 /**
  * Maps a GeoParquet {@link ParquetSchema} to a GeoTools {@link SimpleFeatureType} plus a reader-facing attribute
@@ -64,11 +67,22 @@ final class GeoParquetSchemaMapper {
      * falls back to a synthetic per-read feature id).
      */
     record Mapping(
-            SimpleFeatureType featureType, List<AttributeMapping> attributes, Optional<AttributeMapping> fidAttribute) {
+            SimpleFeatureType featureType,
+            List<AttributeMapping> attributes,
+            Optional<AttributeMapping> fidAttribute,
+            Map<ColumnPath, Integer> geometrySrids) {
 
         /** Convenience for the common case of a mapping with no feature id column. */
         Mapping(SimpleFeatureType featureType, List<AttributeMapping> attributes) {
-            this(featureType, attributes, Optional.empty());
+            this(featureType, attributes, Optional.empty(), Map.of());
+        }
+
+        /** Convenience for a mapping with a feature id but no resolved geometry SRIDs. */
+        Mapping(
+                SimpleFeatureType featureType,
+                List<AttributeMapping> attributes,
+                Optional<AttributeMapping> fidAttribute) {
+            this(featureType, attributes, fidAttribute, Map.of());
         }
     }
 
@@ -100,6 +114,7 @@ final class GeoParquetSchemaMapper {
         }
 
         List<AttributeMapping> attributes = new ArrayList<>();
+        Map<ColumnPath, Integer> geometrySrids = new LinkedHashMap<>();
         String defaultGeometryName = null;
 
         for (ColumnPath path : schema.leafColumns()) {
@@ -113,8 +128,11 @@ final class GeoParquetSchemaMapper {
             }
             AttributeMapping attr = mapped.get();
             attributes.add(attr);
-            if (attr.geometry() && isDefaultGeometry(attr.name(), primaryGeometryColumn, defaultGeometryName)) {
-                defaultGeometryName = attr.name();
+            if (attr.geometry()) {
+                if (isDefaultGeometry(attr.name(), primaryGeometryColumn, defaultGeometryName)) {
+                    defaultGeometryName = attr.name();
+                }
+                resolveSrid(path, primitive.logicalType(), geo).ifPresent(srid -> geometrySrids.put(path, srid));
             }
         }
 
@@ -123,7 +141,7 @@ final class GeoParquetSchemaMapper {
         }
         List<AttributeMapping> mappedAttributes = List.copyOf(attributes);
         Optional<AttributeMapping> fid = resolveFidAttribute(typeName, configuredFidColumn, mappedAttributes);
-        return new Mapping(ftb.buildFeatureType(), mappedAttributes, fid);
+        return new Mapping(ftb.buildFeatureType(), mappedAttributes, fid, Map.copyOf(geometrySrids));
     }
 
     /**
@@ -281,6 +299,24 @@ final class GeoParquetSchemaMapper {
                         g -> Optional.ofNullable(g.columns().get(path.dot())))
                 .flatMap(GeoColumn::crs);
         return ProjJsonCrsConverter.toGeoTools(fromMetadata);
+    }
+
+    /**
+     * Resolves the EPSG SRID for a geometry column, to stamp on each decoded JTS geometry. Resolution mirrors
+     * {@link #resolveCrs}: the native GEOMETRY/GEOGRAPHY logical-type CRS first, then the GeoParquet 1.x {@code "geo"}
+     * column CRS. Empty when no CRS resolves an EPSG code (the geometry keeps JTS's default SRID 0).
+     */
+    private static OptionalInt resolveSrid(
+            ColumnPath path, Optional<LogicalType> logical, Optional<GeoParquetMetadata> geo) {
+        Optional<io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem> crs =
+                logical.flatMap(GeoParquetSchemaMapper::extractCrsFromLogicalType);
+        if (crs.isEmpty()) {
+            crs = geo.flatMap(g -> Optional.ofNullable(g.columns().get(path.dot())))
+                    .flatMap(GeoColumn::crs);
+        }
+        return crs.flatMap(io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem::id)
+                .map(Identifier::epsgCode)
+                .orElse(OptionalInt.empty());
     }
 
     /**

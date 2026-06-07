@@ -18,7 +18,7 @@ package io.tileverse.parquetry.internal.read;
 import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
 import java.util.BitSet;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -227,7 +227,7 @@ final class DremelAssembler {
     final class Structs {
 
         ColumnVector assemble(SchemaNode.Group group, List<String> groupPath, int parentRepLevel, int numSlots) {
-            Map<ColumnPath, ColumnVector> children = new HashMap<>();
+            Map<ColumnPath, ColumnVector> children = new LinkedHashMap<>();
             for (SchemaNode child : group.children()) {
                 List<String> childPath = concat(groupPath, child.name());
                 ColumnVector childVec = assembleNode(child, childPath, parentRepLevel, numSlots);
@@ -598,7 +598,7 @@ final class DremelAssembler {
         }
 
         private static StructVector compactStruct(StructVector v, int[] keptIndices) {
-            Map<ColumnPath, ColumnVector> children = new HashMap<>();
+            Map<ColumnPath, ColumnVector> children = new LinkedHashMap<>();
             for (Map.Entry<ColumnPath, ColumnVector> entry : v.children().entrySet()) {
                 children.put(entry.getKey(), compact(entry.getValue(), keptIndices));
             }

@@ -206,7 +206,13 @@ final class GeoParquetFeatureSource extends ContentFeatureSource {
         List<GeoParquetSchemaMapper.AttributeMapping> readAttributes = attributesFor(m, readType);
 
         FeatureReader<SimpleFeatureType, SimpleFeature> reader = new GeoParquetFeatureReader(
-                readType, readAttributes, dataset(), t.predicate(), t.readProjection(), m.fidAttribute());
+                readType,
+                readAttributes,
+                m.geometrySrids(),
+                dataset(),
+                t.predicate(),
+                t.readProjection(),
+                m.fidAttribute());
 
         if (t.postFilter() != Filter.INCLUDE) {
             reader = new FilteringFeatureReader<>(reader, t.postFilter());

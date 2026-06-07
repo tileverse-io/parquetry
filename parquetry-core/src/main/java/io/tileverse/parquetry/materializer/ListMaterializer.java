@@ -24,12 +24,12 @@ import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.MapVector;
 import io.tileverse.parquetry.batch.StructVector;
 import io.tileverse.parquetry.record.DefaultParquetRecord;
-import io.tileverse.parquetry.record.StructRowAccessor;
+import io.tileverse.parquetry.record.RowColumns;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
  * Builds a Java {@link List} from a row slice of a {@link ListVector}. Used by the row API view when a consumer reads a
- * list cell via {@code record.get(path)} or {@code record.getList(path)}.
+ * list cell via {@code record.get(path)} or {@code record.readList(path)}.
  *
  * <p>Null vs empty: a row is null iff {@code vec.validity().isValid(rowIndex) == false}; an empty list iff
  * {@code offsets[i] == offsets[i+1]} AND validity is set.
@@ -76,15 +76,15 @@ public final class ListMaterializer {
      *
      * <p>The nested {@link ListVector}, {@link MapVector}, and {@link StructVector} arms are dispatched explicitly
      * because they need the {@code schema} context that {@code get} does not accept. A null {@link StructVector}
-     * element yields {@code null}; a non-null element materializes to a {@link DefaultParquetRecord} backed by a
-     * {@link StructRowAccessor}.
+     * element yields {@code null}; a non-null element materializes to a {@link DefaultParquetRecord} over the struct's
+     * {@link RowColumns}.
      */
     static Object valueAt(ColumnVector child, int i, ParquetSchema schema) {
         return switch (child) {
             case ListVector nested -> materializeAt(nested, i, schema);
             case MapVector nested -> MapMaterializer.materializeAt(nested, i, schema);
             case StructVector struct ->
-                struct.isValid(i) ? new DefaultParquetRecord(schema, new StructRowAccessor(struct, i, schema)) : null;
+                struct.isValid(i) ? new DefaultParquetRecord(RowColumns.ofStruct(schema, struct), i) : null;
             default -> child.get(i);
         };
     }

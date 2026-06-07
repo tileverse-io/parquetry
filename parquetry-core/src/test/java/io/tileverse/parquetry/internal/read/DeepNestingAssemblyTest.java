@@ -240,7 +240,7 @@ class DeepNestingAssemblyTest {
                 .isEqualTo(1);
 
         try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, assembled, 2, Arena.ofConfined())) {
-            ParquetRecord nested = batch.materialize(0).getStruct(ColumnPath.of("rec"));
+            ParquetRecord nested = batch.materialize(0).readStruct(ColumnPath.of("rec"));
             assertThat(nested.get(ColumnPath.of("name"))).as("row 0 name").isEqualTo(1);
             assertThat(nested.get(ColumnPath.of("tags"))).as("row 0 tags list").isEqualTo(List.of(10, 20));
         }

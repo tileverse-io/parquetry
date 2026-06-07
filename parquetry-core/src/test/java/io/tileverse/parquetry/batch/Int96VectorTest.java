@@ -119,4 +119,52 @@ class Int96VectorTest {
 
         assertThat(vec.approximateHeapBytes()).isEqualTo(24L + vec.validity().heapBytes());
     }
+
+    @Nested
+    class ReusableTargetAccessors {
+
+        @Test
+        void getIntoCopiesTwelveBytesAndReturnsWidth() {
+            byte[] a = new byte[12];
+            byte[] b = new byte[12];
+            for (int i = 0; i < 12; i++) {
+                a[i] = (byte) i;
+                b[i] = (byte) (100 + i);
+            }
+            BitSet bits = new BitSet(2);
+            bits.set(0, 2);
+            Int96Vector vec = Int96Vector.materialized(
+                    new MemorySegment[] {
+                        MemorySegment.ofArray(a).asReadOnly(),
+                        MemorySegment.ofArray(b).asReadOnly()
+                    },
+                    Validity.of(bits, 2));
+
+            MemorySegment target = MemorySegment.ofArray(new byte[24]);
+            int n0 = vec.getInto(0, target, 0L);
+            int n1 = vec.getInto(1, target, n0);
+
+            assertThat(n0).isEqualTo(12);
+            assertThat(n1).isEqualTo(12);
+            assertThat(target.asSlice(0, 12).toArray(JAVA_BYTE)).containsExactly(a);
+            assertThat(target.asSlice(12, 12).toArray(JAVA_BYTE)).containsExactly(b);
+            assertThat(vec.valueLength(0)).isEqualTo(12);
+        }
+
+        @Test
+        void getIntoReturnsMinusOneOnNull() {
+            BitSet bits = new BitSet(2);
+            bits.set(1);
+            Int96Vector vec = Int96Vector.materialized(
+                    new MemorySegment[] {
+                        null, MemorySegment.ofArray(new byte[12]).asReadOnly()
+                    },
+                    Validity.of(bits, 2));
+
+            assertThat(vec.getInto(0, MemorySegment.ofArray(new byte[12]), 0L)).isEqualTo(-1);
+            assertThat(vec.valueLength(0))
+                    .as("null row is -1, symmetric with getInto")
+                    .isEqualTo(-1);
+        }
+    }
 }

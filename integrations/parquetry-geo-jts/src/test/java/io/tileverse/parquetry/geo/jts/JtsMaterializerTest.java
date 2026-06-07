@@ -15,9 +15,12 @@
  */
 package io.tileverse.parquetry.geo.jts;
 
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -30,8 +33,13 @@ import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.Point;
 import org.locationtech.jts.io.WKBWriter;
 
+import io.tileverse.parquetry.batch.BinaryVector;
+import io.tileverse.parquetry.batch.ColumnVector;
+import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
+import io.tileverse.parquetry.batch.IntVector;
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.format.LogicalType;
-import io.tileverse.parquetry.materializer.RowAccessor;
+import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -57,15 +65,15 @@ class JtsMaterializerTest {
         JtsMaterializer materializer = new JtsMaterializer(schema);
         assertThat(materializer.geometryColumns()).containsExactly(GEOM);
 
-        Map<ColumnPath, Object> out = materializer.materialize(schema, rowOf(Map.of(ID, 42, GEOM, wkb)));
+        Map<ColumnPath, Object> out = materializer.materialize(schema, rowOf(schema, Map.of(ID, 42, GEOM, wkb)));
         assertThat(out).containsEntry(ID, 42);
         Geometry decoded = (Geometry) out.get(GEOM);
         assertThat(decoded.equalsExact(pt)).isTrue();
     }
 
     @Test
-    void rowWithoutGeometryAnnotationPassesThroughByteBuffer() {
-        // No logical type on geometry: materializer doesn't decode WKB; the row's value stays as ByteBuffer.
+    void rowWithoutGeometryAnnotationPassesThroughTheRawBinary() {
+        // No logical type on geometry: the materializer doesn't decode WKB; the row's value stays raw binary.
         ParquetSchema schema = schemaWithGeometryAt("geometry", null);
         GeometryFactory gf = new GeometryFactory();
         Point pt = gf.createPoint(new Coordinate(0.0, 0.0));
@@ -74,8 +82,9 @@ class JtsMaterializerTest {
         JtsMaterializer materializer = new JtsMaterializer(schema);
         assertThat(materializer.geometryColumns()).isEmpty();
 
-        Map<ColumnPath, Object> out = materializer.materialize(schema, rowOf(Map.of(GEOM, wkb)));
-        assertThat(out.get(GEOM)).isSameAs(wkb);
+        Map<ColumnPath, Object> out = materializer.materialize(schema, rowOf(schema, Map.of(GEOM, wkb)));
+        assertThat(out.get(GEOM)).isInstanceOf(MemorySegment.class);
+        assertThat(((MemorySegment) out.get(GEOM)).toArray(JAVA_BYTE)).isEqualTo(wkb.toArray(JAVA_BYTE));
     }
 
     @Test
@@ -89,7 +98,7 @@ class JtsMaterializerTest {
         JtsMaterializer materializer = new JtsMaterializer(schema);
         assertThat(materializer.geometryColumns()).containsExactly(GEOM);
 
-        Map<ColumnPath, Object> out = materializer.materialize(schema, rowOf(Map.of(GEOM, wkb)));
+        Map<ColumnPath, Object> out = materializer.materialize(schema, rowOf(schema, Map.of(GEOM, wkb)));
         assertThat(out.get(GEOM)).isInstanceOf(Point.class);
         Point decoded = (Point) out.get(GEOM);
         assertThat(decoded.getX()).isEqualTo(-71.0589);
@@ -114,7 +123,7 @@ class JtsMaterializerTest {
                 .as("EPSG:3857 should be discovered at construction time and exposed via sridFor")
                 .hasValue(3857);
 
-        Map<ColumnPath, Object> out = materializer.materialize(schema, rowOf(Map.of(GEOM, wkb)));
+        Map<ColumnPath, Object> out = materializer.materialize(schema, rowOf(schema, Map.of(GEOM, wkb)));
         Geometry decoded = (Geometry) out.get(GEOM);
         assertThat(decoded.getSRID())
                 .as("decoded geometry should carry the EPSG SRID derived from its typed CRS")
@@ -132,10 +141,10 @@ class JtsMaterializerTest {
 
         JtsMaterializer materializer = new JtsMaterializer(schema);
         assertThat(materializer.sridFor(GEOM))
-                .as("absent CRS should surface as empty rather than guessing 4326")
+                .as("absent CRS should be reported as empty rather than guessing 4326")
                 .isEmpty();
 
-        Map<ColumnPath, Object> out = materializer.materialize(schema, rowOf(Map.of(GEOM, wkb)));
+        Map<ColumnPath, Object> out = materializer.materialize(schema, rowOf(schema, Map.of(GEOM, wkb)));
         Geometry decoded = (Geometry) out.get(GEOM);
         assertThat(decoded.getSRID())
                 .as("absent CRS should leave JTS's default SRID (0)")
@@ -172,22 +181,19 @@ class JtsMaterializerTest {
                 new SchemaNode.Group("root", Repetition.REQUIRED, List.of(idField, geomField), Optional.empty(), -1));
     }
 
-    private static RowAccessor rowOf(Map<ColumnPath, Object> values) {
-        return new RowAccessor() {
-            @Override
-            public Object get(ColumnPath path) {
-                return values.get(path);
-            }
+    private static ParquetRecord rowOf(ParquetSchema schema, Map<ColumnPath, Object> values) {
+        Map<ColumnPath, ColumnVector> columns = new HashMap<>();
+        values.forEach((path, value) -> columns.put(path, vectorOf(value)));
+        DefaultParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 1, Arena.ofConfined());
+        return batch.materialize(0);
+    }
 
-            @Override
-            public boolean isGroupNull(ColumnPath path) {
-                return false;
-            }
-
-            @Override
-            public Map<ColumnPath, Object> values() {
-                return values;
-            }
+    private static ColumnVector vectorOf(Object value) {
+        Validity present = Validity.allValid(1);
+        return switch (value) {
+            case Integer i -> IntVector.materialized(new int[] {i}, present);
+            case MemorySegment seg -> BinaryVector.materialized(new MemorySegment[] {seg}, present);
+            default -> throw new IllegalArgumentException("unsupported test value: " + value);
         };
     }
 }

@@ -33,7 +33,7 @@ final class DefaultMaterializer implements Materializer<ParquetRecord> {
     private DefaultMaterializer() {}
 
     @Override
-    public ParquetRecord materialize(ParquetSchema projectedSchema, RowAccessor row) {
-        return ParquetRecord.of(projectedSchema, row);
+    public ParquetRecord materialize(ParquetSchema projectedSchema, ParquetRecord row) {
+        return row;
     }
 }

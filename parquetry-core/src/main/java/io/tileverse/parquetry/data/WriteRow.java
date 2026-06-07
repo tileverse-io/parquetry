@@ -25,14 +25,13 @@ import io.tileverse.parquetry.schema.ColumnPath;
 /**
  * Read access to one record's leaf values, keyed by column path.
  *
- * <p>Mirror of {@link io.tileverse.parquetry.materializer.RowAccessor} on the write side. The {@link RowGroupWriter}
- * pulls one value per leaf column from this carrier, then dispatches it to the corresponding {@link ColumnChunkWriter}
- * based on the column's {@link io.tileverse.parquetry.schema.PrimitiveKind}.
+ * <p>Mirror of {@link io.tileverse.parquetry.record.ParquetRecord} on the write side. The {@link RowGroupWriter} pulls
+ * one value per leaf column from this carrier, then dispatches it to the corresponding {@link ColumnChunkWriter} based
+ * on the column's {@link io.tileverse.parquetry.schema.PrimitiveKind}.
  *
- * <p>Returned values follow the same boxing convention as {@link io.tileverse.parquetry.materializer.RowAccessor}:
- * {@code Integer}, {@code Long}, {@code Float}, {@code Double}, {@code Boolean} for primitives, a read-only
- * {@link MemorySegment} for BYTE_ARRAY / FIXED_LEN_BYTE_ARRAY / INT96 columns, and {@code null} for absent leaves on
- * non-required columns.
+ * <p>Returned values follow the read side's generic boxing convention: {@code Integer}, {@code Long}, {@code Float},
+ * {@code Double}, {@code Boolean} for primitives, a read-only {@link MemorySegment} for BYTE_ARRAY /
+ * FIXED_LEN_BYTE_ARRAY / INT96 columns, and {@code null} for absent leaves on non-required columns.
  */
 public interface WriteRow {
 

@@ -36,7 +36,7 @@ class RowApiNestedAccessTest {
         Validity valid = Validity.of(validBits, 1);
         IntVector age = IntVector.materialized(new int[] {52}, valid);
         StructVector person = new StructVector(Map.of(ColumnPath.of("age"), age), valid, 1);
-        ParquetRecord unified = new DefaultParquetRecord(null, new StructRowAccessor(person, 0, null));
+        ParquetRecord unified = new DefaultParquetRecord(RowColumns.ofStruct(null, person), 0);
         assertThatCode(() -> unified.get(ColumnPath.of("age"))).doesNotThrowAnyException();
         assertThat(unified.get(ColumnPath.of("age"))).isEqualTo(52);
     }

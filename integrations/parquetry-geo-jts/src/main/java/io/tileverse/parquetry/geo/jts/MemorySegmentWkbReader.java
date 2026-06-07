@@ -108,8 +108,25 @@ public final class MemorySegmentWkbReader {
      * @throws IllegalStateException when the bytes are not valid WKB (including out-of-bounds reads on truncated input)
      */
     public Geometry read(MemorySegment wkb) {
+        return read(wkb, 0L, wkb.byteSize());
+    }
+
+    /**
+     * Decodes the WKB geometry that begins at {@code offset} of {@code backing}. The structure walk reads forward from
+     * {@code offset}; {@code length} bounds the value (out-of-bounds reads throw). This lets a caller decode straight
+     * from a column's backing window without minting a per-value slice.
+     *
+     * @param backing the segment holding the WKB, with the byte-order byte at {@code offset}
+     * @param offset the byte offset where this geometry's WKB begins
+     * @param length the byte length of this geometry's value within {@code backing}
+     * @return the decoded JTS geometry
+     * @throws IllegalStateException when the bytes are not valid WKB (including out-of-bounds reads on truncated input)
+     */
+    // S1172: length is part of the BinaryView contract; the WKB walk is self-delimiting and reads only what it needs
+    @SuppressWarnings("java:S1172")
+    public Geometry read(MemorySegment backing, long offset, long length) {
         try {
-            Cursor cursor = new Cursor(wkb, 0L);
+            Cursor cursor = new Cursor(backing, offset);
             return readGeometry(cursor);
         } catch (RuntimeException e) {
             throw new IllegalStateException("Failed to decode WKB geometry: " + e.getMessage(), e);

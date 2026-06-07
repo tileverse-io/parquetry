@@ -203,7 +203,7 @@ class BatchRecordMaterializationTest {
                 new DefaultParquetRecordBatch(structSchema(), Map.of(STRUCT_COL, structVec), 1, Arena.ofConfined())) {
             ParquetRecord row = batch.materialize(0);
 
-            ParquetRecord sub = row.getStruct(STRUCT_COL);
+            ParquetRecord sub = row.readStruct(STRUCT_COL);
             assertThat(sub).isInstanceOf(DefaultParquetRecord.class);
             assertThat(sub.getInt(STRUCT_CHILD)).isEqualTo(123);
             assertThat(sub.get(STRUCT_CHILD)).isEqualTo(123);
@@ -221,7 +221,7 @@ class BatchRecordMaterializationTest {
                 new DefaultParquetRecordBatch(structSchema(), Map.of(STRUCT_COL, structVec), 1, Arena.ofConfined())) {
             ParquetRecord row = batch.materialize(0);
 
-            assertThat(row.getStruct(STRUCT_COL)).isNull();
+            assertThat(row.readStruct(STRUCT_COL)).isNull();
             assertThat(row.get(STRUCT_COL)).isNull();
             assertThat(row.isNull(STRUCT_COL)).isTrue();
         }

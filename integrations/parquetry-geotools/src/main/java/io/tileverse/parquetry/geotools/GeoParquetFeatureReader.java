@@ -15,9 +15,6 @@
  */
 package io.tileverse.parquetry.geotools;
 
-import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
-import java.nio.charset.StandardCharsets;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -29,39 +26,49 @@ import org.geotools.api.data.FeatureReader;
 import org.geotools.api.feature.simple.SimpleFeature;
 import org.geotools.api.feature.simple.SimpleFeatureType;
 import org.geotools.feature.simple.SimpleFeatureBuilder;
+import org.locationtech.jts.geom.Geometry;
 
 import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
-import io.tileverse.parquetry.geo.jts.JtsMaterializer;
+import io.tileverse.parquetry.geo.jts.MemorySegmentWkbReader;
 import io.tileverse.parquetry.geotools.GeoParquetSchemaMapper.AttributeMapping;
+import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 
-/** Streams a {@link ParquetDataset} and builds one {@link SimpleFeature} per row. */
+/**
+ * Streams a {@link ParquetDataset} and builds one {@link SimpleFeature} per row.
+ *
+ * <p>Each row is the lazy {@link ParquetRecord} view: attributes are pulled by typed accessor as the feature is built,
+ * and geometry columns decode in place from the record's WKB with no intermediate map or per-value slice.
+ */
 final class GeoParquetFeatureReader implements FeatureReader<SimpleFeatureType, SimpleFeature> {
 
     private final SimpleFeatureType featureType;
     private final List<AttributeMapping> attributes;
     private final Optional<AttributeMapping> fidAttribute;
+    private final Map<ColumnPath, Integer> geometrySrids;
     private final SimpleFeatureBuilder builder;
-    private final Stream<Map<ColumnPath, Object>> stream;
-    private final Iterator<Map<ColumnPath, Object>> rows;
+    private final MemorySegmentWkbReader wkbReader = new MemorySegmentWkbReader();
+    private final Stream<ParquetRecord> stream;
+    private final Iterator<ParquetRecord> rows;
     private long syntheticId;
 
     GeoParquetFeatureReader(
             SimpleFeatureType readType,
             List<AttributeMapping> attributes,
+            Map<ColumnPath, Integer> geometrySrids,
             ParquetDataset dataset,
             Predicate predicate,
             Projection projection,
             Optional<AttributeMapping> fidAttribute) {
         this.featureType = readType;
         this.attributes = attributes;
+        this.geometrySrids = geometrySrids;
         this.fidAttribute = fidAttribute;
         this.builder = new SimpleFeatureBuilder(readType);
-        JtsMaterializer materializer = new JtsMaterializer(dataset.schema());
-        this.stream = dataset.read(predicate, projection, materializer, ReadOptions.DEFAULTS);
+        this.stream = dataset.read(predicate, projection, ReadOptions.DEFAULTS);
         this.rows = stream.iterator();
     }
 
@@ -80,44 +87,59 @@ final class GeoParquetFeatureReader implements FeatureReader<SimpleFeatureType, 
         if (!rows.hasNext()) {
             throw new NoSuchElementException();
         }
-        Map<ColumnPath, Object> row = rows.next();
+        ParquetRecord row = rows.next();
         for (AttributeMapping attr : attributes) {
-            Object value = row.get(attr.path());
-            builder.set(attr.name(), attr.geometry() ? value : convert(value, attr.binding()));
+            builder.set(attr.name(), attributeValue(row, attr));
         }
         return builder.buildFeature(featureId(row));
+    }
+
+    /**
+     * The GeoTools attribute value for {@code attr} on this row: a decoded {@link Geometry} for geometry columns, an
+     * owned {@code String} or {@code byte[]} for binary, a boxed primitive otherwise, or {@code null} for a null cell.
+     */
+    private Object attributeValue(ParquetRecord row, AttributeMapping attr) {
+        ColumnPath path = attr.path();
+        if (row.isNull(path)) {
+            return null;
+        }
+        if (attr.geometry()) {
+            return decodeGeometry(row, attr);
+        }
+        Class<?> binding = attr.binding();
+        if (binding == String.class) {
+            return row.getString(path);
+        }
+        if (binding == byte[].class) {
+            return row.getBinary(path);
+        }
+        return row.get(path);
+    }
+
+    /** Decodes the geometry column in place from the record's WKB and stamps the column's EPSG SRID when resolved. */
+    private Geometry decodeGeometry(ParquetRecord row, AttributeMapping attr) {
+        Geometry geometry = row.readBinary(attr.path(), wkbReader::read);
+        Integer srid = geometrySrids.get(attr.path());
+        if (geometry != null && srid != null) {
+            geometry.setSRID(srid);
+        }
+        return geometry;
     }
 
     /**
      * The feature id for the current row: the configured feature id column's value when one is set, falling back to a
      * synthetic per-read sequence when no column is configured or its value is null.
      */
-    private String featureId(Map<ColumnPath, Object> row) {
+    private String featureId(ParquetRecord row) {
         if (fidAttribute.isEmpty()) {
             return Long.toString(syntheticId++);
         }
         AttributeMapping fid = fidAttribute.get();
-        Object value = convert(row.get(fid.path()), fid.binding());
+        Object value = attributeValue(row, fid);
         if (value == null) {
             return Long.toString(syntheticId++);
         }
         return String.valueOf(value);
-    }
-
-    /**
-     * Converts a raw materializer value to the declared attribute binding.
-     *
-     * <p>Geometry values pass through unchanged because the materializer already decoded them from WKB. Numerics and
-     * booleans are already boxed Java types. Only {@link MemorySegment} values (BYTE_ARRAY and FIXED_LEN_BYTE_ARRAY
-     * columns) need explicit conversion: to {@code String} when the binding is {@code String.class}, or to
-     * {@code byte[]} otherwise.
-     */
-    private static Object convert(Object value, Class<?> binding) {
-        if (!(value instanceof MemorySegment segment)) {
-            return value;
-        }
-        byte[] bytes = segment.toArray(ValueLayout.JAVA_BYTE);
-        return binding == String.class ? new String(bytes, StandardCharsets.UTF_8) : bytes;
     }
 
     @Override

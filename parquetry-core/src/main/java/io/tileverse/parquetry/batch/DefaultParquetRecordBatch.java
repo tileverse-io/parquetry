@@ -20,9 +20,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-import io.tileverse.parquetry.record.BatchRowAccessor;
 import io.tileverse.parquetry.record.DefaultParquetRecord;
 import io.tileverse.parquetry.record.ParquetRecord;
+import io.tileverse.parquetry.record.RowColumns;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
@@ -32,6 +32,7 @@ public final class DefaultParquetRecordBatch implements ParquetRecordBatch {
 
     private final ParquetSchema projectedSchema;
     private final Map<ColumnPath, ColumnVector> columns;
+    private final RowColumns rowColumns;
     private final int rowCount;
     private final Arena arena;
     private final List<AutoCloseable> ownedBuffers = new ArrayList<>();
@@ -60,6 +61,7 @@ public final class DefaultParquetRecordBatch implements ParquetRecordBatch {
 
         this.projectedSchema = projectedSchema;
         this.columns = Map.copyOf(columns);
+        this.rowColumns = RowColumns.of(projectedSchema, projectedSchema.root(), this.columns);
         this.rowCount = rowCount;
         this.arena = arena;
     }
@@ -84,7 +86,7 @@ public final class DefaultParquetRecordBatch implements ParquetRecordBatch {
         if (rowIndex < 0 || rowIndex >= rowCount) {
             throw new IndexOutOfBoundsException("rowIndex " + rowIndex + " out of bounds [0, " + rowCount + ")");
         }
-        return new DefaultParquetRecord(projectedSchema, new BatchRowAccessor(this, rowIndex));
+        return new DefaultParquetRecord(rowColumns, rowIndex);
     }
 
     @Override

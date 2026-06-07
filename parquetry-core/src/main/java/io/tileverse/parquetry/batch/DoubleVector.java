@@ -78,6 +78,19 @@ public final class DoubleVector implements ColumnVector {
         return out;
     }
 
+    /**
+     * Copies {@code count} values starting at row {@code from} into {@code target} at byte {@code targetOffset}, in
+     * little-endian Arrow layout. Lets a bulk consumer reuse one target instead of allocating via {@link #asArray()}.
+     * Values at null rows are copied as stored; the caller applies validity separately, as with {@code asArray}.
+     */
+    public void copyInto(MemorySegment target, long targetOffset, int from, int count) {
+        if (segmentValues != null) {
+            MemorySegment.copy(segmentValues, DOUBLE, (long) from * Double.BYTES, target, DOUBLE, targetOffset, count);
+        } else {
+            MemorySegment.copy(values, from, target, DOUBLE, targetOffset, count);
+        }
+    }
+
     @Override
     public long approximateHeapBytes() {
         if (segmentValues != null) {
