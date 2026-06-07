@@ -27,9 +27,9 @@ import java.util.function.BooleanSupplier;
  * off-heap fetch buffers. {@code maxMemory()} reflects the container's memory limit; a fraction therefore auto-scales
  * per pod.
  *
- * <p>Only speculative decode-ahead reserves against this budget. The in-order current row group never reserves (it is
- * mandatory for progress); when the consumer advances to a previously speculative row group, the coordinator promotes
- * it and calls {@link #wakeWaiters()} to release a worker parked in {@link #reserve(long, BooleanSupplier)}.
+ * <p>Every decoded row group reserves against this budget. A worker that cannot reserve a batch's heap bytes spills the
+ * batch to disk rather than parking; it parks in {@link #reserve(long, BooleanSupplier)} only as a last resort, when
+ * the disk budget is also full. A read that is closing calls {@link #wakeWaiters()} to release any such parked worker.
  */
 public final class DecodeBudget {
 
@@ -91,8 +91,8 @@ public final class DecodeBudget {
     /**
      * Reserves {@code bytes}, blocking until headroom frees or {@code giveUp} returns {@code true}. Returns
      * {@code true} if the bytes were reserved, {@code false} if it gave up first (reserving nothing). A non-positive
-     * request reserves nothing and returns {@code true}. {@code giveUp} is re-checked on every wakeup; a promotion that
-     * flips it must therefore also call {@link #wakeWaiters()}.
+     * request reserves nothing and returns {@code true}. {@code giveUp} is re-checked on every wakeup; whatever flips
+     * it must therefore also call {@link #wakeWaiters()}.
      */
     public boolean reserve(long bytes, BooleanSupplier giveUp) {
         if (bytes <= 0) {
@@ -134,9 +134,8 @@ public final class DecodeBudget {
     }
 
     /**
-     * Wakes every parked reserver to re-check its give-up condition. Called by the coordinator when a speculative row
-     * group is promoted to current (or a read is closing); a worker parked on an oversized or starved reservation then
-     * stops waiting.
+     * Wakes every parked reserver to re-check its give-up condition. Called when a read is closing; a worker parked in
+     * the last-resort reservation (heap and disk both full) then stops waiting and gives up.
      */
     public void wakeWaiters() {
         lock.lock();

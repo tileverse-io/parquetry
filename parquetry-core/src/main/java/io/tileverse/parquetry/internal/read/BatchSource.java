@@ -30,9 +30,6 @@ sealed interface BatchSource extends AutoCloseable permits InlineBatchSource, St
     /** Returns the next batch in order; the consumer owns it and closes it. */
     ParquetRecordBatch next();
 
-    /** Marks this row group as the in-order current one; only the streaming source reacts (stops reserving budget). */
-    default void promote() {}
-
     @Override
     void close();
 }

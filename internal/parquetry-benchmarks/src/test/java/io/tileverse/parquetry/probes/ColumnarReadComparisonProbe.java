@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.benchmarks;
+package io.tileverse.parquetry.probes;
 
 import java.io.IOException;
 import java.lang.foreign.MemorySegment;
@@ -113,7 +113,7 @@ import io.tileverse.parquetry.io.ByteRangeSource;
 // S2699: characterization probe; it prints a comparison table and only asserts the run completes for every engine.
 @SuppressWarnings("java:S2699")
 @EnabledIfSystemProperty(named = "parquetry.probe.file", matches = ".+")
-public final class ColumnarReadComparisonProbe {
+final class ColumnarReadComparisonProbe {
 
     private Path file;
     private int warmupRuns;
@@ -137,16 +137,15 @@ public final class ColumnarReadComparisonProbe {
     }
 
     private void run() throws Exception {
-        System.out.printf(
-                "Columnar read-path comparison over %s (%.1f MiB), full scan%n%n",
-                file, Files.size(file) / (1024.0 * 1024.0));
+        IO.println("Columnar read-path comparison over %s (%.1f MiB), full scan%n"
+                .formatted(file, Files.size(file) / (1024.0 * 1024.0)));
 
         if (concurrency > 1) {
             runConcurrent();
         } else {
             runSequential();
         }
-        System.out.printf("%n(consumed checksum %d)%n", sink);
+        IO.println("%n(consumed checksum %d)".formatted(sink));
     }
 
     private void runSequential() {
@@ -165,7 +164,7 @@ public final class ColumnarReadComparisonProbe {
      * (the long-lived server model); parquet-java opens a file reader per scan (its per-query model).
      */
     private void runConcurrent() {
-        System.out.printf("Concurrency: %d full scans in flight per engine%n%n", concurrency);
+        IO.println("Concurrency: %d full scans in flight per engine%n".formatted(concurrency));
         List<ConcurrentRow> rows = new ArrayList<>();
         if (engineEnabled("parquetry")) {
             rows.add(measureParquetryConcurrent());
@@ -419,35 +418,34 @@ public final class ColumnarReadComparisonProbe {
     private static void printTable(List<Row> rows) {
         String header =
                 String.format("%-14s %12s %12s %12s %12s", "engine", "rows", "wall(ms)", "alloc(MB)", "peakHeap(MB)");
-        System.out.println(header);
-        System.out.println("-".repeat(header.length()));
+        IO.println(header);
+        IO.println("-".repeat(header.length()));
         for (Row row : rows) {
-            System.out.println(row.format());
+            IO.println(row.format());
         }
-        System.out.println();
-        System.out.println("Full scan, columnar APIs, no record assembly on either side; every leaf value touched.");
-        System.out.println("wall(ms) is the raw decode cost: parquetry reads typed vectors per batch, parquet-java");
-        System.out.println("  reads each leaf column with a ColumnReader. Row counts must match across engines.");
-        System.out.println("alloc(MB) is heap allocated by all threads during the run (-Xmx-independent churn).");
-        System.out.println(
-                "peakHeap(MB) is heap occupancy incl. uncollected garbage at the run's -Xmx; an upper bound.");
+        IO.println();
+        IO.println("Full scan, columnar APIs, no record assembly on either side; every leaf value touched.");
+        IO.println("wall(ms) is the raw decode cost: parquetry reads typed vectors per batch, parquet-java");
+        IO.println("  reads each leaf column with a ColumnReader. Row counts must match across engines.");
+        IO.println("alloc(MB) is heap allocated by all threads during the run (-Xmx-independent churn).");
+        IO.println("peakHeap(MB) is heap occupancy incl. uncollected garbage at the run's -Xmx; an upper bound.");
     }
 
     private void printConcurrentTable(List<ConcurrentRow> rows) {
         String header = String.format(
                 "%-14s %8s %12s %10s %10s %10s %12s %12s %8s",
                 "engine", "rows", "req/s", "p50(ms)", "p95(ms)", "max(ms)", "peakHeap(MB)", "alloc(MB)", "status");
-        System.out.println(header);
-        System.out.println("-".repeat(header.length()));
+        IO.println(header);
+        IO.println("-".repeat(header.length()));
         for (ConcurrentRow row : rows) {
-            System.out.println(row.format());
+            IO.println(row.format());
         }
-        System.out.println();
-        System.out.printf("All scans ran %d at once, released together; metrics aggregate every scan.%n", concurrency);
-        System.out.println("req/s is measured scans / summed wave wall; p50/p95/max are per-scan latencies.");
-        System.out.println(
+        IO.println();
+        IO.println("All scans ran %d at once, released together; metrics aggregate every scan".formatted(concurrency));
+        IO.println("req/s is measured scans / summed wave wall; p50/p95/max are per-scan latencies.");
+        IO.println(
                 "peakHeap(MB) is heap occupancy incl. uncollected garbage at the run's -Xmx; the decisive signal is");
-        System.out.println("  whether status stays OK (not OOM) at a pod-sized heap. alloc(MB) is total churn.");
+        IO.println("  whether status stays OK (not OOM) at a pod-sized heap. alloc(MB) is total churn.");
     }
 
     // --- supporting types ---

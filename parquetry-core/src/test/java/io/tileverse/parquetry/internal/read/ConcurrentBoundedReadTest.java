@@ -27,7 +27,9 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.tileverse.parquetry.data.OpenOptions;
 import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -62,15 +64,18 @@ class ConcurrentBoundedReadTest {
         for (int r = 0; r < readers; r++) {
             threads.add(Thread.ofVirtual().start(() -> {
                 try (ByteRangeSource source = TestParquetFiles.openRangeReader(file)) {
-                    ParquetDataset dataset = ParquetDataset.open(source);
-                    ReadOptions options = ReadOptions.builder()
-                            .segmentPool(pool)
-                            .fetchBudget(budget)
-                            .prefetchDepth(3)
-                            .maxConcurrentFetchesPerRead(4)
+                    OpenOptions openOptions = OpenOptions.builder()
+                            .runtime(ParquetRuntime.builder()
+                                    .segmentPool(pool)
+                                    .fetchBudget(budget)
+                                    .prefetchDepth(3)
+                                    .maxConcurrentFetchesPerRead(4)
+                                    .build())
                             .build();
+                    ParquetDataset dataset = ParquetDataset.open(source, openOptions);
                     long count;
-                    try (Stream<ParquetRecord> stream = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
+                    try (Stream<ParquetRecord> stream =
+                            dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                         count = stream.count();
                     }
                     if (count != rows) {

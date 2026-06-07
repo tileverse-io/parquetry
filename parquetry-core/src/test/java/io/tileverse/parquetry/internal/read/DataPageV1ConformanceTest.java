@@ -36,7 +36,9 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import io.tileverse.parquetry.data.OpenOptions;
 import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -159,9 +161,12 @@ class DataPageV1ConformanceTest {
 
     private static List<ParquetRecord> readAllViaParquetry(Path fixture, CountingSegmentPool pool) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixture)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
-            ReadOptions options = ReadOptions.builder().segmentPool(pool).build();
-            try (Stream<ParquetRecord> records = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
+            OpenOptions openOptions = OpenOptions.builder()
+                    .runtime(ParquetRuntime.builder().segmentPool(pool).build())
+                    .build();
+            ParquetDataset dataset = ParquetDataset.open(source, openOptions);
+            try (Stream<ParquetRecord> records =
+                    dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 return records.toList();
             }
         }

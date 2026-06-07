@@ -23,7 +23,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public final class DecodeReservation {
 
-    /** Sentinel for batches that were never reserved: the mandatory current row group and inline fallbacks. */
+    /** Sentinel no-op reservation for a batch that holds no decode-budget bytes, such as an inline-decoded batch. */
     public static final DecodeReservation NONE = new DecodeReservation(null, 0);
 
     private final DecodeBudget budget;

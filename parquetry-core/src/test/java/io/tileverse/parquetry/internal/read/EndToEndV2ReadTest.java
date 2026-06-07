@@ -32,7 +32,9 @@ import org.apache.parquet.io.LocalOutputFile;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.tileverse.parquetry.data.OpenOptions;
 import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -207,10 +209,13 @@ class EndToEndV2ReadTest {
 
     private static List<ParquetRecord> readAllRecords(Path file, CountingSegmentPool pool) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
-            ReadOptions options = ReadOptions.builder().segmentPool(pool).build();
+            OpenOptions openOptions = OpenOptions.builder()
+                    .runtime(ParquetRuntime.builder().segmentPool(pool).build())
+                    .build();
+            ParquetDataset dataset = ParquetDataset.open(source, openOptions);
             List<ParquetRecord> collected = new ArrayList<>();
-            try (Stream<ParquetRecord> stream = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
+            try (Stream<ParquetRecord> stream =
+                    dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 stream.forEach(collected::add);
             }
             return collected;

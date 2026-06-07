@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.benchmarks;
+package io.tileverse.parquetry.probes;
 
 import java.io.IOException;
 import java.lang.foreign.MemorySegment;
@@ -63,7 +63,7 @@ import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
  * Read-path comparison of parquetry, parquet-java 1.17.0, and DuckDB over one local Parquet file, under attribute and
- * spatial filters, materialising every surviving row.
+ * spatial filters, materializing every surviving row.
  *
  * <p>This is a characterization probe, not a JMH microbenchmark: it warms up, runs each engine a few times, and prints
  * a side-by-side table. It exists to answer "how does parquetry behave on the read path with filters, against the other
@@ -115,6 +115,8 @@ import io.tileverse.parquetry.schema.SchemaNode;
  *
  * <ul>
  *   <li>{@code parquetry.probe.file}: the file path (required; the probe is skipped when unset).
+ *   <li>{@code parquetry.probe.engines}: comma-separated engines to run (default {@code parquetry,parquet-java};
+ *       {@code duckdb} has no columnar JDBC equivalent here and is ignored).
  *   <li>{@code parquetry.probe.subtype}: the attribute equality value (default {@code commercial}).
  *   <li>{@code parquetry.probe.cx} / {@code .cy} / {@code .r}: query diamond centre and half-diagonal in degrees
  *       (defaults centre San Salvador, {@code -89.2 13.7}, half-diagonal {@code 0.15}).
@@ -130,7 +132,7 @@ import io.tileverse.parquetry.schema.SchemaNode;
 // S2699: characterization probe; it prints a comparison table and only asserts the run completes for every engine.
 @SuppressWarnings("java:S2699")
 @EnabledIfSystemProperty(named = "parquetry.probe.file", matches = ".+")
-public final class ReadComparisonProbe {
+final class ReadComparisonProbe {
 
     private static final String GEOMETRY = "geometry";
     private static final String SUBTYPE = "subtype";
@@ -189,16 +191,16 @@ public final class ReadComparisonProbe {
     }
 
     private void run() throws Exception {
-        System.out.printf("Read-path comparison over %s (%.1f MiB)%n", file, Files.size(file) / (1024.0 * 1024.0));
-        System.out.printf(
-                "Attribute filter: %s = '%s'   Spatial filter: intersects %s%n%n", SUBTYPE, subtypeValue, queryDiamond);
+        IO.println("Read-path comparison over %s (%.1f MiB)".formatted(file, Files.size(file) / (1024.0 * 1024.0)));
+        IO.println("Attribute filter: %s = '%s'   Spatial filter: intersects %s%n"
+                .formatted(SUBTYPE, subtypeValue, queryDiamond));
 
         if (concurrency > 1) {
             runConcurrent();
         } else {
             runSequential();
         }
-        System.out.printf("%n(consumed checksum %d)%n", sink);
+        IO.println("%n(consumed checksum %d)".formatted(sink));
     }
 
     private void runSequential() {
@@ -227,7 +229,8 @@ public final class ReadComparisonProbe {
      * server model); parquet-java opens a reader per read (its per-query model).
      */
     private void runConcurrent() {
-        System.out.printf("Concurrency: %d reads in flight per engine/scenario pass (DuckDB skipped)%n%n", concurrency);
+        IO.println(
+                "Concurrency: %d reads in flight per engine/scenario pass (DuckDB skipped)%n".formatted(concurrency));
         List<ConcurrentRow> rows = new ArrayList<>();
         for (Scenario scenario : Scenario.values()) {
             if (!scenarioEnabled(scenario)) {
@@ -280,8 +283,8 @@ public final class ReadComparisonProbe {
         Predicate predicate = parquetryPredicate(scenario);
         try (Stream<ParquetRecord> records = dataset.read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
             long count = 0L;
-            for (ParquetRecord record : (Iterable<ParquetRecord>) records::iterator) {
-                consumeParquetry(record);
+            for (ParquetRecord rec : (Iterable<ParquetRecord>) records::iterator) {
+                consumeParquetry(rec);
                 count++;
             }
             return count;
@@ -304,16 +307,16 @@ public final class ReadComparisonProbe {
      * attribute as it iterates and never retains the record. No {@code detach()}: that copy is only for callers that
      * hold a record past its batch, which a streaming reader does not do.
      */
-    private void consumeParquetry(ParquetRecord record) {
-        walkRecord(record, record.schema().root());
+    private void consumeParquetry(ParquetRecord rec) {
+        walkRecord(rec, rec.schema().root());
     }
 
     /**
      * Reads each top-level field of {@code group} from {@code record}, descending nested values by their runtime kind.
      */
-    private void walkRecord(ParquetRecord record, SchemaNode.Group group) {
+    private void walkRecord(ParquetRecord rec, SchemaNode.Group group) {
         for (SchemaNode child : group.children()) {
-            touchValue(record.get(ColumnPath.of(child.name())), child);
+            touchValue(rec.get(ColumnPath.of(child.name())), child);
         }
     }
 
@@ -478,7 +481,7 @@ public final class ReadComparisonProbe {
             statement.execute("INSTALL spatial");
             statement.execute("LOAD spatial");
             return true;
-        } catch (SQLException e) {
+        } catch (SQLException _) {
             return false;
         }
     }
@@ -488,7 +491,7 @@ public final class ReadComparisonProbe {
         Path profile;
         try {
             profile = Files.createTempFile("parquetry-probe-duckdb-", ".json");
-        } catch (IOException e) {
+        } catch (IOException _) {
             return Row.skipped("duckdb", scenario, "cannot create profile file");
         }
         enableProfiling(connection, profile);
@@ -611,25 +614,21 @@ public final class ReadComparisonProbe {
         String header = String.format(
                 "%-22s %-12s %12s %12s %12s %12s %12s %12s",
                 "scenario", "engine", "rows", "wall(ms)", "alloc(MB)", "peakHeap(MB)", "duckScan(ms)", "duckMem(MB)");
-        System.out.println(header);
-        System.out.println("-".repeat(header.length()));
+        IO.println(header);
+        IO.println("-".repeat(header.length()));
         for (Row row : rows) {
-            System.out.println(row.format());
+            IO.println(row.format());
         }
-        System.out.println();
-        System.out.println("wall(ms) is the consumer cost: every row materialised, every requested column read out");
-        System.out.println(
+        IO.println();
+        IO.println("wall(ms) is the consumer cost: every row materialised, every requested column read out");
+        IO.println(
                 "  (ResultSet.getObject per column for DuckDB, in-place value walk for parquetry, Group for parquet-java).");
-        System.out.println("alloc(MB) is heap allocated by all threads during the run (-Xmx-independent churn); for");
-        System.out.println(
-                "  DuckDB it is the JDBC consumer's per-row boxing, while duckMem is DuckDB's native buffer.");
-        System.out.println(
-                "peakHeap(MB) is heap occupancy incl. uncollected garbage at the run's -Xmx; an upper bound.");
-        System.out.println(
-                "duckScan(ms) is DuckDB's internal engine scan from its profiler - context only; a JDBC consumer");
-        System.out.println("  still pays the full wall to pull rows out, which is not what duckScan reflects.");
-        System.out.println(
-                "duckMem(MB) is DuckDB's self-reported peak buffer memory; its native footprint is off-heap.");
+        IO.println("alloc(MB) is heap allocated by all threads during the run (-Xmx-independent churn); for");
+        IO.println("  DuckDB it is the JDBC consumer's per-row boxing, while duckMem is DuckDB's native buffer.");
+        IO.println("peakHeap(MB) is heap occupancy incl. uncollected garbage at the run's -Xmx; an upper bound.");
+        IO.println("duckScan(ms) is DuckDB's internal engine scan from its profiler - context only; a JDBC consumer");
+        IO.println("  still pays the full wall to pull rows out, which is not what duckScan reflects.");
+        IO.println("duckMem(MB) is DuckDB's self-reported peak buffer memory; its native footprint is off-heap.");
     }
 
     private void printConcurrentTable(List<ConcurrentRow> rows) {
@@ -645,18 +644,18 @@ public final class ReadComparisonProbe {
                 "peakHeap(MB)",
                 "alloc(MB)",
                 "status");
-        System.out.println(header);
-        System.out.println("-".repeat(header.length()));
+        IO.println(header);
+        IO.println("-".repeat(header.length()));
         for (ConcurrentRow row : rows) {
-            System.out.println(row.format());
+            IO.println(row.format());
         }
-        System.out.println();
-        System.out.printf(
-                "All passes ran %d reads at once, released together; metrics aggregate every read.%n", concurrency);
-        System.out.println("req/s is measured reads / summed wave wall; p50/p95/max are per-read latencies.");
-        System.out.println(
+        IO.println();
+        IO.println("All passes ran %d reads at once, released together; metrics aggregate every read."
+                .formatted(concurrency));
+        IO.println("req/s is measured reads / summed wave wall; p50/p95/max are per-read latencies.");
+        IO.println(
                 "peakHeap(MB) is heap occupancy incl. uncollected garbage at the run's -Xmx; the decisive signal is");
-        System.out.println("  whether status stays OK (not OOM) at a pod-sized heap. alloc(MB) is total churn.");
+        IO.println("  whether status stays OK (not OOM) at a pod-sized heap. alloc(MB) is total churn.");
     }
 
     // --- supporting types ---
@@ -756,7 +755,7 @@ public final class ReadComparisonProbe {
                 String json = Files.readString(profile);
                 return new DuckDbProfile(
                         extractNumber(json, "latency"), (long) extractNumber(json, "system_peak_buffer_memory"));
-            } catch (IOException e) {
+            } catch (IOException _) {
                 return new DuckDbProfile(0.0, 0L);
             }
         }

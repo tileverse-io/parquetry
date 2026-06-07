@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.benchmarks;
+package io.tileverse.parquetry.probes;
 
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryPoolMXBean;
@@ -160,9 +160,12 @@ final class ProbeMeasurement {
             state.succeeded[index] = true;
         } catch (InterruptedException _) {
             Thread.currentThread().interrupt();
-        } catch (OutOfMemoryError _) {
+        } catch (OutOfMemoryError e) {
             state.oom.set(true);
-            state.firstError.compareAndSet(null, "OutOfMemoryError");
+            String detail = e.getClass().getName() + ": " + e.getMessage();
+            if (state.firstError.compareAndSet(null, detail)) {
+                System.err.println("[probe] first OOM: " + detail);
+            }
         } catch (Throwable e) {
             state.firstError.compareAndSet(null, e.toString());
         } finally {

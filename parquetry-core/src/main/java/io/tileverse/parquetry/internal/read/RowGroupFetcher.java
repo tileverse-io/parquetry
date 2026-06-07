@@ -43,6 +43,7 @@ public final class RowGroupFetcher {
     private final ParquetSchema fileSchema;
     private final ParquetSchema projectedSchema;
     private final SegmentPool pool;
+    private final FetchBufferAllocator mandatoryAllocator;
     private final int maxCoalesceGap;
     private final int maxCoalescedSpan;
 
@@ -51,12 +52,14 @@ public final class RowGroupFetcher {
             @NonNull ParquetSchema fileSchema,
             @NonNull ParquetSchema projectedSchema,
             @NonNull SegmentPool pool,
+            @NonNull FetchBufferAllocator mandatoryAllocator,
             int maxCoalesceGap,
             int maxCoalescedSpan) {
         this.source = source;
         this.fileSchema = fileSchema;
         this.projectedSchema = projectedSchema;
         this.pool = pool;
+        this.mandatoryAllocator = mandatoryAllocator;
         this.maxCoalesceGap = maxCoalesceGap;
         this.maxCoalescedSpan = maxCoalescedSpan;
     }
@@ -77,15 +80,21 @@ public final class RowGroupFetcher {
     /**
      * Reads {@code plan}'s coalesced ranges into pooled buffers and slices each projected column out of them. On any
      * failure, closes every buffer borrowed so far and releases {@code reservation} before propagating.
+     *
+     * <p>A speculative prefetch arrives with a real {@code reservation} that already reserved its whole span against
+     * the {@link FetchBudget}; its range buffers come straight from the {@link SegmentPool} to avoid reserving the same
+     * bytes twice. A mandatory fetch arrives with {@link BudgetReservation#NONE} and routes each range through the
+     * {@link FetchBufferAllocator} valve, which reserves RAM when the budget has room and maps a spill file otherwise.
      */
     public RowGroupFetch fetch(RowGroupSurvivor survivor, FetchPlan plan, BudgetReservation reservation)
             throws IOException {
         RowGroupChunks chunks = survivor.chunks();
+        boolean speculative = reservation != BudgetReservation.NONE;
         List<Pooled> buffers = new ArrayList<>(plan.ranges().size());
         List<MemorySegment> rangeSegments = new ArrayList<>(plan.ranges().size());
         try {
             for (CoalescedRange range : plan.ranges()) {
-                Pooled pooled = pool.borrow(range.length());
+                Pooled pooled = acquireRangeBuffer(range.length(), speculative);
                 buffers.add(pooled);
                 MemorySegment rangeSegment = pooled.segment();
                 int read = source.read(range.fileOffset(), rangeSegment);
@@ -108,6 +117,17 @@ public final class RowGroupFetcher {
             reservation.release();
             throw e;
         }
+    }
+
+    /**
+     * A speculative prefetch already reserved its span; it borrows RAM directly. A mandatory fetch reserves RAM-or-mmap
+     * per range through the valve, retiring the former unconditional-RAM allocation.
+     */
+    private Pooled acquireRangeBuffer(int length, boolean speculative) {
+        if (speculative) {
+            return pool.borrow(length);
+        }
+        return mandatoryAllocator.acquireMandatory(length);
     }
 
     private List<FetchedColumnChunk> sliceColumns(

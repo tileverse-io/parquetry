@@ -175,7 +175,15 @@ public sealed interface ParquetDataset permits DefaultParquetDataset {
      * @throws java.io.UncheckedIOException if {@code source} fails to deliver the bytes
      */
     static ParquetDataset open(ByteRangeSource source) {
-        ParquetReader fileReader = ParquetReader.open(source);
+        return open(source, OpenOptions.DEFAULTS);
+    }
+
+    /**
+     * Opens a {@code ParquetDataset} over {@code source}, binding the {@link ParquetRuntime} and any
+     * {@link io.tileverse.parquetry.internal.read.DecryptionKeyRetriever} from {@code options}.
+     */
+    static ParquetDataset open(ByteRangeSource source, OpenOptions options) {
+        ParquetReader fileReader = ParquetReader.open(source, options.runtime(), options.decryptionKeyRetriever());
         return new DefaultParquetDataset(List.of(fileReader));
     }
 
@@ -185,6 +193,11 @@ public sealed interface ParquetDataset permits DefaultParquetDataset {
      */
     static ParquetDataset open(FileChannel channel) {
         return open(ByteRangeSource.ofChannel(channel));
+    }
+
+    /** Same as {@link #open(FileChannel)}, binding read resources from {@code options}. */
+    static ParquetDataset open(FileChannel channel, OpenOptions options) {
+        return open(ByteRangeSource.ofChannel(channel), options);
     }
 
     /**
@@ -197,13 +210,19 @@ public sealed interface ParquetDataset permits DefaultParquetDataset {
      * @throws java.io.UncheckedIOException if any source fails to deliver bytes
      */
     static ParquetDataset open(FilesetReader fileset) {
+        return open(fileset, OpenOptions.DEFAULTS);
+    }
+
+    /** Same as {@link #open(FilesetReader)}, binding read resources from {@code options}. */
+    static ParquetDataset open(FilesetReader fileset, OpenOptions options) {
         int fileCount = fileset.fileCount();
         if (fileCount <= 0) {
             throw new IllegalArgumentException("fileset must contain at least one file");
         }
         List<ParquetReader> readers = new ArrayList<>(fileCount);
         for (int index = 0; index < fileCount; index++) {
-            readers.add(ParquetReader.open(fileset.openFile(index)));
+            readers.add(
+                    ParquetReader.open(fileset.openFile(index), options.runtime(), options.decryptionKeyRetriever()));
         }
         return new DefaultParquetDataset(readers);
     }

@@ -34,7 +34,9 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.data.OpenOptions;
 import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -164,10 +166,13 @@ class ParquetTestingCorpusIT {
 
     private static List<Map<String, Object>> readCanonicalViaParquetry(Path fixture, CountingSegmentPool pool) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixture)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            OpenOptions openOptions = OpenOptions.builder()
+                    .runtime(ParquetRuntime.builder().segmentPool(pool).build())
+                    .build();
+            ParquetDataset dataset = ParquetDataset.open(source, openOptions);
             ParquetSchema schema = dataset.schema();
-            ReadOptions options = ReadOptions.builder().segmentPool(pool).build();
-            try (Stream<ParquetRecord> records = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
+            try (Stream<ParquetRecord> records =
+                    dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 return records.map(parquetRecord -> CanonicalRow.fromParquetry(parquetRecord, schema))
                         .toList();
             }
@@ -177,10 +182,12 @@ class ParquetTestingCorpusIT {
     private static long totalRowsViaBatchApi(Path fixture, CountingSegmentPool pool) {
         long[] total = {0L};
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixture)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
-            ReadOptions options = ReadOptions.builder().segmentPool(pool).build();
+            OpenOptions openOptions = OpenOptions.builder()
+                    .runtime(ParquetRuntime.builder().segmentPool(pool).build())
+                    .build();
+            ParquetDataset dataset = ParquetDataset.open(source, openOptions);
             try (Stream<ParquetRecordBatch> batches =
-                    dataset.readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
+                    dataset.readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 batches.forEach(batch -> {
                     try (ParquetRecordBatch owned = batch) {
                         total[0] += owned.rowCount();

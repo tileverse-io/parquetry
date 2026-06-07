@@ -16,7 +16,6 @@
 package io.tileverse.parquetry.internal.read;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.ArrayList;
@@ -61,97 +60,5 @@ class ReadOptionsTest {
     void zeroBatchSizeRejected() {
         ReadOptions.Builder builder = ReadOptions.builder();
         assertThatThrownBy(() -> builder.batchSize(0)).isInstanceOf(IllegalArgumentException.class);
-    }
-
-    @Test
-    void decryptionKeyRetrieverDefaultsToEmpty() {
-        assertThat(ReadOptions.DEFAULTS.decryptionKeyRetriever()).isEmpty();
-    }
-
-    @Test
-    void decryptionKeyRetrieverCanBeSet() {
-        DecryptionKeyRetriever stub = meta -> new byte[16];
-        ReadOptions opts = ReadOptions.builder().decryptionKeyRetriever(stub).build();
-        assertThat(opts.decryptionKeyRetriever()).contains(stub);
-    }
-
-    @Test
-    void defaultsProvideConservativeFetchTunables() {
-        ReadOptions options = ReadOptions.DEFAULTS;
-        assertThat(options.maxCoalesceGap()).isEqualTo(1 << 20);
-        assertThat(options.maxCoalescedSpan()).isEqualTo(8 << 20);
-        assertThat(options.prefetchDepth()).isEqualTo(2);
-        assertThat(options.maxConcurrentFetchesPerRead()).isEqualTo(4);
-        assertThat(options.fetchBudget()).isSameAs(FetchBudget.defaultBudget());
-    }
-
-    @Test
-    void rejectsNonPositiveFetchTunables() {
-        assertThatIllegalArgumentException()
-                .isThrownBy(() -> ReadOptions.builder().maxCoalescedSpan(0));
-        assertThatIllegalArgumentException()
-                .isThrownBy(() -> ReadOptions.builder().prefetchDepth(-1));
-        assertThatIllegalArgumentException()
-                .isThrownBy(() -> ReadOptions.builder().maxConcurrentFetchesPerRead(0));
-        assertThatIllegalArgumentException()
-                .isThrownBy(() -> ReadOptions.builder().maxCoalesceGap(-1));
-    }
-
-    @Test
-    void defaultsProvideParallelDecodeTunables() {
-        ReadOptions options = ReadOptions.DEFAULTS;
-        assertThat(options.decodeExecutor()).isSameAs(DecodeExecutor.shared());
-        assertThat(options.maxDecodeAheadPerRead()).isGreaterThanOrEqualTo(2);
-    }
-
-    @Test
-    void defaultDecodeAheadExceedsTwoOnAMultiCoreBoxWithRoomyBudget() {
-        DecodeBudget roomy = DecodeBudget.ofBytes(2048L << 20); // heapTerm 64
-        ReadOptions options = ReadOptions.builder().decodeBudget(roomy).build();
-        int cores = Runtime.getRuntime().availableProcessors();
-        if (cores > 2) {
-            assertThat(options.maxDecodeAheadPerRead()).isGreaterThan(2);
-        }
-    }
-
-    @Test
-    void customDecodeBudgetReshapesTheDecodeAheadDefault() {
-        DecodeBudget tiny = DecodeBudget.ofBytes(1L);
-        ReadOptions options = ReadOptions.builder().decodeBudget(tiny).build();
-        assertThat(options.maxDecodeAheadPerRead()).isEqualTo(2);
-    }
-
-    @Test
-    void builderOverridesParallelDecodeTunables() {
-        DecodeExecutor executor = DecodeExecutor.ofParallelism(3);
-        try {
-            ReadOptions options = ReadOptions.builder()
-                    .decodeExecutor(executor)
-                    .maxDecodeAheadPerRead(0)
-                    .build();
-            assertThat(options.decodeExecutor()).isSameAs(executor);
-            assertThat(options.maxDecodeAheadPerRead()).isZero();
-        } finally {
-            executor.shutdownNow();
-        }
-    }
-
-    @Test
-    void rejectsNegativeDecodeAhead() {
-        assertThatIllegalArgumentException()
-                .isThrownBy(() -> ReadOptions.builder().maxDecodeAheadPerRead(-1));
-    }
-
-    @Test
-    void defaultDecodeBudgetIsTheSharedDefault() {
-        assertThat(ReadOptions.DEFAULTS.decodeBudget().capacity())
-                .isEqualTo(DecodeBudget.defaultBudget().capacity());
-    }
-
-    @Test
-    void decodeBudgetOverrideIsHonored() {
-        DecodeBudget custom = DecodeBudget.ofBytes(123_456);
-        ReadOptions options = ReadOptions.builder().decodeBudget(custom).build();
-        assertThat(options.decodeBudget()).isSameAs(custom);
     }
 }

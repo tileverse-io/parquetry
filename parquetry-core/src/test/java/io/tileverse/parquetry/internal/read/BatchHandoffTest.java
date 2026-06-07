@@ -19,6 +19,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.Arena;
+import java.nio.file.Path;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -29,9 +31,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.io.TempDir;
 
+import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
+import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.batch.Validity;
+import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
@@ -45,8 +52,8 @@ class BatchHandoffTest {
         BatchHandoff handoff = new BatchHandoff(2);
         ParquetRecordBatch b0 = batch();
         ParquetRecordBatch b1 = batch();
-        handoff.put(b0);
-        handoff.put(b1);
+        handoff.put(new HandoffItem.InHeap(b0));
+        handoff.put(new HandoffItem.InHeap(b1));
         handoff.complete();
 
         assertThat(handoff.hasNext()).isTrue();
@@ -64,12 +71,12 @@ class BatchHandoffTest {
         BatchHandoff handoff = new BatchHandoff(1);
         ParquetRecordBatch b0 = batch();
         ParquetRecordBatch b1 = batch();
-        handoff.put(b0);
+        handoff.put(new HandoffItem.InHeap(b0));
 
         CountDownLatch secondPutReturned = new CountDownLatch(1);
         Thread producer = new Thread(() -> {
             try {
-                handoff.put(b1);
+                handoff.put(new HandoffItem.InHeap(b1));
                 secondPutReturned.countDown();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -106,7 +113,7 @@ class BatchHandoffTest {
         AtomicInteger releases = new AtomicInteger();
         ParquetRecordBatch undelivered = batch(arena);
         undelivered.attachReleaseAction(releases::incrementAndGet);
-        handoff.put(undelivered);
+        handoff.put(new HandoffItem.InHeap(undelivered));
         handoff.complete();
 
         handoff.close();
@@ -119,7 +126,7 @@ class BatchHandoffTest {
     @Timeout(value = 5, unit = TimeUnit.SECONDS)
     void cancelledPutClosesHeldBatchAndStopsProducer() throws InterruptedException {
         BatchHandoff handoff = new BatchHandoff(1);
-        handoff.put(batch()); // fill the single slot
+        handoff.put(new HandoffItem.InHeap(batch())); // fill the single slot
 
         Arena arena = Arena.ofShared();
         AtomicInteger releases = new AtomicInteger();
@@ -129,7 +136,7 @@ class BatchHandoffTest {
         CountDownLatch putReturned = new CountDownLatch(1);
         Thread producer = new Thread(() -> {
             try {
-                handoff.put(held);
+                handoff.put(new HandoffItem.InHeap(held));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             } finally {
@@ -156,6 +163,55 @@ class BatchHandoffTest {
         assertThat(handoff.isCancelled()).isTrue();
     }
 
+    @Test
+    @Timeout(value = 5, unit = TimeUnit.SECONDS)
+    void deliversInHeapAndRestoresSpilledItemsInOrder(@TempDir Path dir) throws InterruptedException {
+        ParquetSchema schema = singleIntColumnSchema("n");
+        DiskBudget diskBudget = DiskBudget.ofBytes(1 << 20);
+
+        try (BatchSpillStore store = new BatchSpillStore(dir, diskBudget, schema)) {
+            ParquetRecordBatch inHeap = intBatch(schema, "n", new int[] {1, 2});
+            SpillHandle handle =
+                    store.trySpill(intBatch(schema, "n", new int[] {3, 4, 5})).orElseThrow();
+
+            BatchHandoff handoff = new BatchHandoff(2);
+            handoff.put(new HandoffItem.InHeap(inHeap));
+            handoff.put(new HandoffItem.Spilled(handle, store));
+            handoff.complete();
+
+            ParquetRecordBatch first = handoff.next();
+            assertThat(first.rowCount()).isEqualTo(2);
+            first.close();
+
+            ParquetRecordBatch second = handoff.next();
+            assertThat(second.rowCount()).isEqualTo(3);
+            second.close();
+
+            assertThat(handoff.hasNext()).isFalse();
+        }
+    }
+
+    @Test
+    @Timeout(value = 5, unit = TimeUnit.SECONDS)
+    void closeDiscardsQueuedItemsOfBothKinds(@TempDir Path dir) throws InterruptedException {
+        ParquetSchema schema = singleIntColumnSchema("n");
+        DiskBudget diskBudget = DiskBudget.ofBytes(1 << 20);
+        try (BatchSpillStore store = new BatchSpillStore(dir, diskBudget, schema)) {
+            SpillHandle handle =
+                    store.trySpill(intBatch(schema, "n", new int[] {3, 4, 5})).orElseThrow();
+            long afterSpill = diskBudget.available();
+
+            BatchHandoff handoff = new BatchHandoff(2);
+            handoff.put(new HandoffItem.InHeap(intBatch(schema, "n", new int[] {1})));
+            handoff.put(new HandoffItem.Spilled(handle, store));
+            handoff.close();
+
+            assertThat(diskBudget.available())
+                    .as("the spilled item's disk reservation is released on discard")
+                    .isGreaterThan(afterSpill);
+        }
+    }
+
     private static ParquetRecordBatch batch() {
         return batch(Arena.ofShared());
     }
@@ -172,5 +228,18 @@ class BatchHandoffTest {
                         "value", Repetition.REQUIRED, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1)),
                 Optional.empty(),
                 -1));
+    }
+
+    private static ParquetRecordBatch intBatch(ParquetSchema schema, String name, int[] values) {
+        Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
+        columns.put(ColumnPath.of(name), IntVector.materialized(values, Validity.allValid(values.length)));
+        return DefaultParquetRecordBatch.ofHeap(schema, columns, values.length);
+    }
+
+    private static ParquetSchema singleIntColumnSchema(String name) {
+        SchemaNode.Primitive leaf = new SchemaNode.Primitive(
+                name, Repetition.OPTIONAL, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
+        SchemaNode.Group root = new SchemaNode.Group("root", Repetition.REQUIRED, List.of(leaf), Optional.empty(), -1);
+        return new ParquetSchema(root);
     }
 }

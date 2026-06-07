@@ -19,6 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -27,6 +28,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
@@ -152,9 +154,10 @@ class ParquetReaderTest {
     void matchedPredicateDecodesNothing(@TempDir Path tmp) throws Exception {
         Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(tmp, 4_000);
         CountingSegmentPool pool = new CountingSegmentPool();
-        ReadOptions opts = ReadOptions.builder().segmentPool(pool).build();
+        ParquetRuntime runtime = ParquetRuntime.builder().segmentPool(pool).build();
         try (ByteRangeSource src = TestParquetFiles.openRangeReader(file)) {
-            long n = ParquetReader.open(src).count(Pred.col("year").gtEq(2020), opts);
+            long n = ParquetReader.open(src, runtime, Optional.empty())
+                    .count(Pred.col("year").gtEq(2020), ReadOptions.DEFAULTS);
             assertThat(n).isPositive();
             assertThat(pool.totalBorrows())
                     .as("MATCHED groups add their row count from metadata and borrow no buffers")

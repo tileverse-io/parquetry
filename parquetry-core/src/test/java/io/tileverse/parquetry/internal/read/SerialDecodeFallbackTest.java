@@ -23,7 +23,9 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.tileverse.parquetry.data.OpenOptions;
 import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -48,19 +50,22 @@ class SerialDecodeFallbackTest {
         CountingSegmentPool pool = new CountingSegmentPool();
         long count;
         try (ByteRangeSource source = TestParquetFiles.openRangeReader(file)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
-            ReadOptions options = ReadOptions.builder()
-                    .segmentPool(pool)
-                    .decodeExecutor(decodePool)
-                    .maxDecodeAheadPerRead(0)
+            OpenOptions openOptions = OpenOptions.builder()
+                    .runtime(ParquetRuntime.builder()
+                            .segmentPool(pool)
+                            .decodeExecutor(decodePool)
+                            .maxDecodeAhead(0)
+                            .build())
                     .build();
-            try (Stream<ParquetRecord> stream = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
+            ParquetDataset dataset = ParquetDataset.open(source, openOptions);
+            try (Stream<ParquetRecord> stream =
+                    dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 count = stream.count();
             }
         }
         assertThat(count).isEqualTo(rows);
         assertThat(decodePool.availableSlots())
-                .as("maxDecodeAheadPerRead=0 must decode inline and never acquire a decode slot")
+                .as("maxDecodeAhead=0 must decode inline and never acquire a decode slot")
                 .isEqualTo(4);
         assertThat(pool.outstanding()).isZero();
         decodePool.shutdownNow();

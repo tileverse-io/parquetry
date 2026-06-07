@@ -1,8 +1,10 @@
 # parquetry-benchmarks
 
-JMH microbenchmarks for the parquetry read and write paths. Build and dev only:
-this module is never published to Maven Central, and the normal `./mvnw verify`
-only compiles it (it has no JUnit tests, and benchmarks never run in CI).
+JMH microbenchmarks for the parquetry read and write paths, plus a few comparison
+probes (see below). Build and dev only: this module is never published to Maven
+Central; the normal `./mvnw verify` compiles the benchmarks (which never run in
+CI) and its only tests are the sysprop-controlled probes, which skip unless you
+point them at a file.
 
 ## Build the runner
 
@@ -88,13 +90,54 @@ smoke). CI splits the two phases into `make build-benchmarks` and
 | `WkbReadBenchmark` | Head-to-head decode cost of two WKB-to-JTS readers over one representative geometry per (shape, size): `JTS_PACKED` is JTS's own `WKBReader` over a packed-coordinate `GeometryFactory` (the production-realistic baseline, fed a `byte[]`); `CUSTOM` is `MemorySegmentWkbReader`, which reads straight from a read-only `MemorySegment` onto packed sequences with one bulk copy per ring. The time gap is the headline (the custom reader is roughly an order of magnitude faster on dense geometries); per-op allocation is near-parity on LARGE because the packed `double[]` backing both readers create dominates. Run with `-prof gc` to read `gc.alloc.rate.norm`. | `shape` (`POINT`/`LINESTRING`/`POLYGON`/`MULTIPOLYGON`), `geometrySize` (`SMALL` ~12 vertices; `LARGE` ~2000), `reader` (`JTS_PACKED`/`CUSTOM`) |
 | `JtsSpatialFilterBenchmark` | End-to-end cost of three query strategies using the real JTS geometry engine and a non-axis-aligned diamond query polygon whose bbox over-selects. `BBOX_ONLY` reads all bbox-candidates (coarse superset); `IN_CORE_GATE` pushes `JtsGeometryFilter.intersects` into the read pipeline and avoids materialising the other columns of rows the exact JTS test rejects; `APP_SIDE_FILTER` reads with `BBOX_ONLY` (full materialization of all candidates) and then re-applies the exact JTS test in the stream. `IN_CORE_GATE` and `APP_SIDE_FILTER` return the same exact rows; `BBOX_ONLY` returns a superset. The `layout` axis shows row-group pruning effectiveness; `selectivity` (HIGH small diamond, LOW large diamond) scales how many rows the exact test rejects; `geometrySize` scales per-row WKB decode cost; `output` (`WKB`/`JTS`) selects whether the geometry output column is kept as raw bytes or parsed into a JTS `Geometry` (the JTS-minus-WKB gap on `IN_CORE_GATE` is the surviving rows' output parse, bounding what reusing the gate's decoded geometry as output would save). | `mode` (`BBOX_ONLY`/`IN_CORE_GATE`/`APP_SIDE_FILTER`), `layout` (`CLUSTERED`/`SHUFFLED`), `selectivity` (`HIGH`/`LOW`), `geometrySize` (`SMALL`/`LARGE`), `output` (`WKB`/`JTS`) |
 | `CountBenchmark` | The optimized `ParquetReader.count(predicate)` path against the `read(predicate).count()` baseline over a sorted `id INT64 + value DOUBLE` table of several row groups. The two `@Benchmark` methods (`optimizedCount`, `readCountBaseline`) form the optimized-vs-baseline axis; the `path` parameter selects how the count resolves. `ALWAYS_TRUE` sums per-row-group counts from metadata; `MATCHED` (`id >= 0`, sorted non-null) proves every row group matches and again counts from metadata; `ELIMINATED` (`id` above every group's max) prunes all row groups; `RESIDUAL` (`id > rows / 2`) forces record-level evaluation on the undecided middle groups; `IS_NOT_NULL` settles from the metadata null counts. COMPARISON, SPATIAL, IS_NULL, and PARTIAL paths are deferred: they need non-sorted, nullable, or geometry fixtures that do not exist yet, and this class does not cover them. | `path` (`ALWAYS_TRUE`/`MATCHED`/`ELIMINATED`/`RESIDUAL`/`IS_NOT_NULL`) |
+| `FetchSpillBenchmark` | The resident-memory cost of reading a large-row-group file under a deliberately tiny fetch budget. A mandatory fetch buffers a whole row group; pinning the fetch budget tiny (via `ResourceLimits.fixed`, whose derived budget is ten percent of the stated memory) forces every mandatory fetch off pooled native RAM and onto a mapped on-disk file (reclaimable page cache). The signal is peak resident set size (RSS), reported as the `peakRssKib` secondary counter: the `concurrency x row-group-span` overflow lands on reclaimable mmap rather than anonymous RAM. RSS is read from the OS with `ps` because file-backed mappings are invisible to the JVM's heap and allocation counters; it includes the JVM's own resident baseline (heap, metaspace, code cache), which dominates a small smoke fixture. This is a sizing tool, not a correctness check. | `concurrency` (`1`/`2`/`4`, overlapping reads per op) |
+
+## Fetch-spill characterization
+
+`FetchSpillBenchmark` generates its own fixture in `@Setup` from
+`LargeRowGroupFixture`, the writer pinning the row group to a byte budget
+(`WriteOptions.RowGroupSize.bytes`). No external file and no committed test data
+are needed: the fixture is written to a temp directory and deleted in
+`@TearDown`. The default fixture pins a 128 MiB row group; the `smoke` shrink
+uses a 4 MiB row group while keeping the same valve and concurrency axes.
+
+Run it from the shaded jar:
+
+```bash
+java --enable-preview --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow \
+  -jar internal/parquetry-benchmarks/target/benchmarks.jar FetchSpillBenchmark
+```
+
+`peakRssKib` is whole-process resident memory, not the spilled-fetch delta in
+isolation: it counts the JVM's own resident baseline (heap, metaspace, code
+cache) plus whatever pages of the mapped spill files the kernel keeps resident.
+The read it characterizes is whether peak RSS stays bounded as concurrency
+climbs (the overflow being reclaimable mmap) rather than growing by a full
+row-group span per concurrent read (which it would if every fetch took anonymous
+RAM).
+
+Smoke results (`-p smoke=true -f 0 -wi 1 -i 1 -r 1 -w 1`, in-process, one
+iteration, on the 4 MiB-row-group fixture) -- measured, characterization only,
+not a forked measurement run:
+
+| concurrency | peakRssKib (measured, smoke) |
+|-------------|------------------------------|
+| 1           | 620800                       |
+| 2           | 1026528                      |
+| 4           | 1040048                      |
+
+A forked default run on the 128 MiB fixture is the real measurement; the table
+above proves the benchmark executes and reports a per-concurrency RSS number.
+Re-run with the default fixture and add a labeled measured row when a
+representative host is available.
 
 ## Probes
 
 Probes are not JMH benchmarks. They are sysprop-controlled JUnit tests that read
 a file you supply and print a comparison table; they are skipped under a normal
-build and never run in CI. They live under `src/test` (with their heavier read
-dependencies at test scope) rather than in the shaded JMH jar.
+build and never run in CI. They live in the `io.tileverse.parquetry.probes`
+package under `src/test` (with their heavier read dependencies at test scope),
+separate from the `benchmarks` package and never in the shaded JMH jar.
 
 | Class | Measures | Inputs |
 |-------|----------|--------|

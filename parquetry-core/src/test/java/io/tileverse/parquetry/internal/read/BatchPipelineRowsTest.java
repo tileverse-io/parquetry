@@ -237,6 +237,9 @@ class BatchPipelineRowsTest {
                     prefetcher,
                     DecodeExecutor.shared(),
                     DecodeBudget.defaultBudget(),
+                    DiskBudget.defaultBudget(),
+                    Path.of(System.getProperty("java.io.tmpdir")),
+                    true,
                     /*decodeAhead*/ 0,
                     schema,
                     schema,
@@ -255,8 +258,7 @@ class BatchPipelineRowsTest {
 
         private RowGroupPrefetcher prefetcher(
                 ByteRangeSource source, List<RowGroupSurvivor> survivors, ExecutorService fetchExecutor) {
-            RowGroupFetcher fetcher =
-                    new RowGroupFetcher(source, schema, schema, new CountingSegmentPool(), 1 << 20, 8 << 20);
+            RowGroupFetcher fetcher = TestFetchers.over(source, schema, schema, new CountingSegmentPool());
             return new RowGroupPrefetcher(
                     survivors,
                     fetcher,

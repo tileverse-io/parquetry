@@ -64,8 +64,8 @@ class DatasetTest {
 
         CountingSegmentPool pool = new CountingSegmentPool();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
-            ReadOptions options = ReadOptions.builder().segmentPool(pool).build();
+            ParquetDataset dataset = openWithPool(source, pool);
+            ReadOptions options = ReadOptions.DEFAULTS;
 
             List<RowDto> actual = readAll(dataset, Predicate.ALWAYS_TRUE, Projection.ALL, options);
 
@@ -85,8 +85,8 @@ class DatasetTest {
 
         CountingSegmentPool pool = new CountingSegmentPool();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
-            ReadOptions options = ReadOptions.builder().segmentPool(pool).build();
+            ParquetDataset dataset = openWithPool(source, pool);
+            ReadOptions options = ReadOptions.DEFAULTS;
 
             try (Stream<ParquetRecord> records = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
                 List<RowDto> actual = records.map(DatasetTest::asRowDto).toList();
@@ -105,14 +105,14 @@ class DatasetTest {
 
         CountingSegmentPool pool = new CountingSegmentPool();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetDataset dataset = openWithPool(source, pool);
 
             // Schema, row-group view, and key/value metadata are stable across calls.
             assertThat(dataset.schema()).isSameAs(dataset.schema());
             assertThat(dataset.rowGroups()).isSameAs(dataset.rowGroups());
             assertThat(dataset.keyValueMetadata()).isNotNull();
 
-            ReadOptions options = ReadOptions.builder().segmentPool(pool).build();
+            ReadOptions options = ReadOptions.DEFAULTS;
             for (int i = 0; i < 2; i++) {
                 List<RowDto> actual = readAll(dataset, Predicate.ALWAYS_TRUE, Projection.ALL, options);
                 assertThat(actual).hasSize(expected.size());
@@ -151,8 +151,8 @@ class DatasetTest {
 
         CountingSegmentPool pool = new CountingSegmentPool();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
-            ReadOptions options = ReadOptions.builder().segmentPool(pool).build();
+            ParquetDataset dataset = openWithPool(source, pool);
+            ReadOptions options = ReadOptions.DEFAULTS;
             Predicate impossibleYear = Pred.col("year").eq(9999);
 
             List<RowDto> matched = readAll(dataset, impossibleYear, Projection.ALL, options);
@@ -177,8 +177,8 @@ class DatasetTest {
 
         CountingSegmentPool pool = new CountingSegmentPool();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
-            ReadOptions options = ReadOptions.builder().segmentPool(pool).build();
+            ParquetDataset dataset = openWithPool(source, pool);
+            ReadOptions options = ReadOptions.DEFAULTS;
             Predicate keepYear2022 = Pred.col("year").eq(2022);
 
             List<RowDto> matched = readAll(dataset, keepYear2022, Projection.ALL, options);
@@ -203,8 +203,8 @@ class DatasetTest {
 
         CountingSegmentPool pool = new CountingSegmentPool();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
-            ReadOptions options = ReadOptions.builder().segmentPool(pool).build();
+            ParquetDataset dataset = openWithPool(source, pool);
+            ReadOptions options = ReadOptions.DEFAULTS;
             Projection yearOnly = Projection.of(Set.of(YEAR));
 
             try (Stream<ParquetRecord> records = dataset.read(Predicate.ALWAYS_TRUE, yearOnly, options)) {
@@ -227,8 +227,8 @@ class DatasetTest {
 
         CountingSegmentPool pool = new CountingSegmentPool();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
-            ReadOptions options = ReadOptions.builder().segmentPool(pool).build();
+            ParquetDataset dataset = openWithPool(source, pool);
+            ReadOptions options = ReadOptions.DEFAULTS;
 
             int workers = 4;
             CountDownLatch ready = new CountDownLatch(workers);
@@ -276,6 +276,16 @@ class DatasetTest {
         assertThat(permitted)
                 .as("ParquetDataset must seal to DefaultParquetDataset")
                 .containsExactly(DefaultParquetDataset.class);
+    }
+
+    // --- read helpers ---
+
+    /** Opens a dataset whose reads borrow buffers from {@code pool}; the test then asserts the pool drains. */
+    private static ParquetDataset openWithPool(ByteRangeSource source, CountingSegmentPool pool) {
+        OpenOptions openOptions = OpenOptions.builder()
+                .runtime(ParquetRuntime.builder().segmentPool(pool).build())
+                .build();
+        return ParquetDataset.open(source, openOptions);
     }
 
     // --- fixture helpers ---

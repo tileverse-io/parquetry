@@ -42,10 +42,6 @@ final class DecodedRowGroup implements AutoCloseable {
         return recordEvalRequired;
     }
 
-    void promote() {
-        source.promote();
-    }
-
     boolean hasNext() {
         return source.hasNext();
     }

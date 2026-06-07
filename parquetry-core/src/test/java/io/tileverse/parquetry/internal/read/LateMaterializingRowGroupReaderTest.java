@@ -188,8 +188,7 @@ class LateMaterializingRowGroupReaderTest {
             offsetIndexes.put(leaf, chunks.offsetIndex(leaf).orElseThrow());
         }
 
-        RowGroupFetcher fetcher =
-                new RowGroupFetcher(source, fileSchema, scanSchema, SegmentPool.getDefault(), 1 << 20, 8 << 20);
+        RowGroupFetcher fetcher = TestFetchers.over(source, fileSchema, scanSchema, SegmentPool.getDefault());
         RowGroupSurvivor survivor = RowGroupSurvivor.full(chunks);
         return new ReaderFixture(fetcher, survivor, offsetIndexes, chunks.numRows());
     }

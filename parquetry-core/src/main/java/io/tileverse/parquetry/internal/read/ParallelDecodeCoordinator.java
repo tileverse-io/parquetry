@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.internal.read;
 
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -39,9 +40,9 @@ import lombok.NonNull;
  * decoded inline on the consumer thread (serial fallback). {@code maxDecodeAheadPerRead == 0} decodes every row group
  * inline - the serial path.
  *
- * <p>The in-order current row group is never budget-controlled: when the consumer reaches a speculatively decoded row
- * group, the coordinator promotes it off the budget, which releases a worker parked on a reservation. That promotion is
- * what keeps the read live even under a budget too small for a single batch.
+ * <p>Every row group honors the budget: a speculative batch that does not fit spills to disk rather than exempting the
+ * row group, which keeps the read live even under a budget too small for a single batch. The consumer holds at most one
+ * batch at a time, restoring a spilled one when it reaches it.
  */
 public final class ParallelDecodeCoordinator implements AutoCloseable {
 
@@ -51,6 +52,9 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     private final RowGroupPrefetcher prefetcher;
     private final DecodeExecutor decodeExecutor;
     private final DecodeBudget decodeBudget;
+    private final DiskBudget diskBudget;
+    private final Path spillDir;
+    private final boolean spillEnabled;
     private final int maxDecodeAheadPerRead;
     private final ParquetSchema projectedSchema;
     private final ParquetSchema fileSchema;
@@ -70,6 +74,9 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
             @NonNull RowGroupPrefetcher prefetcher,
             @NonNull DecodeExecutor decodeExecutor,
             @NonNull DecodeBudget decodeBudget,
+            @NonNull DiskBudget diskBudget,
+            @NonNull Path spillDir,
+            boolean spillEnabled,
             int maxDecodeAheadPerRead,
             @NonNull ParquetSchema projectedSchema,
             @NonNull ParquetSchema fileSchema,
@@ -80,6 +87,9 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
         this.prefetcher = prefetcher;
         this.decodeExecutor = decodeExecutor;
         this.decodeBudget = decodeBudget;
+        this.diskBudget = diskBudget;
+        this.spillDir = spillDir;
+        this.spillEnabled = spillEnabled;
         this.maxDecodeAheadPerRead = maxDecodeAheadPerRead;
         this.projectedSchema = projectedSchema;
         this.fileSchema = fileSchema;
@@ -100,7 +110,6 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
         nextToConsume++;
         DecodedRowGroup windowed = window.remove(index);
         if (windowed != null) {
-            windowed.promote();
             return windowed;
         }
         return decodeInline(index);
@@ -130,7 +139,8 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     private DecodedRowGroup submitSpeculative(RowGroupFetch fetch, int index) {
         RowGroupBatchDriver driver = buildDriver(fetch, rowMasks.get(index), index);
         BatchHandoff handoff = new BatchHandoff(HANDOFF_CAPACITY);
-        StreamingBatchSource source = new StreamingBatchSource(handoff, driver, decodeBudget, /*exempt*/ false);
+        BatchSpillStore spillStore = new BatchSpillStore(spillDir, diskBudget, projectedSchema);
+        StreamingBatchSource source = new StreamingBatchSource(handoff, driver, decodeBudget, spillStore, spillEnabled);
         DecodedRowGroup rowGroup = new DecodedRowGroup(source, evalRequiredFor(index));
         try {
             Future<Void> task = decodeExecutor.submitAcquired(() -> {

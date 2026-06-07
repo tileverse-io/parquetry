@@ -132,8 +132,12 @@ class ParallelDecodeCoordinatorTest {
     private static DecodedRowGroup failingStreamingRowGroup(DecodeExecutor pool) {
         RowGroupBatchDriver driver = new FailingDriver(new IllegalStateException("decode blew up"));
         BatchHandoff handoff = new BatchHandoff(2);
+        BatchSpillStore spillStore = new BatchSpillStore(
+                Path.of(System.getProperty("java.io.tmpdir")),
+                DiskBudget.defaultBudget(),
+                TestBatches.singleIntColumnSchema());
         StreamingBatchSource source =
-                new StreamingBatchSource(handoff, driver, DecodeBudget.defaultBudget(), /*exempt*/ false);
+                new StreamingBatchSource(handoff, driver, DecodeBudget.defaultBudget(), spillStore, true);
         source.attachProducerTask(pool.submitAcquired(() -> {
             source.runProducer();
             return null;
@@ -223,6 +227,9 @@ class ParallelDecodeCoordinatorTest {
                     prefetcher,
                     executor,
                     budget,
+                    DiskBudget.defaultBudget(),
+                    Path.of(System.getProperty("java.io.tmpdir")),
+                    true,
                     decodeAhead,
                     schema,
                     schema,
@@ -240,8 +247,7 @@ class ParallelDecodeCoordinatorTest {
         }
 
         private RowGroupPrefetcher prefetcher(ByteRangeSource source, List<RowGroupSurvivor> survivors) {
-            RowGroupFetcher fetcher =
-                    new RowGroupFetcher(source, schema, schema, new CountingSegmentPool(), 1 << 20, 8 << 20);
+            RowGroupFetcher fetcher = TestFetchers.over(source, schema, schema, new CountingSegmentPool());
             ExecutorService executor = Executors.newThreadPerTaskExecutor(
                     Thread.ofVirtual().name("test-fetch-", 0).factory());
             return new RowGroupPrefetcher(

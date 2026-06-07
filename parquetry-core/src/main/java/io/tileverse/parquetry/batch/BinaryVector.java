@@ -110,6 +110,48 @@ public final class BinaryVector implements ColumnVector {
         return new BinaryVector(dictEntries, indices, validity);
     }
 
+    /**
+     * Whether this vector is in dictionary mode (per-row indexes into shared entries) rather than consolidated mode.
+     */
+    public boolean isDictionary() {
+        return indices != null;
+    }
+
+    /**
+     * The read-only backing buffer of a consolidated-mode vector. The returned view is read-only; do not mutate it.
+     * Valid only when {@link #isDictionary()} is {@code false}.
+     */
+    public MemorySegment consolidatedBacking() {
+        return backing;
+    }
+
+    /**
+     * The row offsets of a consolidated-mode vector ({@code offsets.length == size() + 1}), returned directly without
+     * copying; the array is read-only by contract and callers must not mutate it. Offsets index absolutely into
+     * {@link #consolidatedBacking()} and need not start at zero. Valid only when {@link #isDictionary()} is
+     * {@code false}.
+     */
+    public int[] consolidatedOffsets() {
+        return offsets;
+    }
+
+    /**
+     * The shared dictionary entries of a dictionary-mode vector, returned directly without copying; the array is
+     * read-only by contract and callers must not mutate it, and the entries themselves are already read-only. Valid
+     * only in dictionary mode.
+     */
+    public MemorySegment[] dictionaryEntries() {
+        return dictEntries;
+    }
+
+    /**
+     * The per-row indexes into {@link #dictionaryEntries()} of a dictionary-mode vector, returned directly without
+     * copying; the array is read-only by contract and callers must not mutate it. Valid only in dictionary mode.
+     */
+    public int[] dictionaryIndices() {
+        return indices;
+    }
+
     @Override
     public int size() {
         return indices != null ? indices.length : offsets.length - 1;

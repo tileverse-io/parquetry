@@ -53,6 +53,9 @@ import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.filter.spatial.SpatialBoundsSource;
 import io.tileverse.parquetry.internal.filter.spatial.SpatialCoveringRewrite;
 import io.tileverse.parquetry.internal.read.BatchPipeline;
+import io.tileverse.parquetry.internal.read.DecryptionKeyRetriever;
+import io.tileverse.parquetry.internal.read.FetchBufferAllocator;
+import io.tileverse.parquetry.internal.read.FetchSpillStore;
 import io.tileverse.parquetry.internal.read.IndexSectionLoader;
 import io.tileverse.parquetry.internal.read.LateMaterialization;
 import io.tileverse.parquetry.internal.read.ParallelDecodeCoordinator;
@@ -98,28 +101,51 @@ public class ParquetReader {
     private final Map<String, String> keyValueMetadata;
     private final List<RowGroupSummary> rowGroupView;
     private final Optional<GeoParquetMetadata> geoMetadata;
+    private final ParquetRuntime runtime;
+
+    // Held for an encrypted file; the footer-decryption path that reads it is not wired in yet.
+    @SuppressWarnings("java:S1068")
+    private final Optional<DecryptionKeyRetriever> decryptionKeyRetriever;
 
     protected ParquetReader(
             ByteRangeSource source,
             FileMetaData footer,
             ParquetSchema fileSchema,
             Map<String, String> keyValueMetadata,
-            List<RowGroupSummary> rowGroupView) {
+            List<RowGroupSummary> rowGroupView,
+            ParquetRuntime runtime,
+            Optional<DecryptionKeyRetriever> decryptionKeyRetriever) {
         this.source = source;
         this.footer = footer;
         this.fileSchema = fileSchema;
         this.keyValueMetadata = keyValueMetadata;
         this.rowGroupView = rowGroupView;
         this.geoMetadata = parseGeoMetadata(keyValueMetadata);
+        this.runtime = runtime;
+        this.decryptionKeyRetriever = decryptionKeyRetriever;
     }
 
-    /** Opens a reader, performing exactly one footer read against {@code source}. */
+    /**
+     * Opens a reader against the default runtime, performing exactly one footer read against {@code source}. Equivalent
+     * to {@code open(source, ParquetRuntime.defaultRuntime(), Optional.empty())}.
+     */
     public static ParquetReader open(@NonNull ByteRangeSource source) {
+        return open(source, ParquetRuntime.defaultRuntime(), Optional.empty());
+    }
+
+    /**
+     * Opens a reader bound to {@code runtime} for read resources, performing exactly one footer read against
+     * {@code source}. The {@code decryptionKeyRetriever} is held for an encrypted file.
+     */
+    public static ParquetReader open(
+            @NonNull ByteRangeSource source,
+            @NonNull ParquetRuntime runtime,
+            @NonNull Optional<DecryptionKeyRetriever> decryptionKeyRetriever) {
         FileMetaData footer = ParquetFormat.readFooter(source);
         Map<String, String> kvMetadata = collapseKeyValueMetadata(footer.keyValueMetadata());
         ParquetSchema fileSchema = buildFileSchema(footer, kvMetadata);
         List<RowGroupSummary> rgView = toRowGroupView(footer);
-        return new ParquetReader(source, footer, fileSchema, kvMetadata, rgView);
+        return new ParquetReader(source, footer, fileSchema, kvMetadata, rgView, runtime, decryptionKeyRetriever);
     }
 
     /** Returns the file schema, with GeoParquet 1.x logical-type annotations folded in. */
@@ -376,25 +402,28 @@ public class ParquetReader {
      * virtual-thread executor; closing the returned stream cascades to {@link RowGroupPrefetcher#close()}, which shuts
      * the executor down. No executor outlives the read.
      */
-    private RowGroupPrefetcher newPrefetcher(
-            List<RowGroupSurvivor> survivors, ParquetSchema projectedSchema, ReadOptions options) {
+    private RowGroupPrefetcher newPrefetcher(List<RowGroupSurvivor> survivors, ParquetSchema projectedSchema) {
+        FetchSpillStore spillStore = new FetchSpillStore(runtime.spillDir(), runtime.diskBudget());
+        FetchBufferAllocator mandatoryAllocator =
+                new FetchBufferAllocator(runtime.segmentPool(), runtime.fetchBudget(), spillStore);
         RowGroupFetcher fetcher = new RowGroupFetcher(
                 source,
                 fileSchema,
                 projectedSchema,
-                options.segmentPool(),
-                options.maxCoalesceGap(),
-                options.maxCoalescedSpan());
+                runtime.segmentPool(),
+                mandatoryAllocator,
+                runtime.maxCoalesceGap(),
+                runtime.maxCoalescedSpan());
         ExecutorService executor = Executors.newThreadPerTaskExecutor(
                 Thread.ofVirtual().name("parquetry-fetch-", 0).factory());
         try {
             return new RowGroupPrefetcher(
                     survivors,
                     fetcher,
-                    options.fetchBudget(),
+                    runtime.fetchBudget(),
                     executor,
-                    options.prefetchDepth(),
-                    options.maxConcurrentFetchesPerRead());
+                    runtime.prefetchDepth(),
+                    runtime.maxConcurrentFetchesPerRead());
         } catch (RuntimeException e) {
             executor.shutdownNow();
             throw e;
@@ -412,13 +441,16 @@ public class ParquetReader {
             List<Optional<RowMask>> decodeMasks,
             ReadOptions options,
             Optional<LateMaterialization> lateMat) {
-        RowGroupPrefetcher prefetcher = newPrefetcher(survivors, projectedSchema, options);
+        RowGroupPrefetcher prefetcher = newPrefetcher(survivors, projectedSchema);
         List<Boolean> recordEvalRequired = recordEvalFlagsFor(survivors);
         return new ParallelDecodeCoordinator(
                 prefetcher,
-                options.decodeExecutor(),
-                options.decodeBudget(),
-                options.maxDecodeAheadPerRead(),
+                runtime.decodeExecutor(),
+                runtime.decodeBudget(),
+                runtime.diskBudget(),
+                runtime.spillDir(),
+                runtime.spillEnabled(),
+                runtime.maxDecodeAhead(),
                 projectedSchema,
                 fileSchema,
                 options.batchSize(),

@@ -25,7 +25,9 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.tileverse.parquetry.data.OpenOptions;
 import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -72,13 +74,16 @@ class ParallelDecodeParityTest {
         CountingSegmentPool pool = new CountingSegmentPool();
         List<String> rendered = new ArrayList<>();
         try (ByteRangeSource source = TestParquetFiles.openRangeReader(file)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
-            ReadOptions options = ReadOptions.builder()
-                    .segmentPool(pool)
-                    .decodeExecutor(executor)
-                    .maxDecodeAheadPerRead(decodeAhead)
+            OpenOptions openOptions = OpenOptions.builder()
+                    .runtime(ParquetRuntime.builder()
+                            .segmentPool(pool)
+                            .decodeExecutor(executor)
+                            .maxDecodeAhead(decodeAhead)
+                            .build())
                     .build();
-            try (Stream<ParquetRecord> stream = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
+            ParquetDataset dataset = ParquetDataset.open(source, openOptions);
+            try (Stream<ParquetRecord> stream =
+                    dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 stream.forEach(rec -> rendered.add(renderKey(rec)));
             }
         }

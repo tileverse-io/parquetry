@@ -29,14 +29,14 @@ import lombok.NonNull;
 
 /**
  * A bounded hand-off of decoded batches from one producing decode worker to the single consuming read thread. The
- * producer {@link #put(ParquetRecordBatch)}s batches one at a time and parks when the hand-off is full (backpressure),
- * which bounds a single row group's live batches. The consumer drains in order via {@link #hasNext()} /
- * {@link #next()}.
+ * producer {@link #put(HandoffItem)}s items one at a time and parks when the hand-off is full (backpressure), which
+ * bounds a single row group's live batches. Each item is a batch held in heap or a handle to one spilled to disk; the
+ * consumer drains in order via {@link #hasNext()} / {@link #next()}, restoring a spilled batch when it reaches it.
  *
  * <p>The producer signals end-of-stream with {@link #complete()} or a decode failure with {@link #fail(Throwable)}; the
  * consumer's {@link #hasNext()} returns {@code false} after the last batch, or rethrows the failure. {@link #close()}
- * cancels the hand-off: it closes every batch still queued or about to be queued (releasing each one's budget
- * reservation), and a producer parked in {@code put} stops by closing the batch it holds.
+ * cancels the hand-off: it discards every item still queued or about to be queued (releasing each one's heap or disk
+ * reservation), and a producer parked in {@code put} stops by discarding the item it holds.
  */
 final class BatchHandoff implements AutoCloseable {
 
@@ -52,7 +52,7 @@ final class BatchHandoff implements AutoCloseable {
     @SuppressWarnings("java:S3077")
     private volatile Throwable failure;
 
-    private ParquetRecordBatch lookahead;
+    private HandoffItem lookahead;
     private boolean ended;
 
     BatchHandoff(int capacity) {
@@ -64,16 +64,16 @@ final class BatchHandoff implements AutoCloseable {
         this.queue = new LinkedBlockingQueue<>(capacity + 1);
     }
 
-    void put(@NonNull ParquetRecordBatch batch) throws InterruptedException {
+    void put(@NonNull HandoffItem item) throws InterruptedException {
         while (!cancelled.get()) {
-            if (queue.size() < capacity && queue.offer(batch, POLL_MILLIS, TimeUnit.MILLISECONDS)) {
+            if (queue.size() < capacity && queue.offer(item, POLL_MILLIS, TimeUnit.MILLISECONDS)) {
                 if (cancelled.get()) {
-                    drainAndClose();
+                    drainAndDiscard();
                 }
                 return;
             }
         }
-        closeQuietly(batch);
+        discardQuietly(item);
     }
 
     void complete() {
@@ -111,7 +111,7 @@ final class BatchHandoff implements AutoCloseable {
             rethrowFailure();
             return false;
         }
-        lookahead = (ParquetRecordBatch) taken;
+        lookahead = (HandoffItem) taken;
         return true;
     }
 
@@ -119,17 +119,17 @@ final class BatchHandoff implements AutoCloseable {
         if (!hasNext()) {
             throw new NoSuchElementException("No more batches in the hand-off");
         }
-        ParquetRecordBatch batch = lookahead;
+        HandoffItem item = lookahead;
         lookahead = null;
-        return batch;
+        return item.take();
     }
 
     @Override
     public void close() {
         cancelled.set(true);
-        drainAndClose();
+        drainAndDiscard();
         if (lookahead != null) {
-            closeQuietly(lookahead);
+            discardQuietly(lookahead);
             lookahead = null;
         }
     }
@@ -160,21 +160,21 @@ final class BatchHandoff implements AutoCloseable {
         throw new IllegalStateException("Row group decode failed", cause);
     }
 
-    private void drainAndClose() {
+    private void drainAndDiscard() {
         Object item = queue.poll();
         while (item != null) {
-            if (item instanceof ParquetRecordBatch batch) {
-                closeQuietly(batch);
+            if (item instanceof HandoffItem handoffItem) {
+                discardQuietly(handoffItem);
             }
             item = queue.poll();
         }
     }
 
-    private static void closeQuietly(ParquetRecordBatch batch) {
+    private static void discardQuietly(HandoffItem item) {
         try {
-            batch.close();
+            item.discard();
         } catch (RuntimeException _) {
-            // best-effort; a chronic leak shows up in pool accounting
+            // best-effort; a chronic leak shows up in pool / disk accounting
         }
     }
 }
