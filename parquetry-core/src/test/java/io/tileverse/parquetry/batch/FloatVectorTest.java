@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 class FloatVectorTest {
@@ -48,5 +49,33 @@ class FloatVectorTest {
         FloatVector vector = FloatVector.materialized(new float[] {4f, 5f}, Validity.allValid(2));
         assertThat(vector.getFloat(1)).isEqualTo(5f);
         assertThat(vector.asArray()).containsExactly(4f, 5f);
+    }
+
+    @Nested
+    class CopyInto {
+
+        @Test
+        void copiesHeapBackedValuesAtTargetOffset() {
+            FloatVector vec = FloatVector.materialized(new float[] {10f, 20f, 30f, 40f}, Validity.allValid(4));
+
+            MemorySegment target = MemorySegment.ofArray(new byte[6 * Float.BYTES]);
+            vec.copyInto(target, (long) Float.BYTES, 1, 2);
+
+            assertThat(target.getAtIndex(FLOAT, 1)).isEqualTo(20f);
+            assertThat(target.getAtIndex(FLOAT, 2)).isEqualTo(30f);
+        }
+
+        @Test
+        void copiesSegmentBackedValues() {
+            MemorySegment src = MemorySegment.ofArray(new byte[3 * Float.BYTES]);
+            MemorySegment.copy(new float[] {7f, 8f, 9f}, 0, src, FLOAT, 0L, 3);
+            FloatVector vec = FloatVector.segmentBacked(src, Validity.allValid(3));
+
+            MemorySegment target = MemorySegment.ofArray(new byte[3 * Float.BYTES]);
+            vec.copyInto(target, 0L, 0, 3);
+
+            assertThat(target.getAtIndex(FLOAT, 0)).isEqualTo(7f);
+            assertThat(target.getAtIndex(FLOAT, 2)).isEqualTo(9f);
+        }
     }
 }

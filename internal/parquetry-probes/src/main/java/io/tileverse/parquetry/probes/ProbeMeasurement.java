@@ -80,6 +80,7 @@ final class ProbeMeasurement {
             runWave(concurrency, task);
         }
 
+        settle();
         resetPeakHeap();
         long allocBefore = totalAllocatedBytes();
         List<Double> latenciesMillis = new ArrayList<>(concurrency * Math.max(1, measuredWaves));
@@ -220,6 +221,24 @@ final class ProbeMeasurement {
             String firstError) {}
 
     // --- heap, allocation, and timing helpers (shared with each probe's sequential path) ---
+
+    /**
+     * Collects the previous engine's garbage before the next engine's measurement window opens; its peak-heap baseline
+     * then excludes heap the prior engine left uncollected. A best-effort {@link System#gc()} settle: it reduces
+     * cross-engine contamination but does not fully isolate engines (live off-heap state and GC history persist across
+     * engines). For pristine memory numbers, run one engine per process (the {@code parquetry.probe.engines} property).
+     */
+    static void settle() {
+        for (int round = 0; round < 2; round++) {
+            System.gc();
+            try {
+                Thread.sleep(200L);
+            } catch (InterruptedException _) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+    }
 
     static void resetPeakHeap() {
         for (MemoryPoolMXBean pool : ManagementFactory.getMemoryPoolMXBeans()) {

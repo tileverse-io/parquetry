@@ -51,54 +51,6 @@
       <version>${jmh.version}</version>
       <scope>provided</scope>
     </dependency>
-    <!--
-      The read-path comparison probe (ReadComparisonProbe) reads one local file through three engines. It is a
-      sysprop-controlled JUnit probe under src/test, kept at test scope so parquet-hadoop's transitive Hadoop stack
-      stays off the JMH benchmarks' classpath and out of the dependency-convergence check (which excludes test scope).
-      parquet-java reads via LocalInputFile (no Hadoop filesystem), but parquet-hadoop still references
-      org.apache.hadoop.conf.Configuration at runtime, hence hadoop-common. duckdb_jdbc drives the DuckDB arm.
-    -->
-    <dependency>
-      <groupId>org.junit.jupiter</groupId>
-      <artifactId>junit-jupiter</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.parquet</groupId>
-      <artifactId>parquet-hadoop</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.hadoop</groupId>
-      <artifactId>hadoop-common</artifactId>
-      <version>3.3.6</version>
-      <scope>test</scope>
-      <exclusions>
-        <!-- Hadoop's older Jackson shadows the Jackson 3 parquetry's GeoParquet parser needs; keep ours. -->
-        <exclusion>
-          <groupId>com.fasterxml.jackson.core</groupId>
-          <artifactId>*</artifactId>
-        </exclusion>
-      </exclusions>
-    </dependency>
-    <!-- parquet-java's ParquetReader.Builder transitively loads FileInputFormat, which hadoop-common alone lacks. -->
-    <dependency>
-      <groupId>org.apache.hadoop</groupId>
-      <artifactId>hadoop-mapreduce-client-core</artifactId>
-      <version>3.3.6</version>
-      <scope>test</scope>
-      <exclusions>
-        <exclusion>
-          <groupId>com.fasterxml.jackson.core</groupId>
-          <artifactId>*</artifactId>
-        </exclusion>
-      </exclusions>
-    </dependency>
-    <dependency>
-      <groupId>org.duckdb</groupId>
-      <artifactId>duckdb_jdbc</artifactId>
-      <scope>test</scope>
-    </dependency>
   </dependencies>
 
   <build>

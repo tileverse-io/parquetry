@@ -19,171 +19,339 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
-import io.tileverse.parquetry.materializer.RowAccessor;
+import io.tileverse.parquetry.batch.BinaryVector;
+import io.tileverse.parquetry.batch.BooleanVector;
+import io.tileverse.parquetry.batch.ColumnVector;
+import io.tileverse.parquetry.batch.DoubleVector;
+import io.tileverse.parquetry.batch.FixedLenBinaryVector;
+import io.tileverse.parquetry.batch.FloatVector;
+import io.tileverse.parquetry.batch.Int96Vector;
+import io.tileverse.parquetry.batch.IntVector;
+import io.tileverse.parquetry.batch.ListVector;
+import io.tileverse.parquetry.batch.LongVector;
+import io.tileverse.parquetry.batch.MapVector;
+import io.tileverse.parquetry.batch.StructVector;
+import io.tileverse.parquetry.batch.VariantVector;
+import io.tileverse.parquetry.materializer.ListMaterializer;
+import io.tileverse.parquetry.materializer.MapMaterializer;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.ParquetSchemaException;
-import io.tileverse.parquetry.schema.PrimitiveKind;
-import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
- * The single {@link ParquetRecord} implementation, backed by a {@link RowAccessor}. The same type represents a
- * top-level row and a nested struct cell: {@link #getStruct(ColumnPath)} returns another {@code DefaultParquetRecord},
- * this one over a {@code RowAccessor} for the nested struct row.
+ * The live {@link ParquetRecord}: one row of a batch, addressed positionally over a shared {@link RowColumns}. The same
+ * type represents a top-level row and a nested struct cell. Holds only the column set and a row index; values are read
+ * straight from the column vectors with no boxing.
  *
- * <p>Instances are short-lived: one per row, owned by the iterator. Both the schema and row accessor are stored by
- * reference; the record never copies them.
- *
- * <p>Binary values arrive from {@link RowAccessor} as read-only {@link MemorySegment}s. {@link #getBinary(ColumnPath)}
- * and its UTF-8 sibling materialize a fresh {@code byte[]} every time, letting callers mutate the returned array
- * without affecting the underlying page bytes.
- *
- * <p>Typed primitive and binary accessors require that the leaf value be non-null. Callers must guard with
- * {@link #isNull(ColumnPath)} first; otherwise typed accessors throw {@link NullPointerException} (auto-unboxing for
- * primitive returns, or dereference of the underlying {@link MemorySegment} for binary returns). Only
- * {@link #get(ColumnPath)} returns {@code null} for null leaves.
+ * <p>The view is valid only while the producing batch is open. A caller that needs values past batch close calls
+ * {@link #detach()}, which returns an owned {@link DetachedParquetRecord}.
  */
 public final class DefaultParquetRecord implements ParquetRecord {
 
-    private final ParquetSchema schema;
-    private final RowAccessor row;
+    private final RowColumns columns;
+    private final int rowIndex;
 
-    /** Wraps the given row, exposing it through the {@link ParquetRecord} accessors. */
-    public DefaultParquetRecord(ParquetSchema schema, RowAccessor row) {
-        this.schema = schema;
-        this.row = row;
+    /** Wraps row {@code rowIndex} of {@code columns}. */
+    public DefaultParquetRecord(RowColumns columns, int rowIndex) {
+        this.columns = columns;
+        this.rowIndex = rowIndex;
     }
 
     @Override
     public ParquetSchema schema() {
-        return schema;
+        return columns.schema();
     }
 
     @Override
-    public ParquetRecord detach() {
-        Map<ColumnPath, Object> snapshot = row.values();
-        Map<ColumnPath, Object> detached = LinkedHashMap.newLinkedHashMap(snapshot.size());
-        snapshot.forEach((path, value) -> detached.put(path, Detach.detach(value)));
-        return new DefaultParquetRecord(schema, new MaterializedRowAccessor(detached));
+    public int columnCount() {
+        return columns.columnCount();
     }
 
     @Override
-    public Object get(ColumnPath col) {
-        return row.get(col);
+    public ColumnPath columnPath(int col) {
+        return columns.path(col);
     }
 
     @Override
-    public boolean getBoolean(ColumnPath col) {
-        requireKind(col, PrimitiveKind.BOOLEAN, "getBoolean");
-        return (Boolean) row.get(col);
+    public boolean isNull(int col) {
+        ColumnVector vec = columns.vector(col);
+        return vec == null || vec.isNull(rowIndex);
     }
 
     @Override
-    public int getInt(ColumnPath col) {
-        requireKind(col, PrimitiveKind.INT32, "getInt");
-        return (Integer) row.get(col);
+    public boolean getBoolean(int col) {
+        if (columns.vector(col) instanceof BooleanVector vec) {
+            return vec.getBoolean(rowIndex);
+        }
+        throw mismatch(col, "getBoolean");
     }
 
     @Override
-    public long getLong(ColumnPath col) {
-        requireKind(col, PrimitiveKind.INT64, "getLong");
-        return (Long) row.get(col);
+    public int getInt(int col) {
+        if (columns.vector(col) instanceof IntVector vec) {
+            return vec.getInt(rowIndex);
+        }
+        throw mismatch(col, "getInt");
     }
 
     @Override
-    public float getFloat(ColumnPath col) {
-        requireKind(col, PrimitiveKind.FLOAT, "getFloat");
-        return (Float) row.get(col);
+    public long getLong(int col) {
+        if (columns.vector(col) instanceof LongVector vec) {
+            return vec.getLong(rowIndex);
+        }
+        throw mismatch(col, "getLong");
     }
 
     @Override
-    public double getDouble(ColumnPath col) {
-        requireKind(col, PrimitiveKind.DOUBLE, "getDouble");
-        return (Double) row.get(col);
+    public float getFloat(int col) {
+        if (columns.vector(col) instanceof FloatVector vec) {
+            return vec.getFloat(rowIndex);
+        }
+        throw mismatch(col, "getFloat");
     }
 
     @Override
-    public byte[] getBinary(ColumnPath col) {
-        requireBinaryKind(col, "getBinary");
-        return copyBytes(col);
+    public double getDouble(int col) {
+        if (columns.vector(col) instanceof DoubleVector vec) {
+            return vec.getDouble(rowIndex);
+        }
+        throw mismatch(col, "getDouble");
     }
 
     @Override
-    public String getString(ColumnPath col) {
-        requireBinaryKind(col, "getString");
-        return new String(copyBytes(col), StandardCharsets.UTF_8);
+    public String getString(int col) {
+        return readBinary(
+                col,
+                "getString",
+                (backing, offset, length) -> new String(toBytes(backing, offset, length), StandardCharsets.UTF_8));
     }
 
     @Override
-    public boolean isNull(ColumnPath col) {
-        Object value = row.get(col);
-        return value == null || row.isGroupNull(col);
+    public byte[] getBinary(int col) {
+        return readBinary(col, "getBinary", DefaultParquetRecord::toBytes);
+    }
+
+    @Override
+    public <R> R readBinary(int col, BinaryView<R> view) {
+        return readBinary(col, "readBinary", view);
+    }
+
+    private <R> R readBinary(int col, String accessor, BinaryView<R> view) {
+        ColumnVector vec = columns.vector(col);
+        if (vec == null || vec.isNull(rowIndex)) {
+            return null;
+        }
+        return switch (vec) {
+            case BinaryVector bv -> readBinaryValue(bv, view);
+            case FixedLenBinaryVector fb -> readSlice(fb.get(rowIndex), view);
+            case Int96Vector iv -> readSlice(iv.get(rowIndex), view);
+            default -> throw mismatch(col, accessor);
+        };
+    }
+
+    private <R> R readBinaryValue(BinaryVector bv, BinaryView<R> view) {
+        if (bv.isDictionary()) {
+            MemorySegment entry = bv.dictionaryEntries()[bv.dictionaryIndices()[rowIndex]];
+            return view.read(entry, 0L, entry.byteSize());
+        }
+        MemorySegment backing = bv.consolidatedBacking();
+        int[] offsets = bv.consolidatedOffsets();
+        int start = offsets[rowIndex];
+        int length = offsets[rowIndex + 1] - start;
+        return view.read(backing, start, length);
+    }
+
+    private static <R> R readSlice(MemorySegment slice, BinaryView<R> view) {
+        return view.read(slice, 0L, slice.byteSize());
+    }
+
+    @Override
+    public ParquetRecord readStruct(int col) {
+        ColumnVector vec = columns.vector(col);
+        if (vec == null) {
+            return null;
+        }
+        if (!(vec instanceof StructVector struct)) {
+            throw new ParquetSchemaException("Column " + columns.path(col).dot() + " is not a struct column");
+        }
+        if (struct.isNull(rowIndex)) {
+            return null;
+        }
+        return new DefaultParquetRecord(RowColumns.ofStruct(columns.schema(), struct), rowIndex);
     }
 
     // null distinguishes a null row from an empty list per the empty-vs-null contract
     @Override
     @SuppressWarnings({"unchecked", "java:S1168"})
-    public List<ParquetRecord> getList(ColumnPath col) {
-        Object value = get(col);
-        if (value == null) {
+    public List<ParquetRecord> readList(int col) {
+        ColumnVector vec = columns.vector(col);
+        if (vec == null) {
             return null;
         }
-        if (!(value instanceof List<?> list)) {
-            throw new ParquetSchemaException("Column " + col.dot() + " is not a list column");
+        if (!(vec instanceof ListVector list)) {
+            throw new ParquetSchemaException("Column " + columns.path(col).dot() + " is not a list column");
         }
-        return (List<ParquetRecord>) list;
+        return (List<ParquetRecord>) ListMaterializer.materializeAt(list, rowIndex, columns.schema());
+    }
+
+    // S1168: null distinguishes a null map cell from a present empty map
+    @Override
+    @SuppressWarnings("java:S1168")
+    public Map<?, ?> readMap(int col) {
+        ColumnVector vec = columns.vector(col);
+        if (vec == null) {
+            return null;
+        }
+        if (!(vec instanceof MapVector map)) {
+            throw new ParquetSchemaException("Column " + columns.path(col).dot() + " is not a map column");
+        }
+        return MapMaterializer.materializeAt(map, rowIndex, columns.schema());
     }
 
     @Override
-    public ParquetRecord getStruct(ColumnPath col) {
-        Object value = get(col);
-        if (value == null) {
+    public Object get(int col) {
+        ColumnVector vec = columns.vector(col);
+        if (vec == null || vec.isNull(rowIndex)) {
             return null;
         }
-        if (!(value instanceof ParquetRecord nested)) {
-            throw new ParquetSchemaException("Column " + col.dot() + " is not a struct column");
+        return switch (vec) {
+            case IntVector iv -> iv.getInt(rowIndex);
+            case LongVector lv -> lv.getLong(rowIndex);
+            case FloatVector fv -> fv.getFloat(rowIndex);
+            case DoubleVector dv -> dv.getDouble(rowIndex);
+            case BooleanVector bv -> bv.getBoolean(rowIndex);
+            case BinaryVector bv -> bv.get(rowIndex);
+            case FixedLenBinaryVector fb -> fb.get(rowIndex);
+            case Int96Vector iv -> iv.get(rowIndex);
+            case ListVector list -> ListMaterializer.materializeAt(list, rowIndex, columns.schema());
+            case MapVector map -> MapMaterializer.materializeAt(map, rowIndex, columns.schema());
+            case StructVector struct ->
+                new DefaultParquetRecord(RowColumns.ofStruct(columns.schema(), struct), rowIndex);
+            case VariantVector variant -> variant.get(rowIndex);
+        };
+    }
+
+    @Override
+    public boolean isNull(ColumnPath col) {
+        int index = columns.indexOf(col);
+        return index < 0 || isNull(index);
+    }
+
+    @Override
+    public boolean getBoolean(ColumnPath col) {
+        return getBoolean(requireIndex(col, "getBoolean"));
+    }
+
+    @Override
+    public int getInt(ColumnPath col) {
+        return getInt(requireIndex(col, "getInt"));
+    }
+
+    @Override
+    public long getLong(ColumnPath col) {
+        return getLong(requireIndex(col, "getLong"));
+    }
+
+    @Override
+    public float getFloat(ColumnPath col) {
+        return getFloat(requireIndex(col, "getFloat"));
+    }
+
+    @Override
+    public double getDouble(ColumnPath col) {
+        return getDouble(requireIndex(col, "getDouble"));
+    }
+
+    @Override
+    public String getString(ColumnPath col) {
+        return getString(requireIndex(col, "getString"));
+    }
+
+    @Override
+    public byte[] getBinary(ColumnPath col) {
+        return getBinary(requireIndex(col, "getBinary"));
+    }
+
+    @Override
+    public <R> R readBinary(ColumnPath col, BinaryView<R> view) {
+        return readBinary(requireIndex(col, "readBinary"), view);
+    }
+
+    @Override
+    public ParquetRecord readStruct(ColumnPath col) {
+        int index = columns.indexOf(col);
+        return index < 0 ? null : readStruct(index);
+    }
+
+    @Override
+    public List<ParquetRecord> readList(ColumnPath col) {
+        int index = columns.indexOf(col);
+        return index < 0 ? null : readList(index);
+    }
+
+    @Override
+    public Map<?, ?> readMap(ColumnPath col) {
+        int index = columns.indexOf(col);
+        return index < 0 ? null : readMap(index);
+    }
+
+    @Override
+    public Object get(ColumnPath col) {
+        int index = columns.indexOf(col);
+        return index < 0 ? null : get(index);
+    }
+
+    @Override
+    public ParquetRecord detach() {
+        int count = columns.columnCount();
+        ColumnPath[] paths = new ColumnPath[count];
+        Object[] values = new Object[count];
+        for (int i = 0; i < count; i++) {
+            paths[i] = columns.path(i);
+            values[i] = Detach.detach(get(i));
         }
-        return nested;
+        return new DetachedParquetRecord(columns.schema(), paths, values);
     }
 
-    private byte[] copyBytes(ColumnPath col) {
-        MemorySegment source = (MemorySegment) row.get(col);
-        return source.toArray(JAVA_BYTE);
-    }
-
-    private void requireKind(ColumnPath col, PrimitiveKind expected, String accessor) {
-        PrimitiveKind actual = lookupKind(col, accessor);
-        if (actual != expected) {
-            throw mismatch(col, actual, accessor);
-        }
-    }
-
-    private void requireBinaryKind(ColumnPath col, String accessor) {
-        PrimitiveKind actual = lookupKind(col, accessor);
-        if (actual != PrimitiveKind.BYTE_ARRAY && actual != PrimitiveKind.FIXED_LEN_BYTE_ARRAY) {
-            throw mismatch(col, actual, accessor);
-        }
-    }
-
-    private PrimitiveKind lookupKind(ColumnPath col, String accessor) {
-        Optional<SchemaNode> field = schema.find(col);
-        if (field.isEmpty()) {
+    private int requireIndex(ColumnPath col, String accessor) {
+        int index = columns.indexOf(col);
+        if (index < 0) {
             throw new ParquetSchemaException(
                     "Column " + col.dot() + " is not present in the projected schema (accessor " + accessor + ")");
         }
-        if (!(field.get() instanceof SchemaNode.Primitive primitive)) {
-            throw new ParquetSchemaException(
-                    "Column " + col.dot() + " is a group column; accessor " + accessor + " requires a primitive leaf");
-        }
-        return primitive.kind();
+        return index;
     }
 
-    private static ParquetSchemaException mismatch(ColumnPath col, PrimitiveKind actual, String accessor) {
-        return new ParquetSchemaException("Column " + col.dot() + " is " + actual + "; requested " + accessor);
+    private ParquetSchemaException mismatch(int col, String accessor) {
+        ColumnVector vec = columns.vector(col);
+        String kind = vec == null ? "absent" : kindLabel(vec);
+        return new ParquetSchemaException(
+                "Column " + columns.path(col).dot() + " is " + kind + "; requested " + accessor);
+    }
+
+    private static String kindLabel(ColumnVector vec) {
+        return switch (vec) {
+            case IntVector _ -> "INT32";
+            case LongVector _ -> "INT64";
+            case FloatVector _ -> "FLOAT";
+            case DoubleVector _ -> "DOUBLE";
+            case BooleanVector _ -> "BOOLEAN";
+            case BinaryVector _ -> "BYTE_ARRAY";
+            case FixedLenBinaryVector _ -> "FIXED_LEN_BYTE_ARRAY";
+            case Int96Vector _ -> "INT96";
+            case ListVector _ -> "LIST";
+            case MapVector _ -> "MAP";
+            case StructVector _ -> "STRUCT";
+            case VariantVector _ -> "VARIANT";
+        };
+    }
+
+    private static byte[] toBytes(MemorySegment backing, long offset, long length) {
+        byte[] out = new byte[(int) length];
+        MemorySegment.copy(backing, JAVA_BYTE, offset, out, 0, (int) length);
+        return out;
     }
 }

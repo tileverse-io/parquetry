@@ -23,6 +23,7 @@ import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.util.BitSet;
 
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 class IntVectorTest {
@@ -66,5 +67,33 @@ class IntVectorTest {
         assertThatThrownBy(() -> vec.getInt(1))
                 .as("a null row must not silently return the parked default 0")
                 .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Nested
+    class CopyInto {
+
+        @Test
+        void copiesHeapBackedValuesAtTargetOffset() {
+            IntVector vec = IntVector.materialized(new int[] {10, 20, 30, 40}, Validity.allValid(4));
+
+            MemorySegment target = MemorySegment.ofArray(new byte[6 * Integer.BYTES]);
+            vec.copyInto(target, (long) Integer.BYTES, 1, 2);
+
+            assertThat(target.getAtIndex(INT32, 1)).isEqualTo(20);
+            assertThat(target.getAtIndex(INT32, 2)).isEqualTo(30);
+        }
+
+        @Test
+        void copiesSegmentBackedValues() {
+            MemorySegment src = MemorySegment.ofArray(new byte[3 * Integer.BYTES]);
+            MemorySegment.copy(new int[] {7, 8, 9}, 0, src, INT32, 0L, 3);
+            IntVector vec = IntVector.segmentBacked(src, Validity.allValid(3));
+
+            MemorySegment target = MemorySegment.ofArray(new byte[3 * Integer.BYTES]);
+            vec.copyInto(target, 0L, 0, 3);
+
+            assertThat(target.getAtIndex(INT32, 0)).isEqualTo(7);
+            assertThat(target.getAtIndex(INT32, 2)).isEqualTo(9);
+        }
     }
 }

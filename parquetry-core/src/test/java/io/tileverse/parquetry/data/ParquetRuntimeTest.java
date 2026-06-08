@@ -117,16 +117,16 @@ class ParquetRuntimeTest {
                 // cores, decodeBudgetCapacity, expected, why
                 Arguments.of(1, 256 * MIB, 2, "low cores held to the floor of 2"),
                 Arguments.of(2, 2048 * MIB, 2, "cores at the floor"),
-                Arguments.of(4, 256 * MIB, 4, "4-core / 1g pod: core-capped under heapTerm 8"),
-                Arguments.of(16, 256 * MIB, 8, "16-core / 1g pod: heap-capped at heapTerm 8"),
-                Arguments.of(8, 256 * MIB, 8, "cores exactly at heapTerm"),
-                Arguments.of(16, 2048 * MIB, 16, "16-core / 8g pod: core-capped under heapTerm 64"),
+                Arguments.of(4, 256 * MIB, 3, "4-core / 1g pod: capped at the decode-ahead ceiling of 3"),
+                Arguments.of(16, 256 * MIB, 3, "16-core / 1g pod: capped at the decode-ahead ceiling of 3"),
+                Arguments.of(8, 256 * MIB, 3, "8-core / 1g pod: capped at the decode-ahead ceiling of 3"),
+                Arguments.of(16, 2048 * MIB, 3, "16-core / 8g pod: capped at the decode-ahead ceiling of 3"),
                 Arguments.of(16, 1L, 2, "tiny budget: heapTerm held to the floor of 2"));
     }
 
     @ParameterizedTest(name = "[{index}] cores={0} budget={1}B -> {2} ({3})")
     @MethodSource("decodeAheadCases")
-    @DisplayName("decode-ahead default clamps processors into [2, decodeBudget/32MiB]")
+    @DisplayName("decode-ahead default clamps processors into [2, min(decodeBudget/32MiB, 3)]")
     void decodeAheadDefaultClampsCoresAgainstHeapTerm(int cores, long decodeBudgetCapacity, int expected, String why) {
         assertThat(ParquetRuntime.decodeAheadDefault(cores, decodeBudgetCapacity))
                 .as(why)

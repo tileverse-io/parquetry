@@ -82,9 +82,32 @@ public final class BooleanVector implements ColumnVector {
         return out;
     }
 
+    /**
+     * Packs {@code count} values starting at row {@code from} into {@code target} as an LSB-first bitmap beginning at
+     * bit 0 of byte {@code targetOffset}. Lets a bulk consumer reuse one target instead of allocating via
+     * {@link #asArray()}. Values at null rows are packed as stored; the caller applies validity separately.
+     */
+    public void copyInto(MemorySegment target, long targetOffset, int from, int count) {
+        int byteCount = (count + 7) / 8;
+        for (int b = 0; b < byteCount; b++) {
+            target.set(ValueLayout.JAVA_BYTE, targetOffset + b, (byte) 0);
+        }
+        for (int i = 0; i < count; i++) {
+            if (bitValue(from + i)) {
+                long byteIndex = targetOffset + (i >>> 3);
+                int current = target.get(ValueLayout.JAVA_BYTE, byteIndex) & 0xFF;
+                target.set(ValueLayout.JAVA_BYTE, byteIndex, (byte) (current | (1 << (i & 7))));
+            }
+        }
+    }
+
     @Override
     public long approximateHeapBytes() {
         return segmentBitmap != null ? validity.heapBytes() : values.length + validity.heapBytes();
+    }
+
+    private boolean bitValue(int row) {
+        return segmentBitmap != null ? bitAt(row) : values[row];
     }
 
     private boolean bitAt(int row) {

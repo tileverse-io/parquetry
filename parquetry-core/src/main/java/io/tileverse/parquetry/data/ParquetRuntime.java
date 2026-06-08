@@ -55,6 +55,13 @@ public record ParquetRuntime(
 
     private static final long NOMINAL_AHEAD_SLOT_BYTES = 32L << 20;
 
+    /**
+     * Upper bound on the per-read decode-ahead window the default runtime picks. The decode budget is shared across all
+     * concurrent reads, but speculative spill-and-restore stacks heap per read; a modest per-read window keeps the
+     * combined peak bounded under many concurrent reads on a small-heap pod, at a small single-read throughput cost.
+     */
+    private static final int MAX_DEFAULT_DECODE_AHEAD = 3;
+
     public ParquetRuntime {
         if (maxDecodeAhead < 0) {
             throw new IllegalArgumentException("maxDecodeAhead must be >= 0, got " + maxDecodeAhead);
@@ -139,7 +146,8 @@ public record ParquetRuntime(
 
     static int decodeAheadDefault(int availableProcessors, long decodeBudgetCapacity) {
         long heapTerm = Math.max(2L, decodeBudgetCapacity / NOMINAL_AHEAD_SLOT_BYTES);
-        long clamped = Math.clamp(availableProcessors, 2L, heapTerm);
+        long upperBound = Math.min(heapTerm, MAX_DEFAULT_DECODE_AHEAD);
+        long clamped = Math.clamp(availableProcessors, 2L, upperBound);
         return (int) clamped;
     }
 

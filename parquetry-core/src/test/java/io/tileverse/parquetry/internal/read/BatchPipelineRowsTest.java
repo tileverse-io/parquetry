@@ -47,6 +47,7 @@ import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.materializer.Materializer;
+import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaBuilder;
@@ -155,7 +156,7 @@ class BatchPipelineRowsTest {
         }
     }
 
-    /** Materializes each row to its {@code year} value, exercising the real {@link BatchRowAccessor} path. */
+    /** Materializes each row to its {@code year} value, exercising the real {@link ParquetRecord} path. */
     private static Materializer<Integer> yearMaterializer() {
         return (projectedSchema, row) -> (Integer) row.get(YEAR);
     }

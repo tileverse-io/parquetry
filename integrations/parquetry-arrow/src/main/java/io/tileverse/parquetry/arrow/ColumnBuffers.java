@@ -47,8 +47,8 @@ final class ColumnBuffers {
         buffers.add(validityBuffer(vector.validity(), vector.size()));
         switch (vector) {
             case BooleanVector v -> buffers.add(booleanData(v));
-            case IntVector v -> buffers.add(fixedWidth(v.asArray()));
-            case LongVector v -> buffers.add(fixedWidth(v.asArray()));
+            case IntVector v -> buffers.add(fixedWidth(v));
+            case LongVector v -> buffers.add(fixedWidth(v));
             case FloatVector v -> buffers.add(floatData(v));
             case DoubleVector v -> buffers.add(doubleData(v));
             case BinaryVector v -> addVariableWidth(buffers, v);
@@ -72,59 +72,38 @@ final class ColumnBuffers {
 
     private static byte[] booleanData(BooleanVector vector) {
         // Arrow stores a value for every slot, null rows included; the separate validity buffer marks nulls.
-        // Read the backing array directly to keep the parked value for null rows instead of failing fast.
-        boolean[] values = vector.asArray();
-        BitSet bits = new BitSet();
-        for (int row = 0; row < vector.size(); row++) {
-            if (values[row]) {
-                bits.set(row);
-            }
-        }
-        // Arrow boolean buffer is bit-packed LSB-first, same layout as BitSet.toByteArray().
-        byte[] raw = bits.toByteArray();
-        byte[] padded = new byte[align(Math.max((vector.size() + 7) / 8, 1))];
-        System.arraycopy(raw, 0, padded, 0, Math.min(raw.length, padded.length));
-        return padded;
+        int size = vector.size();
+        byte[] out = new byte[align(Math.max((size + 7) / 8, 1))];
+        vector.copyInto(MemorySegment.ofArray(out), 0L, 0, size);
+        return out;
     }
 
-    private static byte[] fixedWidth(int[] values) {
-        ByteBuffer buffer =
-                ByteBuffer.allocate(align(values.length * Integer.BYTES)).order(ByteOrder.LITTLE_ENDIAN);
-        for (int value : values) {
-            buffer.putInt(value);
-        }
-        return buffer.array();
+    private static byte[] fixedWidth(IntVector vector) {
+        int size = vector.size();
+        byte[] out = new byte[align(size * Integer.BYTES)];
+        vector.copyInto(MemorySegment.ofArray(out), 0L, 0, size);
+        return out;
     }
 
-    private static byte[] fixedWidth(long[] values) {
-        ByteBuffer buffer =
-                ByteBuffer.allocate(align(values.length * Long.BYTES)).order(ByteOrder.LITTLE_ENDIAN);
-        for (long value : values) {
-            buffer.putLong(value);
-        }
-        return buffer.array();
+    private static byte[] fixedWidth(LongVector vector) {
+        int size = vector.size();
+        byte[] out = new byte[align(size * Long.BYTES)];
+        vector.copyInto(MemorySegment.ofArray(out), 0L, 0, size);
+        return out;
     }
 
     private static byte[] floatData(FloatVector vector) {
-        ByteBuffer buffer =
-                ByteBuffer.allocate(align(vector.size() * Float.BYTES)).order(ByteOrder.LITTLE_ENDIAN);
-        // Arrow keeps a value per slot, null rows included; the validity buffer marks nulls separately.
-        float[] values = vector.asArray();
-        for (int row = 0; row < vector.size(); row++) {
-            buffer.putFloat(values[row]);
-        }
-        return buffer.array();
+        int size = vector.size();
+        byte[] out = new byte[align(size * Float.BYTES)];
+        vector.copyInto(MemorySegment.ofArray(out), 0L, 0, size);
+        return out;
     }
 
     private static byte[] doubleData(DoubleVector vector) {
-        ByteBuffer buffer =
-                ByteBuffer.allocate(align(vector.size() * Double.BYTES)).order(ByteOrder.LITTLE_ENDIAN);
-        // Arrow keeps a value per slot, null rows included; the validity buffer marks nulls separately.
-        double[] values = vector.asArray();
-        for (int row = 0; row < vector.size(); row++) {
-            buffer.putDouble(values[row]);
-        }
-        return buffer.array();
+        int size = vector.size();
+        byte[] out = new byte[align(size * Double.BYTES)];
+        vector.copyInto(MemorySegment.ofArray(out), 0L, 0, size);
+        return out;
     }
 
     private static void addVariableWidth(List<byte[]> buffers, BinaryVector vector) {

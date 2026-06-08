@@ -180,6 +180,43 @@ public final class BinaryVector implements ColumnVector {
         return backing.asSlice(start, length);
     }
 
+    /**
+     * Byte length of the value at {@code row}, or {@code -1} for a null row (symmetric with {@link #getInto}); a
+     * present empty value returns {@code 0}, which distinguishes it from null. For pre-sizing a target before getInto,
+     * a caller sums only the non-negative lengths.
+     */
+    public int valueLength(int row) {
+        if (validity.isNull(row)) {
+            return -1;
+        }
+        if (indices != null) {
+            return Math.toIntExact(dictEntries[indices[row]].byteSize());
+        }
+        return offsets[row + 1] - offsets[row];
+    }
+
+    /**
+     * Copies the value at {@code row} into {@code target} starting at {@code targetOffset}, returning the byte count
+     * written, or {@code -1} for a null row (nothing written). The caller sizes {@code target} (e.g. via
+     * {@link #valueLength}) and may reuse one target across rows by advancing {@code targetOffset} by the returned
+     * count.
+     */
+    public int getInto(int row, MemorySegment target, long targetOffset) {
+        if (validity.isNull(row)) {
+            return -1;
+        }
+        if (indices != null) {
+            MemorySegment entry = dictEntries[indices[row]];
+            int length = Math.toIntExact(entry.byteSize());
+            MemorySegment.copy(entry, 0L, target, targetOffset, length);
+            return length;
+        }
+        int start = offsets[row];
+        int length = offsets[row + 1] - start;
+        MemorySegment.copy(backing, start, target, targetOffset, length);
+        return length;
+    }
+
     @Override
     public long approximateHeapBytes() {
         if (indices != null) {

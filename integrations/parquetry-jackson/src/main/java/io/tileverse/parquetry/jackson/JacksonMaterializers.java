@@ -18,7 +18,6 @@ package io.tileverse.parquetry.jackson;
 import java.io.StringWriter;
 
 import io.tileverse.parquetry.materializer.Materializer;
-import io.tileverse.parquetry.record.ParquetRecord;
 
 import tools.jackson.core.JsonGenerator;
 import tools.jackson.core.ObjectWriteContext;
@@ -42,7 +41,7 @@ public final class JacksonMaterializers {
     public static Materializer<JsonNode> jsonNode() {
         return (schema, row) -> {
             TokenBuffer buffer = TokenBuffer.forGeneration();
-            JsonRecordEncoder.writeObject(buffer, schema, ParquetRecord.of(schema, row));
+            JsonRecordEncoder.writeObject(buffer, schema, row);
             return MAPPER.readTree(buffer.asParser());
         };
     }
@@ -52,7 +51,7 @@ public final class JacksonMaterializers {
         return (schema, row) -> {
             StringWriter writer = new StringWriter();
             try (JsonGenerator generator = FACTORY.createGenerator(ObjectWriteContext.empty(), writer)) {
-                JsonRecordEncoder.writeObject(generator, schema, ParquetRecord.of(schema, row));
+                JsonRecordEncoder.writeObject(generator, schema, row);
             }
             return writer.toString();
         };

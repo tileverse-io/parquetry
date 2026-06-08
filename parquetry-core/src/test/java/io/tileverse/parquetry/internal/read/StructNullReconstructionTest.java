@@ -97,7 +97,7 @@ class StructNullReconstructionTest {
             assertThat(nullStructRow.get(INFO))
                     .as("row 0 struct column reads as null")
                     .isNull();
-            assertThat(nullStructRow.getStruct(INFO))
+            assertThat(nullStructRow.readStruct(INFO))
                     .as("row 0 getStruct reads as null")
                     .isNull();
 
@@ -105,7 +105,7 @@ class StructNullReconstructionTest {
             assertThat(presentWithNullFieldRow.get(INFO))
                     .as("row 1 struct column is present")
                     .isNotNull();
-            ParquetRecord nested = presentWithNullFieldRow.getStruct(INFO);
+            ParquetRecord nested = presentWithNullFieldRow.readStruct(INFO);
             assertThat(nested.get(ColumnPath.of("x")))
                     .as("row 1 present struct exposes x=10")
                     .isEqualTo(10);
@@ -114,7 +114,7 @@ class StructNullReconstructionTest {
                     .isNull();
 
             ParquetRecord presentRow = batch.materialize(2);
-            ParquetRecord nested2 = presentRow.getStruct(INFO);
+            ParquetRecord nested2 = presentRow.readStruct(INFO);
             assertThat(nested2.get(ColumnPath.of("y")))
                     .as("row 2 present struct exposes y=40")
                     .isEqualTo(40);

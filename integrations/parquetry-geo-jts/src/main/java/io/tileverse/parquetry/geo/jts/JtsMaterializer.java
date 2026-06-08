@@ -15,7 +15,6 @@
  */
 package io.tileverse.parquetry.geo.jts;
 
-import java.lang.foreign.MemorySegment;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -29,7 +28,7 @@ import org.locationtech.jts.geom.Geometry;
 import io.tileverse.parquetry.format.EdgeInterpolationAlgorithm;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.materializer.Materializer;
-import io.tileverse.parquetry.materializer.RowAccessor;
+import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaNode;
@@ -41,8 +40,8 @@ import io.tileverse.parquetry.schema.geo.projjson.Identifier;
  *
  * <p>Each row is returned as a {@code Map<ColumnPath, Object>}: the entries for columns tagged with
  * {@link LogicalType.Geometry} or {@link LogicalType.Geography} are JTS {@link Geometry} objects; entries for every
- * other column pass through the values the row accessor provides (boxed primitives, {@link MemorySegment} for binary,
- * {@link java.util.List} / {@link java.util.Map} for repeated / map columns).
+ * other column pass through the values the record provides (boxed primitives, {@link java.lang.foreign.MemorySegment}
+ * for binary, {@link java.util.List} / {@link java.util.Map} for repeated / map columns).
  *
  * <p>Uniform across GeoParquet 1.x and 2.0: parquetry-format's {@code SchemaBuilder} folds the {@code "geo"} JSON into
  * the schema at footer-read time on 1.x files, so the materializer only needs to inspect the schema's leaf annotations
@@ -62,11 +61,12 @@ public final class JtsMaterializer implements Materializer<Map<ColumnPath, Objec
 
     private final Set<ColumnPath> geoColumns;
     private final Map<ColumnPath, Integer> sridByColumn;
+    private final MemorySegmentWkbReader wkbReader = new MemorySegmentWkbReader();
 
     /**
      * Creates a materializer that decodes the geometry / geography columns of {@code projectedSchema}. The materializer
      * caches the set of geo column paths and any resolvable EPSG SRIDs so each {@link #materialize(ParquetSchema,
-     * RowAccessor)} call only does map lookups, not schema walks.
+     * ParquetRecord)} call only does map lookups, not schema walks.
      */
     public JtsMaterializer(ParquetSchema projectedSchema) {
         Map<ColumnPath, Integer> sridScratch = new LinkedHashMap<>();
@@ -75,8 +75,8 @@ public final class JtsMaterializer implements Materializer<Map<ColumnPath, Objec
     }
 
     /**
-     * Discovery hook: returns the column paths that {@link #materialize(ParquetSchema, RowAccessor)} will decode as JTS
-     * geometries. Useful for callers that want to know in advance which columns the materializer will rewrite.
+     * Discovery hook: returns the column paths that {@link #materialize(ParquetSchema, ParquetRecord)} will decode as
+     * JTS geometries. Useful for callers that want to know in advance which columns the materializer will rewrite.
      */
     public Set<ColumnPath> geometryColumns() {
         return Set.copyOf(geoColumns);
@@ -93,25 +93,24 @@ public final class JtsMaterializer implements Materializer<Map<ColumnPath, Objec
     }
 
     @Override
-    public Map<ColumnPath, Object> materialize(ParquetSchema projectedSchema, RowAccessor row) {
-        Map<ColumnPath, Object> values = row.values();
-        Map<ColumnPath, Object> out = HashMap.newHashMap(values.size());
-        for (Map.Entry<ColumnPath, Object> entry : values.entrySet()) {
-            ColumnPath path = entry.getKey();
-            Object value = entry.getValue();
-            if (geoColumns.contains(path) && value instanceof MemorySegment wkb) {
-                out.put(path, decodeWkb(path, wkb));
+    public Map<ColumnPath, Object> materialize(ParquetSchema projectedSchema, ParquetRecord row) {
+        int count = row.columnCount();
+        Map<ColumnPath, Object> out = HashMap.newHashMap(count);
+        for (int i = 0; i < count; i++) {
+            ColumnPath path = row.columnPath(i);
+            if (geoColumns.contains(path)) {
+                out.put(path, decodeGeometry(row, i, path));
             } else {
-                out.put(path, value);
+                out.put(path, row.get(i));
             }
         }
         return out;
     }
 
-    private Geometry decodeWkb(ColumnPath path, MemorySegment wkb) {
-        Geometry geometry = JtsWkb.read(wkb);
+    private Geometry decodeGeometry(ParquetRecord row, int col, ColumnPath path) {
+        Geometry geometry = row.readBinary(col, wkbReader::read);
         Integer srid = sridByColumn.get(path);
-        if (srid != null) {
+        if (geometry != null && srid != null) {
             geometry.setSRID(srid);
         }
         return geometry;

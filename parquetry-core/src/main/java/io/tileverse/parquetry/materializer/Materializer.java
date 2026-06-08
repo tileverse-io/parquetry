@@ -19,19 +19,22 @@ import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
- * Strategy that turns an assembled {@link RowAccessor} into the caller's preferred row type.
+ * Strategy that turns an assembled {@link ParquetRecord} into the caller's preferred row type.
  *
  * <p>Implementations must be stateless and safe to invoke per row from a single reader thread. The reader supplies the
- * projected schema once and feeds successive row accessors as it iterates the dataset; the materializer owns the cost
- * of adapting them to {@code T}.
+ * projected schema once and feeds successive records as it iterates the dataset; the materializer owns the cost of
+ * adapting them to {@code T}.
  *
- * <p>The default implementation, available via {@link #defaultRecord()}, returns the canonical lazy
- * {@link ParquetRecord} view. Custom user types plug in by implementing this interface directly.
+ * <p>The record is a live, batch-lifetime view: a materializer reads the values it needs during the call and either
+ * produces an owned {@code T} or retains the record only after calling {@link ParquetRecord#detach()}.
+ *
+ * <p>The default implementation, available via {@link #defaultRecord()}, returns the record itself. Custom user types
+ * plug in by implementing this interface directly.
  */
 public interface Materializer<T> {
 
-    /** Builds one value of {@code T} from a row already assembled against {@code projectedSchema}. */
-    T materialize(ParquetSchema projectedSchema, RowAccessor row);
+    /** Builds one value of {@code T} from a {@code row} already assembled against {@code projectedSchema}. */
+    T materialize(ParquetSchema projectedSchema, ParquetRecord row);
 
     /** The canonical built-in: produces a lazy {@link ParquetRecord} backed directly by the row accessor. */
     static Materializer<ParquetRecord> defaultRecord() {

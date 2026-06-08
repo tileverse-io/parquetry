@@ -49,7 +49,7 @@ import io.tileverse.parquetry.internal.filter.RecordLevelEvaluator;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
-import io.tileverse.parquetry.record.BatchRowAccessor;
+import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -253,7 +253,7 @@ class LateMaterializingRowGroupReaderTest {
         try {
             for (ParquetRecordBatch batch : batches) {
                 for (int row = 0; row < batch.rowCount(); row++) {
-                    rows.add(readRow(new BatchRowAccessor(batch, row), outputSchema));
+                    rows.add(readRow(batch.materialize(row), outputSchema));
                 }
             }
         } finally {
@@ -264,11 +264,11 @@ class LateMaterializingRowGroupReaderTest {
         return rows;
     }
 
-    private static MaterializedRow readRow(BatchRowAccessor accessor, ParquetSchema outputSchema) {
+    private static MaterializedRow readRow(ParquetRecord rec, ParquetSchema outputSchema) {
         List<ColumnPath> projected = outputSchema.leafColumns();
-        Long id = projected.contains(ID) ? (Long) accessor.get(ID) : null;
-        Double v = projected.contains(V) ? (Double) accessor.get(V) : null;
-        String name = projected.contains(NAME) ? asString(accessor.get(NAME)) : null;
+        Long id = projected.contains(ID) ? (Long) rec.get(ID) : null;
+        Double v = projected.contains(V) ? (Double) rec.get(V) : null;
+        String name = projected.contains(NAME) ? asString(rec.get(NAME)) : null;
         return new MaterializedRow(id, v, name);
     }
 

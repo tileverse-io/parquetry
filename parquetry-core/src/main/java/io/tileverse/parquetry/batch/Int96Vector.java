@@ -135,6 +135,32 @@ public final class Int96Vector implements ColumnVector {
         return backing.asSlice((long) row * WIDTH, WIDTH);
     }
 
+    /** Byte length of the value at {@code row}: {@code 12} for a present row, {@code -1} for a null row. */
+    public int valueLength(int row) {
+        if (validity.isNull(row)) {
+            return -1;
+        }
+        return WIDTH;
+    }
+
+    /**
+     * Copies the value at {@code row} into {@code target} starting at {@code targetOffset}, returning the byte count
+     * written, or {@code -1} for a null row (nothing written). The caller reuses one target across rows by advancing
+     * {@code targetOffset} by the returned count.
+     */
+    public int getInto(int row, MemorySegment target, long targetOffset) {
+        if (validity.isNull(row)) {
+            return -1;
+        }
+        if (indices != null) {
+            MemorySegment entry = dictEntries[indices[row]];
+            MemorySegment.copy(entry, 0L, target, targetOffset, WIDTH);
+            return WIDTH;
+        }
+        MemorySegment.copy(backing, (long) row * WIDTH, target, targetOffset, WIDTH);
+        return WIDTH;
+    }
+
     @Override
     public long approximateHeapBytes() {
         if (indices != null) {

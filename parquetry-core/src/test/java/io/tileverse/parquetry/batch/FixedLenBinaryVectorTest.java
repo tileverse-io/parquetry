@@ -125,4 +125,53 @@ class FixedLenBinaryVectorTest {
         assertThat(vec.get(0).toArray(JAVA_BYTE)).containsExactly(1, 2);
         assertThat(vec.get(1).toArray(JAVA_BYTE)).containsExactly(3, 4);
     }
+
+    @Nested
+    class ReusableTargetAccessors {
+
+        @Test
+        void getIntoCopiesFixedWidthSlotAndReturnsWidth() {
+            BitSet bits = new BitSet(2);
+            bits.set(0, 2);
+            FixedLenBinaryVector vec = FixedLenBinaryVector.materialized(
+                    new MemorySegment[] {seg((byte) 1, (byte) 2), seg((byte) 3, (byte) 4)}, 2, Validity.of(bits, 2));
+
+            MemorySegment target = MemorySegment.ofArray(new byte[4]);
+            int n0 = vec.getInto(0, target, 0L);
+            int n1 = vec.getInto(1, target, n0);
+
+            assertThat(n0).isEqualTo(2);
+            assertThat(n1).isEqualTo(2);
+            assertThat(target.toArray(JAVA_BYTE)).containsExactly(1, 2, 3, 4);
+            assertThat(vec.valueLength(0)).isEqualTo(2);
+        }
+
+        @Test
+        void getIntoReturnsMinusOneOnNull() {
+            BitSet bits = new BitSet(2);
+            bits.set(1);
+            FixedLenBinaryVector vec = FixedLenBinaryVector.materialized(
+                    new MemorySegment[] {null, seg((byte) 9, (byte) 9)}, 2, Validity.of(bits, 2));
+
+            assertThat(vec.getInto(0, MemorySegment.ofArray(new byte[2]), 0L)).isEqualTo(-1);
+            assertThat(vec.valueLength(0))
+                    .as("null row is -1, symmetric with getInto")
+                    .isEqualTo(-1);
+        }
+
+        @Test
+        void getIntoReadsThroughDictionaryEntries() {
+            MemorySegment[] dict = {seg((byte) 1, (byte) 2), seg((byte) 3, (byte) 4)};
+            int[] indices = {1, 0};
+            BitSet bits = new BitSet(2);
+            bits.set(0, 2);
+            FixedLenBinaryVector vec = FixedLenBinaryVector.dictionary(dict, indices, 2, Validity.of(bits, 2));
+
+            MemorySegment target = MemorySegment.ofArray(new byte[2]);
+            int n = vec.getInto(0, target, 0L);
+
+            assertThat(n).isEqualTo(2);
+            assertThat(target.toArray(JAVA_BYTE)).containsExactly(3, 4);
+        }
+    }
 }

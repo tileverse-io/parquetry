@@ -15,36 +15,93 @@
  */
 package io.tileverse.parquetry.record;
 
+import java.lang.foreign.MemorySegment;
 import java.util.List;
+import java.util.Map;
 
-import io.tileverse.parquetry.materializer.RowAccessor;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
- * A single row of a Parquet result set, addressed by {@link ColumnPath}.
+ * A single row of a Parquet result set: a lazy, positional view over one batch.
  *
- * <p>The sealed hierarchy has one implementation, {@link DefaultParquetRecord}, which adapts a column-keyed
- * {@link RowAccessor}. The row stream and the columnar batch both reach it through a {@code RowAccessor}, and nested
- * struct cells are the same type as top-level rows. Callers that want a different in-memory shape register a custom
- * {@code Materializer<T>} on the read pipeline rather than implementing this interface directly.
+ * <p>A record addresses its columns by position (the projected-schema order of the row's columns) or, as a convenience,
+ * by {@link ColumnPath}. Positional access reads straight from the column vector with no boxing and no map lookup; the
+ * {@code ColumnPath} overloads resolve the path to its index once and delegate.
+ *
+ * <p>Two accessor families express ownership:
+ *
+ * <ul>
+ *   <li>{@code read*} returns a live, zero-copy view valid only while the producing batch is open: {@link #readBinary}
+ *       hands the value's own backing to a caller {@link BinaryView}; {@link #readStruct}/{@link #readList}/
+ *       {@link #readMap} return sub-views over the same batch.
+ *   <li>{@code get*} returns an owned value safe to keep: the primitive getters return a value, {@link #getBinary}
+ *       copies the bytes into a {@code byte[]}, {@link #getString} decodes an owned {@code String}.
+ * </ul>
+ *
+ * <p>The record is a live view; reading it after its batch closes is unsupported. A caller that retains a row past its
+ * batch (a cache, a buffered or sorted collection) calls {@link #detach()} first, which copies every value out.
  *
  * <p>Typed accessors fail fast with {@link io.tileverse.parquetry.schema.ParquetSchemaException} when the requested
- * Java type does not match the column's physical {@code PrimitiveKind}. This is treated as a programming error:
- * predicates and projections are validated against the schema at read setup, and a type mismatch at access time means
- * the caller picked the wrong accessor for the column.
+ * Java type does not match the column's kind. This is treated as a programming error: a mismatch means the caller
+ * picked the wrong accessor for the column.
  */
-public sealed interface ParquetRecord permits DefaultParquetRecord {
+public sealed interface ParquetRecord permits DefaultParquetRecord, DetachedParquetRecord {
 
     /** The projected schema this record was assembled against (not the full file schema). */
     ParquetSchema schema();
 
+    /** The number of columns addressable by position in this record. */
+    int columnCount();
+
+    /** The path of the column at {@code col}. */
+    ColumnPath columnPath(int col);
+
+    /** Whether the value at {@code col} is null (the leaf was null, or a struct ancestor was null). */
+    boolean isNull(int col);
+
+    boolean getBoolean(int col);
+
+    int getInt(int col);
+
+    long getLong(int col);
+
+    float getFloat(int col);
+
+    double getDouble(int col);
+
+    /** UTF-8 decodes the binary column at {@code col} into an owned {@code String}, or {@code null} for a null cell. */
+    String getString(int col);
+
+    /** Copies the binary column at {@code col} into a fresh owned {@code byte[]}, or {@code null} for a null cell. */
+    byte[] getBinary(int col);
+
     /**
-     * Returns the raw boxed value at {@code col}: a boxed primitive, a read-only
-     * {@link java.lang.foreign.MemorySegment} for binary/INT96, or {@code null} when the leaf was null or absent from
-     * the projection.
+     * Reads the binary column at {@code col} in place: the view receives the value's own backing segment, the value's
+     * offset within it, and its byte length, with no slice or copy. Returns the view's result, or {@code null} for a
+     * null cell (the view is not invoked).
      */
-    Object get(ColumnPath col);
+    <R> R readBinary(int col, BinaryView<R> view);
+
+    /** The struct at {@code col} as a live sub-record, or {@code null} when the struct value is null. */
+    ParquetRecord readStruct(int col);
+
+    /** The repeated values at {@code col} as live sub-records, or {@code null} when the value is null. */
+    List<ParquetRecord> readList(int col);
+
+    /** The map at {@code col} as a live map, or {@code null} when the value is null. */
+    // S1452: map key/value types are dynamic per the column's key/value kinds
+    @SuppressWarnings("java:S1452")
+    Map<?, ?> readMap(int col);
+
+    /**
+     * The generic value at {@code col}: a boxed primitive, a read-only {@link MemorySegment} for binary/INT96, a live
+     * sub-record/list/map for nested columns, or {@code null}. This is the introspection path; typed and {@code read*}
+     * accessors are preferred on the hot path.
+     */
+    Object get(int col);
+
+    boolean isNull(ColumnPath col);
 
     boolean getBoolean(ColumnPath col);
 
@@ -56,49 +113,33 @@ public sealed interface ParquetRecord permits DefaultParquetRecord {
 
     double getDouble(ColumnPath col);
 
-    /** Materializes a fresh {@code byte[]} for the binary column at {@code col} on every call. */
-    byte[] getBinary(ColumnPath col);
-
-    /** UTF-8 decodes the binary column at {@code col}. */
     String getString(ColumnPath col);
 
-    /**
-     * Returns {@code true} when the value at {@code col} is null, either because the leaf itself was null or because an
-     * ancestor group was null in the source row.
-     */
-    boolean isNull(ColumnPath col);
+    byte[] getBinary(ColumnPath col);
 
-    /**
-     * Returns the repeated values at {@code col} as a list of sub-records, or {@code null} when the row's value at
-     * {@code col} is null. Throws {@link io.tileverse.parquetry.schema.ParquetSchemaException} when {@code col} is not
-     * a list column.
-     */
-    List<ParquetRecord> getList(ColumnPath col);
+    <R> R readBinary(ColumnPath col, BinaryView<R> view);
 
-    /**
-     * Returns the struct at {@code col} as a sub-record, or {@code null} when the struct value at {@code col} is null.
-     * Throws {@link io.tileverse.parquetry.schema.ParquetSchemaException} when {@code col} is not a struct column.
-     */
-    ParquetRecord getStruct(ColumnPath col);
+    ParquetRecord readStruct(ColumnPath col);
+
+    List<ParquetRecord> readList(ColumnPath col);
+
+    @SuppressWarnings("java:S1452")
+    Map<?, ?> readMap(ColumnPath col);
+
+    Object get(ColumnPath col);
 
     /**
      * Returns a self-contained copy of this record that owns its data and stays valid after the producing batch closes.
-     *
-     * <p>Records obtained from the read path are lazy views over a columnar batch: binary leaves are
-     * {@link java.lang.foreign.MemorySegment} slices over per-page buffers, and nested cells reference the same batch.
-     * The views are valid only during streaming iteration. A consumer that retains a record past the batch (a cache, a
-     * buffered or sorted feature collection) must detach it first; the detached record copies every value out.
-     *
-     * <p>Detaching is idempotent: detaching an already-detached record yields an equivalent record. The detached record
-     * shares the same immutable {@link #schema()} reference.
+     * Detaching is idempotent and shares the same immutable {@link #schema()} reference.
      */
     ParquetRecord detach();
 
     /**
-     * Builds the canonical {@link ParquetRecord} view over an assembled {@link RowAccessor}. Used by built-in
-     * materializers; user code typically obtains records through {@code ParquetDataset.read}.
+     * Reads a binary value straight from its column's backing. The implementation passes the value's own backing
+     * segment plus its {@code offset} and {@code length}; the view reads without slicing or copying.
      */
-    static ParquetRecord of(ParquetSchema projectedSchema, RowAccessor row) {
-        return new DefaultParquetRecord(projectedSchema, row);
+    @FunctionalInterface
+    interface BinaryView<R> {
+        R read(MemorySegment backing, long offset, long length);
     }
 }

@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 class DoubleVectorTest {
@@ -48,5 +49,33 @@ class DoubleVectorTest {
         DoubleVector vector = DoubleVector.materialized(new double[] {4.0, 5.0}, Validity.allValid(2));
         assertThat(vector.getDouble(1)).isEqualTo(5.0);
         assertThat(vector.asArray()).containsExactly(4.0, 5.0);
+    }
+
+    @Nested
+    class CopyInto {
+
+        @Test
+        void copiesHeapBackedValuesAtTargetOffset() {
+            DoubleVector vec = DoubleVector.materialized(new double[] {10d, 20d, 30d, 40d}, Validity.allValid(4));
+
+            MemorySegment target = MemorySegment.ofArray(new byte[6 * Double.BYTES]);
+            vec.copyInto(target, (long) Double.BYTES, 1, 2);
+
+            assertThat(target.getAtIndex(DOUBLE, 1)).isEqualTo(20d);
+            assertThat(target.getAtIndex(DOUBLE, 2)).isEqualTo(30d);
+        }
+
+        @Test
+        void copiesSegmentBackedValues() {
+            MemorySegment src = MemorySegment.ofArray(new byte[3 * Double.BYTES]);
+            MemorySegment.copy(new double[] {7d, 8d, 9d}, 0, src, DOUBLE, 0L, 3);
+            DoubleVector vec = DoubleVector.segmentBacked(src, Validity.allValid(3));
+
+            MemorySegment target = MemorySegment.ofArray(new byte[3 * Double.BYTES]);
+            vec.copyInto(target, 0L, 0, 3);
+
+            assertThat(target.getAtIndex(DOUBLE, 0)).isEqualTo(7d);
+            assertThat(target.getAtIndex(DOUBLE, 2)).isEqualTo(9d);
+        }
     }
 }

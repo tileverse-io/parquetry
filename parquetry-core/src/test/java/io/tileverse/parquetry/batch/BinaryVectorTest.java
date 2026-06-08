@@ -121,6 +121,76 @@ class BinaryVectorTest {
     }
 
     @Nested
+    class ReusableTargetAccessors {
+
+        @Test
+        void getIntoCopiesConsolidatedValueAndReturnsLength() {
+            BitSet bits = new BitSet(3);
+            bits.set(0, 3);
+            BinaryVector vec = BinaryVector.materialized(
+                    new MemorySegment[] {seg("alpha"), seg("be"), seg("gamma")}, Validity.of(bits, 3));
+
+            MemorySegment target = MemorySegment.ofArray(new byte[16]);
+            long cursor = 0;
+            int n0 = vec.getInto(0, target, cursor);
+            cursor += n0;
+            int n1 = vec.getInto(1, target, cursor);
+
+            assertThat(n0).as("alpha length").isEqualTo(5);
+            assertThat(n1).as("be length").isEqualTo(2);
+            assertThat(text(target.asSlice(0, 7)))
+                    .as("packed contiguously at the cursor")
+                    .isEqualTo("alphabe");
+        }
+
+        @Test
+        void getIntoReturnsMinusOneOnNullAndWritesNothing() {
+            BitSet bits = new BitSet(2);
+            bits.set(1);
+            BinaryVector vec = BinaryVector.materialized(new MemorySegment[] {null, seg("x")}, Validity.of(bits, 2));
+
+            MemorySegment target = MemorySegment.ofArray(new byte[] {'Z'});
+            int n = vec.getInto(0, target, 0L);
+
+            assertThat(n).as("null row returns -1").isEqualTo(-1);
+            assertThat(target.get(JAVA_BYTE, 0L)).as("target untouched").isEqualTo((byte) 'Z');
+        }
+
+        @Test
+        void valueLengthIsMinusOneForNullAndDistinguishesAPresentEmptyValue() {
+            BitSet bits = new BitSet(3);
+            bits.set(1, 3); // row 0 null, rows 1 (empty) and 2 present
+            BinaryVector vec =
+                    BinaryVector.materialized(new MemorySegment[] {null, seg(""), seg("gamma")}, Validity.of(bits, 3));
+
+            assertThat(vec.valueLength(0)).as("null row is -1").isEqualTo(-1);
+            assertThat(vec.valueLength(1))
+                    .as("present empty value is 0, not null")
+                    .isZero();
+            assertThat(vec.valueLength(2)).as("present row").isEqualTo(5);
+            assertThat(vec.getInto(1, MemorySegment.ofArray(new byte[1]), 0L))
+                    .as("getInto on a present empty value copies nothing and returns 0")
+                    .isZero();
+        }
+
+        @Test
+        void getIntoReadsThroughDictionaryEntries() {
+            MemorySegment[] dict = {seg("red"), seg("green")};
+            int[] indices = {1, 0};
+            BitSet bits = new BitSet(2);
+            bits.set(0, 2);
+            BinaryVector vec = BinaryVector.dictionary(dict, indices, Validity.of(bits, 2));
+
+            MemorySegment target = MemorySegment.ofArray(new byte[8]);
+            int n = vec.getInto(0, target, 0L);
+
+            assertThat(n).isEqualTo(5);
+            assertThat(text(target.asSlice(0, 5))).isEqualTo("green");
+            assertThat(vec.valueLength(1)).as("dictionary value length").isEqualTo(3);
+        }
+    }
+
+    @Nested
     class DirectFactory {
 
         @Test

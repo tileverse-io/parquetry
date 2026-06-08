@@ -71,7 +71,7 @@ See `parquetry-io/.../io/DefaultSegmentPool.java`.
 
 ---
 
-## 3. The overflow valve: spill to a mapped file — *Planned*
+## 3. The overflow valve: spill to a mapped file — *Implemented*
 
 Section 2 bounds *retention*. It does not bound *peak*: the mandatory current
 row group still allocates `concurrency x span`, and under wide row groups that
@@ -99,27 +99,39 @@ The governing rule, shared with the decode-side spill:
 Because the in-order path always advances, it always drains and releases, and any
 parked speculative work eventually unparks. One shared disk budget, one spill
 directory, and this one invariant serve both the fetch spill described here and
-the decode-batch spill already designed on the decode side.
+the decode-batch spill on the decode side.
 
 This is the *reclaimable-overflow* design: the fetch pipeline is left whole, the
 overflow lands on reclaimable page cache, and bounding the in-order working set
 more tightly (by streaming a row group's coalesced groups one at a time) is a
 deferred, measurement-driven refinement rather than a prerequisite.
 
+As built: `FetchBufferAllocator` and `DecodeBufferAllocator` take a RAM segment
+from the `SegmentPool` when the budget allows and otherwise a `FetchSpillStore`
+mmap. The decompressor's `MemorySegment` never branches on RAM-versus-file.
+`DiskBudget` bounds the spilled bytes process-wide; `ParquetRuntime` reaps
+orphaned spill files at construction (`FetchSpillStore.sweepOrphans`) and exposes
+`spillEnabled` (on by default). The decode-batch spill (`BatchSpillStore`,
+`StreamingBatchSource`, `ParallelDecodeCoordinator`) shares the same `DiskBudget`
+and spill directory.
+
 ---
 
-## 4. The spill store, as an optimization ladder — *Planned*
+## 4. The spill store, as an optimization ladder — *Baseline implemented; optimizations planned*
 
 The store that hands out mapped buffers should start as the simplest correct,
 portable thing and earn each optimization with a measurement. The rungs:
 
-**Baseline.** One temp file per spilled buffer: create, `FileChannel.map` into the
-buffer's own arena, close the channel (the mapping outlives it), use, `arena.close()`
-to unmap, delete. No offset arithmetic, no fragmentation - the filesystem is the
-allocator. Crash-safety comes from a **startup sweep** of a dedicated spill
-subdirectory, not from deleting open files: a `kill -9` leaves files, and the next
-start reaps orphans from dead PIDs. This is portable across Linux, macOS, and
-Windows.
+**Baseline.** *(Implemented.)* One temp file per spilled buffer: create,
+`FileChannel.map` into the buffer's own arena, close the channel (the mapping
+outlives it), use, `arena.close()` to unmap, delete. No offset arithmetic, no
+fragmentation - the filesystem is the allocator. Crash-safety comes from a
+**startup sweep** of a dedicated spill subdirectory, not from deleting open files:
+a `kill -9` leaves files, and the next start reaps orphans from dead PIDs. This is
+portable across Linux, macOS, and Windows. parquetry's `FetchSpillStore`
+implements this rung - a per-buffer mapped file with a deterministic close and the
+startup sweep; `BatchSpillStore` is the decode-side store (an append-only single
+file).
 
 > A note on a tempting POSIX shortcut. Create, map, then unlink the file
 > immediately: the mapping keeps the inode alive, the inode dies on unmap, and
@@ -129,7 +141,7 @@ Windows.
 > platform-specific. The startup sweep is the portable contract; the unlink trick
 > stays a Linux-only nicety, not a dependency.
 
-**First optimization (measured).** A capped pool of kept-open files, the file-level
+**First optimization (measured).** *(Planned.)* A capped pool of kept-open files, the file-level
 twin of the segment pool in section 2: reuse amortizes the per-spill create and
 delete syscalls; an async reaper closes files idle past a TTL, keeping a burst
 from pinning descriptors; the cap is a **file-descriptor** budget, the scarce
@@ -137,7 +149,7 @@ resource in a container, more than a disk one. A pool miss degrades to the
 baseline per-buffer-file path - it never parks, exactly as a segment-pool miss
 allocates fresh.
 
-**Sparse, single-class slots.** Make the kept-open files **sparse** and one
+**Sparse, single-class slots.** *(Planned.)* Make the kept-open files **sparse** and one
 generous block-aligned size (for example 8 MiB or the max coalesced span) rather
 than a tier of size classes. A sparse file holding a 64 KiB buffer physically
 occupies only the pages it touches: the unused capacity costs nothing, and the
@@ -158,7 +170,7 @@ Each rung is additive over a baseline that is correct and portable on its own.
 
 ---
 
-## 5. Sizing the limits: an injectable resource probe — *Planned*
+## 5. Sizing the limits: an injectable resource probe — *Implemented*
 
 The limits these mechanisms honor - how much off-heap memory, how much spill disk,
 and which directory - are physical facts about the pod. The component that
@@ -181,6 +193,13 @@ The override path matters as much for tests as for production tuning: without it
 a budget or spill test auto-sizes to its host and spills on a small CI runner but
 not on a large workstation. Injecting a fake gives every such test a deterministic
 bound independent of the machine it runs on.
+
+As built: `ResourceLimits` is the port - `DefaultResourceLimits` reads the
+container and folds in environment-variable and system-property overrides, and
+`ResourceLimits.fixed` is the test fake. `IoLimits` is the policy layer that
+applies the off-heap, spill, and decode fractions in one place. `ParquetRuntime`
+derives its budgets from `IoLimits.from(resourceLimits)` in `build()`, with each
+budget and the spill directory individually overridable.
 
 ---
 

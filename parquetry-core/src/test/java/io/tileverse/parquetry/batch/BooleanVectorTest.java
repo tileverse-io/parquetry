@@ -21,6 +21,7 @@ import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 class BooleanVectorTest {
@@ -50,5 +51,45 @@ class BooleanVectorTest {
         BooleanVector vector = BooleanVector.materialized(new boolean[] {true, false}, Validity.allValid(2));
         assertThat(vector.getBoolean(0)).isTrue();
         assertThat(vector.asArray()).containsExactly(true, false);
+    }
+
+    @Nested
+    class CopyInto {
+
+        @Test
+        void packsHeapBackedRowsLsbFirst() {
+            boolean[] vals = {true, false, true, true, false, false, false, false, true}; // 9 rows
+            BooleanVector vec = BooleanVector.materialized(vals, Validity.allValid(9));
+
+            MemorySegment target = MemorySegment.ofArray(new byte[2]);
+            vec.copyInto(target, 0L, 0, 9);
+
+            // byte 0 bits 0,2,3 set = 0b0000_1101 = 0x0D; byte 1 bit 0 set (row 8) = 0x01
+            assertThat(target.get(ValueLayout.JAVA_BYTE, 0L)).isEqualTo((byte) 0x0D);
+            assertThat(target.get(ValueLayout.JAVA_BYTE, 1L)).isEqualTo((byte) 0x01);
+        }
+
+        @Test
+        void zeroesDirtyTargetBitsBeforePacking() {
+            boolean[] vals = {false, true};
+            BooleanVector vec = BooleanVector.materialized(vals, Validity.allValid(2));
+
+            MemorySegment target = MemorySegment.ofArray(new byte[] {(byte) 0xFF});
+            vec.copyInto(target, 0L, 0, 2);
+
+            // row0=false, row1=true -> 0b10 = 0x02; the pre-existing 0xFF must be cleared
+            assertThat(target.get(ValueLayout.JAVA_BYTE, 0L)).isEqualTo((byte) 0x02);
+        }
+
+        @Test
+        void packsSegmentBackedRows() {
+            MemorySegment bitmap = MemorySegment.ofArray(new byte[] {(byte) 0b0000_0101}); // rows 0 and 2 true
+            BooleanVector vec = BooleanVector.segmentBacked(bitmap, 3, Validity.allValid(3));
+
+            MemorySegment target = MemorySegment.ofArray(new byte[1]);
+            vec.copyInto(target, 0L, 0, 3);
+
+            assertThat(target.get(ValueLayout.JAVA_BYTE, 0L)).isEqualTo((byte) 0b0000_0101);
+        }
     }
 }

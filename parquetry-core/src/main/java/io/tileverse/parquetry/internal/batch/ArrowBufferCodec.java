@@ -101,19 +101,14 @@ final class ArrowBufferCodec {
     /** Encodes {@code vector} into an Arrow field node with a validity buffer and a packed data buffer. */
     static EncodedNode encode(ColumnVector vector) {
         return switch (vector) {
-            case IntVector intVector ->
-                fixedWidthNode(intVector, ArrowBuffers.encodeInts(intVector.asArray()), INT32_WIDTH);
-            case LongVector longVector ->
-                fixedWidthNode(longVector, ArrowBuffers.encodeLongs(longVector.asArray()), INT64_WIDTH);
+            case IntVector intVector -> fixedWidthNode(intVector, ArrowBuffers.encodeInts(intVector), INT32_WIDTH);
+            case LongVector longVector -> fixedWidthNode(longVector, ArrowBuffers.encodeLongs(longVector), INT64_WIDTH);
             case FloatVector floatVector ->
-                fixedWidthNode(floatVector, ArrowBuffers.encodeFloats(floatVector.asArray()), FLOAT_WIDTH);
+                fixedWidthNode(floatVector, ArrowBuffers.encodeFloats(floatVector), FLOAT_WIDTH);
             case DoubleVector doubleVector ->
-                fixedWidthNode(doubleVector, ArrowBuffers.encodeDoubles(doubleVector.asArray()), DOUBLE_WIDTH);
+                fixedWidthNode(doubleVector, ArrowBuffers.encodeDoubles(doubleVector), DOUBLE_WIDTH);
             case BooleanVector booleanVector ->
-                fixedWidthNode(
-                        booleanVector,
-                        ArrowBuffers.encodeBooleanBitmap(booleanVector.asArray(), booleanVector.size()),
-                        BOOLEAN_WIDTH);
+                fixedWidthNode(booleanVector, ArrowBuffers.encodeBooleanBitmap(booleanVector), BOOLEAN_WIDTH);
             case BinaryVector binaryVector -> encodeBinary(binaryVector);
             case FixedLenBinaryVector fixedVector -> encodeFixedSizeBinary(fixedVector);
             case Int96Vector int96Vector -> encodeInt96(int96Vector);

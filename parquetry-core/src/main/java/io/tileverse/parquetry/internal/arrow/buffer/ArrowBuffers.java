@@ -20,6 +20,11 @@ import java.lang.foreign.ValueLayout;
 import java.nio.ByteOrder;
 import java.util.BitSet;
 
+import io.tileverse.parquetry.batch.BooleanVector;
+import io.tileverse.parquetry.batch.DoubleVector;
+import io.tileverse.parquetry.batch.FloatVector;
+import io.tileverse.parquetry.batch.IntVector;
+import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.Validity;
 
 /**
@@ -106,6 +111,14 @@ public final class ArrowBuffers {
         return segment.asReadOnly();
     }
 
+    /** Packs a vector's {@code int32} values as a little-endian array, padded to the 8-byte alignment. */
+    public static MemorySegment encodeInts(IntVector vector) {
+        int size = vector.size();
+        MemorySegment segment = MemorySegment.ofArray(new byte[align(size * INT_BYTES)]);
+        vector.copyInto(segment, 0L, 0, size);
+        return segment.asReadOnly();
+    }
+
     /** Reads the first {@code count} little-endian {@code int32} values from {@code buffer}. */
     public static int[] decodeInts(MemorySegment buffer, int count) {
         int[] values = new int[count];
@@ -115,12 +128,11 @@ public final class ArrowBuffers {
         return values;
     }
 
-    /** Packs {@code values} as a little-endian {@code int64} array, padded to the 8-byte alignment. */
-    public static MemorySegment encodeLongs(long[] values) {
-        MemorySegment segment = MemorySegment.ofArray(new byte[align(values.length * LONG_BYTES)]);
-        for (int i = 0; i < values.length; i++) {
-            segment.setAtIndex(INT64, i, values[i]);
-        }
+    /** Packs a vector's {@code int64} values as a little-endian array, padded to the 8-byte alignment. */
+    public static MemorySegment encodeLongs(LongVector vector) {
+        int size = vector.size();
+        MemorySegment segment = MemorySegment.ofArray(new byte[align(size * LONG_BYTES)]);
+        vector.copyInto(segment, 0L, 0, size);
         return segment.asReadOnly();
     }
 
@@ -133,12 +145,11 @@ public final class ArrowBuffers {
         return values;
     }
 
-    /** Packs {@code values} as a little-endian IEEE-754 {@code float} array, padded to the 8-byte alignment. */
-    public static MemorySegment encodeFloats(float[] values) {
-        MemorySegment segment = MemorySegment.ofArray(new byte[align(values.length * FLOAT_BYTES)]);
-        for (int i = 0; i < values.length; i++) {
-            segment.setAtIndex(FLOAT, i, values[i]);
-        }
+    /** Packs a vector's IEEE-754 {@code float} values as a little-endian array, padded to the 8-byte alignment. */
+    public static MemorySegment encodeFloats(FloatVector vector) {
+        int size = vector.size();
+        MemorySegment segment = MemorySegment.ofArray(new byte[align(size * FLOAT_BYTES)]);
+        vector.copyInto(segment, 0L, 0, size);
         return segment.asReadOnly();
     }
 
@@ -151,12 +162,11 @@ public final class ArrowBuffers {
         return values;
     }
 
-    /** Packs {@code values} as a little-endian IEEE-754 {@code double} array, padded to the 8-byte alignment. */
-    public static MemorySegment encodeDoubles(double[] values) {
-        MemorySegment segment = MemorySegment.ofArray(new byte[align(values.length * DOUBLE_BYTES)]);
-        for (int i = 0; i < values.length; i++) {
-            segment.setAtIndex(DOUBLE, i, values[i]);
-        }
+    /** Packs a vector's IEEE-754 {@code double} values as a little-endian array, padded to the 8-byte alignment. */
+    public static MemorySegment encodeDoubles(DoubleVector vector) {
+        int size = vector.size();
+        MemorySegment segment = MemorySegment.ofArray(new byte[align(size * DOUBLE_BYTES)]);
+        vector.copyInto(segment, 0L, 0, size);
         return segment.asReadOnly();
     }
 
@@ -170,22 +180,15 @@ public final class ArrowBuffers {
     }
 
     /**
-     * Packs {@code size} booleans into an LSB-first bit-packed buffer (bit {@code i} set meaning {@code values[i]} is
-     * true), padded to the 8-byte alignment. This mirrors the validity bitmap layout, which is how Arrow stores a
-     * boolean data buffer.
+     * Packs a vector's booleans into an LSB-first bit-packed buffer (bit {@code i} set meaning row {@code i} is true),
+     * padded to the 8-byte alignment, mirroring the validity bitmap layout Arrow uses for a boolean data buffer.
      */
-    public static MemorySegment encodeBooleanBitmap(boolean[] values, int size) {
-        BitSet bits = new BitSet(size);
-        for (int i = 0; i < size; i++) {
-            if (values[i]) {
-                bits.set(i);
-            }
-        }
+    public static MemorySegment encodeBooleanBitmap(BooleanVector vector) {
+        int size = vector.size();
         int minBytes = Math.max((size + BITS_PER_BYTE - 1) / BITS_PER_BYTE, 1);
-        byte[] padded = new byte[align(minBytes)];
-        byte[] packed = bits.toByteArray();
-        System.arraycopy(packed, 0, padded, 0, packed.length);
-        return MemorySegment.ofArray(padded).asReadOnly();
+        MemorySegment segment = MemorySegment.ofArray(new byte[align(minBytes)]);
+        vector.copyInto(segment, 0L, 0, size);
+        return segment.asReadOnly();
     }
 
     /** Reads {@code size} booleans from an LSB-first bit-packed buffer produced by {@link #encodeBooleanBitmap}. */
