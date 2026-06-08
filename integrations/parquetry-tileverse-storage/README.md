@@ -42,7 +42,7 @@ On a single GeoServer instance the PMTiles `DataStore` (tileverse-storage, Java 
 import io.tileverse.parquetry.tileverse.ByteRangeSources;
 import io.tileverse.parquetry.tileverse.SegmentPools;
 import io.tileverse.parquetry.io.ByteRangeSource;
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.io.ByteBufferPool;
 import io.tileverse.storage.RangeReader;

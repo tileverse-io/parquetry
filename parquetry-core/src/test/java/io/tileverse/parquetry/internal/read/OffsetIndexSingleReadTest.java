@@ -31,7 +31,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
@@ -77,7 +77,7 @@ class OffsetIndexSingleReadTest {
         // column-index tier did not activate and the single-read property cannot be demonstrated.
         try (ByteRangeSource plain = ByteRangeSource.ofFile(file)) {
             ExplainPlan plan =
-                    ParquetDataset.open(plain).explain(col("id").eq(5L), Projection.ALL, ReadOptions.DEFAULTS);
+                    ParquetReader.open(plain).explain(col("id").eq(5L), Projection.ALL, ReadOptions.DEFAULTS);
             assertThat(plan.rowGroups().get(0).outcome())
                     .as("predicate must narrow to PARTIAL so the decode-mask builder runs")
                     .isEqualTo(RowGroupOutcome.PARTIAL);
@@ -89,7 +89,7 @@ class OffsetIndexSingleReadTest {
             Predicate predicate = col("id").eq(5L);
             long rowsMatched;
             try (Stream<ParquetRecord> rows =
-                    ParquetDataset.open(counting).read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
+                    ParquetReader.open(counting).read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
                 rowsMatched = rows.count();
             }
 

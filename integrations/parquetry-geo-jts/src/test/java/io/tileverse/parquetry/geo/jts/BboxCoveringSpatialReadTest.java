@@ -28,7 +28,7 @@ import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.GeometryFactory;
 
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -64,11 +64,11 @@ class BboxCoveringSpatialReadTest {
         Predicate predicate = Predicate.geometryFilter(filter);
 
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetReader reader = ParquetReader.open(source);
 
-            long expected = bruteForceMatches(dataset, filter);
-            long pushedDown = matchingRowCount(dataset, predicate);
-            long scanned = dataset.explain(predicate, Projection.ALL, ReadOptions.DEFAULTS)
+            long expected = bruteForceMatches(reader, filter);
+            long pushedDown = matchingRowCount(reader, predicate);
+            long scanned = reader.explain(predicate, Projection.ALL, ReadOptions.DEFAULTS)
                     .estimatedRowsScanned();
 
             assertThat(expected)
@@ -92,23 +92,23 @@ class BboxCoveringSpatialReadTest {
                 io.tileverse.parquetry.filter.Pred.col("bbox", "ymax").gtEq(-100.0);
 
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetReader reader = ParquetReader.open(source);
 
-            assertThat(matchingRowCount(dataset, everyRow))
+            assertThat(matchingRowCount(reader, everyRow))
                     .as("read() on a struct-nested column must agree with count() and see every row")
-                    .isEqualTo(dataset.count(everyRow))
+                    .isEqualTo(reader.count(everyRow, ReadOptions.DEFAULTS))
                     .isEqualTo(TOTAL_ROWS);
         }
     }
 
-    private static long matchingRowCount(ParquetDataset dataset, Predicate predicate) {
-        try (Stream<ParquetRecord> rows = dataset.read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
+    private static long matchingRowCount(ParquetReader reader, Predicate predicate) {
+        try (Stream<ParquetRecord> rows = reader.read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
             return rows.count();
         }
     }
 
-    private static long bruteForceMatches(ParquetDataset dataset, JtsGeometryFilter filter) {
-        try (Stream<ParquetRecord> rows = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
+    private static long bruteForceMatches(ParquetReader reader, JtsGeometryFilter filter) {
+        try (Stream<ParquetRecord> rows = reader.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
             return rows.filter(row -> intersects(filter, row)).count();
         }
     }

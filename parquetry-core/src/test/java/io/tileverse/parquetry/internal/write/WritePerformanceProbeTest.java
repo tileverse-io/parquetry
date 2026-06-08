@@ -31,7 +31,7 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.data.Compression;
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
@@ -151,7 +151,7 @@ class WritePerformanceProbeTest {
         long startNanos = System.nanoTime();
         long rowCount = 0L;
         try (ByteRangeSource source = ByteRangeSource.ofFile(input)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetReader dataset = ParquetReader.open(source);
             ParquetSchema schema = dataset.schema();
             try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options);
                     Stream<ParquetRecord> records =

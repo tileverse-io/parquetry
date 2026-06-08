@@ -55,11 +55,12 @@ import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.batch.Validity;
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -108,12 +109,12 @@ class DuckDbCorpusRoundTripIT {
     }
 
     private List<Row> readThroughArrowIntoDuckDb(FileChannel channel, DuckDBConnection conn) throws Exception {
-        ParquetDataset dataset = ParquetDataset.open(channel);
+        ParquetReader reader = ParquetReader.open(ByteRangeSource.ofChannel(channel));
         Predicate predicate = Pred.col(ID).gtEq(FILTER_THRESHOLD);
         Projection projection = Projection.of(PROJECTED);
 
-        ParquetSchema projectedSchema = dataset.schema().project(PROJECTED);
-        ParquetRecordBatch batch = filteredBatch(dataset, predicate, projection, projectedSchema);
+        ParquetSchema projectedSchema = reader.schema().project(PROJECTED);
+        ParquetRecordBatch batch = filteredBatch(reader, predicate, projection, projectedSchema);
 
         Pipe pipe = Pipe.open();
         ExecutorService producer = Executors.newSingleThreadExecutor();
@@ -139,9 +140,9 @@ class DuckDbCorpusRoundTripIT {
      * batch path on its own only prunes whole row groups.
      */
     private ParquetRecordBatch filteredBatch(
-            ParquetDataset dataset, Predicate predicate, Projection projection, ParquetSchema projectedSchema) {
+            ParquetReader reader, Predicate predicate, Projection projection, ParquetSchema projectedSchema) {
         List<Row> rows = new ArrayList<>();
-        try (Stream<ParquetRecord> records = dataset.read(predicate, projection, ReadOptions.DEFAULTS)) {
+        try (Stream<ParquetRecord> records = reader.read(predicate, projection, ReadOptions.DEFAULTS)) {
             records.forEach(record ->
                     rows.add(new Row(record.getInt(ID), record.getInt(INT_COL), record.getString(STRING_COL))));
         }

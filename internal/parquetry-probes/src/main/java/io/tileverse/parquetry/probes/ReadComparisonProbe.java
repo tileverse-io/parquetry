@@ -25,7 +25,7 @@ import java.util.Optional;
 
 import org.locationtech.jts.geom.Geometry;
 
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.format.LogicalType;
@@ -188,18 +188,18 @@ public final class ReadComparisonProbe {
      * {@code attribute.column}/{@code .value}), and whether GeoParquet 1.1 bbox covering columns exist for the
      * parquet-java pushdown. Scenarios whose inputs do not resolve are skipped.
      */
-    private void resolveCapabilities(ParquetDataset dataset) {
-        Optional<GeoParquetMetadata> geo = parseGeoMetadata(dataset.keyValueMetadata());
-        this.geometryColumnName = resolveGeometryColumn(dataset, geo);
+    private void resolveCapabilities(ParquetReader reader) {
+        Optional<GeoParquetMetadata> geo = parseGeoMetadata(reader.keyValueMetadata());
+        this.geometryColumnName = resolveGeometryColumn(reader, geo);
         this.geometryColumn = geometryColumnName == null ? null : ColumnPath.of(geometryColumnName.split("\\."));
         resolveEnvelope(geo);
         this.attributeColumn = attributeColumnName == null ? null : ColumnPath.of(attributeColumnName.split("\\."));
         this.attributeAvailable = attributeColumn != null && attributeValue != null;
         this.spatialAvailable = geometryColumn != null && queryEnvelope != null;
-        this.bboxCoveringAvailable = hasBboxCovering(dataset);
+        this.bboxCoveringAvailable = hasBboxCovering(reader);
     }
 
-    private String resolveGeometryColumn(ParquetDataset dataset, Optional<GeoParquetMetadata> geo) {
+    private String resolveGeometryColumn(ParquetReader reader, Optional<GeoParquetMetadata> geo) {
         if (geometryColumnOverride != null && !geometryColumnOverride.isBlank()) {
             return geometryColumnOverride;
         }
@@ -207,8 +207,8 @@ public final class ReadComparisonProbe {
         if (primary != null && !primary.isBlank()) {
             return primary;
         }
-        for (ColumnPath leaf : dataset.schema().leafColumns()) {
-            boolean isGeometry = dataset.schema()
+        for (ColumnPath leaf : reader.schema().leafColumns()) {
+            boolean isGeometry = reader.schema()
                     .find(leaf)
                     .filter(SchemaNode.Primitive.class::isInstance)
                     .map(SchemaNode.Primitive.class::cast)
@@ -256,9 +256,9 @@ public final class ReadComparisonProbe {
                 centerX - halfDiagonal, centerY - halfDiagonal, centerX + halfDiagonal, centerY + halfDiagonal);
     }
 
-    private boolean hasBboxCovering(ParquetDataset dataset) {
+    private boolean hasBboxCovering(ParquetReader reader) {
         for (String corner : new String[] {"xmin", "xmax", "ymin", "ymax"}) {
-            if (dataset.schema().find(ColumnPath.of(bboxColumn, corner)).isEmpty()) {
+            if (reader.schema().find(ColumnPath.of(bboxColumn, corner)).isEmpty()) {
                 return false;
             }
         }
@@ -339,7 +339,7 @@ public final class ReadComparisonProbe {
 
     private void run() throws Exception {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            resolveCapabilities(ParquetDataset.open(source));
+            resolveCapabilities(ParquetReader.open(source));
         }
         note("Read-path comparison over %s (%.1f MiB)".formatted(file, Files.size(file) / (1024.0 * 1024.0)));
         note("JVM availableProcessors=%d, maxHeap=%d MiB, concurrency=%d"

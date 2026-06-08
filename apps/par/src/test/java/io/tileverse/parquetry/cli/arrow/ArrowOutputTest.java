@@ -39,7 +39,7 @@ import io.tileverse.parquetry.cli.expr.FilterParser;
 import io.tileverse.parquetry.cli.expr.GeometryColumns;
 import io.tileverse.parquetry.cli.render.Projections;
 import io.tileverse.parquetry.cli.support.Fixtures;
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.schema.ColumnPath;

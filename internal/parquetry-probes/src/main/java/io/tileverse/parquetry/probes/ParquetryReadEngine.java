@@ -18,12 +18,12 @@ package io.tileverse.parquetry.probes;
 import java.lang.foreign.MemorySegment;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import io.tileverse.parquetry.data.OpenOptions;
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
@@ -47,7 +47,7 @@ final class ParquetryReadEngine implements ReadEngine {
 
     private final ReadContext context;
     private ByteRangeSource source;
-    private ParquetDataset dataset;
+    private ParquetReader reader;
     private long sink;
 
     ParquetryReadEngine(ReadContext context) {
@@ -62,7 +62,7 @@ final class ParquetryReadEngine implements ReadEngine {
     @Override
     public long read(Scenario scenario) {
         Predicate predicate = predicate(scenario);
-        try (Stream<ParquetRecord> records = dataset().read(predicate, projection(), ReadOptions.DEFAULTS)) {
+        try (Stream<ParquetRecord> records = reader().read(predicate, projection(), ReadOptions.DEFAULTS)) {
             long count = 0L;
             for (ParquetRecord rec : (Iterable<ParquetRecord>) records::iterator) {
                 walkRecord(rec, rec.schema().root());
@@ -84,16 +84,16 @@ final class ParquetryReadEngine implements ReadEngine {
         }
         source.close();
         source = null;
-        dataset = null;
+        reader = null;
     }
 
-    /** Opened once and reused across reads; synchronized so concurrent reads share a single open dataset. */
-    private synchronized ParquetDataset dataset() {
-        if (dataset == null) {
+    /** Opened once and reused across reads; synchronized so concurrent reads share a single open reader. */
+    private synchronized ParquetReader reader() {
+        if (reader == null) {
             source = ByteRangeSource.ofFile(context.file());
-            dataset = ParquetDataset.open(source, openOptions());
+            reader = ParquetReader.open(source, runtime(), Optional.empty());
         }
-        return dataset;
+        return reader;
     }
 
     /**
@@ -101,15 +101,14 @@ final class ParquetryReadEngine implements ReadEngine {
      * (how many row groups one read decodes concurrently); 1 makes a read effectively serial, which isolates intra-read
      * parallelism from inter-read concurrency. Unset uses the default heuristic.
      */
-    private static OpenOptions openOptions() {
+    private static ParquetRuntime runtime() {
         String decodeAhead = System.getProperty("parquetry.probe.decodeAhead");
         if (decodeAhead == null) {
-            return OpenOptions.DEFAULTS;
+            return ParquetRuntime.defaultRuntime();
         }
-        ParquetRuntime runtime = ParquetRuntime.builder()
+        return ParquetRuntime.builder()
                 .maxDecodeAhead(Integer.parseInt(decodeAhead))
                 .build();
-        return OpenOptions.builder().runtime(runtime).build();
     }
 
     /**

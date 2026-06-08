@@ -22,14 +22,14 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.lang.foreign.MemorySegment;
 import java.nio.file.Path;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.OpenOptions;
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
@@ -91,14 +91,12 @@ class FetchFailureCleanupTest {
 
         try (ByteRangeSource base = TestParquetFiles.openRangeReader(file)) {
             FailAfterArmByteRangeSource failing = new FailAfterArmByteRangeSource(base);
-            OpenOptions openOptions = OpenOptions.builder()
-                    .runtime(ParquetRuntime.builder()
-                            .segmentPool(pool)
-                            .fetchBudget(budget)
-                            .prefetchDepth(2)
-                            .build())
+            ParquetRuntime runtime = ParquetRuntime.builder()
+                    .segmentPool(pool)
+                    .fetchBudget(budget)
+                    .prefetchDepth(2)
                     .build();
-            ParquetDataset dataset = ParquetDataset.open(failing, openOptions);
+            ParquetReader dataset = ParquetReader.open(failing, runtime, Optional.empty());
             try (Stream<ParquetRecord> stream =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 failing.arm();

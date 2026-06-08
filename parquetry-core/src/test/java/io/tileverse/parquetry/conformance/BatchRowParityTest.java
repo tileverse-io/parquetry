@@ -40,7 +40,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -55,8 +55,8 @@ import io.tileverse.parquetry.testsupport.CorpusFixtures;
 import lombok.NonNull;
 
 /**
- * Regression net asserting that the row API ({@link ParquetDataset#read()}) and the batch API
- * ({@link ParquetDataset#readBatches()}) agree cell-by-cell across every non-excluded fixture in the
+ * Regression net asserting that the row API ({@link ParquetReader#read()}) and the batch API
+ * ({@link ParquetReader#readBatches()}) agree cell-by-cell across every non-excluded fixture in the
  * {@code apache/parquet-testing} corpus.
  *
  * <p>For each fixture both APIs decode the same bytes through the same column readers; the two paths only differ in how
@@ -83,7 +83,7 @@ class BatchRowParityTest {
     void rowAndBatchApisAgree(String fixtureName) {
         Path fixture = DATA_DIR.resolve(fixtureName);
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixture)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetReader dataset = ParquetReader.open(source);
             ParquetSchema schema = dataset.schema();
             List<ColumnPath> leaves = schema.leafColumns();
 
@@ -146,14 +146,15 @@ class BatchRowParityTest {
     // --- pipeline drivers ---
 
     private static List<Map<ColumnPath, Object>> snapshotViaRowApi(
-            ParquetDataset dataset, ParquetSchema schema, List<ColumnPath> leaves) {
-        try (Stream<ParquetRecord> records = dataset.read()) {
+            ParquetReader dataset, ParquetSchema schema, List<ColumnPath> leaves) {
+        try (Stream<ParquetRecord> records =
+                dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
             return records.map(row -> snapshotRow(row, schema, leaves)).toList();
         }
     }
 
     private static List<Map<ColumnPath, Object>> snapshotViaBatchApi(
-            ParquetDataset dataset, ParquetSchema schema, List<ColumnPath> leaves) {
+            ParquetReader dataset, ParquetSchema schema, List<ColumnPath> leaves) {
         List<Map<ColumnPath, Object>> snapshots = new ArrayList<>();
         ReadOptions options = ReadOptions.DEFAULTS;
         try (Stream<ParquetRecordBatch> batches = dataset.readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {

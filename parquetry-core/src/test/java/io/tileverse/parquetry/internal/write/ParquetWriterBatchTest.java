@@ -42,7 +42,7 @@ import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.batch.Validity;
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
@@ -160,7 +160,7 @@ class ParquetWriterBatchTest {
         }
 
         try (ByteRangeSource source = ByteRangeSource.ofFile(parquetFile)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetReader dataset = ParquetReader.open(source);
             try (Stream<ParquetRecord> stream =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 List<ParquetRecord> all = stream.toList();
@@ -246,7 +246,7 @@ class ParquetWriterBatchTest {
     private static List<Map<String, Object>> readAll(Path parquetFile, ParquetSchema schema) {
         List<Map<String, Object>> out = new ArrayList<>();
         try (ByteRangeSource source = ByteRangeSource.ofFile(parquetFile)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetReader dataset = ParquetReader.open(source);
             try (Stream<ParquetRecord> stream =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 stream.forEach(parquetRecord -> out.add(extractAll(parquetRecord, schema)));

@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>io.tileverse.parquetry</groupId>
+    <artifactId>parquetry-parent</artifactId>
+    <version>${revision}</version>
+  </parent>
+  <artifactId>parquetry-catalog</artifactId>
+  <name>Parquetry :: Catalog</name>
+  <description>Multi-file dataset view and catalog abstraction over Parquet files.</description>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>io.tileverse.parquetry</groupId>
+        <artifactId>parquetry-dependencies</artifactId>
+        <version>${project.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <dependency>
+      <groupId>io.tileverse.parquetry</groupId>
+      <artifactId>parquetry-core</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.tileverse.parquetry</groupId>
+      <artifactId>parquetry-io</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.google.errorprone</groupId>
+      <artifactId>error_prone_annotations</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.projectlombok</groupId>
+      <artifactId>lombok</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.tileverse.parquetry</groupId>
+      <artifactId>parquetry-testkit</artifactId>
+      <version>${project.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <!--
+      The dataset tests build fixtures through AvroParquetWriter (ParquetDatasetTest and the TestParquetFiles helper
+      reused via the core test-jar), matching parquetry-core's test setup.
+    -->
+    <dependency>
+      <groupId>org.apache.parquet</groupId>
+      <artifactId>parquet-avro</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!--
+      Pin com.fasterxml.jackson.core:jackson-annotations to 2.21 at test scope. Jackson 3
+      (tools.jackson jackson-databind 3.x) reuses the 2.x-versioned annotations artifact, and 2.21 is the version it
+      resolves in parquetry-core; the read path's LogicalType deserialization needs it. Without this pin the older
+      jackson-2 annotations (2.12.x/2.14.x) dragged in transitively by parquet-avro and hadoop-common would shadow it
+      by dependency proximity and break LogicalType deserialization at test time.
+    -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-annotations</artifactId>
+      <version>2.21</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hadoop</groupId>
+      <artifactId>hadoop-common</artifactId>
+      <version>3.3.6</version>
+      <scope>test</scope>
+    </dependency>
+    <!--
+      Core's test fixtures (CorpusFixtures, CountingSegmentPool) back the dataset and catalog tests moved out of
+      parquetry-core. Reactor-only; the dependency direction stays catalog -> core.
+    -->
+    <dependency>
+      <groupId>io.tileverse.parquetry</groupId>
+      <artifactId>parquetry-core</artifactId>
+      <version>${project.version}</version>
+      <type>test-jar</type>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>

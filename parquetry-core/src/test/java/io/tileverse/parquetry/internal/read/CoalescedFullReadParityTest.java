@@ -21,14 +21,14 @@ import java.lang.foreign.MemorySegment;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.OpenOptions;
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
@@ -91,10 +91,8 @@ class CoalescedFullReadParityTest {
         int dataReads;
         try (ByteRangeSource base = TestParquetFiles.openRangeReader(file)) {
             CountingByteRangeSource counting = new CountingByteRangeSource(base);
-            OpenOptions openOptions = OpenOptions.builder()
-                    .runtime(ParquetRuntime.builder().segmentPool(pool).build())
-                    .build();
-            ParquetDataset dataset = ParquetDataset.open(counting, openOptions);
+            ParquetRuntime runtime = ParquetRuntime.builder().segmentPool(pool).build();
+            ParquetReader dataset = ParquetReader.open(counting, runtime, Optional.empty());
             try (Stream<ParquetRecord> stream =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 // Footer and filter-plan reads have already happened inside read().

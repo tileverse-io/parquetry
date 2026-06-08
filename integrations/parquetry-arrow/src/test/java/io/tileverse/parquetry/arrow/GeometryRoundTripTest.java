@@ -33,10 +33,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
@@ -48,15 +49,15 @@ class GeometryRoundTripTest {
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try (FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
-            ParquetDataset dataset = ParquetDataset.open(channel);
+            ParquetReader reader = ParquetReader.open(ByteRangeSource.ofChannel(channel));
             Optional<GeoParquetMetadata> geo = Optional.empty();
-            String geoJson = dataset.keyValueMetadata().get("geo");
+            String geoJson = reader.keyValueMetadata().get("geo");
             if (geoJson != null && !geoJson.isEmpty()) {
                 geo = Optional.of(GeoParquetMetadata.parse(geoJson));
             }
             try (Stream<ParquetRecordBatch> batches =
-                    dataset.readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
-                ArrowIpcWriter.write(dataset.schema(), geo, batches, out);
+                    reader.readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
+                ArrowIpcWriter.write(reader.schema(), geo, batches, out);
             }
         }
 

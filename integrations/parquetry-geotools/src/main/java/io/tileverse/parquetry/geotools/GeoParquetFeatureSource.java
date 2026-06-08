@@ -37,8 +37,8 @@ import org.geotools.data.store.ContentFeatureSource;
 import org.geotools.feature.simple.SimpleFeatureTypeBuilder;
 import org.geotools.geometry.jts.ReferencedEnvelope;
 
-import io.tileverse.parquetry.data.ParquetDataset;
-import io.tileverse.parquetry.data.ParquetDatasetCatalog;
+import io.tileverse.parquetry.catalog.ParquetDatasetCatalog;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;

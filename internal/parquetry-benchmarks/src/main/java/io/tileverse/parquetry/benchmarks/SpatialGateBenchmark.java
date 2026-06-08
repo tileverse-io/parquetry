@@ -188,7 +188,7 @@ public class SpatialGateBenchmark {
     @Benchmark
     public void read(Blackhole bh) {
         Predicate predicate = "on".equals(gate) ? onPredicate : offPredicate;
-        try (Stream<ParquetRecord> rows = open.dataset().read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
+        try (Stream<ParquetRecord> rows = open.reader().read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
             rows.forEach(row -> {
                 bh.consume(row.getInt(ID_COL));
                 bh.consume(row.getInt(SyntheticParquet.valueColumn(0)));

@@ -18,13 +18,13 @@ package io.tileverse.parquetry.internal.read;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Path;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
-import io.tileverse.parquetry.data.OpenOptions;
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
@@ -50,11 +50,10 @@ class SpillToDiskIT {
                 .diskBudget(DiskBudget.ofBytes(256L << 20))
                 .spillEnabled(true)
                 .build();
-        OpenOptions spilling = OpenOptions.builder().runtime(spillingRuntime).build();
         ReadOptions smallBatches = ReadOptions.builder().batchSize(2).build();
 
-        long plain = countRows(OpenOptions.DEFAULTS, ReadOptions.DEFAULTS);
-        long spilled = countRows(spilling, smallBatches);
+        long plain = countRows(ParquetRuntime.defaultRuntime(), ReadOptions.DEFAULTS);
+        long spilled = countRows(spillingRuntime, smallBatches);
 
         assertThat(spilled).isEqualTo(plain).isPositive();
     }
@@ -62,16 +61,15 @@ class SpillToDiskIT {
     @Test
     @Timeout(30)
     void readingWithSpillDisabledAndAmpleBudgetReturnsTheSameRows() {
-        OpenOptions disabled = OpenOptions.builder()
-                .runtime(ParquetRuntime.builder().spillEnabled(false).build())
-                .build();
-        assertThat(countRows(disabled, ReadOptions.DEFAULTS))
-                .isEqualTo(countRows(OpenOptions.DEFAULTS, ReadOptions.DEFAULTS));
+        ParquetRuntime spillDisabled =
+                ParquetRuntime.builder().spillEnabled(false).build();
+        assertThat(countRows(spillDisabled, ReadOptions.DEFAULTS))
+                .isEqualTo(countRows(ParquetRuntime.defaultRuntime(), ReadOptions.DEFAULTS));
     }
 
-    private static long countRows(OpenOptions openOptions, ReadOptions readOptions) {
+    private static long countRows(ParquetRuntime runtime, ReadOptions readOptions) {
         try (ByteRangeSource src = ByteRangeSource.ofFile(FILE)) {
-            ParquetDataset ds = ParquetDataset.open(src, openOptions);
+            ParquetReader ds = ParquetReader.open(src, runtime, Optional.empty());
             try (Stream<ParquetRecord> rows = ds.read(Predicate.ALWAYS_TRUE, Projection.ALL, readOptions)) {
                 return rows.count();
             }

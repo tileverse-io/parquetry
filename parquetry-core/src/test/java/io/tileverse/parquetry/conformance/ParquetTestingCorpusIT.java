@@ -25,6 +25,7 @@ import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.stream.Stream;
@@ -34,8 +35,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
-import io.tileverse.parquetry.data.OpenOptions;
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
@@ -166,10 +166,8 @@ class ParquetTestingCorpusIT {
 
     private static List<Map<String, Object>> readCanonicalViaParquetry(Path fixture, CountingSegmentPool pool) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixture)) {
-            OpenOptions openOptions = OpenOptions.builder()
-                    .runtime(ParquetRuntime.builder().segmentPool(pool).build())
-                    .build();
-            ParquetDataset dataset = ParquetDataset.open(source, openOptions);
+            ParquetRuntime runtime = ParquetRuntime.builder().segmentPool(pool).build();
+            ParquetReader dataset = ParquetReader.open(source, runtime, Optional.empty());
             ParquetSchema schema = dataset.schema();
             try (Stream<ParquetRecord> records =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
@@ -182,10 +180,8 @@ class ParquetTestingCorpusIT {
     private static long totalRowsViaBatchApi(Path fixture, CountingSegmentPool pool) {
         long[] total = {0L};
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixture)) {
-            OpenOptions openOptions = OpenOptions.builder()
-                    .runtime(ParquetRuntime.builder().segmentPool(pool).build())
-                    .build();
-            ParquetDataset dataset = ParquetDataset.open(source, openOptions);
+            ParquetRuntime runtime = ParquetRuntime.builder().segmentPool(pool).build();
+            ParquetReader dataset = ParquetReader.open(source, runtime, Optional.empty());
             try (Stream<ParquetRecordBatch> batches =
                     dataset.readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 batches.forEach(batch -> {

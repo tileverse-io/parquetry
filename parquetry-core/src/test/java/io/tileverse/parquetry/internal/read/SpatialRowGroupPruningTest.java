@@ -31,7 +31,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
@@ -197,7 +197,7 @@ class SpatialRowGroupPruningTest {
     private static List<Integer> readIds(Path file, Predicate predicate, ReadOptions options) {
         List<Integer> ids = new ArrayList<>();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetReader dataset = ParquetReader.open(source);
             try (Stream<ParquetRecord> rows = dataset.read(predicate, Projection.ALL, options)) {
                 rows.forEach(row -> ids.add(row.getInt(ColumnPath.of("id"))));
             }

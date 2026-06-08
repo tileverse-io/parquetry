@@ -40,7 +40,7 @@ import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
- * Coverage for {@link ParquetDataset#readBatches()} and the {@link ReadOptions#batchSize()} cap. Fixtures are written
+ * Coverage for {@link ParquetReader#readBatches()} and the {@link ReadOptions#batchSize()} cap. Fixtures are written
  * via {@code parquet-avro} with small row groups so multiple batches are emitted per file.
  */
 class ReadBatchesTest {
@@ -52,11 +52,12 @@ class ReadBatchesTest {
         writeFixture(file, generateRows(rowCount));
 
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetReader dataset = ParquetReader.open(source);
 
             long totalRows = 0L;
             int batchCount = 0;
-            try (Stream<ParquetRecordBatch> batches = dataset.readBatches()) {
+            try (Stream<ParquetRecordBatch> batches =
+                    dataset.readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 List<ParquetRecordBatch> seen = batches.toList();
                 for (ParquetRecordBatch batch : seen) {
                     totalRows += batch.rowCount();
@@ -81,7 +82,7 @@ class ReadBatchesTest {
         ReadOptions options = ReadOptions.builder().batchSize(100).build();
 
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetReader dataset = ParquetReader.open(source);
 
             long totalRows = 0L;
             int maxObservedBatchSize = 0;
@@ -114,7 +115,7 @@ class ReadBatchesTest {
         ColumnPath yearPath = ColumnPath.of("year");
 
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetReader dataset = ParquetReader.open(source);
 
             List<Integer> seenYears = new ArrayList<>(rowCount);
             try (Stream<ParquetRecordBatch> batches =

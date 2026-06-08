@@ -189,7 +189,7 @@ public class LateMaterializationBenchmark {
      */
     @Benchmark
     public double filteredRead() {
-        try (Stream<ParquetRecord> rows = open.dataset().read(predicate, projection, options)) {
+        try (Stream<ParquetRecord> rows = open.reader().read(predicate, projection, options)) {
             return rows.mapToDouble(rec -> rec.getDouble(SyntheticParquet.valueColumn(0)))
                     .sum();
         }

@@ -25,13 +25,13 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
-import io.tileverse.parquetry.data.OpenOptions;
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
@@ -78,10 +78,9 @@ class RowGroupFetcherTest {
      */
     private static List<Map<ColumnPath, Object>> readAllRows(
             ParquetRuntime runtime, DiskBudget diskBudget, boolean expectSpill) {
-        OpenOptions openOptions = OpenOptions.builder().runtime(runtime).build();
         long diskCapacity = diskBudget.capacity();
         try (ByteRangeSource source = ByteRangeSource.ofFile(FILE)) {
-            ParquetDataset dataset = ParquetDataset.open(source, openOptions);
+            ParquetReader dataset = ParquetReader.open(source, runtime, Optional.empty());
             List<ColumnPath> leaves = dataset.schema().leafColumns();
             try (Stream<ParquetRecord> rows =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {

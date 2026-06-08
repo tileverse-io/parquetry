@@ -36,7 +36,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
@@ -241,7 +241,7 @@ class ParquetWriterTest {
         }
 
         try (ByteRangeSource source = ByteRangeSource.ofFile(parquetFile)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetReader dataset = ParquetReader.open(source);
             Map<String, String> kv = dataset.keyValueMetadata();
             assertThat(kv).containsKey("geo").containsEntry("pandas", "{\"version\":\"1.0\"}");
         }
@@ -297,7 +297,7 @@ class ParquetWriterTest {
     private static List<Integer> readIds(Path file) {
         List<Integer> ids = new ArrayList<>();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetReader dataset = ParquetReader.open(source);
             try (Stream<ParquetRecord> stream =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 stream.forEach(r -> ids.add(r.getInt(ColumnPath.of("id"))));

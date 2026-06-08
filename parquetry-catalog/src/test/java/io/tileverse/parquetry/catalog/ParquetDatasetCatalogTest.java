@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.data;
+package io.tileverse.parquetry.catalog;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -24,6 +24,7 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.LocalFileSource;
 import io.tileverse.parquetry.testsupport.CorpusFixtures;

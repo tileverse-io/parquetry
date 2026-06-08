@@ -35,8 +35,8 @@ import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.Polygon;
 
-import io.tileverse.parquetry.data.CatalogOptions;
-import io.tileverse.parquetry.data.ParquetDatasetCatalog;
+import io.tileverse.parquetry.catalog.CatalogOptions;
+import io.tileverse.parquetry.catalog.ParquetDatasetCatalog;
 import io.tileverse.parquetry.io.LocalFileSource;
 import io.tileverse.parquetry.testkit.TestCorpus;
 

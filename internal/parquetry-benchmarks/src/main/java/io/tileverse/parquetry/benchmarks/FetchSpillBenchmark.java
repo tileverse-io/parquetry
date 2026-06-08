@@ -22,6 +22,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -43,8 +44,7 @@ import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
-import io.tileverse.parquetry.data.OpenOptions;
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
@@ -183,10 +183,8 @@ public class FetchSpillBenchmark {
 
     private long consumeFixture() {
         ByteRangeSource source = ByteRangeSource.ofFile(fixture);
-        OpenOptions options = OpenOptions.builder().runtime(tinyFetchRuntime).build();
-        ParquetDataset dataset = ParquetDataset.open(source, options);
-        try (Stream<ParquetRecord> records =
-                dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
+        ParquetReader reader = ParquetReader.open(source, tinyFetchRuntime, Optional.empty());
+        try (Stream<ParquetRecord> records = reader.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
             return records.count();
         } finally {
             source.close();

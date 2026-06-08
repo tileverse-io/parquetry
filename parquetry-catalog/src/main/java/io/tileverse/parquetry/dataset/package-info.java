@@ -13,22 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.data;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
-import org.junit.jupiter.api.Test;
-
-class CatalogOptionsTest {
-
-    @Test
-    void defaultsHaveNoDatasetNameOverride() {
-        assertThat(CatalogOptions.defaults().datasetName()).isEmpty();
-    }
-
-    @Test
-    void builderSetsDatasetName() {
-        CatalogOptions options = CatalogOptions.builder().datasetName("places").build();
-        assertThat(options.datasetName()).contains("places");
-    }
-}
+/**
+ * Logical dataset view over one or more Parquet files of a single schema.
+ *
+ * <p>A {@link io.tileverse.parquetry.dataset.ParquetDataset} reads 1..N files as one stream; it sits above the
+ * single-file {@code io.tileverse.parquetry.data.ParquetReader} engine in {@code parquetry-core}.
+ */
+package io.tileverse.parquetry.dataset;

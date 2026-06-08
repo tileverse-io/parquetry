@@ -26,7 +26,7 @@ import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -50,7 +50,7 @@ class DetachTest {
         byte[] expected;
         Object detached;
         try (ByteRangeSource source = ByteRangeSource.ofFile(FIXTURE)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetReader dataset = ParquetReader.open(source);
             try (Stream<ParquetRecord> rows =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 ParquetRecord first = rows.findFirst().orElseThrow();
@@ -75,7 +75,7 @@ class DetachTest {
         byte[] expected;
         ParquetRecord detached;
         try (ByteRangeSource source = ByteRangeSource.ofFile(FIXTURE)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetReader dataset = ParquetReader.open(source);
             try (Stream<ParquetRecord> rows =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 ParquetRecord first = rows.findFirst().orElseThrow();
@@ -97,7 +97,7 @@ class DetachTest {
         byte[] expected;
         ParquetRecord twiceDetached;
         try (ByteRangeSource source = ByteRangeSource.ofFile(FIXTURE)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetReader dataset = ParquetReader.open(source);
             try (Stream<ParquetRecord> rows =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 ParquetRecord first = rows.findFirst().orElseThrow();

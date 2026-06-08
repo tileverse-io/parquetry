@@ -37,7 +37,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
@@ -75,7 +75,7 @@ class RoundTripCorpusIT {
         ParquetSchema schema;
         List<RowSnapshot> originalRows;
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixture)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetReader dataset = ParquetReader.open(source);
             schema = dataset.schema();
             assumeTrue(isFlatPrimitiveSchema(schema), "fixture has nested or repeated columns");
             assumeTrue(
@@ -173,7 +173,7 @@ class RoundTripCorpusIT {
 
     // --- snapshot + rewrite ---
 
-    private static List<RowSnapshot> snapshotRows(ParquetDataset dataset, ParquetSchema schema) {
+    private static List<RowSnapshot> snapshotRows(ParquetReader dataset, ParquetSchema schema) {
         List<ColumnPath> leaves = schema.leafColumns();
         List<RowSnapshot> snapshots = new ArrayList<>();
         try (Stream<ParquetRecord> records =
@@ -227,16 +227,15 @@ class RoundTripCorpusIT {
 
     private static List<RowSnapshot> readRowsFromFile(Path file) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
-            List<ColumnPath> leaves = dataset.schema().leafColumns();
-            return snapshotRowsFromDataset(dataset, leaves);
+            ParquetReader reader = ParquetReader.open(source);
+            List<ColumnPath> leaves = reader.schema().leafColumns();
+            return snapshotRowsFromReader(reader, leaves);
         }
     }
 
-    private static List<RowSnapshot> snapshotRowsFromDataset(ParquetDataset dataset, List<ColumnPath> leaves) {
+    private static List<RowSnapshot> snapshotRowsFromReader(ParquetReader reader, List<ColumnPath> leaves) {
         List<RowSnapshot> snapshots = new ArrayList<>();
-        try (Stream<ParquetRecord> records =
-                dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
+        try (Stream<ParquetRecord> records = reader.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
             records.forEach(parquetRecord -> snapshots.add(snapshotRow(parquetRecord, leaves)));
         }
         return snapshots;

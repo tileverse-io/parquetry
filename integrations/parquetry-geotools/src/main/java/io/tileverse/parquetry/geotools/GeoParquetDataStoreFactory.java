@@ -24,8 +24,8 @@ import org.geotools.api.data.DataAccessFactory.Param;
 import org.geotools.api.data.DataStore;
 import org.geotools.api.data.DataStoreFactorySpi;
 
-import io.tileverse.parquetry.data.CatalogOptions;
-import io.tileverse.parquetry.data.ParquetDatasetCatalog;
+import io.tileverse.parquetry.catalog.CatalogOptions;
+import io.tileverse.parquetry.catalog.ParquetDatasetCatalog;
 import io.tileverse.parquetry.tileverse.StorageFileSource;
 
 /** Opens a read-only GeoParquet {@link DataStore} from a dataset URI. */

@@ -13,11 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.data;
+package io.tileverse.parquetry.dataset;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 import org.junit.jupiter.api.Test;
+
+import io.tileverse.parquetry.data.ParquetRuntime;
 
 class OpenOptionsTest {
 

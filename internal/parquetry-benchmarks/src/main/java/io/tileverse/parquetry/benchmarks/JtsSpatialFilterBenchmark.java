@@ -315,7 +315,7 @@ public class JtsSpatialFilterBenchmark {
         appSideFilter = JtsGeometryFilter.intersects(GEOMETRY_COL, queryDiamond);
 
         // JTS output form parses each output row's geometry; Projection.ALL materializes the full schema.
-        jtsMaterializer = new JtsMaterializer(open.dataset().schema());
+        jtsMaterializer = new JtsMaterializer(open.reader().schema());
     }
 
     @TearDown(Level.Trial)
@@ -361,11 +361,11 @@ public class JtsSpatialFilterBenchmark {
     private void readAndConsume(Predicate predicate, Blackhole bh) {
         if (output == OutputForm.JTS) {
             try (Stream<Map<ColumnPath, Object>> rows =
-                    open.dataset().read(predicate, Projection.ALL, jtsMaterializer, ReadOptions.DEFAULTS)) {
+                    open.reader().read(predicate, Projection.ALL, jtsMaterializer, ReadOptions.DEFAULTS)) {
                 rows.forEach(row -> consumeJts(row, bh));
             }
         } else {
-            try (Stream<ParquetRecord> rows = open.dataset().read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
+            try (Stream<ParquetRecord> rows = open.reader().read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
                 rows.forEach(row -> bh.consume(row.getInt(ID_COL)));
             }
         }
@@ -389,13 +389,12 @@ public class JtsSpatialFilterBenchmark {
     private void runAppSideFilter(Blackhole bh) {
         if (output == OutputForm.JTS) {
             try (Stream<Map<ColumnPath, Object>> rows =
-                    open.dataset().read(bboxPredicate, Projection.ALL, jtsMaterializer, ReadOptions.DEFAULTS)) {
+                    open.reader().read(bboxPredicate, Projection.ALL, jtsMaterializer, ReadOptions.DEFAULTS)) {
                 rows.filter(row -> appSideFilter.matches((Geometry) row.get(GEOMETRY_COL)))
                         .forEach(row -> consumeJts(row, bh));
             }
         } else {
-            try (Stream<ParquetRecord> rows =
-                    open.dataset().read(bboxPredicate, Projection.ALL, ReadOptions.DEFAULTS)) {
+            try (Stream<ParquetRecord> rows = open.reader().read(bboxPredicate, Projection.ALL, ReadOptions.DEFAULTS)) {
                 rows.filter(this::appSideMatchesGeometry).forEach(row -> bh.consume(row.getInt(ID_COL)));
             }
         }

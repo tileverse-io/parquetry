@@ -37,7 +37,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
@@ -279,7 +279,7 @@ class LateMaterializationCorrectnessTest {
 
     private List<Row> readRows(Predicate predicate, Projection projection, ReadOptions options) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixtureFile)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetReader dataset = ParquetReader.open(source);
             try (Stream<ParquetRecord> rows = dataset.read(predicate, projection, options)) {
                 return rows.map(rec -> toRow(rec, projection)).toList();
             }
@@ -288,7 +288,7 @@ class LateMaterializationCorrectnessTest {
 
     private List<Row> flattenBatches(Predicate predicate, Projection projection, ReadOptions options) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixtureFile)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetReader dataset = ParquetReader.open(source);
             List<Row> result = new ArrayList<>();
             try (Stream<ParquetRecordBatch> batches = dataset.readBatches(predicate, projection, options)) {
                 List<ParquetRecordBatch> collected = batches.toList();
