@@ -16,11 +16,13 @@
 package io.tileverse.parquetry.geotools;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.Set;
 
 import org.geotools.api.feature.simple.SimpleFeatureType;
 import org.geotools.api.referencing.crs.CoordinateReferenceSystem;
@@ -33,6 +35,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.geo.geoparquet.Covering;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 import io.tileverse.parquetry.schema.geo.projjson.Identifier;
@@ -116,8 +119,12 @@ final class GeoParquetSchemaMapper {
         List<AttributeMapping> attributes = new ArrayList<>();
         Map<ColumnPath, Integer> geometrySrids = new LinkedHashMap<>();
         String defaultGeometryName = null;
+        Set<ColumnPath> coveringColumns = coveringColumns(geo);
 
         for (ColumnPath path : schema.leafColumns()) {
+            if (coveringColumns.contains(path)) {
+                continue;
+            }
             SchemaNode.Primitive primitive = asMappablePrimitive(schema, path);
             if (primitive == null) {
                 continue;
@@ -142,6 +149,29 @@ final class GeoParquetSchemaMapper {
         List<AttributeMapping> mappedAttributes = List.copyOf(attributes);
         Optional<AttributeMapping> fid = resolveFidAttribute(typeName, configuredFidColumn, mappedAttributes);
         return new Mapping(ftb.buildFeatureType(), mappedAttributes, fid, Map.copyOf(geometrySrids));
+    }
+
+    /**
+     * Collects the bbox covering sidecar columns declared in the GeoParquet metadata. These columns hold each row's
+     * bounding box for spatial pruning, not user data; keeping them out of the feature type stops them showing up as
+     * attributes in WFS DescribeFeatureType. The spatial filter pushdown still reads them directly from the file.
+     */
+    private static Set<ColumnPath> coveringColumns(Optional<GeoParquetMetadata> geo) {
+        if (geo.isEmpty()) {
+            return Set.of();
+        }
+        Set<ColumnPath> columns = new HashSet<>();
+        for (GeoColumn column : geo.orElseThrow().columns().values()) {
+            column.covering().map(Covering::bbox).ifPresent(bbox -> {
+                columns.add(bbox.xmin());
+                columns.add(bbox.xmax());
+                columns.add(bbox.ymin());
+                columns.add(bbox.ymax());
+                bbox.zmin().ifPresent(columns::add);
+                bbox.zmax().ifPresent(columns::add);
+            });
+        }
+        return columns;
     }
 
     /**
