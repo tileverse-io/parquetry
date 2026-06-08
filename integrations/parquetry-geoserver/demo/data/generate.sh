@@ -7,10 +7,9 @@
 #
 #   ./generate.sh /path/to/natural_earth.gpkg
 #
-# WRITE_COVERING_BBOX=NO: GDAL otherwise writes a GeoParquet 1.1 bbox covering as float32, which
-# the current parquetry release cannot compare against double query bounds (it throws on spatial
-# filters). Omitting the covering makes parquetry evaluate spatial filters on the WKB directly.
-# Drop this option once parquetry supports float32 covering columns.
+# GDAL writes a GeoParquet 1.1 bbox covering (a float32 geom_bbox sidecar struct) by default.
+# parquetry prunes spatial filters against it (row-group and page level) without decoding the WKB,
+# and the GeoTools store keeps the covering columns out of the published feature type.
 
 set -euo pipefail
 
@@ -26,6 +25,6 @@ mkdir -p "$OUT"
 for layer in boundary_lines_land coastlines countries disputed_areas populated_places; do
   echo "converting $layer ..."
   rm -f "$OUT/$layer.parquet"
-  ogr2ogr -f Parquet -lco WRITE_COVERING_BBOX=NO "$OUT/$layer.parquet" "$GPKG" "$layer"
+  ogr2ogr -f Parquet "$OUT/$layer.parquet" "$GPKG" "$layer"
 done
 echo "done -> $OUT"
