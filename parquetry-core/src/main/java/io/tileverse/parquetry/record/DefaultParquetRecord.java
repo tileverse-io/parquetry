@@ -19,7 +19,6 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -181,7 +180,7 @@ public final class DefaultParquetRecord implements ParquetRecord {
         if (struct.isNull(rowIndex)) {
             return null;
         }
-        return new DefaultParquetRecord(RowColumns.ofStruct(columns.schema(), struct), rowIndex);
+        return new DefaultParquetRecord(columns.structColumns(col), rowIndex);
     }
 
     // null distinguishes a null row from an empty list per the empty-vs-null contract
@@ -229,8 +228,7 @@ public final class DefaultParquetRecord implements ParquetRecord {
             case Int96Vector iv -> iv.get(rowIndex);
             case ListVector list -> ListMaterializer.materializeAt(list, rowIndex, columns.schema());
             case MapVector map -> MapMaterializer.materializeAt(map, rowIndex, columns.schema());
-            case StructVector struct ->
-                new DefaultParquetRecord(RowColumns.ofStruct(columns.schema(), struct), rowIndex);
+            case StructVector _ -> new DefaultParquetRecord(columns.structColumns(col), rowIndex);
             case VariantVector variant -> variant.get(rowIndex);
         };
     }
@@ -314,10 +312,10 @@ public final class DefaultParquetRecord implements ParquetRecord {
     }
 
     /**
-     * Locates a possibly-nested leaf: a direct column at this level, or a path descended through struct sub-records.
-     * Each sub-record keys its children by their simple name (matching the assembler); the descent passes the tail (the
-     * path with its head segment dropped) to follow that keying. Returns {@code null} when the path is absent or an
-     * intermediate struct cell is null, which the accessors read as a null leaf.
+     * Locates a possibly-nested leaf: a column held directly at this level, or one reached by descending struct
+     * sub-records one path segment at a time. The descent reuses each struct's cached child layout and resolves
+     * segments by name, allocating no intermediate {@link ColumnPath}. Returns {@code null} when the path is absent or
+     * an intermediate struct cell is null, which the accessors read as a null leaf.
      */
     private Resolved locate(ColumnPath col) {
         int index = columns.indexOf(col);
@@ -327,12 +325,23 @@ public final class DefaultParquetRecord implements ParquetRecord {
         if (col.numParts() == 1) {
             return null;
         }
-        int structIndex = columns.indexOf(ColumnPath.of(col.part(0)));
-        if (structIndex < 0) {
+        return descend(col, 0);
+    }
+
+    private Resolved descend(ColumnPath col, int segmentStart) {
+        String dotted = col.dot();
+        int separator = dotted.indexOf('.', segmentStart);
+        int segmentEnd = separator < 0 ? dotted.length() : separator;
+        int index = columns.indexOfSegment(dotted, segmentStart, segmentEnd);
+        if (index < 0) {
             return null;
         }
-        if (get(structIndex) instanceof DefaultParquetRecord nested) {
-            return nested.locate(tail(col));
+        if (separator < 0) {
+            return new Resolved(this, index);
+        }
+        if (columns.vector(index) instanceof StructVector struct && !struct.isNull(rowIndex)) {
+            DefaultParquetRecord nested = new DefaultParquetRecord(columns.structColumns(index), rowIndex);
+            return nested.descend(col, segmentEnd + 1);
         }
         return null;
     }
@@ -348,14 +357,6 @@ public final class DefaultParquetRecord implements ParquetRecord {
 
     /** A located leaf: the (possibly nested) record that directly holds it, and its index within that record. */
     private record Resolved(DefaultParquetRecord record, int index) {}
-
-    private static ColumnPath tail(ColumnPath path) {
-        List<String> rest = new ArrayList<>(path.numParts() - 1);
-        for (int i = 1; i < path.numParts(); i++) {
-            rest.add(path.part(i));
-        }
-        return ColumnPath.of(rest);
-    }
 
     @Override
     public ParquetRecord detach() {

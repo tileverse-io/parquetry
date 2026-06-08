@@ -42,6 +42,13 @@ public final class RowColumns {
     private final ColumnVector[] vectors;
     private final Map<ColumnPath, Integer> indexByPath;
 
+    /**
+     * Per-struct-column child layouts, built on first access and reused across the batch's rows. A struct column's
+     * child layout is constant for the whole batch; rebuilding it per row (per nested-column access) is the dominant
+     * allocation under a spatial filter, whose covering comparisons read the bbox struct on every surviving row.
+     */
+    private RowColumns[] structChildren;
+
     private RowColumns(
             ParquetSchema schema,
             SchemaNode.Group group,
@@ -118,5 +125,37 @@ public final class RowColumns {
     int indexOf(ColumnPath path) {
         Integer index = indexByPath.get(path);
         return index == null ? -1 : index;
+    }
+
+    /**
+     * The index of the child whose single-segment name equals the {@code [start, end)} slice of {@code dotted}, or
+     * {@code -1}. Comparing the slice in place lets a nested-path walk resolve one segment at a time without allocating
+     * an intermediate {@link ColumnPath} or substring per step. With few children, the linear scan stays cheap.
+     */
+    int indexOfSegment(String dotted, int start, int end) {
+        int length = end - start;
+        for (int i = 0; i < paths.length; i++) {
+            String name = paths[i].dot();
+            if (name.length() == length && dotted.regionMatches(start, name, 0, length)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * The child layout of the struct column at {@code col}, built once and cached for the batch. The caller wraps it
+     * with a row index to read a struct sub-record without rebuilding the layout per row.
+     */
+    RowColumns structColumns(int col) {
+        if (structChildren == null) {
+            structChildren = new RowColumns[vectors.length];
+        }
+        RowColumns cached = structChildren[col];
+        if (cached == null) {
+            cached = ofStruct(schema, (StructVector) vectors[col]);
+            structChildren[col] = cached;
+        }
+        return cached;
     }
 }

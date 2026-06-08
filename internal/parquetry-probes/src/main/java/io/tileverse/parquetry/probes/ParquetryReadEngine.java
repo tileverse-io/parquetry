@@ -20,7 +20,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
+import io.tileverse.parquetry.data.OpenOptions;
 import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -86,9 +88,25 @@ final class ParquetryReadEngine implements ReadEngine {
     private synchronized ParquetDataset dataset() {
         if (dataset == null) {
             source = ByteRangeSource.ofFile(context.file());
-            dataset = ParquetDataset.open(source);
+            dataset = ParquetDataset.open(source, openOptions());
         }
         return dataset;
+    }
+
+    /**
+     * Binds the read runtime. Honors {@code parquetry.probe.decodeAhead} to override the per-read decode-ahead window
+     * (how many row groups one read decodes concurrently); 1 makes a read effectively serial, which isolates intra-read
+     * parallelism from inter-read concurrency. Unset uses the default heuristic.
+     */
+    private static OpenOptions openOptions() {
+        String decodeAhead = System.getProperty("parquetry.probe.decodeAhead");
+        if (decodeAhead == null) {
+            return OpenOptions.DEFAULTS;
+        }
+        ParquetRuntime runtime = ParquetRuntime.builder()
+                .maxDecodeAhead(Integer.parseInt(decodeAhead))
+                .build();
+        return OpenOptions.builder().runtime(runtime).build();
     }
 
     private Predicate predicate(Scenario scenario) {
