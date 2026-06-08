@@ -25,6 +25,7 @@ import java.util.OptionalInt;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import io.tileverse.parquetry.format.ConvertedType;
 import io.tileverse.parquetry.format.EdgeInterpolationAlgorithm;
 import io.tileverse.parquetry.format.FieldRepetitionType;
 import io.tileverse.parquetry.format.LogicalType;
@@ -206,7 +207,7 @@ public final class SchemaBuilder {
         for (int i = 0; i < childCount; i++) {
             children.add(consumeNext(cursor));
         }
-        return new SchemaNode.Group(element.name(), repetition, children, element.logicalType(), fieldId);
+        return new SchemaNode.Group(element.name(), repetition, children, effectiveLogicalType(element), fieldId);
     }
 
     private static SchemaNode.Primitive consumePrimitive(SchemaElement element, Repetition repetition, int fieldId) {
@@ -214,7 +215,57 @@ public final class SchemaBuilder {
                 .orElseThrow(() -> new IllegalStateException("Leaf SchemaElement missing type: " + element.name()));
         PrimitiveKind kind = mapKind(type);
         OptionalInt typeLength = element.typeLength();
-        return new SchemaNode.Primitive(element.name(), repetition, kind, typeLength, element.logicalType(), fieldId);
+        return new SchemaNode.Primitive(
+                element.name(), repetition, kind, typeLength, effectiveLogicalType(element), fieldId);
+    }
+
+    /**
+     * The logical type the rest of the reader should see for {@code element}: its modern {@link LogicalType} annotation
+     * when present, otherwise the equivalent backfilled from the deprecated {@link ConvertedType}. Legacy writers
+     * (duckdb, older parquet-mr) record only the converted type; without this backfill a {@code UTF8} string column
+     * would have no logical type and read as raw binary.
+     */
+    private static Optional<LogicalType> effectiveLogicalType(SchemaElement element) {
+        Optional<LogicalType> declared = element.logicalType();
+        if (declared.isPresent()) {
+            return declared;
+        }
+        return element.convertedType().flatMap(convertedType -> fromConvertedType(convertedType, element));
+    }
+
+    /**
+     * Maps a deprecated {@link ConvertedType} to its modern {@link LogicalType} equivalent per the Parquet format's
+     * backward-compatibility rules. Legacy time and timestamp converted types are always UTC-adjusted; the legacy
+     * encoding had no local-time form. {@code DECIMAL} reads its scale and precision off {@code element}.
+     *
+     * <p>{@code LIST}, {@code MAP}, and {@code MAP_KEY_VALUE} are structural group annotations the Dremel assembler
+     * recognizes from the schema shape, not leaf logical types, and {@code INTERVAL} has no logical-type equivalent;
+     * all four are left without a backfilled annotation.
+     */
+    private static Optional<LogicalType> fromConvertedType(ConvertedType convertedType, SchemaElement element) {
+        return switch (convertedType) {
+            case UTF8 -> Optional.of(new LogicalType.StringType());
+            case ENUM -> Optional.of(new LogicalType.EnumType());
+            case JSON -> Optional.of(new LogicalType.JsonType());
+            case BSON -> Optional.of(new LogicalType.BsonType());
+            case DECIMAL ->
+                Optional.of(new LogicalType.Decimal(
+                        element.scale().orElse(0), element.precision().orElse(0)));
+            case DATE -> Optional.of(new LogicalType.DateType());
+            case TIME_MILLIS -> Optional.of(new LogicalType.Time(true, LogicalType.TimeUnit.MILLIS));
+            case TIME_MICROS -> Optional.of(new LogicalType.Time(true, LogicalType.TimeUnit.MICROS));
+            case TIMESTAMP_MILLIS -> Optional.of(new LogicalType.Timestamp(true, LogicalType.TimeUnit.MILLIS));
+            case TIMESTAMP_MICROS -> Optional.of(new LogicalType.Timestamp(true, LogicalType.TimeUnit.MICROS));
+            case INT_8 -> Optional.of(new LogicalType.IntType((byte) 8, true));
+            case INT_16 -> Optional.of(new LogicalType.IntType((byte) 16, true));
+            case INT_32 -> Optional.of(new LogicalType.IntType((byte) 32, true));
+            case INT_64 -> Optional.of(new LogicalType.IntType((byte) 64, true));
+            case UINT_8 -> Optional.of(new LogicalType.IntType((byte) 8, false));
+            case UINT_16 -> Optional.of(new LogicalType.IntType((byte) 16, false));
+            case UINT_32 -> Optional.of(new LogicalType.IntType((byte) 32, false));
+            case UINT_64 -> Optional.of(new LogicalType.IntType((byte) 64, false));
+            case LIST, MAP, MAP_KEY_VALUE, INTERVAL -> Optional.empty();
+        };
     }
 
     private static Repetition mapRepetition(Optional<FieldRepetitionType> rep) {
