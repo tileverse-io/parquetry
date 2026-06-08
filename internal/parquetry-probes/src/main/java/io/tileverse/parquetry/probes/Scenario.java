@@ -19,6 +19,7 @@ package io.tileverse.parquetry.probes;
 enum Scenario {
     NO_FILTER,
     ATTRIBUTE,
+    BBOX,
     SPATIAL,
     ATTRIBUTE_AND_SPATIAL
 }

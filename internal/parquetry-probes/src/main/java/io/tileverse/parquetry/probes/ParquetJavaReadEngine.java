@@ -37,7 +37,9 @@ import org.apache.parquet.schema.MessageType;
 import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName;
 import org.apache.parquet.schema.Type;
 
+import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.geo.jts.JtsGeometryFilter;
+import io.tileverse.parquetry.internal.filter.spatial.WkbEnvelope;
 
 /**
  * parquet-java 1.17.0's read arm: a {@link ParquetReader} over {@link LocalInputFile} (no Hadoop filesystem), opened
@@ -64,13 +66,12 @@ final class ParquetJavaReadEngine implements ReadEngine {
     @Override
     public long read(Scenario scenario) throws IOException {
         FilterCompat.Filter filter = filter(scenario);
-        boolean exactGateNeeded = scenario == Scenario.SPATIAL || scenario == Scenario.ATTRIBUTE_AND_SPATIAL;
-        JtsGeometryFilter exactGate = JtsGeometryFilter.intersects(context.geometryColumn(), context.queryDiamond());
+        RowGate gate = rowGate(scenario);
         try (ParquetReader<Group> reader = groupReader(filter, projectedSchema(scenario))) {
             long count = 0L;
             Group group = reader.read();
             while (group != null) {
-                if (!exactGateNeeded || passesExactGate(group, exactGate)) {
+                if (gate.passes(group)) {
                     consumeGroup(group);
                     count++;
                 }
@@ -78,6 +79,38 @@ final class ParquetJavaReadEngine implements ReadEngine {
             }
             return count;
         }
+    }
+
+    /** A post-read row test parquet-java applies app-side, because parquet-java cannot evaluate it during the scan. */
+    @FunctionalInterface
+    private interface RowGate {
+        boolean passes(Group group);
+    }
+
+    /**
+     * The app-side gate for a scenario. parquet-java's pushdown handles the numeric work it can; the exact spatial test
+     * is bolted on here, mirroring what a real application over parquet-java must do. SPATIAL re-checks each candidate
+     * with the JTS gate. BBOX needs no gate when the file has covering columns (the numeric pushdown is exact for the
+     * box relation); without them it re-derives each geometry's bbox from its WKB envelope - the same primitive
+     * parquetry uses internally, no JTS geometry built.
+     */
+    private RowGate rowGate(Scenario scenario) {
+        return switch (scenario) {
+            case NO_FILTER, ATTRIBUTE -> group -> true;
+            case SPATIAL, ATTRIBUTE_AND_SPATIAL -> {
+                JtsGeometryFilter exactGate =
+                        JtsGeometryFilter.intersects(context.geometryColumn(), context.queryDiamond());
+                yield group -> passesExactGate(group, exactGate);
+            }
+            case BBOX -> {
+                if (context.bboxCoveringAvailable()) {
+                    yield group -> true;
+                }
+                Predicate.Spatial bboxGate =
+                        new Predicate.Spatial.BboxIntersects(context.geometryColumn(), context.queryEnvelope());
+                yield group -> passesBboxGate(group, bboxGate);
+            }
+        };
     }
 
     @Override
@@ -124,6 +157,13 @@ final class ParquetJavaReadEngine implements ReadEngine {
                 wanted.add(context.bboxColumn());
             }
         }
+        if (scenario == Scenario.BBOX) {
+            if (context.bboxCoveringAvailable()) {
+                wanted.add(context.bboxColumn());
+            } else {
+                wanted.add(topLevel(context.geometryColumnName()));
+            }
+        }
         if (attribute) {
             wanted.add(topLevel(context.attributeColumnName()));
         }
@@ -153,6 +193,7 @@ final class ParquetJavaReadEngine implements ReadEngine {
         return switch (scenario) {
             case NO_FILTER -> FilterCompat.NOOP;
             case ATTRIBUTE -> FilterCompat.get(attributeFilterPredicate());
+            case BBOX -> spatialPrefilter() == null ? FilterCompat.NOOP : FilterCompat.get(spatialPrefilter());
             case SPATIAL -> spatialPrefilter() == null ? FilterCompat.NOOP : FilterCompat.get(spatialPrefilter());
             case ATTRIBUTE_AND_SPATIAL -> {
                 FilterPredicate attribute = attributeFilterPredicate();
@@ -198,6 +239,12 @@ final class ParquetJavaReadEngine implements ReadEngine {
         Binary wkb = group.getBinary(context.geometryColumnName(), 0);
         MemorySegment segment = MemorySegment.ofArray(wkb.getBytes()).asReadOnly();
         return exactGate.gate(segment).isPresent();
+    }
+
+    private boolean passesBboxGate(Group group, Predicate.Spatial bboxGate) {
+        Binary wkb = group.getBinary(context.geometryColumnName(), 0);
+        MemorySegment segment = MemorySegment.ofArray(wkb.getBytes()).asReadOnly();
+        return WkbEnvelope.matches(bboxGate, segment);
     }
 
     /** Recursively reads every value of {@code group}, materializing each primitive, and folds it into the sink. */

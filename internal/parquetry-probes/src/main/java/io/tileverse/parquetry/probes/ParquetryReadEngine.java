@@ -131,9 +131,19 @@ final class ParquetryReadEngine implements ReadEngine {
         return switch (scenario) {
             case NO_FILTER -> Predicate.ALWAYS_TRUE;
             case ATTRIBUTE -> attribute();
+            case BBOX -> bbox();
             case SPATIAL -> spatial();
             case ATTRIBUTE_AND_SPATIAL -> new Predicate.And(List.of(attribute(), spatial()));
         };
+    }
+
+    /**
+     * The bbox-only spatial filter: a bbox rectangle relation handed to parquetry as a predicate, no exact geometry
+     * test. parquetry applies its own ergonomics - lowering it to numeric comparisons on the covering columns when the
+     * file has them (no WKB decoded), or evaluating it from each geometry's WKB envelope otherwise.
+     */
+    private Predicate bbox() {
+        return new Predicate.Spatial.BboxIntersects(context.geometryColumn(), context.queryEnvelope());
     }
 
     private Predicate attribute() {

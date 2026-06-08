@@ -281,6 +281,7 @@ public final class ReadComparisonProbe {
         return switch (scenario) {
             case NO_FILTER -> true;
             case ATTRIBUTE -> attributeAvailable;
+            case BBOX -> spatialAvailable;
             case SPATIAL -> spatialAvailable;
             case ATTRIBUTE_AND_SPATIAL -> attributeAvailable && spatialAvailable;
         };
@@ -292,6 +293,7 @@ public final class ReadComparisonProbe {
         return switch (scenario) {
             case NO_FILTER -> "";
             case ATTRIBUTE -> noAttribute;
+            case BBOX -> noSpatial;
             case SPATIAL -> noSpatial;
             case ATTRIBUTE_AND_SPATIAL -> attributeAvailable ? noSpatial : noAttribute;
         };

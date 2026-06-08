@@ -36,7 +36,7 @@ BBOX_COLUMN=""
 CX=""
 CY=""
 R=""
-FILE="${REPO_ROOT}/buildings.parquet"
+FILE="${REPO_ROOT}/buildings-1.0.parquet"
 PROBE="read"         # read | columnar
 REBUILD=0
 SILENT=0
@@ -51,7 +51,7 @@ USAGE:
 OPTIONS:
   --probe NAME       Which probe: "read" (row path) or "columnar". Default: read
   --engines LIST     Comma-separated, e.g. "parquetry" or "parquetry,parquet-java". Default: all.
-  --file PATH        Parquet file to read. Default: <repo>/buildings.parquet
+  --file PATH        Parquet file to read. Default: <repo>/buildings-1.0.parquet
 
   Running environment (the simulated pod and the container/build):
     --cores N        Pin to N CPUs (docker --cpuset-cpus=0..N-1) - a real core restriction, not just a
@@ -67,7 +67,9 @@ OPTIONS:
     --concurrency N  Reads in flight per engine/scenario. Default: 8
     --warmup N       Warmup passes. Default: 1
     --measure N      Measured passes. Default: 3
-    --scenarios LIST Comma-separated: NO_FILTER,ATTRIBUTE,SPATIAL,ATTRIBUTE_AND_SPATIAL. Default: all.
+    --scenarios LIST Comma-separated: NO_FILTER,ATTRIBUTE,BBOX,SPATIAL,ATTRIBUTE_AND_SPATIAL. Default: all.
+                     BBOX is the spatial filter answered by the bbox rectangle relation only (no exact geometry
+                     test), isolating bbox pushdown from the JTS gate; SPATIAL minus BBOX is the exact-gate cost.
     --decode-ahead N parquetry only: per-read decode-ahead window (row groups decoded concurrently per read). 1 makes a
                      read effectively serial - isolates intra-read parallelism from inter-read concurrency. Default: the
                      built-in heuristic (clamp by cores and heap budget).

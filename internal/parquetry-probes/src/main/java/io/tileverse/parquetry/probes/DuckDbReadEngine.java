@@ -27,6 +27,8 @@ import java.sql.Statement;
 import java.sql.Types;
 import java.util.Optional;
 
+import io.tileverse.parquetry.filter.Bbox;
+
 /**
  * DuckDB's read arm over JDBC, in-process. Each read opens its own connection - the connection-pool model a real server
  * uses - runs the scan, and materializes every value of every {@code ResultSet} row with the typed JDBC getters
@@ -53,7 +55,9 @@ final class DuckDbReadEngine implements ReadEngine {
 
     @Override
     public long read(Scenario scenario) throws SQLException, IOException {
-        boolean spatial = scenario == Scenario.SPATIAL || scenario == Scenario.ATTRIBUTE_AND_SPATIAL;
+        boolean spatial = scenario == Scenario.SPATIAL
+                || scenario == Scenario.ATTRIBUTE_AND_SPATIAL
+                || (scenario == Scenario.BBOX && !context.bboxCoveringAvailable());
         try (Connection connection = DriverManager.getConnection("jdbc:duckdb:")) {
             if (spatial) {
                 loadSpatial(connection);
@@ -183,6 +187,7 @@ final class DuckDbReadEngine implements ReadEngine {
                 switch (scenario) {
                     case NO_FILTER -> "";
                     case ATTRIBUTE -> " WHERE " + attributeSql();
+                    case BBOX -> " WHERE " + bboxSql();
                     case SPATIAL -> " WHERE " + spatialSql();
                     case ATTRIBUTE_AND_SPATIAL -> " WHERE " + attributeSql() + " AND " + spatialSql();
                 };
@@ -205,6 +210,31 @@ final class DuckDbReadEngine implements ReadEngine {
     private String spatialSql() {
         return "ST_Intersects(" + context.geometryColumnName() + ", ST_GeomFromText('"
                 + ProbeGeometry.wkt(context.queryDiamond()) + "'))";
+    }
+
+    /**
+     * The bbox-only filter: the geometry's bounding box overlaps the query envelope. Reads the numeric covering columns
+     * when the file has them (no geometry decoded), otherwise computes the box with DuckDB's {@code ST_} functions over
+     * the geometry.
+     */
+    private String bboxSql() {
+        Bbox q = context.queryEnvelope();
+        if (context.bboxCoveringAvailable()) {
+            String bbox = context.bboxColumn();
+            return structField(bbox, "xmin") + " <= " + q.maxX()
+                    + " AND " + structField(bbox, "xmax") + " >= " + q.minX()
+                    + " AND " + structField(bbox, "ymin") + " <= " + q.maxY()
+                    + " AND " + structField(bbox, "ymax") + " >= " + q.minY();
+        }
+        String geom = context.geometryColumnName();
+        return "ST_XMin(" + geom + ") <= " + q.maxX()
+                + " AND ST_XMax(" + geom + ") >= " + q.minX()
+                + " AND ST_YMin(" + geom + ") <= " + q.maxY()
+                + " AND ST_YMax(" + geom + ") >= " + q.minY();
+    }
+
+    private static String structField(String struct, String leaf) {
+        return "struct_extract(" + struct + ", '" + leaf + "')";
     }
 
     private static String sqlLiteral(String raw) {
