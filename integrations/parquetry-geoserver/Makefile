@@ -8,6 +8,9 @@ DEMO := demo
 COMPOSE := docker compose -f $(DEMO)/docker-compose.yml
 DIST := target/parquetry-geoserver-demo
 URL := http://localhost:8080/geoserver
+# Extra flags forwarded to the plugin Maven build, e.g. MVN_FLAGS=-Drevision=1.0.0 for a release
+# (the POM uses CI-friendly ${revision} versioning; the release tag drives the version).
+MVN_FLAGS ?=
 
 .DEFAULT_GOAL := help
 .PHONY: help demo build plugin image up down logs dist clean
@@ -24,7 +27,7 @@ demo: build up ## Build everything, start GeoServer, print the URL
 build: image ## Build the plugin zip and the demo image
 
 plugin: ## Build only the GeoServer plugin zip
-	cd $(REPO_ROOT) && ./mvnw -ntp -pl :parquetry-geoserver -am -Passembly package -Dmaven.test.skip=true
+	cd $(REPO_ROOT) && ./mvnw -ntp $(MVN_FLAGS) -pl :parquetry-geoserver -am -Passembly package -Dmaven.test.skip=true
 	mkdir -p $(DEMO)/build
 	cp target/parquetry-geoserver-*-plugin.zip $(DEMO)/build/plugin.zip
 
