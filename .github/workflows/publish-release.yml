@@ -70,6 +70,20 @@ jobs:
         env:
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
 
+      # The GeoServer plugin zip (drop into any GeoServer install) and the self-contained demo zip
+      # are attached to the GitHub Release, not Maven Central.
+      - name: Build the GeoServer plugin and demo zips
+        run: make geoserver-dist MVN_FLAGS="-Drevision=${{ steps.version.outputs.version }}"
+
+      - name: Stage release artifacts
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          target=integrations/parquetry-geoserver/target
+          mkdir -p release-artifacts
+          cp "$target/parquetry-geoserver-$version-plugin.zip" release-artifacts/
+          cp "$target/parquetry-geoserver-demo.zip" "release-artifacts/parquetry-geoserver-demo-$version.zip"
+          ls -l release-artifacts
+
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
@@ -78,5 +92,8 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
+          files: release-artifacts/*
           body: |
             Published to Maven Central: https://central.sonatype.com/artifact/io.tileverse.parquetry/parquetry-core/${{ steps.version.outputs.version }}
+
+            The GeoServer plugin and the self-contained demo are attached below.
