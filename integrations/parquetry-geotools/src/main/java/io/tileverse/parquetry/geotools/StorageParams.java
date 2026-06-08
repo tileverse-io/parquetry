@@ -93,10 +93,11 @@ final class StorageParams {
     }
 
     private static Param providerSelectorParam() {
-        List<String> providerIds = StorageProvider.getProviders().stream()
+        // A mutable list: GeoServer's ParamInfo sorts the OPTIONS metadata in place.
+        List<String> providerIds = new ArrayList<>(StorageProvider.getProviders().stream()
                 .map(StorageProvider::getId)
                 .sorted()
-                .toList();
+                .toList());
         Map<String, Object> metadata = new HashMap<>();
         metadata.put(Parameter.LEVEL, "advanced");
         if (!providerIds.isEmpty()) {
@@ -121,16 +122,20 @@ final class StorageParams {
             metadata.put(Parameter.IS_PASSWORD, Boolean.TRUE);
         }
         if (!parameter.sampleValues().isEmpty()) {
-            List<Object> options = parameter.sampleValues().stream()
+            // A mutable list: GeoServer's ParamInfo sorts the OPTIONS metadata in place.
+            List<Object> options = new ArrayList<>(parameter.sampleValues().stream()
                     .map(value -> coerceToString ? (Object) String.valueOf(value) : value)
-                    .toList();
+                    .toList());
             metadata.put(Parameter.OPTIONS, options);
         }
         Object sample = parameter
                 .defaultValue()
                 .map(value -> coerceToString ? (Object) String.valueOf(value) : value)
                 .orElse(null);
-        return param(parameter.key(), type, parameter.title(), parameter.description(), sample, metadata);
+        // GeoServer's store edit page uses the Param title as the field tooltip and resolves the field
+        // label separately from GeoServerApplication.properties. Pass the full description as the title
+        // so the tooltip is informative; the short label comes from the resource bundle.
+        return param(parameter.key(), type, parameter.description(), parameter.description(), sample, metadata);
     }
 
     private static Param param(

@@ -16,7 +16,9 @@
 package io.tileverse.parquetry.geotools;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -40,6 +42,31 @@ class StorageParamsTest {
         @SuppressWarnings("unchecked")
         List<Object> options = (List<Object>) provider.metadata.get(Parameter.OPTIONS);
         assertThat(options).contains("s3", "azure", "gcs", "http");
+    }
+
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void optionListsAreSortableInPlace() {
+        // GeoServer's ParamInfo sorts a param's OPTIONS list in place via Collections.sort; an
+        // immutable list (Stream.toList) throws UnsupportedOperationException and breaks the store
+        // edit page. Every OPTIONS list must support in-place sorting.
+        for (Param param : StorageParams.PROVIDER_PARAMS) {
+            Object options = param.metadata == null ? null : param.metadata.get(Parameter.OPTIONS);
+            if (options instanceof List<?> list && !list.isEmpty()) {
+                assertThatCode(() -> Collections.sort((List) options))
+                        .as("OPTIONS for param '%s' must be sortable in place", param.key)
+                        .doesNotThrowAnyException();
+            }
+        }
+    }
+
+    @Test
+    void tooltipUsesTheFullDescription() {
+        // GeoServer's store edit page shows the Param title as the field tooltip (the label comes from
+        // GeoServerApplication.properties). The tooltip must be the full description, not the short title.
+        Param endpoint = find("storage.s3.endpoint").orElseThrow();
+        assertThat(endpoint.title.toString()).isEqualTo(endpoint.description.toString());
+        assertThat(endpoint.title.toString()).contains("S3-compatible");
     }
 
     @Test

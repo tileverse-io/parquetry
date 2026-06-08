@@ -1,0 +1,19 @@
+<layer>
+  <name>populated_places</name>
+  <id>LayerInfoImpl--2fb5fd2d:19ea55565ed:-7fcd</id>
+  <type>VECTOR</type>
+  <defaultStyle>
+    <id>StyleInfoImpl--2fb5fd2d:19ea55565ed:-7fdc</id>
+  </defaultStyle>
+  <resource class="featureType">
+    <id>FeatureTypeInfoImpl--2fb5fd2d:19ea55565ed:-7fce</id>
+  </resource>
+  <queryable>true</queryable>
+  <opaque>false</opaque>
+  <attribution>
+    <logoWidth>0</logoWidth>
+    <logoHeight>0</logoHeight>
+  </attribution>
+  <dateCreated>2026-06-08 03:45:19.240 UTC</dateCreated>
+  <dateModified>2026-06-08 03:45:19.249 UTC</dateModified>
+</layer>

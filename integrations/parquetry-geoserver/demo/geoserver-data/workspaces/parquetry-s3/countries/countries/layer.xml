@@ -1,0 +1,19 @@
+<layer>
+  <name>countries</name>
+  <id>LayerInfoImpl-1428db6f:19ea58c4651:-7fdb</id>
+  <type>VECTOR</type>
+  <defaultStyle>
+    <id>StyleInfoImpl--2fb5fd2d:19ea55565ed:-7fde</id>
+  </defaultStyle>
+  <resource class="featureType">
+    <id>FeatureTypeInfoImpl-1428db6f:19ea58c4651:-7fdc</id>
+  </resource>
+  <queryable>true</queryable>
+  <opaque>false</opaque>
+  <attribution>
+    <logoWidth>0</logoWidth>
+    <logoHeight>0</logoHeight>
+  </attribution>
+  <dateCreated>2026-06-08 04:46:18.528 UTC</dateCreated>
+  <dateModified>2026-06-08 04:46:43.962 UTC</dateModified>
+</layer>
