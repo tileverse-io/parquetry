@@ -132,7 +132,7 @@ public class PagePruningBenchmark {
 
     @Benchmark
     public double filteredRead() {
-        try (Stream<ParquetRecord> records = open.dataset().read(predicate, projection, options)) {
+        try (Stream<ParquetRecord> records = open.reader().read(predicate, projection, options)) {
             return records.mapToDouble(rec -> rec.getDouble(SyntheticParquet.VALUE))
                     .sum();
         }

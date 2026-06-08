@@ -25,8 +25,8 @@ import org.geotools.geometry.jts.ReferencedEnvelope;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.CatalogOptions;
-import io.tileverse.parquetry.data.ParquetDatasetCatalog;
+import io.tileverse.parquetry.catalog.CatalogOptions;
+import io.tileverse.parquetry.catalog.ParquetDatasetCatalog;
 import io.tileverse.parquetry.io.LocalFileSource;
 import io.tileverse.parquetry.testkit.TestCorpus;
 

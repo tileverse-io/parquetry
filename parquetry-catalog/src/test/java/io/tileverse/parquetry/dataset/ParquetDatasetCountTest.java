@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.data;
+package io.tileverse.parquetry.dataset;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -22,6 +22,8 @@ import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.data.ReadOptions;
+import io.tileverse.parquetry.data.RowGroupSummary;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;

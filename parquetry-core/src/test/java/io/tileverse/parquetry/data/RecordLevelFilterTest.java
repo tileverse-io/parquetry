@@ -57,7 +57,7 @@ class RecordLevelFilterTest {
     void readAppliesTheRecordLevelPredicate() throws Exception {
         Path file = writeFixture();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetReader dataset = ParquetReader.open(source);
             try (Stream<ParquetRecord> rows =
                     dataset.read(col("pop").gt(1_000_000), Projection.ALL, ReadOptions.DEFAULTS)) {
                 List<Integer> ids = rows.map(r -> r.getInt(ID)).sorted().toList();
@@ -70,7 +70,7 @@ class RecordLevelFilterTest {
     void recordLevelPredicateUsesColumnsOutsideTheProjection() throws Exception {
         Path file = writeFixture();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetReader dataset = ParquetReader.open(source);
             Projection idOnly = Projection.of(Set.of(ID));
             try (Stream<ParquetRecord> rows = dataset.read(col("pop").gt(1_000_000), idOnly, ReadOptions.DEFAULTS)) {
                 List<Integer> ids = rows.map(r -> r.getInt(ID)).sorted().toList();
@@ -85,7 +85,7 @@ class RecordLevelFilterTest {
         ReadOptions pushdownOnly =
                 ReadOptions.builder().useRecordLevelFilter(false).build();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetReader dataset = ParquetReader.open(source);
             try (Stream<ParquetRecord> rows = dataset.read(col("pop").gt(1_000_000), Projection.ALL, pushdownOnly)) {
                 assertThat(rows.count()).isEqualTo(4L);
             }

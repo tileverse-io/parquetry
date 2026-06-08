@@ -21,14 +21,14 @@ import java.lang.foreign.MemorySegment;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.OpenOptions;
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
@@ -84,14 +84,12 @@ class MultiRangeCoalescingTest {
             CountingByteRangeSource counting = new CountingByteRangeSource(base);
             // A span of 1 byte forces every column chunk to be its own range, exercising the multi-range slicing path
             // (ColumnSlice.rangeIndex > 0). Column chunks that fit within the span are still single-range.
-            OpenOptions openOptions = OpenOptions.builder()
-                    .runtime(ParquetRuntime.builder()
-                            .segmentPool(pool)
-                            .maxCoalesceGap(0)
-                            .maxCoalescedSpan(1)
-                            .build())
+            ParquetRuntime runtime = ParquetRuntime.builder()
+                    .segmentPool(pool)
+                    .maxCoalesceGap(0)
+                    .maxCoalescedSpan(1)
                     .build();
-            ParquetDataset dataset = ParquetDataset.open(counting, openOptions);
+            ParquetReader dataset = ParquetReader.open(counting, runtime, Optional.empty());
             try (Stream<ParquetRecord> stream =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 int before = counting.calls.get();

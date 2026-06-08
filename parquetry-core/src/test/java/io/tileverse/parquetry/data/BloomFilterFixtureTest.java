@@ -55,7 +55,7 @@ class BloomFilterFixtureTest {
     @Test
     void eqAbsentValueIsEliminatedByBloom() {
         try (ByteRangeSource source = ByteRangeSource.ofFile(FIXTURE)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetReader dataset = ParquetReader.open(source);
             Predicate p = Pred.col("String").eq("absent_value_that_is_definitely_not_in_the_file");
             ExplainPlan plan = dataset.explain(p, Projection.ALL, ReadOptions.DEFAULTS);
 
@@ -71,7 +71,7 @@ class BloomFilterFixtureTest {
     @Test
     void eqPresentValueSurvivesAllTiers() {
         try (ByteRangeSource source = ByteRangeSource.ofFile(FIXTURE)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetReader dataset = ParquetReader.open(source);
             // "Hello" is the recorded min of the column; it must be in both the stats range and the bloom bitset.
             Predicate p = Pred.col("String").eq("Hello");
             ExplainPlan plan = dataset.explain(p, Projection.ALL, ReadOptions.DEFAULTS);
@@ -88,7 +88,7 @@ class BloomFilterFixtureTest {
     @Test
     void disablingBloomTierStopsEliminations() {
         try (ByteRangeSource source = ByteRangeSource.ofFile(FIXTURE)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetReader dataset = ParquetReader.open(source);
             Predicate p = Pred.col("String").eq("absent_value_that_is_definitely_not_in_the_file");
 
             ReadOptions noBloom = ReadOptions.builder().useBloomFilter(false).build();

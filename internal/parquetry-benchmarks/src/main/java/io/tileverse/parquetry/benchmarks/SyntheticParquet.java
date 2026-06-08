@@ -29,7 +29,7 @@ import java.util.Set;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteRow;
@@ -84,10 +84,10 @@ final class SyntheticParquet {
         }
     }
 
-    /** Opens a dataset over {@code file}; the returned handle owns the byte source it closes. */
+    /** Opens a reader over {@code file}; the returned handle owns the byte source it closes. */
     static OpenDataset open(Path file) {
         ByteRangeSource source = ByteRangeSource.ofFile(file);
-        return new OpenDataset(source, ParquetDataset.open(source));
+        return new OpenDataset(source, ParquetReader.open(source));
     }
 
     static void deleteRecursively(Path dir) throws IOException {
@@ -162,19 +162,19 @@ final class SyntheticParquet {
         return new SchemaNode.Primitive(name, Repetition.REQUIRED, kind, OptionalInt.empty(), Optional.empty(), -1);
     }
 
-    /** A dataset plus the byte source behind it; close it to release both. */
+    /** A reader plus the byte source behind it; close it to release both. */
     static final class OpenDataset implements AutoCloseable {
 
         private final ByteRangeSource source;
-        private final ParquetDataset dataset;
+        private final ParquetReader reader;
 
-        private OpenDataset(ByteRangeSource source, ParquetDataset dataset) {
+        private OpenDataset(ByteRangeSource source, ParquetReader reader) {
             this.source = source;
-            this.dataset = dataset;
+            this.reader = reader;
         }
 
-        ParquetDataset dataset() {
-            return dataset;
+        ParquetReader reader() {
+            return reader;
         }
 
         @Override

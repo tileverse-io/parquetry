@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.data;
+package io.tileverse.parquetry.dataset;
 
 import java.io.InterruptedIOException;
 import java.io.UncheckedIOException;
@@ -32,6 +32,9 @@ import java.util.stream.StreamSupport;
 
 import io.tileverse.parquetry.batch.BatchMaterializer;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ReadOptions;
+import io.tileverse.parquetry.data.RowGroupSummary;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;

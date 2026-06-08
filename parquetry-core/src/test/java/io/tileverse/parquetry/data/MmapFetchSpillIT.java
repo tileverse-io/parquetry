@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -88,9 +89,8 @@ class MmapFetchSpillIT {
      * have dipped below capacity, proving the fetch mapped a spill file rather than allocating RAM.
      */
     private static List<Map<ColumnPath, Object>> readAllRows(ParquetRuntime runtime, DiskBudget spillBudget) {
-        OpenOptions openOptions = OpenOptions.builder().runtime(runtime).build();
         try (ByteRangeSource source = ByteRangeSource.ofFile(FILE)) {
-            ParquetDataset dataset = ParquetDataset.open(source, openOptions);
+            ParquetReader dataset = ParquetReader.open(source, runtime, Optional.empty());
             List<ColumnPath> leaves = dataset.schema().leafColumns();
             try (Stream<ParquetRecord> rows =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {

@@ -25,6 +25,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 import org.apache.avro.generic.GenericData;
@@ -36,8 +37,6 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
-import io.tileverse.parquetry.data.OpenOptions;
-import io.tileverse.parquetry.data.ParquetDataset;
 import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
@@ -49,7 +48,7 @@ import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * V1 fixture conformance: reads each committed {@code parquet-avro 1.x} fixture under
- * {@code src/test/resources/v1-fixtures/} through the parquetry pipeline (ParquetDataset.open -> RowGroupPipeline ->
+ * {@code src/test/resources/v1-fixtures/} through the parquetry pipeline (ParquetReader.open -> RowGroupPipeline ->
  * DataPageV1Reader) and asserts every record matches the parquet-avro oracle reading the same bytes. Mirrors the
  * structure of {@link EndToEndV2ReadTest} but consumes pre-built fixtures so the test is deterministic across
  * parquet-avro version bumps.
@@ -161,10 +160,9 @@ class DataPageV1ConformanceTest {
 
     private static List<ParquetRecord> readAllViaParquetry(Path fixture, CountingSegmentPool pool) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixture)) {
-            OpenOptions openOptions = OpenOptions.builder()
-                    .runtime(ParquetRuntime.builder().segmentPool(pool).build())
-                    .build();
-            ParquetDataset dataset = ParquetDataset.open(source, openOptions);
+            ParquetRuntime runtime = ParquetRuntime.builder().segmentPool(pool).build();
+            io.tileverse.parquetry.data.ParquetReader dataset =
+                    io.tileverse.parquetry.data.ParquetReader.open(source, runtime, Optional.empty());
             try (Stream<ParquetRecord> records =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 return records.toList();

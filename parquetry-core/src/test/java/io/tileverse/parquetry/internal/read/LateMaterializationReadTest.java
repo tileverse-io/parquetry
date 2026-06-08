@@ -32,7 +32,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
@@ -48,7 +48,7 @@ import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
- * End-to-end coverage of the late-materializing read path through the public {@link ParquetDataset} API. Every case
+ * End-to-end coverage of the late-materializing read path through the public {@link ParquetReader} API. Every case
  * compares the read against a brute-force baseline that decodes all rows and filters them in Java with the same
  * predicate, asserting identical rows in identical order.
  */
@@ -193,7 +193,7 @@ class LateMaterializationReadTest {
 
     private List<Row> readRows(Path file, Predicate predicate, Projection projection, ReadOptions options) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetReader dataset = ParquetReader.open(source);
             try (Stream<ParquetRecord> rows = dataset.read(predicate, projection, options)) {
                 return rows.map(rec -> toRow(rec, projection)).toList();
             }

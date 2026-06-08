@@ -183,7 +183,7 @@ public class SpatialPruningBenchmark {
     /** Reads all rows matching the query bbox and consumes each row's {@code id} through the blackhole. */
     @Benchmark
     public void bboxIntersectsRead(Blackhole bh) {
-        try (Stream<ParquetRecord> rows = open.dataset().read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
+        try (Stream<ParquetRecord> rows = open.reader().read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
             rows.forEach(row -> bh.consume(row.getInt(ID_COL)));
         }
     }

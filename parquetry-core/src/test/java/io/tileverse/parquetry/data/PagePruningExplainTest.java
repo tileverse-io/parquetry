@@ -52,7 +52,7 @@ class PagePruningExplainTest {
     void columnIndexTierNarrowsToTheSurvivingPages() throws Exception {
         Path file = writeEightRowsAcrossFourPages();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetReader dataset = ParquetReader.open(source);
             ExplainPlan plan = dataset.explain(col("v").gtEq(5), Projection.ALL, ReadOptions.DEFAULTS);
 
             RowGroupPlan rg = plan.rowGroups().get(0);

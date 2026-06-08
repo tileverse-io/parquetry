@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.data;
+package io.tileverse.parquetry.catalog;
 
 import java.net.URI;
 import java.util.ArrayList;
@@ -22,6 +22,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.stream.Stream;
 
+import io.tileverse.parquetry.dataset.FilesetReader;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.FileEntry;
 import io.tileverse.parquetry.io.FileSource;

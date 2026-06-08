@@ -34,7 +34,7 @@ import io.tileverse.parquetry.io.ByteRangeSource;
  * <p>Provides a canonical three-column multi-row-group file writer, a row-group counter, and a {@link ByteRangeSource}
  * factory over a local file.
  */
-final class TestParquetFiles {
+public final class TestParquetFiles {
 
     private TestParquetFiles() {}
 
@@ -61,7 +61,7 @@ final class TestParquetFiles {
      * @param rows total number of rows to write
      * @return path to the written file
      */
-    static Path writeFlatThreeColumnFileMultiRowGroup(Path dir, int rows) throws IOException {
+    public static Path writeFlatThreeColumnFileMultiRowGroup(Path dir, int rows) throws IOException {
         Path file = dir.resolve("three-col-multi-rg.parquet");
         org.apache.avro.Schema schema = new org.apache.avro.Schema.Parser().parse(SCHEMA);
         try (ParquetWriter<GenericData.Record> writer = AvroParquetWriter.<GenericData.Record>builder(
@@ -134,7 +134,7 @@ final class TestParquetFiles {
     }
 
     /** Opens a {@link ByteRangeSource} over the local {@code file}; closing it closes the underlying channel. */
-    static ByteRangeSource openRangeReader(Path file) {
+    public static ByteRangeSource openRangeReader(Path file) {
         return ByteRangeSource.ofFile(file);
     }
 }

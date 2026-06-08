@@ -35,7 +35,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
@@ -148,7 +148,7 @@ class GeometryFilterGateTest {
 
     private long count(Predicate predicate, Projection projection) {
         try (ByteRangeSource src = ByteRangeSource.ofFile(fixtureFile)) {
-            ParquetDataset ds = ParquetDataset.open(src);
+            ParquetReader ds = ParquetReader.open(src);
             try (Stream<ParquetRecord> rows = ds.read(predicate, projection, ReadOptions.DEFAULTS)) {
                 return rows.count();
             }
@@ -157,7 +157,7 @@ class GeometryFilterGateTest {
 
     private boolean exists(Predicate predicate, Projection projection) {
         try (ByteRangeSource src = ByteRangeSource.ofFile(fixtureFile)) {
-            ParquetDataset ds = ParquetDataset.open(src);
+            ParquetReader ds = ParquetReader.open(src);
             try (Stream<ParquetRecord> rows = ds.read(predicate, projection, ReadOptions.DEFAULTS)) {
                 return rows.findAny().isPresent();
             }
@@ -167,7 +167,7 @@ class GeometryFilterGateTest {
     private List<Integer> readIds(Predicate predicate) {
         List<Integer> ids = new ArrayList<>();
         try (ByteRangeSource src = ByteRangeSource.ofFile(fixtureFile)) {
-            ParquetDataset ds = ParquetDataset.open(src);
+            ParquetReader ds = ParquetReader.open(src);
             try (Stream<ParquetRecord> rows = ds.read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
                 rows.forEach(r -> ids.add(r.getInt(ID)));
             }

@@ -25,7 +25,7 @@ import org.geotools.data.store.ContentEntry;
 import org.geotools.data.store.ContentFeatureSource;
 import org.geotools.feature.NameImpl;
 
-import io.tileverse.parquetry.data.ParquetDatasetCatalog;
+import io.tileverse.parquetry.catalog.ParquetDatasetCatalog;
 
 /**
  * Read-only GeoTools DataStore over a parquetry {@link ParquetDatasetCatalog}.

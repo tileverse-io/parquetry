@@ -22,7 +22,7 @@ import io.tileverse.parquetry.cli.GlobalOptions;
 import io.tileverse.parquetry.cli.StorageOptions;
 import io.tileverse.parquetry.cli.UriResolver;
 import io.tileverse.parquetry.cli.render.SchemaRenderer;
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 import picocli.CommandLine.ArgGroup;

@@ -35,7 +35,7 @@ import io.tileverse.parquetry.batch.MapVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.batch.StructVector;
 import io.tileverse.parquetry.batch.VariantVector;
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -52,7 +52,7 @@ final class ParquetryColumnarEngine implements ColumnarEngine {
 
     private final Path file;
     private ByteRangeSource source;
-    private ParquetDataset dataset;
+    private ParquetReader reader;
     private long sink;
 
     ParquetryColumnarEngine(Path file) {
@@ -75,7 +75,7 @@ final class ParquetryColumnarEngine implements ColumnarEngine {
     @Override
     public long scan() {
         try (Stream<ParquetRecordBatch> batches =
-                dataset().readBatches(Predicate.ALWAYS_TRUE, projection(), ReadOptions.DEFAULTS)) {
+                reader().readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
             long rows = 0L;
             for (ParquetRecordBatch batch : (Iterable<ParquetRecordBatch>) batches::iterator) {
                 try (batch) {
@@ -99,16 +99,16 @@ final class ParquetryColumnarEngine implements ColumnarEngine {
         }
         source.close();
         source = null;
-        dataset = null;
+        reader = null;
     }
 
-    /** Opened once and reused across scans; synchronized so concurrent scans share a single open dataset. */
-    private synchronized ParquetDataset dataset() {
-        if (dataset == null) {
+    /** Opened once and reused across scans; synchronized so concurrent scans share a single open reader. */
+    private synchronized ParquetReader reader() {
+        if (reader == null) {
             source = ByteRangeSource.ofFile(file);
-            dataset = ParquetDataset.open(source);
+            reader = ParquetReader.open(source);
         }
-        return dataset;
+        return reader;
     }
 
     private void touchBatch(ParquetRecordBatch batch) {

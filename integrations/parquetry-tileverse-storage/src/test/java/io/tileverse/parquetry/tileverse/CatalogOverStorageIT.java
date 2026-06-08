@@ -26,9 +26,9 @@ import org.junit.jupiter.api.io.TempDir;
 import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
 
-import io.tileverse.parquetry.data.CatalogOptions;
-import io.tileverse.parquetry.data.ParquetDataset;
-import io.tileverse.parquetry.data.ParquetDatasetCatalog;
+import io.tileverse.parquetry.catalog.CatalogOptions;
+import io.tileverse.parquetry.catalog.ParquetDatasetCatalog;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.testkit.TestCorpus;
 

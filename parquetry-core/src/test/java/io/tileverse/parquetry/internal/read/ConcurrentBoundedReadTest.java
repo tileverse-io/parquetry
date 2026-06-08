@@ -20,6 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
@@ -27,8 +28,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.OpenOptions;
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
@@ -64,15 +64,13 @@ class ConcurrentBoundedReadTest {
         for (int r = 0; r < readers; r++) {
             threads.add(Thread.ofVirtual().start(() -> {
                 try (ByteRangeSource source = TestParquetFiles.openRangeReader(file)) {
-                    OpenOptions openOptions = OpenOptions.builder()
-                            .runtime(ParquetRuntime.builder()
-                                    .segmentPool(pool)
-                                    .fetchBudget(budget)
-                                    .prefetchDepth(3)
-                                    .maxConcurrentFetchesPerRead(4)
-                                    .build())
+                    ParquetRuntime runtime = ParquetRuntime.builder()
+                            .segmentPool(pool)
+                            .fetchBudget(budget)
+                            .prefetchDepth(3)
+                            .maxConcurrentFetchesPerRead(4)
                             .build();
-                    ParquetDataset dataset = ParquetDataset.open(source, openOptions);
+                    ParquetReader dataset = ParquetReader.open(source, runtime, Optional.empty());
                     long count;
                     try (Stream<ParquetRecord> stream =
                             dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
