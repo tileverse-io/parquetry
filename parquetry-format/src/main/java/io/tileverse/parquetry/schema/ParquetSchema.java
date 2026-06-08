@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.schema;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -198,10 +199,27 @@ public record ParquetSchema(SchemaNode.Group root) {
      * Returns a new ParquetSchema containing only the leaf columns in {@code kept}.
      *
      * <p>Group nodes that become empty after filtering are dropped entirely.
+     *
+     * @throws ParquetSchemaException if any path in {@code kept} does not name an existing leaf column, mirroring the
+     *     predicate-path validation done at read setup (a projection typo is a programming error, not silently-missing
+     *     data)
      */
     public ParquetSchema project(Set<ColumnPath> kept) {
+        requireKnownLeaves(kept);
         SchemaNode.Group projectedRoot = projectGroup(root, new ArrayList<>(), kept, true);
         return new ParquetSchema(projectedRoot);
+    }
+
+    private void requireKnownLeaves(Set<ColumnPath> kept) {
+        Set<ColumnPath> existingLeaves = new HashSet<>(leafColumns());
+        List<String> unknown = kept.stream()
+                .filter(path -> !existingLeaves.contains(path))
+                .map(ColumnPath::dot)
+                .sorted()
+                .toList();
+        if (!unknown.isEmpty()) {
+            throw new ParquetSchemaException("projection references unknown column(s): " + String.join(", ", unknown));
+        }
     }
 
     private static SchemaNode.Group projectGroup(

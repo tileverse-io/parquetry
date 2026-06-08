@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.schema;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.List;
 import java.util.Optional;
@@ -56,6 +57,35 @@ class SchemaTest {
             Optional.empty(),
             -1));
 
+    private static final ParquetSchema NESTED = new ParquetSchema(new SchemaNode.Group(
+            "root",
+            Repetition.REQUIRED,
+            List.of(
+                    new SchemaNode.Primitive(
+                            "id", Repetition.REQUIRED, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1),
+                    new SchemaNode.Group(
+                            "bbox",
+                            Repetition.OPTIONAL,
+                            List.of(
+                                    new SchemaNode.Primitive(
+                                            "xmin",
+                                            Repetition.REQUIRED,
+                                            PrimitiveKind.DOUBLE,
+                                            OptionalInt.empty(),
+                                            Optional.empty(),
+                                            -1),
+                                    new SchemaNode.Primitive(
+                                            "ymin",
+                                            Repetition.REQUIRED,
+                                            PrimitiveKind.DOUBLE,
+                                            OptionalInt.empty(),
+                                            Optional.empty(),
+                                            -1)),
+                            Optional.empty(),
+                            -1)),
+            Optional.empty(),
+            -1));
+
     @Test
     void leafColumnsListsAllPrimitives() {
         assertThat(FLAT.leafColumns())
@@ -72,6 +102,22 @@ class SchemaTest {
     void projectionDropsUnreferencedColumns() {
         ParquetSchema projected = FLAT.project(Set.of(ColumnPath.of("year"), ColumnPath.of("geometry")));
         assertThat(projected.leafColumns()).containsExactly(ColumnPath.of("year"), ColumnPath.of("geometry"));
+    }
+
+    @Test
+    void projectionRejectsUnknownTopLevelColumn() {
+        Set<ColumnPath> kept = Set.of(ColumnPath.of("year"), ColumnPath.of("nonexistent"));
+        assertThatThrownBy(() -> FLAT.project(kept))
+                .isInstanceOf(ParquetSchemaException.class)
+                .hasMessageContaining("nonexistent");
+    }
+
+    @Test
+    void projectionRejectsUnknownNestedLeaf() {
+        Set<ColumnPath> kept = Set.of(ColumnPath.of("id"), ColumnPath.of("bbox", "xmin2"));
+        assertThatThrownBy(() -> NESTED.project(kept))
+                .isInstanceOf(ParquetSchemaException.class)
+                .hasMessageContaining("bbox.xmin2");
     }
 
     @Test
