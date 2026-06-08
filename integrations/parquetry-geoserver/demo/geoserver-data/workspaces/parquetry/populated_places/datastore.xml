@@ -1,0 +1,17 @@
+<dataStore>
+  <id>DataStoreInfoImpl--2fb5fd2d:19ea55565ed:-7fcf</id>
+  <name>populated_places</name>
+  <type>GeoParquet</type>
+  <enabled>true</enabled>
+  <workspace>
+    <id>WorkspaceInfoImpl--2fb5fd2d:19ea55565ed:-7fe3</id>
+  </workspace>
+  <connectionParameters>
+    <entry key="filetype">geoparquet</entry>
+    <entry key="namespace">http://parquetry</entry>
+    <entry key="uri">file:///data/ne/populated_places.parquet</entry>
+  </connectionParameters>
+  <__default>false</__default>
+  <dateCreated>2026-06-08 03:45:19.224 UTC</dateCreated>
+  <disableOnConnFailure>false</disableOnConnFailure>
+</dataStore>

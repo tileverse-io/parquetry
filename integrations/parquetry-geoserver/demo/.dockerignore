@@ -1,0 +1,6 @@
+# build/plugin.zip, geoserver-data/ and data/ are baked into the image; everything else is not needed.
+# secrets/ is bind-mounted at runtime by compose, never baked into the image.
+*.md
+docker-compose*.yml
+Makefile
+secrets/

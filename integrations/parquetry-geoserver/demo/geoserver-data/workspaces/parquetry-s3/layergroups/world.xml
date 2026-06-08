@@ -1,0 +1,41 @@
+<layerGroup>
+  <id>LayerGroupInfoImpl-1428db6f:19ea58c4651:-7fd2</id>
+  <name>world</name>
+  <mode>NAMED</mode>
+  <title>World Map (S3)</title>
+  <workspace>
+    <id>WorkspaceInfoImpl-1428db6f:19ea58c4651:-7fe3</id>
+  </workspace>
+  <publishables>
+    <published type="layer">
+      <id>LayerInfoImpl-1428db6f:19ea58c4651:-7fdb</id>
+    </published>
+    <published type="layer">
+      <id>LayerInfoImpl-1428db6f:19ea58c4651:-7fd5</id>
+    </published>
+    <published type="layer">
+      <id>LayerInfoImpl-1428db6f:19ea58c4651:-7fd7</id>
+    </published>
+    <published type="layer">
+      <id>LayerInfoImpl-1428db6f:19ea58c4651:-7fd9</id>
+    </published>
+    <published type="layer">
+      <id>LayerInfoImpl-1428db6f:19ea58c4651:-7fd3</id>
+    </published>
+  </publishables>
+  <styles>
+    <style/>
+    <style/>
+    <style/>
+    <style/>
+    <style/>
+  </styles>
+  <bounds>
+    <minx>-180.0</minx>
+    <maxx>180.0</maxx>
+    <miny>-90.0</miny>
+    <maxy>90.0</maxy>
+    <crs>EPSG:4326</crs>
+  </bounds>
+  <dateCreated>2026-06-08 04:47:38.228 UTC</dateCreated>
+</layerGroup>

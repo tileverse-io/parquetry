@@ -1,0 +1,21 @@
+<dataStore>
+  <id>DataStoreInfoImpl-1428db6f:19ea58c4651:-7fe0</id>
+  <name>boundary_lines</name>
+  <type>GeoParquet</type>
+  <enabled>true</enabled>
+  <workspace>
+    <id>WorkspaceInfoImpl-1428db6f:19ea58c4651:-7fe3</id>
+  </workspace>
+  <connectionParameters>
+    <entry key="filetype">geoparquet</entry>
+    <entry key="storage.s3.region">us-east-1</entry>
+    <entry key="storage.provider">s3</entry>
+    <entry key="namespace">http://parquetry-s3</entry>
+    <entry key="storage.s3.force-path-style">true</entry>
+    <entry key="uri">s3://naturalearth/boundary_lines_land.parquet</entry>
+    <entry key="storage.s3.endpoint">http://s3proxy:80</entry>
+  </connectionParameters>
+  <__default>false</__default>
+  <dateCreated>2026-06-08 04:44:56.635 UTC</dateCreated>
+  <disableOnConnFailure>false</disableOnConnFailure>
+</dataStore>

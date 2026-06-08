@@ -1,0 +1,45 @@
+<layerGroup>
+  <id>LayerGroupInfoImpl--2fb5fd2d:19ea55565ed:-7fcc</id>
+  <name>world</name>
+  <mode>NAMED</mode>
+  <title>World Map</title>
+  <workspace>
+    <id>WorkspaceInfoImpl--2fb5fd2d:19ea55565ed:-7fe3</id>
+  </workspace>
+  <publishables>
+    <published type="layer">
+      <id>LayerInfoImpl--2fb5fd2d:19ea55565ed:-7fd9</id>
+    </published>
+    <published type="layer">
+      <id>LayerInfoImpl--2fb5fd2d:19ea55565ed:-7fd0</id>
+    </published>
+    <published type="layer">
+      <id>LayerInfoImpl--2fb5fd2d:19ea55565ed:-7fd3</id>
+    </published>
+    <published type="layer">
+      <id>LayerInfoImpl--2fb5fd2d:19ea55565ed:-7fd6</id>
+    </published>
+    <published type="layer">
+      <id>LayerInfoImpl--2fb5fd2d:19ea55565ed:-7fcd</id>
+    </published>
+  </publishables>
+  <styles>
+    <style>
+      <id>StyleInfoImpl--2fb5fd2d:19ea55565ed:-7fdf</id>
+    </style>
+    <style>
+      <id>StyleInfoImpl--2fb5fd2d:19ea55565ed:-7fdd</id>
+    </style>
+    <style/>
+    <style/>
+    <style/>
+  </styles>
+  <bounds>
+    <minx>-180.0</minx>
+    <maxx>180.0</maxx>
+    <miny>-90.0</miny>
+    <maxy>90.0</maxy>
+    <crs>EPSG:4326</crs>
+  </bounds>
+  <dateCreated>2026-06-08 03:45:19.277 UTC</dateCreated>
+</layerGroup>

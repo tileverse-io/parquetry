@@ -1,0 +1,55 @@
+# GeoParquet-in-GeoServer demo.
+#
+#   docker compose up        (or: make up)
+#   open http://localhost:8080/geoserver  (admin / geoserver)
+#
+# Two workspaces are served on first boot:
+#   parquetry      - the GeoParquet layers read from local files baked into the image
+#   parquetry-s3   - the same layers read from S3, served by the bundled s3proxy emulator
+#
+# The s3 workspace demonstrates the real cloud pattern: the datastores carry NO credentials;
+# GeoServer reads them from the AWS default credential chain (secrets/aws mounted as ~/.aws),
+# and s3proxy is configured to accept those same demo keys. s3proxy serves demo/data/ne directly
+# as the bucket "naturalearth" (a bind mount, no upload).
+#
+# Build the image first with `make build` (compiles the plugin zip, then `docker compose build`).
+
+services:
+  s3proxy:
+    image: andrewgaul/s3proxy:latest
+    container_name: parquetry-s3proxy
+    environment:
+      S3PROXY_AUTHORIZATION: aws-v2-or-v4
+      S3PROXY_IDENTITY: parquetry-demo
+      S3PROXY_CREDENTIAL: parquetry-demo-secret
+      S3PROXY_ENDPOINT: http://0.0.0.0:80
+      JCLOUDS_PROVIDER: filesystem
+      JCLOUDS_FILESYSTEM_BASEDIR: /data
+    volumes:
+      # The parquet directory IS the bucket "naturalearth" (bucket names must be >= 3 chars).
+      - ./data/ne:/data/naturalearth:ro
+
+  geoserver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: parquetry-geoserver:demo
+    container_name: parquetry-geoserver-demo
+    depends_on:
+      - s3proxy
+    ports:
+      - "8080:8080"
+    environment:
+      # The AWS SDK v2 default checksum headers make s3proxy return HTTP 501; relax them. These are
+      # harmless against real AWS. The parquetry-s3 datastores point at the s3proxy endpoint.
+      AWS_REQUEST_CHECKSUM_CALCULATION: WHEN_REQUIRED
+      AWS_RESPONSE_CHECKSUM_VALIDATION: WHEN_REQUIRED
+    volumes:
+      # The AWS default credential chain reads ~/.aws/credentials (HOME is /root in this image).
+      - ./secrets/aws:/root/.aws:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:8080/geoserver/web/"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 40s

@@ -1,0 +1,32 @@
+<assembly xmlns="http://maven.apache.org/ASSEMBLY/2.2.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://maven.apache.org/ASSEMBLY/2.2.0 http://maven.apache.org/xsd/assembly-2.2.0.xsd">
+  <!--
+    GeoServer-plugin layout: a flat zip of jars to unzip into a GeoServer installation's
+    webapps/geoserver/WEB-INF/lib. Contains the plugin jar plus its runtime dependencies.
+    The runtime dependencies are pre-collected into target/dependency by maven-dependency-plugin
+    (copy-dependencies, includeScope=runtime), which honors the resolved scope and therefore
+    excludes everything GeoServer/GeoTools already ship (declared provided in the pom).
+  -->
+  <id>plugin</id>
+  <formats>
+    <format>zip</format>
+  </formats>
+  <includeBaseDirectory>false</includeBaseDirectory>
+  <fileSets>
+    <fileSet>
+      <directory>${project.build.directory}</directory>
+      <outputDirectory></outputDirectory>
+      <includes>
+        <include>${project.artifactId}-${project.version}.jar</include>
+      </includes>
+    </fileSet>
+    <fileSet>
+      <directory>${project.build.directory}/dependency</directory>
+      <outputDirectory></outputDirectory>
+      <includes>
+        <include>*.jar</include>
+      </includes>
+    </fileSet>
+  </fileSets>
+</assembly>

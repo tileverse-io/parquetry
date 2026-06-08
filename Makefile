@@ -1,34 +1,36 @@
-.PHONY: help dev-setup format lint test verify clean compile package install build-benchmarks run-benchmarks run-benchmarks-smoke benchmarks benchmarks-smoke
+.DEFAULT_GOAL := help
+.PHONY: help dev-setup format lint test verify clean compile package install build-benchmarks run-benchmarks run-benchmarks-smoke benchmarks benchmarks-smoke geoserver-plugin geoserver-demo geoserver-demo-down geoserver-dist
 
-help:
-	@echo "Targets: dev-setup format lint test verify clean compile package install"
-	@echo "Benchmarks: benchmarks benchmarks-smoke"
+GEOSERVER_DIR := integrations/parquetry-geoserver
 
-dev-setup:
+help: ## Show this help
+	@awk 'BEGIN {FS = ":.*## "; printf "Targets:\n"} /^[a-zA-Z_-]+:.*## / {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+dev-setup: ## Install parent POMs into the local repo (mvnw -N install)
 	./mvnw -N install
 
-format:
+format: ## Apply code formatting (mvnw validate)
 	./mvnw validate
 
-lint:
+lint: ## Run static analysis (mvnw -Pqa validate)
 	./mvnw -Pqa validate
 
-test:
+test: ## Run unit tests
 	./mvnw test
 
-verify:
+verify: ## Full build: unit + integration tests
 	./mvnw verify
 
-clean:
+clean: ## Remove build output (mvnw clean)
 	./mvnw clean
 
-compile:
+compile: ## Compile all modules
 	./mvnw compile
 
-package:
+package: ## Package all modules (skip tests)
 	./mvnw package -DskipTests
 
-install:
+install: ## Build and install all modules to the local repo
 	./mvnw install
 
 # build-benchmarks, run-benchmarks, and run-benchmarks-smoke are plumbing for CI and
@@ -49,3 +51,17 @@ run-benchmarks-smoke:
 benchmarks: build-benchmarks run-benchmarks ## Build then run the full benchmark suite (real measurement, slow)
 
 benchmarks-smoke: build-benchmarks run-benchmarks-smoke ## Build then smoke-run the benchmarks (fast sanity check, no measurement)
+
+# GeoServer + GeoParquet plugin and demo. These delegate to integrations/parquetry-geoserver/Makefile,
+# which owns them (run `make help` there for the full target list).
+geoserver-plugin: ## Build the GeoServer plugin zip (drop into any GeoServer install)
+	$(MAKE) -C $(GEOSERVER_DIR) plugin
+
+geoserver-demo: ## Build and start the GeoServer + GeoParquet demo
+	$(MAKE) -C $(GEOSERVER_DIR) demo
+
+geoserver-demo-down: ## Stop and remove the GeoServer demo container
+	$(MAKE) -C $(GEOSERVER_DIR) down
+
+geoserver-dist: ## Build the plugin and the self-contained customer demo zip
+	$(MAKE) -C $(GEOSERVER_DIR) dist

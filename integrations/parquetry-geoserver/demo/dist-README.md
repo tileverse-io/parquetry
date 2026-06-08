@@ -1,0 +1,165 @@
+# GeoParquet in GeoServer - demo
+
+GeoServer 3.0 serving [Natural Earth](https://www.naturalearthdata.com/) as live WMS/WFS layers,
+reading [GeoParquet](https://geoparquet.org/) files through the parquetry plugin.
+
+## Run it
+
+You only need Docker.
+
+```bash
+docker compose up
+```
+
+The first run builds the image (it downloads GeoServer and a Java 25 runtime - a few minutes,
+needs internet). Later runs start instantly. Then open:
+
+- Web admin: <http://localhost:8080/geoserver>  (user `admin`, password `geoserver`)
+- Layer preview: Web admin -> Layer Preview -> `parquetry:world`
+
+Stop it with `Ctrl-C`, or `docker compose down` to remove the container.
+
+## What you get
+
+Two workspaces serving the same five GeoParquet layers (and a `world` layer group), one from
+local files and one from S3:
+
+| workspace | reads from |
+|---|---|
+| `parquetry` | local GeoParquet files baked into the image |
+| `parquetry-s3` | the same data over S3, served by the bundled s3proxy emulator |
+
+| layer | geometry | features |
+|---|---|---|
+| `countries` | polygons | 242 |
+| `boundary_lines` | lines | 390 |
+| `coastlines` | lines | 1428 |
+| `disputed_areas` | polygons | 28 |
+| `populated_places` | points | 1251 |
+
+### Reading from S3 the way you would in production
+
+The `parquetry-s3` datastores carry **no credentials**. GeoServer obtains them from the AWS
+default credential chain - here, `secrets/aws/credentials` mounted as `~/.aws` - exactly as it
+would use an instance role or environment credentials on real AWS. The bundled `s3proxy`
+emulator is configured to accept those same demo keys and serves `data/ne` directly as the
+bucket `naturalearth` (a bind mount, no upload). To point at real AWS instead, drop the
+`s3proxy` service, set your own `secrets/aws/credentials` (or environment credentials), and edit
+the `storage.s3.*` parameters of the `parquetry-s3` datastores.
+
+Example requests:
+
+```bash
+# WMS GetMap - the world map as a PNG
+curl -o world.png \
+  "http://localhost:8080/geoserver/parquetry/wms?service=WMS&version=1.1.1&request=GetMap\
+&layers=parquetry:world&bbox=-180,-90,180,90&width=1000&height=500&srs=EPSG:4326&format=image/png"
+
+# WFS GetFeature - GeoJSON
+curl "http://localhost:8080/geoserver/parquetry/wfs?service=WFS&version=2.0.0&request=GetFeature\
+&typeNames=parquetry:populated_places&count=5&outputFormat=application/json"
+```
+
+## Add your own GeoParquet layers (REST API)
+
+The plugin registers a `GeoParquet` datastore type. Create stores and layers for your own
+datasets through the GeoServer REST API (the examples use the default `admin` / `geoserver`
+credentials). Each store currently points at a **single `.parquet` file**.
+
+### Connection parameters
+
+| key | meaning |
+|---|---|
+| `filetype` | always `geoparquet` |
+| `uri` | the dataset URI: `file:///path/to/file.parquet` or `s3://bucket/key.parquet` |
+| `storage.provider` | `s3`, `azure`, `gcs`, `http`, or `file` (auto-detected from the URI when unset) |
+| `storage.s3.region` | AWS region (required for S3, including S3-compatible services) |
+| `storage.s3.endpoint` | only for S3-compatible services (MinIO, Cloudflare R2, the bundled s3proxy) |
+| `storage.s3.force-path-style` | `true` for most S3-compatible services |
+
+No credential parameters are needed when using the AWS default credential chain (environment
+variables, `~/.aws/credentials`, or an instance role). To use static keys instead, add
+`storage.s3.aws-access-key-id` and `storage.s3.aws-secret-access-key`; for a named profile, add
+`storage.s3.default-credentials-profile`.
+
+### 1. Create a workspace
+
+```bash
+curl -u admin:geoserver -XPOST -H "Content-Type: application/xml" \
+  http://localhost:8080/geoserver/rest/workspaces \
+  -d '<workspace><name>mydata</name></workspace>'
+```
+
+### 2a. A store over a local file
+
+```bash
+curl -u admin:geoserver -XPOST -H "Content-Type: application/xml" \
+  http://localhost:8080/geoserver/rest/workspaces/mydata/datastores \
+  -d '<dataStore><name>places</name><type>GeoParquet</type>
+        <connectionParameters>
+          <entry key="filetype">geoparquet</entry>
+          <entry key="uri">file:///data/places.parquet</entry>
+        </connectionParameters>
+      </dataStore>'
+```
+
+### 2b. A store over S3 with the default credential chain
+
+The store carries **no keys**; GeoServer obtains credentials from the AWS default chain. On real
+AWS you only need the region:
+
+```bash
+curl -u admin:geoserver -XPOST -H "Content-Type: application/xml" \
+  http://localhost:8080/geoserver/rest/workspaces/mydata/datastores \
+  -d '<dataStore><name>places</name><type>GeoParquet</type>
+        <connectionParameters>
+          <entry key="filetype">geoparquet</entry>
+          <entry key="uri">s3://my-bucket/path/places.parquet</entry>
+          <entry key="storage.provider">s3</entry>
+          <entry key="storage.s3.region">us-east-1</entry>
+        </connectionParameters>
+      </dataStore>'
+```
+
+For an S3-compatible service (MinIO, R2, or the bundled `s3proxy`) also add the endpoint and
+path-style, e.g. against the bundled emulator:
+
+```xml
+          <entry key="storage.s3.endpoint">http://s3proxy:80</entry>
+          <entry key="storage.s3.force-path-style">true</entry>
+```
+
+### 3. Publish the layer
+
+A single-file store exposes one feature type named after the file (without the `.parquet`
+extension). Publish it - GeoServer computes the bounds from the data:
+
+```bash
+curl -u admin:geoserver -XPOST -H "Content-Type: application/xml" \
+  http://localhost:8080/geoserver/rest/workspaces/mydata/datastores/places/featuretypes \
+  -d '<featureType><name>places</name><nativeName>places</nativeName><srs>EPSG:4326</srs></featureType>'
+```
+
+The layer is then served at `mydata:places` (WMS and WFS). To discover the available feature
+type name in a store, use:
+
+```bash
+curl -u admin:geoserver \
+  "http://localhost:8080/geoserver/rest/workspaces/mydata/datastores/places/featuretypes.json?list=available"
+```
+
+If a batch of REST calls starts returning HTTP 401, GeoServer's brute-force protection is
+throttling repeated logins from a non-local address; space the calls out.
+
+### Multi-file datasets
+
+Each store currently reads a single `.parquet` file. Multi-file datasets - a store over a
+directory or glob of GeoParquet files, with directory listing - are under development.
+
+## Notes
+
+Replacing the bundled data: swap the files under `data/ne/` (and adjust the datastores under
+`geoserver-data/workspaces/parquetry/`), then `docker compose up --build`.
+
+Credentials are the GeoServer defaults (`admin` / `geoserver`); change them for anything beyond a
+local demo.

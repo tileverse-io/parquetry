@@ -80,6 +80,21 @@
       <version>10.7.0</version>
     </dependency>
 
+    <!--
+      GeoServer/GeoTools already ship these; override their transitive compile scope to provided so the
+      plugin assembly does not duplicate them in WEB-INF/lib (JTS comes from GeoTools, Jackson 3 from gs-main).
+    -->
+    <dependency>
+      <groupId>org.locationtech.jts</groupId>
+      <artifactId>jts-core</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>tools.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <scope>provided</scope>
+    </dependency>
+
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
@@ -207,6 +222,54 @@
   </build>
 
   <profiles>
+    <profile>
+      <!--
+        Builds the GeoServer-plugin zip (parquetry-geoserver-${version}-plugin.zip) under target/. Opt-in to keep
+        normal builds fast: ./mvnw -pl :parquetry-geoserver -Passembly package. The zip is the releasable plugin
+        artifact (unzip into a GeoServer install's webapps/geoserver/WEB-INF/lib).
+      -->
+      <id>assembly</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-dependency-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>collect-runtime-deps</id>
+                <goals>
+                  <goal>copy-dependencies</goal>
+                </goals>
+                <phase>prepare-package</phase>
+                <configuration>
+                  <includeScope>runtime</includeScope>
+                  <outputDirectory>${project.build.directory}/dependency</outputDirectory>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-assembly-plugin</artifactId>
+            <configuration>
+              <appendAssemblyId>true</appendAssemblyId>
+              <descriptors>
+                <descriptor>${project.basedir}/src/assembly/assembly.xml</descriptor>
+              </descriptors>
+            </configuration>
+            <executions>
+              <execution>
+                <id>plugin-zip</id>
+                <goals>
+                  <goal>single</goal>
+                </goals>
+                <phase>package</phase>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
     <profile>
       <!--
         Converges the GeoServer/GeoTools provided tree (and its collisions with parquetry's compile tree) for the
