@@ -41,14 +41,16 @@
 
   <build>
     <resources>
-      <!-- Bundle only the corpus fixtures from the submodules: all of parquet-testing, and selected directories from the
-           opengeospatial/geoparquet repo. The submodule .git pointer files are not resources. -->
+      <!-- Bundle only the corpus fixtures: all of parquet-testing and selected directories from the
+           opengeospatial/geoparquet submodule, plus parquetry's own purpose-built fixtures under parquetry/. The
+           submodule .git pointer files are not resources. -->
       <resource>
         <directory>src/main/resources</directory>
         <includes>
           <include>parquet-testing/**</include>
           <include>geoparquet/test_data/**</include>
           <include>geoparquet/examples/**</include>
+          <include>parquetry/**</include>
         </includes>
         <excludes>
           <exclude>**/.git</exclude>

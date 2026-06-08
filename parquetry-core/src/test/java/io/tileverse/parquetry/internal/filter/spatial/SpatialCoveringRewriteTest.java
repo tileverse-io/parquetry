@@ -56,6 +56,8 @@ class SpatialCoveringRewriteTest {
             requiredDouble("ymin"),
             requiredDouble("ymax"));
 
+    private final ParquetSchema schemaWithBboxStruct = schemaWithBboxStruct();
+
     private final Optional<GeoParquetMetadata> geoWithCovering = Optional.of(geoWithCovering());
 
     @Test
@@ -122,6 +124,21 @@ class SpatialCoveringRewriteTest {
         Predicate rewritten = SpatialCoveringRewrite.expand(spatial, schema, geoNoCovering);
 
         assertThat(rewritten).isSameAs(spatial);
+    }
+
+    @Test
+    void noFormalCoveringFallsBackToConventionalBboxStruct() {
+        Predicate spatial = Pred.col("geometry").bboxIntersects(Bbox.of2d(0, 0, 10, 10));
+        Optional<GeoParquetMetadata> geoNoCovering = Optional.of(geoWithoutCovering());
+
+        Predicate rewritten = SpatialCoveringRewrite.expand(spatial, schemaWithBboxStruct, geoNoCovering);
+
+        Predicate expected = new Predicate.And(List.of(
+                Pred.col(ColumnPath.of("bbox", "xmin")).ltEq(10.0),
+                Pred.col(ColumnPath.of("bbox", "xmax")).gtEq(0.0),
+                Pred.col(ColumnPath.of("bbox", "ymin")).ltEq(10.0),
+                Pred.col(ColumnPath.of("bbox", "ymax")).gtEq(0.0)));
+        assertThat(rewritten).isEqualTo(expected);
     }
 
     @Test
@@ -276,6 +293,19 @@ class SpatialCoveringRewriteTest {
     private static ParquetSchema flatSchema(SchemaNode.Primitive... leaves) {
         List<SchemaNode> children = Stream.of(leaves).map(f -> (SchemaNode) f).toList();
         SchemaNode.Group root = new SchemaNode.Group("schema", Repetition.REQUIRED, children, Optional.empty(), -1);
+        return new ParquetSchema(root);
+    }
+
+    /** A schema with a {@code geometry} leaf and a conventional {@code bbox} struct of four double leaves. */
+    private static ParquetSchema schemaWithBboxStruct() {
+        SchemaNode.Group bbox = new SchemaNode.Group(
+                "bbox",
+                Repetition.OPTIONAL,
+                List.of(requiredDouble("xmin"), requiredDouble("xmax"), requiredDouble("ymin"), requiredDouble("ymax")),
+                Optional.empty(),
+                -1);
+        SchemaNode.Group root = new SchemaNode.Group(
+                "schema", Repetition.REQUIRED, List.of(requiredBinary("geometry"), bbox), Optional.empty(), -1);
         return new ParquetSchema(root);
     }
 

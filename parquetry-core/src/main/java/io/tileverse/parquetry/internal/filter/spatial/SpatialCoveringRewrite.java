@@ -145,9 +145,10 @@ public final class SpatialCoveringRewrite {
     }
 
     /**
-     * Resolves the bbox covering for {@code geometryColumn}, but only when all four covering leaves exist as primitive
-     * columns in {@code schema}. The geo metadata map is keyed by the geometry column's name, matching how the rest of
-     * the reader looks it up.
+     * Resolves the bbox covering for {@code geometryColumn}: the GeoParquet {@code covering.bbox} declaration when the
+     * geo metadata provides one and all four of its leaves exist as primitive columns, otherwise the conventional
+     * {@code bbox} struct that GeoParquet 1.0 writers (Overture, GDAL) emit without declaring it. The geo metadata map
+     * is keyed by the geometry column's name, matching how the rest of the reader looks it up.
      */
     private static Optional<BboxCovering> coveringFor(
             ColumnPath geometryColumn, ParquetSchema schema, GeoParquetMetadata geo) {
@@ -155,13 +156,26 @@ public final class SpatialCoveringRewrite {
         if (geoColumn == null) {
             return Optional.empty();
         }
-        Optional<BboxCovering> bbox = geoColumn.covering().map(Covering::bbox);
-        if (bbox.isEmpty()) {
-            return Optional.empty();
+        Optional<BboxCovering> declared = geoColumn.covering().map(Covering::bbox);
+        if (declared.isPresent()) {
+            BboxCovering c = declared.orElseThrow();
+            return allPrimitive(schema, c.xmin(), c.xmax(), c.ymin(), c.ymax()) ? declared : Optional.empty();
         }
-        BboxCovering c = bbox.orElseThrow();
-        if (allPrimitive(schema, c.xmin(), c.xmax(), c.ymin(), c.ymax())) {
-            return bbox;
+        return conventionalBboxCovering(schema);
+    }
+
+    /**
+     * The de-facto bbox covering a file exposes without declaring it: a {@code bbox} struct whose four leaves
+     * {@code xmin}/{@code xmax}/{@code ymin}/{@code ymax} hold each row's bounding box. Resolves only when all four
+     * exist as primitive columns; the lowered comparisons are then trusted exactly like a declared covering.
+     */
+    private static Optional<BboxCovering> conventionalBboxCovering(ParquetSchema schema) {
+        ColumnPath xmin = ColumnPath.of("bbox", "xmin");
+        ColumnPath xmax = ColumnPath.of("bbox", "xmax");
+        ColumnPath ymin = ColumnPath.of("bbox", "ymin");
+        ColumnPath ymax = ColumnPath.of("bbox", "ymax");
+        if (allPrimitive(schema, xmin, xmax, ymin, ymax)) {
+            return Optional.of(new BboxCovering(xmin, xmax, ymin, ymax, Optional.empty(), Optional.empty()));
         }
         return Optional.empty();
     }

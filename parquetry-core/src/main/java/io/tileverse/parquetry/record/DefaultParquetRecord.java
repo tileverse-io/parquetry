@@ -19,6 +19,7 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -236,72 +237,124 @@ public final class DefaultParquetRecord implements ParquetRecord {
 
     @Override
     public boolean isNull(ColumnPath col) {
-        int index = columns.indexOf(col);
-        return index < 0 || isNull(index);
+        Resolved leaf = locate(col);
+        return leaf == null || leaf.record().isNull(leaf.index());
     }
 
     @Override
     public boolean getBoolean(ColumnPath col) {
-        return getBoolean(requireIndex(col, "getBoolean"));
+        Resolved leaf = require(col, "getBoolean");
+        return leaf.record().getBoolean(leaf.index());
     }
 
     @Override
     public int getInt(ColumnPath col) {
-        return getInt(requireIndex(col, "getInt"));
+        Resolved leaf = require(col, "getInt");
+        return leaf.record().getInt(leaf.index());
     }
 
     @Override
     public long getLong(ColumnPath col) {
-        return getLong(requireIndex(col, "getLong"));
+        Resolved leaf = require(col, "getLong");
+        return leaf.record().getLong(leaf.index());
     }
 
     @Override
     public float getFloat(ColumnPath col) {
-        return getFloat(requireIndex(col, "getFloat"));
+        Resolved leaf = require(col, "getFloat");
+        return leaf.record().getFloat(leaf.index());
     }
 
     @Override
     public double getDouble(ColumnPath col) {
-        return getDouble(requireIndex(col, "getDouble"));
+        Resolved leaf = require(col, "getDouble");
+        return leaf.record().getDouble(leaf.index());
     }
 
     @Override
     public String getString(ColumnPath col) {
-        return getString(requireIndex(col, "getString"));
+        Resolved leaf = require(col, "getString");
+        return leaf.record().getString(leaf.index());
     }
 
     @Override
     public byte[] getBinary(ColumnPath col) {
-        return getBinary(requireIndex(col, "getBinary"));
+        Resolved leaf = require(col, "getBinary");
+        return leaf.record().getBinary(leaf.index());
     }
 
     @Override
     public <R> R readBinary(ColumnPath col, BinaryView<R> view) {
-        return readBinary(requireIndex(col, "readBinary"), view);
+        Resolved leaf = require(col, "readBinary");
+        return leaf.record().readBinary(leaf.index(), view);
     }
 
     @Override
     public ParquetRecord readStruct(ColumnPath col) {
-        int index = columns.indexOf(col);
-        return index < 0 ? null : readStruct(index);
+        Resolved leaf = locate(col);
+        return leaf == null ? null : leaf.record().readStruct(leaf.index());
     }
 
     @Override
     public List<ParquetRecord> readList(ColumnPath col) {
-        int index = columns.indexOf(col);
-        return index < 0 ? null : readList(index);
+        Resolved leaf = locate(col);
+        return leaf == null ? null : leaf.record().readList(leaf.index());
     }
 
     @Override
     public Map<?, ?> readMap(ColumnPath col) {
-        int index = columns.indexOf(col);
-        return index < 0 ? null : readMap(index);
+        Resolved leaf = locate(col);
+        return leaf == null ? null : leaf.record().readMap(leaf.index());
     }
 
     @Override
     public Object get(ColumnPath col) {
+        Resolved leaf = locate(col);
+        return leaf == null ? null : leaf.record().get(leaf.index());
+    }
+
+    /**
+     * Locates a possibly-nested leaf: a direct column at this level, or a path descended through struct sub-records.
+     * Each sub-record keys its children by their simple name (matching the assembler); the descent passes the tail (the
+     * path with its head segment dropped) to follow that keying. Returns {@code null} when the path is absent or an
+     * intermediate struct cell is null, which the accessors read as a null leaf.
+     */
+    private Resolved locate(ColumnPath col) {
         int index = columns.indexOf(col);
-        return index < 0 ? null : get(index);
+        if (index >= 0) {
+            return new Resolved(this, index);
+        }
+        if (col.numParts() == 1) {
+            return null;
+        }
+        int structIndex = columns.indexOf(ColumnPath.of(col.part(0)));
+        if (structIndex < 0) {
+            return null;
+        }
+        if (get(structIndex) instanceof DefaultParquetRecord nested) {
+            return nested.locate(tail(col));
+        }
+        return null;
+    }
+
+    private Resolved require(ColumnPath col, String accessor) {
+        Resolved leaf = locate(col);
+        if (leaf == null) {
+            throw new ParquetSchemaException(
+                    "Column " + col.dot() + " is not present in the projected schema (accessor " + accessor + ")");
+        }
+        return leaf;
+    }
+
+    /** A located leaf: the (possibly nested) record that directly holds it, and its index within that record. */
+    private record Resolved(DefaultParquetRecord record, int index) {}
+
+    private static ColumnPath tail(ColumnPath path) {
+        List<String> rest = new ArrayList<>(path.numParts() - 1);
+        for (int i = 1; i < path.numParts(); i++) {
+            rest.add(path.part(i));
+        }
+        return ColumnPath.of(rest);
     }
 
     @Override
@@ -314,15 +367,6 @@ public final class DefaultParquetRecord implements ParquetRecord {
             values[i] = Detach.detach(get(i));
         }
         return new DetachedParquetRecord(columns.schema(), paths, values);
-    }
-
-    private int requireIndex(ColumnPath col, String accessor) {
-        int index = columns.indexOf(col);
-        if (index < 0) {
-            throw new ParquetSchemaException(
-                    "Column " + col.dot() + " is not present in the projected schema (accessor " + accessor + ")");
-        }
-        return index;
     }
 
     private ParquetSchemaException mismatch(int col, String accessor) {
