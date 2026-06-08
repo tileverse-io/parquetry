@@ -75,7 +75,7 @@ final class ParquetryColumnarEngine implements ColumnarEngine {
     @Override
     public long scan() {
         try (Stream<ParquetRecordBatch> batches =
-                reader().readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
+                reader().readBatches(Predicate.ALWAYS_TRUE, projection(), ReadOptions.DEFAULTS)) {
             long rows = 0L;
             for (ParquetRecordBatch batch : (Iterable<ParquetRecordBatch>) batches::iterator) {
                 try (batch) {

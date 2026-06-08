@@ -510,6 +510,7 @@ public final class ReadComparisonProbe {
         for (ConcurrentRow row : rows) {
             IO.println(row.format());
         }
+        printErrorCauses(rows);
         if (silent) {
             return;
         }
@@ -519,6 +520,22 @@ public final class ReadComparisonProbe {
         IO.println("req/s is measured reads / summed wave wall; p50/p95/max are per-read latencies.");
         IO.println(
                 "peakHeap(MB) is heap occupancy incl. uncollected garbage at the run's -Xmx; the decisive signal is whether status stays OK (not OOM) at a pod-sized heap. alloc(MB) is total churn.");
+    }
+
+    /** Prints the failure cause for every engine/scenario that did not read cleanly; nothing when all passed. */
+    private void printErrorCauses(List<ConcurrentRow> rows) {
+        boolean anyPrinted = false;
+        for (ConcurrentRow row : rows) {
+            String detail = row.errorDetail();
+            if (detail == null) {
+                continue;
+            }
+            if (!anyPrinted) {
+                IO.println();
+                anyPrinted = true;
+            }
+            IO.println("cause [%s / %s]: %s".formatted(row.engine(), row.scenario(), detail));
+        }
     }
 
     // --- supporting types ---
@@ -597,6 +614,18 @@ public final class ReadComparisonProbe {
                 return "OK";
             }
             return String.format("%s(%d failed)", outcome.status(), outcome.failed());
+        }
+
+        /** The failure cause to print beneath the table, or null when the engine read cleanly. */
+        String errorDetail() {
+            if (skipReason != null) {
+                return skipReason;
+            }
+            if (outcome.status() == ProbeMeasurement.Status.OK) {
+                return null;
+            }
+            String cause = outcome.firstError();
+            return cause != null ? cause : statusLabel() + ", no cause captured";
         }
     }
 

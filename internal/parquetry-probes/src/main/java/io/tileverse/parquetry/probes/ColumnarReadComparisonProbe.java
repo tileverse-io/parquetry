@@ -244,6 +244,7 @@ public final class ColumnarReadComparisonProbe {
         for (ConcurrentRow row : rows) {
             IO.println(row.format());
         }
+        printErrorCauses(rows);
         if (silent) {
             return;
         }
@@ -252,6 +253,22 @@ public final class ColumnarReadComparisonProbe {
         IO.println("req/s is measured scans / summed wave wall; p50/p95/max are per-scan latencies.");
         IO.println(
                 "peakHeap(MB) is heap occupancy incl. uncollected garbage at the run's -Xmx; the decisive signal is whether status stays OK (not OOM) at a pod-sized heap. alloc(MB) is total churn. DuckDB's off-heap Arrow buffers are not in these heap columns.");
+    }
+
+    /** Prints the failure cause for every engine that did not scan cleanly; nothing when all engines passed. */
+    private void printErrorCauses(List<ConcurrentRow> rows) {
+        boolean anyPrinted = false;
+        for (ConcurrentRow row : rows) {
+            String detail = row.errorDetail();
+            if (detail == null) {
+                continue;
+            }
+            if (!anyPrinted) {
+                IO.println();
+                anyPrinted = true;
+            }
+            IO.println("cause [%s]: %s".formatted(row.engine(), detail));
+        }
     }
 
     // --- supporting types ---
@@ -324,6 +341,18 @@ public final class ColumnarReadComparisonProbe {
                 return "OK";
             }
             return String.format("%s(%d failed)", outcome.status(), outcome.failed());
+        }
+
+        /** The failure cause to print beneath the table, or null when the engine scanned cleanly. */
+        String errorDetail() {
+            if (skipReason != null) {
+                return skipReason;
+            }
+            if (outcome.status() == ProbeMeasurement.Status.OK) {
+                return null;
+            }
+            String cause = outcome.firstError();
+            return cause != null ? cause : statusLabel() + ", no cause captured";
         }
     }
 
