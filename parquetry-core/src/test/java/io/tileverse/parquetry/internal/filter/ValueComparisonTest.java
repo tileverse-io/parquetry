@@ -53,6 +53,43 @@ class ValueComparisonTest {
         assertThat(ValueComparison.compareBoxed(actual, bound)).isPositive();
     }
 
+    @Test
+    void compareValuesWidensDoubleQueryAgainstFloatBound() {
+        assertThat(ValueComparison.compareValues(new Value.DoubleVal(1.5), new Value.FloatVal(2.0f)))
+                .isNegative();
+        assertThat(ValueComparison.compareValues(new Value.DoubleVal(2.0), new Value.FloatVal(2.0f)))
+                .isZero();
+        assertThat(ValueComparison.compareValues(new Value.DoubleVal(3.0), new Value.FloatVal(2.0f)))
+                .isPositive();
+    }
+
+    @Test
+    void compareValuesWidensFloatQueryAgainstDoubleBound() {
+        assertThat(ValueComparison.compareValues(new Value.FloatVal(2.0f), new Value.DoubleVal(1.5)))
+                .isPositive();
+    }
+
+    @Test
+    void compareBoxedWidensFloatActualAgainstDoubleBound() {
+        assertThat(ValueComparison.compareBoxed(2.0f, new Value.DoubleVal(1.5))).isPositive();
+        assertThat(ValueComparison.compareBoxed(2.0f, new Value.DoubleVal(2.0))).isZero();
+    }
+
+    @Test
+    void compareBoxedWidensDoubleActualAgainstFloatBound() {
+        assertThat(ValueComparison.compareBoxed(1.5, new Value.FloatVal(2.0f))).isNegative();
+    }
+
+    @Test
+    void compareFloatWidensAgainstDoubleBound() {
+        assertThat(ValueComparison.compareFloat(2.0f, new Value.DoubleVal(1.5))).isPositive();
+    }
+
+    @Test
+    void compareDoubleWidensAgainstFloatBound() {
+        assertThat(ValueComparison.compareDouble(1.5, new Value.FloatVal(2.0f))).isNegative();
+    }
+
     @ParameterizedTest(name = "compareBoxed({0}, {1}) sign == {2}")
     @MethodSource("boxedCoercionCases")
     void compareBoxedCoercesAndFallsThrough(Object actual, Value bound, int expectedSign) {

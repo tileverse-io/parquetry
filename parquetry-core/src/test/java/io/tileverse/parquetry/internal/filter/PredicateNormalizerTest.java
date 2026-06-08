@@ -192,6 +192,18 @@ class PredicateNormalizerTest {
     }
 
     @Test
+    void validateAcceptsDoubleBoundOnFloatColumn() {
+        ParquetSchema schema = singleColumn("x", PrimitiveKind.FLOAT);
+        PredicateNormalizer.validate(col("x").ltEq(1.5), schema);
+    }
+
+    @Test
+    void validateAcceptsFloatBoundOnDoubleColumn() {
+        ParquetSchema schema = singleColumn("y", PrimitiveKind.DOUBLE);
+        PredicateNormalizer.validate(col("y").eq(1.5f), schema);
+    }
+
+    @Test
     void validateRejectsBboxOnNonBinaryColumn() {
         ParquetSchema schema = flatSchema();
         Predicate p = col("year").intersects(Bbox.of2d(0, 0, 1, 1));
@@ -220,6 +232,12 @@ class PredicateNormalizerTest {
         SchemaNode.Primitive city = primitive("city", PrimitiveKind.BYTE_ARRAY);
         SchemaNode.Group addr = new SchemaNode.Group("addr", Repetition.OPTIONAL, List.of(city), Optional.empty(), -1);
         SchemaNode.Group root = new SchemaNode.Group("root", Repetition.REQUIRED, List.of(addr), Optional.empty(), -1);
+        return new ParquetSchema(root);
+    }
+
+    private static ParquetSchema singleColumn(String name, PrimitiveKind kind) {
+        SchemaNode.Group root =
+                new SchemaNode.Group("root", Repetition.REQUIRED, List.of(primitive(name, kind)), Optional.empty(), -1);
         return new ParquetSchema(root);
     }
 

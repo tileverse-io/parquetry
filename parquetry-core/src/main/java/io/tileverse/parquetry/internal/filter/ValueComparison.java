@@ -54,6 +54,8 @@ public final class ValueComparison {
             case Value.LongVal(long bv) when actual instanceof Long av -> Long.compare(av, bv);
             case Value.FloatVal(float bv) when actual instanceof Float av -> Float.compare(av, bv);
             case Value.DoubleVal(double bv) when actual instanceof Double av -> Double.compare(av, bv);
+            case Value.DoubleVal(double bv) when actual instanceof Float av -> Double.compare(av, bv);
+            case Value.FloatVal(float bv) when actual instanceof Double av -> Double.compare(av, bv);
             case Value.StringVal(String bv) when actual instanceof String av -> av.compareTo(bv);
             case Value.StringVal(String bv)
             when actual instanceof MemorySegment av ->
@@ -87,6 +89,8 @@ public final class ValueComparison {
             case Value.LongVal(long qv) when bound instanceof Value.LongVal(long bv) -> Long.compare(qv, bv);
             case Value.FloatVal(float qv) when bound instanceof Value.FloatVal(float bv) -> Float.compare(qv, bv);
             case Value.DoubleVal(double qv) when bound instanceof Value.DoubleVal(double bv) -> Double.compare(qv, bv);
+            case Value.DoubleVal(double qv) when bound instanceof Value.FloatVal(float bv) -> Double.compare(qv, bv);
+            case Value.FloatVal(float qv) when bound instanceof Value.DoubleVal(double bv) -> Double.compare(qv, bv);
             case Value.StringVal(String qv)
             when bound instanceof Value.BinaryVal(MemorySegment bv) ->
                 compareBytes(MemorySegment.ofArray(qv.getBytes(StandardCharsets.UTF_8)), bv);
@@ -122,12 +126,20 @@ public final class ValueComparison {
      * Compares a primitive {@code double} against a {@link Value} without boxing; agrees with {@link #compareBoxed}.
      */
     public static int compareDouble(double actual, Value bound) {
-        return bound instanceof Value.DoubleVal(double bv) ? Double.compare(actual, bv) : 0;
+        return switch (bound) {
+            case Value.DoubleVal(double bv) -> Double.compare(actual, bv);
+            case Value.FloatVal(float bv) -> Double.compare(actual, bv);
+            default -> 0;
+        };
     }
 
     /** Compares a primitive {@code float} against a {@link Value} without boxing; agrees with {@link #compareBoxed}. */
     public static int compareFloat(float actual, Value bound) {
-        return bound instanceof Value.FloatVal(float bv) ? Float.compare(actual, bv) : 0;
+        return switch (bound) {
+            case Value.FloatVal(float bv) -> Float.compare(actual, bv);
+            case Value.DoubleVal(double bv) -> Double.compare(actual, bv);
+            default -> 0;
+        };
     }
 
     /**
