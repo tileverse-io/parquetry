@@ -27,6 +27,7 @@ WARMUP="1"
 MEASURE="3"
 ENGINES=""
 SCENARIOS=""
+DECODE_AHEAD=""
 ATTR_COLUMN=""
 ATTR_VALUE=""
 GEOMETRY_COLUMN=""
@@ -66,6 +67,9 @@ OPTIONS:
     --warmup N       Warmup passes. Default: 1
     --measure N      Measured passes. Default: 3
     --scenarios LIST Comma-separated: NO_FILTER,ATTRIBUTE,SPATIAL,ATTRIBUTE_AND_SPATIAL. Default: all.
+    --decode-ahead N parquetry only: per-read decode-ahead window (row groups decoded concurrently per read). 1 makes a
+                     read effectively serial - isolates intra-read parallelism from inter-read concurrency. Default: the
+                     built-in heuristic (clamp by cores and heap budget).
     --attribute-column COL  Column for the ATTRIBUTE filter. Unset => ATTRIBUTE scenarios are skipped.
     --attribute-value VAL   Equality value for --attribute-column. Both are required to enable ATTRIBUTE.
     --geometry-column COL   Geometry column for SPATIAL. Default: GeoParquet primary column, else first
@@ -119,6 +123,7 @@ while [[ $# -gt 0 ]]; do
     --measure) MEASURE="$2"; shift 2 ;;
     --engines) ENGINES="$2"; shift 2 ;;
     --scenarios) SCENARIOS="$2"; shift 2 ;;
+    --decode-ahead) DECODE_AHEAD="$2"; shift 2 ;;
     --attribute-column) ATTR_COLUMN="$2"; shift 2 ;;
     --attribute-value) ATTR_VALUE="$2"; shift 2 ;;
     --geometry-column) GEOMETRY_COLUMN="$2"; shift 2 ;;
@@ -187,6 +192,7 @@ PROBE_PROPS=(
 )
 [[ -n "$ENGINES" ]] && PROBE_PROPS+=("-Dparquetry.probe.engines=${ENGINES}")
 [[ -n "$SCENARIOS" ]] && PROBE_PROPS+=("-Dparquetry.probe.scenarios=${SCENARIOS}")
+[[ -n "$DECODE_AHEAD" ]] && PROBE_PROPS+=("-Dparquetry.probe.decodeAhead=${DECODE_AHEAD}")
 [[ -n "$ATTR_COLUMN" ]] && PROBE_PROPS+=("-Dparquetry.probe.attribute.column=${ATTR_COLUMN}")
 [[ -n "$ATTR_VALUE" ]] && PROBE_PROPS+=("-Dparquetry.probe.attribute.value=${ATTR_VALUE}")
 [[ -n "$GEOMETRY_COLUMN" ]] && PROBE_PROPS+=("-Dparquetry.probe.geometry.column=${GEOMETRY_COLUMN}")
