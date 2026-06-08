@@ -41,6 +41,7 @@ public final class DiskBudget {
     private final ReentrantLock lock = new ReentrantLock();
     private final Condition headroomChanged = lock.newCondition();
     private long available;
+    private long minAvailable;
 
     private DiskBudget(long capacity) {
         if (capacity <= 0) {
@@ -48,6 +49,7 @@ public final class DiskBudget {
         }
         this.capacity = capacity;
         this.available = capacity;
+        this.minAvailable = capacity;
     }
 
     /** A budget capped at {@code maxBytes}. */
@@ -83,7 +85,7 @@ public final class DiskBudget {
         lock.lock();
         try {
             if (available >= bytes) {
-                available -= bytes;
+                consume(bytes);
                 return true;
             }
             return false;
@@ -108,11 +110,17 @@ public final class DiskBudget {
                 }
                 headroomChanged.awaitUninterruptibly();
             }
-            available -= bytes;
+            consume(bytes);
             return true;
         } finally {
             lock.unlock();
         }
+    }
+
+    /** Deducts a reservation and records the low-water mark. Caller holds {@link #lock}. */
+    private void consume(long bytes) {
+        available -= bytes;
+        minAvailable = Math.min(minAvailable, available);
     }
 
     /** Returns up to {@code bytes} of headroom and wakes parked reservers, clamped to never exceed {@code capacity}. */
@@ -149,6 +157,20 @@ public final class DiskBudget {
         lock.lock();
         try {
             return available;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * The lowest {@link #available()} ever reached: the peak disk a spill held at once. Monotonically non-increasing,
+     * so it records that a spill occurred even after the reservation has been released. Useful for observability and
+     * for tests that must detect a transient spill without racing its release.
+     */
+    public long minAvailable() {
+        lock.lock();
+        try {
+            return minAvailable;
         } finally {
             lock.unlock();
         }

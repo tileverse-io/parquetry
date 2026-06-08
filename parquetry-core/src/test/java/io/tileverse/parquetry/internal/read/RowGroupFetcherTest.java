@@ -65,46 +65,34 @@ class RowGroupFetcherTest {
                 .diskBudget(spillDisk)
                 .build();
 
-        List<Map<ColumnPath, Object>> baseline = readAllRows(ramRuntime, spillDisk, false);
-        List<Map<ColumnPath, Object>> spilled = readAllRows(spillingRuntime, spillDisk, true);
+        List<Map<ColumnPath, Object>> baseline = readAllRows(ramRuntime);
+        List<Map<ColumnPath, Object>> spilled = readAllRows(spillingRuntime);
 
         assertThat(spilled).as("rows read via the spilled mandatory fetch").isEqualTo(baseline);
+        // The spill file is unmapped (and its disk reservation returned) as soon as the row group is decoded, which
+        // can happen before any row is pulled. Assert against the low-water mark, which records the reservation even
+        // after it has been released, rather than the live available bytes, which race the release.
+        assertThat(spillDisk.minAvailable())
+                .as("the mandatory fetch reserved disk for a spill mapping")
+                .isLessThan(spillDisk.capacity());
     }
 
-    /**
-     * Reads every row into a list of column-to-value maps. When {@code expectSpill} is set, the disk budget is sampled
-     * after the first row has been pulled (the first row group's mandatory fetch has run) and is asserted to have
-     * dipped below capacity, proving the fetch mapped a spill file rather than allocating RAM.
-     */
-    private static List<Map<ColumnPath, Object>> readAllRows(
-            ParquetRuntime runtime, DiskBudget diskBudget, boolean expectSpill) {
-        long diskCapacity = diskBudget.capacity();
+    /** Reads every row into a list of column-to-value maps. */
+    private static List<Map<ColumnPath, Object>> readAllRows(ParquetRuntime runtime) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(FILE)) {
             ParquetReader dataset = ParquetReader.open(source, runtime, Optional.empty());
             List<ColumnPath> leaves = dataset.schema().leafColumns();
             try (Stream<ParquetRecord> rows =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
-                return collectRows(rows, leaves, diskBudget, diskCapacity, expectSpill);
+                return collectRows(rows, leaves);
             }
         }
     }
 
-    private static List<Map<ColumnPath, Object>> collectRows(
-            Stream<ParquetRecord> rows,
-            List<ColumnPath> leaves,
-            DiskBudget diskBudget,
-            long diskCapacity,
-            boolean expectSpill) {
+    private static List<Map<ColumnPath, Object>> collectRows(Stream<ParquetRecord> rows, List<ColumnPath> leaves) {
         List<Map<ColumnPath, Object>> collected = new ArrayList<>();
-        boolean sampledFirstRow = false;
         for (ParquetRecord row : (Iterable<ParquetRecord>) rows::iterator) {
             collected.add(snapshot(row, leaves));
-            if (expectSpill && !sampledFirstRow) {
-                assertThat(diskBudget.available())
-                        .as("mandatory fetch mapped a spill file")
-                        .isLessThan(diskCapacity);
-                sampledFirstRow = true;
-            }
         }
         return collected;
     }
