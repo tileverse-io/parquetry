@@ -20,7 +20,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 
 import org.geotools.api.feature.simple.SimpleFeatureType;
 import org.geotools.api.feature.type.GeometryDescriptor;
@@ -30,9 +32,14 @@ import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.Point;
 
 import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.geotools.GeoParquetSchemaMapper.AttributeMapping;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.PrimitiveKind;
+import io.tileverse.parquetry.schema.Repetition;
+import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
 class GeoParquetSchemaMapperTest {
@@ -108,5 +115,56 @@ class GeoParquetSchemaMapperTest {
             assertThat(mapping.attributes())
                     .allSatisfy(a -> assertThat(a.path()).isNotNull());
         }
+    }
+
+    @Test
+    void hidesDeclaredBboxCoveringColumnsFromTheFeatureType() {
+        ParquetSchema schema = schemaWithDeclaredCovering();
+        String geoJson = """
+                {"version":"1.1.0","primary_column":"geom","columns":{"geom":{"encoding":"WKB",\
+                "geometry_types":[],"covering":{"bbox":{"xmin":["geom_bbox","xmin"],"ymin":["geom_bbox","ymin"],\
+                "xmax":["geom_bbox","xmax"],"ymax":["geom_bbox","ymax"]}}}}}""";
+
+        GeoParquetSchemaMapper.Mapping mapping =
+                GeoParquetSchemaMapper.map("countries", null, schema, Map.of("geo", geoJson), null);
+
+        List<String> attributeNames = mapping.featureType().getAttributeDescriptors().stream()
+                .map(descriptor -> descriptor.getLocalName())
+                .toList();
+        assertThat(attributeNames).contains("geom", "name");
+        assertThat(attributeNames)
+                .as("the bbox covering is an internal spatial index, not a user attribute")
+                .doesNotContain("geom_bbox.xmin", "geom_bbox.ymin", "geom_bbox.xmax", "geom_bbox.ymax");
+    }
+
+    private static ParquetSchema schemaWithDeclaredCovering() {
+        SchemaNode.Primitive geom = new SchemaNode.Primitive(
+                "geom",
+                Repetition.OPTIONAL,
+                PrimitiveKind.BYTE_ARRAY,
+                OptionalInt.empty(),
+                Optional.of(new LogicalType.Geometry(Optional.empty())),
+                -1);
+        SchemaNode.Primitive name = new SchemaNode.Primitive(
+                "name",
+                Repetition.OPTIONAL,
+                PrimitiveKind.BYTE_ARRAY,
+                OptionalInt.empty(),
+                Optional.of(new LogicalType.StringType()),
+                -1);
+        SchemaNode.Group bbox = new SchemaNode.Group(
+                "geom_bbox",
+                Repetition.OPTIONAL,
+                List.of(coveringLeaf("xmin"), coveringLeaf("ymin"), coveringLeaf("xmax"), coveringLeaf("ymax")),
+                Optional.empty(),
+                -1);
+        SchemaNode.Group root =
+                new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(geom, name, bbox), Optional.empty(), -1);
+        return new ParquetSchema(root);
+    }
+
+    private static SchemaNode.Primitive coveringLeaf(String name) {
+        return new SchemaNode.Primitive(
+                name, Repetition.OPTIONAL, PrimitiveKind.FLOAT, OptionalInt.empty(), Optional.empty(), -1);
     }
 }
