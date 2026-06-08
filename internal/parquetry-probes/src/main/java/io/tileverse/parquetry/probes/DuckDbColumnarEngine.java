@@ -127,7 +127,10 @@ final class DuckDbColumnarEngine implements ColumnarEngine {
     }
 
     private String query() {
-        return "SELECT * FROM read_parquet('" + file.toAbsolutePath().toString().replace("'", "''") + "')";
+        java.util.List<String> columns = ProbeColumns.requested();
+        String selectList = columns.isEmpty() ? "*" : String.join(", ", columns);
+        return "SELECT " + selectList + " FROM read_parquet('"
+                + file.toAbsolutePath().toString().replace("'", "''") + "')";
     }
 
     /** Folds every value of {@code vector} into the sink, descending structs and lists to their leaves. */

@@ -16,18 +16,24 @@
 package io.tileverse.parquetry.probes;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.lang.foreign.MemorySegment;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 
 import org.apache.parquet.example.data.Group;
 import org.apache.parquet.filter2.compat.FilterCompat;
 import org.apache.parquet.filter2.predicate.FilterApi;
 import org.apache.parquet.filter2.predicate.FilterPredicate;
+import org.apache.parquet.hadoop.ParquetFileReader;
 import org.apache.parquet.hadoop.ParquetReader;
 import org.apache.parquet.hadoop.api.ReadSupport;
 import org.apache.parquet.hadoop.example.GroupReadSupport;
 import org.apache.parquet.io.LocalInputFile;
 import org.apache.parquet.io.api.Binary;
 import org.apache.parquet.schema.GroupType;
+import org.apache.parquet.schema.MessageType;
 import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName;
 import org.apache.parquet.schema.Type;
 
@@ -37,12 +43,14 @@ import io.tileverse.parquetry.geo.jts.JtsGeometryFilter;
  * parquet-java 1.17.0's read arm: a {@link ParquetReader} over {@link LocalInputFile} (no Hadoop filesystem), opened
  * per read. parquet-java has no spatial concept. The spatial filter pushes a numeric prefilter on the {@code bbox}
  * covering columns (row-group and page pruning) and applies the exact geometry test app-side with the same JTS gate
- * parquetry uses. Every {@code Group} is read out in full, mirroring a consumer that materializes each row.
+ * parquetry uses. Each {@code Group} is read out in full (or restricted to the requested columns when
+ * {@code parquetry.probe.columns} is set), mirroring a consumer that materializes each row.
  */
 final class ParquetJavaReadEngine implements ReadEngine {
 
     private final ReadContext context;
     private long sink;
+    private MessageType fileSchema;
 
     ParquetJavaReadEngine(ReadContext context) {
         this.context = context;
@@ -58,7 +66,7 @@ final class ParquetJavaReadEngine implements ReadEngine {
         FilterCompat.Filter filter = filter(scenario);
         boolean exactGateNeeded = scenario == Scenario.SPATIAL || scenario == Scenario.ATTRIBUTE_AND_SPATIAL;
         JtsGeometryFilter exactGate = JtsGeometryFilter.intersects(context.geometryColumn(), context.queryDiamond());
-        try (ParquetReader<Group> reader = groupReader(filter)) {
+        try (ParquetReader<Group> reader = groupReader(filter, projectedSchema(scenario))) {
             long count = 0L;
             Group group = reader.read();
             while (group != null) {
@@ -77,7 +85,8 @@ final class ParquetJavaReadEngine implements ReadEngine {
         return sink;
     }
 
-    private ParquetReader<Group> groupReader(FilterCompat.Filter filter) throws IOException {
+    private ParquetReader<Group> groupReader(FilterCompat.Filter filter, MessageType requestedSchema)
+            throws IOException {
         ParquetReader.Builder<Group> builder = new ParquetReader.Builder<>(new LocalInputFile(context.file())) {
             @Override
             protected ReadSupport<Group> getReadSupport() {
@@ -87,7 +96,57 @@ final class ParquetJavaReadEngine implements ReadEngine {
         if (filter != FilterCompat.NOOP) {
             builder = builder.withFilter(filter);
         }
+        if (requestedSchema != null) {
+            builder = builder.set(ReadSupport.PARQUET_READ_SCHEMA, requestedSchema.toString());
+        }
         return builder.build();
+    }
+
+    /**
+     * The requested read schema from {@code parquetry.probe.columns}, or {@code null} to read every column. Selects the
+     * named output fields plus this scenario's predicate columns - the bbox covering and geometry for spatial, the
+     * attribute column for the equality filter - because parquet-java must materialize a filter's columns to evaluate
+     * it. This mirrors parquetry, which always reads predicate columns for filtering on top of the output projection.
+     */
+    private MessageType projectedSchema(Scenario scenario) {
+        List<String> columns = ProbeColumns.requested();
+        if (columns.isEmpty()) {
+            return null;
+        }
+        Set<String> wanted = columns.stream()
+                .map(ParquetJavaReadEngine::topLevel)
+                .collect(java.util.stream.Collectors.toCollection(HashSet::new));
+        boolean spatial = scenario == Scenario.SPATIAL || scenario == Scenario.ATTRIBUTE_AND_SPATIAL;
+        boolean attribute = scenario == Scenario.ATTRIBUTE || scenario == Scenario.ATTRIBUTE_AND_SPATIAL;
+        if (spatial) {
+            wanted.add(topLevel(context.geometryColumnName()));
+            if (context.bboxCoveringAvailable()) {
+                wanted.add(context.bboxColumn());
+            }
+        }
+        if (attribute) {
+            wanted.add(topLevel(context.attributeColumnName()));
+        }
+        MessageType full = fileSchema();
+        List<Type> fields = full.getFields().stream()
+                .filter(field -> wanted.contains(field.getName()))
+                .toList();
+        return new MessageType(full.getName(), fields);
+    }
+
+    private static String topLevel(String columnPath) {
+        return columnPath.split("\\.")[0];
+    }
+
+    private MessageType fileSchema() {
+        if (fileSchema == null) {
+            try (ParquetFileReader reader = ParquetFileReader.open(new LocalInputFile(context.file()))) {
+                fileSchema = reader.getFileMetaData().getSchema();
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+        return fileSchema;
     }
 
     private FilterCompat.Filter filter(Scenario scenario) {

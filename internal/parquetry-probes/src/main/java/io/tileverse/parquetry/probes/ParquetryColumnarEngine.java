@@ -17,6 +17,8 @@ package io.tileverse.parquetry.probes;
 
 import java.lang.foreign.MemorySegment;
 import java.nio.file.Path;
+import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import io.tileverse.parquetry.batch.BinaryVector;
@@ -38,6 +40,7 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
  * parquetry's columnar arm: reads the file as vectorized {@link ParquetRecordBatch}es and touches every leaf value with
@@ -61,10 +64,18 @@ final class ParquetryColumnarEngine implements ColumnarEngine {
         return "parquetry";
     }
 
+    /** The columns to decode from {@code parquetry.probe.columns}, or every column when unset. */
+    private static Projection projection() {
+        Set<ColumnPath> kept = ProbeColumns.requested().stream()
+                .map(name -> ColumnPath.of(name.split("\\.")))
+                .collect(Collectors.toSet());
+        return kept.isEmpty() ? Projection.ALL : Projection.of(kept);
+    }
+
     @Override
     public long scan() {
         try (Stream<ParquetRecordBatch> batches =
-                dataset().readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
+                dataset().readBatches(Predicate.ALWAYS_TRUE, projection(), ReadOptions.DEFAULTS)) {
             long rows = 0L;
             for (ParquetRecordBatch batch : (Iterable<ParquetRecordBatch>) batches::iterator) {
                 try (batch) {

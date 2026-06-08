@@ -18,6 +18,8 @@ package io.tileverse.parquetry.probes;
 import java.lang.foreign.MemorySegment;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import io.tileverse.parquetry.data.OpenOptions;
@@ -30,6 +32,7 @@ import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.geo.jts.JtsGeometryFilter;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
+import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
@@ -59,7 +62,7 @@ final class ParquetryReadEngine implements ReadEngine {
     @Override
     public long read(Scenario scenario) {
         Predicate predicate = predicate(scenario);
-        try (Stream<ParquetRecord> records = dataset().read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
+        try (Stream<ParquetRecord> records = dataset().read(predicate, projection(), ReadOptions.DEFAULTS)) {
             long count = 0L;
             for (ParquetRecord rec : (Iterable<ParquetRecord>) records::iterator) {
                 walkRecord(rec, rec.schema().root());
@@ -107,6 +110,22 @@ final class ParquetryReadEngine implements ReadEngine {
                 .maxDecodeAhead(Integer.parseInt(decodeAhead))
                 .build();
         return OpenOptions.builder().runtime(runtime).build();
+    }
+
+    /**
+     * The output projection. Honors {@code parquetry.probe.columns} (comma-separated leaf paths, e.g.
+     * {@code geometry,subtype,id}) to materialize only those columns, modelling a real query that selects a few
+     * attributes rather than the whole row. Predicate columns are still read for filtering regardless. Unset projects
+     * every column.
+     */
+    private static Projection projection() {
+        List<String> columns = ProbeColumns.requested();
+        if (columns.isEmpty()) {
+            return Projection.ALL;
+        }
+        Set<ColumnPath> kept =
+                columns.stream().map(name -> ColumnPath.of(name.split("\\."))).collect(Collectors.toSet());
+        return Projection.of(kept);
     }
 
     private Predicate predicate(Scenario scenario) {

@@ -186,7 +186,16 @@ final class DuckDbReadEngine implements ReadEngine {
                     case SPATIAL -> " WHERE " + spatialSql();
                     case ATTRIBUTE_AND_SPATIAL -> " WHERE " + attributeSql() + " AND " + spatialSql();
                 };
-        return "SELECT * FROM " + source + where;
+        return "SELECT " + selectList() + " FROM " + source + where;
+    }
+
+    /**
+     * The output projection from {@code parquetry.probe.columns}, or {@code *} for every column. Only output columns
+     * are listed; the filter columns named in the {@code WHERE} clause are read regardless and need no entry here.
+     */
+    private static String selectList() {
+        java.util.List<String> columns = ProbeColumns.requested();
+        return columns.isEmpty() ? "*" : String.join(", ", columns);
     }
 
     private String attributeSql() {

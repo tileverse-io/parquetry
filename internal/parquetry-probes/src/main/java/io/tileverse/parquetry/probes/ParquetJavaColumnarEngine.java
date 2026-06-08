@@ -18,6 +18,7 @@ package io.tileverse.parquetry.probes;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
 
 import org.apache.parquet.column.ColumnDescriptor;
 import org.apache.parquet.column.ColumnReader;
@@ -56,7 +57,7 @@ final class ParquetJavaColumnarEngine implements ColumnarEngine {
             MessageType schema = reader.getFooter().getFileMetaData().getSchema();
             String createdBy = reader.getFooter().getFileMetaData().getCreatedBy();
             GroupConverter recordConverter = new DummyRecordConverter(schema).getRootConverter();
-            List<ColumnDescriptor> columns = schema.getColumns();
+            List<ColumnDescriptor> columns = projected(schema.getColumns());
             long rows = 0L;
             PageReadStore pages = reader.readNextRowGroup();
             while (pages != null) {
@@ -74,6 +75,20 @@ final class ParquetJavaColumnarEngine implements ColumnarEngine {
     @Override
     public long checksum() {
         return sink;
+    }
+
+    /**
+     * Restricts the leaf columns to those under the requested top-level fields ({@code parquetry.probe.columns}), or
+     * keeps every column when unset. A leaf's first path segment is its top-level field.
+     */
+    private static List<ColumnDescriptor> projected(List<ColumnDescriptor> columns) {
+        Set<String> topLevel = ProbeColumns.requestedTopLevel();
+        if (topLevel.isEmpty()) {
+            return columns;
+        }
+        return columns.stream()
+                .filter(column -> topLevel.contains(column.getPath()[0]))
+                .toList();
     }
 
     private void touchColumn(ColumnReadStoreImpl store, ColumnDescriptor column) {
