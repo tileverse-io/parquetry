@@ -208,6 +208,46 @@ class SchemaBuilderGeoTest {
                 .contains(nativeType);
     }
 
+    @Test
+    void emptyGeoCrsDoesNotConflictWithNativeCrs() {
+        LogicalType derived = new LogicalType.Geometry(Optional.empty());
+        LogicalType nativeType = new LogicalType.Geometry(Optional.of(crs("OGC:CRS84")));
+        assertThat(SchemaBuilder.geoConflictsWithNative(derived, nativeType))
+                .as("an absent 'geo' crs means the spec default; it cannot conflict with the native crs")
+                .isFalse();
+    }
+
+    @Test
+    void differingNonEmptyGeoCrsConflictsWithNative() {
+        LogicalType derived = new LogicalType.Geometry(Optional.of(crs("EPSG:4326")));
+        LogicalType nativeType = new LogicalType.Geometry(Optional.of(crs("EPSG:3857")));
+        assertThat(SchemaBuilder.geoConflictsWithNative(derived, nativeType))
+                .as("a 'geo' crs that names a different CRS than native is a genuine conflict")
+                .isTrue();
+    }
+
+    @Test
+    void identicalGeoAndNativeDoNotConflict() {
+        LogicalType derived = new LogicalType.Geometry(Optional.empty());
+        LogicalType nativeType = new LogicalType.Geometry(Optional.empty());
+        assertThat(SchemaBuilder.geoConflictsWithNative(derived, nativeType))
+                .as("identical derived and native never conflict")
+                .isFalse();
+    }
+
+    @Test
+    void typeMismatchConflictsEvenWhenGeoCrsIsEmpty() {
+        LogicalType derived = new LogicalType.Geography(Optional.empty(), Optional.empty());
+        LogicalType nativeType = new LogicalType.Geometry(Optional.of(crs("OGC:CRS84")));
+        assertThat(SchemaBuilder.geoConflictsWithNative(derived, nativeType))
+                .as("Geometry vs Geography is a real conflict even when the 'geo' crs is absent")
+                .isTrue();
+    }
+
+    private static CoordinateReferenceSystem crs(String name) {
+        return new GeographicCRS(Optional.of(name), Optional.empty(), Optional.empty(), Optional.empty());
+    }
+
     private static ParquetSchema schemaWithAnnotation(LogicalType annotation) {
         return new ParquetSchema(new SchemaNode.Group(
                 "root",

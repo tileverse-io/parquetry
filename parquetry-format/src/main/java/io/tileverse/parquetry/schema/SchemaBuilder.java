@@ -123,9 +123,9 @@ public final class SchemaBuilder {
 
     /**
      * Picks the {@link LogicalType} this {@code GeoColumn} would synthesize and records it under {@code path}, unless
-     * the leaf already carries a native Geometry / Geography annotation. When the native annotation disagrees with what
-     * {@code "geo"} would produce, logs a WARN so the stale {@code "geo"} entry doesn't silently lie - native still
-     * wins.
+     * the leaf already has a native Geometry / Geography annotation. When the {@code "geo"} metadata genuinely
+     * conflicts with the native annotation (see {@link #geoConflictsWithNative}), logs a WARN so the stale
+     * {@code "geo"} entry doesn't silently lie - native still wins.
      */
     private static void recordOverride(
             ParquetSchema schema, String columnName, GeoColumn geoColumn, Map<ColumnPath, LogicalType> overrides) {
@@ -138,7 +138,7 @@ public final class SchemaBuilder {
         LogicalType derived = deriveLogicalType(geoColumn);
         Optional<LogicalType> existing = nativeGeoAnnotation(field.get());
         if (existing.isPresent()) {
-            if (!derived.equals(existing.get())) {
+            if (geoConflictsWithNative(derived, existing.get())) {
                 LOG.warn(
                         "Column '{}' has native annotation {} but 'geo' KV metadata says {}; native wins.",
                         columnName,
@@ -148,6 +148,35 @@ public final class SchemaBuilder {
             return;
         }
         overrides.put(path, derived);
+    }
+
+    /**
+     * Whether the {@code "geo"} KV metadata genuinely contradicts a native Geometry / Geography annotation. An absent
+     * {@code "geo"} crs ({@link Optional#empty()}) asserts nothing - it means the spec default OGC:CRS84 - so a
+     * crs-only difference against the native annotation is underspecification, not a conflict. A different non-empty
+     * crs, or a Geometry-vs-Geography mismatch, is a real conflict.
+     */
+    static boolean geoConflictsWithNative(LogicalType derived, LogicalType existing) {
+        if (derived.equals(existing)) {
+            return false;
+        }
+        if (assertsNoCrs(derived)) {
+            return !withoutCrs(derived).equals(withoutCrs(existing));
+        }
+        return true;
+    }
+
+    private static boolean assertsNoCrs(LogicalType type) {
+        return withoutCrs(type).equals(type);
+    }
+
+    private static LogicalType withoutCrs(LogicalType type) {
+        return switch (type) {
+            case LogicalType.Geometry _ -> new LogicalType.Geometry(Optional.empty());
+            case LogicalType.Geography(var _, Optional<EdgeInterpolationAlgorithm> algorithm) ->
+                new LogicalType.Geography(Optional.empty(), algorithm);
+            default -> type;
+        };
     }
 
     /**
