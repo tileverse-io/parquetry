@@ -20,6 +20,14 @@ Gates every pull request and every push to `main` (ignoring `docs/**` and
 
 Needs no secrets.
 
+## `benchmarks-smoke.yml`
+
+Builds the JMH benchmarks runner (`make build-benchmarks`) and runs it once with
+tiny data (`make run-benchmarks-smoke`) as a sanity check, no measurement. Runs on
+the same events as PR validation but as its own workflow, because the runner is
+much slower than Build & Test and would otherwise hold the validation run open and
+delay reviewing failures. Needs no secrets.
+
 ## `publish-snapshot.yml`
 
 After `Pull Request Validation` completes successfully on `main` (or on manual

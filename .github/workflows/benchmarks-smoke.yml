@@ -1,0 +1,54 @@
+name: Benchmarks Smoke
+
+# Split out of Pull Request Validation: the benchmarks runner takes considerably longer than
+# Build & Test, and keeping it in that workflow held the run open and delayed reviewing failures.
+# As its own workflow it runs independently and never blocks the build/test feedback.
+
+on:
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Cancel in-progress runs for the same PR or branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  MAVEN_OPTS: -Dhttp.keepAlive=false -Dmaven.wagon.http.pool=false -Dmaven.wagon.http.retryHandler.class=standard -Dmaven.wagon.http.retryHandler.count=2
+
+jobs:
+  benchmarks-smoke:
+    name: Benchmarks Smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Skip on a merge commit: validation already ran during the PR.
+    if: "github.event_name == 'pull_request' || !contains(github.event.head_commit.message, 'Merge pull request #')"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build the benchmarks runner
+        run: make build-benchmarks
+
+      - name: Run benchmarks once with tiny data (sanity check, no measurement)
+        run: make run-benchmarks-smoke
