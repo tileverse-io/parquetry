@@ -224,8 +224,11 @@ final class PredicateNormalizer {
             case Value.BoolVal _ -> kind == PrimitiveKind.BOOLEAN;
             case Value.IntVal _ -> kind == PrimitiveKind.INT32;
             case Value.LongVal _ -> kind == PrimitiveKind.INT64;
-            case Value.FloatVal _ -> kind == PrimitiveKind.FLOAT;
-            case Value.DoubleVal _ -> kind == PrimitiveKind.DOUBLE;
+            // Float and double widen to each other. A double-valued query against a FLOAT column is how the spatial
+            // covering rewrite reaches a GeoParquet file whose bbox columns are float32 (GDAL's default); the promotion
+            // is exact and the comparison stays conservative.
+            case Value.FloatVal _ -> kind == PrimitiveKind.FLOAT || kind == PrimitiveKind.DOUBLE;
+            case Value.DoubleVal _ -> kind == PrimitiveKind.DOUBLE || kind == PrimitiveKind.FLOAT;
             case Value.StringVal _ -> kind == PrimitiveKind.BYTE_ARRAY;
             case Value.BinaryVal _ -> kind == PrimitiveKind.BYTE_ARRAY || kind == PrimitiveKind.FIXED_LEN_BYTE_ARRAY;
             case Value.DateVal _ -> kind == PrimitiveKind.INT32;
