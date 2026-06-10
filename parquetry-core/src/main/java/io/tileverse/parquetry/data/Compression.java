@@ -15,44 +15,26 @@
  */
 package io.tileverse.parquetry.data;
 
-import static java.lang.foreign.ValueLayout.JAVA_BYTE;
-
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.lang.foreign.MemorySegment;
-import java.util.OptionalInt;
-import java.util.zip.GZIPInputStream;
-import java.util.zip.GZIPOutputStream;
 
-import org.brotli.dec.BrotliInputStream;
-
+import io.tileverse.parquetry.compression.Codec;
 import io.tileverse.parquetry.format.CompressionCodec;
-
-import io.airlift.compress.v3.hadoop.HadoopInputStream;
-import io.airlift.compress.v3.lz4.Lz4Compressor;
-import io.airlift.compress.v3.lz4.Lz4Decompressor;
-import io.airlift.compress.v3.lz4.Lz4HadoopStreams;
-import io.airlift.compress.v3.lzo.LzoCompressor;
-import io.airlift.compress.v3.lzo.LzoDecompressor;
-import io.airlift.compress.v3.snappy.SnappyCompressor;
-import io.airlift.compress.v3.snappy.SnappyDecompressor;
-import io.airlift.compress.v3.zstd.ZstdCompressor;
-import io.airlift.compress.v3.zstd.ZstdDecompressor;
 
 /**
  * Compression codec for Parquet page payloads.
  *
  * <p>Sealed ADT that doubles as the user-facing configuration on the write side and as the compress/decompress entry
- * point used internally by the page readers and writers. Construct variants via the static factories
+ * point used internally by the page readers and writers. Construct cases via the static factories
  * ({@link #uncompressed()}, {@link #snappy()}, {@link #gzip()}, {@link #lz4Raw()}, {@link #zstd(int)},
  * {@link #brotli()}, {@link #lzo()}, {@link #lz4Hadoop()}).
  *
- * <p>{@link #wireCodec()} maps to the parquet-format wire enum ({@link CompressionCodec}) that lands in the footer's
- * {@link io.tileverse.parquetry.format.ColumnMetaData#codec() ColumnMetaData.codec}; {@link #forWireCodec} resolves a
- * wire enum value back to the default-parameterized case for the read path.
+ * <p>The byte-level work is delegated to the {@link Codec} engines in {@code parquetry-compression}; this type owns the
+ * Parquet-side concerns: {@link #wireCodec()} maps to the parquet-format wire enum ({@link CompressionCodec}) that
+ * lands in the footer's {@link io.tileverse.parquetry.format.ColumnMetaData#codec() ColumnMetaData.codec};
+ * {@link #forWireCodec} resolves a wire enum value back to the default-parameterized case for the read path.
  *
- * <p>Three variants are decode-only: {@link Brotli} (the {@code org.brotli:dec} library ships only a decoder),
+ * <p>Three cases are decode-only: {@link Brotli} (the {@code org.brotli:dec} library ships only a decoder),
  * {@link Lz4Hadoop} (the deprecated LZ4 wire codec; new writers should emit {@link Lz4Raw} instead), and -- per the "do
  * not produce deprecated formats" rule -- nothing else. {@link Lzo} encodes and decodes both: the LZO wire codec is not
  * deprecated, just historically encumbered by C-library licensing.
@@ -141,7 +123,7 @@ public sealed interface Compression
 
     /**
      * Resolves a wire enum value to the default-parameterized case. Used on the read path where the wire form does not
-     * carry codec parameters; ZSTD-level information is not present in the wire enum so this method returns
+     * include codec parameters; ZSTD-level information is not present in the wire enum, thus this method returns
      * {@link #zstd(int) zstd(3)}.
      */
     static Compression forWireCodec(CompressionCodec wire) {
@@ -162,39 +144,35 @@ public sealed interface Compression
 
         static final Uncompressed INSTANCE = new Uncompressed();
 
+        private static final Codec ENGINE = Codec.uncompressed();
+
         @Override
         public CompressionCodec wireCodec() {
             return CompressionCodec.UNCOMPRESSED;
         }
 
         @Override
-        public int decompress(MemorySegment src, MemorySegment output) {
-            long size = src.byteSize();
-            MemorySegment.copy(src, 0L, output, 0L, size);
-            return (int) size;
+        public int decompress(MemorySegment src, MemorySegment output) throws IOException {
+            return ENGINE.decompress(src, output);
         }
 
         @Override
         public int compress(MemorySegment src, MemorySegment output) throws IOException {
-            long size = src.byteSize();
-            if (size > output.byteSize()) {
-                throw new IOException(
-                        "UNCOMPRESSED output buffer too small: need " + size + " bytes, have " + output.byteSize());
-            }
-            MemorySegment.copy(src, 0L, output, 0L, size);
-            return (int) size;
+            return ENGINE.compress(src, output);
         }
 
         @Override
         public long maxCompressedLength(long uncompressedLength) {
-            return uncompressedLength;
+            return ENGINE.maxCompressedLength(uncompressedLength);
         }
     }
 
-    /** Snappy codec; uses aircompressor's snappy compressor/decompressor. */
+    /** Snappy codec; raw snappy block format, as other Parquet writers emit. */
     record Snappy() implements Compression {
 
         static final Snappy INSTANCE = new Snappy();
+
+        private static final Codec ENGINE = Codec.snappy();
 
         @Override
         public CompressionCodec wireCodec() {
@@ -202,43 +180,27 @@ public sealed interface Compression
         }
 
         @Override
-        public int decompress(MemorySegment src, MemorySegment output) {
-            return SnappyDecompressor.create().decompress(src, output);
+        public int decompress(MemorySegment src, MemorySegment output) throws IOException {
+            return ENGINE.decompress(src, output);
         }
 
         @Override
         public int compress(MemorySegment src, MemorySegment output) throws IOException {
-            SnappyCompressor compressor = SnappyCompressor.create();
-            try {
-                return compressor.compress(src, output);
-            } catch (IllegalArgumentException overflow) {
-                throw new IOException(
-                        "SNAPPY output buffer too small for input of " + src.byteSize() + " bytes", overflow);
-            }
+            return ENGINE.compress(src, output);
         }
 
         @Override
         public long maxCompressedLength(long uncompressedLength) {
-            return SnappyCompressor.create().maxCompressedLength(CompressionSupport.intExact(uncompressedLength));
+            return ENGINE.maxCompressedLength(uncompressedLength);
         }
     }
 
-    /**
-     * GZIP codec. The JDK's {@link GZIPInputStream}/{@link GZIPOutputStream} are stream/byte-array based, so the
-     * boundary with the codec's {@link MemorySegment} API is bridged via {@code byte[]} copies. Not on the hot path.
-     *
-     * <p>Aircompressor v3 ships only a hadoop-stream-based gzip codec (no standalone {@code Compressor}), so we drive
-     * {@link GZIPOutputStream} directly. {@link #maxCompressedLength(long)} mirrors the conservative bound used by
-     * {@code java.util.zip.Deflater}: the source length, rounded up to a 16 KiB boundary, plus a 64-byte header/trailer
-     * allowance, with a 32-byte floor for empty/tiny payloads.
-     */
+    /** GZIP codec. */
     record Gzip() implements Compression {
 
         static final Gzip INSTANCE = new Gzip();
 
-        private static final int HEADER_TRAILER_ALLOWANCE = 64;
-        private static final int BLOCK_OVERHEAD_GRANULARITY = 16 * 1024;
-        private static final long MIN_OUTPUT_SIZE = 32L;
+        private static final Codec ENGINE = Codec.gzip();
 
         @Override
         public CompressionCodec wireCodec() {
@@ -247,43 +209,26 @@ public sealed interface Compression
 
         @Override
         public int decompress(MemorySegment src, MemorySegment output) throws IOException {
-            byte[] in = src.toArray(JAVA_BYTE);
-            try (GZIPInputStream gz = new GZIPInputStream(new ByteArrayInputStream(in))) {
-                return CompressionSupport.streamToSegment(gz, output);
-            }
+            return ENGINE.decompress(src, output);
         }
 
         @Override
         public int compress(MemorySegment src, MemorySegment output) throws IOException {
-            CompressionSupport.BoundedSegmentOutputStream sink =
-                    new CompressionSupport.BoundedSegmentOutputStream(output);
-            try (GZIPOutputStream gz = new GZIPOutputStream(sink)) {
-                CompressionSupport.writeFromSegment(src, gz);
-            }
-            return sink.written();
+            return ENGINE.compress(src, output);
         }
 
         @Override
         public long maxCompressedLength(long uncompressedLength) {
-            // Java's Deflater accepts int-sized inputs only; capping here avoids overflow in the rounding arithmetic
-            // below when uncompressedLength is near Long.MAX_VALUE.
-            if (uncompressedLength < 0 || uncompressedLength > Integer.MAX_VALUE) {
-                throw new IllegalArgumentException("uncompressedLength out of range: " + uncompressedLength);
-            }
-            long blocks = (uncompressedLength + BLOCK_OVERHEAD_GRANULARITY - 1) / BLOCK_OVERHEAD_GRANULARITY;
-            long overheadFromBlocks = blocks * 5L;
-            long total = uncompressedLength + overheadFromBlocks + HEADER_TRAILER_ALLOWANCE;
-            return Math.max(total, MIN_OUTPUT_SIZE);
+            return ENGINE.maxCompressedLength(uncompressedLength);
         }
     }
 
-    /**
-     * LZ4_RAW codec. Uses aircompressor's {@link Lz4Compressor} / {@link Lz4Decompressor}, which handle the raw LZ4
-     * block format (no frame header) that Parquet's LZ4_RAW encoding uses.
-     */
+    /** LZ4_RAW codec: the raw LZ4 block format (no frame header) that Parquet's LZ4_RAW encoding uses. */
     record Lz4Raw() implements Compression {
 
         static final Lz4Raw INSTANCE = new Lz4Raw();
+
+        private static final Codec ENGINE = Codec.lz4Raw();
 
         @Override
         public CompressionCodec wireCodec() {
@@ -291,44 +236,34 @@ public sealed interface Compression
         }
 
         @Override
-        public int decompress(MemorySegment src, MemorySegment output) {
-            return Lz4Decompressor.create().decompress(src, output);
+        public int decompress(MemorySegment src, MemorySegment output) throws IOException {
+            return ENGINE.decompress(src, output);
         }
 
         @Override
         public int compress(MemorySegment src, MemorySegment output) throws IOException {
-            Lz4Compressor compressor = Lz4Compressor.create();
-            try {
-                return compressor.compress(src, output);
-            } catch (IllegalArgumentException overflow) {
-                throw new IOException(
-                        "LZ4_RAW output buffer too small for input of " + src.byteSize() + " bytes", overflow);
-            }
+            return ENGINE.compress(src, output);
         }
 
         @Override
         public long maxCompressedLength(long uncompressedLength) {
-            return Lz4Compressor.create().maxCompressedLength(CompressionSupport.intExact(uncompressedLength));
+            return ENGINE.maxCompressedLength(uncompressedLength);
         }
     }
 
     /**
      * ZSTD codec. The compression level (range {@code [1, 22]}, default {@value #DEFAULT_LEVEL}) is configured at
-     * construction time.
+     * construction time. The level changes the compression ratio, not the wire format; on platforms where only the
+     * non-native zstd backend is available the engine degrades to the backend's default level.
      */
     record Zstd(int level) implements Compression {
 
         /** ZSTD default compression level, matching the underlying aircompressor default. */
-        public static final int DEFAULT_LEVEL = 3;
-
-        private static final int MIN_LEVEL = 1;
-        private static final int MAX_LEVEL = 22;
+        public static final int DEFAULT_LEVEL = Codec.Zstd.DEFAULT_LEVEL;
 
         public Zstd {
-            if (level < MIN_LEVEL || level > MAX_LEVEL) {
-                throw new IllegalArgumentException(
-                        "ZSTD compression level must be in [" + MIN_LEVEL + ", " + MAX_LEVEL + "], got " + level);
-            }
+            // Delegates range validation (and its error message) to the engine constructor.
+            Codec.zstd(level);
         }
 
         @Override
@@ -337,41 +272,18 @@ public sealed interface Compression
         }
 
         @Override
-        public int decompress(MemorySegment src, MemorySegment output) {
-            return ZstdDecompressor.create().decompress(src, output);
+        public int decompress(MemorySegment src, MemorySegment output) throws IOException {
+            return Codec.zstd(level).decompress(src, output);
         }
 
         @Override
         public int compress(MemorySegment src, MemorySegment output) throws IOException {
-            ZstdCompressor compressor = compressorAtBestLevel();
-            try {
-                return compressor.compress(src, output);
-            } catch (IllegalArgumentException overflow) {
-                throw new IOException(
-                        "ZSTD output buffer too small for input of " + src.byteSize() + " bytes", overflow);
-            }
+            return Codec.zstd(level).compress(src, output);
         }
 
         @Override
         public long maxCompressedLength(long uncompressedLength) {
-            return compressorAtBestLevel().maxCompressedLength(CompressionSupport.intExact(uncompressedLength));
-        }
-
-        /**
-         * A compressor at the configured {@link #level}, degrading to the backend default when only the non-native zstd
-         * compressor is available (platforms without aircompressor's native zstd, such as Windows). That compressor
-         * accepts only its default level and rejects any other. The level changes the compression ratio, not the wire
-         * format; a file written at the default level still reads back identically, on every platform.
-         *
-         * <p>The level is already validated to {@code [1, 22]} by the constructor; a rejection here can only mean the
-         * non-native backend declining a non-default level.
-         */
-        private ZstdCompressor compressorAtBestLevel() {
-            try {
-                return ZstdCompressor.create(level);
-            } catch (IllegalArgumentException _) {
-                return ZstdCompressor.create();
-            }
+            return Codec.zstd(level).maxCompressedLength(uncompressedLength);
         }
     }
 
@@ -385,9 +297,7 @@ public sealed interface Compression
 
         static final Brotli INSTANCE = new Brotli();
 
-        private static final String COMPRESS_UNSUPPORTED_MESSAGE =
-                "Brotli compression is not supported: the org.brotli:dec dependency is decoder-only "
-                        + "and aircompressor v3 does not provide a Brotli compressor";
+        private static final Codec ENGINE = Codec.brotli();
 
         @Override
         public CompressionCodec wireCodec() {
@@ -396,30 +306,26 @@ public sealed interface Compression
 
         @Override
         public int decompress(MemorySegment src, MemorySegment output) throws IOException {
-            byte[] in = src.toArray(JAVA_BYTE);
-            try (BrotliInputStream br = new BrotliInputStream(new ByteArrayInputStream(in))) {
-                return CompressionSupport.streamToSegment(br, output);
-            }
+            return ENGINE.decompress(src, output);
         }
 
         @Override
-        public int compress(MemorySegment src, MemorySegment output) {
-            throw new UnsupportedOperationException(COMPRESS_UNSUPPORTED_MESSAGE);
+        public int compress(MemorySegment src, MemorySegment output) throws IOException {
+            return ENGINE.compress(src, output);
         }
 
         @Override
         public long maxCompressedLength(long uncompressedLength) {
-            throw new UnsupportedOperationException(COMPRESS_UNSUPPORTED_MESSAGE);
+            return ENGINE.maxCompressedLength(uncompressedLength);
         }
     }
 
-    /**
-     * LZO codec. Uses aircompressor's {@link LzoCompressor} / {@link LzoDecompressor} on raw LZO block data (no Hadoop
-     * stream framing).
-     */
+    /** LZO codec; raw LZO block data (no Hadoop stream framing). */
     record Lzo() implements Compression {
 
         static final Lzo INSTANCE = new Lzo();
+
+        private static final Codec ENGINE = Codec.lzo();
 
         @Override
         public CompressionCodec wireCodec() {
@@ -427,24 +333,18 @@ public sealed interface Compression
         }
 
         @Override
-        public int decompress(MemorySegment src, MemorySegment output) {
-            return new LzoDecompressor().decompress(src, output);
+        public int decompress(MemorySegment src, MemorySegment output) throws IOException {
+            return ENGINE.decompress(src, output);
         }
 
         @Override
         public int compress(MemorySegment src, MemorySegment output) throws IOException {
-            LzoCompressor compressor = new LzoCompressor();
-            try {
-                return compressor.compress(src, output);
-            } catch (IllegalArgumentException overflow) {
-                throw new IOException(
-                        "LZO output buffer too small for input of " + src.byteSize() + " bytes", overflow);
-            }
+            return ENGINE.compress(src, output);
         }
 
         @Override
         public long maxCompressedLength(long uncompressedLength) {
-            return new LzoCompressor().maxCompressedLength(CompressionSupport.intExact(uncompressedLength));
+            return ENGINE.maxCompressedLength(uncompressedLength);
         }
     }
 
@@ -460,6 +360,9 @@ public sealed interface Compression
 
         static final Lz4Hadoop INSTANCE = new Lz4Hadoop();
 
+        private static final Codec FRAMED = Codec.lz4Hadoop();
+        private static final Codec RAW = Codec.lz4Raw();
+
         private static final String COMPRESS_UNSUPPORTED_MESSAGE =
                 "Legacy LZ4 (Hadoop framing) compression is not supported because the parquet-format spec "
                         + "deprecates this codec; use lz4Raw() for new writes";
@@ -470,23 +373,16 @@ public sealed interface Compression
         }
 
         @Override
-        public int decompress(MemorySegment src, MemorySegment output) {
-            OptionalInt framed = tryHadoopFramed(src, output);
-            if (framed.isPresent()) {
-                return framed.getAsInt();
-            }
-            return Lz4Decompressor.create().decompress(src, output);
-        }
-
-        private static OptionalInt tryHadoopFramed(MemorySegment src, MemorySegment output) {
-            byte[] in = src.toArray(JAVA_BYTE);
-            InputStream wrapped = new ByteArrayInputStream(in);
-            try (HadoopInputStream hadoop = new Lz4HadoopStreams().createInputStream(wrapped)) {
-                int written = CompressionSupport.streamToSegment(hadoop, output);
-                return written == output.byteSize() ? OptionalInt.of(written) : OptionalInt.empty();
+        public int decompress(MemorySegment src, MemorySegment output) throws IOException {
+            try {
+                int written = FRAMED.decompress(src, output);
+                if (written == output.byteSize()) {
+                    return written;
+                }
             } catch (IOException _) {
-                return OptionalInt.empty();
+                // Not a Hadoop-framed stream; fall through to raw LZ4 decoding.
             }
+            return RAW.decompress(src, output);
         }
 
         @Override

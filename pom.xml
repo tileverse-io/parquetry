@@ -37,6 +37,7 @@
     <module>dependencies</module>
     <module>bom</module>
     <module>parquetry-io</module>
+    <module>parquetry-compression</module>
     <module>parquetry-format</module>
     <module>parquetry-core</module>
     <module>parquetry-catalog</module>

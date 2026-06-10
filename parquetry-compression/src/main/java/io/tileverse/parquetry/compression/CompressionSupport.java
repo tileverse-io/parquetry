@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.data;
+package io.tileverse.parquetry.compression;
 
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
@@ -22,16 +22,46 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.foreign.MemorySegment;
 
-/** Package-private helpers shared by {@link Compression} record implementations. */
+/** Package-private helpers shared by {@link Codec} record implementations. */
 final class CompressionSupport {
 
     private CompressionSupport() {}
+
+    private static final int DEFLATE_HEADER_TRAILER_ALLOWANCE = 64;
+    private static final int DEFLATE_BLOCK_OVERHEAD_GRANULARITY = 16 * 1024;
+    private static final long DEFLATE_MIN_OUTPUT_SIZE = 32L;
 
     static int intExact(long uncompressedLength) {
         if (uncompressedLength < 0 || uncompressedLength > Integer.MAX_VALUE) {
             throw new IllegalArgumentException("uncompressedLength out of range: " + uncompressedLength);
         }
         return (int) uncompressedLength;
+    }
+
+    /**
+     * Conservative compressed-size bound for DEFLATE-based codecs, mirroring {@code java.util.zip.Deflater}: the source
+     * length, rounded up to a 16 KiB boundary at 5 bytes of block overhead each, plus a 64-byte header/trailer
+     * allowance, with a 32-byte floor for empty/tiny payloads.
+     */
+    static long deflateBound(long uncompressedLength) {
+        // Java's Deflater accepts int-sized inputs only; capping here avoids overflow in the rounding arithmetic
+        // below when uncompressedLength is near Long.MAX_VALUE.
+        if (uncompressedLength < 0 || uncompressedLength > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("uncompressedLength out of range: " + uncompressedLength);
+        }
+        long blocks =
+                (uncompressedLength + DEFLATE_BLOCK_OVERHEAD_GRANULARITY - 1) / DEFLATE_BLOCK_OVERHEAD_GRANULARITY;
+        long overheadFromBlocks = blocks * 5L;
+        long total = uncompressedLength + overheadFromBlocks + DEFLATE_HEADER_TRAILER_ALLOWANCE;
+        return Math.max(total, DEFLATE_MIN_OUTPUT_SIZE);
+    }
+
+    /** Copies the first {@code max} bytes of {@code src} (or all of it when shorter) into a fresh array. */
+    static byte[] prefix(MemorySegment src, int max) {
+        int length = (int) Math.min(src.byteSize(), max);
+        byte[] out = new byte[length];
+        MemorySegment.copy(src, JAVA_BYTE, 0, out, 0, length);
+        return out;
     }
 
     static void writeFromSegment(MemorySegment src, OutputStream sink) throws IOException {
@@ -54,6 +84,9 @@ final class CompressionSupport {
             int n = in.read(buf);
             if (n < 0) {
                 break;
+            }
+            if ((long) written + n > output.byteSize()) {
+                throw new IOException("Output buffer too small (limit=" + output.byteSize() + ")");
             }
             MemorySegment.copy(buf, 0, output, JAVA_BYTE, written, n);
             written += n;
@@ -92,7 +125,7 @@ final class CompressionSupport {
 
         private void ensureCapacity(int additional) throws IOException {
             if ((long) written + additional > limit) {
-                throw new IOException("GZIP output buffer too small (limit=" + limit + ")");
+                throw new IOException("Output buffer too small (limit=" + limit + ")");
             }
         }
 
