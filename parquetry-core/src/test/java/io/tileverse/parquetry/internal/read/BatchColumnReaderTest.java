@@ -18,6 +18,7 @@ package io.tileverse.parquetry.internal.read;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -52,6 +53,7 @@ import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.internal.read.page.Dictionary;
 import io.tileverse.parquetry.internal.read.page.PageCursor;
+import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
@@ -321,6 +323,29 @@ class BatchColumnReaderTest {
         assertThat(vec.validity().isValid(2)).isFalse();
         assertThat(vec.validity().isValid(3)).isTrue();
         assertThat(vec.getInt(3)).isEqualTo(33);
+    }
+
+    /**
+     * Regression: when the origin-validity fast path has already acquired its pooled off-heap bitmap and the value
+     * decode of the same page then throws, the page-load failure path must release that buffer instead of holding it
+     * (and its decode-budget reservation) until the reader is closed. The page declares two non-null INT32 values but
+     * provides bytes for only one; the def-level decode succeeds, the PLAIN value decode throws.
+     */
+    @Test
+    void originValidityBufferIsReleasedWhenValueDecodeThrows() throws IOException {
+        byte[] defBytes = rleEncodeBits(new int[] {1, 0, 1, 0}, /*maxLevel*/ 1);
+        byte[] truncatedValueBytes = encodeInt32sLittleEndian(new int[] {10});
+        byte[] payload = buildV1PayloadWithDefLevels(defBytes, truncatedValueBytes);
+        byte[] chunkBuffer = encodeV1Page(4, payload, org.apache.parquet.format.Encoding.PLAIN);
+        FetchedColumnChunk chunk = heapChunk(PATH, chunkBuffer, 4, /*maxRep*/ 0, /*maxDef*/ 1);
+
+        SegmentPool pool = SegmentPool.create();
+        BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(pool), chunk, optionalInt32Leaf());
+
+        assertThatThrownBy(() -> reader.readBatch(10, new ArrayList<>())).isInstanceOf(RuntimeException.class);
+        assertThat(pool.stats().outstandingBorrows())
+                .as("the origin-validity bitmap must be released when the page decode fails")
+                .isZero();
     }
 
     // --- test 4: hasMore false after all pages consumed ---

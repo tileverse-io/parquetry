@@ -35,8 +35,13 @@ final class TestDecodeBuffers {
     private TestDecodeBuffers() {}
 
     static DecodeBufferAllocator ample() {
+        return ample(SegmentPool.getDefault());
+    }
+
+    /** Same ample budgets over a caller-supplied pool, letting a test assert on that pool's borrow accounting. */
+    static DecodeBufferAllocator ample(SegmentPool pool) {
         return new DecodeBufferAllocator(
-                SegmentPool.getDefault(),
+                pool,
                 DecodeBudget.ofBytes(AMPLE_DECODE_BUDGET),
                 new FetchSpillStore(spillDir(), DiskBudget.ofBytes(AMPLE_DISK_BUDGET)));
     }

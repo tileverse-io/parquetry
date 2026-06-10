@@ -326,6 +326,9 @@ final class BatchColumnReader {
             DecodedPage page = readNextDataPage(arena);
             decodeIntoHeap(page);
         } catch (RuntimeException e) {
+            // decodeIntoHeap may have parked the origin-validity bitmap in its field before the value decode threw;
+            // unwind it here rather than holding it (and its decode-budget reservation) until the reader is closed
+            releaseOriginValidity();
             arena.close();
             throw e;
         }
