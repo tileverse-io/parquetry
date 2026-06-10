@@ -44,6 +44,7 @@ import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.DoubleVector;
 import io.tileverse.parquetry.batch.FloatVector;
 import io.tileverse.parquetry.batch.IntVector;
+import io.tileverse.parquetry.batch.Levels;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.format.ColumnMetaData;
@@ -203,11 +204,11 @@ class BatchColumnReaderTest {
 
         BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, leaf);
 
-        int[] defLevels = reader.currentPageDefLevels();
+        Levels defLevels = reader.currentPageDefLevels();
         assertThat(defLevels)
                 .as("a non-top-level leaf must retain its def-level stream for struct null reconstruction")
-                .isNotNull()
-                .containsExactly(0, 1, 0, 1);
+                .isNotNull();
+        assertThat(intsOf(defLevels)).containsExactly(0, 1, 0, 1);
 
         IntVector vec = (IntVector) reader.readBatch(10, new ArrayList<>());
         assertThat(vec.size()).isEqualTo(4);
@@ -219,6 +220,57 @@ class BatchColumnReaderTest {
         assertThat(vec.validity().isValid(2)).isFalse();
         assertThat(vec.validity().isValid(3)).isTrue();
         assertThat(vec.getInt(3)).isEqualTo(33);
+    }
+
+    /**
+     * A nested optional leaf read across two pages: the reader's def-level scratch is reused for page 2, and the page-1
+     * values and validity must already be consumed correctly before the reuse overwrites the buffer.
+     */
+    @Test
+    void nestedLeafDefLevelsSurviveScratchReuseAcrossPages() throws IOException {
+        byte[] page1 = nullableInt32Page(new int[] {0, 1, 1}, new int[] {11, 22});
+        byte[] page2 = nullableInt32Page(new int[] {1, 0, 1, 1}, new int[] {33, 44, 55});
+        ColumnPath nestedPath = ColumnPath.of("info", "value");
+        FetchedColumnChunk chunk =
+                heapChunk(nestedPath, concat(page1, page2), /*numValues*/ 7, /*maxRep*/ 0, /*maxDef*/ 1);
+        SchemaNode.Primitive leaf = new SchemaNode.Primitive(
+                "value", Repetition.REQUIRED, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
+
+        SegmentPool pool = SegmentPool.create();
+        BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(pool), chunk, leaf);
+
+        assertThat(intsOf(reader.currentPageDefLevels())).containsExactly(0, 1, 1);
+        IntVector first = (IntVector) reader.readBatch(10, new ArrayList<>());
+        assertThat(first.size()).isEqualTo(3);
+        assertThat(first.validity().isValid(0)).isFalse();
+        assertThat(first.getInt(1)).isEqualTo(11);
+        assertThat(first.getInt(2)).isEqualTo(22);
+
+        // The next currentPageDefLevels call is what loads page 2. That load draws nothing from the pool: the
+        // def-level scratch's buffer already fits page 2's levels, and a nullable INT32 page decodes its values and
+        // validity on the heap. A zero borrow delta across the call pins the scratch reuse.
+        long borrowsBeforePageTwoLoad = pool.stats().totalBorrows();
+        assertThat(intsOf(reader.currentPageDefLevels()))
+                .as("page 2 decoded into the reused scratch")
+                .containsExactly(1, 0, 1, 1);
+        assertThat(pool.stats().totalBorrows())
+                .as("loading page 2 reuses the def-level scratch buffer instead of borrowing a new one")
+                .isEqualTo(borrowsBeforePageTwoLoad);
+        IntVector second = (IntVector) reader.readBatch(10, new ArrayList<>());
+        assertThat(second.size()).isEqualTo(4);
+        assertThat(second.getInt(0)).isEqualTo(33);
+        assertThat(second.validity().isValid(1)).isFalse();
+        assertThat(second.getInt(2)).isEqualTo(44);
+        assertThat(second.getInt(3)).isEqualTo(55);
+        assertThat(reader.hasMore()).isFalse();
+    }
+
+    private static int[] intsOf(Levels levels) {
+        int[] out = new int[levels.size()];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = levels.get(i);
+        }
+        return out;
     }
 
     /**

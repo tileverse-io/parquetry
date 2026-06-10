@@ -32,6 +32,7 @@ import org.apache.parquet.format.PageType;
 import org.apache.parquet.format.Util;
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.batch.Levels;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.CompressionCodec;
 import io.tileverse.parquetry.format.Encoding;
@@ -70,12 +71,12 @@ class DefLevelRetentionTest {
 
         BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, leaf);
 
-        int[] elementDefs = reader.currentPageDefLevels();
-
-        assertThat(elementDefs)
+        Levels elementDefLevels = reader.currentPageDefLevels();
+        assertThat(elementDefLevels)
                 .as("def-level stream is retained, not collapsed to present/absent")
-                .isNotNull()
-                .containsExactly(2, 0, 1, 2);
+                .isNotNull();
+        int[] elementDefs = intsOf(elementDefLevels);
+        assertThat(elementDefs).containsExactly(2, 0, 1, 2);
 
         boolean hasIntermediate = false;
         for (int d : elementDefs) {
@@ -86,6 +87,14 @@ class DefLevelRetentionTest {
         assertThat(hasIntermediate)
                 .as("def-level stream retains an intermediate level strictly between 0 and maxDef")
                 .isTrue();
+    }
+
+    private static int[] intsOf(Levels levels) {
+        int[] out = new int[levels.size()];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = levels.get(i);
+        }
+        return out;
     }
 
     // --- fixture helpers ---

@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Set;
 
 import io.tileverse.parquetry.batch.ColumnVector;
+import io.tileverse.parquetry.batch.Levels;
 import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.MapVector;
 import io.tileverse.parquetry.batch.StructVector;
@@ -159,7 +160,7 @@ public final class NestedVectorAssembler {
     private static Map<ColumnPath, LevelSlice> wholeSlices(Map<ColumnPath, int[]> levelsByLeaf) {
         Map<ColumnPath, LevelSlice> slices = HashMap.newHashMap(levelsByLeaf.size());
         for (Map.Entry<ColumnPath, int[]> entry : levelsByLeaf.entrySet()) {
-            slices.put(entry.getKey(), LevelSlice.ofWhole(entry.getValue()));
+            slices.put(entry.getKey(), LevelSlice.ofWhole(Levels.of(entry.getValue())));
         }
         return slices;
     }

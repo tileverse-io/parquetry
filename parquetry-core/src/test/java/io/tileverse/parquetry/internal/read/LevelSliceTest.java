@@ -20,11 +20,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.batch.Levels;
+
 class LevelSliceTest {
 
     @Test
     void atReadsThroughTheWindowOffset() {
-        int[] levels = {9, 9, 0, 1, 2, 9};
+        Levels levels = Levels.of(new int[] {9, 9, 0, 1, 2, 9});
         LevelSlice slice = new LevelSlice(levels, 2, 3);
 
         assertThat(slice.length()).as("window length").isEqualTo(3);
@@ -34,9 +36,8 @@ class LevelSliceTest {
     }
 
     @Test
-    void ofWholeCoversTheEntireArray() {
-        int[] levels = {0, 1, 0};
-        LevelSlice slice = LevelSlice.ofWhole(levels);
+    void ofWholeCoversTheEntireSequence() {
+        LevelSlice slice = LevelSlice.ofWhole(Levels.of(new int[] {0, 1, 0}));
 
         assertThat(slice.length()).isEqualTo(3);
         assertThat(slice.at(0)).isZero();
@@ -46,15 +47,14 @@ class LevelSliceTest {
 
     @Test
     void emptyWindowHasZeroLength() {
-        int[] levels = {0, 1, 0};
-        LevelSlice slice = new LevelSlice(levels, 1, 0);
+        LevelSlice slice = new LevelSlice(Levels.of(new int[] {0, 1, 0}), 1, 0);
 
         assertThat(slice.length()).isZero();
     }
 
     @Test
-    void rejectsAWindowPastTheArrayEnd() {
-        int[] levels = {0, 1, 0};
+    void rejectsAWindowPastTheSequenceEnd() {
+        Levels levels = Levels.of(new int[] {0, 1, 0});
 
         assertThatThrownBy(() -> new LevelSlice(levels, 2, 2)).isInstanceOf(IndexOutOfBoundsException.class);
     }

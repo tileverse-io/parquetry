@@ -18,6 +18,7 @@ package io.tileverse.parquetry.internal.read.page;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 
 /**
  * Decodes Parquet repetition and definition level streams.
@@ -100,6 +101,16 @@ public final class LevelDecoder {
     public void decode(int n, int[] dst, int offset) {
         for (int i = 0; i < n; i++) {
             dst[offset + i] = nextValue();
+        }
+    }
+
+    /**
+     * Decodes the next {@code n} level values into {@code dst} as 32-bit native-order ints, written unaligned (pooled
+     * segments make no alignment promise). {@code dst} must cover at least {@code 4L * n} bytes.
+     */
+    public void decodeInto(int n, MemorySegment dst) {
+        for (int i = 0; i < n; i++) {
+            dst.setAtIndex(ValueLayout.JAVA_INT_UNALIGNED, i, nextValue());
         }
     }
 
