@@ -129,6 +129,27 @@ public final class Validity {
         return size - nullCount;
     }
 
+    /**
+     * The mask for rows {@code [start, start + n)} of this mask, rebased to row zero and owning its own bitmap. A range
+     * with no null row collapses to the all-valid representation. The off-heap representation materializes the slice
+     * into a heap {@link BitSet}; a caller that owns the underlying segment can copy bytes off-heap instead.
+     */
+    public Validity slice(int start, int n) {
+        if (nullCount == 0) {
+            return allValid(n);
+        }
+        if (validBits != null) {
+            return of(validBits.get(start, start + n), n);
+        }
+        BitSet out = new BitSet(n);
+        for (int i = 0; i < n; i++) {
+            if (isValid(start + i)) {
+                out.set(i);
+            }
+        }
+        return of(out, n);
+    }
+
     /** A fresh mutable copy of the valid-bit mask, independent of this instance. */
     public BitSet copy() {
         BitSet out = new BitSet(size);

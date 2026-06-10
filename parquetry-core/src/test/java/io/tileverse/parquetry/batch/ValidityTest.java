@@ -130,4 +130,68 @@ class ValidityTest {
         Validity validity = Validity.ofSegment(seg, 0, 8);
         assertThat(validity.heapBytes()).as("off-heap bitmap is not heap").isZero();
     }
+
+    @Test
+    void sliceOfFullyValidRangeCollapsesToAllValid() {
+        BitSet bits = new BitSet();
+        bits.set(0, 10);
+        bits.clear(8); // a null outside the sliced range keeps the mask bitmap-backed
+        Validity validity = Validity.of(bits, 10);
+
+        Validity slice = validity.slice(3, 4); // rows 3..6, all valid
+
+        assertThat(slice.size()).as("slice row count").isEqualTo(4);
+        assertThat(slice.hasNulls()).as("a fully valid range has no nulls").isFalse();
+    }
+
+    @Test
+    void sliceRebasesNullsToRowZero() {
+        BitSet bits = new BitSet();
+        bits.set(0, 10);
+        bits.clear(5); // row 5 null
+        Validity validity = Validity.of(bits, 10);
+
+        Validity slice = validity.slice(3, 4); // rows 3..6 -> local index 2 is null
+
+        assertThat(slice.size()).as("slice row count").isEqualTo(4);
+        assertThat(slice.hasNulls()).as("the slice includes a null row").isTrue();
+        assertThat(slice.isNull(2)).as("row 5 maps to local index 2").isTrue();
+        assertThat(slice.isValid(0)).as("row 3 is valid").isTrue();
+        assertThat(slice.nullCount()).as("exactly one null in the slice").isEqualTo(1);
+    }
+
+    @Test
+    void sliceOfAllValidMaskIsAllValid() {
+        Validity slice = Validity.allValid(100).slice(20, 30);
+        assertThat(slice.size()).isEqualTo(30);
+        assertThat(slice.hasNulls()).isFalse();
+    }
+
+    @Test
+    void sliceExcludesBitsBeyondTheWindow() {
+        BitSet bits = new BitSet();
+        bits.set(0, 200);
+        bits.clear(40); // null before the window keeps the mask bitmap-backed
+        Validity validity = Validity.of(bits, 200);
+
+        Validity slice = validity.slice(50, 64);
+
+        assertThat(slice.size()).isEqualTo(64);
+        assertThat(slice.hasNulls()).isFalse();
+    }
+
+    @Test
+    void sliceOfSegmentBackedMaskMirrorsTheBits() {
+        byte bitmap = (byte) 0b1101_1011; // rows 2 and 5 null
+        MemorySegment seg = MemorySegment.ofArray(new byte[] {bitmap});
+        Validity validity = Validity.ofSegment(seg, 2, 8);
+
+        Validity slice = validity.slice(4, 4); // rows 4..7 -> local index 1 (row 5) null
+
+        assertThat(slice.size()).isEqualTo(4);
+        assertThat(slice.nullCount()).isEqualTo(1);
+        assertThat(slice.isNull(1)).as("row 5 maps to local index 1").isTrue();
+        assertThat(slice.isValid(0)).isTrue();
+        assertThat(slice.isValid(2)).isTrue();
+    }
 }

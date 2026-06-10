@@ -111,31 +111,22 @@ final class BatchColumnReader {
     private boolean pageLoaded;
     private int pageSize;
     private int pageLogicalRowCount;
-    private BitSet pageValidity;
-    // Flat optional fast path only (maxRep == 0, maxDef == 1, no row mask): the page's validity decoded straight from
-    // the def-level stream into an off-heap LSB-first bitmap (bit set == valid). When non-null, pageValidity (the heap
-    // BitSet) is left null and every validity read goes through pageValidityView instead. The pooled buffer is held for
-    // the page's lifetime and released at page-advance.
+    // The page's per-row null mask, whichever representation Validity collapsed it to: all-valid (no bitmap), a heap
+    // BitSet, or - on the flat optional fast path - the pooled off-heap bitmap decoded straight from the def-level
+    // stream. The pooled buffer behind that last representation is pageValidityPooled, held for the page's lifetime
+    // and released at page-advance; it is non-null exactly when pageValidity reads the off-heap bitmap.
+    private Validity pageValidity;
     private SegmentPool.Pooled pageValidityPooled;
-    private Validity pageValidityView;
     private int[] pageRepLevels; // null when maxRep == 0
     private int[] pageDefLevels; // null when maxDef == 0
     private int[] pageInts;
     private long[] pageLongs;
     private float[] pageFloats;
     private double[] pageDoubles;
-    // Set only for PLAIN, all-valid INT32 pages: the live page value segment (little-endian ints).
-    // When non-null, pageInts is left null and slices copy straight from this segment (no heap array).
-    private MemorySegment pageIntValues;
-    // Set only for PLAIN, all-valid INT64 pages: the live page value segment (little-endian longs).
-    // When non-null, pageLongs is left null and slices copy straight from this segment (no heap array).
-    private MemorySegment pageLongValues;
-    // Set only for PLAIN, all-valid FLOAT pages: the live page value segment (little-endian floats).
-    // When non-null, pageFloats is left null and slices copy straight from this segment (no heap array).
-    private MemorySegment pageFloatValues;
-    // Set only for PLAIN, all-valid DOUBLE pages: the live page value segment (little-endian doubles).
-    // When non-null, pageDoubles is left null and slices copy straight from this segment (no heap array).
-    private MemorySegment pageDoubleValues;
+    // Set only for PLAIN, all-valid fixed-width pages (INT32 / INT64 / FLOAT / DOUBLE): the live page value segment in
+    // the column's little-endian layout. When non-null the heap array of the same kind is left null and slices copy
+    // straight from this segment (no heap array).
+    private MemorySegment pageLiveValues;
     private boolean[] pageBooleans;
 
     // Scratch holder for PLAIN/DELTA binary between value decode and the freeze step that consolidates it into the
@@ -150,8 +141,9 @@ final class BatchColumnReader {
     // the row's value bytes within the live page value segment (pageBinaryBacking). Null rows hold 0 and are never
     // read.
     private int[] pageValuePos;
-    // True while pageBinaryBacking points into a still-open page Arena the binary slices read from directly. The Arena
-    // is then kept alive across the page's batches and closed at page-advance.
+    // True while a page payload - the binary backing or the fixed-width live value segment - points into a still-open
+    // page Arena the slices read from directly. The Arena is then kept alive across the page's batches and closed at
+    // page-advance.
     private boolean pageBackingIsLivePage;
     // The page Arena kept alive across the page's batches when pageBackingIsLivePage; closed at advance / reader close.
     private Arena livePageArena;
@@ -395,7 +387,6 @@ final class BatchColumnReader {
 
     /** Releases the off-heap origin validity bitmap held for the flat fast path, if any. */
     private void releaseOriginValidity() {
-        pageValidityView = null;
         if (pageValidityPooled != null) {
             pageValidityPooled.close();
             pageValidityPooled = null;
@@ -414,10 +405,7 @@ final class BatchColumnReader {
         pageLongs = null;
         pageFloats = null;
         pageDoubles = null;
-        pageIntValues = null;
-        pageLongValues = null;
-        pageFloatValues = null;
-        pageDoubleValues = null;
+        pageLiveValues = null;
         pageBooleans = null;
         pageSegments = null;
         pageBinaryBacking = null;
@@ -430,23 +418,23 @@ final class BatchColumnReader {
     // ---- level decoding ----
 
     /**
-     * Derives the present/absent bitmap from the already-decoded definition levels: bit {@code i} is set when value
-     * {@code i} is defined at the leaf, i.e. its definition level equals {@code maxDef}. A column with no optional
-     * ancestor ({@code maxDef == 0}, def levels absent and {@code defLevels == null}) has every value present.
+     * Derives the page's null mask from the already-decoded definition levels: value {@code i} is present when its
+     * definition level equals {@code maxDef}. A column with no optional ancestor ({@code maxDef == 0}, def levels
+     * absent and {@code defLevels == null}) has every value present and allocates no bitmap, as does a null-free page
+     * ({@link Validity#of} collapses it).
      */
-    private BitSet deriveValidity(int[] defLevels, int values) {
-        BitSet validity = new BitSet(values);
+    private Validity deriveValidity(int[] defLevels, int values) {
         if (defLevels == null) {
-            validity.set(0, values);
-            return validity;
+            return Validity.allValid(values);
         }
+        BitSet validity = new BitSet(values);
         int maxDef = maxLevels.maxDefinitionLevel();
         for (int i = 0; i < values; i++) {
             if (defLevels[i] == maxDef) {
                 validity.set(i);
             }
         }
-        return validity;
+        return Validity.of(validity, values);
     }
 
     /**
@@ -461,7 +449,7 @@ final class BatchColumnReader {
      * leaf's def levels to rebuild the optional struct's per-row null mask. Dropping that stream would silently lose
      * the struct's null rows. Only a top-level-flat leaf has no group ancestor that will ever ask for its def levels.
      *
-     * <p>Masked reads keep the heap path because their compaction rewrites the validity {@link BitSet}.
+     * <p>Masked reads keep the heap path because their compaction rewrites the page validity row by row.
      */
     private boolean canDecodeOriginValidity() {
         if (columnPath.numParts() != 1) {
@@ -477,9 +465,9 @@ final class BatchColumnReader {
     }
 
     /**
-     * Decodes the page's def-level stream straight into an off-heap LSB-first validity bitmap (bit set == present),
-     * leaving the heap {@link #pageValidity} {@link BitSet} null. The pooled buffer is held for the page's lifetime and
-     * released at page-advance; every validity read for the page goes through {@link #pageValidityView}.
+     * Decodes the page's def-level stream straight into an off-heap LSB-first validity bitmap (bit set == present). A
+     * null-bearing page keeps the pooled buffer behind {@link #pageValidity} for the page's lifetime, released at
+     * page-advance; an all-valid page collapses to the bitmap-free representation and returns its buffer immediately.
      */
     private void decodeOriginValidity(DecodedPage page) {
         long byteSize = Math.max(1L, (pageSize + 7) / 8);
@@ -489,10 +477,14 @@ final class BatchColumnReader {
             LevelDecoder defDecoder = new LevelDecoder(defBitWidth);
             defDecoder.load(page.defLevelBytes());
             int validCount = defDecoder.decodeValidityBitmap(pageSize, maxLevels.maxDefinitionLevel(), bitmap);
-            pageValidityView = Validity.ofSegment(bitmap, pageSize - validCount, pageSize);
-            pageValidity = null;
             pageDefLevels = null;
-            pageValidityPooled = pooled;
+            if (validCount == pageSize) {
+                pageValidity = Validity.allValid(pageSize);
+                pooled.close();
+            } else {
+                pageValidity = Validity.ofSegment(bitmap, pageSize - validCount, pageSize);
+                pageValidityPooled = pooled;
+            }
         } catch (RuntimeException e) {
             pooled.close();
             throw e;
@@ -572,32 +564,8 @@ final class BatchColumnReader {
 
     // ---- per-kind value decoding ----
 
-    /** The page's non-null value count, from whichever validity representation the page holds. */
-    private int pageNonNullCount() {
-        if (pageValidityView != null) {
-            return pageValidityView.cardinality();
-        }
-        return pageValidity.cardinality();
-    }
-
-    /** Index of the next present (non-null) row at or after {@code from}, or {@code -1}; representation-agnostic. */
-    private int nextPresentRow(int from) {
-        if (pageValidityView != null) {
-            return pageValidityView.nextSetBit(from);
-        }
-        return pageValidity.nextSetBit(from);
-    }
-
-    /** Whether page row {@code row} is present (non-null); representation-agnostic. */
-    private boolean isRowPresent(int row) {
-        if (pageValidityView != null) {
-            return pageValidityView.isValid(row);
-        }
-        return pageValidity.get(row);
-    }
-
     private void decodeValuesByKind(DecodedPage page) {
-        int nonNullCount = pageNonNullCount();
+        int nonNullCount = pageValidity.cardinality();
         decodedValueCount += nonNullCount;
         Encoding encoding = page.valuesEncoding();
         MemorySegment valueBuf = page.valueBytes();
@@ -608,33 +576,29 @@ final class BatchColumnReader {
         }
         switch (leaf.kind()) {
             case INT32 -> {
-                if (canSliceIntFromLivePage(encoding, nonNullCount)) {
-                    pageIntValues = valueBuf.asReadOnly();
-                    pageBackingIsLivePage = true;
+                if (canSliceFixedWidthFromLivePage(encoding, nonNullCount)) {
+                    retainLiveValues(valueBuf);
                 } else {
                     pageInts = decodeInts(valueBuf, encoding, nonNullCount, dict);
                 }
             }
             case INT64 -> {
-                if (canSliceLongFromLivePage(encoding, nonNullCount)) {
-                    pageLongValues = valueBuf.asReadOnly();
-                    pageBackingIsLivePage = true;
+                if (canSliceFixedWidthFromLivePage(encoding, nonNullCount)) {
+                    retainLiveValues(valueBuf);
                 } else {
                     pageLongs = decodeLongs(valueBuf, encoding, nonNullCount, dict);
                 }
             }
             case FLOAT -> {
-                if (canSliceFloatFromLivePage(encoding, nonNullCount)) {
-                    pageFloatValues = valueBuf.asReadOnly();
-                    pageBackingIsLivePage = true;
+                if (canSliceFixedWidthFromLivePage(encoding, nonNullCount)) {
+                    retainLiveValues(valueBuf);
                 } else {
                     pageFloats = decodeFloats(valueBuf, encoding, nonNullCount, dict);
                 }
             }
             case DOUBLE -> {
-                if (canSliceDoubleFromLivePage(encoding, nonNullCount)) {
-                    pageDoubleValues = valueBuf.asReadOnly();
-                    pageBackingIsLivePage = true;
+                if (canSliceFixedWidthFromLivePage(encoding, nonNullCount)) {
+                    retainLiveValues(valueBuf);
                 } else {
                     pageDoubles = decodeDoubles(valueBuf, encoding, nonNullCount, dict);
                 }
@@ -647,55 +611,22 @@ final class BatchColumnReader {
     }
 
     /**
-     * True when a DOUBLE page's values can be sliced straight from the live page segment with no heap {@code double[]}.
-     * Holds only for a PLAIN, all-valid page that is not later compacted to surviving rows: the value bytes are already
-     * the little-endian DOUBLE layout the slice copies from, and a surviving-rows page would compact through the heap
-     * {@link #pageDoubles} the {@link #gatherTypedPayloads(int[])} path reorders.
+     * True when a fixed-width page's values (INT32 / INT64 / FLOAT / DOUBLE) can be sliced straight from the live page
+     * segment with no heap array. Holds only for a PLAIN, all-valid page that is not later compacted to surviving rows:
+     * PLAIN value bytes are already the little-endian layout the slice copies from, and a surviving-rows page compacts
+     * through the heap arrays the {@link #gatherTypedPayloads(int[])} path reorders.
      */
-    private boolean canSliceDoubleFromLivePage(Encoding encoding, int nonNullCount) {
+    private boolean canSliceFixedWidthFromLivePage(Encoding encoding, int nonNullCount) {
         if (survivingRows != null) {
             return false;
         }
         return encoding == Encoding.PLAIN && nonNullCount == pageSize;
     }
 
-    /**
-     * True when an INT32 page's values can be sliced straight from the live page segment with no heap {@code int[]}.
-     * Holds only for a PLAIN, all-valid page that is not later compacted to surviving rows: the value bytes are already
-     * the little-endian INT32 layout the slice copies from, and a surviving-rows page would compact through the heap
-     * {@link #pageInts} the {@link #gatherTypedPayloads(int[])} path reorders.
-     */
-    private boolean canSliceIntFromLivePage(Encoding encoding, int nonNullCount) {
-        if (survivingRows != null) {
-            return false;
-        }
-        return encoding == Encoding.PLAIN && nonNullCount == pageSize;
-    }
-
-    /**
-     * True when an INT64 page's values can be sliced straight from the live page segment with no heap {@code long[]}.
-     * Holds only for a PLAIN, all-valid page that is not later compacted to surviving rows: the value bytes are already
-     * the little-endian INT64 layout the slice copies from, and a surviving-rows page would compact through the heap
-     * {@link #pageLongs} the {@link #gatherTypedPayloads(int[])} path reorders.
-     */
-    private boolean canSliceLongFromLivePage(Encoding encoding, int nonNullCount) {
-        if (survivingRows != null) {
-            return false;
-        }
-        return encoding == Encoding.PLAIN && nonNullCount == pageSize;
-    }
-
-    /**
-     * True when a FLOAT page's values can be sliced straight from the live page segment with no heap {@code float[]}.
-     * Holds only for a PLAIN, all-valid page that is not later compacted to surviving rows: the value bytes are already
-     * the little-endian FLOAT layout the slice copies from, and a surviving-rows page would compact through the heap
-     * {@link #pageFloats} the {@link #gatherTypedPayloads(int[])} path reorders.
-     */
-    private boolean canSliceFloatFromLivePage(Encoding encoding, int nonNullCount) {
-        if (survivingRows != null) {
-            return false;
-        }
-        return encoding == Encoding.PLAIN && nonNullCount == pageSize;
+    /** Keeps the live page segment as the page's value backing; the page Arena then stays open across the batches. */
+    private void retainLiveValues(MemorySegment valueBuf) {
+        pageLiveValues = valueBuf.asReadOnly();
+        pageBackingIsLivePage = true;
     }
 
     /**
@@ -860,7 +791,7 @@ final class BatchColumnReader {
         int[] positions = new int[rowCount];
         int dense = 0;
         for (int row = 0; row < rowCount; row++) {
-            if (isRowPresent(row)) {
+            if (pageValidity.isValid(row)) {
                 positions[row] = densePositions[dense++];
             }
         }
@@ -874,7 +805,7 @@ final class BatchColumnReader {
         int acc = 0;
         for (int row = 0; row < rowCount; row++) {
             offsets[row] = acc;
-            if (isRowPresent(row)) {
+            if (pageValidity.isValid(row)) {
                 acc += denseLengths[dense++];
             }
         }
@@ -1034,42 +965,42 @@ final class BatchColumnReader {
 
     private void spreadInts(int[] dense, int[] dst) {
         int j = 0;
-        for (int i = nextPresentRow(0); i >= 0; i = nextPresentRow(i + 1)) {
+        for (int i = pageValidity.nextSetBit(0); i >= 0; i = pageValidity.nextSetBit(i + 1)) {
             dst[i] = dense[j++];
         }
     }
 
     private void spreadLongs(long[] dense, long[] dst) {
         int j = 0;
-        for (int i = nextPresentRow(0); i >= 0; i = nextPresentRow(i + 1)) {
+        for (int i = pageValidity.nextSetBit(0); i >= 0; i = pageValidity.nextSetBit(i + 1)) {
             dst[i] = dense[j++];
         }
     }
 
     private void spreadFloats(float[] dense, float[] dst) {
         int j = 0;
-        for (int i = nextPresentRow(0); i >= 0; i = nextPresentRow(i + 1)) {
+        for (int i = pageValidity.nextSetBit(0); i >= 0; i = pageValidity.nextSetBit(i + 1)) {
             dst[i] = dense[j++];
         }
     }
 
     private void spreadDoubles(double[] dense, double[] dst) {
         int j = 0;
-        for (int i = nextPresentRow(0); i >= 0; i = nextPresentRow(i + 1)) {
+        for (int i = pageValidity.nextSetBit(0); i >= 0; i = pageValidity.nextSetBit(i + 1)) {
             dst[i] = dense[j++];
         }
     }
 
     private void spreadBooleans(boolean[] dense, boolean[] dst) {
         int j = 0;
-        for (int i = nextPresentRow(0); i >= 0; i = nextPresentRow(i + 1)) {
+        for (int i = pageValidity.nextSetBit(0); i >= 0; i = pageValidity.nextSetBit(i + 1)) {
             dst[i] = dense[j++];
         }
     }
 
     private void spreadSegments(MemorySegment[] dense, MemorySegment[] dst) {
         int j = 0;
-        for (int i = nextPresentRow(0); i >= 0; i = nextPresentRow(i + 1)) {
+        for (int i = pageValidity.nextSetBit(0); i >= 0; i = pageValidity.nextSetBit(i + 1)) {
             dst[i] = dense[j++];
         }
     }
@@ -1197,7 +1128,7 @@ final class BatchColumnReader {
         if (pageDefLevels != null) {
             pageDefLevels = gatherInts(pageDefLevels, keep);
         }
-        pageValidity = keptValidity;
+        pageValidity = Validity.of(keptValidity, keep.length);
         pageSize = keep.length;
         pageLogicalRowCount = keep.length;
     }
@@ -1210,7 +1141,7 @@ final class BatchColumnReader {
         int keepCursor = 0;
         int pendingSkip = 0;
         for (int row = 0; row < pageSize && keepCursor < keep.length; row++) {
-            boolean nonNull = pageValidity.get(row);
+            boolean nonNull = pageValidity.isValid(row);
             boolean kept = keep[keepCursor] == row;
             if (kept) {
                 if (nonNull) {
@@ -1329,14 +1260,14 @@ final class BatchColumnReader {
         }
     }
 
-    private static BitSet gatherValidity(BitSet source, int[] keep) {
+    private static Validity gatherValidity(Validity source, int[] keep) {
         BitSet out = new BitSet(keep.length);
         for (int j = 0; j < keep.length; j++) {
-            if (source.get(keep[j])) {
+            if (source.isValid(keep[j])) {
                 out.set(j);
             }
         }
-        return out;
+        return Validity.of(out, keep.length);
     }
 
     private static int[] gatherInts(int[] source, int[] keep) {
@@ -1409,18 +1340,17 @@ final class BatchColumnReader {
      * the off-heap decode budget has room, an mmap of an on-disk file otherwise). The owning batch closes the buffer on
      * {@link io.tileverse.parquetry.batch.ParquetRecordBatch#close()}; the resulting vector holds no heap value array.
      *
-     * <p>For a PLAIN all-valid page the bytes come straight from the live page segment ({@link #pageDoubleValues}),
-     * whose little-endian DOUBLE layout matches the target, making the copy a raw byte copy with no heap
-     * {@code double[]}. Otherwise the page decoded into the heap {@link #pageDoubles}, which the copy reads element by
-     * element.
+     * <p>For a PLAIN all-valid page the bytes come straight from the live page segment ({@link #pageLiveValues}), whose
+     * little-endian DOUBLE layout matches the target, making the copy a raw byte copy with no heap {@code double[]}.
+     * Otherwise the page decoded into the heap {@link #pageDoubles}, which the copy reads element by element.
      */
     private DoubleVector sliceDouble(int start, int n, Validity sliceValidity, List<AutoCloseable> acquiredBuffers) {
         long byteSize = (long) n * Double.BYTES;
         SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
         acquiredBuffers.add(pooled);
         MemorySegment dst = pooled.segment();
-        if (pageDoubleValues != null) {
-            MemorySegment.copy(pageDoubleValues, (long) start * Double.BYTES, dst, 0L, byteSize);
+        if (pageLiveValues != null) {
+            MemorySegment.copy(pageLiveValues, (long) start * Double.BYTES, dst, 0L, byteSize);
         } else {
             MemorySegment.copy(pageDoubles, start, dst, DOUBLE, 0L, n);
         }
@@ -1432,7 +1362,7 @@ final class BatchColumnReader {
      * off-heap decode budget has room, an mmap of an on-disk file otherwise). The owning batch closes the buffer on
      * {@link io.tileverse.parquetry.batch.ParquetRecordBatch#close()}; the resulting vector holds no heap value array.
      *
-     * <p>For a PLAIN all-valid page the bytes come straight from the live page segment ({@link #pageIntValues}), whose
+     * <p>For a PLAIN all-valid page the bytes come straight from the live page segment ({@link #pageLiveValues}), whose
      * little-endian INT32 layout matches the target, making the copy a raw byte copy with no heap {@code int[]}.
      * Otherwise the page decoded into the heap {@link #pageInts}, which the copy reads element by element.
      */
@@ -1441,8 +1371,8 @@ final class BatchColumnReader {
         SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
         acquiredBuffers.add(pooled);
         MemorySegment dst = pooled.segment();
-        if (pageIntValues != null) {
-            MemorySegment.copy(pageIntValues, (long) start * Integer.BYTES, dst, 0L, byteSize);
+        if (pageLiveValues != null) {
+            MemorySegment.copy(pageLiveValues, (long) start * Integer.BYTES, dst, 0L, byteSize);
         } else {
             MemorySegment.copy(pageInts, start, dst, INT32, 0L, n);
         }
@@ -1451,7 +1381,7 @@ final class BatchColumnReader {
 
     /**
      * Copies the page's long values for the slice into a buffer the decode valve hands out. For a PLAIN all-valid page
-     * the bytes come straight from the live page segment ({@link #pageLongValues}), whose little-endian INT64 layout
+     * the bytes come straight from the live page segment ({@link #pageLiveValues}), whose little-endian INT64 layout
      * matches the target, making the copy a raw byte copy with no heap {@code long[]}. Otherwise the page decoded into
      * the heap {@link #pageLongs}, which the copy reads element by element.
      */
@@ -1460,8 +1390,8 @@ final class BatchColumnReader {
         SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
         acquiredBuffers.add(pooled);
         MemorySegment dst = pooled.segment();
-        if (pageLongValues != null) {
-            MemorySegment.copy(pageLongValues, (long) start * Long.BYTES, dst, 0L, byteSize);
+        if (pageLiveValues != null) {
+            MemorySegment.copy(pageLiveValues, (long) start * Long.BYTES, dst, 0L, byteSize);
         } else {
             MemorySegment.copy(pageLongs, start, dst, INT64, 0L, n);
         }
@@ -1470,7 +1400,7 @@ final class BatchColumnReader {
 
     /**
      * Copies the page's float values for the slice into a buffer the decode valve hands out. For a PLAIN all-valid page
-     * the bytes come straight from the live page segment ({@link #pageFloatValues}), whose little-endian FLOAT layout
+     * the bytes come straight from the live page segment ({@link #pageLiveValues}), whose little-endian FLOAT layout
      * matches the target, making the copy a raw byte copy with no heap {@code float[]}. Otherwise the page decoded into
      * the heap {@link #pageFloats}, which the copy reads element by element.
      */
@@ -1479,8 +1409,8 @@ final class BatchColumnReader {
         SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
         acquiredBuffers.add(pooled);
         MemorySegment dst = pooled.segment();
-        if (pageFloatValues != null) {
-            MemorySegment.copy(pageFloatValues, (long) start * Float.BYTES, dst, 0L, byteSize);
+        if (pageLiveValues != null) {
+            MemorySegment.copy(pageLiveValues, (long) start * Float.BYTES, dst, 0L, byteSize);
         } else {
             MemorySegment.copy(pageFloats, start, dst, FLOAT, 0L, n);
         }
@@ -1603,78 +1533,71 @@ final class BatchColumnReader {
         return Int96Vector.of(dst, sliceValidity);
     }
 
-    static BitSet sliceBitSet(BitSet source, int start, int n) {
-        return source.get(start, start + n);
-    }
-
     /**
-     * The validity mask for the page slice {@code [start, start + n)} from whichever representation the page holds. The
-     * off-heap origin path packs the slice into its own off-heap bitmap (registered on the batch) because the page's
-     * origin bitmap is released at page-advance while the batch and its vectors live on; the heap path copies the
-     * {@link BitSet}. Either way the resulting mask owns memory independent of the page.
+     * The validity mask for the page slice {@code [start, start + n)}. A null-free page answers all-valid without
+     * touching its bitmap. The off-heap origin representation copies the slice's bytes into its own off-heap bitmap
+     * (registered on the batch) because the page's origin bitmap is released at page-advance while the batch and its
+     * vectors live on; the heap representation slices through {@link Validity#slice}. Either way the resulting mask
+     * owns memory independent of the page.
      */
     private Validity sliceCurrentValidity(int start, int n, List<AutoCloseable> acquiredBuffers) {
-        if (pageValidityView != null) {
+        if (!pageValidity.hasNulls()) {
+            return Validity.allValid(n);
+        }
+        if (pageValidityPooled != null) {
             return sliceOriginValidity(start, n, acquiredBuffers);
         }
-        return sliceValidity(pageValidity, start, n);
+        return pageValidity.slice(start, n);
     }
 
     /**
-     * The validity mask for the page slice {@code [start, start + n)}. A range with no null row needs no bitmap, which
-     * skips the per-slice {@link BitSet} copy that {@link Validity#of} would otherwise collapse away.
-     */
-    static Validity sliceValidity(BitSet source, int start, int n) {
-        boolean rangeFullyValid = source.nextClearBit(start) >= start + n;
-        if (rangeFullyValid) {
-            return Validity.allValid(n);
-        }
-        return Validity.of(sliceBitSet(source, start, n), n);
-    }
-
-    /**
-     * Packs the off-heap origin bitmap's bits for {@code [start, start + n)} into a fresh off-heap slice bitmap rebased
-     * to bit zero. A fully present range needs no bitmap and acquires nothing; otherwise the slice bitmap is acquired
-     * from the decode valve and registered on the batch, which closes it on batch close.
+     * Copies the off-heap origin bitmap's bits for {@code [start, start + n)} into a fresh off-heap slice bitmap
+     * rebased to bit zero: whole bytes when {@code start} is byte-aligned (the common page-aligned batch case),
+     * shift-combined byte pairs otherwise - never per-bit walks. A range that turns out fully present needs no bitmap;
+     * its buffer goes straight back to the pool. Otherwise the slice bitmap is registered on the batch, which closes it
+     * on batch close.
      */
     private Validity sliceOriginValidity(int start, int n, List<AutoCloseable> acquiredBuffers) {
-        int nulls = countNullsInRange(start, n);
-        if (nulls == 0) {
-            return Validity.allValid(n);
-        }
+        MemorySegment origin = pageValidityPooled.segment();
         long byteSize = Math.max(1L, (n + 7) / 8);
         SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
-        acquiredBuffers.add(pooled);
         MemorySegment dst = pooled.segment();
-        packPresenceBitmap(start, n, dst);
-        return Validity.ofSegment(dst, nulls, n);
-    }
-
-    private int countNullsInRange(int start, int n) {
-        int nulls = 0;
-        for (int i = 0; i < n; i++) {
-            if (!isRowPresent(start + i)) {
-                nulls++;
-            }
+        int valid = copyPresenceBits(origin, start, n, dst);
+        if (valid == n) {
+            pooled.close();
+            return Validity.allValid(n);
         }
-        return nulls;
+        acquiredBuffers.add(pooled);
+        return Validity.ofSegment(dst, n - valid, n);
     }
 
     /**
-     * Writes the slice's presence bits LSB-first into {@code dst}, rebased so page row {@code start} lands at bit 0.
+     * Copies presence bits {@code [start, start + n)} of {@code origin} into {@code dst} rebased to bit zero,
+     * LSB-first, returning the count of set (present) bits. Bits of {@code dst}'s final byte at or beyond {@code n} are
+     * cleared. The unaligned form combines each destination byte from two source bytes; the high source byte of the
+     * final pair may not exist (the range can end inside the low byte), which the bounds guard covers.
      */
-    private void packPresenceBitmap(int start, int n, MemorySegment dst) {
-        long byteCount = (n + 7) / 8;
-        for (long byteIndex = 0; byteIndex < byteCount; byteIndex++) {
-            int packed = 0;
-            for (int bit = 0; bit < 8; bit++) {
-                int row = (int) (byteIndex * 8 + bit);
-                if (row < n && isRowPresent(start + row)) {
-                    packed |= 1 << bit;
-                }
+    private static int copyPresenceBits(MemorySegment origin, int start, int n, MemorySegment dst) {
+        int dstBytes = (n + 7) >>> 3;
+        int srcByte = start >>> 3;
+        int shift = start & 7;
+        long originBytes = origin.byteSize();
+        int valid = 0;
+        for (int i = 0; i < dstBytes; i++) {
+            int combined = origin.get(ValueLayout.JAVA_BYTE, (long) srcByte + i) & 0xff;
+            if (shift != 0) {
+                long highIndex = (long) srcByte + i + 1;
+                int high = highIndex < originBytes ? origin.get(ValueLayout.JAVA_BYTE, highIndex) & 0xff : 0;
+                combined = ((combined >>> shift) | (high << (8 - shift))) & 0xff;
             }
-            dst.set(ValueLayout.JAVA_BYTE, byteIndex, (byte) packed);
+            if (i == dstBytes - 1) {
+                int bitsInLastByte = n - (i << 3);
+                combined &= (1 << bitsInLastByte) - 1;
+            }
+            valid += Integer.bitCount(combined);
+            dst.set(ValueLayout.JAVA_BYTE, i, (byte) combined);
         }
+        return valid;
     }
 
     // ---- close ----

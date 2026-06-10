@@ -28,7 +28,6 @@ import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.BitSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -70,109 +69,6 @@ import io.tileverse.parquetry.schema.SchemaNode;
 class BatchColumnReaderTest {
 
     private static final ColumnPath PATH = ColumnPath.of("val");
-
-    /**
-     * Pins the contract of {@link BatchColumnReader#sliceBitSet}: extract bits {@code [start, start + n)} from the
-     * source and shift them down so source bit {@code start} maps to slice bit 0, with no bit set at or beyond index
-     * {@code n}.
-     */
-    @Nested
-    class SliceBitSet {
-
-        @Test
-        void copiesAllBitsWhenFullyValid() {
-            BitSet source = new BitSet(100);
-            source.set(0, 100);
-
-            BitSet slice = BatchColumnReader.sliceBitSet(source, 0, 100);
-
-            assertThat(slice.cardinality()).isEqualTo(100);
-            assertThat(slice.nextClearBit(0)).isEqualTo(100);
-        }
-
-        @Test
-        void shiftsByStartOffset() {
-            BitSet source = new BitSet(100);
-            source.set(10, 100);
-
-            BitSet slice = BatchColumnReader.sliceBitSet(source, 8, 50);
-
-            assertThat(slice.get(0)).isFalse();
-            assertThat(slice.get(1)).isFalse();
-            assertThat(slice.get(2)).isTrue();
-            assertThat(slice.cardinality()).isEqualTo(48);
-        }
-
-        @Test
-        void excludesBitsBeyondTheWindow() {
-            BitSet source = new BitSet(200);
-            source.set(0, 200);
-
-            BitSet slice = BatchColumnReader.sliceBitSet(source, 50, 64);
-
-            assertThat(slice.cardinality()).isEqualTo(64);
-            assertThat(slice.length()).isEqualTo(64);
-        }
-
-        @Test
-        void preservesSparsePattern() {
-            BitSet source = new BitSet(128);
-            source.set(65);
-            source.set(70);
-            source.set(127);
-
-            BitSet slice = BatchColumnReader.sliceBitSet(source, 64, 64);
-
-            assertThat(slice.get(1)).isTrue();
-            assertThat(slice.get(6)).isTrue();
-            assertThat(slice.get(63)).isTrue();
-            assertThat(slice.cardinality()).isEqualTo(3);
-        }
-
-        @Test
-        void emptyWhenNoBitsInWindow() {
-            BitSet source = new BitSet(100);
-            source.set(0, 10);
-
-            BitSet slice = BatchColumnReader.sliceBitSet(source, 20, 30);
-
-            assertThat(slice.isEmpty()).isTrue();
-        }
-    }
-
-    /**
-     * Pins the contract of {@link BatchColumnReader#sliceValidity}: a fully-valid range yields the no-bitmap all-valid
-     * mask, while a range with a clear bit mirrors the null pattern shifted to the slice's local indices.
-     */
-    @Nested
-    class SliceValidity {
-
-        @Test
-        void fullyValidRangeYieldsAllValidWithoutNulls() {
-            BitSet source = new BitSet();
-            source.set(0, 10); // rows 0..9 all valid
-
-            Validity mask = BatchColumnReader.sliceValidity(source, 3, 4); // slice rows 3..6
-
-            assertThat(mask.size()).as("slice row count").isEqualTo(4);
-            assertThat(mask.hasNulls()).as("a fully valid range has no nulls").isFalse();
-        }
-
-        @Test
-        void rangeWithAClearBitMirrorsTheNulls() {
-            BitSet source = new BitSet();
-            source.set(0, 10);
-            source.clear(5); // row 5 null
-
-            Validity mask = BatchColumnReader.sliceValidity(source, 3, 4); // slice rows 3..6 -> local index 2 is null
-
-            assertThat(mask.size()).as("slice row count").isEqualTo(4);
-            assertThat(mask.hasNulls()).as("the slice includes a null row").isTrue();
-            assertThat(mask.isNull(2)).as("row 5 maps to local index 2").isTrue();
-            assertThat(mask.isValid(0)).as("row 3 is valid").isTrue();
-            assertThat(mask.nullCount()).as("exactly one null in the slice").isEqualTo(1);
-        }
-    }
 
     // --- test 1: single page, no nulls, INT32 ---
 
@@ -346,6 +242,77 @@ class BatchColumnReaderTest {
         assertThat(pool.stats().outstandingBorrows())
                 .as("the origin-validity bitmap must be released when the page decode fails")
                 .isZero();
+    }
+
+    /**
+     * Reads a null-bearing flat optional page in 3-row batches: slice starts 3 and 9 are not byte-aligned in the page's
+     * off-heap origin bitmap, driving the shift-combined arm of the per-slice presence copy. Every row's validity and
+     * value must survive the rebasing.
+     */
+    @Test
+    void flatOptionalColumnReadInUnalignedBatches() throws IOException {
+        int[] defLevels = {1, 0, 1, 1, 0, 1, 1, 1, 0, 1, 0, 1, 1};
+        int[] nonNullValues = {10, 20, 30, 40, 50, 60, 70, 80, 90};
+        byte[] page = nullableInt32Page(defLevels, nonNullValues);
+        FetchedColumnChunk chunk = heapChunk(PATH, page, defLevels.length, /*maxRep*/ 0, /*maxDef*/ 1);
+
+        BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, optionalInt32Leaf());
+
+        int row = 0;
+        int nextValue = 0;
+        while (reader.hasMore()) {
+            IntVector vec = (IntVector) reader.readBatch(3, new ArrayList<>());
+            for (int i = 0; i < vec.size(); i++, row++) {
+                boolean expectedPresent = defLevels[row] == 1;
+                assertThat(vec.validity().isValid(i)).as("row %d presence", row).isEqualTo(expectedPresent);
+                if (expectedPresent) {
+                    assertThat(vec.getInt(i)).as("row %d value", row).isEqualTo(nonNullValues[nextValue++]);
+                }
+            }
+        }
+        assertThat(row).isEqualTo(defLevels.length);
+        assertThat(nextValue).isEqualTo(nonNullValues.length);
+    }
+
+    /** A flat optional page whose every row is null: zero value bytes, validity all-null, no value ever read. */
+    @Test
+    void fullyNullFlatOptionalPage() throws IOException {
+        int[] defLevels = {0, 0, 0, 0, 0};
+        byte[] page = nullableInt32Page(defLevels, new int[0]);
+        FetchedColumnChunk chunk = heapChunk(PATH, page, defLevels.length, /*maxRep*/ 0, /*maxDef*/ 1);
+
+        BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, optionalInt32Leaf());
+
+        IntVector vec = (IntVector) reader.readBatch(10, new ArrayList<>());
+        assertThat(vec.size()).isEqualTo(5);
+        for (int i = 0; i < 5; i++) {
+            assertThat(vec.validity().isValid(i)).as("row %d", i).isFalse();
+        }
+        assertThat(reader.hasMore()).isFalse();
+    }
+
+    /**
+     * An all-valid flat optional page collapses its origin validity to the bitmap-free representation and returns the
+     * pooled bitmap immediately instead of pinning it until page-advance. Mid-page (one 2-row batch consumed of 5) the
+     * only outstanding borrow is the batch's value buffer.
+     */
+    @Test
+    void allValidOptionalPageReleasesItsOriginBitmapImmediately() throws IOException {
+        int[] defLevels = {1, 1, 1, 1, 1};
+        int[] values = {1, 2, 3, 4, 5};
+        byte[] page = nullableInt32Page(defLevels, values);
+        FetchedColumnChunk chunk = heapChunk(PATH, page, defLevels.length, /*maxRep*/ 0, /*maxDef*/ 1);
+
+        SegmentPool pool = SegmentPool.create();
+        BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(pool), chunk, optionalInt32Leaf());
+
+        List<AutoCloseable> acquired = new ArrayList<>();
+        IntVector vec = (IntVector) reader.readBatch(2, acquired);
+        assertThat(vec.getInt(0)).isEqualTo(1);
+        assertThat(vec.getInt(1)).isEqualTo(2);
+        assertThat(pool.stats().outstandingBorrows())
+                .as("mid-page: only the batch's value buffer; the all-valid origin bitmap went straight back")
+                .isEqualTo(1);
     }
 
     // --- test 4: hasMore false after all pages consumed ---
