@@ -44,9 +44,9 @@ import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.explain.RowGroupOutcome;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * End-to-end coverage for the {@code ParquetDataset} facade: footer caching, filter / projection wiring, the
@@ -65,7 +65,7 @@ class DatasetTest {
         List<RowDto> expected = generateRows(120);
         writeParquetFile(file, expected, CompressionCodecName.SNAPPY, 16L * 1024 * 1024);
 
-        CountingSegmentPool pool = new CountingSegmentPool();
+        SegmentPool pool = SegmentPool.create();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetDataset dataset = openWithPool(source, pool);
             ReadOptions options = ReadOptions.DEFAULTS;
@@ -75,7 +75,7 @@ class DatasetTest {
             assertThat(actual).hasSize(expected.size());
             assertRowsMatch(actual, expected);
         }
-        assertThat(pool.outstanding())
+        assertThat(pool.stats().outstandingBorrows())
                 .as("pooled buffers must drain after stream close")
                 .isZero();
     }
@@ -86,7 +86,7 @@ class DatasetTest {
         List<RowDto> expected = generateRows(50);
         writeParquetFile(file, expected, CompressionCodecName.UNCOMPRESSED, 16L * 1024 * 1024);
 
-        CountingSegmentPool pool = new CountingSegmentPool();
+        SegmentPool pool = SegmentPool.create();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetDataset dataset = openWithPool(source, pool);
             ReadOptions options = ReadOptions.DEFAULTS;
@@ -97,7 +97,7 @@ class DatasetTest {
                 assertRowsMatch(actual, expected);
             }
         }
-        assertThat(pool.outstanding()).isZero();
+        assertThat(pool.stats().outstandingBorrows()).isZero();
     }
 
     @Test
@@ -106,7 +106,7 @@ class DatasetTest {
         List<RowDto> expected = generateRows(30);
         writeParquetFile(file, expected, CompressionCodecName.SNAPPY, 16L * 1024 * 1024);
 
-        CountingSegmentPool pool = new CountingSegmentPool();
+        SegmentPool pool = SegmentPool.create();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetDataset dataset = openWithPool(source, pool);
 
@@ -121,7 +121,7 @@ class DatasetTest {
                 assertThat(actual).hasSize(expected.size());
             }
         }
-        assertThat(pool.outstanding()).isZero();
+        assertThat(pool.stats().outstandingBorrows()).isZero();
     }
 
     @Test
@@ -152,7 +152,7 @@ class DatasetTest {
         List<RowDto> rows = generateRows(200);
         writeParquetFile(file, rows, CompressionCodecName.SNAPPY, 8_192L);
 
-        CountingSegmentPool pool = new CountingSegmentPool();
+        SegmentPool pool = SegmentPool.create();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetDataset dataset = openWithPool(source, pool);
             ReadOptions options = ReadOptions.DEFAULTS;
@@ -165,7 +165,7 @@ class DatasetTest {
             assertThat(plan.rowGroups()).isNotEmpty();
             assertThat(plan.rowGroups()).allMatch(rg -> rg.outcome() == RowGroupOutcome.ELIMINATED);
         }
-        assertThat(pool.outstanding()).isZero();
+        assertThat(pool.stats().outstandingBorrows()).isZero();
     }
 
     @Test
@@ -178,7 +178,7 @@ class DatasetTest {
         List<RowDto> rows = generateYearClusteredRows(2_000);
         writeParquetFile(file, rows, CompressionCodecName.SNAPPY, 8_192L);
 
-        CountingSegmentPool pool = new CountingSegmentPool();
+        SegmentPool pool = SegmentPool.create();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetDataset dataset = openWithPool(source, pool);
             ReadOptions options = ReadOptions.DEFAULTS;
@@ -195,7 +195,7 @@ class DatasetTest {
             assertThat(plan.rowGroups()).anyMatch(rg -> rg.outcome() == RowGroupOutcome.ELIMINATED);
             assertThat(plan.rowGroups()).anyMatch(rg -> rg.outcome() != RowGroupOutcome.ELIMINATED);
         }
-        assertThat(pool.outstanding()).isZero();
+        assertThat(pool.stats().outstandingBorrows()).isZero();
     }
 
     @Test
@@ -204,7 +204,7 @@ class DatasetTest {
         List<RowDto> rows = generateRows(80);
         writeParquetFile(file, rows, CompressionCodecName.SNAPPY, 16L * 1024 * 1024);
 
-        CountingSegmentPool pool = new CountingSegmentPool();
+        SegmentPool pool = SegmentPool.create();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetDataset dataset = openWithPool(source, pool);
             ReadOptions options = ReadOptions.DEFAULTS;
@@ -219,7 +219,7 @@ class DatasetTest {
                 }
             }
         }
-        assertThat(pool.outstanding()).isZero();
+        assertThat(pool.stats().outstandingBorrows()).isZero();
     }
 
     @Test
@@ -228,7 +228,7 @@ class DatasetTest {
         List<RowDto> expected = generateRows(400);
         writeParquetFile(file, expected, CompressionCodecName.SNAPPY, 8_192L);
 
-        CountingSegmentPool pool = new CountingSegmentPool();
+        SegmentPool pool = SegmentPool.create();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetDataset dataset = openWithPool(source, pool);
             ReadOptions options = ReadOptions.DEFAULTS;
@@ -266,7 +266,7 @@ class DatasetTest {
                 assertRowsMatch(rows, expected);
             }
         }
-        assertThat(pool.outstanding())
+        assertThat(pool.stats().outstandingBorrows())
                 .as("every concurrent read drained its pooled buffers")
                 .isZero();
     }
@@ -284,7 +284,7 @@ class DatasetTest {
     // --- read helpers ---
 
     /** Opens a dataset whose reads borrow buffers from {@code pool}; the test then asserts the pool drains. */
-    private static ParquetDataset openWithPool(ByteRangeSource source, CountingSegmentPool pool) {
+    private static ParquetDataset openWithPool(ByteRangeSource source, SegmentPool pool) {
         OpenOptions openOptions = OpenOptions.builder()
                 .runtime(ParquetRuntime.builder().segmentPool(pool).build())
                 .build();

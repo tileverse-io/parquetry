@@ -41,9 +41,9 @@ import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaBuilder;
-import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * Drives {@link ParallelDecodeCoordinator} directly over a real multi-row-group fixture to prove file-order delivery,
@@ -248,7 +248,7 @@ class ParallelDecodeCoordinatorTest {
         }
 
         private RowGroupPrefetcher prefetcher(ByteRangeSource source, List<RowGroupSurvivor> survivors) {
-            RowGroupFetcher fetcher = TestFetchers.over(source, schema, schema, new CountingSegmentPool());
+            RowGroupFetcher fetcher = TestFetchers.over(source, schema, schema, SegmentPool.create());
             ExecutorService executor = Executors.newThreadPerTaskExecutor(
                     Thread.ofVirtual().name("test-fetch-", 0).factory());
             return new RowGroupPrefetcher(

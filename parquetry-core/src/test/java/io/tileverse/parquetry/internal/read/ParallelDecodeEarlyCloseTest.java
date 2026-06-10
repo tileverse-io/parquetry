@@ -31,8 +31,8 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
-import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * Proves that closing a parallel-decode stream early - after consuming just one record - drains any in-flight decode
@@ -44,7 +44,7 @@ class ParallelDecodeEarlyCloseTest {
     void closingEarlyDrainsInFlightDecodesWithoutLeaks(@TempDir Path tmp) throws Exception {
         Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(tmp, 4_000);
         DecodeExecutor decodePool = DecodeExecutor.ofParallelism(4);
-        CountingSegmentPool pool = new CountingSegmentPool();
+        SegmentPool pool = SegmentPool.create();
         try (ByteRangeSource source = TestParquetFiles.openRangeReader(file)) {
             ParquetRuntime runtime = ParquetRuntime.builder()
                     .segmentPool(pool)
@@ -62,7 +62,7 @@ class ParallelDecodeEarlyCloseTest {
         assertThat(decodePool.availableSlots())
                 .as("all decode slots released after early close")
                 .isEqualTo(4);
-        assertThat(pool.outstanding())
+        assertThat(pool.stats().outstandingBorrows())
                 .as("prefetched/decoded-but-unconsumed buffers returned on early close")
                 .isZero();
         decodePool.shutdownNow();

@@ -84,6 +84,48 @@ class SegmentPoolTest {
     }
 
     @Test
+    void createReturnsIndependentPools() {
+        SegmentPool a = SegmentPool.create();
+        SegmentPool b = SegmentPool.create();
+        assertThat(a).isNotSameAs(b);
+        try (SegmentPool.Pooled _ = a.borrow(64)) {
+            assertThat(a.stats().outstandingBorrows()).isEqualTo(1);
+            assertThat(b.stats().outstandingBorrows()).isZero();
+        }
+    }
+
+    @Test
+    void statsTrackTheBorrowLifecycle() {
+        SegmentPool pool = SegmentPool.create();
+        assertThat(pool.stats()).isEqualTo(new SegmentPool.PoolStats(0, 0, 0, 0));
+
+        SegmentPool.Pooled pooled = pool.borrow(64);
+        assertThat(pool.stats().outstandingBorrows()).isEqualTo(1);
+        assertThat(pool.stats().totalBorrows()).isEqualTo(1);
+
+        pooled.close();
+        assertThat(pool.stats().outstandingBorrows()).isZero();
+        assertThat(pool.stats().totalBorrows()).isEqualTo(1);
+
+        pooled.close();
+        assertThat(pool.stats().outstandingBorrows())
+                .as("an idempotent re-close must not decrement twice")
+                .isZero();
+    }
+
+    @Test
+    void statsCountLargeUnpooledBorrows() {
+        DefaultSegmentPool pool = new DefaultSegmentPool(1024, 1 << 20, 1024);
+        SegmentPool.Pooled large = pool.borrow(8192);
+        assertThat(pool.stats().outstandingBorrows()).isEqualTo(1);
+        large.close();
+        large.close();
+        assertThat(pool.stats().outstandingBorrows()).isZero();
+        assertThat(pool.stats().totalBorrows()).isEqualTo(1);
+        assertThat(pool.stats().freeSegments()).isZero();
+    }
+
+    @Test
     void concurrentBorrowAndReturnStayConsistent() throws Exception {
         long maxPooledBytes = 8L * 8192;
         DefaultSegmentPool pool = new DefaultSegmentPool(1 << 20, maxPooledBytes, 8192);
@@ -108,7 +150,9 @@ class SegmentPoolTest {
             assertThat(executor.awaitTermination(60, TimeUnit.SECONDS)).isTrue();
         }
         assertThat(failed).isFalse();
-        assertThat(pool.pooledBytes()).isLessThanOrEqualTo(maxPooledBytes);
+        assertThat(pool.stats().retainedBytes()).isLessThanOrEqualTo(maxPooledBytes);
+        assertThat(pool.stats().outstandingBorrows()).isZero();
+        assertThat(pool.stats().totalBorrows()).isEqualTo(8L * 2000);
     }
 
     /**
@@ -124,12 +168,12 @@ class SegmentPoolTest {
             SegmentPool.Pooled first = pool.borrow(512);
             long address = first.segment().address();
             first.close();
-            assertThat(pool.freeCount()).isEqualTo(1);
+            assertThat(pool.stats().freeSegments()).isEqualTo(1);
             try (SegmentPool.Pooled second = pool.borrow(512)) {
                 assertThat(second.segment().address()).as("reused backing").isEqualTo(address);
-                assertThat(pool.freeCount()).isZero();
+                assertThat(pool.stats().freeSegments()).isZero();
             }
-            assertThat(pool.freeCount()).isEqualTo(1);
+            assertThat(pool.stats().freeSegments()).isEqualTo(1);
         }
 
         @Test
@@ -143,8 +187,8 @@ class SegmentPoolTest {
             for (SegmentPool.Pooled pooled : held) {
                 pooled.close();
             }
-            assertThat(pool.pooledBytes()).as("retained bytes").isLessThanOrEqualTo(maxPooledBytes);
-            assertThat(pool.freeCount())
+            assertThat(pool.stats().retainedBytes()).as("retained bytes").isLessThanOrEqualTo(maxPooledBytes);
+            assertThat(pool.stats().freeSegments())
                     .as("1024-byte backings retained under a 4096 cap")
                     .isEqualTo(4);
         }
@@ -153,8 +197,8 @@ class SegmentPoolTest {
         void largeBuffersAreNeverPooled() {
             DefaultSegmentPool pool = new DefaultSegmentPool(1024, 1 << 20, 1024);
             pool.borrow(8192).close();
-            assertThat(pool.freeCount()).isZero();
-            assertThat(pool.pooledBytes()).isZero();
+            assertThat(pool.stats().freeSegments()).isZero();
+            assertThat(pool.stats().retainedBytes()).isZero();
         }
 
         @Test
@@ -162,11 +206,11 @@ class SegmentPoolTest {
             DefaultSegmentPool pool = new DefaultSegmentPool(1024, 1 << 20, 1024);
             for (int i = 0; i < 100; i++) {
                 pool.borrow(64 * 1024).close();
-                assertThat(pool.freeCount())
+                assertThat(pool.stats().freeSegments())
                         .as("retained after large borrow %d", i)
                         .isZero();
             }
-            assertThat(pool.pooledBytes()).isZero();
+            assertThat(pool.stats().retainedBytes()).isZero();
         }
 
         @Test

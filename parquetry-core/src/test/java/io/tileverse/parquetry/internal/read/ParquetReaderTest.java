@@ -37,8 +37,8 @@ import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.explain.RowGroupOutcome;
 import io.tileverse.parquetry.filter.explain.RowGroupPlan;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
-import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 class ParquetReaderTest {
 
@@ -153,13 +153,13 @@ class ParquetReaderTest {
     @Test
     void matchedPredicateDecodesNothing(@TempDir Path tmp) throws Exception {
         Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(tmp, 4_000);
-        CountingSegmentPool pool = new CountingSegmentPool();
+        SegmentPool pool = SegmentPool.create();
         ParquetRuntime runtime = ParquetRuntime.builder().segmentPool(pool).build();
         try (ByteRangeSource src = TestParquetFiles.openRangeReader(file)) {
             long n = ParquetReader.open(src, runtime, Optional.empty())
                     .count(Pred.col("year").gtEq(2020), ReadOptions.DEFAULTS);
             assertThat(n).isPositive();
-            assertThat(pool.totalBorrows())
+            assertThat(pool.stats().totalBorrows())
                     .as("MATCHED groups add their row count from metadata and borrow no buffers")
                     .isZero();
         }

@@ -32,8 +32,8 @@ import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.internal.read.FetchBudget;
 import io.tileverse.parquetry.internal.read.TestParquetFiles;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
-import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * Proves that early-terminating a read over a multi-file dataset drains the segment pool across every reader. A
@@ -47,7 +47,7 @@ class MultiReaderEarlyCloseTest {
     void earlyCloseAcrossReadersDrainsPoolAndBudget(@TempDir Path tmp) throws Exception {
         int rowsPerFile = 4_000;
         Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(tmp, rowsPerFile);
-        CountingSegmentPool pool = new CountingSegmentPool();
+        SegmentPool pool = SegmentPool.create();
         FetchBudget budget = FetchBudget.ofMaxMemoryFraction(0.1);
         long capacityBefore = budget.available();
 
@@ -74,7 +74,7 @@ class MultiReaderEarlyCloseTest {
             }
         }
 
-        assertThat(pool.outstanding())
+        assertThat(pool.stats().outstandingBorrows())
                 .as("buffers borrowed across both readers are returned on early close")
                 .isZero();
         assertThat(budget.available())

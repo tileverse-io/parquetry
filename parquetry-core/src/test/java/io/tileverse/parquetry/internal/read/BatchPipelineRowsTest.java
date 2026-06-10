@@ -46,12 +46,12 @@ import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaBuilder;
-import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * Drives {@link BatchPipeline#rows} over a real multi-row-group fixture to prove the row stream keeps at most one
@@ -260,7 +260,7 @@ class BatchPipelineRowsTest {
 
         private RowGroupPrefetcher prefetcher(
                 ByteRangeSource source, List<RowGroupSurvivor> survivors, ExecutorService fetchExecutor) {
-            RowGroupFetcher fetcher = TestFetchers.over(source, schema, schema, new CountingSegmentPool());
+            RowGroupFetcher fetcher = TestFetchers.over(source, schema, schema, SegmentPool.create());
             return new RowGroupPrefetcher(
                     survivors,
                     fetcher,

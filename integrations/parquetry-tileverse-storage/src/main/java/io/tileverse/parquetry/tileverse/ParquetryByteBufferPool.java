@@ -18,25 +18,27 @@ package io.tileverse.parquetry.tileverse;
 import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.internal.read.FetchBudget;
 import io.tileverse.parquetry.io.SegmentPool;
 
 import io.tileverse.io.ByteBufferPool;
 
 /**
- * A tileverse {@link ByteBufferPool} that vends {@code asByteBuffer()} views of parquetry's shared Arena
- * {@link SegmentPool}, accounted against parquetry's shared {@link FetchBudget}. A co-resident reader that borrows
- * direct buffers here (for example a PMTiles or VersaTiles store on the same instance) draws from the same off-heap
- * memory parquetry's own reads use, letting both share one budget instead of running two pools.
+ * A tileverse {@link ByteBufferPool} that vends {@code asByteBuffer()} views of the default {@link ParquetRuntime}'s
+ * {@link SegmentPool}, accounted against the same runtime's {@link FetchBudget} - the exact instances parquetry's own
+ * reads draw from. A co-resident reader that borrows direct buffers here (for example a PMTiles or VersaTiles store on
+ * the same instance) shares one off-heap pool and one budget with those reads instead of running two pools.
  *
  * <p>Discovered through {@link java.util.ServiceLoader}; {@link ByteBufferPool#getDefault()} prefers this provider over
  * the built-in pool when the integration module is on the classpath. The public no-argument constructor exists for that
- * discovery.
+ * discovery; the runtime's resources are resolved lazily on first borrow, keeping provider discovery free of runtime
+ * construction side effects.
  *
- * <p><strong>Direct borrows</strong> reserve their size against the shared {@link FetchBudget} (soft accounting) and
- * borrow a native segment from the shared {@link SegmentPool}, returning a direct {@code ByteBuffer} view sized to the
- * request. Borrowing never blocks: an over-budget borrow still returns a usable buffer and simply holds no reservation
- * to release. Closing the handle returns the segment and releases any reservation.
+ * <p><strong>Direct borrows</strong> reserve their size against the runtime's {@link FetchBudget} (soft accounting) and
+ * borrow a native segment from the runtime's {@link SegmentPool}, returning a direct {@code ByteBuffer} view sized to
+ * the request. Borrowing never blocks: an over-budget borrow still returns a usable buffer and simply holds no
+ * reservation to release. Closing the handle returns the segment and releases any reservation.
  *
  * <p><strong>Heap borrows</strong> return a plain on-heap {@code ByteBuffer.allocate(size)} that supports
  * {@code array()}/{@code hasArray()} (tileverse callers rely on that) and are not routed through the arena.
@@ -47,18 +49,23 @@ import io.tileverse.io.ByteBufferPool;
  */
 public final class ParquetryByteBufferPool implements ByteBufferPool {
 
-    private final SegmentPool segmentPool = SegmentPool.getDefault();
-    private final FetchBudget fetchBudget = FetchBudget.defaultBudget();
-
     /** Public no-argument constructor for {@link java.util.ServiceLoader} discovery. */
     public ParquetryByteBufferPool() {
-        // discovered via ServiceLoader; shares the default SegmentPool and FetchBudget with parquetry's own reads
+        // resources come from ParquetRuntime.defaultRuntime() at borrow time, not construction time
+    }
+
+    private static SegmentPool segmentPool() {
+        return ParquetRuntime.defaultRuntime().segmentPool();
+    }
+
+    private static FetchBudget fetchBudget() {
+        return ParquetRuntime.defaultRuntime().fetchBudget();
     }
 
     @Override
     public PooledByteBuffer borrowDirect(int size) {
         requireNonNegative(size);
-        boolean reserved = fetchBudget.tryReserve(size);
+        boolean reserved = fetchBudget().tryReserve(size);
         SegmentPool.Pooled pooled = borrowOrRelease(size, reserved);
         ByteBuffer view = pooled.segment().asByteBuffer();
         Runnable release = directRelease(pooled, reserved, size);
@@ -72,22 +79,22 @@ public final class ParquetryByteBufferPool implements ByteBufferPool {
         return new Handle(view, () -> {});
     }
 
-    private SegmentPool.Pooled borrowOrRelease(int size, boolean reserved) {
+    private static SegmentPool.Pooled borrowOrRelease(int size, boolean reserved) {
         try {
-            return segmentPool.borrow(size);
+            return segmentPool().borrow(size);
         } catch (RuntimeException e) {
             if (reserved) {
-                fetchBudget.release(size);
+                fetchBudget().release(size);
             }
             throw e;
         }
     }
 
-    private Runnable directRelease(SegmentPool.Pooled pooled, boolean reserved, int size) {
+    private static Runnable directRelease(SegmentPool.Pooled pooled, boolean reserved, int size) {
         return () -> {
             pooled.close();
             if (reserved) {
-                fetchBudget.release(size);
+                fetchBudget().release(size);
             }
         };
     }

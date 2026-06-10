@@ -34,8 +34,8 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
-import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * Proves that many concurrent reads sharing one small {@link DecodeExecutor} never deadlock, never leak decode slots,
@@ -53,7 +53,7 @@ class ConcurrentParallelDecodeTest {
 
         // Smaller than reader count to ensure contention and inline-fallback coverage.
         DecodeExecutor decodePool = DecodeExecutor.ofParallelism(2);
-        CountingSegmentPool pool = new CountingSegmentPool();
+        SegmentPool pool = SegmentPool.create();
         int readers = 12;
         List<Throwable> failures = new CopyOnWriteArrayList<>();
         AtomicInteger completed = new AtomicInteger();
@@ -94,6 +94,8 @@ class ConcurrentParallelDecodeTest {
 
         assertThat(failures).as("no reader failed or deadlocked").isEmpty();
         assertThat(completed.get()).isEqualTo(readers);
-        assertThat(pool.outstanding()).as("no pooled buffer leaks").isZero();
+        assertThat(pool.stats().outstandingBorrows())
+                .as("no pooled buffer leaks")
+                .isZero();
     }
 }

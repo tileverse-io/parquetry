@@ -34,8 +34,8 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
-import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * Proves that many concurrent reads sharing one small {@link FetchBudget} never exceed it, never deadlock, and leave
@@ -55,7 +55,7 @@ class ConcurrentBoundedReadTest {
         // frequently fail and the serial fallback path runs.
         FetchBudget budget = FetchBudget.ofBytes(64 * 1024);
         long capacityBefore = budget.available();
-        CountingSegmentPool pool = new CountingSegmentPool();
+        SegmentPool pool = SegmentPool.create();
 
         int readers = 16;
         List<Throwable> failures = new CopyOnWriteArrayList<>();
@@ -94,6 +94,8 @@ class ConcurrentBoundedReadTest {
         assertThat(budget.available())
                 .as("every reserved byte is released once all reads finish")
                 .isEqualTo(capacityBefore);
-        assertThat(pool.outstanding()).as("no pooled buffer leaks").isZero();
+        assertThat(pool.stats().outstandingBorrows())
+                .as("no pooled buffer leaks")
+                .isZero();
     }
 }

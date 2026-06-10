@@ -21,20 +21,46 @@ import java.lang.foreign.MemorySegment;
  * A pool of native {@link MemorySegment}s for column-chunk fetch and per-page decompression buffers. Borrowing reuses
  * native memory to keep the streaming memory budget bounded; closing the handle returns the backing segment.
  *
- * <p>Implementations support concurrent {@link #borrow} calls from multiple threads. A returned {@link Pooled} handle,
- * by contrast, is owned by a single borrower and is not safe to share across threads. The process-wide
- * {@link #getDefault() default} is a small bounded JDK-only pool. An adapter module can supply an implementation backed
- * by a shared pool that a co-resident reader already uses; a single physical pool then serves several readers.
+ * <p>The interface is sealed with {@link DefaultSegmentPool} as its only implementation. The read path derives element
+ * counts from segment sizes, which makes the exact-size promise of {@link #borrow} a correctness invariant, not a
+ * convention; sealing puts its enforcement in one reviewable place instead of trusting every implementor.
+ * {@link #getDefault()} is the process-wide shared pool, letting a single physical pool serve several readers on the
+ * same instance. {@link #create()} builds a private pool with its own retention state and {@link #stats() accounting},
+ * for tests and for callers that need isolation from the shared default.
+ *
+ * <p>Pools support concurrent {@link #borrow} calls from multiple threads. A returned {@link Pooled} handle, by
+ * contrast, is owned by a single borrower and is not safe to share across threads.
  */
-public interface SegmentPool {
+public sealed interface SegmentPool permits DefaultSegmentPool {
 
     /** Borrows a native segment of exactly {@code byteSize} bytes; return it by closing the handle. */
     Pooled borrow(long byteSize);
+
+    /** A point-in-time snapshot of this pool's accounting, for leak assertions and monitoring. */
+    PoolStats stats();
 
     /** Process-wide shared default: a small bounded pool of native segments, JDK-only. */
     static SegmentPool getDefault() {
         return DefaultSegmentPool.INSTANCE;
     }
+
+    /** A new private pool with the default retention bounds, independent of {@link #getDefault()}. */
+    static SegmentPool create() {
+        return new DefaultSegmentPool(
+                DefaultSegmentPool.DEFAULT_LARGE_BUFFER_THRESHOLD,
+                DefaultSegmentPool.DEFAULT_MAX_POOLED_BYTES,
+                DefaultSegmentPool.DEFAULT_BLOCK_SIZE);
+    }
+
+    /**
+     * A point-in-time snapshot of a pool's accounting.
+     *
+     * @param outstandingBorrows borrows not yet closed; zero proves every borrowed segment was returned
+     * @param totalBorrows borrows ever made, never decremented; zero proves the pool was never drawn from
+     * @param freeSegments backings currently retained for reuse
+     * @param retainedBytes total capacity of the retained backings
+     */
+    record PoolStats(long outstandingBorrows, long totalBorrows, int freeSegments, long retainedBytes) {}
 
     /**
      * A borrowed segment owned by a single borrower. The owner closes it exactly once when done; repeated

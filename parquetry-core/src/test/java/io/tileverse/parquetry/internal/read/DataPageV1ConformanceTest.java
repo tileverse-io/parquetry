@@ -42,9 +42,9 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * V1 fixture conformance: reads each committed {@code parquet-avro 1.x} fixture under
@@ -76,14 +76,14 @@ class DataPageV1ConformanceTest {
         Path fixture = stageFixture(fixtureName, tmp);
         List<GenericRecord> expected = readAllViaParquetAvro(fixture);
 
-        CountingSegmentPool pool = new CountingSegmentPool();
+        SegmentPool pool = SegmentPool.create();
         List<ParquetRecord> actual = readAllViaParquetry(fixture, pool);
 
         assertThat(actual)
                 .as("%s row count must match parquet-avro oracle", fixtureName)
                 .hasSameSizeAs(expected);
         assertIntStringRecordsMatchOracle(fixtureName, actual, expected);
-        assertThat(pool.outstanding())
+        assertThat(pool.stats().outstandingBorrows())
                 .as("pooled buffers must drain after %s", fixtureName)
                 .isZero();
     }
@@ -94,14 +94,14 @@ class DataPageV1ConformanceTest {
         Path fixture = stageFixture(fixtureName, tmp);
         List<GenericRecord> expected = readAllViaParquetAvro(fixture);
 
-        CountingSegmentPool pool = new CountingSegmentPool();
+        SegmentPool pool = SegmentPool.create();
         List<ParquetRecord> actual = readAllViaParquetry(fixture, pool);
 
         assertThat(actual)
                 .as("%s row count must match parquet-avro oracle", fixtureName)
                 .hasSameSizeAs(expected);
         assertNullableRecordsMatchOracle(actual, expected);
-        assertThat(pool.outstanding())
+        assertThat(pool.stats().outstandingBorrows())
                 .as("pooled buffers must drain after %s", fixtureName)
                 .isZero();
     }
@@ -158,7 +158,7 @@ class DataPageV1ConformanceTest {
 
     // --- pipeline drivers ---
 
-    private static List<ParquetRecord> readAllViaParquetry(Path fixture, CountingSegmentPool pool) {
+    private static List<ParquetRecord> readAllViaParquetry(Path fixture, SegmentPool pool) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixture)) {
             ParquetRuntime runtime = ParquetRuntime.builder().segmentPool(pool).build();
             io.tileverse.parquetry.data.ParquetReader dataset =

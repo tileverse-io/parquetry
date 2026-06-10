@@ -40,9 +40,9 @@ import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * End-to-end integration test: write a small Parquet 2.0 file via {@code parquet-avro}, then read it back through the
@@ -65,12 +65,12 @@ class EndToEndV2ReadTest {
         List<RowDto> expected = generateRows(100);
         writeParquet2File(file, expected, CompressionCodecName.SNAPPY, /*rowGroupBytes*/ 16L * 1024 * 1024);
 
-        CountingSegmentPool pool = new CountingSegmentPool();
+        SegmentPool pool = SegmentPool.create();
         List<ParquetRecord> actual = readAllRecords(file, pool);
 
         assertThat(actual).hasSize(expected.size());
         assertRecordsMatch(actual, expected);
-        assertThat(pool.outstanding())
+        assertThat(pool.stats().outstandingBorrows())
                 .as("Every borrowed PooledByteBuffer must be returned end-to-end")
                 .isZero();
     }
@@ -82,7 +82,7 @@ class EndToEndV2ReadTest {
         // Tiny row-group target forces parquet-avro to flush multiple row groups for our 2000 rows.
         writeParquet2File(file, expected, CompressionCodecName.SNAPPY, /*rowGroupBytes*/ 8_192L);
 
-        CountingSegmentPool pool = new CountingSegmentPool();
+        SegmentPool pool = SegmentPool.create();
         List<ParquetRecord> actual = readAllRecords(file, pool);
 
         assertThat(actual).hasSize(expected.size());
@@ -90,7 +90,7 @@ class EndToEndV2ReadTest {
         assertThat(rowGroupCount(file))
                 .as("fixture should span multiple row groups for the multi-RG assertion to be load-bearing")
                 .isGreaterThan(1);
-        assertThat(pool.outstanding()).isZero();
+        assertThat(pool.stats().outstandingBorrows()).isZero();
     }
 
     @Test
@@ -99,11 +99,11 @@ class EndToEndV2ReadTest {
         List<RowDto> expected = generateRows(50);
         writeParquet2File(file, expected, CompressionCodecName.UNCOMPRESSED, /*rowGroupBytes*/ 16L * 1024 * 1024);
 
-        CountingSegmentPool pool = new CountingSegmentPool();
+        SegmentPool pool = SegmentPool.create();
         List<ParquetRecord> actual = readAllRecords(file, pool);
 
         assertRecordsMatch(actual, expected);
-        assertThat(pool.outstanding()).isZero();
+        assertThat(pool.stats().outstandingBorrows()).isZero();
     }
 
     @Test
@@ -112,7 +112,7 @@ class EndToEndV2ReadTest {
         int rowCount = 20;
         writeParquet2FileWithNullableColumn(file, rowCount);
 
-        CountingSegmentPool pool = new CountingSegmentPool();
+        SegmentPool pool = SegmentPool.create();
         List<ParquetRecord> actual = readAllRecords(file, pool);
 
         assertThat(actual).hasSize(rowCount);
@@ -132,7 +132,7 @@ class EndToEndV2ReadTest {
                         .isEqualTo(expectedOptionalValue(i));
             }
         }
-        assertThat(pool.outstanding()).isZero();
+        assertThat(pool.stats().outstandingBorrows()).isZero();
     }
 
     // --- fixture generation ---
@@ -207,7 +207,7 @@ class EndToEndV2ReadTest {
 
     // --- read helper ---
 
-    private static List<ParquetRecord> readAllRecords(Path file, CountingSegmentPool pool) {
+    private static List<ParquetRecord> readAllRecords(Path file, SegmentPool pool) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetRuntime runtime = ParquetRuntime.builder().segmentPool(pool).build();
             ParquetReader dataset = ParquetReader.open(source, runtime, Optional.empty());

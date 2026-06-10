@@ -32,9 +32,9 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * Proves that the parallel decode path returns identical records in identical (strict file) order as the serial path.
@@ -71,7 +71,7 @@ class ParallelDecodeParityTest {
     }
 
     private static List<String> read(Path file, int decodeAhead, DecodeExecutor executor) {
-        CountingSegmentPool pool = new CountingSegmentPool();
+        SegmentPool pool = SegmentPool.create();
         List<String> rendered = new ArrayList<>();
         try (ByteRangeSource source = TestParquetFiles.openRangeReader(file)) {
             ParquetRuntime runtime = ParquetRuntime.builder()
@@ -85,7 +85,7 @@ class ParallelDecodeParityTest {
                 stream.forEach(rec -> rendered.add(renderKey(rec)));
             }
         }
-        assertThat(pool.outstanding()).isZero();
+        assertThat(pool.stats().outstandingBorrows()).isZero();
         return rendered;
     }
 

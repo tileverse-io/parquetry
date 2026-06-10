@@ -41,10 +41,10 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.testsupport.CorpusFixtures;
-import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * Conformance integration test that reads every {@code .parquet} file under
@@ -89,7 +89,7 @@ class ParquetTestingCorpusIT {
         Path fixture = DATA_DIR.resolve(fixtureName);
         List<Map<String, Object>> expected = ParquetJavaOracle.read(fixture);
 
-        CountingSegmentPool pool = new CountingSegmentPool();
+        SegmentPool pool = SegmentPool.create();
         List<Map<String, Object>> actual = readCanonicalViaParquetry(fixture, pool);
 
         assertThat(actual)
@@ -100,7 +100,7 @@ class ParquetTestingCorpusIT {
                     .as("%s row %d: parquetry %s vs oracle %s", fixtureName, i, actual.get(i), expected.get(i))
                     .isTrue();
         }
-        assertThat(pool.outstanding())
+        assertThat(pool.stats().outstandingBorrows())
                 .as("pooled buffers must drain after %s", fixtureName)
                 .isZero();
     }
@@ -111,13 +111,13 @@ class ParquetTestingCorpusIT {
         Path fixture = DATA_DIR.resolve(fixtureName);
         long expectedRows = ParquetJavaOracle.read(fixture).size();
 
-        CountingSegmentPool pool = new CountingSegmentPool();
+        SegmentPool pool = SegmentPool.create();
         long actualRows = totalRowsViaBatchApi(fixture, pool);
 
         assertThat(actualRows)
                 .as("%s batch row count must match parquet-java oracle", fixtureName)
                 .isEqualTo(expectedRows);
-        assertThat(pool.outstanding())
+        assertThat(pool.stats().outstandingBorrows())
                 .as("pooled buffers must drain after %s", fixtureName)
                 .isZero();
     }
@@ -164,7 +164,7 @@ class ParquetTestingCorpusIT {
 
     // --- pipeline drivers ---
 
-    private static List<Map<String, Object>> readCanonicalViaParquetry(Path fixture, CountingSegmentPool pool) {
+    private static List<Map<String, Object>> readCanonicalViaParquetry(Path fixture, SegmentPool pool) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixture)) {
             ParquetRuntime runtime = ParquetRuntime.builder().segmentPool(pool).build();
             ParquetReader dataset = ParquetReader.open(source, runtime, Optional.empty());
@@ -177,7 +177,7 @@ class ParquetTestingCorpusIT {
         }
     }
 
-    private static long totalRowsViaBatchApi(Path fixture, CountingSegmentPool pool) {
+    private static long totalRowsViaBatchApi(Path fixture, SegmentPool pool) {
         long[] total = {0L};
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixture)) {
             ParquetRuntime runtime = ParquetRuntime.builder().segmentPool(pool).build();

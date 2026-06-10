@@ -31,8 +31,8 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
-import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * Proves that closing a read stream after consuming only one record releases all prefetched-but-unconsumed buffers and
@@ -46,7 +46,7 @@ class EarlyCloseCleanupTest {
     @Test
     void closingEarlyReleasesPrefetchedBuffersAndBudget(@TempDir Path tmp) throws Exception {
         Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(tmp, 4_000);
-        CountingSegmentPool pool = new CountingSegmentPool();
+        SegmentPool pool = SegmentPool.create();
         FetchBudget budget = FetchBudget.ofMaxMemoryFraction(0.1);
         long capacityBefore = budget.available();
 
@@ -69,7 +69,7 @@ class EarlyCloseCleanupTest {
         assertThat(budget.available())
                 .as("prefetched-but-unconsumed row groups release their reserved bytes on early close")
                 .isEqualTo(capacityBefore);
-        assertThat(pool.outstanding())
+        assertThat(pool.stats().outstandingBorrows())
                 .as("prefetched-but-unconsumed buffers are returned on early close")
                 .isZero();
     }

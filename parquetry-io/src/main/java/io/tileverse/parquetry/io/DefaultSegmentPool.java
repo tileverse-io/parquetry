@@ -19,6 +19,7 @@ import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -52,6 +53,8 @@ final class DefaultSegmentPool implements SegmentPool {
     private final ReentrantLock lock = new ReentrantLock();
     private final List<MemorySegment> free = new ArrayList<>();
     private long retainedBytes;
+    private final AtomicLong outstandingBorrows = new AtomicLong();
+    private final AtomicLong totalBorrows = new AtomicLong();
 
     DefaultSegmentPool(long largeBufferThreshold, long maxPooledBytes, int blockSize) {
         if (largeBufferThreshold <= 0) {
@@ -74,17 +77,33 @@ final class DefaultSegmentPool implements SegmentPool {
             throw new IllegalArgumentException("byteSize must be >= 0, got " + byteSize);
         }
         long capacity = roundUpToBlockSize(byteSize);
-        if (capacity > largeBufferThreshold) {
-            return borrowUnpooled(byteSize, capacity);
+        Pooled borrowed =
+                capacity > largeBufferThreshold ? borrowUnpooled(byteSize, capacity) : borrowPooled(byteSize, capacity);
+        outstandingBorrows.incrementAndGet();
+        totalBorrows.incrementAndGet();
+        return borrowed;
+    }
+
+    @Override
+    public PoolStats stats() {
+        lock.lock();
+        try {
+            return new PoolStats(outstandingBorrows.get(), totalBorrows.get(), free.size(), retainedBytes);
+        } finally {
+            lock.unlock();
         }
-        return borrowPooled(byteSize, capacity);
+    }
+
+    /** Called by a handle's first {@code close()}; the handles guarantee at most one call per borrow. */
+    void borrowReturned() {
+        outstandingBorrows.decrementAndGet();
     }
 
     private Pooled borrowUnpooled(long byteSize, long capacity) {
         Arena arena = Arena.ofShared();
         MemorySegment backing = arena.allocate(capacity);
         MemorySegment view = backing.asSlice(0, byteSize);
-        return new UnpooledSegment(arena, view);
+        return new UnpooledSegment(this, arena, view);
     }
 
     private Pooled borrowPooled(long byteSize, long capacity) {
@@ -146,25 +165,5 @@ final class DefaultSegmentPool implements SegmentPool {
             return blockSize;
         }
         return ((byteSize + blockSize - 1) / blockSize) * blockSize;
-    }
-
-    // visible for testing
-    int freeCount() {
-        lock.lock();
-        try {
-            return free.size();
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    // visible for testing
-    long pooledBytes() {
-        lock.lock();
-        try {
-            return retainedBytes;
-        } finally {
-            lock.unlock();
-        }
     }
 }

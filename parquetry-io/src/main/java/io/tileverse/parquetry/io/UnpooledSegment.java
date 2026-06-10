@@ -24,10 +24,12 @@ import java.lang.foreign.MemorySegment;
  */
 final class UnpooledSegment implements SegmentPool.Pooled {
 
+    private final DefaultSegmentPool pool;
     private final MemorySegment view;
     private Arena arena;
 
-    UnpooledSegment(Arena arena, MemorySegment view) {
+    UnpooledSegment(DefaultSegmentPool pool, Arena arena, MemorySegment view) {
+        this.pool = pool;
         this.arena = arena;
         this.view = view;
     }
@@ -44,5 +46,6 @@ final class UnpooledSegment implements SegmentPool.Pooled {
         }
         arena.close();
         arena = null;
+        pool.borrowReturned();
     }
 }

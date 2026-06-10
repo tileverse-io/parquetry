@@ -34,8 +34,8 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
-import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * Proves two properties of the coalesced+prefetched read path:
@@ -86,7 +86,7 @@ class CoalescedFullReadParityTest {
         int rowGroups = TestParquetFiles.rowGroupCount(file);
         int columns = 3;
 
-        CountingSegmentPool pool = new CountingSegmentPool();
+        SegmentPool pool = SegmentPool.create();
         List<ParquetRecord> records = new ArrayList<>();
         int dataReads;
         try (ByteRangeSource base = TestParquetFiles.openRangeReader(file)) {
@@ -111,6 +111,6 @@ class CoalescedFullReadParityTest {
                         columns, rowGroups)
                 .isLessThanOrEqualTo(rowGroups)
                 .isLessThan(columns * rowGroups);
-        assertThat(pool.outstanding()).isZero();
+        assertThat(pool.stats().outstandingBorrows()).isZero();
     }
 }

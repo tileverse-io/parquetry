@@ -34,8 +34,8 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
-import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * Proves that the multi-range-per-row-group slicing path (rangeIndex > 0) decodes records correctly when the coalesced
@@ -77,7 +77,7 @@ class MultiRangeCoalescingTest {
         int rowGroups = TestParquetFiles.rowGroupCount(file);
         int columns = 3;
 
-        CountingSegmentPool pool = new CountingSegmentPool();
+        SegmentPool pool = SegmentPool.create();
         List<ParquetRecord> records = new ArrayList<>();
         int dataReads;
         try (ByteRangeSource base = TestParquetFiles.openRangeReader(file)) {
@@ -106,6 +106,6 @@ class MultiRangeCoalescingTest {
                         dataReads, rowGroups, columns)
                 .isGreaterThan(rowGroups)
                 .isLessThanOrEqualTo(columns * rowGroups);
-        assertThat(pool.outstanding()).isZero();
+        assertThat(pool.stats().outstandingBorrows()).isZero();
     }
 }

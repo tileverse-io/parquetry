@@ -41,6 +41,7 @@ final class PooledSegment implements SegmentPool.Pooled {
             return;
         }
         pool.giveBack(backing);
+        pool.borrowReturned();
         backing = null;
     }
 }

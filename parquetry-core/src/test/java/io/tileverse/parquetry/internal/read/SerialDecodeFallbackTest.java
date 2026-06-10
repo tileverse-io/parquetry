@@ -30,8 +30,8 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
-import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * Proves that {@code maxDecodeAheadPerRead=0} routes all decodes through the inline (serial) path and never touches the
@@ -47,7 +47,7 @@ class SerialDecodeFallbackTest {
         int rows = 4_000;
         Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(tmp, rows);
         DecodeExecutor decodePool = DecodeExecutor.ofParallelism(4);
-        CountingSegmentPool pool = new CountingSegmentPool();
+        SegmentPool pool = SegmentPool.create();
         long count;
         try (ByteRangeSource source = TestParquetFiles.openRangeReader(file)) {
             ParquetRuntime runtime = ParquetRuntime.builder()
@@ -65,7 +65,7 @@ class SerialDecodeFallbackTest {
         assertThat(decodePool.availableSlots())
                 .as("maxDecodeAhead=0 must decode inline and never acquire a decode slot")
                 .isEqualTo(4);
-        assertThat(pool.outstanding()).isZero();
+        assertThat(pool.stats().outstandingBorrows()).isZero();
         decodePool.shutdownNow();
     }
 }

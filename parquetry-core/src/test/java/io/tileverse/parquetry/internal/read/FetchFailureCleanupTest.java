@@ -35,8 +35,8 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
-import io.tileverse.parquetry.testsupport.CountingSegmentPool;
 
 /**
  * Proves that a mid-stream fetch failure releases the fetch budget and returns all borrowed buffers to the pool - i.e.
@@ -85,7 +85,7 @@ class FetchFailureCleanupTest {
     @Test
     void fetchFailureMidStreamReleasesBudgetAndBuffers(@TempDir Path tmp) throws Exception {
         Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(tmp, 4_000);
-        CountingSegmentPool pool = new CountingSegmentPool();
+        SegmentPool pool = SegmentPool.create();
         FetchBudget budget = FetchBudget.ofMaxMemoryFraction(0.1);
         long capacityBefore = budget.available();
 
@@ -109,7 +109,7 @@ class FetchFailureCleanupTest {
         assertThat(budget.available())
                 .as("budget fully restored after a mid-stream fetch failure")
                 .isEqualTo(capacityBefore);
-        assertThat(pool.outstanding())
+        assertThat(pool.stats().outstandingBorrows())
                 .as("all pooled buffers returned after a mid-stream fetch failure")
                 .isZero();
     }
