@@ -17,15 +17,18 @@ package io.tileverse.parquetry.geotools;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.BiFunction;
 
 import org.geotools.api.filter.And;
 import org.geotools.api.filter.BinaryComparisonOperator;
 import org.geotools.api.filter.Filter;
 import org.geotools.api.filter.FilterFactory;
+import org.geotools.api.filter.Id;
 import org.geotools.api.filter.MultiValuedFilter;
 import org.geotools.api.filter.Not;
 import org.geotools.api.filter.Or;
@@ -40,6 +43,7 @@ import org.geotools.api.filter.PropertyIsNull;
 import org.geotools.api.filter.expression.Expression;
 import org.geotools.api.filter.expression.Literal;
 import org.geotools.api.filter.expression.PropertyName;
+import org.geotools.api.filter.identity.Identifier;
 import org.geotools.api.filter.spatial.BinarySpatialOperator;
 import org.geotools.api.geometry.BoundingBox;
 import org.geotools.api.referencing.crs.CoordinateReferenceSystem;
@@ -52,6 +56,7 @@ import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.MatchAction;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.geo.jts.JtsGeometryFilter;
 import io.tileverse.parquetry.geotools.GeoParquetSchemaMapper.AttributeMapping;
@@ -82,6 +87,7 @@ final class FilterToPredicate {
 
     private final Map<String, AttributeMapping> attributesByName;
     private final ParquetSchema schema;
+    private final Optional<AttributeMapping> fidAttribute;
     private final CoordinateReferenceSystem nativeCrs;
     private final FilterFactory ff = CommonFactoryFinder.getFilterFactory();
 
@@ -92,6 +98,7 @@ final class FilterToPredicate {
         }
         this.attributesByName = Map.copyOf(byName);
         this.schema = mapping.schema();
+        this.fidAttribute = mapping.fidAttribute();
         this.nativeCrs = nativeCrs;
     }
 
@@ -106,11 +113,65 @@ final class FilterToPredicate {
             case And and -> and(and);
             case Or or -> or(or);
             case Not not -> not(not);
+            case Id id -> idFilter(id);
             default ->
                 leaf(filter)
                         .map(predicate -> new Result(predicate, Filter.INCLUDE))
                         .orElseGet(() -> new Result(Predicate.ALWAYS_TRUE, filter));
         };
+    }
+
+    /**
+     * Pushes an {@link Id} filter as {@code featureIdColumn IN (values)} and keeps the original filter as the residual.
+     * The predicate is only a necessary condition: the read still honors the {@code Id} exactly through the residual,
+     * but the IN lets the STATS, dictionary, and bloom tiers prune row groups and pages first.
+     *
+     * <p>A feature id is the bare column value ({@link GeoParquetFeatureReader} stringifies it); the WFS
+     * {@code typeName.<id>} convention is a protocol concern handled above the data access layer, not unwound here.
+     * Each requested id is converted to the feature id column's type; ids that do not convert match no row and are
+     * dropped, and an Id whose ids never convert is {@code ALWAYS_FALSE}. With no feature id column the filter cannot
+     * be pushed and rides the residual unchanged.
+     */
+    private Result idFilter(Id id) {
+        if (fidAttribute.isEmpty()) {
+            return new Result(Predicate.ALWAYS_TRUE, id);
+        }
+        AttributeMapping fid = fidAttribute.get();
+        Set<Value> values = new LinkedHashSet<>();
+        for (Identifier identifier : id.getIdentifiers()) {
+            Value value = toFidValue(fid.binding(), String.valueOf(identifier.getID()));
+            if (value != null) {
+                values.add(value);
+            }
+        }
+        if (values.isEmpty()) {
+            return new Result(Predicate.ALWAYS_FALSE, Filter.INCLUDE);
+        }
+        return new Result(new Predicate.In(fid.path(), List.copyOf(values)), id);
+    }
+
+    /** Converts a feature id string to the feature id column's value type, or {@code null} when it does not fit. */
+    private static Value toFidValue(Class<?> binding, String text) {
+        if (binding == String.class) {
+            return new Value.StringVal(text);
+        }
+        if (binding == Long.class) {
+            Long v = Converters.convert(text, Long.class);
+            return v == null ? null : new Value.LongVal(v);
+        }
+        if (binding == Integer.class) {
+            Integer v = Converters.convert(text, Integer.class);
+            return v == null ? null : new Value.IntVal(v);
+        }
+        if (binding == Double.class) {
+            Double v = Converters.convert(text, Double.class);
+            return v == null ? null : new Value.DoubleVal(v);
+        }
+        if (binding == Float.class) {
+            Float v = Converters.convert(text, Float.class);
+            return v == null ? null : new Value.FloatVal(v);
+        }
+        return null;
     }
 
     private Result and(And and) {

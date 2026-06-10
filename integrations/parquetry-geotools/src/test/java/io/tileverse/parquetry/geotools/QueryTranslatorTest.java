@@ -34,6 +34,7 @@ import org.locationtech.jts.geom.Point;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.geotools.GeoParquetSchemaMapper.AttributeMapping;
 import io.tileverse.parquetry.geotools.GeoParquetSchemaMapper.Mapping;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -57,9 +58,13 @@ class QueryTranslatorTest {
     }
 
     private static Mapping mappingWithFid() {
+        return mappingWithFid("name");
+    }
+
+    private static Mapping mappingWithFid(String column) {
         Mapping base = mapping();
         AttributeMapping fid = base.attributes().stream()
-                .filter(a -> a.name().equals("name"))
+                .filter(a -> a.name().equals(column))
                 .findFirst()
                 .orElseThrow();
         return new Mapping(base.featureType(), base.attributes(), Optional.of(fid));
@@ -73,12 +78,40 @@ class QueryTranslatorTest {
     }
 
     @Test
-    void idFilterWithFeatureIdColumnStaysInPostFilter() {
+    void idFilterPushesInPredicateOnTheFeatureIdColumnAndKeepsResidual() {
         Filter idFilter = FF.id(Set.of(FF.featureId("x")));
         Query q = new Query("t", idFilter);
         QueryTranslator.TranslatedQuery t = new QueryTranslator(mappingWithFid()).translate(q);
-        assertThat(t.predicate()).isEqualTo((Predicate) Predicate.ALWAYS_TRUE);
+        assertThat(t.predicate()).isEqualTo(new Predicate.In(ColumnPath.of("name"), List.of(new Value.StringVal("x"))));
         assertThat(t.postFilter()).isEqualTo(idFilter);
+    }
+
+    @Test
+    void idFilterWithNumericFeatureIdColumnPushesLongValues() {
+        Filter idFilter = FF.id(Set.of(FF.featureId("10"), FF.featureId("20")));
+        QueryTranslator.TranslatedQuery t =
+                new QueryTranslator(mappingWithFid("pop")).translate(new Query("t", idFilter));
+        assertThat(t.predicate()).isInstanceOf(Predicate.In.class);
+        Predicate.In in = (Predicate.In) t.predicate();
+        assertThat(in.col()).isEqualTo(ColumnPath.of("pop"));
+        assertThat(in.values()).containsExactlyInAnyOrder(new Value.LongVal(10), new Value.LongVal(20));
+    }
+
+    @Test
+    void idFilterTreatsTheFeatureIdAsAPureValue() {
+        // The store deals in bare ids; a dotted id is a literal value, not a typeName-prefixed one to unwind.
+        Filter idFilter = FF.id(Set.of(FF.featureId("a.b")));
+        QueryTranslator.TranslatedQuery t = new QueryTranslator(mappingWithFid()).translate(new Query("t", idFilter));
+        assertThat(t.predicate())
+                .isEqualTo(new Predicate.In(ColumnPath.of("name"), List.of(new Value.StringVal("a.b"))));
+    }
+
+    @Test
+    void idFilterWithNoFeatureIdMatchingTheColumnTypeIsAlwaysFalse() {
+        Filter idFilter = FF.id(Set.of(FF.featureId("not-a-number")));
+        QueryTranslator.TranslatedQuery t =
+                new QueryTranslator(mappingWithFid("pop")).translate(new Query("t", idFilter));
+        assertThat(t.predicate()).isEqualTo((Predicate) Predicate.ALWAYS_FALSE);
     }
 
     @Test

@@ -20,6 +20,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 
 import org.geotools.api.data.FeatureReader;
@@ -224,6 +226,33 @@ class GeoParquetPushdownIT {
                 assertThat(match.getAttribute("name")).isEqualTo(someName);
                 assertThat(reader.hasNext()).isFalse();
             }
+        }
+    }
+
+    @Test
+    void idFilterWithMultipleFeatureIdsReturnsExactlyThoseFeatures(@TempDir Path dir) throws Exception {
+        try (GeoParquetDataStore store = store(dir)) {
+            store.setFidColumn("name");
+            GeoParquetFeatureSource fs = (GeoParquetFeatureSource) store.getFeatureSource("example");
+
+            List<String> names = new ArrayList<>();
+            try (FeatureReader<SimpleFeatureType, SimpleFeature> all = fs.getReader(new Query("example"))) {
+                while (all.hasNext()) {
+                    names.add((String) all.next().getAttribute("name"));
+                }
+            }
+            assertThat(names).hasSizeGreaterThanOrEqualTo(2);
+            String first = names.get(0);
+            String second = names.get(1);
+
+            Query byIds = new Query("example", FF.id(Set.of(FF.featureId(first), FF.featureId(second))));
+            List<String> matched = new ArrayList<>();
+            try (FeatureReader<SimpleFeatureType, SimpleFeature> reader = fs.getReader(byIds)) {
+                while (reader.hasNext()) {
+                    matched.add((String) reader.next().getAttribute("name"));
+                }
+            }
+            assertThat(matched).containsExactlyInAnyOrder(first, second);
         }
     }
 

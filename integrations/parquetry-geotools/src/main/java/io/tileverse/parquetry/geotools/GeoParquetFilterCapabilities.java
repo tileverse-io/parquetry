@@ -15,6 +15,7 @@
  */
 package io.tileverse.parquetry.geotools;
 
+import org.geotools.api.filter.Id;
 import org.geotools.api.filter.PropertyIsBetween;
 import org.geotools.api.filter.PropertyIsNull;
 import org.geotools.api.filter.spatial.BBOX;
@@ -37,6 +38,9 @@ import org.geotools.filter.Capabilities;
  * an operator does not promise an exact translation; {@link FilterToPredicate} runs afterward and pushes back to the
  * residual anything it cannot express (an unbound property, a non-literal operand, a mismatched binding). Operators
  * that parquetry never pushes - {@code PropertyIsLike}, functions, {@code In} - are deliberately omitted here.
+ *
+ * <p>{@code Id} is advertised so {@link FilterToPredicate} can lower it to an {@code IN} on the feature id column; it
+ * still rides the residual for exact membership.
  */
 final class GeoParquetFilterCapabilities {
 
@@ -48,6 +52,7 @@ final class GeoParquetFilterCapabilities {
         capabilities.addAll(Capabilities.SIMPLE_COMPARISONS_OPENGIS);
         capabilities.addType(PropertyIsBetween.class);
         capabilities.addType(PropertyIsNull.class);
+        capabilities.addType(Id.class);
         addSpatialOperators(capabilities);
         return capabilities;
     }

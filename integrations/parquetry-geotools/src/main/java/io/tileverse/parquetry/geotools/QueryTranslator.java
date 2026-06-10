@@ -119,9 +119,9 @@ final class QueryTranslator {
     /**
      * Rejects an {@code Id} filter when no feature id column is resolved. Without a stable feature id, the synthetic
      * per-read ids an Id filter would match against are meaningless; rejecting the filter reports a programming error
-     * rather than returning a silently empty result. When a feature id column is present, GeoTools applies the Id
-     * filter on the materialized features: it is not in {@link GeoParquetFilterCapabilities} and stays in the
-     * post-filter.
+     * rather than returning a silently empty result. When a feature id column is present, {@link FilterToPredicate}
+     * lowers the Id to an {@code IN} on that column for pruning and keeps the Id in the post-filter for an exact
+     * membership re-check.
      */
     private void requireFeatureIdColumnForIdFilter(Filter filter) {
         if (mapping.fidAttribute().isPresent()) {
