@@ -184,4 +184,57 @@ class LevelDecoderTest {
         expected.set(5, 9);
         assertThat(validity).isEqualTo(expected);
     }
+
+    @Test
+    void decodeValidityBitmapPacksPresenceLsbFirstAcrossMixedRuns() {
+        // RLE 3 zeros, bit-packed 8 ones, RLE 2 zeros -> levels [0,0,0,1,1,1,1,1,1,1,1,0,0].
+        // With target=1 the present rows are indices 3..10 (eight rows); the bitmap is LSB-first.
+        byte[] bytes = {6, 0, 3, (byte) 0xff, 4, 0};
+        LevelDecoder d = new LevelDecoder(1);
+        d.load(MemorySegment.ofArray(bytes));
+
+        MemorySegment bitmap = MemorySegment.ofArray(new byte[2]);
+        int validCount = d.decodeValidityBitmap(13, 1, bitmap);
+
+        assertThat(validCount).isEqualTo(8);
+        for (int row = 0; row < 13; row++) {
+            boolean present = bitSet(bitmap, row);
+            assertThat(present).as("row %d presence", row).isEqualTo(row >= 3 && row <= 10);
+        }
+    }
+
+    @Test
+    void decodeValidityBitmapAllPresentIsOneRleRun() {
+        // RLE run of value 1, length 10: header = (10 << 1) = 20 (0x14), value byte = 1.
+        byte[] bytes = {0x14, 0x01};
+        LevelDecoder d = new LevelDecoder(1);
+        d.load(MemorySegment.ofArray(bytes));
+
+        MemorySegment bitmap = MemorySegment.ofArray(new byte[2]);
+        int validCount = d.decodeValidityBitmap(10, 1, bitmap);
+
+        assertThat(validCount).isEqualTo(10);
+        for (int row = 0; row < 10; row++) {
+            assertThat(bitSet(bitmap, row)).as("row %d present", row).isTrue();
+        }
+    }
+
+    @Test
+    void decodeValidityBitmapBitWidthZeroAllPresentWhenTargetIsZero() {
+        LevelDecoder d = new LevelDecoder(0);
+        d.load(MemorySegment.ofArray(new byte[0]));
+
+        MemorySegment bitmap = MemorySegment.ofArray(new byte[1]);
+        int validCount = d.decodeValidityBitmap(5, 0, bitmap);
+
+        assertThat(validCount).isEqualTo(5);
+        for (int row = 0; row < 5; row++) {
+            assertThat(bitSet(bitmap, row)).as("row %d present", row).isTrue();
+        }
+    }
+
+    private static boolean bitSet(MemorySegment bitmap, int row) {
+        int b = bitmap.get(java.lang.foreign.ValueLayout.JAVA_BYTE, row >>> 3) & 0xff;
+        return ((b >>> (row & 7)) & 1) != 0;
+    }
 }

@@ -112,6 +112,12 @@ final class BatchColumnReader {
     private int pageSize;
     private int pageLogicalRowCount;
     private BitSet pageValidity;
+    // Flat optional fast path only (maxRep == 0, maxDef == 1, no row mask): the page's validity decoded straight from
+    // the def-level stream into an off-heap LSB-first bitmap (bit set == valid). When non-null, pageValidity (the heap
+    // BitSet) is left null and every validity read goes through pageValidityView instead. The pooled buffer is held for
+    // the page's lifetime and released at page-advance.
+    private SegmentPool.Pooled pageValidityPooled;
+    private Validity pageValidityView;
     private int[] pageRepLevels; // null when maxRep == 0
     private int[] pageDefLevels; // null when maxDef == 0
     private int[] pageInts;
@@ -347,8 +353,12 @@ final class BatchColumnReader {
     private void decodeIntoHeap(DecodedPage page) {
         pageSize = page.valueCount();
         pageRepLevels = decodeRepLevels(page, pageSize);
-        pageDefLevels = decodeDefLevels(page, pageSize);
-        pageValidity = deriveValidity(pageDefLevels, pageSize);
+        if (canDecodeOriginValidity()) {
+            decodeOriginValidity(page);
+        } else {
+            pageDefLevels = decodeDefLevels(page, pageSize);
+            pageValidity = deriveValidity(pageDefLevels, pageSize);
+        }
         pageLogicalRowCount = (pageRepLevels == null) ? pageSize : countRepZeroMarkers(pageRepLevels);
         clearTypedPayloads();
         pageWasDictionary = isDictionaryEncoded(page.valuesEncoding());
@@ -373,10 +383,20 @@ final class BatchColumnReader {
         pageValidity = null;
         pageRepLevels = null;
         pageDefLevels = null;
+        releaseOriginValidity();
         clearTypedPayloads();
         closeLivePageArena();
         valuesConsumedInCurrentPage = 0;
         logicalRowsConsumedInCurrentPage = 0;
+    }
+
+    /** Releases the off-heap origin validity bitmap held for the flat fast path, if any. */
+    private void releaseOriginValidity() {
+        pageValidityView = null;
+        if (pageValidityPooled != null) {
+            pageValidityPooled.close();
+            pageValidityPooled = null;
+        }
     }
 
     private void closeLivePageArena() {
@@ -424,6 +444,56 @@ final class BatchColumnReader {
             }
         }
         return validity;
+    }
+
+    /**
+     * True for the flat optional fast path: a top-level primitive column ({@code numParts == 1}, parent is the schema
+     * root) that is optional with no repetition ({@code maxRep == 0}, {@code maxDef == 1}) and no row mask. There the
+     * def-level stream is one present/absent bit per value, which decodes straight into an off-heap validity bitmap,
+     * skipping both the {@code int[]} of def levels and the heap {@link BitSet}.
+     *
+     * <p>The top-level condition is load-bearing, not a convenience. A required leaf nested under an optional struct
+     * also has {@code maxRep == 0, maxDef == 1} (the optional struct contributes the one definition level), but its
+     * def-level stream is consumed downstream: {@code DremelAssembler} reads a struct's first row-aligned descendant
+     * leaf's def levels to rebuild the optional struct's per-row null mask. Dropping that stream would silently lose
+     * the struct's null rows. Only a top-level-flat leaf has no group ancestor that will ever ask for its def levels.
+     *
+     * <p>Masked reads keep the heap path because their compaction rewrites the validity {@link BitSet}.
+     */
+    private boolean canDecodeOriginValidity() {
+        if (columnPath.numParts() != 1) {
+            return false;
+        }
+        if (maxLevels.maxRepetitionLevel() != 0 || maxLevels.maxDefinitionLevel() != 1) {
+            return false;
+        }
+        if (survivingRows != null || skipDecode) {
+            return false;
+        }
+        return pageSize > 0;
+    }
+
+    /**
+     * Decodes the page's def-level stream straight into an off-heap LSB-first validity bitmap (bit set == present),
+     * leaving the heap {@link #pageValidity} {@link BitSet} null. The pooled buffer is held for the page's lifetime and
+     * released at page-advance; every validity read for the page goes through {@link #pageValidityView}.
+     */
+    private void decodeOriginValidity(DecodedPage page) {
+        long byteSize = Math.max(1L, (pageSize + 7) / 8);
+        SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
+        try {
+            MemorySegment bitmap = pooled.segment();
+            LevelDecoder defDecoder = new LevelDecoder(defBitWidth);
+            defDecoder.load(page.defLevelBytes());
+            int validCount = defDecoder.decodeValidityBitmap(pageSize, maxLevels.maxDefinitionLevel(), bitmap);
+            pageValidityView = Validity.ofSegment(bitmap, pageSize - validCount, pageSize);
+            pageValidity = null;
+            pageDefLevels = null;
+            pageValidityPooled = pooled;
+        } catch (RuntimeException e) {
+            pooled.close();
+            throw e;
+        }
     }
 
     // null marks "flat column, no rep levels exist" - distinct from "repeated column with zero values in the page"
@@ -499,8 +569,32 @@ final class BatchColumnReader {
 
     // ---- per-kind value decoding ----
 
+    /** The page's non-null value count, from whichever validity representation the page holds. */
+    private int pageNonNullCount() {
+        if (pageValidityView != null) {
+            return pageValidityView.cardinality();
+        }
+        return pageValidity.cardinality();
+    }
+
+    /** Index of the next present (non-null) row at or after {@code from}, or {@code -1}; representation-agnostic. */
+    private int nextPresentRow(int from) {
+        if (pageValidityView != null) {
+            return pageValidityView.nextSetBit(from);
+        }
+        return pageValidity.nextSetBit(from);
+    }
+
+    /** Whether page row {@code row} is present (non-null); representation-agnostic. */
+    private boolean isRowPresent(int row) {
+        if (pageValidityView != null) {
+            return pageValidityView.isValid(row);
+        }
+        return pageValidity.get(row);
+    }
+
     private void decodeValuesByKind(DecodedPage page) {
-        int nonNullCount = pageValidity.cardinality();
+        int nonNullCount = pageNonNullCount();
         decodedValueCount += nonNullCount;
         Encoding encoding = page.valuesEncoding();
         MemorySegment valueBuf = page.valueBytes();
@@ -753,17 +847,17 @@ final class BatchColumnReader {
             decoder.load(buf, nonNullCount);
             decoder.decodeBinaryLayout(nonNullCount, densePositions, denseLengths, 0);
         }
-        pageValuePos = spreadPositions(densePositions, pageValidity, pageSize);
-        pageBinaryOffsets = rowOffsetsFromDenseLengths(denseLengths, pageValidity, pageSize);
+        pageValuePos = spreadPositions(densePositions, pageSize);
+        pageBinaryOffsets = rowOffsetsFromDenseLengths(denseLengths, pageSize);
         pageSegments = null;
     }
 
     /** Row-indexed source positions: present rows take the next dense position; null rows stay zero (never read). */
-    private static int[] spreadPositions(int[] densePositions, BitSet validity, int rowCount) {
+    private int[] spreadPositions(int[] densePositions, int rowCount) {
         int[] positions = new int[rowCount];
         int dense = 0;
         for (int row = 0; row < rowCount; row++) {
-            if (validity.get(row)) {
+            if (isRowPresent(row)) {
                 positions[row] = densePositions[dense++];
             }
         }
@@ -771,13 +865,13 @@ final class BatchColumnReader {
     }
 
     /** Row-indexed cumulative value-byte offsets (length {@code rowCount + 1}); null rows are zero-length runs. */
-    private static int[] rowOffsetsFromDenseLengths(int[] denseLengths, BitSet validity, int rowCount) {
+    private int[] rowOffsetsFromDenseLengths(int[] denseLengths, int rowCount) {
         int[] offsets = new int[rowCount + 1];
         int dense = 0;
         int acc = 0;
         for (int row = 0; row < rowCount; row++) {
             offsets[row] = acc;
-            if (validity.get(row)) {
+            if (isRowPresent(row)) {
                 acc += denseLengths[dense++];
             }
         }
@@ -937,42 +1031,42 @@ final class BatchColumnReader {
 
     private void spreadInts(int[] dense, int[] dst) {
         int j = 0;
-        for (int i = pageValidity.nextSetBit(0); i >= 0; i = pageValidity.nextSetBit(i + 1)) {
+        for (int i = nextPresentRow(0); i >= 0; i = nextPresentRow(i + 1)) {
             dst[i] = dense[j++];
         }
     }
 
     private void spreadLongs(long[] dense, long[] dst) {
         int j = 0;
-        for (int i = pageValidity.nextSetBit(0); i >= 0; i = pageValidity.nextSetBit(i + 1)) {
+        for (int i = nextPresentRow(0); i >= 0; i = nextPresentRow(i + 1)) {
             dst[i] = dense[j++];
         }
     }
 
     private void spreadFloats(float[] dense, float[] dst) {
         int j = 0;
-        for (int i = pageValidity.nextSetBit(0); i >= 0; i = pageValidity.nextSetBit(i + 1)) {
+        for (int i = nextPresentRow(0); i >= 0; i = nextPresentRow(i + 1)) {
             dst[i] = dense[j++];
         }
     }
 
     private void spreadDoubles(double[] dense, double[] dst) {
         int j = 0;
-        for (int i = pageValidity.nextSetBit(0); i >= 0; i = pageValidity.nextSetBit(i + 1)) {
+        for (int i = nextPresentRow(0); i >= 0; i = nextPresentRow(i + 1)) {
             dst[i] = dense[j++];
         }
     }
 
     private void spreadBooleans(boolean[] dense, boolean[] dst) {
         int j = 0;
-        for (int i = pageValidity.nextSetBit(0); i >= 0; i = pageValidity.nextSetBit(i + 1)) {
+        for (int i = nextPresentRow(0); i >= 0; i = nextPresentRow(i + 1)) {
             dst[i] = dense[j++];
         }
     }
 
     private void spreadSegments(MemorySegment[] dense, MemorySegment[] dst) {
         int j = 0;
-        for (int i = pageValidity.nextSetBit(0); i >= 0; i = pageValidity.nextSetBit(i + 1)) {
+        for (int i = nextPresentRow(0); i >= 0; i = nextPresentRow(i + 1)) {
             dst[i] = dense[j++];
         }
     }
@@ -1293,7 +1387,7 @@ final class BatchColumnReader {
     // ---- vector slicing ----
 
     private ColumnVector sliceVector(int start, int n, List<AutoCloseable> acquiredBuffers) {
-        Validity sliceValidityMask = sliceValidity(pageValidity, start, n);
+        Validity sliceValidityMask = sliceCurrentValidity(start, n, acquiredBuffers);
         return switch (leaf.kind()) {
             case INT32 -> sliceInt(start, n, sliceValidityMask, acquiredBuffers);
             case INT64 -> sliceLong(start, n, sliceValidityMask, acquiredBuffers);
@@ -1321,7 +1415,7 @@ final class BatchColumnReader {
         long byteSize = (long) n * Double.BYTES;
         SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
         acquiredBuffers.add(pooled);
-        MemorySegment dst = pooled.segment().asSlice(0L, byteSize);
+        MemorySegment dst = pooled.segment();
         if (pageDoubleValues != null) {
             MemorySegment.copy(pageDoubleValues, (long) start * Double.BYTES, dst, 0L, byteSize);
         } else {
@@ -1343,7 +1437,7 @@ final class BatchColumnReader {
         long byteSize = (long) n * Integer.BYTES;
         SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
         acquiredBuffers.add(pooled);
-        MemorySegment dst = pooled.segment().asSlice(0L, byteSize);
+        MemorySegment dst = pooled.segment();
         if (pageIntValues != null) {
             MemorySegment.copy(pageIntValues, (long) start * Integer.BYTES, dst, 0L, byteSize);
         } else {
@@ -1362,7 +1456,7 @@ final class BatchColumnReader {
         long byteSize = (long) n * Long.BYTES;
         SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
         acquiredBuffers.add(pooled);
-        MemorySegment dst = pooled.segment().asSlice(0L, byteSize);
+        MemorySegment dst = pooled.segment();
         if (pageLongValues != null) {
             MemorySegment.copy(pageLongValues, (long) start * Long.BYTES, dst, 0L, byteSize);
         } else {
@@ -1381,7 +1475,7 @@ final class BatchColumnReader {
         long byteSize = (long) n * Float.BYTES;
         SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
         acquiredBuffers.add(pooled);
-        MemorySegment dst = pooled.segment().asSlice(0L, byteSize);
+        MemorySegment dst = pooled.segment();
         if (pageFloatValues != null) {
             MemorySegment.copy(pageFloatValues, (long) start * Float.BYTES, dst, 0L, byteSize);
         } else {
@@ -1400,7 +1494,7 @@ final class BatchColumnReader {
         long byteSize = Math.max(1L, (n + 7) / 8);
         SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
         acquiredBuffers.add(pooled);
-        MemorySegment dst = pooled.segment().asSlice(0L, byteSize);
+        MemorySegment dst = pooled.segment();
         packBooleanBitmap(pageBooleans, start, n, dst);
         return BooleanVector.segmentBacked(dst, n, sliceValidity);
     }
@@ -1442,6 +1536,7 @@ final class BatchColumnReader {
         long windowBytes = (long) pageBinaryOffsets[start + n] - base;
         SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(Math.max(1L, windowBytes));
         acquiredBuffers.add(pooled);
+        // The valve never hands out a zero-length buffer; slice back to the true window so an all-null slice is empty.
         MemorySegment dst = pooled.segment().asSlice(0L, windowBytes);
         if (pageBackingIsLivePage) {
             copyRowsFromLivePage(start, n, dst);
@@ -1487,7 +1582,7 @@ final class BatchColumnReader {
         long byteSize = (long) n * width;
         SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
         acquiredBuffers.add(pooled);
-        MemorySegment dst = pooled.segment().asSlice(0L, byteSize);
+        MemorySegment dst = pooled.segment();
         MemorySegment.copy(pageBinaryBacking, (long) start * width, dst, 0L, byteSize);
         return FixedLenBinaryVector.of(dst, width, sliceValidity);
     }
@@ -1500,13 +1595,26 @@ final class BatchColumnReader {
         long byteSize = (long) n * INT96_WIDTH;
         SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
         acquiredBuffers.add(pooled);
-        MemorySegment dst = pooled.segment().asSlice(0L, byteSize);
+        MemorySegment dst = pooled.segment();
         MemorySegment.copy(pageBinaryBacking, (long) start * INT96_WIDTH, dst, 0L, byteSize);
         return Int96Vector.of(dst, sliceValidity);
     }
 
     static BitSet sliceBitSet(BitSet source, int start, int n) {
         return source.get(start, start + n);
+    }
+
+    /**
+     * The validity mask for the page slice {@code [start, start + n)} from whichever representation the page holds. The
+     * off-heap origin path packs the slice into its own off-heap bitmap (registered on the batch) because the page's
+     * origin bitmap is released at page-advance while the batch and its vectors live on; the heap path copies the
+     * {@link BitSet}. Either way the resulting mask owns memory independent of the page.
+     */
+    private Validity sliceCurrentValidity(int start, int n, List<AutoCloseable> acquiredBuffers) {
+        if (pageValidityView != null) {
+            return sliceOriginValidity(start, n, acquiredBuffers);
+        }
+        return sliceValidity(pageValidity, start, n);
     }
 
     /**
@@ -1519,6 +1627,51 @@ final class BatchColumnReader {
             return Validity.allValid(n);
         }
         return Validity.of(sliceBitSet(source, start, n), n);
+    }
+
+    /**
+     * Packs the off-heap origin bitmap's bits for {@code [start, start + n)} into a fresh off-heap slice bitmap rebased
+     * to bit zero. A fully present range needs no bitmap and acquires nothing; otherwise the slice bitmap is acquired
+     * from the decode valve and registered on the batch, which closes it on batch close.
+     */
+    private Validity sliceOriginValidity(int start, int n, List<AutoCloseable> acquiredBuffers) {
+        int nulls = countNullsInRange(start, n);
+        if (nulls == 0) {
+            return Validity.allValid(n);
+        }
+        long byteSize = Math.max(1L, (n + 7) / 8);
+        SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
+        acquiredBuffers.add(pooled);
+        MemorySegment dst = pooled.segment();
+        packPresenceBitmap(start, n, dst);
+        return Validity.ofSegment(dst, nulls, n);
+    }
+
+    private int countNullsInRange(int start, int n) {
+        int nulls = 0;
+        for (int i = 0; i < n; i++) {
+            if (!isRowPresent(start + i)) {
+                nulls++;
+            }
+        }
+        return nulls;
+    }
+
+    /**
+     * Writes the slice's presence bits LSB-first into {@code dst}, rebased so page row {@code start} lands at bit 0.
+     */
+    private void packPresenceBitmap(int start, int n, MemorySegment dst) {
+        long byteCount = (n + 7) / 8;
+        for (long byteIndex = 0; byteIndex < byteCount; byteIndex++) {
+            int packed = 0;
+            for (int bit = 0; bit < 8; bit++) {
+                int row = (int) (byteIndex * 8 + bit);
+                if (row < n && isRowPresent(start + row)) {
+                    packed |= 1 << bit;
+                }
+            }
+            dst.set(ValueLayout.JAVA_BYTE, byteIndex, (byte) packed);
+        }
     }
 
     // ---- close ----

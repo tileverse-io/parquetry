@@ -250,6 +250,79 @@ class BatchColumnReaderTest {
         assertThat(validity.isValid(4)).isTrue();
     }
 
+    /**
+     * Flat optional INT32 column ({@code maxRep == 0}, {@code maxDef == 1}) with nulls spread across two pages, read in
+     * one batch per page. This exercises the origin-validity fast path that decodes the def-level stream straight into
+     * an off-heap validity bitmap: the per-slice {@link Validity} and the values must both be correct on each page.
+     */
+    @Test
+    void flatOptionalColumnWithNullsAcrossPageBoundary() throws IOException {
+        // Page 1: rows {v, null, v, null} -> def levels {1,0,1,0}, non-null values {10, 20}.
+        // Page 2: rows {null, v, v} -> def levels {0,1,1}, non-null values {30, 40}.
+        byte[] page1 = nullableInt32Page(new int[] {1, 0, 1, 0}, new int[] {10, 20});
+        byte[] page2 = nullableInt32Page(new int[] {0, 1, 1}, new int[] {30, 40});
+        FetchedColumnChunk chunk = twoPageChunk(page1, page2, /*totalValues*/ 7, /*maxDef*/ 1);
+        SchemaNode.Primitive leaf = optionalInt32Leaf();
+
+        BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, leaf);
+
+        IntVector first = (IntVector) reader.readBatch(10, new ArrayList<>());
+        assertThat(first.size()).isEqualTo(4);
+        assertThat(first.validity().isValid(0)).isTrue();
+        assertThat(first.getInt(0)).isEqualTo(10);
+        assertThat(first.validity().isValid(1)).isFalse();
+        assertThat(first.validity().isValid(2)).isTrue();
+        assertThat(first.getInt(2)).isEqualTo(20);
+        assertThat(first.validity().isValid(3)).isFalse();
+
+        IntVector second = (IntVector) reader.readBatch(10, new ArrayList<>());
+        assertThat(second.size()).isEqualTo(3);
+        assertThat(second.validity().isValid(0)).isFalse();
+        assertThat(second.validity().isValid(1)).isTrue();
+        assertThat(second.getInt(1)).isEqualTo(30);
+        assertThat(second.validity().isValid(2)).isTrue();
+        assertThat(second.getInt(2)).isEqualTo(40);
+
+        assertThat(reader.hasMore()).isFalse();
+    }
+
+    /**
+     * Regression: a REQUIRED primitive nested under an OPTIONAL struct has the same level shape as a top-level flat
+     * optional column ({@code maxRep == 0}, {@code maxDef == 1}; the optional struct contributes the one definition
+     * level), but its def-level stream is consumed downstream - {@code DremelAssembler} rebuilds the struct's per-row
+     * null mask from it. The origin-validity fast path must NOT engage for a non-top-level leaf; the def-level stream
+     * must still be retained. Asserting {@link BatchColumnReader#currentPageDefLevels()} is non-null locks the scoping.
+     */
+    @Test
+    void nestedRequiredLeafUnderOptionalStructRetainsDefLevels() throws IOException {
+        // info is null on rows 0 and 2 (descendant def level 0); present on rows 1, 3 (def level 1).
+        byte[] defLevelBytes = rleEncodeBits(new int[] {0, 1, 0, 1}, /*maxLevel*/ 1);
+        int[] nonNullValues = {11, 33};
+        ColumnPath nestedPath = ColumnPath.of("info", "value");
+        FetchedColumnChunk chunk = nestedNullableChunk(nestedPath, nonNullValues, defLevelBytes, /*numValues*/ 4);
+        SchemaNode.Primitive leaf = new SchemaNode.Primitive(
+                "value", Repetition.REQUIRED, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
+
+        BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, leaf);
+
+        int[] defLevels = reader.currentPageDefLevels();
+        assertThat(defLevels)
+                .as("a non-top-level leaf must retain its def-level stream for struct null reconstruction")
+                .isNotNull()
+                .containsExactly(0, 1, 0, 1);
+
+        IntVector vec = (IntVector) reader.readBatch(10, new ArrayList<>());
+        assertThat(vec.size()).isEqualTo(4);
+        assertThat(vec.validity().isValid(0))
+                .as("row 0 struct absent -> leaf null")
+                .isFalse();
+        assertThat(vec.validity().isValid(1)).isTrue();
+        assertThat(vec.getInt(1)).isEqualTo(11);
+        assertThat(vec.validity().isValid(2)).isFalse();
+        assertThat(vec.validity().isValid(3)).isTrue();
+        assertThat(vec.getInt(3)).isEqualTo(33);
+    }
+
     // --- test 4: hasMore false after all pages consumed ---
 
     @Test
@@ -667,6 +740,32 @@ class BatchColumnReaderTest {
         byte[] payload = buildV1PayloadWithDefLevels(defBytes, valueBytes);
         byte[] chunkBuffer = encodeV1Page(numValues, payload, org.apache.parquet.format.Encoding.PLAIN);
         return heapChunk(PATH, chunkBuffer, numValues, /*maxRep*/ 0, /*maxDef*/ 1);
+    }
+
+    /**
+     * Builds a single nullable INT32 page chunk at an arbitrary (possibly nested) path. A nested path gives the leaf
+     * {@code numParts > 1}, which keeps the origin-validity fast path off even at {@code maxDef == 1}.
+     */
+    private static FetchedColumnChunk nestedNullableChunk(
+            ColumnPath path, int[] nonNullValues, byte[] defBytes, int numValues) throws IOException {
+        byte[] valueBytes = encodeInt32sLittleEndian(nonNullValues);
+        byte[] payload = buildV1PayloadWithDefLevels(defBytes, valueBytes);
+        byte[] chunkBuffer = encodeV1Page(numValues, payload, org.apache.parquet.format.Encoding.PLAIN);
+        return heapChunk(path, chunkBuffer, numValues, /*maxRep*/ 0, /*maxDef*/ 1);
+    }
+
+    /** Encodes one nullable INT32 V1 page: def-level section (length-prefixed) then the non-null value bytes. */
+    private static byte[] nullableInt32Page(int[] defLevels, int[] nonNullValues) throws IOException {
+        byte[] defBytes = rleEncodeBits(defLevels, /*maxLevel*/ 1);
+        byte[] valueBytes = encodeInt32sLittleEndian(nonNullValues);
+        byte[] payload = buildV1PayloadWithDefLevels(defBytes, valueBytes);
+        return encodeV1Page(defLevels.length, payload, org.apache.parquet.format.Encoding.PLAIN);
+    }
+
+    /** Concatenates two already-encoded V1 pages into one INT32 chunk buffer. */
+    private static FetchedColumnChunk twoPageChunk(byte[] page1, byte[] page2, long totalValues, int maxDef) {
+        byte[] chunkBuffer = concat(page1, page2);
+        return heapChunk(PATH, chunkBuffer, totalValues, /*maxRep*/ 0, maxDef);
     }
 
     /**

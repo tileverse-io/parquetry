@@ -117,34 +117,142 @@ public final class LevelDecoder {
             }
             return;
         }
+        walkRuns(count, targetLevel, new BitSetSink(out, base));
+    }
+
+    /**
+     * Decodes {@code count} definition levels straight into an off-heap LSB-first validity bitmap: bit {@code i} is set
+     * when level {@code i} equals {@code targetLevel} (the value is present at the leaf), cleared otherwise.
+     * {@code out} must cover at least {@code ceil(count / 8)} bytes; this method writes every covered byte, never
+     * relying on the caller to pre-zero. Returns the count of set bits (the present, non-null values). An all-present
+     * page is a single RLE run and fills the bitmap in whole bytes.
+     */
+    public int decodeValidityBitmap(int count, int targetLevel, MemorySegment out) {
+        ValidityBitmapSink sink = new ValidityBitmapSink(out);
+        if (bitWidth == 0) {
+            sink.acceptRun(targetLevel == 0, count);
+            sink.flush();
+            return sink.validCount();
+        }
+        walkRuns(count, targetLevel, sink);
+        sink.flush();
+        return sink.validCount();
+    }
+
+    /**
+     * Shared RLE / bit-packed run walker for the {@code bitWidth > 0} case. Consumes {@code count} levels, handing each
+     * run to {@code sink}: an RLE run is one {@link RunSink#acceptRun} call (whole run matches the target or not), a
+     * bit-packed run is walked value by value through {@link RunSink#acceptValue}. The per-run dispatch keeps the
+     * virtual call coarse, off the per-value path. Both {@link #decodeEquals} and {@link #decodeValidityBitmap} drive
+     * their output through this one state machine so they cannot drift.
+     */
+    private void walkRuns(int count, int targetLevel, RunSink sink) {
         int produced = 0;
         while (produced < count) {
             if (remainingInRun == 0) {
                 readNextRunHeader();
             }
             int take = Math.min(remainingInRun, count - produced);
-            setEqualBits(out, base + produced, take, targetLevel);
+            if (currentRunIsRle) {
+                sink.acceptRun(rleValue == targetLevel, take);
+            } else {
+                for (int i = 0; i < take; i++) {
+                    sink.acceptValue(readBitPackedValue() == targetLevel);
+                }
+            }
             remainingInRun -= take;
             produced += take;
         }
     }
 
     /**
-     * Sets the bits in {@code [from, from + take)} whose level equals {@code targetLevel}, consuming {@code take}
-     * values of the current run. An RLE run sets the whole range in one call; a bit-packed run is walked value by
-     * value.
+     * Receives the matched / unmatched levels {@link #walkRuns} produces: whole RLE runs in bulk, bit-packed singly.
      */
-    private void setEqualBits(BitSet out, int from, int take, int targetLevel) {
-        if (currentRunIsRle) {
-            if (rleValue == targetLevel) {
-                out.set(from, from + take);
-            }
-            return;
+    private interface RunSink {
+
+        /** A run of {@code count} levels that all do ({@code matches}) or all do not equal the target level. */
+        void acceptRun(boolean matches, int count);
+
+        /** One bit-packed level that does ({@code match}) or does not equal the target level. */
+        void acceptValue(boolean match);
+    }
+
+    /** A {@link RunSink} that sets the matching bits of a heap {@link BitSet}, rebased to {@code base}. */
+    private static final class BitSetSink implements RunSink {
+
+        private final BitSet out;
+        private final int base;
+        private int produced;
+
+        private BitSetSink(BitSet out, int base) {
+            this.out = out;
+            this.base = base;
         }
-        for (int i = 0; i < take; i++) {
-            if (readBitPackedValue() == targetLevel) {
-                out.set(from + i);
+
+        @Override
+        public void acceptRun(boolean matches, int count) {
+            if (matches) {
+                out.set(base + produced, base + produced + count);
             }
+            produced += count;
+        }
+
+        @Override
+        public void acceptValue(boolean match) {
+            if (match) {
+                out.set(base + produced);
+            }
+            produced++;
+        }
+    }
+
+    /**
+     * A {@link RunSink} that packs the matching bits LSB-first into an off-heap segment one byte at a time,
+     * accumulating until a byte is full. {@link #flush()} writes the final partial byte after the last run.
+     */
+    private static final class ValidityBitmapSink implements RunSink {
+
+        private final MemorySegment out;
+        private long byteIndex;
+        private int currentByte;
+        private int bitsInByte;
+        private int validCount;
+
+        private ValidityBitmapSink(MemorySegment out) {
+            this.out = out;
+        }
+
+        @Override
+        public void acceptRun(boolean matches, int count) {
+            for (int i = 0; i < count; i++) {
+                acceptValue(matches);
+            }
+        }
+
+        @Override
+        public void acceptValue(boolean match) {
+            if (match) {
+                currentByte |= 1 << bitsInByte;
+                validCount++;
+            }
+            bitsInByte++;
+            if (bitsInByte == 8) {
+                out.set(JAVA_BYTE, byteIndex++, (byte) currentByte);
+                currentByte = 0;
+                bitsInByte = 0;
+            }
+        }
+
+        private void flush() {
+            if (bitsInByte > 0) {
+                out.set(JAVA_BYTE, byteIndex++, (byte) currentByte);
+                currentByte = 0;
+                bitsInByte = 0;
+            }
+        }
+
+        private int validCount() {
+            return validCount;
         }
     }
 
