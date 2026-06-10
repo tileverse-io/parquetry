@@ -18,7 +18,6 @@ package io.tileverse.parquetry.internal.read.page;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 import java.lang.foreign.MemorySegment;
-import java.util.BitSet;
 
 /**
  * Decodes Parquet repetition and definition level streams.
@@ -105,22 +104,6 @@ public final class LevelDecoder {
     }
 
     /**
-     * Sets bit {@code base + i} in {@code out} for each of the next {@code count} levels that equals
-     * {@code targetLevel}, leaving the other bits untouched. RLE runs of the target value set a whole range in one
-     * call; only bit-packed runs are walked value by value. This is the def-level to validity-bitset path: it avoids
-     * materializing an {@code int[]} of levels and turns an all-defined page (a single RLE run) into one range set.
-     */
-    public void decodeEquals(int count, int targetLevel, BitSet out, int base) {
-        if (bitWidth == 0) {
-            if (targetLevel == 0) {
-                out.set(base, base + count);
-            }
-            return;
-        }
-        walkRuns(count, targetLevel, new BitSetSink(out, base));
-    }
-
-    /**
      * Decodes {@code count} definition levels straight into an off-heap LSB-first validity bitmap: bit {@code i} is set
      * when level {@code i} equals {@code targetLevel} (the value is present at the leaf), cleared otherwise.
      * {@code out} must cover at least {@code ceil(count / 8)} bytes; this method writes every covered byte, never
@@ -140,13 +123,11 @@ public final class LevelDecoder {
     }
 
     /**
-     * Shared RLE / bit-packed run walker for the {@code bitWidth > 0} case. Consumes {@code count} levels, handing each
-     * run to {@code sink}: an RLE run is one {@link RunSink#acceptRun} call (whole run matches the target or not), a
-     * bit-packed run is walked value by value through {@link RunSink#acceptValue}. The per-run dispatch keeps the
-     * virtual call coarse, off the per-value path. Both {@link #decodeEquals} and {@link #decodeValidityBitmap} drive
-     * their output through this one state machine so they cannot drift.
+     * RLE / bit-packed run walker for the {@code bitWidth > 0} case. Consumes {@code count} levels, handing each run to
+     * {@code sink}: an RLE run is one {@link ValidityBitmapSink#acceptRun} call (the whole run matches the target or
+     * not), a bit-packed run is walked value by value through {@link ValidityBitmapSink#acceptValue}.
      */
-    private void walkRuns(int count, int targetLevel, RunSink sink) {
+    private void walkRuns(int count, int targetLevel, ValidityBitmapSink sink) {
         int produced = 0;
         while (produced < count) {
             if (remainingInRun == 0) {
@@ -166,51 +147,11 @@ public final class LevelDecoder {
     }
 
     /**
-     * Receives the matched / unmatched levels {@link #walkRuns} produces: whole RLE runs in bulk, bit-packed singly.
+     * Packs matched / unmatched levels LSB-first into an off-heap segment: bit-packed levels one bit at a time,
+     * accumulating until a byte is full; RLE runs in whole {@code 0xFF}/{@code 0x00} bytes once the run reaches a byte
+     * boundary. {@link #flush()} writes the final partial byte after the last run.
      */
-    private interface RunSink {
-
-        /** A run of {@code count} levels that all do ({@code matches}) or all do not equal the target level. */
-        void acceptRun(boolean matches, int count);
-
-        /** One bit-packed level that does ({@code match}) or does not equal the target level. */
-        void acceptValue(boolean match);
-    }
-
-    /** A {@link RunSink} that sets the matching bits of a heap {@link BitSet}, rebased to {@code base}. */
-    private static final class BitSetSink implements RunSink {
-
-        private final BitSet out;
-        private final int base;
-        private int produced;
-
-        private BitSetSink(BitSet out, int base) {
-            this.out = out;
-            this.base = base;
-        }
-
-        @Override
-        public void acceptRun(boolean matches, int count) {
-            if (matches) {
-                out.set(base + produced, base + produced + count);
-            }
-            produced += count;
-        }
-
-        @Override
-        public void acceptValue(boolean match) {
-            if (match) {
-                out.set(base + produced);
-            }
-            produced++;
-        }
-    }
-
-    /**
-     * A {@link RunSink} that packs the matching bits LSB-first into an off-heap segment one byte at a time,
-     * accumulating until a byte is full. {@link #flush()} writes the final partial byte after the last run.
-     */
-    private static final class ValidityBitmapSink implements RunSink {
+    private static final class ValidityBitmapSink {
 
         private final MemorySegment out;
         private long byteIndex;
@@ -222,15 +163,29 @@ public final class LevelDecoder {
             this.out = out;
         }
 
-        @Override
-        public void acceptRun(boolean matches, int count) {
-            for (int i = 0; i < count; i++) {
+        /** A run of {@code count} levels that all do ({@code matches}) or all do not equal the target level. */
+        void acceptRun(boolean matches, int count) {
+            int remaining = count;
+            while (remaining > 0 && bitsInByte != 0) {
+                acceptValue(matches);
+                remaining--;
+            }
+            int wholeBytes = remaining >>> 3;
+            if (wholeBytes > 0) {
+                out.asSlice(byteIndex, wholeBytes).fill(matches ? (byte) 0xff : (byte) 0x00);
+                byteIndex += wholeBytes;
+                if (matches) {
+                    validCount += wholeBytes * 8;
+                }
+                remaining -= wholeBytes * 8;
+            }
+            for (int i = 0; i < remaining; i++) {
                 acceptValue(matches);
             }
         }
 
-        @Override
-        public void acceptValue(boolean match) {
+        /** One bit-packed level that does ({@code match}) or does not equal the target level. */
+        void acceptValue(boolean match) {
             if (match) {
                 currentByte |= 1 << bitsInByte;
                 validCount++;
@@ -258,8 +213,7 @@ public final class LevelDecoder {
 
     /**
      * Pulls the next level value from the underlying RLE/bit-packed stream. Internal driver for {@link #decode},
-     * {@link #skip}, and the package-local page decoders that yield one value at a time; not part of the public
-     * surface.
+     * {@link #skip}, and the package-local page decoders that yield one value at a time; not public API.
      */
     int nextValue() {
         if (bitWidth == 0) {

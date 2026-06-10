@@ -18,7 +18,6 @@ package io.tileverse.parquetry.internal.read.page;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.lang.foreign.MemorySegment;
-import java.util.BitSet;
 
 import org.junit.jupiter.api.Test;
 
@@ -142,50 +141,6 @@ class LevelDecoderTest {
     }
 
     @Test
-    void decodeEqualsSetsBitsWhereLevelMatchesTargetAcrossMixedRuns() {
-        // RLE 3 zeros, bit-packed 8 ones, RLE 2 zeros -> levels [0,0,0,1,1,1,1,1,1,1,1,0,0].
-        // With target=1 the validity bits are the eight middle ones (indices 3..10).
-        byte[] bytes = {6, 0, 3, (byte) 0xff, 4, 0};
-        LevelDecoder d = new LevelDecoder(1);
-        d.load(MemorySegment.ofArray(bytes));
-
-        BitSet validity = new BitSet(13);
-        d.decodeEquals(13, 1, validity, 0);
-
-        BitSet expected = new BitSet(13);
-        expected.set(3, 11);
-        assertThat(validity).isEqualTo(expected);
-    }
-
-    @Test
-    void decodeEqualsBulkSetsAnRleRunOfTheTargetValue() {
-        // RLE run of value 1, length 10, bitWidth 1: header = (10 << 1) | 0 = 20 (0x14), value byte = 1.
-        byte[] bytes = {0x14, 0x01};
-        LevelDecoder d = new LevelDecoder(1);
-        d.load(MemorySegment.ofArray(bytes));
-
-        BitSet validity = new BitSet(10);
-        d.decodeEquals(10, 1, validity, 0);
-
-        assertThat(validity.cardinality()).isEqualTo(10);
-    }
-
-    @Test
-    void decodeEqualsHonorsTheBaseOffset() {
-        // RLE run of value 1, length 4: header = (4 << 1) = 8, value byte = 1.
-        byte[] bytes = {0x08, 0x01};
-        LevelDecoder d = new LevelDecoder(1);
-        d.load(MemorySegment.ofArray(bytes));
-
-        BitSet validity = new BitSet(10);
-        d.decodeEquals(4, 1, validity, 5);
-
-        BitSet expected = new BitSet(10);
-        expected.set(5, 9);
-        assertThat(validity).isEqualTo(expected);
-    }
-
-    @Test
     void decodeValidityBitmapPacksPresenceLsbFirstAcrossMixedRuns() {
         // RLE 3 zeros, bit-packed 8 ones, RLE 2 zeros -> levels [0,0,0,1,1,1,1,1,1,1,1,0,0].
         // With target=1 the present rows are indices 3..10 (eight rows); the bitmap is LSB-first.
@@ -216,6 +171,28 @@ class LevelDecoderTest {
         assertThat(validCount).isEqualTo(10);
         for (int row = 0; row < 10; row++) {
             assertThat(bitSet(bitmap, row)).as("row %d present", row).isTrue();
+        }
+    }
+
+    /**
+     * An RLE run that starts mid-byte exercises all three arms of the run fill: leading bits up to the byte boundary,
+     * whole {@code 0xFF} bytes for the run's aligned middle, and trailing bits in the final partial byte. Levels are an
+     * RLE run of 3 zeros then an RLE run of 27 ones; presence must be exact at every index.
+     */
+    @Test
+    void decodeValidityBitmapFillsWholeBytesForRunsStartingMidByte() {
+        // RLE run of 3 zeros: header = (3 << 1) = 6, value byte = 0.
+        // RLE run of 27 ones: header = (27 << 1) = 54 (0x36), value byte = 1.
+        byte[] bytes = {0x06, 0x00, 0x36, 0x01};
+        LevelDecoder d = new LevelDecoder(1);
+        d.load(MemorySegment.ofArray(bytes));
+
+        MemorySegment bitmap = MemorySegment.ofArray(new byte[4]);
+        int validCount = d.decodeValidityBitmap(30, 1, bitmap);
+
+        assertThat(validCount).isEqualTo(27);
+        for (int row = 0; row < 30; row++) {
+            assertThat(bitSet(bitmap, row)).as("row %d presence", row).isEqualTo(row >= 3);
         }
     }
 
