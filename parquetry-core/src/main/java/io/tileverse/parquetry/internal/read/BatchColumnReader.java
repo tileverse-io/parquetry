@@ -38,6 +38,7 @@ import io.tileverse.parquetry.batch.FixedLenBinaryVector;
 import io.tileverse.parquetry.batch.FloatVector;
 import io.tileverse.parquetry.batch.Int96Vector;
 import io.tileverse.parquetry.batch.IntVector;
+import io.tileverse.parquetry.batch.Levels;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.data.Compression;
@@ -80,18 +81,18 @@ import lombok.NonNull;
  * current page's pre-decoded values.
  *
  * <p>Page lifecycle: {@link #loadNextPage()} decompresses the next page into a confined {@link Arena}, fully decodes
- * rep-levels / def-levels into heap arrays, and decodes values either into heap arrays (fixed-width and dictionary
- * kinds) or, for contiguous PLAIN / DELTA_LENGTH binary and PLAIN all-valid INT32 / INT64 / FLOAT / DOUBLE, into
- * row-indexed positions over the still-open page. For the heap kinds the Arena is closed before {@link #loadNextPage()}
- * returns; for the live-page kinds the Arena is kept open across the page's batches and closed at page-advance, because
- * the per-batch slices copy their bytes straight from the page. Each {@link #readBatch} call then slices the current
- * page; within-page splitting is correct because the page state (heap arrays, or the live page plus its offsets)
- * outlives every slice of the page.
+ * rep-levels / def-levels into reader-owned off-heap scratch buffers (the {@link Levels} views over them stay valid
+ * until the next page decode), and decodes values either into heap arrays (fixed-width and dictionary kinds) or, for
+ * contiguous PLAIN / DELTA_LENGTH binary and PLAIN all-valid INT32 / INT64 / FLOAT / DOUBLE, into row-indexed positions
+ * over the still-open page. For the heap kinds the Arena is closed before {@link #loadNextPage()} returns; for the
+ * live-page kinds the Arena is kept open across the page's batches and closed at page-advance, because the per-batch
+ * slices copy their bytes straight from the page. Each {@link #readBatch} call then slices the current page;
+ * within-page splitting is correct because the page state (level scratches, heap arrays, or the live page plus its
+ * offsets) outlives every slice of the page.
  */
 final class BatchColumnReader {
 
-    private static final int[] EMPTY_REP_LEVELS = new int[0];
-    private static final int[] EMPTY_DEF_LEVELS = new int[0];
+    private static final Levels EMPTY_LEVELS = Levels.of(new int[0]);
     private static final int INT96_WIDTH = 12;
 
     private final ColumnPath columnPath;
@@ -106,6 +107,8 @@ final class BatchColumnReader {
     private final RowRanges survivingRows; // null when this column is not masked
     private final boolean skipDecode;
     private final DecodeBufferAllocator decodeBufferAllocator;
+    private final LevelScratch repLevelScratch;
+    private final LevelScratch defLevelScratch;
 
     // Per-page state. Populated by loadNextPage; cleared on advance.
     private boolean pageLoaded;
@@ -117,8 +120,8 @@ final class BatchColumnReader {
     // and released at page-advance; it is non-null exactly when pageValidity reads the off-heap bitmap.
     private Validity pageValidity;
     private SegmentPool.Pooled pageValidityPooled;
-    private int[] pageRepLevels; // null when maxRep == 0
-    private int[] pageDefLevels; // null when maxDef == 0
+    private Levels pageRepLevels; // null when maxRep == 0
+    private Levels pageDefLevels; // null when maxDef == 0, or when the origin fast path consumed the stream
     private int[] pageInts;
     private long[] pageLongs;
     private float[] pageFloats;
@@ -185,6 +188,8 @@ final class BatchColumnReader {
             OffsetIndex offsetIndex,
             boolean skipDecode) {
         this.decodeBufferAllocator = decodeBufferAllocator;
+        this.repLevelScratch = new LevelScratch(decodeBufferAllocator);
+        this.defLevelScratch = new LevelScratch(decodeBufferAllocator);
         this.skipDecode = skipDecode;
         this.columnPath = chunk.path();
         this.leaf = leaf;
@@ -204,7 +209,7 @@ final class BatchColumnReader {
         }
     }
 
-    // ---- public iteration surface ----
+    // ---- public iteration API ----
 
     /** True while the current page has unconsumed values or the page cursor has more pages. */
     boolean hasMore() {
@@ -235,8 +240,11 @@ final class BatchColumnReader {
         return pageLogicalRowCount - logicalRowsConsumedInCurrentPage;
     }
 
-    /** Rep-level stream for the current page; one entry per leaf element. Null for flat columns. */
-    int[] currentPageRepLevels() {
+    /**
+     * Rep-level stream for the current page; one entry per leaf element. Null for flat columns. The returned view is
+     * valid only until the reader decodes its next page.
+     */
+    Levels currentPageRepLevels() {
         ensurePageLoaded();
         return pageRepLevels;
     }
@@ -244,9 +252,10 @@ final class BatchColumnReader {
     /**
      * Definition-level stream for the current page; one entry per leaf element. Null when the column has no optional
      * ancestor ({@code maxDef == 0}). Unlike the present/absent bitmap derived from these levels, this retains the
-     * intermediate def levels that distinguish a null list from an empty list from a null element.
+     * intermediate def levels that distinguish a null list from an empty list from a null element. The returned view is
+     * valid only until the reader decodes its next page.
      */
-    int[] currentPageDefLevels() {
+    Levels currentPageDefLevels() {
         ensurePageLoaded();
         return pageDefLevels;
     }
@@ -270,7 +279,7 @@ final class BatchColumnReader {
         if (pageRepLevels == null) {
             return logicalRows;
         }
-        return countValuesForLogicalRows(pageRepLevels, valuesConsumedInCurrentPage, logicalRows);
+        return pageRepLevels.valuesForRows(valuesConsumedInCurrentPage, logicalRows);
     }
 
     /**
@@ -316,10 +325,10 @@ final class BatchColumnReader {
         Arena arena = Arena.ofConfined();
         try {
             DecodedPage page = readNextDataPage(arena);
-            decodeIntoHeap(page);
+            decodePage(page);
         } catch (RuntimeException e) {
-            // decodeIntoHeap may have parked the origin-validity bitmap in its field before the value decode threw;
-            // unwind it here rather than holding it (and its decode-budget reservation) until the reader is closed
+            // the origin-validity bitmap may already be parked in its field when the value decode throws; unwind it
+            // here rather than holding it (and its decode-budget reservation) until the reader is closed
             releaseOriginValidity();
             arena.close();
             throw e;
@@ -345,16 +354,18 @@ final class BatchColumnReader {
         return page;
     }
 
-    private void decodeIntoHeap(DecodedPage page) {
+    private void decodePage(DecodedPage page) {
         pageSize = page.valueCount();
         pageRepLevels = decodeRepLevels(page, pageSize);
         if (canDecodeOriginValidity()) {
             decodeOriginValidity(page);
         } else {
             pageDefLevels = decodeDefLevels(page, pageSize);
-            pageValidity = deriveValidity(pageDefLevels, pageSize);
+            pageValidity = pageDefLevels == null
+                    ? Validity.allValid(pageSize)
+                    : pageDefLevels.validityAt(maxLevels.maxDefinitionLevel());
         }
-        pageLogicalRowCount = (pageRepLevels == null) ? pageSize : countRepZeroMarkers(pageRepLevels);
+        pageLogicalRowCount = (pageRepLevels == null) ? pageSize : pageRepLevels.countOf(0);
         clearTypedPayloads();
         pageWasDictionary = isDictionaryEncoded(page.valuesEncoding());
         if (skipDecode && survivingRows != null) {
@@ -418,26 +429,6 @@ final class BatchColumnReader {
     // ---- level decoding ----
 
     /**
-     * Derives the page's null mask from the already-decoded definition levels: value {@code i} is present when its
-     * definition level equals {@code maxDef}. A column with no optional ancestor ({@code maxDef == 0}, def levels
-     * absent and {@code defLevels == null}) has every value present and allocates no bitmap, as does a null-free page
-     * ({@link Validity#of} collapses it).
-     */
-    private Validity deriveValidity(int[] defLevels, int values) {
-        if (defLevels == null) {
-            return Validity.allValid(values);
-        }
-        BitSet validity = new BitSet(values);
-        int maxDef = maxLevels.maxDefinitionLevel();
-        for (int i = 0; i < values; i++) {
-            if (defLevels[i] == maxDef) {
-                validity.set(i);
-            }
-        }
-        return Validity.of(validity, values);
-    }
-
-    /**
      * True for the flat optional fast path: a top-level primitive column ({@code numParts == 1}, parent is the schema
      * root) that is optional with no repetition ({@code maxRep == 0}, {@code maxDef == 1}) and no row mask. There the
      * def-level stream is one present/absent bit per value, which decodes straight into an off-heap validity bitmap,
@@ -492,74 +483,36 @@ final class BatchColumnReader {
     }
 
     // null marks "flat column, no rep levels exist" - distinct from "repeated column with zero values in the page"
-    @SuppressWarnings("java:S1168")
-    private int[] decodeRepLevels(DecodedPage page, int values) {
+    private Levels decodeRepLevels(DecodedPage page, int values) {
         if (maxLevels.maxRepetitionLevel() == 0) {
             return null;
         }
         if (values == 0) {
-            return EMPTY_REP_LEVELS;
+            return EMPTY_LEVELS;
         }
         LevelDecoder repDecoder = new LevelDecoder(repBitWidth);
         repDecoder.load(page.repLevelBytes());
-        int[] repLevels = new int[values];
-        repDecoder.decode(values, repLevels, 0);
-        return repLevels;
+        return repLevelScratch.decode(repDecoder, values);
     }
 
     // null marks "no optional ancestor, all values present" - the def-level section is absent from the page
-    @SuppressWarnings("java:S1168")
-    private int[] decodeDefLevels(DecodedPage page, int values) {
+    private Levels decodeDefLevels(DecodedPage page, int values) {
         if (maxLevels.maxDefinitionLevel() == 0) {
             return null;
         }
         if (values == 0) {
-            return EMPTY_DEF_LEVELS;
+            return EMPTY_LEVELS;
         }
         LevelDecoder defDecoder = new LevelDecoder(defBitWidth);
         defDecoder.load(page.defLevelBytes());
-        int[] defLevels = new int[values];
-        defDecoder.decode(values, defLevels, 0);
-        return defLevels;
-    }
-
-    private static int countRepZeroMarkers(int[] repLevels) {
-        int count = 0;
-        for (int rep : repLevels) {
-            if (rep == 0) {
-                count++;
-            }
-        }
-        return count;
-    }
-
-    private static int countValuesForLogicalRows(int[] repLevels, int startIndex, int logicalRows) {
-        int rowsCrossed = 0;
-        int i = startIndex;
-        while (i < repLevels.length) {
-            if (repLevels[i] == 0) {
-                if (rowsCrossed == logicalRows) {
-                    return i - startIndex;
-                }
-                rowsCrossed++;
-            }
-            i++;
-        }
-        return repLevels.length - startIndex;
+        return defLevelScratch.decode(defDecoder, values);
     }
 
     private int countLogicalRowsInSlice(int start, int count) {
         if (pageRepLevels == null) {
             return count;
         }
-        int rows = 0;
-        int end = start + count;
-        for (int i = start; i < end; i++) {
-            if (pageRepLevels[i] == 0) {
-                rows++;
-            }
-        }
-        return rows;
+        return pageRepLevels.rowsInRange(start, count);
     }
 
     // ---- per-kind value decoding ----
@@ -1126,7 +1079,7 @@ final class BatchColumnReader {
         }
 
         if (pageDefLevels != null) {
-            pageDefLevels = gatherInts(pageDefLevels, keep);
+            pageDefLevels = pageDefLevels.gather(keep);
         }
         pageValidity = Validity.of(keptValidity, keep.length);
         pageSize = keep.length;
@@ -1217,7 +1170,7 @@ final class BatchColumnReader {
         }
         pageValidity = gatherValidity(pageValidity, keep);
         if (pageDefLevels != null) {
-            pageDefLevels = gatherInts(pageDefLevels, keep);
+            pageDefLevels = pageDefLevels.gather(keep);
         }
         gatherTypedPayloads(keep);
         pageSize = keep.length;
@@ -1602,9 +1555,11 @@ final class BatchColumnReader {
 
     // ---- close ----
 
-    /** Releases the page Arena retained for a directly-read binary page, if any; idempotent via {@code advance}. */
+    /** Releases the page Arena, the level scratches, and any pooled page state; idempotent via {@code advance}. */
     void close() {
         advancePastCurrentPage();
+        repLevelScratch.close();
+        defLevelScratch.close();
     }
 
     // ---- diagnostics ----

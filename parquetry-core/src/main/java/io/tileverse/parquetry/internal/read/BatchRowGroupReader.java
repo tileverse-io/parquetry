@@ -27,6 +27,7 @@ import com.google.errorprone.annotations.MustBeClosed;
 
 import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
+import io.tileverse.parquetry.batch.Levels;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -247,7 +248,7 @@ public final class BatchRowGroupReader implements AutoCloseable {
      * Asks each column reader for a vector covering {@code batchLogicalRows} logical rows. For repeated columns the
      * actual leaf-value count is derived via {@link BatchColumnReader#valuesForLogicalRows(int)} and the matching
      * slices of the rep-level and def-level streams are windowed into {@code repLevelsByLeafOut} /
-     * {@code defLevelsByLeafOut} as views over the page level arrays before the reader advances.
+     * {@code defLevelsByLeafOut} as views over the page level sequences before the reader advances.
      */
     private Map<ColumnPath, ColumnVector> readVectors(
             int batchLogicalRows,
@@ -259,11 +260,11 @@ public final class BatchRowGroupReader implements AutoCloseable {
             BatchColumnReader reader = entry.getValue();
             int valuesThisBatch = reader.valuesForLogicalRows(batchLogicalRows);
             int start = reader.valuesConsumedInCurrentPage();
-            int[] pageRepLevels = reader.currentPageRepLevels();
+            Levels pageRepLevels = reader.currentPageRepLevels();
             if (pageRepLevels != null) {
                 repLevelsByLeafOut.put(entry.getKey(), new LevelSlice(pageRepLevels, start, valuesThisBatch));
             }
-            int[] pageDefLevels = reader.currentPageDefLevels();
+            Levels pageDefLevels = reader.currentPageDefLevels();
             if (pageDefLevels != null) {
                 defLevelsByLeafOut.put(entry.getKey(), new LevelSlice(pageDefLevels, start, valuesThisBatch));
             }

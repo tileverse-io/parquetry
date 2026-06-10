@@ -17,31 +17,34 @@ package io.tileverse.parquetry.internal.read;
 
 import java.util.Objects;
 
+import io.tileverse.parquetry.batch.Levels;
+
 /**
- * A {@code [from, from + length)} window over a page's rep- or def-level array, handed to the nested assembler instead
- * of a per-batch copy. The level array is owned by the column reader's current page, is allocated fresh per page, and
- * is never mutated after decode, and the assembler reads each window entirely within one batch assembly, which makes a
- * borrowed view safe.
+ * A {@code [from, from + length)} window over a page's rep- or def-level sequence, handed to the nested assembler
+ * instead of a per-batch copy. The borrowed view is safe because the assembler reads each window entirely within the
+ * {@code nextBatch} call that produced it, before the owning column reader decodes another page; a segment-backed
+ * {@link Levels} reads a reader-owned scratch buffer that the next page decode reuses, which is why a window must never
+ * be retained past the producing batch assembly.
  */
 // borrowed window view, never compared by content nor used as a map key; default record equality is fine
 @SuppressWarnings("java:S6218")
-record LevelSlice(int[] levels, int from, int length) {
+record LevelSlice(Levels levels, int from, int length) {
 
     LevelSlice {
         Objects.requireNonNull(levels, "levels");
-        if (from < 0 || length < 0 || from + length > levels.length) {
+        if (from < 0 || length < 0 || from + length > levels.size()) {
             throw new IndexOutOfBoundsException(
-                    "window [" + from + ", " + (from + length) + ") out of bounds for length " + levels.length);
+                    "window [" + from + ", " + (from + length) + ") out of bounds for size " + levels.size());
         }
     }
 
-    /** A window covering the whole array; for callers that already hold an exactly-sized per-batch level array. */
-    static LevelSlice ofWhole(int[] levels) {
-        return new LevelSlice(levels, 0, levels.length);
+    /** A window covering the whole sequence; for callers that already hold an exactly-sized per-batch sequence. */
+    static LevelSlice ofWhole(Levels levels) {
+        return new LevelSlice(levels, 0, levels.size());
     }
 
     /** The level value at window position {@code i}. */
     int at(int i) {
-        return levels[from + i];
+        return levels.get(from + i);
     }
 }

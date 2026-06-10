@@ -18,6 +18,7 @@ package io.tileverse.parquetry.internal.read.page;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 
 import org.junit.jupiter.api.Test;
 
@@ -117,6 +118,28 @@ class LevelDecoderTest {
         decoder.decode(13, dst, 0);
 
         assertThat(dst).containsExactly(0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0);
+    }
+
+    @Test
+    void decodeIntoSegmentMatchesArrayDecode() {
+        // RLE 3 zeros, bit-packed 8 ones, RLE 2 zeros - the same stream bulkDecodeFillsArrayFromMultipleRuns uses.
+        byte[] bytes = {6, 0, 3, (byte) 0xff, 4, 0};
+
+        LevelDecoder arrayDecoder = new LevelDecoder(1);
+        arrayDecoder.load(MemorySegment.ofArray(bytes));
+        int[] expected = new int[13];
+        arrayDecoder.decode(13, expected, 0);
+
+        LevelDecoder segmentDecoder = new LevelDecoder(1);
+        segmentDecoder.load(MemorySegment.ofArray(bytes));
+        MemorySegment dst = MemorySegment.ofArray(new byte[13 * Integer.BYTES]);
+        segmentDecoder.decodeInto(13, dst);
+
+        for (int i = 0; i < 13; i++) {
+            assertThat(dst.getAtIndex(ValueLayout.JAVA_INT_UNALIGNED, i))
+                    .as("level %d", i)
+                    .isEqualTo(expected[i]);
+        }
     }
 
     @Test
