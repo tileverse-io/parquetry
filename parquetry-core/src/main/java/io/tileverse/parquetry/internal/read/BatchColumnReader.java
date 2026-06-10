@@ -81,11 +81,12 @@ import lombok.NonNull;
  *
  * <p>Page lifecycle: {@link #loadNextPage()} decompresses the next page into a confined {@link Arena}, fully decodes
  * rep-levels / def-levels into heap arrays, and decodes values either into heap arrays (fixed-width and dictionary
- * kinds) or, for contiguous PLAIN / DELTA_LENGTH binary, into row-indexed positions over the still-open page. For the
- * heap kinds the Arena is closed before {@link #loadNextPage()} returns; for the live-binary kind the Arena is kept
- * open across the page's batches and closed at page-advance, because the per-batch slices copy their bytes straight
- * from the page. Each {@link #readBatch} call then slices the current page; within-page splitting is correct because
- * the page state (heap arrays, or the live page plus its offsets) outlives every slice of the page.
+ * kinds) or, for contiguous PLAIN / DELTA_LENGTH binary and PLAIN all-valid INT32 / INT64 / FLOAT / DOUBLE, into
+ * row-indexed positions over the still-open page. For the heap kinds the Arena is closed before {@link #loadNextPage()}
+ * returns; for the live-page kinds the Arena is kept open across the page's batches and closed at page-advance, because
+ * the per-batch slices copy their bytes straight from the page. Each {@link #readBatch} call then slices the current
+ * page; within-page splitting is correct because the page state (heap arrays, or the live page plus its offsets)
+ * outlives every slice of the page.
  */
 final class BatchColumnReader {
 
@@ -117,6 +118,18 @@ final class BatchColumnReader {
     private long[] pageLongs;
     private float[] pageFloats;
     private double[] pageDoubles;
+    // Set only for PLAIN, all-valid INT32 pages: the live page value segment (little-endian ints).
+    // When non-null, pageInts is left null and slices copy straight from this segment (no heap array).
+    private MemorySegment pageIntValues;
+    // Set only for PLAIN, all-valid INT64 pages: the live page value segment (little-endian longs).
+    // When non-null, pageLongs is left null and slices copy straight from this segment (no heap array).
+    private MemorySegment pageLongValues;
+    // Set only for PLAIN, all-valid FLOAT pages: the live page value segment (little-endian floats).
+    // When non-null, pageFloats is left null and slices copy straight from this segment (no heap array).
+    private MemorySegment pageFloatValues;
+    // Set only for PLAIN, all-valid DOUBLE pages: the live page value segment (little-endian doubles).
+    // When non-null, pageDoubles is left null and slices copy straight from this segment (no heap array).
+    private MemorySegment pageDoubleValues;
     private boolean[] pageBooleans;
 
     // Scratch holder for PLAIN/DELTA binary between value decode and the freeze step that consolidates it into the
@@ -378,6 +391,10 @@ final class BatchColumnReader {
         pageLongs = null;
         pageFloats = null;
         pageDoubles = null;
+        pageIntValues = null;
+        pageLongValues = null;
+        pageFloatValues = null;
+        pageDoubleValues = null;
         pageBooleans = null;
         pageSegments = null;
         pageBinaryBacking = null;
@@ -493,15 +510,95 @@ final class BatchColumnReader {
             return;
         }
         switch (leaf.kind()) {
-            case INT32 -> pageInts = decodeInts(valueBuf, encoding, nonNullCount, dict);
-            case INT64 -> pageLongs = decodeLongs(valueBuf, encoding, nonNullCount, dict);
-            case FLOAT -> pageFloats = decodeFloats(valueBuf, encoding, nonNullCount, dict);
-            case DOUBLE -> pageDoubles = decodeDoubles(valueBuf, encoding, nonNullCount, dict);
+            case INT32 -> {
+                if (canSliceIntFromLivePage(encoding, nonNullCount)) {
+                    pageIntValues = valueBuf.asReadOnly();
+                    pageBackingIsLivePage = true;
+                } else {
+                    pageInts = decodeInts(valueBuf, encoding, nonNullCount, dict);
+                }
+            }
+            case INT64 -> {
+                if (canSliceLongFromLivePage(encoding, nonNullCount)) {
+                    pageLongValues = valueBuf.asReadOnly();
+                    pageBackingIsLivePage = true;
+                } else {
+                    pageLongs = decodeLongs(valueBuf, encoding, nonNullCount, dict);
+                }
+            }
+            case FLOAT -> {
+                if (canSliceFloatFromLivePage(encoding, nonNullCount)) {
+                    pageFloatValues = valueBuf.asReadOnly();
+                    pageBackingIsLivePage = true;
+                } else {
+                    pageFloats = decodeFloats(valueBuf, encoding, nonNullCount, dict);
+                }
+            }
+            case DOUBLE -> {
+                if (canSliceDoubleFromLivePage(encoding, nonNullCount)) {
+                    pageDoubleValues = valueBuf.asReadOnly();
+                    pageBackingIsLivePage = true;
+                } else {
+                    pageDoubles = decodeDoubles(valueBuf, encoding, nonNullCount, dict);
+                }
+            }
             case BOOLEAN -> pageBooleans = decodeBooleans(valueBuf, encoding, nonNullCount);
             case BYTE_ARRAY -> decodeByteArray(valueBuf, encoding, nonNullCount, dict);
             case FIXED_LEN_BYTE_ARRAY -> pageSegments = decodeFixedLenBinary(valueBuf, encoding, nonNullCount, dict);
             case INT96 -> pageSegments = decodeInt96(valueBuf, encoding, nonNullCount, dict);
         }
+    }
+
+    /**
+     * True when a DOUBLE page's values can be sliced straight from the live page segment with no heap {@code double[]}.
+     * Holds only for a PLAIN, all-valid page that is not later compacted to surviving rows: the value bytes are already
+     * the little-endian DOUBLE layout the slice copies from, and a surviving-rows page would compact through the heap
+     * {@link #pageDoubles} the {@link #gatherTypedPayloads(int[])} path reorders.
+     */
+    private boolean canSliceDoubleFromLivePage(Encoding encoding, int nonNullCount) {
+        if (survivingRows != null) {
+            return false;
+        }
+        return encoding == Encoding.PLAIN && nonNullCount == pageSize;
+    }
+
+    /**
+     * True when an INT32 page's values can be sliced straight from the live page segment with no heap {@code int[]}.
+     * Holds only for a PLAIN, all-valid page that is not later compacted to surviving rows: the value bytes are already
+     * the little-endian INT32 layout the slice copies from, and a surviving-rows page would compact through the heap
+     * {@link #pageInts} the {@link #gatherTypedPayloads(int[])} path reorders.
+     */
+    private boolean canSliceIntFromLivePage(Encoding encoding, int nonNullCount) {
+        if (survivingRows != null) {
+            return false;
+        }
+        return encoding == Encoding.PLAIN && nonNullCount == pageSize;
+    }
+
+    /**
+     * True when an INT64 page's values can be sliced straight from the live page segment with no heap {@code long[]}.
+     * Holds only for a PLAIN, all-valid page that is not later compacted to surviving rows: the value bytes are already
+     * the little-endian INT64 layout the slice copies from, and a surviving-rows page would compact through the heap
+     * {@link #pageLongs} the {@link #gatherTypedPayloads(int[])} path reorders.
+     */
+    private boolean canSliceLongFromLivePage(Encoding encoding, int nonNullCount) {
+        if (survivingRows != null) {
+            return false;
+        }
+        return encoding == Encoding.PLAIN && nonNullCount == pageSize;
+    }
+
+    /**
+     * True when a FLOAT page's values can be sliced straight from the live page segment with no heap {@code float[]}.
+     * Holds only for a PLAIN, all-valid page that is not later compacted to surviving rows: the value bytes are already
+     * the little-endian FLOAT layout the slice copies from, and a surviving-rows page would compact through the heap
+     * {@link #pageFloats} the {@link #gatherTypedPayloads(int[])} path reorders.
+     */
+    private boolean canSliceFloatFromLivePage(Encoding encoding, int nonNullCount) {
+        if (survivingRows != null) {
+            return false;
+        }
+        return encoding == Encoding.PLAIN && nonNullCount == pageSize;
     }
 
     /**
@@ -1214,13 +1311,22 @@ final class BatchColumnReader {
      * Copies the page's double values for the slice into a buffer the decode valve hands out (a native segment while
      * the off-heap decode budget has room, an mmap of an on-disk file otherwise). The owning batch closes the buffer on
      * {@link io.tileverse.parquetry.batch.ParquetRecordBatch#close()}; the resulting vector holds no heap value array.
+     *
+     * <p>For a PLAIN all-valid page the bytes come straight from the live page segment ({@link #pageDoubleValues}),
+     * whose little-endian DOUBLE layout matches the target, making the copy a raw byte copy with no heap
+     * {@code double[]}. Otherwise the page decoded into the heap {@link #pageDoubles}, which the copy reads element by
+     * element.
      */
     private DoubleVector sliceDouble(int start, int n, Validity sliceValidity, List<AutoCloseable> acquiredBuffers) {
         long byteSize = (long) n * Double.BYTES;
         SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
         acquiredBuffers.add(pooled);
         MemorySegment dst = pooled.segment().asSlice(0L, byteSize);
-        MemorySegment.copy(pageDoubles, start, dst, DOUBLE, 0L, n);
+        if (pageDoubleValues != null) {
+            MemorySegment.copy(pageDoubleValues, (long) start * Double.BYTES, dst, 0L, byteSize);
+        } else {
+            MemorySegment.copy(pageDoubles, start, dst, DOUBLE, 0L, n);
+        }
         return DoubleVector.segmentBacked(dst, sliceValidity);
     }
 
@@ -1228,31 +1334,59 @@ final class BatchColumnReader {
      * Copies the page's int values for the slice into a buffer the decode valve hands out (a native segment while the
      * off-heap decode budget has room, an mmap of an on-disk file otherwise). The owning batch closes the buffer on
      * {@link io.tileverse.parquetry.batch.ParquetRecordBatch#close()}; the resulting vector holds no heap value array.
+     *
+     * <p>For a PLAIN all-valid page the bytes come straight from the live page segment ({@link #pageIntValues}), whose
+     * little-endian INT32 layout matches the target, making the copy a raw byte copy with no heap {@code int[]}.
+     * Otherwise the page decoded into the heap {@link #pageInts}, which the copy reads element by element.
      */
     private IntVector sliceInt(int start, int n, Validity sliceValidity, List<AutoCloseable> acquiredBuffers) {
         long byteSize = (long) n * Integer.BYTES;
         SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
         acquiredBuffers.add(pooled);
         MemorySegment dst = pooled.segment().asSlice(0L, byteSize);
-        MemorySegment.copy(pageInts, start, dst, INT32, 0L, n);
+        if (pageIntValues != null) {
+            MemorySegment.copy(pageIntValues, (long) start * Integer.BYTES, dst, 0L, byteSize);
+        } else {
+            MemorySegment.copy(pageInts, start, dst, INT32, 0L, n);
+        }
         return IntVector.segmentBacked(dst, sliceValidity);
     }
 
+    /**
+     * Copies the page's long values for the slice into a buffer the decode valve hands out. For a PLAIN all-valid page
+     * the bytes come straight from the live page segment ({@link #pageLongValues}), whose little-endian INT64 layout
+     * matches the target, making the copy a raw byte copy with no heap {@code long[]}. Otherwise the page decoded into
+     * the heap {@link #pageLongs}, which the copy reads element by element.
+     */
     private LongVector sliceLong(int start, int n, Validity sliceValidity, List<AutoCloseable> acquiredBuffers) {
         long byteSize = (long) n * Long.BYTES;
         SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
         acquiredBuffers.add(pooled);
         MemorySegment dst = pooled.segment().asSlice(0L, byteSize);
-        MemorySegment.copy(pageLongs, start, dst, INT64, 0L, n);
+        if (pageLongValues != null) {
+            MemorySegment.copy(pageLongValues, (long) start * Long.BYTES, dst, 0L, byteSize);
+        } else {
+            MemorySegment.copy(pageLongs, start, dst, INT64, 0L, n);
+        }
         return LongVector.segmentBacked(dst, sliceValidity);
     }
 
+    /**
+     * Copies the page's float values for the slice into a buffer the decode valve hands out. For a PLAIN all-valid page
+     * the bytes come straight from the live page segment ({@link #pageFloatValues}), whose little-endian FLOAT layout
+     * matches the target, making the copy a raw byte copy with no heap {@code float[]}. Otherwise the page decoded into
+     * the heap {@link #pageFloats}, which the copy reads element by element.
+     */
     private FloatVector sliceFloat(int start, int n, Validity sliceValidity, List<AutoCloseable> acquiredBuffers) {
-        long byteSize = (long) n * Integer.BYTES;
+        long byteSize = (long) n * Float.BYTES;
         SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
         acquiredBuffers.add(pooled);
         MemorySegment dst = pooled.segment().asSlice(0L, byteSize);
-        MemorySegment.copy(pageFloats, start, dst, FLOAT, 0L, n);
+        if (pageFloatValues != null) {
+            MemorySegment.copy(pageFloatValues, (long) start * Float.BYTES, dst, 0L, byteSize);
+        } else {
+            MemorySegment.copy(pageFloats, start, dst, FLOAT, 0L, n);
+        }
         return FloatVector.segmentBacked(dst, sliceValidity);
     }
 

@@ -41,7 +41,10 @@ import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.batch.BinaryVector;
 import io.tileverse.parquetry.batch.ColumnVector;
+import io.tileverse.parquetry.batch.DoubleVector;
+import io.tileverse.parquetry.batch.FloatVector;
 import io.tileverse.parquetry.batch.IntVector;
+import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.CompressionCodec;
@@ -283,6 +286,106 @@ class BatchColumnReaderTest {
         assertThat(reader.hasMore()).isFalse();
     }
 
+    // --- test 5b: PLAIN all-valid DOUBLE column read row-by-row across a page boundary ---
+
+    /**
+     * Drives the PLAIN all-valid DOUBLE path that slices straight from the live page segment instead of a heap
+     * {@code double[]}. Two pages with no nulls are read one row at a time via {@link DoubleVector#getDouble(int)}; the
+     * boundary forces a page advance mid-read, exercising the live-page lifetime, and every value must round-trip.
+     */
+    @Test
+    void plainAllValidDoubleColumnReadsAcrossPageBoundary() throws IOException {
+        double[] page1 = {0.0, 1.0, 2.0, 3.0, 4.0};
+        double[] page2 = {5.0, 6.0, 7.0, 8.0, 9.0, 10.0};
+        FetchedColumnChunk chunk = twoPageDoubleChunk(page1, page2);
+
+        BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, requiredDoubleLeaf());
+
+        List<Double> readValues = new ArrayList<>();
+        while (reader.hasMore()) {
+            DoubleVector vec = (DoubleVector) reader.readBatch(1, new ArrayList<>());
+            assertThat(vec.size()).isEqualTo(1);
+            readValues.add(vec.getDouble(0));
+        }
+
+        assertThat(readValues).containsExactly(0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0);
+    }
+
+    // --- test 5c: PLAIN all-valid INT32 column read row-by-row across a page boundary ---
+
+    /**
+     * Drives the PLAIN all-valid INT32 path that slices straight from the live page segment instead of a heap
+     * {@code int[]}. Two pages with no nulls are read one row at a time via {@link IntVector#getInt(int)}; the boundary
+     * forces a page advance mid-read, exercising the live-page lifetime, and every value must round-trip.
+     */
+    @Test
+    void plainAllValidIntColumnReadsAcrossPageBoundary() throws IOException {
+        int[] page1 = {0, 1, 2, 3, 4};
+        int[] page2 = {5, 6, 7, 8, 9, 10};
+        FetchedColumnChunk chunk = twoPageInt32Chunk(page1, page2);
+
+        BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, requiredInt32Leaf());
+
+        List<Integer> readValues = new ArrayList<>();
+        while (reader.hasMore()) {
+            IntVector vec = (IntVector) reader.readBatch(1, new ArrayList<>());
+            assertThat(vec.size()).isEqualTo(1);
+            readValues.add(vec.getInt(0));
+        }
+
+        assertThat(readValues).containsExactly(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+    }
+
+    // --- test 5d: PLAIN all-valid INT64 column read row-by-row across a page boundary ---
+
+    /**
+     * Drives the PLAIN all-valid INT64 path that slices straight from the live page segment instead of a heap
+     * {@code long[]}. Two pages with no nulls are read one row at a time via {@link LongVector#getLong(int)}; the
+     * boundary forces a page advance mid-read, exercising the live-page lifetime, and every value must round-trip.
+     */
+    @Test
+    void plainAllValidLongColumnReadsAcrossPageBoundary() throws IOException {
+        long[] page1 = {0L, 1L, 2L, 3L, 4L};
+        long[] page2 = {5L, 6L, 7L, 8L, 9L, 10L};
+        FetchedColumnChunk chunk = twoPageInt64Chunk(page1, page2);
+
+        BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, requiredLongLeaf());
+
+        List<Long> readValues = new ArrayList<>();
+        while (reader.hasMore()) {
+            LongVector vec = (LongVector) reader.readBatch(1, new ArrayList<>());
+            assertThat(vec.size()).isEqualTo(1);
+            readValues.add(vec.getLong(0));
+        }
+
+        assertThat(readValues).containsExactly(0L, 1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L, 10L);
+    }
+
+    // --- test 5e: PLAIN all-valid FLOAT column read row-by-row across a page boundary ---
+
+    /**
+     * Drives the PLAIN all-valid FLOAT path that slices straight from the live page segment instead of a heap
+     * {@code float[]}. Two pages with no nulls are read one row at a time via {@link FloatVector#getFloat(int)}; the
+     * boundary forces a page advance mid-read, exercising the live-page lifetime, and every value must round-trip.
+     */
+    @Test
+    void plainAllValidFloatColumnReadsAcrossPageBoundary() throws IOException {
+        float[] page1 = {0.0f, 1.0f, 2.0f, 3.0f, 4.0f};
+        float[] page2 = {5.0f, 6.0f, 7.0f, 8.0f, 9.0f, 10.0f};
+        FetchedColumnChunk chunk = twoPageFloatChunk(page1, page2);
+
+        BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, requiredFloatLeaf());
+
+        List<Float> readValues = new ArrayList<>();
+        while (reader.hasMore()) {
+            FloatVector vec = (FloatVector) reader.readBatch(1, new ArrayList<>());
+            assertThat(vec.size()).isEqualTo(1);
+            readValues.add(vec.getFloat(0));
+        }
+
+        assertThat(readValues).containsExactly(0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 9.0f, 10.0f);
+    }
+
     // --- test 6: PLAIN BYTE_ARRAY with nulls, split across batches and a page boundary ---
 
     /**
@@ -499,6 +602,21 @@ class BatchColumnReaderTest {
         return heapChunk(PATH, chunkBuffer, values.length, /*maxRep*/ 0, maxDef);
     }
 
+    /**
+     * Builds a {@link FetchedColumnChunk} with two PLAIN DOUBLE pages concatenated in one chunk buffer (required
+     * column, no def/rep levels). The value bytes are the little-endian DOUBLE layout the live-page slice copies
+     * straight from.
+     */
+    private static FetchedColumnChunk twoPageDoubleChunk(double[] page1, double[] page2) throws IOException {
+        byte[] payload1 = encodeDoublesLittleEndian(page1);
+        byte[] payload2 = encodeDoublesLittleEndian(page2);
+        byte[] page1Bytes = encodeV1Page(page1.length, payload1, org.apache.parquet.format.Encoding.PLAIN);
+        byte[] page2Bytes = encodeV1Page(page2.length, payload2, org.apache.parquet.format.Encoding.PLAIN);
+        byte[] chunkBuffer = concat(page1Bytes, page2Bytes);
+        long totalValues = (long) page1.length + page2.length;
+        return doubleHeapChunk(chunkBuffer, totalValues);
+    }
+
     /** Builds a {@link FetchedColumnChunk} with two PLAIN INT32 pages concatenated in one chunk buffer. */
     private static FetchedColumnChunk twoPageInt32Chunk(int[] page1, int[] page2) throws IOException {
         byte[] payload1 = encodeInt32sLittleEndian(page1);
@@ -508,6 +626,34 @@ class BatchColumnReaderTest {
         byte[] chunkBuffer = concat(page1Bytes, page2Bytes);
         long totalValues = (long) page1.length + page2.length;
         return heapChunk(PATH, chunkBuffer, totalValues, /*maxRep*/ 0, /*maxDef*/ 0);
+    }
+
+    /**
+     * Builds a {@link FetchedColumnChunk} with two PLAIN INT64 pages concatenated in one chunk buffer (required column,
+     * no def/rep levels). The value bytes are the little-endian INT64 layout the live-page slice copies straight from.
+     */
+    private static FetchedColumnChunk twoPageInt64Chunk(long[] page1, long[] page2) throws IOException {
+        byte[] payload1 = encodeLongsLittleEndian(page1);
+        byte[] payload2 = encodeLongsLittleEndian(page2);
+        byte[] page1Bytes = encodeV1Page(page1.length, payload1, org.apache.parquet.format.Encoding.PLAIN);
+        byte[] page2Bytes = encodeV1Page(page2.length, payload2, org.apache.parquet.format.Encoding.PLAIN);
+        byte[] chunkBuffer = concat(page1Bytes, page2Bytes);
+        long totalValues = (long) page1.length + page2.length;
+        return longHeapChunk(chunkBuffer, totalValues);
+    }
+
+    /**
+     * Builds a {@link FetchedColumnChunk} with two PLAIN FLOAT pages concatenated in one chunk buffer (required column,
+     * no def/rep levels). The value bytes are the little-endian FLOAT layout the live-page slice copies straight from.
+     */
+    private static FetchedColumnChunk twoPageFloatChunk(float[] page1, float[] page2) throws IOException {
+        byte[] payload1 = encodeFloatsLittleEndian(page1);
+        byte[] payload2 = encodeFloatsLittleEndian(page2);
+        byte[] page1Bytes = encodeV1Page(page1.length, payload1, org.apache.parquet.format.Encoding.PLAIN);
+        byte[] page2Bytes = encodeV1Page(page2.length, payload2, org.apache.parquet.format.Encoding.PLAIN);
+        byte[] chunkBuffer = concat(page1Bytes, page2Bytes);
+        long totalValues = (long) page1.length + page2.length;
+        return floatHeapChunk(chunkBuffer, totalValues);
     }
 
     /**
@@ -624,6 +770,60 @@ class BatchColumnReaderTest {
         return new FetchedColumnChunk(path, meta, maxRep, maxDef, segment, Optional.empty());
     }
 
+    /** Wraps a byte array in a read-only heap {@link MemorySegment} and builds a required DOUBLE column chunk. */
+    private static FetchedColumnChunk doubleHeapChunk(byte[] data, long numValues) {
+        MemorySegment segment = MemorySegment.ofArray(data).asReadOnly();
+
+        ColumnMetaData meta = ColumnMetaData.builder()
+                .type(PhysicalType.DOUBLE)
+                .encodings(List.of(Encoding.PLAIN))
+                .pathInSchema(pathSegments(PATH))
+                .codec(CompressionCodec.UNCOMPRESSED)
+                .numValues(numValues)
+                .totalUncompressedSize((long) data.length)
+                .totalCompressedSize((long) data.length)
+                .dataPageOffset(0L)
+                .build();
+
+        return new FetchedColumnChunk(PATH, meta, /*maxRep*/ 0, /*maxDef*/ 0, segment, Optional.empty());
+    }
+
+    /** Wraps a byte array in a read-only heap {@link MemorySegment} and builds a required INT64 column chunk. */
+    private static FetchedColumnChunk longHeapChunk(byte[] data, long numValues) {
+        MemorySegment segment = MemorySegment.ofArray(data).asReadOnly();
+
+        ColumnMetaData meta = ColumnMetaData.builder()
+                .type(PhysicalType.INT64)
+                .encodings(List.of(Encoding.PLAIN))
+                .pathInSchema(pathSegments(PATH))
+                .codec(CompressionCodec.UNCOMPRESSED)
+                .numValues(numValues)
+                .totalUncompressedSize((long) data.length)
+                .totalCompressedSize((long) data.length)
+                .dataPageOffset(0L)
+                .build();
+
+        return new FetchedColumnChunk(PATH, meta, /*maxRep*/ 0, /*maxDef*/ 0, segment, Optional.empty());
+    }
+
+    /** Wraps a byte array in a read-only heap {@link MemorySegment} and builds a required FLOAT column chunk. */
+    private static FetchedColumnChunk floatHeapChunk(byte[] data, long numValues) {
+        MemorySegment segment = MemorySegment.ofArray(data).asReadOnly();
+
+        ColumnMetaData meta = ColumnMetaData.builder()
+                .type(PhysicalType.FLOAT)
+                .encodings(List.of(Encoding.PLAIN))
+                .pathInSchema(pathSegments(PATH))
+                .codec(CompressionCodec.UNCOMPRESSED)
+                .numValues(numValues)
+                .totalUncompressedSize((long) data.length)
+                .totalCompressedSize((long) data.length)
+                .dataPageOffset(0L)
+                .build();
+
+        return new FetchedColumnChunk(PATH, meta, /*maxRep*/ 0, /*maxDef*/ 0, segment, Optional.empty());
+    }
+
     /**
      * Builds a {@link FetchedColumnChunk} for a dictionary-encoded INT32 column.
      *
@@ -705,6 +905,21 @@ class BatchColumnReaderTest {
                 "val", Repetition.REQUIRED, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
     }
 
+    private static SchemaNode.Primitive requiredDoubleLeaf() {
+        return new SchemaNode.Primitive(
+                "val", Repetition.REQUIRED, PrimitiveKind.DOUBLE, OptionalInt.empty(), Optional.empty(), -1);
+    }
+
+    private static SchemaNode.Primitive requiredLongLeaf() {
+        return new SchemaNode.Primitive(
+                "val", Repetition.REQUIRED, PrimitiveKind.INT64, OptionalInt.empty(), Optional.empty(), -1);
+    }
+
+    private static SchemaNode.Primitive requiredFloatLeaf() {
+        return new SchemaNode.Primitive(
+                "val", Repetition.REQUIRED, PrimitiveKind.FLOAT, OptionalInt.empty(), Optional.empty(), -1);
+    }
+
     private static SchemaNode.Primitive optionalInt32Leaf() {
         return new SchemaNode.Primitive(
                 "val", Repetition.OPTIONAL, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
@@ -778,6 +993,30 @@ class BatchColumnReaderTest {
         ByteBuffer buf = ByteBuffer.allocate(values.length * 4).order(LITTLE_ENDIAN);
         for (int v : values) {
             buf.putInt(v);
+        }
+        return buf.array();
+    }
+
+    private static byte[] encodeDoublesLittleEndian(double[] values) {
+        ByteBuffer buf = ByteBuffer.allocate(values.length * Double.BYTES).order(LITTLE_ENDIAN);
+        for (double v : values) {
+            buf.putDouble(v);
+        }
+        return buf.array();
+    }
+
+    private static byte[] encodeLongsLittleEndian(long[] values) {
+        ByteBuffer buf = ByteBuffer.allocate(values.length * Long.BYTES).order(LITTLE_ENDIAN);
+        for (long v : values) {
+            buf.putLong(v);
+        }
+        return buf.array();
+    }
+
+    private static byte[] encodeFloatsLittleEndian(float[] values) {
+        ByteBuffer buf = ByteBuffer.allocate(values.length * Float.BYTES).order(LITTLE_ENDIAN);
+        for (float v : values) {
+            buf.putFloat(v);
         }
         return buf.array();
     }
