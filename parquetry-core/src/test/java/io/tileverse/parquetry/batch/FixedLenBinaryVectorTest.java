@@ -43,7 +43,7 @@ class FixedLenBinaryVectorTest {
             validBits.set(0, 3);
             Validity validity = Validity.of(validBits, 3);
 
-            FixedLenBinaryVector vec = FixedLenBinaryVector.dictionary(dict, indices, 2, validity);
+            FixedLenBinaryVector vec = FixedLenBinaryVector.dictionary(dict, IntSequence.of(indices), 2, validity);
 
             assertThat(vec.size()).isEqualTo(3);
             assertThat(vec.byteWidth()).isEqualTo(2);
@@ -60,7 +60,7 @@ class FixedLenBinaryVectorTest {
             validBits.set(0);
             Validity validity = Validity.of(validBits, 2);
 
-            FixedLenBinaryVector vec = FixedLenBinaryVector.dictionary(dict, indices, 2, validity);
+            FixedLenBinaryVector vec = FixedLenBinaryVector.dictionary(dict, IntSequence.of(indices), 2, validity);
 
             assertThat(vec.get(1)).isNull();
             assertThat(vec.get(0).toArray(JAVA_BYTE)).containsExactly(1, 2);
@@ -165,7 +165,8 @@ class FixedLenBinaryVectorTest {
             int[] indices = {1, 0};
             BitSet bits = new BitSet(2);
             bits.set(0, 2);
-            FixedLenBinaryVector vec = FixedLenBinaryVector.dictionary(dict, indices, 2, Validity.of(bits, 2));
+            FixedLenBinaryVector vec =
+                    FixedLenBinaryVector.dictionary(dict, IntSequence.of(indices), 2, Validity.of(bits, 2));
 
             MemorySegment target = MemorySegment.ofArray(new byte[2]);
             int n = vec.getInto(0, target, 0L);

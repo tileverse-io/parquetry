@@ -19,6 +19,8 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.BitSet;
 
@@ -28,8 +30,10 @@ import io.tileverse.parquetry.batch.BinaryVector;
 import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.FixedLenBinaryVector;
 import io.tileverse.parquetry.batch.Int96Vector;
+import io.tileverse.parquetry.batch.IntSequence;
 import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.internal.arrow.buffer.ArrowBuffers;
+import io.tileverse.parquetry.internal.arrow.buffer.EncodedBuffer.BufferRole;
 import io.tileverse.parquetry.internal.arrow.buffer.EncodedNode;
 import io.tileverse.parquetry.internal.arrow.buffer.LeafType;
 
@@ -46,7 +50,7 @@ class ArrowBufferCodecBinaryTest {
         valid.set(0);
         valid.set(2);
         valid.set(3); // row 1 null
-        BinaryVector original = BinaryVector.of(heap(backingBytes), offsets, Validity.of(valid, 4));
+        BinaryVector original = BinaryVector.of(heap(backingBytes), IntSequence.of(offsets), Validity.of(valid, 4));
 
         BinaryVector restored = (BinaryVector) roundTrip(original, LeafType.BINARY);
 
@@ -71,7 +75,7 @@ class ArrowBufferCodecBinaryTest {
         BitSet valid = new BitSet(3);
         valid.set(0);
         valid.set(2); // row 1 null
-        BinaryVector original = BinaryVector.of(heap(backingBytes), offsets, Validity.of(valid, 3));
+        BinaryVector original = BinaryVector.of(heap(backingBytes), IntSequence.of(offsets), Validity.of(valid, 3));
 
         BinaryVector restored = (BinaryVector) roundTrip(original, LeafType.BINARY);
 
@@ -81,10 +85,34 @@ class ArrowBufferCodecBinaryTest {
     }
 
     @Test
+    void segmentBackedOffsetsRoundTripAndEncodeIdenticallyToHeapOffsets() {
+        byte[] hello = utf8("hello");
+        byte[] world = utf8("world");
+        byte[] backingBytes = concat(hello, world);
+        // Rows: "hello", null, "world". Offsets index into the backing.
+        int[] offsets = {0, 5, 5, 10};
+        BitSet valid = new BitSet(3);
+        valid.set(0);
+        valid.set(2); // row 1 null
+        Validity validity = Validity.of(valid, 3);
+        BinaryVector heapForm = BinaryVector.of(heap(backingBytes), IntSequence.of(offsets), validity);
+        BinaryVector segmentForm = BinaryVector.of(heap(backingBytes), segmentSequence(offsets), validity);
+
+        BinaryVector restored = (BinaryVector) roundTrip(segmentForm, LeafType.BINARY);
+
+        assertThat(bytesAt(restored, 0)).containsExactly(hello);
+        assertThat(restored.get(1)).isNull();
+        assertThat(bytesAt(restored, 2)).containsExactly(world);
+        byte[] segmentOffsetsBytes = offsetsBufferBytes(ArrowBufferCodec.encode(segmentForm));
+        byte[] heapOffsetsBytes = offsetsBufferBytes(ArrowBufferCodec.encode(heapForm));
+        assertThat(segmentOffsetsBytes).containsExactly(heapOffsetsBytes);
+    }
+
+    @Test
     void binaryVectorRoundTripsAllNull() {
         BitSet valid = new BitSet(2); // both rows null
         int[] offsets = {0, 0, 0};
-        BinaryVector original = BinaryVector.of(heap(new byte[0]), offsets, Validity.of(valid, 2));
+        BinaryVector original = BinaryVector.of(heap(new byte[0]), IntSequence.of(offsets), Validity.of(valid, 2));
 
         BinaryVector restored = (BinaryVector) roundTrip(original, LeafType.BINARY);
 
@@ -149,7 +177,7 @@ class ArrowBufferCodecBinaryTest {
         byte[] world = utf8("world");
         byte[] backingBytes = concat(hello, world);
         int[] offsets = {0, 5, 10};
-        BinaryVector original = BinaryVector.of(heap(backingBytes), offsets, Validity.allValid(2));
+        BinaryVector original = BinaryVector.of(heap(backingBytes), IntSequence.of(offsets), Validity.allValid(2));
 
         EncodedNode node = ArrowBufferCodec.encode(original);
 
@@ -175,6 +203,25 @@ class ArrowBufferCodecBinaryTest {
     private static byte[] bytesAt(ColumnVector vector, int row) {
         MemorySegment value = vector.get(row);
         return value.toArray(JAVA_BYTE);
+    }
+
+    private static byte[] offsetsBufferBytes(EncodedNode node) {
+        return node.buffers().stream()
+                .filter(buffer -> buffer.role() == BufferRole.OFFSETS)
+                .findFirst()
+                .orElseThrow()
+                .bytes()
+                .toArray(JAVA_BYTE);
+    }
+
+    /** An {@link IntSequence} over a manually filled little-endian i32 segment. */
+    private static IntSequence segmentSequence(int[] values) {
+        ValueLayout.OfInt littleEndianI32 = ValueLayout.JAVA_INT_UNALIGNED.withOrder(ByteOrder.LITTLE_ENDIAN);
+        MemorySegment segment = MemorySegment.ofArray(new byte[values.length * Integer.BYTES]);
+        for (int i = 0; i < values.length; i++) {
+            segment.setAtIndex(littleEndianI32, i, values[i]);
+        }
+        return IntSequence.ofSegment(segment, values.length);
     }
 
     private static MemorySegment heap(byte[] bytes) {

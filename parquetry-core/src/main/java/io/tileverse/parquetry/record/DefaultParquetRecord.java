@@ -29,6 +29,7 @@ import io.tileverse.parquetry.batch.DoubleVector;
 import io.tileverse.parquetry.batch.FixedLenBinaryVector;
 import io.tileverse.parquetry.batch.FloatVector;
 import io.tileverse.parquetry.batch.Int96Vector;
+import io.tileverse.parquetry.batch.IntSequence;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.LongVector;
@@ -154,13 +155,13 @@ public final class DefaultParquetRecord implements ParquetRecord {
 
     private <R> R readBinaryValue(BinaryVector bv, BinaryView<R> view) {
         if (bv.isDictionary()) {
-            MemorySegment entry = bv.dictionaryEntries()[bv.dictionaryIndices()[rowIndex]];
+            MemorySegment entry = bv.dictionaryEntries()[bv.dictionaryIndices().get(rowIndex)];
             return view.read(entry, 0L, entry.byteSize());
         }
         MemorySegment backing = bv.consolidatedBacking();
-        int[] offsets = bv.consolidatedOffsets();
-        int start = offsets[rowIndex];
-        int length = offsets[rowIndex + 1] - start;
+        IntSequence offsets = bv.consolidatedOffsets();
+        int start = offsets.get(rowIndex);
+        int length = offsets.get(rowIndex + 1) - start;
         return view.read(backing, start, length);
     }
 

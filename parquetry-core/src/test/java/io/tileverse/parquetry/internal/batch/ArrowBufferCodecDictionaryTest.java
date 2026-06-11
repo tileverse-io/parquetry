@@ -19,6 +19,8 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.BitSet;
 
@@ -28,7 +30,9 @@ import io.tileverse.parquetry.batch.BinaryVector;
 import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.FixedLenBinaryVector;
 import io.tileverse.parquetry.batch.Int96Vector;
+import io.tileverse.parquetry.batch.IntSequence;
 import io.tileverse.parquetry.batch.Validity;
+import io.tileverse.parquetry.internal.arrow.buffer.EncodedBuffer.BufferRole;
 import io.tileverse.parquetry.internal.arrow.buffer.EncodedNode;
 import io.tileverse.parquetry.internal.arrow.buffer.LeafType;
 
@@ -46,7 +50,7 @@ class ArrowBufferCodecDictionaryTest {
         valid.set(1);
         valid.set(3);
         valid.set(4); // row 2 null
-        BinaryVector original = BinaryVector.dictionary(dictEntries, indices, Validity.of(valid, 5));
+        BinaryVector original = BinaryVector.dictionary(dictEntries, IntSequence.of(indices), Validity.of(valid, 5));
 
         BinaryVector restored = (BinaryVector) roundTrip(original, LeafType.BINARY);
 
@@ -57,6 +61,33 @@ class ArrowBufferCodecDictionaryTest {
         assertThat(restored.get(2)).isNull();
         assertThat(bytesAt(restored, 3)).containsExactly(utf8("red"));
         assertThat(bytesAt(restored, 4)).containsExactly(utf8("green"));
+    }
+
+    @Test
+    void segmentBackedIndicesRoundTripAndEncodeIdenticallyToHeapIndices() {
+        MemorySegment red = readOnly(utf8("red"));
+        MemorySegment green = readOnly(utf8("green"));
+        MemorySegment[] dictEntries = {red, green};
+        // Rows: red, green, null, green
+        int[] indices = {0, 1, 0, 1};
+        BitSet valid = new BitSet(4);
+        valid.set(0);
+        valid.set(1);
+        valid.set(3); // row 2 null
+        Validity validity = Validity.of(valid, 4);
+        BinaryVector heapForm = BinaryVector.dictionary(dictEntries, IntSequence.of(indices), validity);
+        BinaryVector segmentForm = BinaryVector.dictionary(dictEntries, segmentSequence(indices), validity);
+
+        BinaryVector restored = (BinaryVector) roundTrip(segmentForm, LeafType.BINARY);
+
+        assertThat(restored.isDictionary()).isTrue();
+        assertThat(bytesAt(restored, 0)).containsExactly(utf8("red"));
+        assertThat(bytesAt(restored, 1)).containsExactly(utf8("green"));
+        assertThat(restored.get(2)).isNull();
+        assertThat(bytesAt(restored, 3)).containsExactly(utf8("green"));
+        byte[] segmentIndicesBytes = indicesBufferBytes(ArrowBufferCodec.encode(segmentForm));
+        byte[] heapIndicesBytes = indicesBufferBytes(ArrowBufferCodec.encode(heapForm));
+        assertThat(segmentIndicesBytes).containsExactly(heapIndicesBytes);
     }
 
     @Test
@@ -72,7 +103,7 @@ class ArrowBufferCodecDictionaryTest {
         valid.set(1);
         valid.set(3); // row 2 null
         FixedLenBinaryVector original =
-                FixedLenBinaryVector.dictionary(dictEntries, indices, byteWidth, Validity.of(valid, 4));
+                FixedLenBinaryVector.dictionary(dictEntries, IntSequence.of(indices), byteWidth, Validity.of(valid, 4));
 
         FixedLenBinaryVector restored = (FixedLenBinaryVector) roundTrip(original, LeafType.FIXED_LEN_BINARY);
 
@@ -96,7 +127,7 @@ class ArrowBufferCodecDictionaryTest {
         valid.set(0);
         valid.set(2);
         valid.set(3); // row 1 null
-        Int96Vector original = Int96Vector.dictionary(dictEntries, indices, Validity.of(valid, 4));
+        Int96Vector original = Int96Vector.dictionary(dictEntries, IntSequence.of(indices), Validity.of(valid, 4));
 
         Int96Vector restored = (Int96Vector) roundTrip(original, LeafType.INT96);
 
@@ -111,6 +142,25 @@ class ArrowBufferCodecDictionaryTest {
     private static byte[] bytesAt(ColumnVector vector, int row) {
         MemorySegment value = vector.get(row);
         return value.toArray(JAVA_BYTE);
+    }
+
+    private static byte[] indicesBufferBytes(EncodedNode node) {
+        return node.buffers().stream()
+                .filter(buffer -> buffer.role() == BufferRole.DICTIONARY_INDICES)
+                .findFirst()
+                .orElseThrow()
+                .bytes()
+                .toArray(JAVA_BYTE);
+    }
+
+    /** An {@link IntSequence} over a manually filled little-endian i32 segment. */
+    private static IntSequence segmentSequence(int[] values) {
+        ValueLayout.OfInt littleEndianI32 = ValueLayout.JAVA_INT_UNALIGNED.withOrder(ByteOrder.LITTLE_ENDIAN);
+        MemorySegment segment = MemorySegment.ofArray(new byte[values.length * Integer.BYTES]);
+        for (int i = 0; i < values.length; i++) {
+            segment.setAtIndex(littleEndianI32, i, values[i]);
+        }
+        return IntSequence.ofSegment(segment, values.length);
     }
 
     private static MemorySegment readOnly(byte[] bytes) {

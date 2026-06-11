@@ -43,6 +43,7 @@ import io.tileverse.parquetry.batch.BinaryVector;
 import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.DoubleVector;
 import io.tileverse.parquetry.batch.FloatVector;
+import io.tileverse.parquetry.batch.IntSequence;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.Levels;
 import io.tileverse.parquetry.batch.LongVector;
@@ -706,10 +707,37 @@ class BatchColumnReaderTest {
             BinaryVector vec = (BinaryVector) reader.readBatch(3, new ArrayList<>());
 
             assertThat(vec.size()).isEqualTo(3);
-            long offsetsBytes = (vec.size() + 1L) * Integer.BYTES;
             assertThat(vec.approximateHeapBytes())
-                    .as("value bytes live off-heap; only offsets and validity are heap")
-                    .isEqualTo(offsetsBytes + vec.validity().heapBytes());
+                    .as("value bytes and offsets live off-heap; only validity is heap")
+                    .isEqualTo(vec.validity().heapBytes());
+        }
+
+        /**
+         * The direct lane parks its row positions and offsets in one pooled page-lifetime segment. A batch that leaves
+         * the page partially consumed keeps that borrow parked; closing the reader (and the batch's own valve buffers)
+         * must return every borrow to the pool - a non-zero count would mean the page-metadata segment leaked.
+         */
+        @Test
+        void directBinaryPageMetadataBorrowIsReleasedOnClose() throws Exception {
+            byte[][] page1 = {bytes("aa"), null, bytes("bbbb"), bytes("c")};
+            byte[][] page2 = {null, bytes("dd")};
+            FetchedColumnChunk chunk = twoPageNullableByteArrayChunk(page1, page2);
+
+            SegmentPool pool = SegmentPool.create();
+            BatchColumnReader reader =
+                    new BatchColumnReader(TestDecodeBuffers.ample(pool), chunk, optionalByteArrayLeaf());
+
+            List<AutoCloseable> acquired = new ArrayList<>();
+            ColumnVector batch = reader.readBatch(2, acquired);
+            assertByteArraySlice(batch, new byte[][] {bytes("aa"), null});
+
+            reader.close();
+            for (AutoCloseable buffer : acquired) {
+                buffer.close();
+            }
+            assertThat(pool.stats().outstandingBorrows())
+                    .as("every pooled borrow, the page-metadata segment included, must be back after close")
+                    .isZero();
         }
 
         private void assertByteArraySlice(ColumnVector vec, byte[][] expected) {
@@ -772,12 +800,13 @@ class BatchColumnReaderTest {
         }
 
         /**
-         * Pins the placeholder-index invariant the reused index scratch depends on: the dictionary vectors hand out the
-         * raw {@code dictionaryIndices()} array wholesale - the Arrow buffer codec serializes every slot, null rows
-         * included - and {@code dictEntries[indices[row]]} is resolved from those slots without consulting validity per
-         * slot, hence every null row's slot must hold the harmless placeholder index 0. Page 1 is all-valid and writes
-         * the highest dictionary index into every slot; if page 2's decode reused that scratch without zero-filling it
-         * first, page 2's null rows would still hold page 1's index and leak the wrong dictionary entry.
+         * Pins the placeholder-index invariant the reused pooled metadata segment depends on: the dictionary vectors
+         * hand out the raw {@code dictionaryIndices()} sequence wholesale - the Arrow buffer codec serializes every
+         * slot, null rows included - and {@code dictEntries[indices.get(row)]} is resolved from those slots without
+         * consulting validity per slot, hence every null row's slot must hold the harmless placeholder index 0. Page 1
+         * is all-valid and writes the highest dictionary index into every slot; if page 2's decode reused that backing
+         * without the in-place spread zeroing null slots, page 2's null rows would still hold page 1's index and leak
+         * the wrong dictionary entry.
          */
         @Test
         void dictionaryNullRowsKeepThePlaceholderIndexAcrossReusedPages() throws IOException {
@@ -803,12 +832,98 @@ class BatchColumnReaderTest {
             // The null rows' slots in the raw index array hold the placeholder index 0 and resolve the placeholder
             // entry ("alpha"), not page 1's lingering index 2 ("gamma").
             BinaryVector binary = (BinaryVector) batch2;
-            int[] rawIndices = binary.dictionaryIndices();
+            IntSequence rawIndices = binary.dictionaryIndices();
             MemorySegment[] entries = binary.dictionaryEntries();
-            assertThat(rawIndices[1]).isZero();
-            assertThat(rawIndices[2]).isZero();
-            assertThat(entries[rawIndices[1]].toArray(JAVA_BYTE)).containsExactly(bytes("alpha"));
-            assertThat(entries[rawIndices[2]].toArray(JAVA_BYTE)).containsExactly(bytes("alpha"));
+            assertThat(rawIndices.get(1)).isZero();
+            assertThat(rawIndices.get(2)).isZero();
+            assertThat(entries[rawIndices.get(1)].toArray(JAVA_BYTE)).containsExactly(bytes("alpha"));
+            assertThat(entries[rawIndices.get(2)].toArray(JAVA_BYTE)).containsExactly(bytes("alpha"));
+        }
+
+        /**
+         * Pins the zero placeholder for null rows' index slots in the pooled page-metadata segment. A fresh heap array
+         * was zero-filled by the JVM; a pooled segment may hold stale bytes from a previous borrower. Same two-dirty-
+         * block seeding as the fixed-width tests: the page's small validity-bitmap acquire runs first and consumes one
+         * dirty block, leaving the other, still dirty, for the indices acquire. A stale 0xFFFFFFFF slot would resolve
+         * {@code dictEntries[indices.get(row)]} out of bounds; every null row's slot must read the placeholder index 0.
+         */
+        @Test
+        void dictionaryNullRowSlotsReadThePlaceholderIndexNotStalePoolBytes() throws IOException {
+            int rows = 4096; // 16KB of i32 index slots
+            SegmentPool pool = SegmentPool.create();
+            seedTwoDirtyBlocks(pool, (long) rows * Integer.BYTES);
+            assertThat(pool.stats().freeSegments())
+                    .as("both dirty blocks must be retained or this test pins nothing")
+                    .isEqualTo(2);
+
+            byte[][] dictValues = {bytes("alpha"), bytes("beta"), bytes("gamma")};
+            int[] defLevels = new int[rows];
+            int[] expectedIndexPerRow = new int[rows];
+            int[] nonNullIndices = new int[rows - 2];
+            int v = 0;
+            for (int row = 0; row < rows; row++) {
+                boolean isNull = (row == 100 || row == 4000);
+                defLevels[row] = isNull ? 0 : 1;
+                if (!isNull) {
+                    expectedIndexPerRow[row] = v % dictValues.length;
+                    nonNullIndices[v] = v % dictValues.length;
+                    v++;
+                }
+            }
+            FetchedColumnChunk chunk = dictionaryEncodedByteArrayChunk(dictValues, nonNullIndices, defLevels);
+            BatchColumnReader reader =
+                    new BatchColumnReader(TestDecodeBuffers.ample(pool), chunk, optionalByteArrayLeaf());
+
+            BinaryVector binary = (BinaryVector) reader.readBatch(rows, new ArrayList<>());
+
+            IntSequence rawIndices = binary.dictionaryIndices();
+            MemorySegment[] entries = binary.dictionaryEntries();
+            assertThat(binary.validity().isValid(100)).isFalse();
+            assertThat(binary.validity().isValid(4000)).isFalse();
+            assertThat(rawIndices.get(100))
+                    .as("null slot reads the placeholder index")
+                    .isZero();
+            assertThat(rawIndices.get(4000))
+                    .as("null slot reads the placeholder index")
+                    .isZero();
+            assertThat(entries[rawIndices.get(100)].toArray(JAVA_BYTE)).containsExactly(bytes("alpha"));
+            assertThat(entries[rawIndices.get(4000)].toArray(JAVA_BYTE)).containsExactly(bytes("alpha"));
+            for (int row : new int[] {0, 99, 101, 3999, 4001, 4095}) {
+                assertThat(binary.get(row).toArray(JAVA_BYTE))
+                        .as("valid row %d resolves its own entry; the in-place spread must not shift it", row)
+                        .containsExactly(dictValues[expectedIndexPerRow[row]]);
+            }
+        }
+
+        /**
+         * Pins the all-null lane's explicit zero fill of the pooled page-metadata segment. No index decode and no
+         * spread run for a page with zero non-null values; only the fill stands between a previous borrower's bytes and
+         * the wholesale {@code dictionaryIndices()} reads. Same two-dirty-block seeding as the null-slots test.
+         */
+        @Test
+        void allNullDictionaryPageIndexSlotsAreZeroFilledNotStalePoolBytes() throws IOException {
+            int rows = 4096; // 16KB of i32 index slots
+            SegmentPool pool = SegmentPool.create();
+            seedTwoDirtyBlocks(pool, (long) rows * Integer.BYTES);
+            assertThat(pool.stats().freeSegments())
+                    .as("both dirty blocks must be retained or this test pins nothing")
+                    .isEqualTo(2);
+
+            byte[][] dictValues = {bytes("alpha"), bytes("beta")};
+            int[] defLevels = new int[rows]; // all zero: every row is null
+            FetchedColumnChunk chunk = dictionaryEncodedByteArrayChunk(dictValues, new int[0], defLevels);
+            BatchColumnReader reader =
+                    new BatchColumnReader(TestDecodeBuffers.ample(pool), chunk, optionalByteArrayLeaf());
+
+            BinaryVector binary = (BinaryVector) reader.readBatch(rows, new ArrayList<>());
+
+            assertThat(binary.validity().cardinality()).isZero();
+            IntSequence rawIndices = binary.dictionaryIndices();
+            for (int row = 0; row < rows; row++) {
+                assertThat(rawIndices.get(row))
+                        .as("null slot at row %d reads the zero placeholder", row)
+                        .isZero();
+            }
         }
 
         private void assertByteArraySlice(ColumnVector vec, byte[][] expected) {

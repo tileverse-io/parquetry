@@ -23,6 +23,7 @@ import java.util.BitSet;
 import io.tileverse.parquetry.batch.BooleanVector;
 import io.tileverse.parquetry.batch.DoubleVector;
 import io.tileverse.parquetry.batch.FloatVector;
+import io.tileverse.parquetry.batch.IntSequence;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.Validity;
@@ -108,6 +109,13 @@ public final class ArrowBuffers {
         for (int i = 0; i < values.length; i++) {
             segment.setAtIndex(INT32, i, values[i]);
         }
+        return segment.asReadOnly();
+    }
+
+    /** Packs a sequence's {@code int32} values as a little-endian array, padded to the 8-byte alignment. */
+    public static MemorySegment encodeInts(IntSequence values) {
+        MemorySegment segment = MemorySegment.ofArray(new byte[align(values.size() * INT_BYTES)]);
+        values.copyInto(segment, 0L);
         return segment.asReadOnly();
     }
 

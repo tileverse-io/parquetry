@@ -46,7 +46,7 @@ class Int96VectorTest {
             validBits.set(0, 3);
             Validity validity = Validity.of(validBits, 3);
 
-            Int96Vector vec = Int96Vector.dictionary(dict, indices, validity);
+            Int96Vector vec = Int96Vector.dictionary(dict, IntSequence.of(indices), validity);
 
             assertThat(vec.size()).isEqualTo(3);
             assertThat(vec.get(0).toArray(JAVA_BYTE)[0]).isEqualTo((byte) 7);
@@ -62,7 +62,7 @@ class Int96VectorTest {
             validBits.set(0);
             Validity validity = Validity.of(validBits, 2);
 
-            Int96Vector vec = Int96Vector.dictionary(dict, indices, validity);
+            Int96Vector vec = Int96Vector.dictionary(dict, IntSequence.of(indices), validity);
 
             assertThat(vec.get(1)).isNull();
             assertThat(vec.get(0).toArray(JAVA_BYTE)[0]).isEqualTo((byte) 7);

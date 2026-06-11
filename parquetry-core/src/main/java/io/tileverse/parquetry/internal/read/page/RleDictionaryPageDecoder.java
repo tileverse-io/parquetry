@@ -70,6 +70,16 @@ public final class RleDictionaryPageDecoder<T> implements PageDecoder<T> {
         }
     }
 
+    /**
+     * Decodes {@code n} raw dictionary indexes into {@code dst} as little-endian 32-bit ints, written unaligned and
+     * without dictionary lookup. {@code dst} must cover at least {@code 4L * n} bytes.
+     */
+    public void decodeIndicesInto(int n, MemorySegment dst) {
+        for (int i = 0; i < n; i++) {
+            dst.setAtIndex(ParquetLayouts.INT32, i, indexDecoder.nextValue());
+        }
+    }
+
     @Override
     public void decodeInts(int n, int[] dst, int offset) {
         Dictionary.IntDict ints = (Dictionary.IntDict) dictionary;

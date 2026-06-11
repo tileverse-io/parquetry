@@ -28,8 +28,8 @@ import lombok.NonNull;
  * off-heap (native) backing; materialized and dictionary-built vectors use a heap backing.
  *
  * <p>Dictionary mode (low-cardinality columns): the distinct values live once in a shared {@code dictEntries} array,
- * and an {@code int[]} of per-row indexes selects an entry for each row. This holds {@code 4} bytes per row over the
- * shared entries instead of one slice per row. {@link #get(int)} returns the shared entry directly, with no slice.
+ * and an {@link IntSequence} of per-row indexes selects an entry for each row. This holds {@code 4} bytes per row over
+ * the shared entries instead of one slice per row. {@link #get(int)} returns the shared entry directly, with no slice.
  *
  * <p>The mode is chosen by which fields are populated: {@code indices != null} means dictionary mode. Either way the
  * returned segments are read-only; a native consolidated backing is owned by the batch and released on its close.
@@ -38,7 +38,7 @@ public final class FixedLenBinaryVector implements ColumnVector {
 
     private final MemorySegment backing;
     private final MemorySegment[] dictEntries;
-    private final int[] indices;
+    private final IntSequence indices;
     private final int byteWidth;
     private final Validity validity;
 
@@ -51,7 +51,10 @@ public final class FixedLenBinaryVector implements ColumnVector {
     }
 
     private FixedLenBinaryVector(
-            @NonNull MemorySegment[] dictEntries, @NonNull int[] indices, int byteWidth, @NonNull Validity validity) {
+            @NonNull MemorySegment[] dictEntries,
+            @NonNull IntSequence indices,
+            int byteWidth,
+            @NonNull Validity validity) {
         this.backing = null;
         this.dictEntries = dictEntries;
         this.indices = indices;
@@ -91,7 +94,10 @@ public final class FixedLenBinaryVector implements ColumnVector {
 
     /** Builds a dictionary-encoded vector: each row indexes a shared fixed-width dictionary entry. */
     public static FixedLenBinaryVector dictionary(
-            @NonNull MemorySegment[] dictEntries, @NonNull int[] indices, int byteWidth, @NonNull Validity validity) {
+            @NonNull MemorySegment[] dictEntries,
+            @NonNull IntSequence indices,
+            int byteWidth,
+            @NonNull Validity validity) {
         return new FixedLenBinaryVector(dictEntries, indices, byteWidth, validity);
     }
 
@@ -121,17 +127,16 @@ public final class FixedLenBinaryVector implements ColumnVector {
     }
 
     /**
-     * The per-row indexes into {@link #dictionaryEntries()} of a dictionary-mode vector, returned directly without
-     * copying; the array is read-only by contract and callers must not mutate it. Valid only in dictionary mode.
+     * The per-row indexes into {@link #dictionaryEntries()} of a dictionary-mode vector. Valid only in dictionary mode.
      */
-    public int[] dictionaryIndices() {
+    public IntSequence dictionaryIndices() {
         return indices;
     }
 
     @Override
     public int size() {
         if (indices != null) {
-            return indices.length;
+            return indices.size();
         }
         return byteWidth == 0 ? 0 : Math.toIntExact(backing.byteSize() / byteWidth);
     }
@@ -157,7 +162,7 @@ public final class FixedLenBinaryVector implements ColumnVector {
             return null;
         }
         if (indices != null) {
-            return dictEntries[indices[row]];
+            return dictEntries[indices.get(row)];
         }
         return backing.asSlice((long) row * byteWidth, byteWidth);
     }
@@ -180,7 +185,7 @@ public final class FixedLenBinaryVector implements ColumnVector {
             return -1;
         }
         if (indices != null) {
-            MemorySegment entry = dictEntries[indices[row]];
+            MemorySegment entry = dictEntries[indices.get(row)];
             MemorySegment.copy(entry, 0L, target, targetOffset, byteWidth);
             return byteWidth;
         }
@@ -191,7 +196,7 @@ public final class FixedLenBinaryVector implements ColumnVector {
     @Override
     public long approximateHeapBytes() {
         if (indices != null) {
-            return (long) indices.length * Integer.BYTES + dictionaryEntryBytes() + validity.heapBytes();
+            return indices.heapBytes() + dictionaryEntryBytes() + validity.heapBytes();
         }
         long backingBytes = backing.isNative() ? 0L : backing.byteSize();
         return backingBytes + validity.heapBytes();
