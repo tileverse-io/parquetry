@@ -29,6 +29,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
 import java.util.stream.Stream;
+import java.util.zip.CRC32;
 
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -36,6 +37,9 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.tukaani.xz.LZMA2Options;
+import org.tukaani.xz.MemoryLimitException;
+import org.tukaani.xz.XZOutputStream;
 
 import io.airlift.compress.v3.hadoop.HadoopOutputStream;
 import io.airlift.compress.v3.lz4.Lz4HadoopStreams;
@@ -88,7 +92,9 @@ class CodecTest {
                             Codec.Lz4Hadoop.class,
                             Codec.Zstd.class,
                             Codec.Brotli.class,
-                            Codec.Lzo.class);
+                            Codec.Lzo.class,
+                            Codec.Bzip2.class,
+                            Codec.Xz.class);
             assertThat(Codec.class.isSealed()).isTrue();
         }
 
@@ -151,7 +157,9 @@ class CodecTest {
                     Codec.deflate(),
                     Codec.lz4Raw(),
                     Codec.zstd(3),
-                    Codec.lzo());
+                    Codec.lzo(),
+                    Codec.bzip2(),
+                    Codec.xz());
         }
 
         @ParameterizedTest(name = "{0}")
@@ -172,7 +180,50 @@ class CodecTest {
         }
 
         static List<Codec> nonTrivialCompressibleCodecs() {
-            return List.of(Codec.snappy(), Codec.gzip(), Codec.deflate(), Codec.lz4Raw(), Codec.zstd(3), Codec.lzo());
+            return List.of(
+                    Codec.snappy(),
+                    Codec.gzip(),
+                    Codec.deflate(),
+                    Codec.lz4Raw(),
+                    Codec.zstd(3),
+                    Codec.lzo(),
+                    Codec.bzip2(),
+                    Codec.xz());
+        }
+
+        /**
+         * Pins the hand-rolled bzip2/xz {@code maxCompressedLength} formulas: compressing into a buffer of exactly the
+         * advertised bound must succeed and round-trip for every payload shape, guarding the formulas against library
+         * upgrades that grow the compressed output.
+         */
+        @ParameterizedTest(name = "{0}/{1}")
+        @MethodSource("handRolledBoundsCases")
+        void handRolledBoundsHoldAcrossPayloads(Codec codec, String name, byte[] payload) throws Exception {
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment src = arena.allocate(payload.length);
+                MemorySegment.copy(payload, 0, src, ValueLayout.JAVA_BYTE, 0, payload.length);
+
+                long bound = codec.maxCompressedLength(payload.length);
+                MemorySegment exactlyBound = arena.allocate(bound);
+                int compressedLen = codec.compress(src, exactlyBound);
+                assertThat(compressedLen).as("compressed length").isPositive().isLessThanOrEqualTo((int) bound);
+
+                MemorySegment decompressed = arena.allocate(payload.length);
+                int decompressedLen = codec.decompress(exactlyBound.asSlice(0, compressedLen), decompressed);
+                assertThat(decompressedLen).as("decompressed length").isEqualTo(payload.length);
+
+                byte[] back = new byte[payload.length];
+                MemorySegment.copy(decompressed, ValueLayout.JAVA_BYTE, 0, back, 0, payload.length);
+                assertThat(back).as("round-tripped bytes").isEqualTo(payload);
+            }
+        }
+
+        static Stream<Arguments> handRolledBoundsCases() {
+            List<Arguments> payloadsWithEmpty = Stream.concat(payloads(), Stream.of(Arguments.of("empty", new byte[0])))
+                    .toList();
+            return Stream.of(Codec.bzip2(), Codec.xz())
+                    .flatMap(codec ->
+                            payloadsWithEmpty.stream().map(args -> Arguments.of(codec, args.get()[0], args.get()[1])));
         }
 
         @Test
@@ -306,7 +357,14 @@ class CodecTest {
         }
 
         static List<Codec> sizeDiscoveringCodecs() {
-            return List.of(Codec.uncompressed(), Codec.snappy(), Codec.gzip(), Codec.deflate(), Codec.zstd(3));
+            return List.of(
+                    Codec.uncompressed(),
+                    Codec.snappy(),
+                    Codec.gzip(),
+                    Codec.deflate(),
+                    Codec.zstd(3),
+                    Codec.bzip2(),
+                    Codec.xz());
         }
 
         @ParameterizedTest(name = "deflate/{0}")
@@ -371,6 +429,21 @@ class CodecTest {
             assertThatThrownBy(() -> Codec.zstd().decompress(garbage)).isInstanceOf(IOException.class);
             assertThatThrownBy(() -> Codec.deflate().decompress(garbage)).isInstanceOf(IOException.class);
             assertThatThrownBy(() -> Codec.gzip().decompress(garbage)).isInstanceOf(IOException.class);
+            assertThatThrownBy(() -> Codec.bzip2().decompress(garbage)).isInstanceOf(IOException.class);
+            assertThatThrownBy(() -> Codec.xz().decompress(garbage)).isInstanceOf(IOException.class);
+        }
+
+        /**
+         * The xz block header declares the LZMA2 dictionary size and the decoder allocates it up front; a crafted
+         * ~50-byte stream declaring a 768 MiB dictionary would be an out-of-memory lever without the engine's decoder
+         * memory cap. The rejection must reach callers as IOException ({@code MemoryLimitException} is one).
+         */
+        @Test
+        void xzRejectsOversizedDeclaredDictionary() throws Exception {
+            MemorySegment src = MemorySegment.ofArray(xzStreamDeclaringHugeDictionary());
+            // MemoryLimitException specifically: a plain IOException here could be a corrupt-header artifact of
+            // the patching helper rather than the memory limit doing its job.
+            assertThatThrownBy(() -> Codec.xz().decompress(src)).isInstanceOf(MemoryLimitException.class);
         }
 
         @Test
@@ -379,6 +452,49 @@ class CodecTest {
             assertThatThrownBy(() -> Codec.lz4Raw().decompress(src)).isInstanceOf(UnsupportedOperationException.class);
             assertThatThrownBy(() -> Codec.lzo().decompress(src)).isInstanceOf(UnsupportedOperationException.class);
         }
+    }
+
+    private static final int XZ_STREAM_HEADER_LENGTH = 12;
+
+    /**
+     * A tiny xz stream whose block header declares a 768 MiB LZMA2 dictionary. Written normally with the default
+     * dictionary, then the dictionary-size byte is patched and the block-header CRC32 recomputed; the encoder never
+     * allocates the huge dictionary.
+     */
+    private static byte[] xzStreamDeclaringHugeDictionary() throws IOException {
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        try (XZOutputStream xz = new XZOutputStream(bos, new LZMA2Options())) {
+            xz.write("hello".getBytes());
+        }
+        byte[] stream = bos.toByteArray();
+        int headerStart = XZ_STREAM_HEADER_LENGTH;
+        int headerLength = (stream[headerStart] + 1) * 4;
+        // Block header layout here: header size, block flags, filter id, properties length, dictionary size.
+        int dictSizeOffset = headerStart + 4;
+        stream[dictSizeOffset] = encodeLzma2DictSize(LZMA2Options.DICT_SIZE_MAX);
+        patchBlockHeaderCrc(stream, headerStart, headerLength);
+        return stream;
+    }
+
+    /** The .xz LZMA2 properties byte encodes the dictionary size as {@code (2 | (bits & 1)) << (bits / 2 + 11)}. */
+    private static byte encodeLzma2DictSize(int dictSize) {
+        for (int bits = 0; bits < 40; bits++) {
+            if ((2 | (bits & 1)) << (bits / 2 + 11) == dictSize) {
+                return (byte) bits;
+            }
+        }
+        throw new IllegalArgumentException("dictionary size has no LZMA2 properties encoding: " + dictSize);
+    }
+
+    private static void patchBlockHeaderCrc(byte[] stream, int headerStart, int headerLength) {
+        CRC32 crc = new CRC32();
+        crc.update(stream, headerStart, headerLength - 4);
+        int crcOffset = headerStart + headerLength - 4;
+        int value = (int) crc.getValue();
+        stream[crcOffset] = (byte) value;
+        stream[crcOffset + 1] = (byte) (value >>> 8);
+        stream[crcOffset + 2] = (byte) (value >>> 16);
+        stream[crcOffset + 3] = (byte) (value >>> 24);
     }
 
     private static byte[] brotliHelloWorld() {
