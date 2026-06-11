@@ -570,6 +570,29 @@ class BatchColumnReaderTest {
             assertThat(reader.hasMore()).isFalse();
         }
 
+        /**
+         * Pins the per-page refill of the direct-binary row layout: two PLAIN pages that BOTH interleave nulls, read
+         * one batch per page, must each return exactly their own bytes and null pattern. The second page's layout must
+         * not leak anything from the first page's decode.
+         */
+        @Test
+        void directBinaryScratchesRefillAcrossPages() throws IOException {
+            byte[][] page1 = {bytes("alpha"), null, bytes("bravo")};
+            byte[][] page2 = {null, bytes("charlie"), bytes("x"), null};
+            FetchedColumnChunk chunk = twoPageNullableByteArrayChunk(page1, page2);
+
+            BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, optionalByteArrayLeaf());
+
+            // readBatch never crosses a page, leaving one batch per page.
+            ColumnVector batch1 = reader.readBatch(10, new ArrayList<>());
+            assertByteArraySlice(batch1, page1);
+
+            ColumnVector batch2 = reader.readBatch(10, new ArrayList<>());
+            assertByteArraySlice(batch2, page2);
+
+            assertThat(reader.hasMore()).isFalse();
+        }
+
         @Test
         void decodesValueBytesOffHeap() throws IOException {
             byte[][] rows = {bytes("aa"), bytes("bbbb"), bytes("c")};
@@ -644,6 +667,46 @@ class BatchColumnReaderTest {
             assertThat(firstAlpha).isSameAs(secondAlpha);
         }
 
+        /**
+         * Pins the placeholder-index invariant the reused index scratch depends on: the dictionary vectors hand out the
+         * raw {@code dictionaryIndices()} array wholesale - the Arrow buffer codec serializes every slot, null rows
+         * included - and {@code dictEntries[indices[row]]} is resolved from those slots without consulting validity per
+         * slot, hence every null row's slot must hold the harmless placeholder index 0. Page 1 is all-valid and writes
+         * the highest dictionary index into every slot; if page 2's decode reused that scratch without zero-filling it
+         * first, page 2's null rows would still hold page 1's index and leak the wrong dictionary entry.
+         */
+        @Test
+        void dictionaryNullRowsKeepThePlaceholderIndexAcrossReusedPages() throws IOException {
+            byte[][] dictValues = {bytes("alpha"), bytes("beta"), bytes("gamma")};
+            // Page 1: four valid rows, every one referencing the highest dictionary index (2 -> "gamma").
+            int[] page1DefLevels = {1, 1, 1, 1};
+            int[] page1Indices = {2, 2, 2, 2};
+            // Page 2: nulls at rows 1 and 2; the valid rows reference entries 0 and 1.
+            int[] page2DefLevels = {1, 0, 0, 1};
+            int[] page2Indices = {0, 1};
+            FetchedColumnChunk chunk = dictionaryEncodedByteArrayChunkTwoPages(
+                    dictValues, page1DefLevels, page1Indices, page2DefLevels, page2Indices);
+
+            BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, optionalByteArrayLeaf());
+
+            ColumnVector batch1 = reader.readBatch(4, new ArrayList<>());
+            assertByteArraySlice(batch1, new byte[][] {bytes("gamma"), bytes("gamma"), bytes("gamma"), bytes("gamma")});
+
+            ColumnVector batch2 = reader.readBatch(4, new ArrayList<>());
+            assertByteArraySlice(batch2, new byte[][] {bytes("alpha"), null, null, bytes("beta")});
+            assertThat(reader.hasMore()).isFalse();
+
+            // The null rows' slots in the raw index array hold the placeholder index 0 and resolve the placeholder
+            // entry ("alpha"), not page 1's lingering index 2 ("gamma").
+            BinaryVector binary = (BinaryVector) batch2;
+            int[] rawIndices = binary.dictionaryIndices();
+            MemorySegment[] entries = binary.dictionaryEntries();
+            assertThat(rawIndices[1]).isZero();
+            assertThat(rawIndices[2]).isZero();
+            assertThat(entries[rawIndices[1]].toArray(JAVA_BYTE)).containsExactly(bytes("alpha"));
+            assertThat(entries[rawIndices[2]].toArray(JAVA_BYTE)).containsExactly(bytes("alpha"));
+        }
+
         private void assertByteArraySlice(ColumnVector vec, byte[][] expected) {
             assertThat(vec).isInstanceOf(BinaryVector.class);
             assertThat(vec.size()).isEqualTo(expected.length);
@@ -679,12 +742,35 @@ class BatchColumnReaderTest {
     private static FetchedColumnChunk dictionaryEncodedByteArrayChunk(
             byte[][] dictValues, int[] indices, int[] defLevels) throws IOException {
         Dictionary.BinaryDict dictionary = new Dictionary.BinaryDict(toSegments(dictValues));
+        byte[] chunkBuffer = encodeDictionaryByteArrayPage(dictValues.length, defLevels, indices);
+        return dictionaryByteArrayChunk(dictionary, chunkBuffer, defLevels.length);
+    }
 
+    /**
+     * Builds a {@link FetchedColumnChunk} with two nullable dictionary-encoded BYTE_ARRAY data pages concatenated in
+     * one chunk buffer, both resolving through the same chunk-level dictionary. Same per-page layout as
+     * {@link #dictionaryEncodedByteArrayChunk}.
+     */
+    private static FetchedColumnChunk dictionaryEncodedByteArrayChunkTwoPages(
+            byte[][] dictValues, int[] defLevels1, int[] indices1, int[] defLevels2, int[] indices2)
+            throws IOException {
+        Dictionary.BinaryDict dictionary = new Dictionary.BinaryDict(toSegments(dictValues));
+        byte[] page1 = encodeDictionaryByteArrayPage(dictValues.length, defLevels1, indices1);
+        byte[] page2 = encodeDictionaryByteArrayPage(dictValues.length, defLevels2, indices2);
+        byte[] chunkBuffer = concat(page1, page2);
+        return dictionaryByteArrayChunk(dictionary, chunkBuffer, defLevels1.length + defLevels2.length);
+    }
+
+    private static byte[] encodeDictionaryByteArrayPage(int dictionarySize, int[] defLevels, int[] indices)
+            throws IOException {
         byte[] defLevelBytes = rleEncodeBits(defLevels, /*maxLevel*/ 1);
-        byte[] indexPage = encodeRleDictionaryIndexPage(indices, dictValues.length);
+        byte[] indexPage = encodeRleDictionaryIndexPage(indices, dictionarySize);
         byte[] payload = buildV1PayloadWithDefLevels(defLevelBytes, indexPage);
-        byte[] chunkBuffer = encodeV1Page(defLevels.length, payload, org.apache.parquet.format.Encoding.RLE_DICTIONARY);
+        return encodeV1Page(defLevels.length, payload, org.apache.parquet.format.Encoding.RLE_DICTIONARY);
+    }
 
+    private static FetchedColumnChunk dictionaryByteArrayChunk(
+            Dictionary.BinaryDict dictionary, byte[] chunkBuffer, int numValues) {
         MemorySegment segment = MemorySegment.ofArray(chunkBuffer).asReadOnly();
 
         ColumnMetaData meta = ColumnMetaData.builder()
@@ -692,7 +778,7 @@ class BatchColumnReaderTest {
                 .encodings(List.of(Encoding.RLE_DICTIONARY))
                 .pathInSchema(pathSegments(PATH))
                 .codec(CompressionCodec.UNCOMPRESSED)
-                .numValues((long) defLevels.length)
+                .numValues((long) numValues)
                 .totalUncompressedSize((long) chunkBuffer.length)
                 .totalCompressedSize((long) chunkBuffer.length)
                 .dataPageOffset(0L)
