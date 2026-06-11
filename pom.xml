@@ -84,6 +84,8 @@
     <opentelemetry.version>1.46.0</opentelemetry.version>
     <aircompressor.version>3.6</aircompressor.version>
     <brotli-dec.version>0.1.2</brotli-dec.version>
+    <commons-compress.version>1.27.1</commons-compress.version>
+    <xz.version>1.10</xz.version>
     <slf4j.version>2.0.17</slf4j.version>
     <error-prone-annotations.version>2.43.0</error-prone-annotations.version>
     <jspecify.version>1.0.0</jspecify.version>

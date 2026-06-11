@@ -29,7 +29,12 @@ import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 import java.util.zip.Inflater;
 
+import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream;
+import org.apache.commons.compress.compressors.bzip2.BZip2CompressorOutputStream;
 import org.brotli.dec.BrotliInputStream;
+import org.tukaani.xz.LZMA2Options;
+import org.tukaani.xz.XZInputStream;
+import org.tukaani.xz.XZOutputStream;
 
 import io.airlift.compress.v3.MalformedInputException;
 import io.airlift.compress.v3.hadoop.HadoopInputStream;
@@ -59,7 +64,8 @@ import io.airlift.compress.v3.zstd.ZstdInputStream;
  * {@link UnsupportedOperationException} from it.
  *
  * <p>Construct cases via the static factories ({@link #uncompressed()}, {@link #snappy()}, {@link #gzip()},
- * {@link #deflate()}, {@link #lz4Raw()}, {@link #lz4Hadoop()}, {@link #zstd(int)}, {@link #brotli()}, {@link #lzo()}).
+ * {@link #deflate()}, {@link #lz4Raw()}, {@link #lz4Hadoop()}, {@link #zstd(int)}, {@link #brotli()}, {@link #lzo()},
+ * {@link #bzip2()}, {@link #xz()}).
  *
  * <p>Instances are stateless and safe to share across virtual threads; each compress/decompress call constructs its own
  * underlying compressor/decompressor so concurrent fan-out cannot race on internal scratch state.
@@ -73,7 +79,9 @@ public sealed interface Codec
                 Codec.Lz4Hadoop,
                 Codec.Zstd,
                 Codec.Brotli,
-                Codec.Lzo {
+                Codec.Lzo,
+                Codec.Bzip2,
+                Codec.Xz {
 
     /** No-op codec; bytes pass through verbatim. */
     static Codec uncompressed() {
@@ -127,6 +135,16 @@ public sealed interface Codec
     /** LZO raw block format (no Hadoop stream framing). */
     static Codec lzo() {
         return Lzo.INSTANCE;
+    }
+
+    /** bzip2 codec, as Avro's optional {@code bzip2} OCF codec uses. Stream-based via commons-compress. */
+    static Codec bzip2() {
+        return Bzip2.INSTANCE;
+    }
+
+    /** XZ container format (LZMA2), as Avro's optional {@code xz} OCF codec uses. Stream-based. */
+    static Codec xz() {
+        return Xz.INSTANCE;
     }
 
     /**
@@ -613,6 +631,82 @@ public sealed interface Codec
         @Override
         public long maxCompressedLength(long uncompressedLength) {
             return new LzoCompressor().maxCompressedLength(CompressionSupport.intExact(uncompressedLength));
+        }
+    }
+
+    /** bzip2 codec. The worst-case bound follows the bzip2 manual: about 1% growth plus 600 bytes. */
+    record Bzip2() implements Codec {
+
+        static final Bzip2 INSTANCE = new Bzip2();
+
+        @Override
+        public int decompress(MemorySegment src, MemorySegment output) throws IOException {
+            byte[] in = src.toArray(JAVA_BYTE);
+            try (BZip2CompressorInputStream bzip2 = new BZip2CompressorInputStream(new ByteArrayInputStream(in))) {
+                return CompressionSupport.streamToSegment(bzip2, output);
+            }
+        }
+
+        @Override
+        public MemorySegment decompress(MemorySegment src) throws IOException {
+            byte[] in = src.toArray(JAVA_BYTE);
+            try (BZip2CompressorInputStream bzip2 = new BZip2CompressorInputStream(new ByteArrayInputStream(in))) {
+                return MemorySegment.ofArray(bzip2.readAllBytes()).asReadOnly();
+            }
+        }
+
+        @Override
+        public int compress(MemorySegment src, MemorySegment output) throws IOException {
+            CompressionSupport.BoundedSegmentOutputStream sink =
+                    new CompressionSupport.BoundedSegmentOutputStream(output);
+            try (BZip2CompressorOutputStream bzip2 = new BZip2CompressorOutputStream(sink)) {
+                CompressionSupport.writeFromSegment(src, bzip2);
+            }
+            return sink.written();
+        }
+
+        @Override
+        public long maxCompressedLength(long uncompressedLength) {
+            long n = CompressionSupport.intExact(uncompressedLength);
+            return n + (n / 100) + 600;
+        }
+    }
+
+    /** XZ codec. The worst-case bound is generous: LZMA2 worst case is well under 1.34x plus a fixed header. */
+    record Xz() implements Codec {
+
+        static final Xz INSTANCE = new Xz();
+
+        @Override
+        public int decompress(MemorySegment src, MemorySegment output) throws IOException {
+            byte[] in = src.toArray(JAVA_BYTE);
+            try (XZInputStream xz = new XZInputStream(new ByteArrayInputStream(in))) {
+                return CompressionSupport.streamToSegment(xz, output);
+            }
+        }
+
+        @Override
+        public MemorySegment decompress(MemorySegment src) throws IOException {
+            byte[] in = src.toArray(JAVA_BYTE);
+            try (XZInputStream xz = new XZInputStream(new ByteArrayInputStream(in))) {
+                return MemorySegment.ofArray(xz.readAllBytes()).asReadOnly();
+            }
+        }
+
+        @Override
+        public int compress(MemorySegment src, MemorySegment output) throws IOException {
+            CompressionSupport.BoundedSegmentOutputStream sink =
+                    new CompressionSupport.BoundedSegmentOutputStream(output);
+            try (XZOutputStream xz = new XZOutputStream(sink, new LZMA2Options(LZMA2Options.PRESET_DEFAULT))) {
+                CompressionSupport.writeFromSegment(src, xz);
+            }
+            return sink.written();
+        }
+
+        @Override
+        public long maxCompressedLength(long uncompressedLength) {
+            long n = CompressionSupport.intExact(uncompressedLength);
+            return n + (n / 3) + 256;
         }
     }
 }

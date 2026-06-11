@@ -88,7 +88,9 @@ class CodecTest {
                             Codec.Lz4Hadoop.class,
                             Codec.Zstd.class,
                             Codec.Brotli.class,
-                            Codec.Lzo.class);
+                            Codec.Lzo.class,
+                            Codec.Bzip2.class,
+                            Codec.Xz.class);
             assertThat(Codec.class.isSealed()).isTrue();
         }
 
@@ -151,7 +153,9 @@ class CodecTest {
                     Codec.deflate(),
                     Codec.lz4Raw(),
                     Codec.zstd(3),
-                    Codec.lzo());
+                    Codec.lzo(),
+                    Codec.bzip2(),
+                    Codec.xz());
         }
 
         @ParameterizedTest(name = "{0}")
@@ -172,7 +176,15 @@ class CodecTest {
         }
 
         static List<Codec> nonTrivialCompressibleCodecs() {
-            return List.of(Codec.snappy(), Codec.gzip(), Codec.deflate(), Codec.lz4Raw(), Codec.zstd(3), Codec.lzo());
+            return List.of(
+                    Codec.snappy(),
+                    Codec.gzip(),
+                    Codec.deflate(),
+                    Codec.lz4Raw(),
+                    Codec.zstd(3),
+                    Codec.lzo(),
+                    Codec.bzip2(),
+                    Codec.xz());
         }
 
         @Test
@@ -306,7 +318,14 @@ class CodecTest {
         }
 
         static List<Codec> sizeDiscoveringCodecs() {
-            return List.of(Codec.uncompressed(), Codec.snappy(), Codec.gzip(), Codec.deflate(), Codec.zstd(3));
+            return List.of(
+                    Codec.uncompressed(),
+                    Codec.snappy(),
+                    Codec.gzip(),
+                    Codec.deflate(),
+                    Codec.zstd(3),
+                    Codec.bzip2(),
+                    Codec.xz());
         }
 
         @ParameterizedTest(name = "deflate/{0}")
@@ -371,6 +390,8 @@ class CodecTest {
             assertThatThrownBy(() -> Codec.zstd().decompress(garbage)).isInstanceOf(IOException.class);
             assertThatThrownBy(() -> Codec.deflate().decompress(garbage)).isInstanceOf(IOException.class);
             assertThatThrownBy(() -> Codec.gzip().decompress(garbage)).isInstanceOf(IOException.class);
+            assertThatThrownBy(() -> Codec.bzip2().decompress(garbage)).isInstanceOf(IOException.class);
+            assertThatThrownBy(() -> Codec.xz().decompress(garbage)).isInstanceOf(IOException.class);
         }
 
         @Test
