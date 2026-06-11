@@ -24,7 +24,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
  * Builds a Java {@link Map} (insertion-ordered) from a row slice of a {@link MapVector}. Used by the row API view when
- * a consumer reads a map cell via {@code record.get(path)} or {@code record.getMap(path)}.
+ * a consumer reads a map cell via {@code record.get(path)} or {@code record.readMap(path)}.
  *
  * <p>Null vs empty: a row is null iff {@code vec.validity().isValid(rowIndex) == false}; an empty map iff
  * {@code offsets[i] == offsets[i+1]} AND validity is set.
