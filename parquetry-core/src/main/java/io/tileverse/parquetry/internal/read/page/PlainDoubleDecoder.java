@@ -47,6 +47,13 @@ public final class PlainDoubleDecoder implements PageDecoder<Double> {
     }
 
     @Override
+    public void decodeDoubles(int n, MemorySegment dst, long dstIndex) {
+        long byteCount = (long) n * BYTES_PER_VALUE;
+        MemorySegment.copy(segment, offset, dst, dstIndex * BYTES_PER_VALUE, byteCount);
+        offset += byteCount;
+    }
+
+    @Override
     public void skip(int n) {
         offset += (long) n * BYTES_PER_VALUE;
     }

@@ -17,6 +17,8 @@ package io.tileverse.parquetry.internal.read.page;
 
 import java.lang.foreign.MemorySegment;
 
+import io.tileverse.parquetry.format.ParquetLayouts;
+
 /**
  * DELTA_BINARY_PACKED decoder for INT64 columns.
  *
@@ -41,6 +43,13 @@ public final class DeltaBinaryPackedInt64Decoder implements PageDecoder<Long> {
     public void decodeLongs(int n, long[] dst, int offset) {
         for (int i = 0; i < n; i++) {
             dst[offset + i] = delegate.next();
+        }
+    }
+
+    @Override
+    public void decodeLongs(int n, MemorySegment dst, long dstIndex) {
+        for (int i = 0; i < n; i++) {
+            dst.setAtIndex(ParquetLayouts.INT64, dstIndex + i, delegate.next());
         }
     }
 

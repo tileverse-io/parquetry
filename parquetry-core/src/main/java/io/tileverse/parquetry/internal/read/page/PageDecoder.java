@@ -17,6 +17,8 @@ package io.tileverse.parquetry.internal.read.page;
 
 import java.lang.foreign.MemorySegment;
 
+import io.tileverse.parquetry.format.ParquetLayouts;
+
 /**
  * Lazily materializes column values from one decompressed data-page payload.
  *
@@ -29,10 +31,10 @@ import java.lang.foreign.MemorySegment;
  * per page.
  *
  * <p>{@code valueCount} is the page header's {@code numValues} - the logical row count <em>including nulls</em>. PLAIN
- * encoding stores only the non-null values, so an all-null OPTIONAL page validly has {@code valueCount = N} and zero
- * value bytes; the column reader will not call {@link #next()} for those rows. Implementations must therefore not cap
- * the input buffer at {@code valueCount} (e.g. {@code asIntBuffer().limit(valueCount)}); the buffer's natural capacity
- * already reflects what was written. Over-consumption past that capacity should fail loudly.
+ * encoding stores only the non-null values; an all-null OPTIONAL page therefore validly has {@code valueCount = N} and
+ * zero value bytes; the column reader will not call {@link #next()} for those rows. Implementations must therefore not
+ * cap the input buffer at {@code valueCount} (e.g. {@code asIntBuffer().limit(valueCount)}); the buffer's natural
+ * capacity already reflects what was written. Over-consumption past that capacity should fail loudly.
  */
 public interface PageDecoder<T> {
 
@@ -67,6 +69,46 @@ public interface PageDecoder<T> {
     default void decodeDoubles(int n, double[] dst, int offset) {
         for (int i = 0; i < n; i++) {
             dst[offset + i] = (Double) next();
+        }
+    }
+
+    /**
+     * Bulk decode {@code n} ints into {@code dst} starting at element index {@code dstIndex}, in the unaligned
+     * little-endian {@link ParquetLayouts#INT32} layout (pooled destination segments make no alignment promise).
+     */
+    default void decodeInts(int n, MemorySegment dst, long dstIndex) {
+        for (int i = 0; i < n; i++) {
+            dst.setAtIndex(ParquetLayouts.INT32, dstIndex + i, (Integer) next());
+        }
+    }
+
+    /**
+     * Bulk decode {@code n} longs into {@code dst} starting at element index {@code dstIndex}
+     * ({@link ParquetLayouts#INT64}).
+     */
+    default void decodeLongs(int n, MemorySegment dst, long dstIndex) {
+        for (int i = 0; i < n; i++) {
+            dst.setAtIndex(ParquetLayouts.INT64, dstIndex + i, (Long) next());
+        }
+    }
+
+    /**
+     * Bulk decode {@code n} floats into {@code dst} starting at element index {@code dstIndex}
+     * ({@link ParquetLayouts#FLOAT}).
+     */
+    default void decodeFloats(int n, MemorySegment dst, long dstIndex) {
+        for (int i = 0; i < n; i++) {
+            dst.setAtIndex(ParquetLayouts.FLOAT, dstIndex + i, (Float) next());
+        }
+    }
+
+    /**
+     * Bulk decode {@code n} doubles into {@code dst} starting at element index {@code dstIndex}
+     * ({@link ParquetLayouts#DOUBLE}).
+     */
+    default void decodeDoubles(int n, MemorySegment dst, long dstIndex) {
+        for (int i = 0; i < n; i++) {
+            dst.setAtIndex(ParquetLayouts.DOUBLE, dstIndex + i, (Double) next());
         }
     }
 

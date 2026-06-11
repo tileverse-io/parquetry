@@ -246,16 +246,16 @@ class BatchColumnReaderTest {
         assertThat(first.getInt(1)).isEqualTo(11);
         assertThat(first.getInt(2)).isEqualTo(22);
 
-        // The next currentPageDefLevels call is what loads page 2. That load draws nothing from the pool: the
-        // def-level scratch's buffer already fits page 2's levels, and a nullable INT32 page decodes its values and
-        // validity on the heap. A zero borrow delta across the call pins the scratch reuse.
+        // The next currentPageDefLevels call is what loads page 2. The def-level scratch's buffer already fits page
+        // 2's levels and draws nothing from the pool; the load's single borrow is the pooled page-values segment an
+        // unmasked nullable INT32 page decodes its values into. A delta of exactly one pins the scratch reuse.
         long borrowsBeforePageTwoLoad = pool.stats().totalBorrows();
         assertThat(intsOf(reader.currentPageDefLevels()))
                 .as("page 2 decoded into the reused scratch")
                 .containsExactly(1, 0, 1, 1);
         assertThat(pool.stats().totalBorrows())
-                .as("loading page 2 reuses the def-level scratch buffer instead of borrowing a new one")
-                .isEqualTo(borrowsBeforePageTwoLoad);
+                .as("loading page 2 reuses the def-level scratch buffer; only the page-values segment is borrowed")
+                .isEqualTo(borrowsBeforePageTwoLoad + 1);
         IntVector second = (IntVector) reader.readBatch(10, new ArrayList<>());
         assertThat(second.size()).isEqualTo(4);
         assertThat(second.getInt(0)).isEqualTo(33);
@@ -501,6 +501,110 @@ class BatchColumnReaderTest {
         }
 
         assertThat(readValues).containsExactly(0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 9.0f, 10.0f);
+    }
+
+    // --- test 5f: unmasked nullable fixed-width pages decode into the pooled page-values segment ---
+
+    /**
+     * Pins the zero placeholder for null slots in the pooled page-values segment. A fresh heap array was zero-filled by
+     * the JVM; a pooled segment may hold stale bytes from a previous borrower. The pool is smallest-fit over one free
+     * list, hence TWO 16KB blocks are pre-dirtied with 0xFF (borrowed simultaneously - a sequential borrow/close pair
+     * would reuse one block): the page's small validity-bitmap acquire runs first and consumes one dirty block, leaving
+     * the other, still dirty, for the page-values acquire. The validity-blind {@link IntVector#asArray()} read of a
+     * null row's slot must yield 0, never the dirty bytes.
+     */
+    @Test
+    void nullablePageNullSlotsReadZeroNotStalePoolBytes() throws IOException {
+        int rows = 4096; // 16KB of INT32
+        SegmentPool pool = SegmentPool.create();
+        seedTwoDirtyBlocks(pool, (long) rows * Integer.BYTES);
+        assertThat(pool.stats().freeSegments())
+                .as("both dirty blocks must be retained or this test pins nothing")
+                .isEqualTo(2);
+
+        int[] defLevels = new int[rows];
+        int[] nonNullValues = new int[rows - 2];
+        int v = 0;
+        for (int row = 0; row < rows; row++) {
+            boolean isNull = (row == 100 || row == 4000);
+            defLevels[row] = isNull ? 0 : 1;
+            if (!isNull) {
+                nonNullValues[v++] = row + 1;
+            }
+        }
+        byte[] page = nullableInt32Page(defLevels, nonNullValues);
+        FetchedColumnChunk chunk = heapChunk(PATH, page, rows, /*maxRep*/ 0, /*maxDef*/ 1);
+        BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(pool), chunk, optionalInt32Leaf());
+
+        IntVector vec = (IntVector) reader.readBatch(rows, new ArrayList<>());
+
+        int[] slots = vec.asArray();
+        assertThat(slots[100]).as("null slot reads the zero placeholder").isZero();
+        assertThat(slots[4000]).as("null slot reads the zero placeholder").isZero();
+        assertThat(slots[0]).isEqualTo(1);
+        assertThat(slots[101]).isEqualTo(102); // the value at row 101 is row+1; the null at 100 must not shift it
+        assertThat(slots[4095]).isEqualTo(4096);
+    }
+
+    /**
+     * A nullable DOUBLE page decodes into the pooled segment (not PLAIN-all-valid, hence not the live-page path); the
+     * in-place spread must land every value on its own row slot with null slots zeroed.
+     */
+    @Test
+    void nullableDoublePageSpreadsValuesToRowSlots() throws IOException {
+        // five rows with rows 1 and 2 null: the def-level stream marks them absent and only three values exist
+        byte[] page = nullableDoublePage(new int[] {1, 0, 0, 1, 1}, new double[] {1.5, 2.5, 3.5});
+        FetchedColumnChunk chunk = doubleHeapChunk(page, /*numValues*/ 5, /*maxDef*/ 1);
+        BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, optionalDoubleLeaf());
+
+        DoubleVector vec = (DoubleVector) reader.readBatch(10, new ArrayList<>());
+
+        double[] slots = vec.asArray();
+        assertThat(slots[0]).isEqualTo(1.5);
+        assertThat(slots[1]).isZero();
+        assertThat(slots[2]).isZero();
+        assertThat(slots[3]).isEqualTo(2.5);
+        assertThat(slots[4]).isEqualTo(3.5);
+    }
+
+    /**
+     * Pins the all-null lane's explicit zero fill of the pooled page-values segment. No value decode and no spread run
+     * for a page with zero non-null values; only the fill stands between a previous borrower's bytes and the
+     * validity-blind reads. Same two-dirty-block seeding as the null-slots test: the validity-bitmap acquire consumes
+     * one block, the page-values acquire receives the other, still dirty.
+     */
+    @Test
+    void allNullPageValuesAreZeroFilledNotStalePoolBytes() throws IOException {
+        int rows = 4096; // 16KB of INT32
+        SegmentPool pool = SegmentPool.create();
+        seedTwoDirtyBlocks(pool, (long) rows * Integer.BYTES);
+        assertThat(pool.stats().freeSegments())
+                .as("both dirty blocks must be retained or this test pins nothing")
+                .isEqualTo(2);
+
+        int[] defLevels = new int[rows]; // all zero: every row is null
+        byte[] page = nullableInt32Page(defLevels, new int[0]);
+        FetchedColumnChunk chunk = heapChunk(PATH, page, rows, /*maxRep*/ 0, /*maxDef*/ 1);
+        BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(pool), chunk, optionalInt32Leaf());
+
+        IntVector vec = (IntVector) reader.readBatch(rows, new ArrayList<>());
+
+        assertThat(vec.asArray())
+                .as("every null slot reads the zero placeholder")
+                .containsOnly(0);
+    }
+
+    /**
+     * Leaves two free blocks of {@code blockBytes} filled with 0xFF in the pool. The blocks are borrowed simultaneously
+     * before dirtying; a sequential borrow/close pair would dirty the same block twice.
+     */
+    private static void seedTwoDirtyBlocks(SegmentPool pool, long blockBytes) {
+        SegmentPool.Pooled first = pool.borrow(blockBytes);
+        SegmentPool.Pooled second = pool.borrow(blockBytes);
+        first.segment().fill((byte) 0xFF);
+        second.segment().fill((byte) 0xFF);
+        first.close();
+        second.close();
     }
 
     // --- test 6: PLAIN BYTE_ARRAY with nulls, split across batches and a page boundary ---
@@ -892,6 +996,14 @@ class BatchColumnReaderTest {
         return encodeV1Page(defLevels.length, payload, org.apache.parquet.format.Encoding.PLAIN);
     }
 
+    /** Encodes one nullable DOUBLE V1 page: def-level section (length-prefixed) then the non-null value bytes. */
+    private static byte[] nullableDoublePage(int[] defLevels, double[] nonNullValues) throws IOException {
+        byte[] defBytes = rleEncodeBits(defLevels, /*maxLevel*/ 1);
+        byte[] valueBytes = encodeDoublesLittleEndian(nonNullValues);
+        byte[] payload = buildV1PayloadWithDefLevels(defBytes, valueBytes);
+        return encodeV1Page(defLevels.length, payload, org.apache.parquet.format.Encoding.PLAIN);
+    }
+
     /** Concatenates two already-encoded V1 pages into one INT32 chunk buffer. */
     private static FetchedColumnChunk twoPageChunk(byte[] page1, byte[] page2, long totalValues, int maxDef) {
         byte[] chunkBuffer = concat(page1, page2);
@@ -1001,6 +1113,11 @@ class BatchColumnReaderTest {
 
     /** Wraps a byte array in a read-only heap {@link MemorySegment} and builds a required DOUBLE column chunk. */
     private static FetchedColumnChunk doubleHeapChunk(byte[] data, long numValues) {
+        return doubleHeapChunk(data, numValues, /*maxDef*/ 0);
+    }
+
+    /** Wraps a byte array in a read-only heap {@link MemorySegment} and builds a DOUBLE column chunk. */
+    private static FetchedColumnChunk doubleHeapChunk(byte[] data, long numValues, int maxDef) {
         MemorySegment segment = MemorySegment.ofArray(data).asReadOnly();
 
         ColumnMetaData meta = ColumnMetaData.builder()
@@ -1014,7 +1131,7 @@ class BatchColumnReaderTest {
                 .dataPageOffset(0L)
                 .build();
 
-        return new FetchedColumnChunk(PATH, meta, /*maxRep*/ 0, /*maxDef*/ 0, segment, Optional.empty());
+        return new FetchedColumnChunk(PATH, meta, /*maxRep*/ 0, maxDef, segment, Optional.empty());
     }
 
     /** Wraps a byte array in a read-only heap {@link MemorySegment} and builds a required INT64 column chunk. */
@@ -1152,6 +1269,11 @@ class BatchColumnReaderTest {
     private static SchemaNode.Primitive optionalInt32Leaf() {
         return new SchemaNode.Primitive(
                 "val", Repetition.OPTIONAL, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
+    }
+
+    private static SchemaNode.Primitive optionalDoubleLeaf() {
+        return new SchemaNode.Primitive(
+                "val", Repetition.OPTIONAL, PrimitiveKind.DOUBLE, OptionalInt.empty(), Optional.empty(), -1);
     }
 
     private static SchemaNode.Primitive optionalByteArrayLeaf() {

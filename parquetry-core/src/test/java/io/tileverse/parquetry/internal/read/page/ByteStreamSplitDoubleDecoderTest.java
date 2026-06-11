@@ -21,6 +21,8 @@ import java.lang.foreign.MemorySegment;
 
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.format.ParquetLayouts;
+
 class ByteStreamSplitDoubleDecoderTest {
 
     @Test
@@ -59,6 +61,25 @@ class ByteStreamSplitDoubleDecoderTest {
         decoder.decodeDoubles(values.length, dst, 0);
 
         assertThat(dst).containsExactly(values);
+    }
+
+    @Test
+    void bulkDecodeDoublesIntoSegment() {
+        double[] values = {1.5, -2.25, 3.141592653589793, 0.0};
+        byte[] encoded = encode(values);
+
+        PageDecoder<Double> decoder = new ByteStreamSplitDoubleDecoder();
+        decoder.load(MemorySegment.ofArray(encoded), values.length);
+
+        MemorySegment dst = MemorySegment.ofArray(new byte[values.length * Double.BYTES]);
+        dst.setAtIndex(ParquetLayouts.DOUBLE, 0, -1.0); // sentinel - must be left alone
+        decoder.decodeDoubles(3, dst, 1);
+
+        assertThat(dst.getAtIndex(ParquetLayouts.DOUBLE, 0)).isEqualTo(-1.0);
+        assertThat(dst.getAtIndex(ParquetLayouts.DOUBLE, 1)).isEqualTo(1.5);
+        assertThat(dst.getAtIndex(ParquetLayouts.DOUBLE, 2)).isEqualTo(-2.25);
+        assertThat(dst.getAtIndex(ParquetLayouts.DOUBLE, 3)).isEqualTo(3.141592653589793);
+        assertThat(decoder.next()).isEqualTo(0.0);
     }
 
     static byte[] encode(double[] values) {

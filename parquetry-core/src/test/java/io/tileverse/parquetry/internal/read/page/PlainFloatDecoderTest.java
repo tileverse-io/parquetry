@@ -23,6 +23,8 @@ import java.nio.ByteBuffer;
 
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.format.ParquetLayouts;
+
 class PlainFloatDecoderTest {
 
     @Test
@@ -94,5 +96,47 @@ class PlainFloatDecoderTest {
         assertThat(dst[1]).isEqualTo(2.5f);
         assertThat(dst[2]).isEqualTo(Float.NEGATIVE_INFINITY);
         assertThat(Float.isNaN(dst[3])).isTrue();
+    }
+
+    @Test
+    void bulkDecodeIntoSegmentCopiesBytes() {
+        ByteBuffer page = ByteBuffer.allocate(16).order(LITTLE_ENDIAN);
+        page.putFloat(1.0f);
+        page.putFloat(2.5f);
+        page.putFloat(Float.NEGATIVE_INFINITY);
+        page.putFloat(Float.NaN);
+        page.flip();
+
+        PageDecoder<Float> decoder = new PlainFloatDecoder();
+        decoder.load(MemorySegment.ofBuffer(page), 4);
+
+        MemorySegment dst = MemorySegment.ofArray(new byte[5 * Float.BYTES]);
+        dst.setAtIndex(ParquetLayouts.FLOAT, 0, -1.0f); // sentinel - must be left alone
+        decoder.decodeFloats(4, dst, 1);
+
+        assertThat(dst.getAtIndex(ParquetLayouts.FLOAT, 0)).isEqualTo(-1.0f);
+        assertThat(dst.getAtIndex(ParquetLayouts.FLOAT, 1)).isEqualTo(1.0f);
+        assertThat(dst.getAtIndex(ParquetLayouts.FLOAT, 4)).isNaN();
+    }
+
+    @Test
+    void bulkDecodeIntoSegmentAfterPartialNext() {
+        ByteBuffer page = ByteBuffer.allocate(16).order(LITTLE_ENDIAN);
+        page.putFloat(1.0f);
+        page.putFloat(2.5f);
+        page.putFloat(Float.NEGATIVE_INFINITY);
+        page.putFloat(Float.NaN);
+        page.flip();
+
+        PageDecoder<Float> decoder = new PlainFloatDecoder();
+        decoder.load(MemorySegment.ofBuffer(page), 4);
+        assertThat(decoder.next()).isEqualTo(1.0f);
+
+        MemorySegment dst = MemorySegment.ofArray(new byte[2 * Float.BYTES]);
+        decoder.decodeFloats(2, dst, 0);
+
+        assertThat(dst.getAtIndex(ParquetLayouts.FLOAT, 0)).isEqualTo(2.5f);
+        assertThat(dst.getAtIndex(ParquetLayouts.FLOAT, 1)).isEqualTo(Float.NEGATIVE_INFINITY);
+        assertThat(decoder.next()).isNaN();
     }
 }

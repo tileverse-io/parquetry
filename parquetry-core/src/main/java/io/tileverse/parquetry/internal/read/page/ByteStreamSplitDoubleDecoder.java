@@ -19,6 +19,8 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 import java.lang.foreign.MemorySegment;
 
+import io.tileverse.parquetry.format.ParquetLayouts;
+
 /**
  * BYTE_STREAM_SPLIT page decoder for DOUBLE (8-byte values).
  *
@@ -55,20 +57,31 @@ public final class ByteStreamSplitDoubleDecoder implements PageDecoder<Double> {
 
     @Override
     public Double next() {
+        return Double.longBitsToDouble(nextBits());
+    }
+
+    @Override
+    public void decodeDoubles(int n, double[] dst, int offset) {
+        for (int i = 0; i < n; i++) {
+            dst[offset + i] = Double.longBitsToDouble(nextBits());
+        }
+    }
+
+    @Override
+    public void decodeDoubles(int n, MemorySegment dst, long dstIndex) {
+        for (int i = 0; i < n; i++) {
+            dst.setAtIndex(ParquetLayouts.DOUBLE, dstIndex + i, Double.longBitsToDouble(nextBits()));
+        }
+    }
+
+    private long nextBits() {
         long bits = 0L;
         for (int s = 0; s < BYTES_PER_VALUE; s++) {
             long b = streams[s * valueCount + cursor] & 0xffL;
             bits |= b << (s * 8);
         }
         cursor++;
-        return Double.longBitsToDouble(bits);
-    }
-
-    @Override
-    public void decodeDoubles(int n, double[] dst, int offset) {
-        for (int i = 0; i < n; i++) {
-            dst[offset + i] = next();
-        }
+        return bits;
     }
 
     @Override

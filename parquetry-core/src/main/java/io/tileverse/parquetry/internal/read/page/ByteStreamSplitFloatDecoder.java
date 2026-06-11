@@ -19,6 +19,8 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 import java.lang.foreign.MemorySegment;
 
+import io.tileverse.parquetry.format.ParquetLayouts;
+
 /**
  * BYTE_STREAM_SPLIT page decoder for FLOAT (4-byte values).
  *
@@ -55,20 +57,31 @@ public final class ByteStreamSplitFloatDecoder implements PageDecoder<Float> {
 
     @Override
     public Float next() {
+        return Float.intBitsToFloat(nextBits());
+    }
+
+    @Override
+    public void decodeFloats(int n, float[] dst, int offset) {
+        for (int i = 0; i < n; i++) {
+            dst[offset + i] = Float.intBitsToFloat(nextBits());
+        }
+    }
+
+    @Override
+    public void decodeFloats(int n, MemorySegment dst, long dstIndex) {
+        for (int i = 0; i < n; i++) {
+            dst.setAtIndex(ParquetLayouts.FLOAT, dstIndex + i, Float.intBitsToFloat(nextBits()));
+        }
+    }
+
+    private int nextBits() {
         int bits = 0;
         for (int s = 0; s < BYTES_PER_VALUE; s++) {
             int b = streams[s * valueCount + cursor] & 0xff;
             bits |= b << (s * 8);
         }
         cursor++;
-        return Float.intBitsToFloat(bits);
-    }
-
-    @Override
-    public void decodeFloats(int n, float[] dst, int offset) {
-        for (int i = 0; i < n; i++) {
-            dst[offset + i] = next();
-        }
+        return bits;
     }
 
     @Override

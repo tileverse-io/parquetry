@@ -22,6 +22,8 @@ import java.lang.foreign.MemorySegment;
 
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.format.ParquetLayouts;
+
 class DeltaBinaryPackedDecoderTest {
 
     @Test
@@ -101,6 +103,53 @@ class DeltaBinaryPackedDecoderTest {
         decoder.decodeLongs(values.length, dst, 0);
 
         assertThat(dst).containsExactly(values);
+    }
+
+    @Test
+    void bulkDecodeIntsIntoSegment() {
+        int[] values = {100, 107, 114, 121, 128};
+        // Pad to block size 8 with the last value
+        int[] padded = new int[8];
+        System.arraycopy(values, 0, padded, 0, values.length);
+        for (int i = values.length; i < padded.length; i++) padded[i] = values[values.length - 1];
+        byte[] encoded = encodeInts(padded, 8, 2, values.length);
+
+        PageDecoder<Integer> decoder = new DeltaBinaryPackedInt32Decoder();
+        decoder.load(MemorySegment.ofArray(encoded), values.length);
+
+        MemorySegment dst = MemorySegment.ofArray(new byte[values.length * Integer.BYTES]);
+        dst.setAtIndex(ParquetLayouts.INT32, 0, -1); // sentinel - must be left alone
+        decoder.decodeInts(4, dst, 1);
+
+        assertThat(dst.getAtIndex(ParquetLayouts.INT32, 0)).isEqualTo(-1);
+        assertThat(dst.getAtIndex(ParquetLayouts.INT32, 1)).isEqualTo(100);
+        assertThat(dst.getAtIndex(ParquetLayouts.INT32, 2)).isEqualTo(107);
+        assertThat(dst.getAtIndex(ParquetLayouts.INT32, 3)).isEqualTo(114);
+        assertThat(dst.getAtIndex(ParquetLayouts.INT32, 4)).isEqualTo(121);
+        assertThat(decoder.next()).isEqualTo(128);
+    }
+
+    @Test
+    void bulkDecodeLongsIntoSegment() {
+        long[] values = {1_000_000_000L, 1_000_000_013L, 1_000_000_026L, 1_000_000_039L};
+        // Pad to block size 4 with the last value
+        long[] padded = new long[4];
+        System.arraycopy(values, 0, padded, 0, values.length);
+        for (int i = values.length; i < padded.length; i++) padded[i] = values[values.length - 1];
+        byte[] encoded = encodeLongs(padded, 4, 2, values.length);
+
+        PageDecoder<Long> decoder = new DeltaBinaryPackedInt64Decoder();
+        decoder.load(MemorySegment.ofArray(encoded), values.length);
+
+        MemorySegment dst = MemorySegment.ofArray(new byte[values.length * Long.BYTES]);
+        dst.setAtIndex(ParquetLayouts.INT64, 0, -1L); // sentinel - must be left alone
+        decoder.decodeLongs(3, dst, 1);
+
+        assertThat(dst.getAtIndex(ParquetLayouts.INT64, 0)).isEqualTo(-1L);
+        assertThat(dst.getAtIndex(ParquetLayouts.INT64, 1)).isEqualTo(1_000_000_000L);
+        assertThat(dst.getAtIndex(ParquetLayouts.INT64, 2)).isEqualTo(1_000_000_013L);
+        assertThat(dst.getAtIndex(ParquetLayouts.INT64, 3)).isEqualTo(1_000_000_026L);
+        assertThat(decoder.next()).isEqualTo(1_000_000_039L);
     }
 
     /**
