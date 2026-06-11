@@ -109,6 +109,11 @@ final class BatchColumnReader {
     private final DecodeBufferAllocator decodeBufferAllocator;
     private final LevelScratch repLevelScratch;
     private final LevelScratch defLevelScratch;
+    private final IntScratch valuePosScratch = new IntScratch();
+    private final IntScratch binaryOffsetsScratch = new IntScratch();
+    private final IntScratch densePositionsScratch = new IntScratch();
+    private final IntScratch denseLengthsScratch = new IntScratch();
+    private final IntScratch indicesScratch = new IntScratch();
 
     // Per-page state. Populated by loadNextPage; cleared on advance.
     private boolean pageLoaded;
@@ -141,8 +146,8 @@ final class BatchColumnReader {
     private boolean pageWasDictionary;
 
     // Per-row source positions for the direct off-heap binary path: pageValuePos[row] is the absolute byte offset of
-    // the row's value bytes within the live page value segment (pageBinaryBacking). Null rows hold 0 and are never
-    // read.
+    // the row's value bytes within the live page value segment (pageBinaryBacking). Null rows are never read and may
+    // hold stale values from the reused scratch.
     private int[] pageValuePos;
     // True while a page payload - the binary backing or the fixed-width live value segment - points into a still-open
     // page Arena the slices read from directly. The Arena is then kept alive across the page's batches and closed at
@@ -583,13 +588,19 @@ final class BatchColumnReader {
     }
 
     /**
-     * Decodes a dictionary binary page into a row-positioned {@code int[]} of dictionary indexes. Null rows keep the
-     * harmless placeholder index 0; their nullness lives in {@code pageValidity}. The chunk-level {@link #dictEntries}
-     * is materialized here on first use.
+     * Decodes a dictionary binary page into a row-positioned {@code int[]} of dictionary indexes over the reused
+     * scratch. Null rows must read the harmless placeholder index 0 because the dictionary vectors hand out the raw
+     * index array wholesale (the Arrow buffer codec serializes every slot, null rows included) and a stale slot would
+     * resolve {@code dictEntries[indices[row]]} to the wrong entry; a nullable page therefore zero-fills the scratch
+     * before spreading (an all-valid page overwrites every slot). The chunk-level {@link #dictEntries} is materialized
+     * here on first use.
      */
     private int[] decodeDictionaryIndices(MemorySegment buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
         dictionaryEntries();
-        int[] indices = new int[pageSize];
+        int[] indices = indicesScratch.array(pageSize);
+        if (nonNullCount < pageSize) {
+            Arrays.fill(indices, 0, pageSize, 0);
+        }
         if (nonNullCount == 0) {
             return indices;
         }
@@ -599,7 +610,8 @@ final class BatchColumnReader {
             decoder.decodeIndices(pageSize, indices, 0);
             return indices;
         }
-        int[] dense = new int[nonNullCount];
+        // dictionary pages and direct-binary pages are mutually exclusive per page; the dense scratch is shared
+        int[] dense = densePositionsScratch.array(nonNullCount);
         decoder.decodeIndices(nonNullCount, dense, 0);
         spreadInts(dense, indices);
         return indices;
@@ -727,8 +739,8 @@ final class BatchColumnReader {
     private void decodeBinaryDirect(MemorySegment buf, Encoding encoding, int nonNullCount) {
         pageBinaryBacking = buf.asReadOnly();
         pageBackingIsLivePage = true;
-        int[] densePositions = new int[nonNullCount];
-        int[] denseLengths = new int[nonNullCount];
+        int[] densePositions = densePositionsScratch.array(nonNullCount);
+        int[] denseLengths = denseLengthsScratch.array(nonNullCount);
         if (nonNullCount > 0) {
             PageDecoder<?> decoder = binaryDecoderFor(encoding, null); // PLAIN/DELTA need no dictionary
             decoder.load(buf, nonNullCount);
@@ -739,9 +751,12 @@ final class BatchColumnReader {
         pageSegments = null;
     }
 
-    /** Row-indexed source positions: present rows take the next dense position; null rows stay zero (never read). */
+    /**
+     * Row-indexed source positions: present rows take the next dense position; null rows are never read and may hold
+     * stale values from the reused scratch.
+     */
     private int[] spreadPositions(int[] densePositions, int rowCount) {
-        int[] positions = new int[rowCount];
+        int[] positions = valuePosScratch.array(rowCount);
         int dense = 0;
         for (int row = 0; row < rowCount; row++) {
             if (pageValidity.isValid(row)) {
@@ -753,7 +768,7 @@ final class BatchColumnReader {
 
     /** Row-indexed cumulative value-byte offsets (length {@code rowCount + 1}); null rows are zero-length runs. */
     private int[] rowOffsetsFromDenseLengths(int[] denseLengths, int rowCount) {
-        int[] offsets = new int[rowCount + 1];
+        int[] offsets = binaryOffsetsScratch.array(rowCount + 1);
         int dense = 0;
         int acc = 0;
         for (int row = 0; row < rowCount; row++) {
