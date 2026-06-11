@@ -29,6 +29,7 @@ import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.batch.BinaryVector;
 import io.tileverse.parquetry.batch.ColumnVector;
+import io.tileverse.parquetry.batch.IntSequence;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.MapVector;
@@ -218,7 +219,7 @@ class ArrowBufferCodecNestedTest {
             cursor += rows[i].length;
             offsets[i + 1] = cursor;
         }
-        return BinaryVector.of(heap(backing), offsets, Validity.allValid(rows.length));
+        return BinaryVector.of(heap(backing), IntSequence.of(offsets), Validity.allValid(rows.length));
     }
 
     private static int totalLength(byte[]... rows) {

@@ -22,27 +22,28 @@ import lombok.NonNull;
 /**
  * Column vector for BYTE_ARRAY (variable-length binary) values, in one of two layouts.
  *
- * <p>Consolidated mode: the values share one read-only heap backing buffer; an {@code int[]} of length {@code size()+1}
- * delimits each row's bytes as {@code [offsets[i], offsets[i+1])}. Null cells (validity bit clear) are stored as
- * zero-length runs; {@link #get(int)} consults validity and returns {@code null} for a null cell, reserving a
- * zero-length slice for a present-but-empty value.
+ * <p>Consolidated mode: the values share one read-only backing buffer; an {@link IntSequence} of length
+ * {@code size()+1} delimits each row's bytes as {@code [offsets.get(i), offsets.get(i+1))}. Null cells (validity bit
+ * clear) are stored as zero-length runs; {@link #get(int)} consults validity and returns {@code null} for a null cell,
+ * reserving a zero-length slice for a present-but-empty value. The decode path hands out an off-heap (native) backing;
+ * materialized and spill-restored vectors use a heap backing.
  *
  * <p>Dictionary mode (low-cardinality columns): the distinct values live once in a shared {@code dictEntries} array,
- * and an {@code int[]} of per-row indexes selects an entry for each row. This holds {@code 4} bytes per row over the
- * shared entries instead of one slice per row. {@link #get(int)} returns the shared entry directly, with no slice.
+ * and an {@link IntSequence} of per-row indexes selects an entry for each row. This holds {@code 4} bytes per row over
+ * the shared entries instead of one slice per row. {@link #get(int)} returns the shared entry directly, with no slice.
  *
  * <p>The mode is chosen by which fields are populated: {@code indices != null} means dictionary mode. Either way the
- * returned segments are read-only and heap-owned, which outlives any decode Arena.
+ * returned segments are read-only; a native consolidated backing is owned by the batch and released on its close.
  */
 public final class BinaryVector implements ColumnVector {
 
     private final MemorySegment backing;
-    private final int[] offsets;
+    private final IntSequence offsets;
     private final MemorySegment[] dictEntries;
-    private final int[] indices;
+    private final IntSequence indices;
     private final Validity validity;
 
-    private BinaryVector(@NonNull MemorySegment backing, @NonNull int[] offsets, @NonNull Validity validity) {
+    private BinaryVector(@NonNull MemorySegment backing, @NonNull IntSequence offsets, @NonNull Validity validity) {
         this.backing = backing;
         this.offsets = offsets;
         this.dictEntries = null;
@@ -50,7 +51,8 @@ public final class BinaryVector implements ColumnVector {
         this.validity = validity;
     }
 
-    private BinaryVector(@NonNull MemorySegment[] dictEntries, @NonNull int[] indices, @NonNull Validity validity) {
+    private BinaryVector(
+            @NonNull MemorySegment[] dictEntries, @NonNull IntSequence indices, @NonNull Validity validity) {
         this.backing = null;
         this.offsets = null;
         this.dictEntries = dictEntries;
@@ -58,8 +60,9 @@ public final class BinaryVector implements ColumnVector {
         this.validity = validity;
     }
 
-    /** Builds a vector over a backing buffer and its row offsets ({@code offsets.length == values + 1}). */
-    public static BinaryVector of(@NonNull MemorySegment backing, @NonNull int[] offsets, @NonNull Validity validity) {
+    /** Builds a vector over a backing buffer and its row offsets ({@code offsets.size() == values + 1}). */
+    public static BinaryVector of(
+            @NonNull MemorySegment backing, @NonNull IntSequence offsets, @NonNull Validity validity) {
         return new BinaryVector(backing.asReadOnly(), offsets, validity);
     }
 
@@ -69,7 +72,7 @@ public final class BinaryVector implements ColumnVector {
      */
     public static BinaryVector materialized(@NonNull MemorySegment[] values, @NonNull Validity validity) {
         VariableLayout layout = consolidate(values);
-        return new BinaryVector(layout.backing(), layout.offsets(), validity);
+        return new BinaryVector(layout.backing(), IntSequence.of(layout.offsets()), validity);
     }
 
     /** A read-only backing buffer paired with its row offsets ({@code offsets.length == rows + 1}). */
@@ -106,7 +109,7 @@ public final class BinaryVector implements ColumnVector {
 
     /** Builds a dictionary-encoded vector: each row indexes a shared dictionary entry. */
     public static BinaryVector dictionary(
-            @NonNull MemorySegment[] dictEntries, @NonNull int[] indices, @NonNull Validity validity) {
+            @NonNull MemorySegment[] dictEntries, @NonNull IntSequence indices, @NonNull Validity validity) {
         return new BinaryVector(dictEntries, indices, validity);
     }
 
@@ -126,12 +129,11 @@ public final class BinaryVector implements ColumnVector {
     }
 
     /**
-     * The row offsets of a consolidated-mode vector ({@code offsets.length == size() + 1}), returned directly without
-     * copying; the array is read-only by contract and callers must not mutate it. Offsets index absolutely into
-     * {@link #consolidatedBacking()} and need not start at zero. Valid only when {@link #isDictionary()} is
+     * The row offsets of a consolidated-mode vector ({@code offsets.size() == size() + 1}). Offsets index absolutely
+     * into {@link #consolidatedBacking()} and need not start at zero. Valid only when {@link #isDictionary()} is
      * {@code false}.
      */
-    public int[] consolidatedOffsets() {
+    public IntSequence consolidatedOffsets() {
         return offsets;
     }
 
@@ -145,16 +147,15 @@ public final class BinaryVector implements ColumnVector {
     }
 
     /**
-     * The per-row indexes into {@link #dictionaryEntries()} of a dictionary-mode vector, returned directly without
-     * copying; the array is read-only by contract and callers must not mutate it. Valid only in dictionary mode.
+     * The per-row indexes into {@link #dictionaryEntries()} of a dictionary-mode vector. Valid only in dictionary mode.
      */
-    public int[] dictionaryIndices() {
+    public IntSequence dictionaryIndices() {
         return indices;
     }
 
     @Override
     public int size() {
-        return indices != null ? indices.length : offsets.length - 1;
+        return indices != null ? indices.size() : offsets.size() - 1;
     }
 
     @Override
@@ -173,10 +174,10 @@ public final class BinaryVector implements ColumnVector {
             return null;
         }
         if (indices != null) {
-            return dictEntries[indices[row]];
+            return dictEntries[indices.get(row)];
         }
-        int start = offsets[row];
-        int length = offsets[row + 1] - start;
+        int start = offsets.get(row);
+        int length = offsets.get(row + 1) - start;
         return backing.asSlice(start, length);
     }
 
@@ -190,9 +191,9 @@ public final class BinaryVector implements ColumnVector {
             return -1;
         }
         if (indices != null) {
-            return Math.toIntExact(dictEntries[indices[row]].byteSize());
+            return Math.toIntExact(dictEntries[indices.get(row)].byteSize());
         }
-        return offsets[row + 1] - offsets[row];
+        return offsets.get(row + 1) - offsets.get(row);
     }
 
     /**
@@ -206,13 +207,13 @@ public final class BinaryVector implements ColumnVector {
             return -1;
         }
         if (indices != null) {
-            MemorySegment entry = dictEntries[indices[row]];
+            MemorySegment entry = dictEntries[indices.get(row)];
             int length = Math.toIntExact(entry.byteSize());
             MemorySegment.copy(entry, 0L, target, targetOffset, length);
             return length;
         }
-        int start = offsets[row];
-        int length = offsets[row + 1] - start;
+        int start = offsets.get(row);
+        int length = offsets.get(row + 1) - start;
         MemorySegment.copy(backing, start, target, targetOffset, length);
         return length;
     }
@@ -220,13 +221,13 @@ public final class BinaryVector implements ColumnVector {
     @Override
     public long approximateHeapBytes() {
         if (indices != null) {
-            return (long) indices.length * Integer.BYTES + dictionaryEntryBytes() + validity.heapBytes();
+            return indices.heapBytes() + dictionaryEntryBytes() + validity.heapBytes();
         }
         // A native backing lives off-heap and is not counted. A heap backing counts only this vector's window into the
         // shared page backing; sibling slices each count their own window, which keeps the page bytes from being
         // multiplied across the batches the page was split into.
-        long windowBytes = backing.isNative() ? 0L : (offsets[offsets.length - 1] - offsets[0]);
-        return windowBytes + (long) offsets.length * Integer.BYTES + validity.heapBytes();
+        long windowBytes = backing.isNative() ? 0L : (offsets.get(offsets.size() - 1) - offsets.get(0));
+        return windowBytes + offsets.heapBytes() + validity.heapBytes();
     }
 
     private long dictionaryEntryBytes() {

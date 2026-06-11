@@ -97,7 +97,7 @@ class BinaryVectorTest {
             validBits.set(0, 3);
             Validity validity = Validity.of(validBits, 3);
 
-            BinaryVector vec = BinaryVector.dictionary(dict, indices, validity);
+            BinaryVector vec = BinaryVector.dictionary(dict, IntSequence.of(indices), validity);
 
             assertThat(vec.size()).isEqualTo(3);
             assertThat(text(vec.get(0))).isEqualTo("red");
@@ -113,7 +113,7 @@ class BinaryVectorTest {
             validBits.set(0);
             Validity validity = Validity.of(validBits, 2);
 
-            BinaryVector vec = BinaryVector.dictionary(dict, indices, validity);
+            BinaryVector vec = BinaryVector.dictionary(dict, IntSequence.of(indices), validity);
 
             assertThat(vec.get(1)).isNull();
             assertThat(text(vec.get(0))).isEqualTo("red");
@@ -179,7 +179,7 @@ class BinaryVectorTest {
             int[] indices = {1, 0};
             BitSet bits = new BitSet(2);
             bits.set(0, 2);
-            BinaryVector vec = BinaryVector.dictionary(dict, indices, Validity.of(bits, 2));
+            BinaryVector vec = BinaryVector.dictionary(dict, IntSequence.of(indices), Validity.of(bits, 2));
 
             MemorySegment target = MemorySegment.ofArray(new byte[8]);
             int n = vec.getInto(0, target, 0L);
@@ -202,7 +202,7 @@ class BinaryVectorTest {
             validBits.set(0, 2);
             Validity validity = Validity.of(validBits, 2);
 
-            BinaryVector vec = BinaryVector.of(backing, offsets, validity);
+            BinaryVector vec = BinaryVector.of(backing, IntSequence.of(offsets), validity);
 
             assertThat(text(vec.get(0))).isEqualTo("alpha");
             assertThat(text(vec.get(1))).isEqualTo("gamma");
@@ -219,7 +219,7 @@ class BinaryVectorTest {
             validBits.set(0);
             Validity validity = Validity.of(validBits, 1);
 
-            BinaryVector vec = BinaryVector.of(backing, offsets, validity);
+            BinaryVector vec = BinaryVector.of(backing, IntSequence.of(offsets), validity);
 
             assertThat(vec.approximateHeapBytes())
                     .isEqualTo(5L
@@ -233,7 +233,7 @@ class BinaryVectorTest {
                 MemorySegment data = arena.allocate(5); // two values, ab and cde, five bytes total
                 MemorySegment.copy(MemorySegment.ofArray(new byte[] {'a', 'b', 'c', 'd', 'e'}), 0L, data, 0L, 5L);
                 int[] offsets = {0, 2, 5};
-                BinaryVector vector = BinaryVector.of(data, offsets, Validity.allValid(2));
+                BinaryVector vector = BinaryVector.of(data, IntSequence.of(offsets), Validity.allValid(2));
                 assertThat(vector.size()).as("size").isEqualTo(2);
                 assertThat(vector.get(0).toArray(ValueLayout.JAVA_BYTE)).containsExactly('a', 'b');
                 assertThat(vector.get(1).toArray(ValueLayout.JAVA_BYTE)).containsExactly('c', 'd', 'e');

@@ -190,6 +190,35 @@ class RleDictionaryPageDecoderTest {
         assertThat(dst).containsExactly(0, 1, 2, 0, 1, 2);
     }
 
+    /** Verify that segment-destination decodeIndicesInto writes the raw indexes, not the dereferenced values. */
+    @Test
+    void decodeIndicesIntoSegmentWritesRawIndexesNotValues() {
+        Dictionary.IntDict dict = new Dictionary.IntDict(intBuf(10, 20, 30));
+
+        // byte 0: 0x24, byte 1: 0x09  (indexes [0, 1, 2, 0, 1, 2])
+        ByteBuffer page = ByteBuffer.wrap(new byte[] {
+            2, // bit width
+            3, // RLE header: bit-packed, 1 group of 8
+            (byte) 0x24, // byte 0 of packed indexes
+            (byte) 0x09 // byte 1 of packed indexes
+        });
+
+        RleDictionaryPageDecoder<Integer> decoder = new RleDictionaryPageDecoder<>(dict);
+        decoder.load(MemorySegment.ofBuffer(page), 6);
+
+        MemorySegment dst = MemorySegment.ofArray(new byte[6 * Integer.BYTES]);
+        dst.setAtIndex(ParquetLayouts.INT32, 5, -1); // sentinel - must be left alone
+        decoder.decodeIndicesInto(5, dst);
+
+        assertThat(dst.getAtIndex(ParquetLayouts.INT32, 0)).isEqualTo(0);
+        assertThat(dst.getAtIndex(ParquetLayouts.INT32, 1)).isEqualTo(1);
+        assertThat(dst.getAtIndex(ParquetLayouts.INT32, 2)).isEqualTo(2);
+        assertThat(dst.getAtIndex(ParquetLayouts.INT32, 3)).isEqualTo(0);
+        assertThat(dst.getAtIndex(ParquetLayouts.INT32, 4)).isEqualTo(1);
+        assertThat(dst.getAtIndex(ParquetLayouts.INT32, 5)).isEqualTo(-1);
+        assertThat(decoder.next()).isEqualTo(30); // the cursor sits on the sixth index (2)
+    }
+
     /** Verify that bulk decodeDoubles dereferences indexes against a DOUBLE dictionary without boxing artifacts. */
     @Test
     void decodeDoublesBulk() {

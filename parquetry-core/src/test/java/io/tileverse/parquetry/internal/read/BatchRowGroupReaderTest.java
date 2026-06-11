@@ -275,9 +275,8 @@ class BatchRowGroupReaderTest {
 
                 assertThat(binary).as("BYTE_ARRAY decodes to a BinaryVector").isInstanceOf(BinaryVector.class);
                 assertThat(binary.approximateHeapBytes())
-                        .as("value bytes are off-heap; only offsets and validity count as heap")
-                        .isEqualTo((long) (binary.size() + 1) * Integer.BYTES
-                                + binary.validity().heapBytes());
+                        .as("value bytes and offsets are off-heap; only validity counts as heap")
+                        .isEqualTo(binary.validity().heapBytes());
                 assertThat(binary.get(0))
                         .as("first value reads back through the off-heap buffer")
                         .isNotNull();

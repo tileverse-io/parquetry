@@ -31,6 +31,7 @@ import io.tileverse.parquetry.batch.DoubleVector;
 import io.tileverse.parquetry.batch.FixedLenBinaryVector;
 import io.tileverse.parquetry.batch.FloatVector;
 import io.tileverse.parquetry.batch.Int96Vector;
+import io.tileverse.parquetry.batch.IntSequence;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.LongVector;
@@ -164,23 +165,17 @@ final class ArrowBufferCodec {
      * entries starting at zero, and the packed data bytes.
      *
      * <p>The offsets index absolutely into the shared backing window and need not start at zero, while Arrow Binary
-     * offsets must start at zero. The per-row lengths {@code offsets[i+1] - offsets[i]} are base-independent, and
-     * {@link ArrowBuffers#encodeOffsets} rebuilds a zero-based offsets buffer from those lengths. The data buffer is
-     * the window {@code [base, end)} of the backing, where {@code base = offsets[0]} and {@code end = offsets[size]}.
+     * offsets must start at zero. The data buffer is the window {@code [base, end)} of the backing, where {@code base =
+     * offsets.get(0)} and {@code end = offsets.get(size)}.
      */
-    private static EncodedNode consolidatedBinaryNode(Validity validity, MemorySegment backing, int[] offsets) {
-        int size = offsets.length - 1;
-        int base = offsets[0];
-        int end = offsets[size];
-
-        int[] rowLengths = new int[size];
-        for (int row = 0; row < size; row++) {
-            rowLengths[row] = offsets[row + 1] - offsets[row];
-        }
+    private static EncodedNode consolidatedBinaryNode(Validity validity, MemorySegment backing, IntSequence offsets) {
+        int size = offsets.size() - 1;
+        int base = offsets.get(0);
+        int end = offsets.get(size);
 
         MemorySegment window = backing.asSlice(base, (long) end - base);
         EncodedBuffer validityBuffer = new EncodedBuffer(BufferRole.VALIDITY, ArrowBuffers.encodeValidity(validity));
-        EncodedBuffer offsetsBuffer = new EncodedBuffer(BufferRole.OFFSETS, ArrowBuffers.encodeOffsets(rowLengths));
+        EncodedBuffer offsetsBuffer = new EncodedBuffer(BufferRole.OFFSETS, arrowBinaryOffsets(offsets, base));
         EncodedBuffer dataBuffer = new EncodedBuffer(BufferRole.DATA, ArrowBuffers.paddedCopy(window));
         return new EncodedNode(
                 size,
@@ -188,6 +183,27 @@ final class ArrowBufferCodec {
                 List.of(validityBuffer, offsetsBuffer, dataBuffer),
                 List.of(),
                 new NodeEncoding.Plain());
+    }
+
+    /**
+     * Builds the zero-based Arrow offsets buffer for a consolidated binary window; Arrow requires the first offset to
+     * be zero. Zero-based offsets export verbatim through {@link ArrowBuffers#encodeInts(IntSequence)}. Offsets with a
+     * nonzero base are rebuilt from the base-independent per-row lengths {@code offsets.get(i+1) - offsets.get(i)},
+     * which {@link ArrowBuffers#encodeOffsets} turns back into a zero-based buffer.
+     */
+    private static MemorySegment arrowBinaryOffsets(IntSequence offsets, int base) {
+        if (base == 0) {
+            return ArrowBuffers.encodeInts(offsets);
+        }
+        int size = offsets.size() - 1;
+        int[] rowLengths = new int[size];
+        int previousOffset = base;
+        for (int row = 0; row < size; row++) {
+            int nextOffset = offsets.get(row + 1);
+            rowLengths[row] = nextOffset - previousOffset;
+            previousOffset = nextOffset;
+        }
+        return ArrowBuffers.encodeOffsets(rowLengths);
     }
 
     private static EncodedNode encodeFixedSizeBinary(FixedLenBinaryVector vector) {
@@ -379,7 +395,7 @@ final class ArrowBufferCodec {
      */
     private static EncodedNode dictionaryNode(ColumnVector vector, EncodedNode dictionary, int byteWidth) {
         Validity validity = vector.validity();
-        int[] indices = dictionaryIndices(vector);
+        IntSequence indices = dictionaryIndices(vector);
         EncodedBuffer validityBuffer = new EncodedBuffer(BufferRole.VALIDITY, ArrowBuffers.encodeValidity(validity));
         EncodedBuffer indicesBuffer =
                 new EncodedBuffer(BufferRole.DICTIONARY_INDICES, ArrowBuffers.encodeInts(indices));
@@ -391,7 +407,7 @@ final class ArrowBufferCodec {
                 new NodeEncoding.Dictionary(dictionary, byteWidth));
     }
 
-    private static int[] dictionaryIndices(ColumnVector vector) {
+    private static IntSequence dictionaryIndices(ColumnVector vector) {
         return switch (vector) {
             case BinaryVector binaryVector -> binaryVector.dictionaryIndices();
             case FixedLenBinaryVector fixedVector -> fixedVector.dictionaryIndices();
@@ -406,7 +422,8 @@ final class ArrowBufferCodec {
      */
     private static EncodedNode binaryDictionaryNode(MemorySegment[] entries) {
         BinaryVector.VariableLayout layout = BinaryVector.consolidate(entries);
-        return consolidatedBinaryNode(Validity.allValid(entries.length), layout.backing(), layout.offsets());
+        return consolidatedBinaryNode(
+                Validity.allValid(entries.length), layout.backing(), IntSequence.of(layout.offsets()));
     }
 
     /** Encodes the distinct values of a fixed-stride dictionary as an all-valid consolidated FixedSizeBinary node. */
@@ -418,7 +435,7 @@ final class ArrowBufferCodec {
     private static BinaryVector decodeBinaryKind(EncodedNode node, Validity validity, int length) {
         if (node.encoding() instanceof NodeEncoding.Dictionary(EncodedNode dictionaryNode, int _)) {
             MemorySegment[] entries = decodeBinaryDictionaryEntries(dictionaryNode);
-            int[] indices = decodeIndices(node, length);
+            IntSequence indices = decodeIndices(node, length);
             return BinaryVector.dictionary(entries, indices, validity);
         }
         return decodeConsolidatedBinary(node, validity, length);
@@ -426,7 +443,7 @@ final class ArrowBufferCodec {
 
     private static BinaryVector decodeConsolidatedBinary(EncodedNode node, Validity validity, int length) {
         MemorySegment offsetsBytes = node.buffers().get(BINARY_OFFSETS_BUFFER).bytes();
-        int[] offsets = ArrowBuffers.decodeOffsets(offsetsBytes, length);
+        IntSequence offsets = IntSequence.of(ArrowBuffers.decodeOffsets(offsetsBytes, length));
         MemorySegment data = ownedCopy(node.buffers().get(BINARY_DATA_BUFFER).bytes());
         return BinaryVector.of(data, offsets, validity);
     }
@@ -434,7 +451,7 @@ final class ArrowBufferCodec {
     private static FixedLenBinaryVector decodeFixedSizeBinaryKind(EncodedNode node, Validity validity, int length) {
         if (node.encoding() instanceof NodeEncoding.Dictionary(EncodedNode dictionaryNode, int byteWidth)) {
             MemorySegment[] entries = decodeFixedSizeBinaryDictionaryEntries(dictionaryNode, byteWidth);
-            int[] indices = decodeIndices(node, length);
+            IntSequence indices = decodeIndices(node, length);
             return FixedLenBinaryVector.dictionary(entries, indices, byteWidth, validity);
         }
         int byteWidth = ((NodeEncoding.FixedWidth) node.encoding()).byteWidth();
@@ -445,17 +462,17 @@ final class ArrowBufferCodec {
     private static Int96Vector decodeInt96Kind(EncodedNode node, Validity validity, int length) {
         if (node.encoding() instanceof NodeEncoding.Dictionary(EncodedNode dictionaryNode, int _)) {
             MemorySegment[] entries = decodeFixedSizeBinaryDictionaryEntries(dictionaryNode, INT96_WIDTH);
-            int[] indices = decodeIndices(node, length);
+            IntSequence indices = decodeIndices(node, length);
             return Int96Vector.dictionary(entries, indices, validity);
         }
         return Int96Vector.of(fixedStrideRows(node, INT96_WIDTH), validity);
     }
 
     /** Reads the {@code length} per-row dictionary indices from a dictionary node's int32 indices buffer. */
-    private static int[] decodeIndices(EncodedNode node, int length) {
+    private static IntSequence decodeIndices(EncodedNode node, int length) {
         MemorySegment indicesBytes =
                 node.buffers().get(DICTIONARY_INDICES_BUFFER).bytes();
-        return ArrowBuffers.decodeInts(indicesBytes, length);
+        return IntSequence.of(ArrowBuffers.decodeInts(indicesBytes, length));
     }
 
     /**

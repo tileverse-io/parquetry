@@ -31,6 +31,7 @@ import org.junit.jupiter.api.Test;
 import io.tileverse.parquetry.batch.BinaryVector;
 import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
+import io.tileverse.parquetry.batch.IntSequence;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.MapVector;
@@ -186,7 +187,7 @@ class ListMapNullVsEmptyTest {
         // array (which previously threw ArrayIndexOutOfBoundsException and crashed the filtered count path).
         IntVector idLeaf = IntVector.materialized(new int[] {0, 42}, validity(false, true));
         BinaryVector binaryLeaf =
-                BinaryVector.dictionary(new MemorySegment[0], new int[] {0, 0}, validity(false, false));
+                BinaryVector.dictionary(new MemorySegment[0], IntSequence.of(new int[] {0, 0}), validity(false, false));
         Map<ColumnPath, ColumnVector> leafVectors = Map.of(idField, idLeaf, binaryField, binaryLeaf);
 
         Map<ColumnPath, int[]> repLevelsByLeaf = Map.of(idField, new int[] {0, 0}, binaryField, new int[] {0, 0});
