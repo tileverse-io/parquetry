@@ -23,6 +23,8 @@ import java.nio.ByteBuffer;
 
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.format.ParquetLayouts;
+
 class PlainInt32DecoderTest {
 
     @Test
@@ -114,5 +116,47 @@ class PlainInt32DecoderTest {
         decoder.decodeInts(3, dst, 0);
 
         assertThat(dst).containsExactly(20, 30, 40);
+    }
+
+    @Test
+    void bulkDecodeIntoSegmentCopiesBytes() {
+        ByteBuffer page = ByteBuffer.allocate(16).order(LITTLE_ENDIAN);
+        page.putInt(10);
+        page.putInt(20);
+        page.putInt(30);
+        page.putInt(40);
+        page.flip();
+
+        PageDecoder<Integer> decoder = new PlainInt32Decoder();
+        decoder.load(MemorySegment.ofBuffer(page), 4);
+
+        MemorySegment dst = MemorySegment.ofArray(new byte[5 * Integer.BYTES]);
+        dst.setAtIndex(ParquetLayouts.INT32, 0, -1); // sentinel - must be left alone
+        decoder.decodeInts(4, dst, 1);
+
+        assertThat(dst.getAtIndex(ParquetLayouts.INT32, 0)).isEqualTo(-1);
+        assertThat(dst.getAtIndex(ParquetLayouts.INT32, 1)).isEqualTo(10);
+        assertThat(dst.getAtIndex(ParquetLayouts.INT32, 4)).isEqualTo(40);
+    }
+
+    @Test
+    void bulkDecodeIntoSegmentAfterPartialNext() {
+        ByteBuffer page = ByteBuffer.allocate(16).order(LITTLE_ENDIAN);
+        page.putInt(10);
+        page.putInt(20);
+        page.putInt(30);
+        page.putInt(40);
+        page.flip();
+
+        PageDecoder<Integer> decoder = new PlainInt32Decoder();
+        decoder.load(MemorySegment.ofBuffer(page), 4);
+        assertThat(decoder.next()).isEqualTo(10);
+
+        MemorySegment dst = MemorySegment.ofArray(new byte[2 * Integer.BYTES]);
+        decoder.decodeInts(2, dst, 0);
+
+        assertThat(dst.getAtIndex(ParquetLayouts.INT32, 0)).isEqualTo(20);
+        assertThat(dst.getAtIndex(ParquetLayouts.INT32, 1)).isEqualTo(30);
+        assertThat(decoder.next()).isEqualTo(40);
     }
 }

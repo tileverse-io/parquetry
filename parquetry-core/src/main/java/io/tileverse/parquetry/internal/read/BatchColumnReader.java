@@ -82,13 +82,14 @@ import lombok.NonNull;
  *
  * <p>Page lifecycle: {@link #loadNextPage()} decompresses the next page into a confined {@link Arena}, fully decodes
  * rep-levels / def-levels into reader-owned off-heap scratch buffers (the {@link Levels} views over them stay valid
- * until the next page decode), and decodes values either into heap arrays (fixed-width and dictionary kinds) or, for
- * contiguous PLAIN / DELTA_LENGTH binary and PLAIN all-valid INT32 / INT64 / FLOAT / DOUBLE, into row-indexed positions
- * over the still-open page. For the heap kinds the Arena is closed before {@link #loadNextPage()} returns; for the
+ * until the next page decode), and decodes values into one of three backings: row-indexed positions over the still-open
+ * page for contiguous PLAIN / DELTA_LENGTH binary and PLAIN all-valid INT32 / INT64 / FLOAT / DOUBLE; a pooled
+ * page-lifetime segment for the remaining unmasked fixed-width pages; or heap arrays for masked reads and the other
+ * kinds. For the heap and pooled-segment backings the Arena is closed before {@link #loadNextPage()} returns; for the
  * live-page kinds the Arena is kept open across the page's batches and closed at page-advance, because the per-batch
  * slices copy their bytes straight from the page. Each {@link #readBatch} call then slices the current page;
- * within-page splitting is correct because the page state (level scratches, heap arrays, or the live page plus its
- * offsets) outlives every slice of the page.
+ * within-page splitting is correct because the page state (level scratches, heap arrays, the pooled value segment, or
+ * the live page plus its offsets) outlives every slice of the page.
  */
 final class BatchColumnReader {
 
@@ -131,10 +132,13 @@ final class BatchColumnReader {
     private long[] pageLongs;
     private float[] pageFloats;
     private double[] pageDoubles;
-    // Set only for PLAIN, all-valid fixed-width pages (INT32 / INT64 / FLOAT / DOUBLE): the live page value segment in
-    // the column's little-endian layout. When non-null the heap array of the same kind is left null and slices copy
-    // straight from this segment (no heap array).
-    private MemorySegment pageLiveValues;
+    // The page's fixed-width value segment in the column's little-endian layout, when the page decoded off-heap:
+    // either the live page value segment (PLAIN all-valid; pageBackingIsLivePage is set and the page Arena stays open
+    // across the batches) or a pooled page-lifetime buffer (pageValuesPooled non-null, released at page advance)
+    // holding row-positioned values with null slots zeroed. Null when the page decoded into a heap array (masked
+    // reads) or the column is not fixed-width.
+    private MemorySegment pageValues;
+    private SegmentPool.Pooled pageValuesPooled;
     private boolean[] pageBooleans;
 
     // Scratch holder for PLAIN/DELTA binary between value decode and the freeze step that consolidates it into the
@@ -332,9 +336,11 @@ final class BatchColumnReader {
             DecodedPage page = readNextDataPage(arena);
             decodePage(page);
         } catch (RuntimeException e) {
-            // the origin-validity bitmap may already be parked in its field when the value decode throws; unwind it
-            // here rather than holding it (and its decode-budget reservation) until the reader is closed
+            // the origin-validity bitmap and the pooled page-values segment may already be parked in their fields when
+            // the value decode throws; unwind them here rather than holding them (and their decode-budget
+            // reservations) until the reader is closed
             releaseOriginValidity();
+            releasePageValues();
             arena.close();
             throw e;
         }
@@ -395,6 +401,7 @@ final class BatchColumnReader {
         pageRepLevels = null;
         pageDefLevels = null;
         releaseOriginValidity();
+        releasePageValues();
         clearTypedPayloads();
         closeLivePageArena();
         valuesConsumedInCurrentPage = 0;
@@ -406,6 +413,14 @@ final class BatchColumnReader {
         if (pageValidityPooled != null) {
             pageValidityPooled.close();
             pageValidityPooled = null;
+        }
+    }
+
+    /** Releases the pooled page-values segment held for the page's lifetime, if any. */
+    private void releasePageValues() {
+        if (pageValuesPooled != null) {
+            pageValuesPooled.close();
+            pageValuesPooled = null;
         }
     }
 
@@ -421,7 +436,7 @@ final class BatchColumnReader {
         pageLongs = null;
         pageFloats = null;
         pageDoubles = null;
-        pageLiveValues = null;
+        pageValues = null;
         pageBooleans = null;
         pageSegments = null;
         pageBinaryBacking = null;
@@ -533,38 +548,58 @@ final class BatchColumnReader {
             return;
         }
         switch (leaf.kind()) {
-            case INT32 -> {
-                if (canSliceFixedWidthFromLivePage(encoding, nonNullCount)) {
-                    retainLiveValues(valueBuf);
-                } else {
-                    pageInts = decodeInts(valueBuf, encoding, nonNullCount, dict);
-                }
-            }
-            case INT64 -> {
-                if (canSliceFixedWidthFromLivePage(encoding, nonNullCount)) {
-                    retainLiveValues(valueBuf);
-                } else {
-                    pageLongs = decodeLongs(valueBuf, encoding, nonNullCount, dict);
-                }
-            }
-            case FLOAT -> {
-                if (canSliceFixedWidthFromLivePage(encoding, nonNullCount)) {
-                    retainLiveValues(valueBuf);
-                } else {
-                    pageFloats = decodeFloats(valueBuf, encoding, nonNullCount, dict);
-                }
-            }
-            case DOUBLE -> {
-                if (canSliceFixedWidthFromLivePage(encoding, nonNullCount)) {
-                    retainLiveValues(valueBuf);
-                } else {
-                    pageDoubles = decodeDoubles(valueBuf, encoding, nonNullCount, dict);
-                }
-            }
+            case INT32 -> decodeInt32Page(valueBuf, encoding, nonNullCount, dict);
+            case INT64 -> decodeInt64Page(valueBuf, encoding, nonNullCount, dict);
+            case FLOAT -> decodeFloatPage(valueBuf, encoding, nonNullCount, dict);
+            case DOUBLE -> decodeDoublePage(valueBuf, encoding, nonNullCount, dict);
             case BOOLEAN -> pageBooleans = decodeBooleans(valueBuf, encoding, nonNullCount);
             case BYTE_ARRAY -> decodeByteArray(valueBuf, encoding, nonNullCount, dict);
             case FIXED_LEN_BYTE_ARRAY -> pageSegments = decodeFixedLenBinary(valueBuf, encoding, nonNullCount, dict);
             case INT96 -> pageSegments = decodeInt96(valueBuf, encoding, nonNullCount, dict);
+        }
+    }
+
+    /** Routes an INT32 page to its value backing: live-page slice, pooled segment, or the masked heap lane. */
+    private void decodeInt32Page(MemorySegment valueBuf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
+        if (canSliceFixedWidthFromLivePage(encoding, nonNullCount)) {
+            retainLiveValues(valueBuf);
+        } else if (survivingRows == null) {
+            decodeIntsIntoPageValues(valueBuf, encoding, nonNullCount, dict);
+        } else {
+            pageInts = decodeInts(valueBuf, encoding, nonNullCount, dict);
+        }
+    }
+
+    /** Routes an INT64 page to its value backing: live-page slice, pooled segment, or the masked heap lane. */
+    private void decodeInt64Page(MemorySegment valueBuf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
+        if (canSliceFixedWidthFromLivePage(encoding, nonNullCount)) {
+            retainLiveValues(valueBuf);
+        } else if (survivingRows == null) {
+            decodeLongsIntoPageValues(valueBuf, encoding, nonNullCount, dict);
+        } else {
+            pageLongs = decodeLongs(valueBuf, encoding, nonNullCount, dict);
+        }
+    }
+
+    /** Routes a FLOAT page to its value backing: live-page slice, pooled segment, or the masked heap lane. */
+    private void decodeFloatPage(MemorySegment valueBuf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
+        if (canSliceFixedWidthFromLivePage(encoding, nonNullCount)) {
+            retainLiveValues(valueBuf);
+        } else if (survivingRows == null) {
+            decodeFloatsIntoPageValues(valueBuf, encoding, nonNullCount, dict);
+        } else {
+            pageFloats = decodeFloats(valueBuf, encoding, nonNullCount, dict);
+        }
+    }
+
+    /** Routes a DOUBLE page to its value backing: live-page slice, pooled segment, or the masked heap lane. */
+    private void decodeDoublePage(MemorySegment valueBuf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
+        if (canSliceFixedWidthFromLivePage(encoding, nonNullCount)) {
+            retainLiveValues(valueBuf);
+        } else if (survivingRows == null) {
+            decodeDoublesIntoPageValues(valueBuf, encoding, nonNullCount, dict);
+        } else {
+            pageDoubles = decodeDoubles(valueBuf, encoding, nonNullCount, dict);
         }
     }
 
@@ -583,8 +618,137 @@ final class BatchColumnReader {
 
     /** Keeps the live page segment as the page's value backing; the page Arena then stays open across the batches. */
     private void retainLiveValues(MemorySegment valueBuf) {
-        pageLiveValues = valueBuf.asReadOnly();
+        pageValues = valueBuf.asReadOnly();
         pageBackingIsLivePage = true;
+    }
+
+    /**
+     * Decodes a fixed-width page's values into one pooled page-lifetime segment instead of a fresh heap array. The
+     * decoder writes the non-null values densely at the segment's head; a nullable page then spreads them to their row
+     * slots in place. Null slots read zero - the contract the fresh heap arrays gave for free: validity-blind typed
+     * getters and serialized buffers read deterministic zeros, never stale pool bytes from a previous borrower.
+     */
+    private void decodeIntsIntoPageValues(MemorySegment buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
+        MemorySegment out = acquirePageValues((long) pageSize * Integer.BYTES);
+        if (nonNullCount == 0) {
+            out.fill((byte) 0);
+            return;
+        }
+        PageDecoder<?> decoder = intDecoderFor(encoding, dict);
+        decoder.load(buf, nonNullCount);
+        decoder.decodeInts(nonNullCount, out, 0L);
+        if (nonNullCount < pageSize) {
+            spreadIntsInPlace(out, nonNullCount);
+        }
+    }
+
+    /** INT64 form of {@link #decodeIntsIntoPageValues}: pooled page-lifetime segment, null slots zeroed. */
+    private void decodeLongsIntoPageValues(MemorySegment buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
+        MemorySegment out = acquirePageValues((long) pageSize * Long.BYTES);
+        if (nonNullCount == 0) {
+            out.fill((byte) 0);
+            return;
+        }
+        PageDecoder<?> decoder = longDecoderFor(encoding, dict);
+        decoder.load(buf, nonNullCount);
+        decoder.decodeLongs(nonNullCount, out, 0L);
+        if (nonNullCount < pageSize) {
+            spreadLongsInPlace(out, nonNullCount);
+        }
+    }
+
+    /** FLOAT form of {@link #decodeIntsIntoPageValues}: pooled page-lifetime segment, null slots zeroed. */
+    private void decodeFloatsIntoPageValues(
+            MemorySegment buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
+        MemorySegment out = acquirePageValues((long) pageSize * Float.BYTES);
+        if (nonNullCount == 0) {
+            out.fill((byte) 0);
+            return;
+        }
+        PageDecoder<?> decoder = floatDecoderFor(encoding, dict);
+        decoder.load(buf, nonNullCount);
+        decoder.decodeFloats(nonNullCount, out, 0L);
+        if (nonNullCount < pageSize) {
+            spreadFloatsInPlace(out, nonNullCount);
+        }
+    }
+
+    /** DOUBLE form of {@link #decodeIntsIntoPageValues}: pooled page-lifetime segment, null slots zeroed. */
+    private void decodeDoublesIntoPageValues(
+            MemorySegment buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
+        MemorySegment out = acquirePageValues((long) pageSize * Double.BYTES);
+        if (nonNullCount == 0) {
+            out.fill((byte) 0);
+            return;
+        }
+        PageDecoder<?> decoder = doubleDecoderFor(encoding, dict);
+        decoder.load(buf, nonNullCount);
+        decoder.decodeDoubles(nonNullCount, out, 0L);
+        if (nonNullCount < pageSize) {
+            spreadDoublesInPlace(out, nonNullCount);
+        }
+    }
+
+    /** Acquires the page-lifetime value segment from the decode valve; released at page advance. */
+    private MemorySegment acquirePageValues(long byteSize) {
+        SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(Math.max(1L, byteSize));
+        pageValuesPooled = pooled;
+        pageValues = pooled.segment();
+        return pageValues;
+    }
+
+    /**
+     * Spreads the {@code nonNullCount} dense values at the segment's head to their row slots, walking rows in reverse
+     * and zeroing null slots in the same pass. In reverse order each move's source index never exceeds its destination
+     * row ({@code j <= row} throughout: the j-th set bit's row is at least j), hence no dense value is overwritten
+     * before it is read. The walk stops when {@code row == j}: the remaining prefix is all-valid and already in place.
+     * Allocates nothing - a reused per-reader dense scratch would amortize nothing on one-page-per-chunk files.
+     */
+    private void spreadIntsInPlace(MemorySegment values, int nonNullCount) {
+        int j = nonNullCount - 1;
+        for (int row = pageSize - 1; row >= 0 && row != j; row--) {
+            if (pageValidity.isValid(row)) {
+                values.setAtIndex(INT32, row, values.getAtIndex(INT32, j--));
+            } else {
+                values.setAtIndex(INT32, row, 0);
+            }
+        }
+    }
+
+    /** INT64 form of {@link #spreadIntsInPlace}. */
+    private void spreadLongsInPlace(MemorySegment values, int nonNullCount) {
+        int j = nonNullCount - 1;
+        for (int row = pageSize - 1; row >= 0 && row != j; row--) {
+            if (pageValidity.isValid(row)) {
+                values.setAtIndex(INT64, row, values.getAtIndex(INT64, j--));
+            } else {
+                values.setAtIndex(INT64, row, 0L);
+            }
+        }
+    }
+
+    /** FLOAT form of {@link #spreadIntsInPlace}. */
+    private void spreadFloatsInPlace(MemorySegment values, int nonNullCount) {
+        int j = nonNullCount - 1;
+        for (int row = pageSize - 1; row >= 0 && row != j; row--) {
+            if (pageValidity.isValid(row)) {
+                values.setAtIndex(FLOAT, row, values.getAtIndex(FLOAT, j--));
+            } else {
+                values.setAtIndex(FLOAT, row, 0f);
+            }
+        }
+    }
+
+    /** DOUBLE form of {@link #spreadIntsInPlace}. */
+    private void spreadDoublesInPlace(MemorySegment values, int nonNullCount) {
+        int j = nonNullCount - 1;
+        for (int row = pageSize - 1; row >= 0 && row != j; row--) {
+            if (pageValidity.isValid(row)) {
+                values.setAtIndex(DOUBLE, row, values.getAtIndex(DOUBLE, j--));
+            } else {
+                values.setAtIndex(DOUBLE, row, 0d);
+            }
+        }
     }
 
     /**
@@ -617,6 +781,7 @@ final class BatchColumnReader {
         return indices;
     }
 
+    /** Heap decode for masked reads; unmasked pages decode into the pooled page-values segment. */
     private int[] decodeInts(MemorySegment buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
         int[] out = new int[pageSize];
         if (nonNullCount == 0) {
@@ -634,6 +799,7 @@ final class BatchColumnReader {
         return out;
     }
 
+    /** Heap decode for masked reads; unmasked pages decode into the pooled page-values segment. */
     private long[] decodeLongs(MemorySegment buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
         long[] out = new long[pageSize];
         if (nonNullCount == 0) {
@@ -651,6 +817,7 @@ final class BatchColumnReader {
         return out;
     }
 
+    /** Heap decode for masked reads; unmasked pages decode into the pooled page-values segment. */
     private float[] decodeFloats(MemorySegment buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
         float[] out = new float[pageSize];
         if (nonNullCount == 0) {
@@ -668,6 +835,7 @@ final class BatchColumnReader {
         return out;
     }
 
+    /** Heap decode for masked reads; unmasked pages decode into the pooled page-values segment. */
     private double[] decodeDoubles(MemorySegment buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
         double[] out = new double[pageSize];
         if (nonNullCount == 0) {
@@ -842,9 +1010,9 @@ final class BatchColumnReader {
 
     /**
      * Dictionary-encoded binary values are references into the column's {@link Dictionary}, whose values are
-     * heap-owned, immutable, GC-managed segments (not page-Arena or pool memory). They outlive the page Arena and
-     * survive the chunk's close, so they need no per-row heap copy. PLAIN/DELTA values are zero-copy views into the
-     * page Arena and must be copied out before that Arena closes.
+     * heap-owned, immutable, GC-managed segments (not page-Arena or pool memory). They outlive the page Arena, survive
+     * the chunk's close, and need no per-row heap copy. PLAIN/DELTA values are zero-copy views into the page Arena and
+     * must be copied out before that Arena closes.
      */
     private static boolean isDictionaryEncoded(Encoding encoding) {
         return encoding == Encoding.RLE_DICTIONARY || encoding == Encoding.PLAIN_DICTIONARY;
@@ -1308,17 +1476,18 @@ final class BatchColumnReader {
      * the off-heap decode budget has room, an mmap of an on-disk file otherwise). The owning batch closes the buffer on
      * {@link io.tileverse.parquetry.batch.ParquetRecordBatch#close()}; the resulting vector holds no heap value array.
      *
-     * <p>For a PLAIN all-valid page the bytes come straight from the live page segment ({@link #pageLiveValues}), whose
-     * little-endian DOUBLE layout matches the target, making the copy a raw byte copy with no heap {@code double[]}.
-     * Otherwise the page decoded into the heap {@link #pageDoubles}, which the copy reads element by element.
+     * <p>When the page decoded off-heap, {@link #pageValues} - the live page segment (PLAIN all-valid) or the pooled
+     * decode buffer - already has the little-endian DOUBLE layout of the target, making the copy a raw byte copy with
+     * no heap {@code double[]}. The heap branch remains only for masked reads, which compact into {@link #pageDoubles}
+     * and copy element by element.
      */
     private DoubleVector sliceDouble(int start, int n, Validity sliceValidity, List<AutoCloseable> acquiredBuffers) {
         long byteSize = (long) n * Double.BYTES;
         SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
         acquiredBuffers.add(pooled);
         MemorySegment dst = pooled.segment();
-        if (pageLiveValues != null) {
-            MemorySegment.copy(pageLiveValues, (long) start * Double.BYTES, dst, 0L, byteSize);
+        if (pageValues != null) {
+            MemorySegment.copy(pageValues, (long) start * Double.BYTES, dst, 0L, byteSize);
         } else {
             MemorySegment.copy(pageDoubles, start, dst, DOUBLE, 0L, n);
         }
@@ -1330,17 +1499,18 @@ final class BatchColumnReader {
      * off-heap decode budget has room, an mmap of an on-disk file otherwise). The owning batch closes the buffer on
      * {@link io.tileverse.parquetry.batch.ParquetRecordBatch#close()}; the resulting vector holds no heap value array.
      *
-     * <p>For a PLAIN all-valid page the bytes come straight from the live page segment ({@link #pageLiveValues}), whose
-     * little-endian INT32 layout matches the target, making the copy a raw byte copy with no heap {@code int[]}.
-     * Otherwise the page decoded into the heap {@link #pageInts}, which the copy reads element by element.
+     * <p>When the page decoded off-heap, {@link #pageValues} - the live page segment (PLAIN all-valid) or the pooled
+     * decode buffer - already has the little-endian INT32 layout of the target, making the copy a raw byte copy with no
+     * heap {@code int[]}. The heap branch remains only for masked reads, which compact into {@link #pageInts} and copy
+     * element by element.
      */
     private IntVector sliceInt(int start, int n, Validity sliceValidity, List<AutoCloseable> acquiredBuffers) {
         long byteSize = (long) n * Integer.BYTES;
         SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
         acquiredBuffers.add(pooled);
         MemorySegment dst = pooled.segment();
-        if (pageLiveValues != null) {
-            MemorySegment.copy(pageLiveValues, (long) start * Integer.BYTES, dst, 0L, byteSize);
+        if (pageValues != null) {
+            MemorySegment.copy(pageValues, (long) start * Integer.BYTES, dst, 0L, byteSize);
         } else {
             MemorySegment.copy(pageInts, start, dst, INT32, 0L, n);
         }
@@ -1348,18 +1518,18 @@ final class BatchColumnReader {
     }
 
     /**
-     * Copies the page's long values for the slice into a buffer the decode valve hands out. For a PLAIN all-valid page
-     * the bytes come straight from the live page segment ({@link #pageLiveValues}), whose little-endian INT64 layout
-     * matches the target, making the copy a raw byte copy with no heap {@code long[]}. Otherwise the page decoded into
-     * the heap {@link #pageLongs}, which the copy reads element by element.
+     * Copies the page's long values for the slice into a buffer the decode valve hands out. When the page decoded
+     * off-heap, {@link #pageValues} - the live page segment (PLAIN all-valid) or the pooled decode buffer - already has
+     * the little-endian INT64 layout of the target, making the copy a raw byte copy with no heap {@code long[]}. The
+     * heap branch remains only for masked reads, which compact into {@link #pageLongs} and copy element by element.
      */
     private LongVector sliceLong(int start, int n, Validity sliceValidity, List<AutoCloseable> acquiredBuffers) {
         long byteSize = (long) n * Long.BYTES;
         SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
         acquiredBuffers.add(pooled);
         MemorySegment dst = pooled.segment();
-        if (pageLiveValues != null) {
-            MemorySegment.copy(pageLiveValues, (long) start * Long.BYTES, dst, 0L, byteSize);
+        if (pageValues != null) {
+            MemorySegment.copy(pageValues, (long) start * Long.BYTES, dst, 0L, byteSize);
         } else {
             MemorySegment.copy(pageLongs, start, dst, INT64, 0L, n);
         }
@@ -1367,18 +1537,18 @@ final class BatchColumnReader {
     }
 
     /**
-     * Copies the page's float values for the slice into a buffer the decode valve hands out. For a PLAIN all-valid page
-     * the bytes come straight from the live page segment ({@link #pageLiveValues}), whose little-endian FLOAT layout
-     * matches the target, making the copy a raw byte copy with no heap {@code float[]}. Otherwise the page decoded into
-     * the heap {@link #pageFloats}, which the copy reads element by element.
+     * Copies the page's float values for the slice into a buffer the decode valve hands out. When the page decoded
+     * off-heap, {@link #pageValues} - the live page segment (PLAIN all-valid) or the pooled decode buffer - already has
+     * the little-endian FLOAT layout of the target, making the copy a raw byte copy with no heap {@code float[]}. The
+     * heap branch remains only for masked reads, which compact into {@link #pageFloats} and copy element by element.
      */
     private FloatVector sliceFloat(int start, int n, Validity sliceValidity, List<AutoCloseable> acquiredBuffers) {
         long byteSize = (long) n * Float.BYTES;
         SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
         acquiredBuffers.add(pooled);
         MemorySegment dst = pooled.segment();
-        if (pageLiveValues != null) {
-            MemorySegment.copy(pageLiveValues, (long) start * Float.BYTES, dst, 0L, byteSize);
+        if (pageValues != null) {
+            MemorySegment.copy(pageValues, (long) start * Float.BYTES, dst, 0L, byteSize);
         } else {
             MemorySegment.copy(pageFloats, start, dst, FLOAT, 0L, n);
         }

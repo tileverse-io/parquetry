@@ -23,6 +23,8 @@ import java.nio.ByteBuffer;
 
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.format.ParquetLayouts;
+
 class PlainDoubleDecoderTest {
 
     @Test
@@ -94,5 +96,47 @@ class PlainDoubleDecoderTest {
         assertThat(dst[1]).isEqualTo(2.5);
         assertThat(dst[2]).isEqualTo(Double.POSITIVE_INFINITY);
         assertThat(Double.isNaN(dst[3])).isTrue();
+    }
+
+    @Test
+    void bulkDecodeIntoSegmentCopiesBytes() {
+        ByteBuffer page = ByteBuffer.allocate(32).order(LITTLE_ENDIAN);
+        page.putDouble(1.0);
+        page.putDouble(2.5);
+        page.putDouble(Double.POSITIVE_INFINITY);
+        page.putDouble(Double.NaN);
+        page.flip();
+
+        PageDecoder<Double> decoder = new PlainDoubleDecoder();
+        decoder.load(MemorySegment.ofBuffer(page), 4);
+
+        MemorySegment dst = MemorySegment.ofArray(new byte[5 * Double.BYTES]);
+        dst.setAtIndex(ParquetLayouts.DOUBLE, 0, -1.0); // sentinel - must be left alone
+        decoder.decodeDoubles(4, dst, 1);
+
+        assertThat(dst.getAtIndex(ParquetLayouts.DOUBLE, 0)).isEqualTo(-1.0);
+        assertThat(dst.getAtIndex(ParquetLayouts.DOUBLE, 1)).isEqualTo(1.0);
+        assertThat(dst.getAtIndex(ParquetLayouts.DOUBLE, 4)).isNaN();
+    }
+
+    @Test
+    void bulkDecodeIntoSegmentAfterPartialNext() {
+        ByteBuffer page = ByteBuffer.allocate(32).order(LITTLE_ENDIAN);
+        page.putDouble(1.0);
+        page.putDouble(2.5);
+        page.putDouble(Double.POSITIVE_INFINITY);
+        page.putDouble(Double.NaN);
+        page.flip();
+
+        PageDecoder<Double> decoder = new PlainDoubleDecoder();
+        decoder.load(MemorySegment.ofBuffer(page), 4);
+        assertThat(decoder.next()).isEqualTo(1.0);
+
+        MemorySegment dst = MemorySegment.ofArray(new byte[2 * Double.BYTES]);
+        decoder.decodeDoubles(2, dst, 0);
+
+        assertThat(dst.getAtIndex(ParquetLayouts.DOUBLE, 0)).isEqualTo(2.5);
+        assertThat(dst.getAtIndex(ParquetLayouts.DOUBLE, 1)).isEqualTo(Double.POSITIVE_INFINITY);
+        assertThat(decoder.next()).isNaN();
     }
 }

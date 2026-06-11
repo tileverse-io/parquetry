@@ -47,6 +47,13 @@ public final class PlainInt64Decoder implements PageDecoder<Long> {
     }
 
     @Override
+    public void decodeLongs(int n, MemorySegment dst, long dstIndex) {
+        long byteCount = (long) n * BYTES_PER_VALUE;
+        MemorySegment.copy(segment, offset, dst, dstIndex * BYTES_PER_VALUE, byteCount);
+        offset += byteCount;
+    }
+
+    @Override
     public void skip(int n) {
         offset += (long) n * BYTES_PER_VALUE;
     }

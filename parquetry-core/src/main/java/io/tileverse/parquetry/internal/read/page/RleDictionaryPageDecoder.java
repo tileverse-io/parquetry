@@ -19,12 +19,14 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 import java.lang.foreign.MemorySegment;
 
+import io.tileverse.parquetry.format.ParquetLayouts;
+
 /**
  * Data-page decoder for dictionary-encoded columns (PLAIN_DICTIONARY / RLE_DICTIONARY).
  *
  * <p>Each value is an integer index into the column's {@link Dictionary}. Indexes are encoded with the RLE-Bit-Packed
- * hybrid; the bit width is carried as the first byte of the page payload (NOT in the page header). After reading the
- * bit width, the rest of the payload is delegated to a {@link LevelDecoder} configured at that bit width.
+ * hybrid; the bit width is stored as the first byte of the page payload (NOT in the page header). After reading the bit
+ * width, the rest of the payload is delegated to a {@link LevelDecoder} configured at that bit width.
  *
  * @param <T> the dictionary value type
  */
@@ -77,10 +79,26 @@ public final class RleDictionaryPageDecoder<T> implements PageDecoder<T> {
     }
 
     @Override
+    public void decodeInts(int n, MemorySegment dst, long dstIndex) {
+        Dictionary.IntDict ints = (Dictionary.IntDict) dictionary;
+        for (int i = 0; i < n; i++) {
+            dst.setAtIndex(ParquetLayouts.INT32, dstIndex + i, ints.getInt(indexDecoder.nextValue()));
+        }
+    }
+
+    @Override
     public void decodeLongs(int n, long[] dst, int offset) {
         Dictionary.LongDict longs = (Dictionary.LongDict) dictionary;
         for (int i = 0; i < n; i++) {
             dst[offset + i] = longs.getLong(indexDecoder.nextValue());
+        }
+    }
+
+    @Override
+    public void decodeLongs(int n, MemorySegment dst, long dstIndex) {
+        Dictionary.LongDict longs = (Dictionary.LongDict) dictionary;
+        for (int i = 0; i < n; i++) {
+            dst.setAtIndex(ParquetLayouts.INT64, dstIndex + i, longs.getLong(indexDecoder.nextValue()));
         }
     }
 
@@ -93,10 +111,26 @@ public final class RleDictionaryPageDecoder<T> implements PageDecoder<T> {
     }
 
     @Override
+    public void decodeFloats(int n, MemorySegment dst, long dstIndex) {
+        Dictionary.FloatDict floats = (Dictionary.FloatDict) dictionary;
+        for (int i = 0; i < n; i++) {
+            dst.setAtIndex(ParquetLayouts.FLOAT, dstIndex + i, floats.getFloat(indexDecoder.nextValue()));
+        }
+    }
+
+    @Override
     public void decodeDoubles(int n, double[] dst, int offset) {
         Dictionary.DoubleDict doubles = (Dictionary.DoubleDict) dictionary;
         for (int i = 0; i < n; i++) {
             dst[offset + i] = doubles.getDouble(indexDecoder.nextValue());
+        }
+    }
+
+    @Override
+    public void decodeDoubles(int n, MemorySegment dst, long dstIndex) {
+        Dictionary.DoubleDict doubles = (Dictionary.DoubleDict) dictionary;
+        for (int i = 0; i < n; i++) {
+            dst.setAtIndex(ParquetLayouts.DOUBLE, dstIndex + i, doubles.getDouble(indexDecoder.nextValue()));
         }
     }
 
