@@ -40,12 +40,11 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 final class DefaultSegmentPool implements SegmentPool {
 
-    static final long DEFAULT_LARGE_BUFFER_THRESHOLD = 256L * 1024;
-    static final long DEFAULT_MAX_POOLED_BYTES = 4L * 1024 * 1024;
-    static final int DEFAULT_BLOCK_SIZE = 8192;
+    static final DefaultSegmentPool INSTANCE = fromOptions(SegmentPool.Options.elastic());
 
-    static final DefaultSegmentPool INSTANCE =
-            new DefaultSegmentPool(DEFAULT_LARGE_BUFFER_THRESHOLD, DEFAULT_MAX_POOLED_BYTES, DEFAULT_BLOCK_SIZE);
+    static DefaultSegmentPool fromOptions(SegmentPool.Options options) {
+        return new DefaultSegmentPool(options.largeBufferThreshold(), options.maxPooledBytes(), options.blockSize());
+    }
 
     private final long largeBufferThreshold;
     private final long maxPooledBytes;

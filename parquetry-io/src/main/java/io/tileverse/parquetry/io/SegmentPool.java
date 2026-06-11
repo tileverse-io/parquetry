@@ -17,6 +17,9 @@ package io.tileverse.parquetry.io;
 
 import java.lang.foreign.MemorySegment;
 
+import io.tileverse.parquetry.io.limits.IoLimits;
+import io.tileverse.parquetry.io.limits.ResourceLimits;
+
 /**
  * A pool of native {@link MemorySegment}s for column-chunk fetch and per-page decompression buffers. Borrowing reuses
  * native memory to keep the streaming memory budget bounded; closing the handle returns the backing segment.
@@ -39,17 +42,56 @@ public sealed interface SegmentPool permits DefaultSegmentPool {
     /** A point-in-time snapshot of this pool's accounting, for leak assertions and monitoring. */
     PoolStats stats();
 
-    /** Process-wide shared default: a small bounded pool of native segments, JDK-only. */
+    /** Process-wide shared default: a JDK-only pool with the {@link Options#elastic() elastic} retention policy. */
     static SegmentPool getDefault() {
         return DefaultSegmentPool.INSTANCE;
     }
 
-    /** A new private pool with the default retention bounds, independent of {@link #getDefault()}. */
+    /** A new private pool with the {@link Options#elastic() elastic} options, independent of {@link #getDefault()}. */
     static SegmentPool create() {
-        return new DefaultSegmentPool(
-                DefaultSegmentPool.DEFAULT_LARGE_BUFFER_THRESHOLD,
-                DefaultSegmentPool.DEFAULT_MAX_POOLED_BYTES,
-                DefaultSegmentPool.DEFAULT_BLOCK_SIZE);
+        return create(Options.elastic());
+    }
+
+    /** A new private pool with the given retention policy, independent of {@link #getDefault()}. */
+    static SegmentPool create(Options options) {
+        return DefaultSegmentPool.fromOptions(options);
+    }
+
+    /**
+     * The pool's retention policy. Small buffers (rounded capacity at most {@code largeBufferThreshold}) are pooled for
+     * reuse up to {@code maxPooledBytes} of idle retention; larger buffers are freed deterministically when the
+     * borrower closes. Capacities round up to {@code blockSize} to make reuse across nearby request sizes likely. A
+     * zero {@code maxPooledBytes} disables retention entirely (every return frees).
+     */
+    record Options(long largeBufferThreshold, long maxPooledBytes, int blockSize) {
+
+        public Options {
+            if (largeBufferThreshold <= 0) {
+                throw new IllegalArgumentException("largeBufferThreshold must be > 0, got " + largeBufferThreshold);
+            }
+            if (maxPooledBytes < 0) {
+                throw new IllegalArgumentException("maxPooledBytes must be >= 0, got " + maxPooledBytes);
+            }
+            if (blockSize <= 0) {
+                throw new IllegalArgumentException("blockSize must be > 0, got " + blockSize);
+            }
+        }
+
+        /**
+         * The pod-sized policy: a 4 MB pooling threshold (page-value segments and most coalesced fetch spans stay
+         * poolable) and an idle-retention cap of one eighth of the off-heap allowance, clamped to [16 MB, 512 MB].
+         * Computed once; the limits probe reads container and filesystem facts.
+         */
+        public static Options elastic() {
+            return ElasticHolder.OPTIONS;
+        }
+
+        private static final class ElasticHolder {
+            private static final Options OPTIONS = new Options(
+                    4L << 20,
+                    Math.clamp(IoLimits.from(ResourceLimits.getDefault()).maxOffHeapBytes() / 8, 16L << 20, 512L << 20),
+                    8192);
+        }
     }
 
     /**

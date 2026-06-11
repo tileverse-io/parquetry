@@ -95,6 +95,46 @@ class SegmentPoolTest {
     }
 
     @Test
+    void optionsRejectInvalidSizes() {
+        assertThatThrownBy(() -> new SegmentPool.Options(0, 1024, 8192)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new SegmentPool.Options(1024, -1, 8192)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new SegmentPool.Options(1024, 1024, 0)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void elasticOptionsScaleTheRetentionCapWithinBounds() {
+        SegmentPool.Options elastic = SegmentPool.Options.elastic();
+        assertThat(elastic.largeBufferThreshold()).isEqualTo(4L << 20);
+        assertThat(elastic.maxPooledBytes()).isBetween(16L << 20, 512L << 20);
+        assertThat(elastic.blockSize()).isEqualTo(8192);
+    }
+
+    @Test
+    void megabyteBuffersArePooledUnderTheElasticThreshold() {
+        SegmentPool pool = SegmentPool.create();
+        SegmentPool.Pooled first = pool.borrow(1L << 20);
+        long address = first.segment().address();
+        first.close();
+        assertThat(pool.stats().freeSegments()).isEqualTo(1);
+        try (SegmentPool.Pooled second = pool.borrow(1L << 20)) {
+            assertThat(second.segment().address()).as("reused backing").isEqualTo(address);
+        }
+    }
+
+    @Test
+    void createHonorsCustomOptions() {
+        SegmentPool pool = SegmentPool.create(new SegmentPool.Options(512 * 1024, 1L << 20, 1024));
+        pool.borrow(600 * 1024).close();
+        assertThat(pool.stats().freeSegments())
+                .as("above the custom threshold: never pooled")
+                .isZero();
+        pool.borrow(400 * 1024).close();
+        assertThat(pool.stats().freeSegments())
+                .as("below the custom threshold: pooled")
+                .isEqualTo(1);
+    }
+
+    @Test
     void statsTrackTheBorrowLifecycle() {
         SegmentPool pool = SegmentPool.create();
         assertThat(pool.stats()).isEqualTo(new SegmentPool.PoolStats(0, 0, 0, 0));
