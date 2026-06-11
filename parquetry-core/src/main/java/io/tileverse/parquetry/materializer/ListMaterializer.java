@@ -15,9 +15,10 @@
  */
 package io.tileverse.parquetry.materializer;
 
-import java.util.ArrayList;
-import java.util.Collections;
+import java.util.AbstractList;
 import java.util.List;
+import java.util.Objects;
+import java.util.RandomAccess;
 
 import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.ListVector;
@@ -42,6 +43,11 @@ public final class ListMaterializer {
      * Builds a Java {@link List} from row {@code rowIndex} of {@code vec}'s offset slice. Returns null when the row's
      * list is null per the vector's validity bitmap; an empty list materializes to {@link List#of()}.
      *
+     * <p>The result is an immutable, lazy random-access view over the row's slice of the child vector: nothing is
+     * copied up front, and repeated {@code get(i)} re-materializes the element. The view stays valid while the owning
+     * batch is open; a caller retaining the list past the batch needs an explicit copy (or
+     * {@link io.tileverse.parquetry.record.ParquetRecord#detach()} on the enclosing record).
+     *
      * <p>The {@code schema} is threaded through to struct element materialization. Pass {@code null} only when the list
      * is known to contain no struct elements; a null schema on a struct element will propagate and cause a
      * NullPointerException in any nested-struct accessor call.
@@ -59,12 +65,7 @@ public final class ListMaterializer {
             return List.of();
         }
         ColumnVector child = vec.child();
-        List<Object> result = new ArrayList<>(end - start);
-        for (int i = start; i < end; i++) {
-            result.add(valueAt(child, i, schema));
-        }
-        // An element may be null (a null nested list or a null primitive element); List.copyOf would reject it.
-        return Collections.unmodifiableList(result);
+        return new LazyListView(child, start, end, schema);
     }
 
     /**
@@ -78,6 +79,9 @@ public final class ListMaterializer {
      * because they need the {@code schema} context that {@code get} does not accept. A null {@link StructVector}
      * element yields {@code null}; a non-null element materializes to a {@link DefaultParquetRecord} over the struct's
      * {@link RowColumns}.
+     *
+     * <p>The list path resolves struct elements through {@link LazyListView}'s shared {@link RowColumns} instead of
+     * this method; the map path keeps the per-element resolution here.
      */
     static Object valueAt(ColumnVector child, int i, ParquetSchema schema) {
         return switch (child) {
@@ -87,5 +91,53 @@ public final class ListMaterializer {
                 struct.isValid(i) ? new DefaultParquetRecord(RowColumns.ofStruct(schema, struct), i) : null;
             default -> child.get(i);
         };
+    }
+
+    /**
+     * An immutable, random-access {@link List} view over one row's slice of a {@link ListVector}. Elements materialize
+     * on demand in {@link #get(int)}; nothing is copied up front. The view is valid while the owning batch is open -
+     * the same lifetime the struct elements inside the previously copied lists already had. Callers needing a detached
+     * copy use an explicit copy loop or {@code List.copyOf} (which rejects null elements).
+     *
+     * <p>Struct elements share one {@link RowColumns} built lazily on first access, replacing the per-element rebuild
+     * the eager path paid. Each {@code get(int)} on a struct element returns a fresh record instance with identity
+     * equality; do not rely on element identity or {@code contains}/{@code indexOf} over struct lists.
+     */
+    static final class LazyListView extends AbstractList<Object> implements RandomAccess {
+
+        private final ColumnVector child;
+        private final int start;
+        private final int size;
+        private final ParquetSchema schema;
+        private RowColumns structElementColumns;
+
+        LazyListView(ColumnVector child, int start, int end, ParquetSchema schema) {
+            this.child = child;
+            this.start = start;
+            this.size = end - start;
+            this.schema = schema;
+        }
+
+        @Override
+        public int size() {
+            return size;
+        }
+
+        @Override
+        public Object get(int index) {
+            Objects.checkIndex(index, size);
+            int position = start + index;
+            if (child instanceof StructVector struct) {
+                return struct.isValid(position) ? new DefaultParquetRecord(structColumns(struct), position) : null;
+            }
+            return valueAt(child, position, schema);
+        }
+
+        private RowColumns structColumns(StructVector struct) {
+            if (structElementColumns == null) {
+                structElementColumns = RowColumns.ofStruct(schema, struct);
+            }
+            return structElementColumns;
+        }
     }
 }
