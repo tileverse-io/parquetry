@@ -38,6 +38,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.tukaani.xz.LZMA2Options;
+import org.tukaani.xz.MemoryLimitException;
 import org.tukaani.xz.XZOutputStream;
 
 import io.airlift.compress.v3.hadoop.HadoopOutputStream;
@@ -440,7 +441,9 @@ class CodecTest {
         @Test
         void xzRejectsOversizedDeclaredDictionary() throws Exception {
             MemorySegment src = MemorySegment.ofArray(xzStreamDeclaringHugeDictionary());
-            assertThatThrownBy(() -> Codec.xz().decompress(src)).isInstanceOf(IOException.class);
+            // MemoryLimitException specifically: a plain IOException here could be a corrupt-header artifact of
+            // the patching helper rather than the memory limit doing its job.
+            assertThatThrownBy(() -> Codec.xz().decompress(src)).isInstanceOf(MemoryLimitException.class);
         }
 
         @Test
