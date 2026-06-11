@@ -677,10 +677,14 @@ public sealed interface Codec
 
         static final Xz INSTANCE = new Xz();
 
+        // Bounds the dictionary allocation a crafted stream can declare; 96 MiB covers preset 9's 64 MiB
+        // dictionary plus decoder overhead, and MemoryLimitException is an IOException subclass.
+        private static final int XZ_DECODE_MEMLIMIT_KIB = 98_304;
+
         @Override
         public int decompress(MemorySegment src, MemorySegment output) throws IOException {
             byte[] in = src.toArray(JAVA_BYTE);
-            try (XZInputStream xz = new XZInputStream(new ByteArrayInputStream(in))) {
+            try (XZInputStream xz = new XZInputStream(new ByteArrayInputStream(in), XZ_DECODE_MEMLIMIT_KIB)) {
                 return CompressionSupport.streamToSegment(xz, output);
             }
         }
@@ -688,7 +692,7 @@ public sealed interface Codec
         @Override
         public MemorySegment decompress(MemorySegment src) throws IOException {
             byte[] in = src.toArray(JAVA_BYTE);
-            try (XZInputStream xz = new XZInputStream(new ByteArrayInputStream(in))) {
+            try (XZInputStream xz = new XZInputStream(new ByteArrayInputStream(in), XZ_DECODE_MEMLIMIT_KIB)) {
                 return MemorySegment.ofArray(xz.readAllBytes()).asReadOnly();
             }
         }
