@@ -34,6 +34,8 @@ public sealed interface ColumnVector
                 Int96Vector,
                 ListVector,
                 MapVector,
+                LevelListVector,
+                LevelMapVector,
                 StructVector,
                 VariantVector {
 

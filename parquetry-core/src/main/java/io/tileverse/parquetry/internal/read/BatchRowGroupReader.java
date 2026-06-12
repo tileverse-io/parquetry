@@ -63,6 +63,7 @@ public final class BatchRowGroupReader implements AutoCloseable {
     private final List<ProjectedLeaf> projectedLeaves;
     private final Optional<RowMask> rowMask;
     private final boolean skipDecode;
+    private final BatchForm batchForm;
     private final DecodeBufferAllocator decodeBufferAllocator;
 
     // Lazily built on first nextBatch() call; keyed by column path in declaration order.
@@ -74,8 +75,9 @@ public final class BatchRowGroupReader implements AutoCloseable {
             @NonNull ParquetSchema projectedSchema,
             @NonNull ParquetSchema fileSchema,
             @NonNull OptionalInt batchSizeCap,
-            @NonNull Optional<RowMask> rowMask) {
-        this(decodeBufferAllocator, chunks, projectedSchema, fileSchema, batchSizeCap, rowMask, false);
+            @NonNull Optional<RowMask> rowMask,
+            @NonNull BatchForm batchForm) {
+        this(decodeBufferAllocator, chunks, projectedSchema, fileSchema, batchSizeCap, rowMask, false, batchForm);
     }
 
     /**
@@ -84,6 +86,8 @@ public final class BatchRowGroupReader implements AutoCloseable {
      * empty (the reader decodes every row in full). Skip-decode is defined for flat columns only; the caller guarantees
      * every masked column is flat.
      */
+    @SuppressWarnings("java:S107") // the decode inputs plus the skip-decode and form flags; a parameter object would
+    // only relocate the arity
     public BatchRowGroupReader(
             @NonNull DecodeBufferAllocator decodeBufferAllocator,
             @NonNull List<FetchedColumnChunk> chunks,
@@ -91,13 +95,15 @@ public final class BatchRowGroupReader implements AutoCloseable {
             @NonNull ParquetSchema fileSchema,
             @NonNull OptionalInt batchSizeCap,
             @NonNull Optional<RowMask> rowMask,
-            boolean skipDecode) {
+            boolean skipDecode,
+            @NonNull BatchForm batchForm) {
         this.decodeBufferAllocator = decodeBufferAllocator;
         this.projectedSchema = projectedSchema;
         this.batchSizeCap = batchSizeCap;
         this.projectedLeaves = resolveProjectedLeaves(chunks, fileSchema);
         this.rowMask = rowMask;
         this.skipDecode = skipDecode;
+        this.batchForm = batchForm;
     }
 
     /**
@@ -144,8 +150,8 @@ public final class BatchRowGroupReader implements AutoCloseable {
             Map<ColumnPath, LevelSlice> defLevelsByLeaf = new HashMap<>();
             Map<ColumnPath, ColumnVector> leafVectors =
                     readVectors(batchRows, repLevelsByLeaf, defLevelsByLeaf, acquiredBuffers);
-            Map<ColumnPath, ColumnVector> vectors = NestedVectorAssembler.assembleNestedViews(
-                    projectedSchema, leafVectors, repLevelsByLeaf, defLevelsByLeaf, batchRows);
+            Map<ColumnPath, ColumnVector> vectors =
+                    assembleGroups(leafVectors, repLevelsByLeaf, defLevelsByLeaf, batchRows, acquiredBuffers);
             DefaultParquetRecordBatch batch =
                     new DefaultParquetRecordBatch(projectedSchema, vectors, batchRows, batchArena);
             for (AutoCloseable buffer : acquiredBuffers) {
@@ -157,6 +163,33 @@ public final class BatchRowGroupReader implements AutoCloseable {
             batchArena.close();
             throw e;
         }
+    }
+
+    /**
+     * Wraps the row-aligned LIST and MAP groups in the requested {@link BatchForm}: the eager Arrow-shape vectors for
+     * {@link BatchForm#ASSEMBLED}, or the lazy level vectors for {@link BatchForm#LEVELS}. The level form acquires a
+     * batch-owned {@link BatchLevels} into {@code acquiredBuffers}, which the batch owns and closes.
+     */
+    private Map<ColumnPath, ColumnVector> assembleGroups(
+            Map<ColumnPath, ColumnVector> leafVectors,
+            Map<ColumnPath, LevelSlice> repLevelsByLeaf,
+            Map<ColumnPath, LevelSlice> defLevelsByLeaf,
+            int batchRows,
+            List<AutoCloseable> acquiredBuffers) {
+        return switch (batchForm) {
+            case ASSEMBLED ->
+                NestedVectorAssembler.assembleNestedViews(
+                        projectedSchema, leafVectors, repLevelsByLeaf, defLevelsByLeaf, batchRows);
+            case LEVELS ->
+                LevelVectorAssembler.assembleLevelForm(
+                        projectedSchema,
+                        leafVectors,
+                        repLevelsByLeaf,
+                        defLevelsByLeaf,
+                        batchRows,
+                        decodeBufferAllocator,
+                        acquiredBuffers);
+        };
     }
 
     /** Closes the buffers acquired for a batch that failed to assemble, in reverse order, best-effort. */

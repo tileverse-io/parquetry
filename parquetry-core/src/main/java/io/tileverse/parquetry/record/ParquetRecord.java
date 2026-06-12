@@ -46,7 +46,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
  * Java type does not match the column's kind. This is treated as a programming error: a mismatch means the caller
  * picked the wrong accessor for the column.
  */
-public sealed interface ParquetRecord permits DefaultParquetRecord, DetachedParquetRecord {
+public sealed interface ParquetRecord permits DefaultParquetRecord, DetachedParquetRecord, LevelElementRecord {
 
     /** The projected schema this record was assembled against (not the full file schema). */
     ParquetSchema schema();

@@ -63,6 +63,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     private final List<Optional<RowMask>> rowMasks;
     private final List<Boolean> recordEvalRequired;
     private final Optional<LateMaterialization> lateMat;
+    private final BatchForm batchForm;
 
     private final Map<Integer, DecodedRowGroup> window = new HashMap<>();
     private final int size;
@@ -85,7 +86,8 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
             @NonNull OptionalInt batchSizeCap,
             @NonNull List<Optional<RowMask>> rowMasks,
             @NonNull List<Boolean> recordEvalRequired,
-            @NonNull Optional<LateMaterialization> lateMat) {
+            @NonNull Optional<LateMaterialization> lateMat,
+            @NonNull BatchForm batchForm) {
         this.prefetcher = prefetcher;
         this.decodeExecutor = decodeExecutor;
         this.decodeBudget = decodeBudget;
@@ -100,6 +102,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
         this.rowMasks = List.copyOf(rowMasks);
         this.recordEvalRequired = List.copyOf(recordEvalRequired);
         this.lateMat = lateMat;
+        this.batchForm = batchForm;
         this.size = prefetcher.size();
     }
 
@@ -169,7 +172,8 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
         if (lateMat.isPresent()) {
             return buildLateMaterializedDriver(fetch, mask, index);
         }
-        return new ClassicRowGroupDriver(decodeBufferAllocator, fetch, projectedSchema, fileSchema, batchSizeCap, mask);
+        return new ClassicRowGroupDriver(
+                decodeBufferAllocator, fetch, projectedSchema, fileSchema, batchSizeCap, mask, batchForm);
     }
 
     private RowGroupBatchDriver buildLateMaterializedDriver(RowGroupFetch fetch, Optional<RowMask> mask, int index) {
@@ -185,7 +189,8 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
                 batchSizeCap,
                 mask,
                 perRg.outputOffsetIndexes(),
-                perRg.numRows());
+                perRg.numRows(),
+                batchForm);
         return new LateMaterializedRowGroupDriver(fetch, reader);
     }
 

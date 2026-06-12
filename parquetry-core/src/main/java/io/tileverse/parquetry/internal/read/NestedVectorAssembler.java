@@ -214,7 +214,7 @@ public final class NestedVectorAssembler {
      * Adds every descendant leaf path of {@code group} present in {@code leafVectors} to {@code hiddenLeaves}. Used for
      * LIST and MAP wrappers, whose children are sized at element granularity rather than logical-row granularity.
      */
-    private static void markDescendantLeavesHidden(
+    static void markDescendantLeavesHidden(
             SchemaNode.Group group,
             List<String> groupPath,
             Map<ColumnPath, ColumnVector> leafVectors,
@@ -237,7 +237,7 @@ public final class NestedVectorAssembler {
      * element-granular and live inside the struct's nested LIST / MAP child vector; row-aligned struct leaves stay
      * addressable at their own paths for flat-column access.
      */
-    private static void hideRepeatedDescendantLeaves(
+    static void hideRepeatedDescendantLeaves(
             SchemaNode.Group group,
             List<String> groupPath,
             Map<ColumnPath, ColumnVector> leafVectors,

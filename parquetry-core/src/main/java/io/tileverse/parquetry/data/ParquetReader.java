@@ -52,6 +52,7 @@ import io.tileverse.parquetry.internal.filter.bloom.BloomFilterReader;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.filter.spatial.SpatialBoundsSource;
 import io.tileverse.parquetry.internal.filter.spatial.SpatialCoveringRewrite;
+import io.tileverse.parquetry.internal.read.BatchForm;
 import io.tileverse.parquetry.internal.read.BatchPipeline;
 import io.tileverse.parquetry.internal.read.DecodeBufferAllocator;
 import io.tileverse.parquetry.internal.read.DecryptionKeyRetriever;
@@ -189,10 +190,21 @@ public class ParquetReader {
         Predicate normalized = plan.normalizedPredicate();
         Optional<LateMaterialization> lateMat =
                 lateMaterializationFor(survivors, scanSchema, outputSchema, normalized, options, recordLevel);
-        ParallelDecodeCoordinator coordinator =
-                newDecodeCoordinator(survivors, scanSchema, decodeMasks, options, lateMat);
         Predicate recordFilter = (recordLevel && lateMat.isEmpty()) ? recordFilterOf(normalized) : null;
+        ParallelDecodeCoordinator coordinator =
+                newDecodeCoordinator(survivors, scanSchema, decodeMasks, options, lateMat, rowsForm(recordFilter));
         return BatchPipeline.rows(coordinator, materializer, outputSchema, recordFilter);
+    }
+
+    /**
+     * Picks the batch form for a streaming row read from whether a per-row filter will run. The levels form defers
+     * Dremel assembly to a lazy row view, which lets a filtered read skip materializing the cells of rows it discards;
+     * the assembled form prepays that assembly on idle decode workers, which an unfiltered full scan reads faster than
+     * it would pay for lazy navigation on the consumer's critical path. The condition must match exactly when
+     * {@link BatchPipeline#rows} receives a non-null {@code recordFilter}.
+     */
+    static BatchForm rowsForm(Predicate recordFilter) {
+        return recordFilter == null ? BatchForm.ASSEMBLED : BatchForm.LEVELS;
     }
 
     /**
@@ -358,7 +370,7 @@ public class ParquetReader {
         Predicate normalized = plan.normalizedPredicate();
         List<Optional<RowMask>> masks = decodeMasksFor(residual, scanSchema, options);
         ParallelDecodeCoordinator coordinator =
-                newDecodeCoordinator(residual, scanSchema, masks, options, Optional.empty());
+                newDecodeCoordinator(residual, scanSchema, masks, options, Optional.empty(), BatchForm.LEVELS);
         return BatchPipeline.countMatching(coordinator, normalized);
     }
 
@@ -392,8 +404,8 @@ public class ParquetReader {
         List<RowGroupSurvivor> survivors = survivorsFor(plan, rowGroupChunks);
         ParquetSchema projectedSchema = plan.projectedSchema();
         List<Optional<RowMask>> decodeMasks = decodeMasksFor(survivors, projectedSchema, options);
-        ParallelDecodeCoordinator coordinator =
-                newDecodeCoordinator(survivors, projectedSchema, decodeMasks, options, Optional.empty());
+        ParallelDecodeCoordinator coordinator = newDecodeCoordinator(
+                survivors, projectedSchema, decodeMasks, options, Optional.empty(), BatchForm.ASSEMBLED);
         Stream<ParquetRecordBatch> batches = BatchPipeline.batches(coordinator);
         return batches.map(batch -> materializer.materialize(projectedSchema, batch));
     }
@@ -441,7 +453,8 @@ public class ParquetReader {
             ParquetSchema projectedSchema,
             List<Optional<RowMask>> decodeMasks,
             ReadOptions options,
-            Optional<LateMaterialization> lateMat) {
+            Optional<LateMaterialization> lateMat,
+            BatchForm batchForm) {
         RowGroupPrefetcher prefetcher = newPrefetcher(survivors, projectedSchema);
         List<Boolean> recordEvalRequired = recordEvalFlagsFor(survivors);
         DecodeBufferAllocator decodeBufferAllocator = newDecodeBufferAllocator();
@@ -459,7 +472,8 @@ public class ParquetReader {
                 options.batchSize(),
                 decodeMasks,
                 recordEvalRequired,
-                lateMat);
+                lateMat,
+                batchForm);
     }
 
     /**

@@ -89,7 +89,8 @@ class LateMaterializingRowGroupReaderTest {
                         OptionalInt.empty(),
                         Optional.empty(),
                         fixture.offsetIndexes(),
-                        fixture.numRows());
+                        fixture.numRows(),
+                        BatchForm.ASSEMBLED);
 
                 List<MaterializedRow> actual = drain(decodeMatching(lateReader), outputSchema);
                 List<MaterializedRow> expected = bruteForce(predicate, outputSchema);
@@ -122,7 +123,8 @@ class LateMaterializingRowGroupReaderTest {
                         OptionalInt.empty(),
                         Optional.empty(),
                         fixture.offsetIndexes(),
-                        fixture.numRows());
+                        fixture.numRows(),
+                        BatchForm.ASSEMBLED);
 
                 List<MaterializedRow> actual = drain(decodeMatching(lateReader), outputSchema);
                 List<MaterializedRow> expected = bruteForce(predicate, outputSchema);
@@ -158,7 +160,8 @@ class LateMaterializingRowGroupReaderTest {
                         OptionalInt.empty(),
                         Optional.empty(),
                         fixture.offsetIndexes(),
-                        fixture.numRows());
+                        fixture.numRows(),
+                        BatchForm.ASSEMBLED);
 
                 Selection selection = lateReader.selectMatching();
                 List<ParquetRecordBatch> batches = decodeMatching(lateReader);

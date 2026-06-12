@@ -65,6 +65,7 @@ public final class LateMaterializingRowGroupReader {
     private final Optional<RowMask> rowMask;
     private final Map<ColumnPath, OffsetIndex> offsetIndexes;
     private final long numRows;
+    private final BatchForm outputForm;
     private final DecodeBufferAllocator decodeBufferAllocator;
 
     // S107: aggregates the late-materialization decode inputs; a parameter object would only relocate the arity.
@@ -79,7 +80,8 @@ public final class LateMaterializingRowGroupReader {
             @NonNull OptionalInt batchSizeCap,
             @NonNull Optional<RowMask> rowMask,
             @NonNull Map<ColumnPath, OffsetIndex> offsetIndexes,
-            long numRows) {
+            long numRows,
+            @NonNull BatchForm outputForm) {
         this.decodeBufferAllocator = decodeBufferAllocator;
         this.chunks = List.copyOf(chunks);
         this.fileSchema = fileSchema;
@@ -90,6 +92,7 @@ public final class LateMaterializingRowGroupReader {
         this.rowMask = rowMask;
         this.offsetIndexes = Map.copyOf(offsetIndexes);
         this.numRows = numRows;
+        this.outputForm = outputForm;
     }
 
     /**
@@ -119,7 +122,8 @@ public final class LateMaterializingRowGroupReader {
                 fileSchema,
                 batchSizeCap,
                 Optional.of(selectionMask),
-                true);
+                true,
+                outputForm);
     }
 
     /**
@@ -134,8 +138,16 @@ public final class LateMaterializingRowGroupReader {
                 .toList();
         Selection.Builder selectionBuilder = Selection.builder();
         RowRangeCursor cursor = new RowRangeCursor(surviving);
+        // Phase 1 batches only feed the predicate evaluator; they never reach the consumer record stream, hence the
+        // form does not matter and they stay assembled (the scanned predicate columns are flat by contract anyway).
         try (BatchRowGroupReader phase1 = new BatchRowGroupReader(
-                decodeBufferAllocator, predicateChunks, predicateSchema, fileSchema, batchSizeCap, rowMask)) {
+                decodeBufferAllocator,
+                predicateChunks,
+                predicateSchema,
+                fileSchema,
+                batchSizeCap,
+                rowMask,
+                BatchForm.ASSEMBLED)) {
             while (phase1.hasMore()) {
                 try (ParquetRecordBatch batch = phase1.nextBatch()) {
                     evaluateBatch(batch, cursor, selectionBuilder);
