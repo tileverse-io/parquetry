@@ -16,7 +16,6 @@
 package io.tileverse.parquetry.schema;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -196,24 +195,25 @@ public record ParquetSchema(SchemaNode.Group root) {
     }
 
     /**
-     * Returns a new ParquetSchema containing only the leaf columns in {@code kept}.
+     * Returns a new ParquetSchema containing only the columns in {@code kept}. A path may name a leaf column or a
+     * group: naming a group keeps its entire subtree, the way a consumer selects a nested column by its root name
+     * without spelling out every leaf below it.
      *
      * <p>Group nodes that become empty after filtering are dropped entirely.
      *
-     * @throws ParquetSchemaException if any path in {@code kept} does not name an existing leaf column, mirroring the
-     *     predicate-path validation done at read setup (a projection typo is a programming error, not silently-missing
-     *     data)
+     * @throws ParquetSchemaException if any path in {@code kept} does not name an existing column or group, mirroring
+     *     the predicate-path validation done at read setup (a projection typo is a programming error, not
+     *     silently-missing data)
      */
     public ParquetSchema project(Set<ColumnPath> kept) {
-        requireKnownLeaves(kept);
-        SchemaNode.Group projectedRoot = projectGroup(root, new ArrayList<>(), kept, true);
+        requireKnownColumns(kept);
+        SchemaNode.Group projectedRoot = projectGroup(root, new ArrayList<>(), kept, true, false);
         return new ParquetSchema(projectedRoot);
     }
 
-    private void requireKnownLeaves(Set<ColumnPath> kept) {
-        Set<ColumnPath> existingLeaves = new HashSet<>(leafColumns());
+    private void requireKnownColumns(Set<ColumnPath> kept) {
         List<String> unknown = kept.stream()
-                .filter(path -> !existingLeaves.contains(path))
+                .filter(path -> find(path).isEmpty())
                 .map(ColumnPath::dot)
                 .sorted()
                 .toList();
@@ -223,23 +223,24 @@ public record ParquetSchema(SchemaNode.Group root) {
     }
 
     private static SchemaNode.Group projectGroup(
-            SchemaNode.Group group, List<String> prefix, Set<ColumnPath> kept, boolean isRoot) {
+            SchemaNode.Group group, List<String> prefix, Set<ColumnPath> kept, boolean isRoot, boolean keepAll) {
         List<String> groupPath = new ArrayList<>(prefix);
         if (!isRoot) {
             groupPath.add(group.name());
         }
         List<SchemaNode> projected = new ArrayList<>();
         for (SchemaNode child : group.children()) {
+            List<String> childPath = new ArrayList<>(groupPath);
+            childPath.add(child.name());
+            boolean childKept = keepAll || kept.contains(ColumnPath.of(childPath));
             switch (child) {
                 case SchemaNode.Primitive p -> {
-                    List<String> childPath = new ArrayList<>(groupPath);
-                    childPath.add(p.name());
-                    if (kept.contains(ColumnPath.of(childPath))) {
+                    if (childKept) {
                         projected.add(p);
                     }
                 }
                 case SchemaNode.Group g -> {
-                    SchemaNode.Group sub = projectGroup(g, groupPath, kept, false);
+                    SchemaNode.Group sub = projectGroup(g, groupPath, kept, false, childKept);
                     if (!sub.children().isEmpty()) {
                         projected.add(sub);
                     }

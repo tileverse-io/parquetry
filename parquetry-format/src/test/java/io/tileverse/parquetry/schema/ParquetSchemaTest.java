@@ -121,6 +121,27 @@ class SchemaTest {
     }
 
     @Test
+    void projectionByGroupPathKeepsTheWholeSubtree() {
+        ParquetSchema projected = NESTED.project(Set.of(ColumnPath.of("bbox")));
+        assertThat(projected.leafColumns())
+                .containsExactly(ColumnPath.of("bbox", "xmin"), ColumnPath.of("bbox", "ymin"));
+    }
+
+    @Test
+    void projectionMixesGroupAndLeafPaths() {
+        ParquetSchema projected = NESTED.project(Set.of(ColumnPath.of("id"), ColumnPath.of("bbox")));
+        assertThat(projected.leafColumns())
+                .containsExactly(ColumnPath.of("id"), ColumnPath.of("bbox", "xmin"), ColumnPath.of("bbox", "ymin"));
+    }
+
+    @Test
+    void projectionByGroupPathIsRedundantWithItsOwnLeaf() {
+        ParquetSchema projected = NESTED.project(Set.of(ColumnPath.of("bbox"), ColumnPath.of("bbox", "xmin")));
+        assertThat(projected.leafColumns())
+                .containsExactly(ColumnPath.of("bbox", "xmin"), ColumnPath.of("bbox", "ymin"));
+    }
+
+    @Test
     void columnPathDotPrintsHumanReadable() {
         assertThat(ColumnPath.of("a", "b", "c").dot()).isEqualTo("a.b.c");
     }
