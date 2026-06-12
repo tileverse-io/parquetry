@@ -35,7 +35,7 @@ Direction rule: **cross-cutting capabilities stay at the top level; direction-sp
 
 | Package | Role |
 |---|---|
-| `data` | Public entry points (`ParquetReader`, `ParquetDataset`, `FilesetReader`, `ParquetWriter`) and their option types (`ReadOptions`, `WriteOptions` with nested `ParquetVersion`, `RowGroupSize`, `EncodingPolicy`, `BloomFilterConfig`, `GeoParquetMetadataMode`; `WriteRow`, `WriteProgressListener`). |
+| `data` | Public entry points (`ParquetReader`, `ParquetDataset`, `FilesetReader`, `ParquetWriter`) and their option types (`ReadOptions`, `WriteOptions` with nested `ParquetVersion`, `RowGroupSize`, `EncodingPolicy`, `BloomFilterConfig`, `GeoParquetMetadataMode`; `WriteRow`). The neutral read/write observability vocabulary (`QueryObserver`, `WriteObserver`, and the stats records) lives in `observe`. |
 | `data.read` | Read internals: per-column readers, batch pipeline, level resolver, nested vector assembler. |
 | `data.read.page` | Page-level read mechanics: `PageDecoder`, the per-encoding decoders, `Dictionary`, `RleDictionaryPageDecoder`, `LevelDecoder`. |
 | `data.write` | Write internals: `ColumnChunkWriter`, `RowGroupWriter`, `StatisticsAccumulator`, column / offset / bloom builders, `GeoMetadataWriter`. |

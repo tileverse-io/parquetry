@@ -31,20 +31,31 @@ public final class RowGroupFetch implements AutoCloseable {
     private final List<Pooled> buffers;
     private final List<FetchedColumnChunk> columns;
     private final BudgetReservation reservation;
+    private final long fetchNanos;
     private boolean closed;
 
     RowGroupFetch(
             @NonNull List<Pooled> buffers,
             @NonNull List<FetchedColumnChunk> columns,
-            @NonNull BudgetReservation reservation) {
+            @NonNull BudgetReservation reservation,
+            long fetchNanos) {
         this.buffers = List.copyOf(buffers);
         this.columns = List.copyOf(columns);
         this.reservation = reservation;
+        this.fetchNanos = fetchNanos;
     }
 
     /** The projected column chunk views, in projected-leaf order. */
     public List<FetchedColumnChunk> columns() {
         return columns;
+    }
+
+    /**
+     * Nanoseconds the fetch spent reading and slicing this row group, or zero when the observer did not opt into
+     * timings. Final, published to the consumer through the prefetcher's future join.
+     */
+    public long fetchNanos() {
+        return fetchNanos;
     }
 
     @Override

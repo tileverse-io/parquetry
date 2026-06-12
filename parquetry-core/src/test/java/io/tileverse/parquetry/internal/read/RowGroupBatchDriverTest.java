@@ -110,7 +110,7 @@ class RowGroupBatchDriverTest {
     // --- fixture helpers ---
 
     private static RowGroupFetch fetchOf(FetchedColumnChunk chunk) {
-        return new RowGroupFetch(List.<Pooled>of(), List.of(chunk), BudgetReservation.NONE);
+        return new RowGroupFetch(List.<Pooled>of(), List.of(chunk), BudgetReservation.NONE, 0L);
     }
 
     private static ParquetSchema flatSchema(String... names) {

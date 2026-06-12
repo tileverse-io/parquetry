@@ -61,6 +61,11 @@ import io.tileverse.parquetry.internal.write.GeoColumnSummary;
 import io.tileverse.parquetry.internal.write.GeoMetadataWriter;
 import io.tileverse.parquetry.internal.write.RowGroupFlushResult;
 import io.tileverse.parquetry.internal.write.RowGroupWriter;
+import io.tileverse.parquetry.observe.IndexesWritten;
+import io.tileverse.parquetry.observe.RowGroupFlushed;
+import io.tileverse.parquetry.observe.WriteObserver;
+import io.tileverse.parquetry.observe.WriteStarted;
+import io.tileverse.parquetry.observe.WriteStats;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
@@ -86,8 +91,8 @@ import lombok.NonNull;
  * are {@code protected}. A subclass can specialize how index blobs are laid out, where row-group writers come from, or
  * what extra key/value metadata lands in the footer without re-implementing the rest of the write pipeline. Lifecycle
  * primitives ({@link #checkOpen}, {@link #checkInterrupt}, {@link #markFailed}, {@link #cleanupAfterFailure},
- * {@link #maybeFlushRowGroup}) and the progress-listener hooks ({@link #maybeFireProgress},
- * {@link #fireRowGroupFlushed}, {@link #fireOnClose}) are likewise {@code protected} for subclasses to participate in.
+ * {@link #maybeFlushRowGroup}) and the write-observer hooks ({@link #maybeFireProgress}, {@link #fireRowGroupFlushed},
+ * {@link #fireOnClose}) are likewise {@code protected} for subclasses to participate in.
  */
 public class ParquetWriter implements AutoCloseable {
 
@@ -98,6 +103,7 @@ public class ParquetWriter implements AutoCloseable {
 
     private final CountingWritableByteChannel out;
     private final WriteOptions options;
+    private final WriteObserver observer;
     private final ParquetSchema schema;
     private final Path tempDir;
     private final GeoMetadataWriter geoWriter;
@@ -109,6 +115,9 @@ public class ParquetWriter implements AutoCloseable {
     private Instant currentRowGroupStart = Instant.now();
     private long totalRows;
     private long lastProgressMilestone;
+    private long observedCompressedBytes;
+    private long observedUncompressedBytes;
+    private boolean writeStartedFired;
     private boolean closed;
     private boolean failed;
 
@@ -151,6 +160,7 @@ public class ParquetWriter implements AutoCloseable {
             RowGroupWriter first) {
         this.out = out;
         this.options = options;
+        this.observer = options.writeObserver();
         this.schema = schema;
         this.tempDir = tempDir;
         this.geoWriter = geoWriter;
@@ -162,6 +172,7 @@ public class ParquetWriter implements AutoCloseable {
         checkInterrupt();
         checkOpen();
         try {
+            fireWriteStartedOnce();
             currentRowGroup.append(row);
             totalRows++;
             maybeFireProgress();
@@ -177,6 +188,7 @@ public class ParquetWriter implements AutoCloseable {
         checkInterrupt();
         checkOpen();
         try {
+            fireWriteStartedOnce();
             currentRowGroup.appendBatch(batch);
             totalRows += batch.rowCount();
             maybeFireProgress();
@@ -266,9 +278,16 @@ public class ParquetWriter implements AutoCloseable {
         int rowGroupIndex = completedRowGroups.size();
         completedRowGroups.add(patched);
         accumulateGeoSummaries(flushed);
+        accumulateColumnDataBytes(patched, flushed);
         fireRowGroupFlushed(rowGroupIndex, patched, flushed);
+        fireIndexesWritten(patched);
         currentRowGroup = openRowGroupWriter(options, schema, tempDir, out.bytesWritten());
         currentRowGroupStart = Instant.now();
+    }
+
+    private void accumulateColumnDataBytes(RowGroup patched, RowGroupFlushResult flushed) {
+        observedCompressedBytes += flushed.bytesWritten();
+        observedUncompressedBytes += patched.totalByteSize();
     }
 
     /**
@@ -463,43 +482,82 @@ public class ParquetWriter implements AutoCloseable {
         deleteTempDirQuietly(tempDir);
     }
 
+    /** Fires the write-started event the first time a row reaches the writer. */
+    private void fireWriteStartedOnce() {
+        if (writeStartedFired || !observing()) {
+            return;
+        }
+        writeStartedFired = true;
+        observer.onWriteStarted(new WriteStarted(schema));
+    }
+
     /** Fires the row-progress event at the configured cadence. Subclasses may override to add extra telemetry. */
     protected void maybeFireProgress() {
-        options.progressListener().ifPresent(listener -> {
-            long cadence = options.progressListenerCadenceRows();
-            long milestone = (totalRows / cadence) * cadence;
-            if (milestone > lastProgressMilestone) {
-                lastProgressMilestone = milestone;
-                listener.onRowsWritten(milestone);
-            }
-        });
+        if (!observing()) {
+            return;
+        }
+        long cadence = options.writeObserverCadenceRows();
+        long milestone = (totalRows / cadence) * cadence;
+        if (milestone > lastProgressMilestone) {
+            lastProgressMilestone = milestone;
+            observer.onRowsWritten(milestone);
+        }
     }
 
     /** Fires the row-group-flushed event. Subclasses may override to add extra telemetry. */
     protected void fireRowGroupFlushed(int rowGroupIndex, RowGroup patched, RowGroupFlushResult flushed) {
-        Optional<WriteProgressListener> listener = options.progressListener();
-        if (listener.isEmpty()) {
+        if (!observing()) {
             return;
         }
         Duration scope = Duration.between(currentRowGroupStart, Instant.now());
-        WriteProgressListener.RowGroupFlushEvent event = new WriteProgressListener.RowGroupFlushEvent(
+        RowGroupFlushed event = new RowGroupFlushed(
                 rowGroupIndex,
                 patched.numRows(),
                 patched.totalByteSize(),
                 flushed.bytesWritten(),
+                flushed.dictionaryBytes(),
                 scope,
                 patched.columns().size());
-        listener.get().onRowGroupFlushed(event);
+        observer.onRowGroupFlushed(event);
     }
 
-    /** Fires the close event. Subclasses may override to add extra telemetry. */
-    protected void fireOnClose() {
-        Optional<WriteProgressListener> listener = options.progressListener();
-        if (listener.isEmpty()) {
+    /** Fires the indexes-written event with the column-index, offset-index, and bloom-filter byte totals. */
+    private void fireIndexesWritten(RowGroup patched) {
+        if (!observing()) {
             return;
         }
-        Duration total = Duration.between(writerStart, Instant.now());
-        listener.get().onClose(totalRows, out.bytesWritten(), total);
+        long columnIndexBytes = 0L;
+        long offsetIndexBytes = 0L;
+        long bloomFilterBytes = 0L;
+        for (ColumnChunk chunk : patched.columns()) {
+            columnIndexBytes += chunk.columnIndexLength().orElse(0);
+            offsetIndexBytes += chunk.offsetIndexLength().orElse(0);
+            bloomFilterBytes += bloomFilterLengthOf(chunk);
+        }
+        observer.onIndexesWritten(new IndexesWritten(columnIndexBytes, offsetIndexBytes, bloomFilterBytes));
+    }
+
+    private static long bloomFilterLengthOf(ColumnChunk chunk) {
+        Optional<ColumnMetaData> metaData = chunk.metaData();
+        if (metaData.isEmpty()) {
+            return 0L;
+        }
+        return metaData.get().bloomFilterLength().orElse(0L);
+    }
+
+    /** Fires the write-finished event with the file-level totals and total elapsed writer time. */
+    protected void fireOnClose() {
+        if (!observing()) {
+            return;
+        }
+        Duration wallClock = Duration.between(writerStart, Instant.now());
+        WriteStats stats = new WriteStats(
+                totalRows, completedRowGroups.size(), observedCompressedBytes, observedUncompressedBytes, wallClock);
+        observer.onWriteFinished(stats);
+    }
+
+    private boolean observing() {
+        return observer != WriteObserver.NONE;
     }
 
     /** Returns the schema after V2 logical-type application. Test helper; not part of the public API. */

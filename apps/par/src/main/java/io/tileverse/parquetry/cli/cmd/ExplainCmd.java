@@ -29,6 +29,7 @@ import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
+import io.tileverse.parquetry.observe.QueryObserver;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
@@ -36,6 +37,7 @@ import picocli.CommandLine.ArgGroup;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Mixin;
 import picocli.CommandLine.Model.CommandSpec;
+import picocli.CommandLine.Option;
 import picocli.CommandLine.ParameterException;
 import picocli.CommandLine.Parameters;
 import picocli.CommandLine.Spec;
@@ -43,11 +45,24 @@ import picocli.CommandLine.Spec;
 @Command(name = "explain", description = "Print the filter/scan plan for a Parquet file.")
 public final class ExplainCmd implements Callable<Integer> {
 
+    private static final QueryObserver WANTS_TIMINGS = new QueryObserver() {
+        @Override
+        public boolean wantsTimings() {
+            return true;
+        }
+    };
+
     @Parameters(index = "0", paramLabel = "<uri>", description = "Parquet file path or URI.")
     private String uri;
 
     @Mixin
     private GlobalOptions options;
+
+    @Option(
+            names = {"--analyze"},
+            description =
+                    "Execute the read and annotate the plan with actual row, byte, pruning, and per-phase timing counts.")
+    private boolean analyze;
 
     @ArgGroup(validate = false, heading = StorageOptions.HEADING)
     private StorageOptions storage = new StorageOptions();
@@ -63,11 +78,21 @@ public final class ExplainCmd implements Callable<Integer> {
             Set<ColumnPath> geometryColumns = GeometryColumns.resolve(schema, dataset.keyValueMetadata());
             Predicate predicate = buildPredicate(schema, geometryColumns);
             Projection projection = Projections.resolve(options.columns, schema).projection();
-            ExplainPlan plan = dataset.explain(predicate, projection, ReadOptions.DEFAULTS);
+            ExplainPlan plan = plan(dataset, predicate, projection);
             String rendered = renderPlan(plan);
             spec.commandLine().getOut().println(rendered);
             return 0;
         }
+    }
+
+    private ExplainPlan plan(ParquetDataset dataset, Predicate predicate, Projection projection) {
+        if (!analyze) {
+            return dataset.explain(predicate, projection, ReadOptions.DEFAULTS);
+        }
+        // Analyzing always measures per-phase timing; there is no reason to execute a read and withhold the timings.
+        ReadOptions analyzeOptions =
+                ReadOptions.builder().queryObserver(WANTS_TIMINGS).build();
+        return dataset.explainAnalyze(predicate, projection, analyzeOptions);
     }
 
     private Predicate buildPredicate(ParquetSchema schema, Set<ColumnPath> geometryColumns) {

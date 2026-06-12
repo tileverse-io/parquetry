@@ -74,8 +74,8 @@ class BatchPipelineRowsTest {
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixture.file())) {
             ParallelDecodeCoordinator coordinator = fixture.serialCoordinator(source, AllFull.INSTANCE);
             long rows = 0;
-            try (Stream<Integer> stream =
-                    BatchPipeline.rows(coordinator, yearMaterializer(), fixture.schema(), null, tracker)) {
+            try (Stream<Integer> stream = BatchPipeline.rows(
+                    coordinator, yearMaterializer(), fixture.schema(), null, false, false, tracker)) {
                 Iterator<Integer> it = stream.iterator();
                 while (it.hasNext()) {
                     it.next();
@@ -126,8 +126,8 @@ class BatchPipelineRowsTest {
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixture.file())) {
             ExecutorService fetchExecutor = newFetchExecutor();
             ParallelDecodeCoordinator coordinator = fixture.serialCoordinator(source, AllFull.INSTANCE, fetchExecutor);
-            try (Stream<Integer> stream =
-                    BatchPipeline.rows(coordinator, yearMaterializer(), fixture.schema(), null, tracker)) {
+            try (Stream<Integer> stream = BatchPipeline.rows(
+                    coordinator, yearMaterializer(), fixture.schema(), null, false, false, tracker)) {
                 Iterator<Integer> it = stream.iterator();
                 assertThat(it.hasNext()).as("the stream has rows to consume").isTrue();
                 it.next();
@@ -148,8 +148,8 @@ class BatchPipelineRowsTest {
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixture.file())) {
             ParallelDecodeCoordinator coordinator = fixture.serialCoordinator(source, mode);
             List<Integer> years = new ArrayList<>();
-            try (Stream<Integer> stream =
-                    BatchPipeline.rows(coordinator, yearMaterializer(), fixture.schema(), filter, batch -> {})) {
+            try (Stream<Integer> stream = BatchPipeline.rows(
+                    coordinator, yearMaterializer(), fixture.schema(), filter, false, false, batch -> {})) {
                 stream.forEach(years::add);
             }
             return years;
@@ -249,7 +249,8 @@ class BatchPipelineRowsTest {
                     masks,
                     recordEvalRequired,
                     Optional.empty(),
-                    BatchForm.LEVELS);
+                    BatchForm.LEVELS,
+                    ParallelDecodeCoordinator.DecodeObservation.NONE);
         }
 
         private List<RowGroupSurvivor> survivors(ByteRangeSource source, SurvivorMode mode) {

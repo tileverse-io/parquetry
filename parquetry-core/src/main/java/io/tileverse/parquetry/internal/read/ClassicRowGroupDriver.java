@@ -56,6 +56,16 @@ final class ClassicRowGroupDriver implements RowGroupBatchDriver {
     }
 
     @Override
+    public BatchRowGroupReader.PageCounts pageCounts() {
+        return reader.pageCounts();
+    }
+
+    @Override
+    public long rowsProduced() {
+        return reader.rowsProduced();
+    }
+
+    @Override
     public void close() {
         try {
             reader.close();

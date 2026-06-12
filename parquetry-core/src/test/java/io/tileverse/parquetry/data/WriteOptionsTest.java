@@ -55,6 +55,7 @@ import io.tileverse.parquetry.format.PageType;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.observe.WriteObserver;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -91,8 +92,8 @@ class WriteOptionsTest {
         assertThat(o.dictionaryByteLimit()).isEqualTo(1 << 20);
         assertThat(o.pageByteLimit()).isEqualTo(64 * 1024);
         assertThat(o.pageValueLimit()).isEqualTo(8_192);
-        assertThat(o.progressListener()).isEmpty();
-        assertThat(o.progressListenerCadenceRows()).isEqualTo(100_000L);
+        assertThat(o.writeObserver()).isSameAs(WriteObserver.NONE);
+        assertThat(o.writeObserverCadenceRows()).isEqualTo(100_000L);
         assertThat(o.tempDir()).isEqualTo(Path.of(System.getProperty("java.io.tmpdir")));
         assertThat(o.compression()).isEmpty();
         assertThat(o.encodingPolicies()).isEmpty();
@@ -195,8 +196,8 @@ class WriteOptionsTest {
         assertThatThrownBy(() -> b.pageByteLimit(-1)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> b.dictionaryByteLimit(0)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> b.dictionaryByteLimit(-1)).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> b.progressListenerCadenceRows(0L)).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> b.progressListenerCadenceRows(-1L)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> b.writeObserverCadenceRows(0L)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> b.writeObserverCadenceRows(-1L)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
@@ -261,16 +262,16 @@ class WriteOptionsTest {
     }
 
     @Test
-    void progressListenerCarriesThroughBuild() {
-        WriteProgressListener listener = new WriteProgressListener() {};
+    void writeObserverPropagatesThroughBuild() {
+        WriteObserver observer = new WriteObserver() {};
 
         WriteOptions o = WriteOptions.builder()
-                .progressListener(listener)
-                .progressListenerCadenceRows(10_000L)
+                .writeObserver(observer)
+                .writeObserverCadenceRows(10_000L)
                 .build();
 
-        assertThat(o.progressListener()).containsSame(listener);
-        assertThat(o.progressListenerCadenceRows()).isEqualTo(10_000L);
+        assertThat(o.writeObserver()).isSameAs(observer);
+        assertThat(o.writeObserverCadenceRows()).isEqualTo(10_000L);
     }
 
     @Test

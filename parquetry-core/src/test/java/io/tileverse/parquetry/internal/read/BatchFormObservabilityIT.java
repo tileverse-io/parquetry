@@ -97,6 +97,8 @@ class BatchFormObservabilityIT {
                     rowCountMaterializer(),
                     fixture.schema(),
                     /*recordFilter*/ null,
+                    /*observe*/ false,
+                    /*wantsTimings*/ false,
                     batch -> listVectors.add(batch.columns().get(LIST_COLUMN)))) {
                 rows.forEach(ignored -> {});
             }
@@ -144,7 +146,8 @@ class BatchFormObservabilityIT {
                     masks,
                     recordEvalRequired,
                     Optional.empty(),
-                    form);
+                    form,
+                    ParallelDecodeCoordinator.DecodeObservation.NONE);
         }
 
         private List<RowGroupSurvivor> survivors(ByteRangeSource source) {

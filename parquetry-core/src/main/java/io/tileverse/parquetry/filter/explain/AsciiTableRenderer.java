@@ -20,6 +20,9 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 
+import io.tileverse.parquetry.observe.QueryStats;
+import io.tileverse.parquetry.observe.RowGroupRead;
+
 /** Renders an {@link ExplainPlan} as a compact fixed-width ASCII table. */
 final class AsciiTableRenderer {
 
@@ -35,6 +38,39 @@ final class AsciiTableRenderer {
     }
 
     String render() {
+        StringBuilder out = new StringBuilder();
+        out.append(tierConfigurationLine()).append('\n');
+        appendTable(out);
+        plan.execution().ifPresent(stats -> out.append(totalsLine(stats)).append('\n'));
+        return out.toString();
+    }
+
+    private String tierConfigurationLine() {
+        TierConfiguration config = TierConfiguration.from(plan);
+        List<String> labels = new ArrayList<>();
+        for (Tier tier : TierConfiguration.ORDER) {
+            labels.add(config.isOff(tier) ? tier.name() + "(off)" : tier.name());
+        }
+        return "Tiers: " + String.join(", ", labels);
+    }
+
+    private void appendTable(StringBuilder out) {
+        boolean withExecution = plan.execution().isPresent();
+        boolean withTime = withExecution && hasAnyTimings();
+
+        List<List<String>> rows = new ArrayList<>();
+        rows.add(headerCells(withExecution, withTime));
+        for (RowGroupPlan rg : plan.rowGroups()) {
+            rows.add(rowCells(rg, withExecution, withTime));
+        }
+
+        int[] widths = columnWidths(rows);
+        for (List<String> row : rows) {
+            appendRow(out, row, widths);
+        }
+    }
+
+    private static List<String> headerCells(boolean withExecution, boolean withTime) {
         List<String> headers = new ArrayList<>();
         headers.add("RG");
         headers.add("Rows");
@@ -42,23 +78,17 @@ final class AsciiTableRenderer {
             headers.add(TIER_HEADER.get(t));
         }
         headers.add("Outcome");
-
-        List<List<String>> rows = new ArrayList<>();
-        rows.add(headers);
-        for (RowGroupPlan rg : plan.rowGroups()) {
-            rows.add(rowCells(rg));
+        if (withExecution) {
+            headers.add("actual");
+            headers.add("bytes");
+            if (withTime) {
+                headers.add("time");
+            }
         }
-        int[] widths = columnWidths(rows);
-
-        StringBuilder out = new StringBuilder();
-        appendRow(out, rows.get(0), widths);
-        for (int i = 1; i < rows.size(); i++) {
-            appendRow(out, rows.get(i), widths);
-        }
-        return out.toString();
+        return headers;
     }
 
-    private static List<String> rowCells(RowGroupPlan rg) {
+    private static List<String> rowCells(RowGroupPlan rg, boolean withExecution, boolean withTime) {
         Map<Tier, PruningDecision> byTier = new EnumMap<>(Tier.class);
         for (PruningDecision d : rg.tiers()) {
             byTier.put(d.tier(), d);
@@ -69,15 +99,55 @@ final class AsciiTableRenderer {
         for (Tier t : TIER_ORDER) {
             cells.add(cell(byTier.get(t), rg.rowCount()));
         }
-        cells.add(
-                switch (rg.outcome()) {
-                    case ELIMINATED -> "skip";
-                    case PARTIAL ->
-                        rg.survivingRows().map(r -> r.totalRows() + " rows").orElse("partial");
-                    case FULL -> "all";
-                    case MATCHED -> "matched";
-                });
+        cells.add(outcomeCell(rg));
+        if (withExecution) {
+            appendExecutionCells(cells, rg, withTime);
+        }
         return cells;
+    }
+
+    private static void appendExecutionCells(List<String> cells, RowGroupPlan rg, boolean withTime) {
+        if (rg.execution().isEmpty()) {
+            cells.add("-");
+            cells.add("-");
+            if (withTime) {
+                cells.add("-");
+            }
+            return;
+        }
+        RowGroupRead read = rg.execution().orElseThrow();
+        cells.add(Long.toString(read.rowsMatched()));
+        cells.add(Long.toString(read.fetch().totalBytes()));
+        if (withTime) {
+            cells.add(read.timings().map(t -> formatDuration(t.decodeNanos())).orElse("-"));
+        }
+    }
+
+    private static String outcomeCell(RowGroupPlan rg) {
+        return switch (rg.outcome()) {
+            case ELIMINATED -> "skip";
+            case PARTIAL -> rg.survivingRows().map(r -> r.totalRows() + " rows").orElse("partial");
+            case FULL -> "all";
+            case MATCHED -> "matched";
+        };
+    }
+
+    private String totalsLine(QueryStats stats) {
+        return "Total: "
+                + stats.rowsMatched()
+                + " rows, "
+                + stats.totalFetch().totalBytes()
+                + " bytes, "
+                + formatDuration(stats.wallClockNanos());
+    }
+
+    private boolean hasAnyTimings() {
+        if (plan.execution().map(stats -> stats.cpuTimings().isPresent()).orElse(false)) {
+            return true;
+        }
+        return plan.rowGroups().stream()
+                .anyMatch(rg ->
+                        rg.execution().map(read -> read.timings().isPresent()).orElse(false));
     }
 
     private static String cell(PruningDecision d, long rowCount) {
@@ -90,6 +160,18 @@ final class AsciiTableRenderer {
             case PruningDecision.NarrowedTo n -> "NARROW " + n.ranges().totalRows() + "/" + rowCount;
             case PruningDecision.NotApplied _ -> "n/a";
         };
+    }
+
+    /**
+     * Formats a nanosecond duration as a short ASCII string in microseconds or milliseconds, picking the unit that
+     * reads naturally for the magnitude. Sub-millisecond values render in microseconds.
+     */
+    private static String formatDuration(long nanos) {
+        long micros = nanos / 1_000L;
+        if (micros < 1_000L) {
+            return micros + "us";
+        }
+        return (nanos / 1_000_000L) + "ms";
     }
 
     private static int[] columnWidths(List<List<String>> rows) {

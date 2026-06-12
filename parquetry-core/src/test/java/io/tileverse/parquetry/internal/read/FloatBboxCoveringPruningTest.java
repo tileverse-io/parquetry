@@ -41,6 +41,7 @@ import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.filter.explain.Tier;
 import io.tileverse.parquetry.io.ByteRangeSource;
@@ -75,11 +76,10 @@ class FloatBboxCoveringPruningTest {
     void intersectsPrunesFloatCoveringAndReturnsOverlappingRows() throws Exception {
         Path file = writeFourClusteredRowGroups();
 
-        List<PruningDecision> decisions = new ArrayList<>();
-        ReadOptions options =
-                ReadOptions.builder().pruningDecisionListener(decisions::add).build();
+        ReadOptions options = ReadOptions.DEFAULTS;
         Predicate predicate = Pred.col("geometry").bboxIntersects(Bbox.of2d(0, 0, 10, 10));
 
+        List<PruningDecision> decisions = planDecisions(file, predicate, options);
         List<Integer> ids = readIds(file, predicate, options);
 
         assertThat(statsEliminations(decisions))
@@ -150,6 +150,16 @@ class FloatBboxCoveringPruningTest {
             }
         }
         return ids;
+    }
+
+    private static List<PruningDecision> planDecisions(Path file, Predicate predicate, ReadOptions options) {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetReader dataset = ParquetReader.open(source);
+            ExplainPlan plan = dataset.explain(predicate, Projection.ALL, options);
+            return plan.rowGroups().stream()
+                    .flatMap(rowGroup -> rowGroup.tiers().stream())
+                    .toList();
+        }
     }
 
     private static ParquetSchema schemaWithFloatBboxCovering() {

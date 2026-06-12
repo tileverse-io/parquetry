@@ -15,9 +15,15 @@
  */
 package io.tileverse.parquetry.filter.explain;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 
 import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.observe.QueryStats;
+import io.tileverse.parquetry.observe.RowGroupRead;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
@@ -31,7 +37,10 @@ import io.tileverse.parquetry.schema.ParquetSchema;
  * @param normalizedPredicate the predicate after structural normalization
  * @param rowGroups one {@link RowGroupPlan} per row group in the file
  * @param estimatedRowsScanned sum of surviving rows across all row groups
- * @param estimatedBytesRead 0 in the v1 explain (no per-page byte tracking yet)
+ * @param estimatedBytesRead sum, over the non-eliminated row groups, of the total compressed size of the projected leaf
+ *     column chunks; an upper bound on the bytes a read would fetch (whole-chunk granularity, no page-level refinement)
+ * @param execution the whole-query execution stats when this plan was annotated with what a read actually did; empty
+ *     for a plain explain that never read column data
  */
 public record ExplainPlan(
         ParquetSchema fileSchema,
@@ -40,10 +49,34 @@ public record ExplainPlan(
         Predicate normalizedPredicate,
         List<RowGroupPlan> rowGroups,
         long estimatedRowsScanned,
-        long estimatedBytesRead) {
+        long estimatedBytesRead,
+        Optional<QueryStats> execution) {
 
     public ExplainPlan {
         rowGroups = List.copyOf(rowGroups);
+        Objects.requireNonNull(execution, "execution");
+    }
+
+    /**
+     * Returns a copy of this plan annotated with execution results: the whole-query {@code stats} and, on each row
+     * group, the {@link RowGroupRead} keyed by its {@link RowGroupPlan#index()} in {@code perRowGroup}. A row group
+     * with no matching entry keeps an empty execution. The original plan is left unchanged.
+     */
+    public ExplainPlan withExecution(QueryStats stats, Map<Integer, RowGroupRead> perRowGroup) {
+        List<RowGroupPlan> annotated = new ArrayList<>(rowGroups.size());
+        for (RowGroupPlan rowGroup : rowGroups) {
+            Optional<RowGroupRead> read = Optional.ofNullable(perRowGroup.get(rowGroup.index()));
+            annotated.add(rowGroup.withExecution(read));
+        }
+        return new ExplainPlan(
+                fileSchema,
+                projectedSchema,
+                originalPredicate,
+                normalizedPredicate,
+                annotated,
+                estimatedRowsScanned,
+                estimatedBytesRead,
+                Optional.of(stats));
     }
 
     /**

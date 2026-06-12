@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.internal.read;
 
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.internal.read.BatchRowGroupReader.PageCounts;
 
 /**
  * Pulls one decoded {@link ParquetRecordBatch} at a time from one row group, decoding lazily on the calling thread.
@@ -29,6 +30,24 @@ interface RowGroupBatchDriver extends AutoCloseable {
 
     /** Decodes and returns the next batch; the caller owns it and closes it. */
     ParquetRecordBatch nextBatch();
+
+    /**
+     * Data pages decoded and skipped while emitting this row group's output batches, for read observability. The
+     * default reports no pages, for fixture drivers that do not decode through a {@link BatchRowGroupReader}; the
+     * production drivers override it.
+     */
+    default PageCounts pageCounts() {
+        return PageCounts.ZERO;
+    }
+
+    /**
+     * Logical rows actually run through decode while emitting this row group's batches, for read observability. The
+     * default reports zero, for fixture drivers that do not decode through a {@link BatchRowGroupReader}; the
+     * production drivers override it.
+     */
+    default long rowsProduced() {
+        return 0L;
+    }
 
     @Override
     void close();

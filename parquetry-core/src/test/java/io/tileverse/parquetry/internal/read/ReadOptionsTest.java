@@ -18,14 +18,10 @@ package io.tileverse.parquetry.internal.read;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.util.ArrayList;
-import java.util.List;
-
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.filter.explain.PruningDecision;
-import io.tileverse.parquetry.filter.explain.Tier;
+import io.tileverse.parquetry.observe.QueryObserver;
 
 class ReadOptionsTest {
 
@@ -47,18 +43,60 @@ class ReadOptionsTest {
     }
 
     @Test
-    void listenerReceivesEachDecision() {
-        List<PruningDecision> seen = new ArrayList<>();
-        ReadOptions opts =
-                ReadOptions.builder().pruningDecisionListener(seen::add).build();
-        PruningDecision d = new PruningDecision.NotApplied(Tier.STATS, "test");
-        opts.pruningDecisionListener().accept(d);
-        assertThat(seen).containsExactly(d);
+    void defaultQueryObserverIsNone() {
+        assertThat(ReadOptions.DEFAULTS.queryObserver()).isSameAs(QueryObserver.NONE);
+    }
+
+    @Test
+    void builderSetsQueryObserver() {
+        QueryObserver observer = new QueryObserver() {};
+        ReadOptions options = ReadOptions.builder().queryObserver(observer).build();
+        assertThat(options.queryObserver()).isSameAs(observer);
     }
 
     @Test
     void zeroBatchSizeRejected() {
         ReadOptions.Builder builder = ReadOptions.builder();
         assertThatThrownBy(() -> builder.batchSize(0)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void toBuilderRoundTripsEveryField() {
+        QueryObserver observer = new QueryObserver() {};
+        ReadOptions original = ReadOptions.builder()
+                .useStatsFilter(false)
+                .useDictionaryFilter(false)
+                .useColumnIndexFilter(false)
+                .useBloomFilter(false)
+                .useRecordLevelFilter(false)
+                .useLateMaterialization(false)
+                .queryObserver(observer)
+                .batchSize(64)
+                .build();
+
+        ReadOptions copy = original.toBuilder().build();
+
+        assertThat(copy).isEqualTo(original);
+    }
+
+    @Test
+    void toBuilderSwappingObserverPreservesEveryOtherField() {
+        ReadOptions original = ReadOptions.builder()
+                .useStatsFilter(false)
+                .useColumnIndexFilter(false)
+                .batchSize(32)
+                .build();
+        QueryObserver other = new QueryObserver() {};
+
+        ReadOptions swapped = original.toBuilder().queryObserver(other).build();
+
+        assertThat(swapped.queryObserver()).isSameAs(other);
+        assertThat(swapped.useStatsFilter()).isFalse();
+        assertThat(swapped.useColumnIndexFilter()).isFalse();
+        assertThat(swapped.useDictionaryFilter()).isTrue();
+        assertThat(swapped.useBloomFilter()).isTrue();
+        assertThat(swapped.useRecordLevelFilter()).isTrue();
+        assertThat(swapped.useLateMaterialization()).isTrue();
+        assertThat(swapped.batchSize()).isEqualTo(original.batchSize());
     }
 }

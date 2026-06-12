@@ -16,9 +16,11 @@
 package io.tileverse.parquetry.filter.explain;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 import io.tileverse.parquetry.filter.RowRanges;
+import io.tileverse.parquetry.observe.RowGroupRead;
 
 /**
  * Per-row-group output of {@code FilterPipeline}: the index within the file, the row count, the ordered list of
@@ -31,15 +33,28 @@ import io.tileverse.parquetry.filter.RowRanges;
  * @param outcome the final pipeline decision (eliminated, partial, full, matched) after running every applicable tier
  * @param survivingRows the rows that survive when {@link #outcome} is {@link RowGroupOutcome#PARTIAL}; empty for
  *     {@link RowGroupOutcome#ELIMINATED}, {@link RowGroupOutcome#FULL}, and {@link RowGroupOutcome#MATCHED}
+ * @param execution the decode result for this row group when the plan was annotated with execution stats; empty for a
+ *     plain explain that never read column data
  */
 public record RowGroupPlan(
         int index,
         long rowCount,
         List<PruningDecision> tiers,
         RowGroupOutcome outcome,
-        Optional<RowRanges> survivingRows) {
+        Optional<RowRanges> survivingRows,
+        Optional<RowGroupRead> execution) {
 
     public RowGroupPlan {
         tiers = List.copyOf(tiers);
+        Objects.requireNonNull(survivingRows, "survivingRows");
+        Objects.requireNonNull(execution, "execution");
+    }
+
+    /**
+     * Returns a copy of this plan with its execution result replaced. Used when an explain plan is annotated with the
+     * per-row-group reads that actually happened.
+     */
+    RowGroupPlan withExecution(Optional<RowGroupRead> read) {
+        return new RowGroupPlan(index, rowCount, tiers, outcome, survivingRows, read);
     }
 }
