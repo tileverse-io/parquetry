@@ -17,3 +17,4 @@ dependency-reduced-pom.xml
 **/.cache/
 .flattened-pom.xml
 .jqwik-database
+/*.parquet
