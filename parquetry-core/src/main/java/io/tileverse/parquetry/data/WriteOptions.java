@@ -24,6 +24,7 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
 
+import io.tileverse.parquetry.observe.WriteObserver;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystems;
 
@@ -33,8 +34,8 @@ import lombok.NonNull;
  * Immutable configuration for the parquetry write engine.
  *
  * <p>Aggregates the typed configuration -- {@link ParquetVersion}, {@link RowGroupSize}, {@link Compression},
- * {@link EncodingPolicy}, {@link BloomFilterConfig}, {@link GeoParquetMetadataMode}, {@link WriteProgressListener} --
- * and exposes per-column override maps for compression, encoding, bloom filters, and CRS.
+ * {@link EncodingPolicy}, {@link BloomFilterConfig}, {@link GeoParquetMetadataMode}, {@link WriteObserver} -- and
+ * exposes per-column override maps for compression, encoding, bloom filters, and CRS.
  *
  * <p>The five write-only value types ({@link ParquetVersion}, {@link GeoParquetMetadataMode}, {@link RowGroupSize},
  * {@link EncodingPolicy}, {@link BloomFilterConfig}) are nested here to keep the {@code dataset} package surface
@@ -60,8 +61,8 @@ import lombok.NonNull;
  * @param keyValueMetadata caller-supplied file-level key/value metadata merged into the footer alongside the
  *     writer-managed GeoParquet entry; the reserved {@code "geo"} key is rejected; unmodifiable
  * @param tempDir working directory for column-chunk temp files
- * @param progressListener optional progress listener
- * @param progressListenerCadenceRows row cadence between {@link WriteProgressListener#onRowsWritten(long)} callbacks
+ * @param writeObserver write-observability callback target; defaults to {@link WriteObserver#NONE}
+ * @param writeObserverCadenceRows row cadence between {@link WriteObserver#onRowsWritten(long)} callbacks
  */
 public record WriteOptions(
         @NonNull ParquetVersion parquetVersion,
@@ -79,8 +80,8 @@ public record WriteOptions(
         @NonNull Map<String, CoordinateReferenceSystem> crs,
         @NonNull Map<String, String> keyValueMetadata,
         @NonNull Path tempDir,
-        @NonNull Optional<WriteProgressListener> progressListener,
-        long progressListenerCadenceRows) {
+        @NonNull WriteObserver writeObserver,
+        long writeObserverCadenceRows) {
 
     private static final String RESERVED_GEO_KEY = "geo";
 
@@ -98,9 +99,9 @@ public record WriteOptions(
             throw new IllegalArgumentException(
                     "expectedRowCount must be non-negative: " + expectedRowCount.getAsLong());
         }
-        if (progressListenerCadenceRows <= 0) {
+        if (writeObserverCadenceRows <= 0) {
             throw new IllegalArgumentException(
-                    "progressListenerCadenceRows must be positive: " + progressListenerCadenceRows);
+                    "writeObserverCadenceRows must be positive: " + writeObserverCadenceRows);
         }
         // V1.1 page format cannot carry the GeoParquet 2.0 native logical types; coerce the metadata mode for
         // coherence.
@@ -313,8 +314,8 @@ public record WriteOptions(
         private final Map<String, CoordinateReferenceSystem> crs = new LinkedHashMap<>();
         private final Map<String, String> keyValueMetadata = new LinkedHashMap<>();
         private Path tempDir = Path.of(System.getProperty("java.io.tmpdir"));
-        private Optional<WriteProgressListener> progressListener = Optional.empty();
-        private long progressListenerCadenceRows = 100_000L;
+        private WriteObserver writeObserver = WriteObserver.NONE;
+        private long writeObserverCadenceRows = 100_000L;
 
         private Builder() {}
 
@@ -440,16 +441,16 @@ public record WriteOptions(
             return this;
         }
 
-        public Builder progressListener(@NonNull WriteProgressListener l) {
-            this.progressListener = Optional.of(l);
+        public Builder writeObserver(@NonNull WriteObserver observer) {
+            this.writeObserver = observer;
             return this;
         }
 
-        public Builder progressListenerCadenceRows(long every) {
+        public Builder writeObserverCadenceRows(long every) {
             if (every <= 0) {
-                throw new IllegalArgumentException("progressListenerCadenceRows must be positive: " + every);
+                throw new IllegalArgumentException("writeObserverCadenceRows must be positive: " + every);
             }
-            this.progressListenerCadenceRows = every;
+            this.writeObserverCadenceRows = every;
             return this;
         }
 
@@ -470,8 +471,8 @@ public record WriteOptions(
                     crs,
                     keyValueMetadata,
                     tempDir,
-                    progressListener,
-                    progressListenerCadenceRows);
+                    writeObserver,
+                    writeObserverCadenceRows);
         }
 
         private static int requirePositive(String name, int value) {

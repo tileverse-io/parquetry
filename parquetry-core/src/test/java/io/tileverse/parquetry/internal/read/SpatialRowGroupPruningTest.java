@@ -43,6 +43,7 @@ import io.tileverse.parquetry.filter.GeometryFilter;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.filter.explain.Tier;
 import io.tileverse.parquetry.io.ByteRangeSource;
@@ -73,11 +74,10 @@ class SpatialRowGroupPruningTest {
     void intersectsEliminatesNonOverlappingRowGroups() throws Exception {
         Path file = writeFourClusteredRowGroups();
 
-        List<PruningDecision> decisions = new ArrayList<>();
-        ReadOptions options =
-                ReadOptions.builder().pruningDecisionListener(decisions::add).build();
+        ReadOptions options = ReadOptions.DEFAULTS;
         Predicate predicate = Pred.col("geometry").bboxIntersects(Bbox.of2d(0, 0, 10, 10));
 
+        List<PruningDecision> decisions = planDecisions(file, predicate, options);
         List<Integer> ids = readIds(file, predicate, options);
 
         assertThat(spatialEliminations(decisions))
@@ -92,12 +92,11 @@ class SpatialRowGroupPruningTest {
     void containsEliminatesRowGroupsWhoseUnionCannotEncloseTheQuery() throws Exception {
         Path file = writeFourClusteredRowGroups();
 
-        List<PruningDecision> decisions = new ArrayList<>();
-        ReadOptions options =
-                ReadOptions.builder().pruningDecisionListener(decisions::add).build();
+        ReadOptions options = ReadOptions.DEFAULTS;
         // A query box that only row group 2's geometries can possibly enclose.
         Predicate predicate = Pred.col("geometry").bboxContains(Bbox.of2d(204, 204, 204.5, 204.5));
 
+        List<PruningDecision> decisions = planDecisions(file, predicate, options);
         List<Integer> ids = readIds(file, predicate, options);
 
         assertThat(spatialEliminations(decisions))
@@ -120,11 +119,9 @@ class SpatialRowGroupPruningTest {
         GeometryFilter<Object> fake = fakePruningOnlyFilter(geomCol, Optional.of(pruning));
         Predicate predicate = Predicate.geometryFilter(fake);
 
-        List<PruningDecision> decisions = new ArrayList<>();
-        ReadOptions options =
-                ReadOptions.builder().pruningDecisionListener(decisions::add).build();
+        ReadOptions options = ReadOptions.DEFAULTS;
 
-        readIds(file, predicate, options);
+        List<PruningDecision> decisions = planDecisions(file, predicate, options);
 
         assertThat(spatialEliminations(decisions))
                 .as(
@@ -203,6 +200,16 @@ class SpatialRowGroupPruningTest {
             }
         }
         return ids;
+    }
+
+    private static List<PruningDecision> planDecisions(Path file, Predicate predicate, ReadOptions options) {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetReader dataset = ParquetReader.open(source);
+            ExplainPlan plan = dataset.explain(predicate, Projection.ALL, options);
+            return plan.rowGroups().stream()
+                    .flatMap(rowGroup -> rowGroup.tiers().stream())
+                    .toList();
+        }
     }
 
     private static ParquetSchema flatSchema(SchemaNode.Primitive... leaves) {

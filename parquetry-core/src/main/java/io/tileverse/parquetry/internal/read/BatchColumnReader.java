@@ -1841,6 +1841,11 @@ final class BatchColumnReader {
         return pageCursor.decodedDataPageCount();
     }
 
+    /** Data pages this reader advanced past without decoding because they fell outside the surviving rows. */
+    int skippedDataPageCount() {
+        return pageCursor.skippedDataPageCount();
+    }
+
     /** Count of non-null values run through a value decoder by this reader. */
     long decodedValueCount() {
         return decodedValueCount;

@@ -25,6 +25,7 @@ import java.util.OptionalInt;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 
+import io.tileverse.parquetry.observe.QueryObserver;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 import lombok.NonNull;
@@ -64,6 +65,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     private final List<Boolean> recordEvalRequired;
     private final Optional<LateMaterialization> lateMat;
     private final BatchForm batchForm;
+    private final DecodeObservation observation;
 
     private final Map<Integer, DecodedRowGroup> window = new HashMap<>();
     private final int size;
@@ -87,7 +89,8 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
             @NonNull List<Optional<RowMask>> rowMasks,
             @NonNull List<Boolean> recordEvalRequired,
             @NonNull Optional<LateMaterialization> lateMat,
-            @NonNull BatchForm batchForm) {
+            @NonNull BatchForm batchForm,
+            @NonNull DecodeObservation observation) {
         this.prefetcher = prefetcher;
         this.decodeExecutor = decodeExecutor;
         this.decodeBudget = decodeBudget;
@@ -103,6 +106,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
         this.recordEvalRequired = List.copyOf(recordEvalRequired);
         this.lateMat = lateMat;
         this.batchForm = batchForm;
+        this.observation = observation;
         this.size = prefetcher.size();
     }
 
@@ -116,9 +120,12 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
         nextToConsume++;
         DecodedRowGroup windowed = window.remove(index);
         if (windowed != null) {
+            windowed.markDelivered();
             return windowed;
         }
-        return decodeInline(index);
+        DecodedRowGroup inline = decodeInline(index);
+        inline.markDelivered();
+        return inline;
     }
 
     private void submitAhead() throws IOException {
@@ -143,11 +150,14 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     // rejection nothing was started, the empty hand-off needs no close, and the driver moves to the inline fallback.
     @SuppressWarnings("java:S2095")
     private DecodedRowGroup submitSpeculative(RowGroupFetch fetch, int index) {
+        boolean wantsTimings = observation.wantsTimings();
         RowGroupBatchDriver driver = buildDriver(fetch, rowMasks.get(index), index);
         BatchHandoff handoff = new BatchHandoff(HANDOFF_CAPACITY);
         BatchSpillStore spillStore = new BatchSpillStore(spillDir, diskBudget, projectedSchema);
-        StreamingBatchSource source = new StreamingBatchSource(handoff, driver, decodeBudget, spillStore, spillEnabled);
-        DecodedRowGroup rowGroup = new DecodedRowGroup(source, evalRequiredFor(index));
+        StreamingBatchSource source =
+                new StreamingBatchSource(handoff, driver, decodeBudget, spillStore, spillEnabled, wantsTimings);
+        DecodedRowGroup rowGroup =
+                new DecodedRowGroup(source, evalRequiredFor(index), observationFor(index, fetch.fetchNanos()));
         try {
             Future<Void> task = decodeExecutor.submitAcquired(() -> {
                 source.runProducer();
@@ -156,7 +166,10 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
             source.attachProducerTask(task);
         } catch (RejectedExecutionException _) {
             // The slot was released by submitAcquired; fall back to inline streaming over the same driver.
-            return new DecodedRowGroup(new InlineBatchSource(driver), evalRequiredFor(index));
+            return new DecodedRowGroup(
+                    new InlineBatchSource(driver, wantsTimings),
+                    evalRequiredFor(index),
+                    observationFor(index, fetch.fetchNanos()));
         }
         return rowGroup;
     }
@@ -165,7 +178,10 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
         RowGroupFetch fetch = prefetcher.take(index);
         nextToSubmit = Math.max(nextToSubmit, index + 1);
         RowGroupBatchDriver driver = buildDriver(fetch, rowMasks.get(index), index);
-        return new DecodedRowGroup(new InlineBatchSource(driver), evalRequiredFor(index));
+        return new DecodedRowGroup(
+                new InlineBatchSource(driver, observation.wantsTimings()),
+                evalRequiredFor(index),
+                observationFor(index, fetch.fetchNanos()));
     }
 
     private RowGroupBatchDriver buildDriver(RowGroupFetch fetch, Optional<RowMask> mask, int index) {
@@ -198,6 +214,24 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
         return !lateMat.isPresent() && recordEvalRequired.get(index);
     }
 
+    /**
+     * The per-row-group observation context for survivor position {@code index}, or {@code null} when no observer is
+     * attached. A {@code null} keeps {@link DecodedRowGroup} on its byte-identical decode path. {@code index} is the
+     * dense survivor position; the true file ordinal it reports comes from the observation's parallel ordinal list.
+     * {@code fetchNanos} is the row group's measured fetch time, zero when timings are off.
+     */
+    private DecodedRowGroup.ReadObservation observationFor(int index, long fetchNanos) {
+        if (observation == DecodeObservation.NONE) {
+            return null;
+        }
+        return new DecodedRowGroup.ReadObservation(
+                observation.observer(),
+                observation.rowGroupIndices().get(index),
+                observation.matchedEqualsDecoded(),
+                observation.wantsTimings(),
+                fetchNanos);
+    }
+
     @Override
     public void close() {
         for (DecodedRowGroup rowGroup : window.values()) {
@@ -209,5 +243,22 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
         }
         window.clear();
         prefetcher.close();
+    }
+
+    /**
+     * The observation context one read threads into the coordinator: the observer and the true file ordinal per
+     * survivor (the list parallel to the survivor list). {@code NONE} is the not-observing sentinel; the coordinator
+     * builds no per-row-group observation for it, keeping the decode path byte-identical. {@code matchedEqualsDecoded}
+     * is {@code true} for the pushdown-only batches path and {@code false} for the record-filtering read and count
+     * paths. {@code wantsTimings} mirrors the observer's opt-in; when off, no decode-side clock is read.
+     */
+    public record DecodeObservation(
+            QueryObserver observer, List<Integer> rowGroupIndices, boolean matchedEqualsDecoded, boolean wantsTimings) {
+
+        public static final DecodeObservation NONE = new DecodeObservation(QueryObserver.NONE, List.of(), false, false);
+
+        public DecodeObservation {
+            rowGroupIndices = List.copyOf(rowGroupIndices);
+        }
     }
 }

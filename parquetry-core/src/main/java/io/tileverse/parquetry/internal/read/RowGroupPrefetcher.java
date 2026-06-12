@@ -47,6 +47,7 @@ public final class RowGroupPrefetcher implements AutoCloseable {
     private final ExecutorService executor;
     private final int prefetchDepth;
     private final Semaphore concurrencyPermits;
+    private final boolean wantsTimings;
 
     private final Map<Integer, Future<RowGroupFetch>> window = new HashMap<>();
     private int highestSubmitted = -1;
@@ -58,12 +59,29 @@ public final class RowGroupPrefetcher implements AutoCloseable {
             @NonNull ExecutorService executor,
             int prefetchDepth,
             int maxConcurrentFetchesPerRead) {
+        this(survivors, fetcher, budget, executor, prefetchDepth, maxConcurrentFetchesPerRead, false);
+    }
+
+    /**
+     * Same as the six-argument constructor, additionally timing each fetch when {@code wantsTimings} is on: every
+     * {@link RowGroupFetch} then reports its {@code fetchNanos}. When off (the default), no fetch reads the clock.
+     */
+    @SuppressWarnings("java:S107") // internal prefetcher wiring: the parameters are cohesive collaborators of one read
+    public RowGroupPrefetcher(
+            @NonNull List<RowGroupSurvivor> survivors,
+            @NonNull RowGroupFetcher fetcher,
+            @NonNull FetchBudget budget,
+            @NonNull ExecutorService executor,
+            int prefetchDepth,
+            int maxConcurrentFetchesPerRead,
+            boolean wantsTimings) {
         this.survivors = List.copyOf(survivors);
         this.fetcher = fetcher;
         this.budget = budget;
         this.executor = executor;
         this.prefetchDepth = prefetchDepth;
         this.concurrencyPermits = new Semaphore(maxConcurrentFetchesPerRead);
+        this.wantsTimings = wantsTimings;
     }
 
     public int size() {
@@ -103,7 +121,7 @@ public final class RowGroupPrefetcher implements AutoCloseable {
         try {
             future = executor.submit(() -> {
                 try {
-                    return fetcher.fetch(survivor, plan, reservation);
+                    return fetcher.fetch(survivor, plan, reservation, wantsTimings);
                 } finally {
                     concurrencyPermits.release();
                 }
@@ -120,7 +138,7 @@ public final class RowGroupPrefetcher implements AutoCloseable {
     private RowGroupFetch fetchInline(int index) throws IOException {
         RowGroupSurvivor survivor = survivors.get(index);
         FetchPlan plan = fetcher.planFor(survivor);
-        return fetcher.fetch(survivor, plan, BudgetReservation.NONE);
+        return fetcher.fetch(survivor, plan, BudgetReservation.NONE, wantsTimings);
     }
 
     private RowGroupFetch join(Future<RowGroupFetch> future) throws IOException {

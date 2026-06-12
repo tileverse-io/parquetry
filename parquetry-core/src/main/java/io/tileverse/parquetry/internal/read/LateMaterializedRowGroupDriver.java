@@ -61,6 +61,32 @@ final class LateMaterializedRowGroupDriver implements RowGroupBatchDriver {
         }
     }
 
+    /**
+     * The row group's full page tally: phase 1 (predicate-column decode) plus phase 2 (output-column decode). Phase 2
+     * is absent when phase 1 matched no row, hence the phase-1 tally stands alone there - it can still be non-zero, the
+     * predicate columns having been decoded to prove the row group out.
+     */
+    @Override
+    public BatchRowGroupReader.PageCounts pageCounts() {
+        BatchRowGroupReader.PageCounts phase1 = reader.phase1PageCounts();
+        if (outputReader == null) {
+            return phase1;
+        }
+        BatchRowGroupReader.PageCounts phase2 = outputReader.pageCounts();
+        return new BatchRowGroupReader.PageCounts(
+                phase1.decoded() + phase2.decoded(), phase1.skipped() + phase2.skipped());
+    }
+
+    /**
+     * The rows this row group actually ran through decode: phase 1's predicate scan covers every surviving row, while
+     * phase 2 re-decodes only the matched subset's output columns. Phase 1's tally is the decoded-row figure; adding
+     * phase 2 would double-count the matched rows.
+     */
+    @Override
+    public long rowsProduced() {
+        return reader.phase1RowsProduced();
+    }
+
     @Override
     public void close() {
         try {

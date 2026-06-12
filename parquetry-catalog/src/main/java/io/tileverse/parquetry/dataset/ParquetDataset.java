@@ -147,6 +147,13 @@ public sealed interface ParquetDataset permits DefaultParquetDataset {
     ExplainPlan explain(Predicate predicate, Projection projection, ReadOptions options);
 
     /**
+     * Runs the filter pipeline and then a count-style drain of {@code predicate}, returning the {@link ExplainPlan}
+     * annotated with the execution stats that drain actually produced. Use this to compare planned pruning against
+     * measured work. Single-file only for now; throws {@link UnsupportedOperationException} on a multi-file dataset.
+     */
+    ExplainPlan explainAnalyze(Predicate predicate, Projection projection, ReadOptions options);
+
+    /**
      * Counts the rows matching {@code predicate} without assembling any record.
      *
      * <p>{@link Predicate.Always} (the no-predicate {@link #count()} and the always-false case) is answered from

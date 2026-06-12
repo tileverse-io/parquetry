@@ -69,6 +69,8 @@ public final class BatchRowGroupReader implements AutoCloseable {
     // Lazily built on first nextBatch() call; keyed by column path in declaration order.
     private Map<ColumnPath, BatchColumnReader> columnReaders;
 
+    private long rowsProducedTotal;
+
     public BatchRowGroupReader(
             @NonNull DecodeBufferAllocator decodeBufferAllocator,
             @NonNull List<FetchedColumnChunk> chunks,
@@ -146,6 +148,7 @@ public final class BatchRowGroupReader implements AutoCloseable {
         try {
             ensureColumnReadersBuilt();
             int batchRows = computeBatchRows();
+            rowsProducedTotal += batchRows;
             Map<ColumnPath, LevelSlice> repLevelsByLeaf = new HashMap<>();
             Map<ColumnPath, LevelSlice> defLevelsByLeaf = new HashMap<>();
             Map<ColumnPath, ColumnVector> leafVectors =
@@ -231,6 +234,38 @@ public final class BatchRowGroupReader implements AutoCloseable {
         if (firstFailure != null) {
             throw firstFailure;
         }
+    }
+
+    // --- page-count summary ---
+
+    /**
+     * Sums the data pages decoded and skipped across every column reader, for the read observability callback. Returns
+     * zeros before the first batch is pulled (no column reader has been built yet).
+     */
+    public PageCounts pageCounts() {
+        if (columnReaders == null) {
+            return PageCounts.ZERO;
+        }
+        int decoded = 0;
+        int skipped = 0;
+        for (BatchColumnReader reader : columnReaders.values()) {
+            decoded += reader.decodedDataPageCount();
+            skipped += reader.skippedDataPageCount();
+        }
+        return new PageCounts(decoded, skipped);
+    }
+
+    /** Data pages decoded and skipped across a row group's column readers. */
+    public record PageCounts(int decoded, int skipped) {
+        static final PageCounts ZERO = new PageCounts(0, 0);
+    }
+
+    /**
+     * Logical rows this reader has decoded into batches, for the read observability callback. Counts batch rows as they
+     * are produced, never the row group's metadata row count; an abandoned reader reports only what it decoded.
+     */
+    public long rowsProduced() {
+        return rowsProducedTotal;
     }
 
     // --- column reader construction ---

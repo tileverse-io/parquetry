@@ -70,4 +70,55 @@ class ExplainCmdTest {
         int code = cmd.execute("explain", file.toString(), "-o", "csv");
         assertThat(code).isEqualTo(2);
     }
+
+    @Test
+    void analyzeAnnotatesActualCounts(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("cities.parquet");
+        Fixtures.writeCities(file);
+        StringWriter out = new StringWriter();
+        CommandLine cmd = Par.newCommandLine();
+        cmd.setOut(new PrintWriter(out));
+        int code = cmd.execute("explain", file.toString(), "--filter", "pop > 1000000", "--analyze");
+        assertThat(code).isZero();
+        // The execution annotation adds an "actual" column and a totals line.
+        assertThat(out.toString()).contains("actual");
+    }
+
+    @Test
+    void unfilteredAnalyzeAnnotatesActualCounts(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("cities.parquet");
+        Fixtures.writeCities(file);
+        StringWriter out = new StringWriter();
+        CommandLine cmd = Par.newCommandLine();
+        cmd.setOut(new PrintWriter(out));
+        // A full scan (no --filter) decodes the projected columns and reports their real read cost.
+        int code = cmd.execute("explain", file.toString(), "--analyze");
+        assertThat(code).isZero();
+        assertThat(out.toString()).contains("actual");
+    }
+
+    @Test
+    void analyzeAsJsonAddsExecution(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("cities.parquet");
+        Fixtures.writeCities(file);
+        StringWriter out = new StringWriter();
+        CommandLine cmd = Par.newCommandLine();
+        cmd.setOut(new PrintWriter(out));
+        int code = cmd.execute("explain", file.toString(), "--filter", "pop > 1000000", "--analyze", "-o", "json");
+        assertThat(code).isZero();
+        assertThat(out.toString()).contains("execution");
+    }
+
+    @Test
+    void analyzeIncludesTiming(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("cities.parquet");
+        Fixtures.writeCities(file);
+        StringWriter out = new StringWriter();
+        CommandLine cmd = Par.newCommandLine();
+        cmd.setOut(new PrintWriter(out));
+        int code = cmd.execute("explain", file.toString(), "--filter", "pop > 1000000", "--analyze");
+        assertThat(code).isZero();
+        // --analyze always measures per-phase timing, which adds the "time" column.
+        assertThat(out.toString()).contains("actual").contains("time");
+    }
 }

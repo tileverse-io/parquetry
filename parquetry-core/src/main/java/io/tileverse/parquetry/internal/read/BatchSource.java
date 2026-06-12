@@ -30,6 +30,24 @@ sealed interface BatchSource extends AutoCloseable permits InlineBatchSource, St
     /** Returns the next batch in order; the consumer owns it and closes it. */
     ParquetRecordBatch next();
 
+    /**
+     * Data pages decoded and skipped for this row group, for read observability. Read only after the source is drained
+     * or closed; the streaming source's producer has then finished and its counters are stable.
+     */
+    BatchRowGroupReader.PageCounts pageCounts();
+
+    /**
+     * Logical rows actually run through decode for this row group, for read observability. Read only after the source
+     * is drained or closed; the streaming source's producer has then finished and its counters are stable.
+     */
+    long rowsProduced();
+
+    /**
+     * Nanoseconds spent decoding this row group's batches, or zero when the observer did not opt into timings. Read
+     * only after the source is drained or closed, under the same join as {@link #pageCounts()}.
+     */
+    long decodeNanos();
+
     @Override
     void close();
 }

@@ -16,9 +16,8 @@
 package io.tileverse.parquetry.data;
 
 import java.util.OptionalInt;
-import java.util.function.Consumer;
 
-import io.tileverse.parquetry.filter.explain.PruningDecision;
+import io.tileverse.parquetry.observe.QueryObserver;
 
 import lombok.NonNull;
 
@@ -28,8 +27,8 @@ import lombok.NonNull;
  * {@link ParquetRuntime}, bound once at {@code ParquetDataset.open(...)}, not here.
  *
  * <p>Filter toggles default to ON; turn them off to bypass a tier (useful for measuring effectiveness or working around
- * a known-bad statistic). The {@code pruningDecisionListener} receives one {@link PruningDecision} per (row group,
- * tier) pair as the pipeline runs - the same vocabulary as {@code ExplainPlan}.
+ * a known-bad statistic). The {@code queryObserver} receives query and row-group boundary callbacks as the read runs;
+ * it defaults to {@link QueryObserver#NONE} (no-op).
  *
  * <p>Reads execute synchronously on the caller's thread. Callers that want parallelism issue concurrent
  * {@code read(...)} calls against the dataset (which is thread-safe), or wrap the returned
@@ -45,7 +44,8 @@ import lombok.NonNull;
  *     rows that match the predicate (two-phase decode); when off, decode every surviving row's output columns and drop
  *     non-matches at materialization. Honored only when {@code useRecordLevelFilter} is on and the predicate is
  *     non-trivial; otherwise it has no effect.
- * @param pruningDecisionListener called once per per-row-group tier outcome; never {@code null} (defaults to no-op)
+ * @param queryObserver receives query and row-group boundary callbacks; never {@code null} (defaults to
+ *     {@link QueryObserver#NONE})
  * @param batchSize maximum row count per emitted batch on the {@code readBatches(...)} path; empty means each batch is
  *     bounded only by the natural page row count
  */
@@ -56,7 +56,7 @@ public record ReadOptions(
         boolean useBloomFilter,
         boolean useRecordLevelFilter,
         boolean useLateMaterialization,
-        @NonNull Consumer<PruningDecision> pruningDecisionListener,
+        @NonNull QueryObserver queryObserver,
         @NonNull OptionalInt batchSize) {
 
     public ReadOptions {
@@ -65,11 +65,28 @@ public record ReadOptions(
         }
     }
 
-    /** Sensible defaults: all tiers on, no listener, natural batch size. */
+    /** Sensible defaults: all tiers on, no observer, natural batch size. */
     public static final ReadOptions DEFAULTS = builder().build();
 
     public static Builder builder() {
         return new Builder();
+    }
+
+    /**
+     * A {@link Builder} pre-populated with this instance's field values. Mutating one field and calling {@code build()}
+     * yields a copy differing only in that field.
+     */
+    public Builder toBuilder() {
+        Builder builder = new Builder();
+        builder.useStatsFilter = useStatsFilter;
+        builder.useDictionaryFilter = useDictionaryFilter;
+        builder.useColumnIndexFilter = useColumnIndexFilter;
+        builder.useBloomFilter = useBloomFilter;
+        builder.useRecordLevelFilter = useRecordLevelFilter;
+        builder.useLateMaterialization = useLateMaterialization;
+        builder.queryObserver = queryObserver;
+        builder.batchSize = batchSize;
+        return builder;
     }
 
     /** Fluent builder for {@link ReadOptions}. */
@@ -81,7 +98,7 @@ public record ReadOptions(
         private boolean useBloomFilter = true;
         private boolean useRecordLevelFilter = true;
         private boolean useLateMaterialization = true;
-        private Consumer<PruningDecision> pruningDecisionListener = _ -> {};
+        private QueryObserver queryObserver = QueryObserver.NONE;
         private OptionalInt batchSize = OptionalInt.empty();
 
         private Builder() {}
@@ -116,8 +133,8 @@ public record ReadOptions(
             return this;
         }
 
-        public Builder pruningDecisionListener(@NonNull Consumer<PruningDecision> v) {
-            this.pruningDecisionListener = v;
+        public Builder queryObserver(@NonNull QueryObserver v) {
+            this.queryObserver = v;
             return this;
         }
 
@@ -142,7 +159,7 @@ public record ReadOptions(
                     useBloomFilter,
                     useRecordLevelFilter,
                     useLateMaterialization,
-                    pruningDecisionListener,
+                    queryObserver,
                     batchSize);
         }
     }

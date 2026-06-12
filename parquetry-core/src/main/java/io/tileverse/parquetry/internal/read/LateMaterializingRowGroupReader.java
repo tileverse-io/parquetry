@@ -68,6 +68,14 @@ public final class LateMaterializingRowGroupReader {
     private final BatchForm outputForm;
     private final DecodeBufferAllocator decodeBufferAllocator;
 
+    // Phase-1 predicate-column page tally, captured before the phase-1 reader is closed. The closed reader can no
+    // longer
+    // report it, yet the row group's read event must account for the predicate-column pages too.
+    private BatchRowGroupReader.PageCounts phase1PageCounts = BatchRowGroupReader.PageCounts.ZERO;
+
+    // Phase-1 decoded-row tally, captured alongside the page tally for the same reason.
+    private long phase1RowsProduced;
+
     // S107: aggregates the late-materialization decode inputs; a parameter object would only relocate the arity.
     @SuppressWarnings("java:S107")
     public LateMaterializingRowGroupReader(
@@ -153,8 +161,27 @@ public final class LateMaterializingRowGroupReader {
                     evaluateBatch(batch, cursor, selectionBuilder);
                 }
             }
+            phase1PageCounts = phase1.pageCounts();
+            phase1RowsProduced = phase1.rowsProduced();
         }
         return selectionBuilder.build();
+    }
+
+    /**
+     * The data pages phase 1 decoded and skipped over the predicate columns. Valid after {@link #selectMatching()} has
+     * run; the phase-1 reader has been closed by then, hence the count is read from this retained tally rather than
+     * from the reader.
+     */
+    public BatchRowGroupReader.PageCounts phase1PageCounts() {
+        return phase1PageCounts;
+    }
+
+    /**
+     * The rows phase 1 ran through decode over the predicate columns: every surviving row, whether or not it matched.
+     * Valid after {@link #selectMatching()} has run, read from the retained tally like {@link #phase1PageCounts()}.
+     */
+    public long phase1RowsProduced() {
+        return phase1RowsProduced;
     }
 
     private void evaluateBatch(ParquetRecordBatch batch, RowRangeCursor cursor, Selection.Builder selectionBuilder) {

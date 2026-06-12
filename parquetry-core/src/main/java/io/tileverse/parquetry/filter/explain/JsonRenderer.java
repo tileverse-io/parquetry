@@ -16,6 +16,10 @@
 package io.tileverse.parquetry.filter.explain;
 
 import io.tileverse.parquetry.filter.RowRanges;
+import io.tileverse.parquetry.observe.FetchStats;
+import io.tileverse.parquetry.observe.PhaseTimings;
+import io.tileverse.parquetry.observe.QueryStats;
+import io.tileverse.parquetry.observe.RowGroupRead;
 
 /** Minimal hand-rolled JSON emitter for {@link ExplainPlan}. Avoids pulling Jackson into core's runtime classpath. */
 final class JsonRenderer {
@@ -30,6 +34,7 @@ final class JsonRenderer {
         appendString(sb, plan.normalizedPredicate().toString());
         sb.append(",\"estimatedRowsScanned\":").append(plan.estimatedRowsScanned());
         sb.append(",\"estimatedBytesRead\":").append(plan.estimatedBytesRead());
+        appendTierConfiguration(sb, plan);
         sb.append(",\"rowGroups\":[");
         for (int i = 0; i < plan.rowGroups().size(); i++) {
             if (i > 0) {
@@ -37,8 +42,25 @@ final class JsonRenderer {
             }
             appendRowGroup(sb, plan.rowGroups().get(i));
         }
-        sb.append("]}");
+        sb.append("]");
+        plan.execution().ifPresent(stats -> appendQueryStats(sb, stats));
+        sb.append("}");
         return sb.toString();
+    }
+
+    private static void appendTierConfiguration(StringBuilder sb, ExplainPlan plan) {
+        TierConfiguration config = TierConfiguration.from(plan);
+        sb.append(",\"tiers\":[");
+        for (int i = 0; i < TierConfiguration.ORDER.size(); i++) {
+            if (i > 0) {
+                sb.append(',');
+            }
+            Tier tier = TierConfiguration.ORDER.get(i);
+            sb.append("{\"name\":\"").append(tier.name()).append('"');
+            sb.append(",\"off\":").append(config.isOff(tier));
+            sb.append('}');
+        }
+        sb.append(']');
     }
 
     private static void appendRowGroup(StringBuilder sb, RowGroupPlan rg) {
@@ -54,6 +76,7 @@ final class JsonRenderer {
         }
         sb.append("]");
         rg.survivingRows().ifPresent(r -> appendRowRanges(sb, r));
+        rg.execution().ifPresent(read -> appendRowGroupRead(sb, read));
         sb.append('}');
     }
 
@@ -82,6 +105,52 @@ final class JsonRenderer {
                     .append(']');
         }
         sb.append(']');
+    }
+
+    private static void appendQueryStats(StringBuilder sb, QueryStats stats) {
+        sb.append(",\"execution\":{");
+        sb.append("\"wallClockNanos\":").append(stats.wallClockNanos());
+        sb.append(",\"rowsDecoded\":").append(stats.rowsDecoded());
+        sb.append(",\"rowsMatched\":").append(stats.rowsMatched());
+        sb.append(",\"rowGroupsRead\":").append(stats.rowGroupsRead());
+        sb.append(",\"rowGroupsTotal\":").append(stats.rowGroupsTotal());
+        sb.append(",\"pagesDecoded\":").append(stats.pagesDecoded());
+        sb.append(",\"pagesPruned\":").append(stats.pagesPruned());
+        appendFetchStats(sb, stats.totalFetch());
+        stats.cpuTimings().ifPresent(timings -> appendTimings(sb, timings));
+        sb.append('}');
+    }
+
+    private static void appendRowGroupRead(StringBuilder sb, RowGroupRead read) {
+        sb.append(",\"execution\":{");
+        sb.append("\"rowsDecoded\":").append(read.rowsDecoded());
+        sb.append(",\"rowsMatched\":").append(read.rowsMatched());
+        sb.append(",\"pagesDecoded\":").append(read.pagesDecoded());
+        sb.append(",\"pagesPruned\":").append(read.pagesPruned());
+        appendFetchStats(sb, read.fetch());
+        read.timings().ifPresent(timings -> appendTimings(sb, timings));
+        sb.append('}');
+    }
+
+    private static void appendFetchStats(StringBuilder sb, FetchStats fetch) {
+        sb.append(",\"fetch\":{");
+        sb.append("\"totalBytes\":").append(fetch.totalBytes());
+        sb.append(",\"pageBytes\":").append(fetch.pageBytes());
+        sb.append(",\"dictionaryBytes\":").append(fetch.dictionaryBytes());
+        sb.append(",\"columnIndexBytes\":").append(fetch.columnIndexBytes());
+        sb.append(",\"offsetIndexBytes\":").append(fetch.offsetIndexBytes());
+        sb.append(",\"bloomFilterBytes\":").append(fetch.bloomFilterBytes());
+        sb.append(",\"fetchCount\":").append(fetch.fetchCount());
+        sb.append('}');
+    }
+
+    private static void appendTimings(StringBuilder sb, PhaseTimings timings) {
+        sb.append(",\"timings\":{");
+        sb.append("\"pipelineNanos\":").append(timings.pipelineNanos());
+        sb.append(",\"fetchNanos\":").append(timings.fetchNanos());
+        sb.append(",\"decodeNanos\":").append(timings.decodeNanos());
+        sb.append(",\"recordFilterNanos\":").append(timings.recordFilterNanos());
+        sb.append('}');
     }
 
     private static void appendString(StringBuilder sb, String s) {

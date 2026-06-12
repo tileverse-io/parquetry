@@ -57,7 +57,11 @@ public final class BatchPipeline {
      */
     @MustBeClosed
     public static Stream<ParquetRecordBatch> batches(@NonNull ParallelDecodeCoordinator coordinator) {
-        BatchIterator iterator = new BatchIterator(coordinator);
+        return stream(new BatchIterator(coordinator));
+    }
+
+    @MustBeClosed
+    private static Stream<ParquetRecordBatch> stream(BatchIterator iterator) {
         Spliterator<ParquetRecordBatch> spliterator =
                 Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED | Spliterator.NONNULL);
         return StreamSupport.stream(spliterator, /*parallel*/ false).onClose(iterator::close);
@@ -78,13 +82,15 @@ public final class BatchPipeline {
             @NonNull ParallelDecodeCoordinator coordinator,
             @NonNull Materializer<T> materializer,
             @NonNull ParquetSchema outputSchema,
-            Predicate recordFilter) {
-        return rows(coordinator, materializer, outputSchema, recordFilter, batch -> {});
+            Predicate recordFilter,
+            boolean observe,
+            boolean wantsTimings) {
+        return rows(coordinator, materializer, outputSchema, recordFilter, observe, wantsTimings, batch -> {});
     }
 
     /**
-     * Same as {@link #rows(ParallelDecodeCoordinator, Materializer, ParquetSchema, Predicate)}, plus a
-     * {@code batchObserver} notified the moment each freshly pulled batch becomes the one live batch. Tests use it to
+     * Same as {@link #rows(ParallelDecodeCoordinator, Materializer, ParquetSchema, Predicate, boolean, boolean)}, plus
+     * a {@code batchObserver} notified the moment each freshly pulled batch becomes the one live batch. Tests use it to
      * assert that at most one batch is resident at a time.
      */
     @MustBeClosed
@@ -93,9 +99,11 @@ public final class BatchPipeline {
             @NonNull Materializer<T> materializer,
             @NonNull ParquetSchema outputSchema,
             Predicate recordFilter,
+            boolean observe,
+            boolean wantsTimings,
             @NonNull Consumer<ParquetRecordBatch> batchObserver) {
-        RowIterator<T> iterator =
-                new RowIterator<>(coordinator, materializer, outputSchema, recordFilter, batchObserver);
+        RowIterator<T> iterator = new RowIterator<>(
+                coordinator, materializer, outputSchema, recordFilter, batchObserver, observe, wantsTimings);
         Spliterator<T> spliterator =
                 Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED | Spliterator.NONNULL);
         return StreamSupport.stream(spliterator, /*parallel*/ false).onClose(iterator::close);
@@ -106,13 +114,20 @@ public final class BatchPipeline {
      * evaluated columnar-style ({@link VectorizedPredicateEvaluator}) and its matching-row bitset cardinality is
      * summed. Every batch is closed as it is consumed; closing the stream cascades to the coordinator.
      */
-    public static long countMatching(@NonNull ParallelDecodeCoordinator coordinator, @NonNull Predicate predicate) {
+    public static long countMatching(
+            @NonNull ParallelDecodeCoordinator coordinator, @NonNull Predicate predicate, boolean observe) {
         long total = 0L;
-        try (Stream<ParquetRecordBatch> batches = batches(coordinator)) {
+        BatchIterator iterator = new BatchIterator(coordinator);
+        try (Stream<ParquetRecordBatch> batches = stream(iterator)) {
             Iterator<ParquetRecordBatch> it = batches.iterator();
             while (it.hasNext()) {
                 try (ParquetRecordBatch batch = it.next()) {
-                    total += VectorizedPredicateEvaluator.eval(predicate, batch).cardinality();
+                    long matched =
+                            VectorizedPredicateEvaluator.eval(predicate, batch).cardinality();
+                    total += matched;
+                    if (observe) {
+                        iterator.addMatchedToCurrentRowGroup(matched);
+                    }
                 }
             }
         }
@@ -160,6 +175,14 @@ public final class BatchPipeline {
             return currentRowGroup.next();
         }
 
+        /**
+         * Attributes {@code matched} rows to the row group that produced the batch just returned by {@link #next()}.
+         * Only the count path calls it, and only when observing.
+         */
+        void addMatchedToCurrentRowGroup(long matched) {
+            currentRowGroup.addMatchedRows(matched);
+        }
+
         @Override
         public void close() {
             closeCurrentRowGroup();
@@ -197,12 +220,16 @@ public final class BatchPipeline {
         private final ParquetSchema outputSchema;
         private final Predicate recordFilter;
         private final Consumer<ParquetRecordBatch> batchObserver;
+        private final boolean observe;
+        private final boolean wantsTimings;
 
         private DecodedRowGroup currentRowGroup;
         private Predicate currentFilter;
         private ParquetRecordBatch currentBatch;
         private int rowIndex;
         private int batchRowCount;
+        private long matchedInCurrentRowGroup;
+        private long recordFilterNanosInCurrentRowGroup;
 
         private boolean hasComputedNext;
         private T next;
@@ -212,12 +239,16 @@ public final class BatchPipeline {
                 Materializer<T> materializer,
                 ParquetSchema outputSchema,
                 Predicate recordFilter,
-                Consumer<ParquetRecordBatch> batchObserver) {
+                Consumer<ParquetRecordBatch> batchObserver,
+                boolean observe,
+                boolean wantsTimings) {
             this.coordinator = coordinator;
             this.materializer = materializer;
             this.outputSchema = outputSchema;
             this.recordFilter = recordFilter;
             this.batchObserver = batchObserver;
+            this.observe = observe;
+            this.wantsTimings = wantsTimings;
         }
 
         @Override
@@ -252,12 +283,32 @@ public final class BatchPipeline {
             }
         }
 
-        /** Materializes the next surviving row in the current batch, or {@code null} once its rows are exhausted. */
+        /**
+         * Materializes the next surviving row in the current batch, or {@code null} once its rows are exhausted. When
+         * the observer opted into timings, each scan resumption is bracketed and the elapsed time accumulates into the
+         * current row group's record-filter tally; the figure covers predicate evaluation plus the per-row
+         * materialization interleaved with it.
+         */
         private T scanCurrentBatch() {
+            if (!wantsTimings) {
+                return scanRows();
+            }
+            long start = System.nanoTime();
+            try {
+                return scanRows();
+            } finally {
+                recordFilterNanosInCurrentRowGroup += System.nanoTime() - start;
+            }
+        }
+
+        private T scanRows() {
             while (rowIndex < batchRowCount) {
                 ParquetRecord row = currentBatch.materialize(rowIndex);
                 rowIndex++;
                 if (currentFilter == null || RecordLevelEvaluator.test(currentFilter, row::get)) {
+                    if (observe) {
+                        matchedInCurrentRowGroup++;
+                    }
                     return materializer.materialize(outputSchema, row);
                 }
             }
@@ -326,6 +377,14 @@ public final class BatchPipeline {
             currentRowGroup = null;
             currentFilter = null;
             if (rowGroup != null) {
+                if (observe) {
+                    rowGroup.addMatchedRows(matchedInCurrentRowGroup);
+                    matchedInCurrentRowGroup = 0L;
+                }
+                if (wantsTimings) {
+                    rowGroup.addRecordFilterNanos(recordFilterNanosInCurrentRowGroup);
+                    recordFilterNanosInCurrentRowGroup = 0L;
+                }
                 rowGroup.close();
             }
         }

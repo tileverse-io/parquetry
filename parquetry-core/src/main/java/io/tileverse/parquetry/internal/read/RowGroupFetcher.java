@@ -27,6 +27,8 @@ import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.io.SegmentPool.Pooled;
+import io.tileverse.parquetry.observe.FetchAccumulator;
+import io.tileverse.parquetry.observe.FetchPurpose;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
@@ -46,7 +48,10 @@ public final class RowGroupFetcher {
     private final FetchBufferAllocator mandatoryAllocator;
     private final int maxCoalesceGap;
     private final int maxCoalescedSpan;
+    private final FetchAccumulator accumulator;
 
+    // internal fetcher wiring: the eight parameters are cohesive collaborators of one row-group fetch
+    @SuppressWarnings("java:S107")
     public RowGroupFetcher(
             @NonNull ByteRangeSource source,
             @NonNull ParquetSchema fileSchema,
@@ -54,7 +59,8 @@ public final class RowGroupFetcher {
             @NonNull SegmentPool pool,
             @NonNull FetchBufferAllocator mandatoryAllocator,
             int maxCoalesceGap,
-            int maxCoalescedSpan) {
+            int maxCoalescedSpan,
+            @NonNull FetchAccumulator accumulator) {
         this.source = source;
         this.fileSchema = fileSchema;
         this.projectedSchema = projectedSchema;
@@ -62,6 +68,7 @@ public final class RowGroupFetcher {
         this.mandatoryAllocator = mandatoryAllocator;
         this.maxCoalesceGap = maxCoalesceGap;
         this.maxCoalescedSpan = maxCoalescedSpan;
+        this.accumulator = accumulator;
     }
 
     /**
@@ -88,6 +95,18 @@ public final class RowGroupFetcher {
      */
     public RowGroupFetch fetch(RowGroupSurvivor survivor, FetchPlan plan, BudgetReservation reservation)
             throws IOException {
+        return fetch(survivor, plan, reservation, false);
+    }
+
+    /**
+     * Same as {@link #fetch(RowGroupSurvivor, FetchPlan, BudgetReservation)}, additionally timing the fetch when
+     * {@code wantsTimings} is on: the elapsed nanoseconds land on the returned {@link RowGroupFetch#fetchNanos()}. When
+     * off, no clock is read and the fetch reports zero.
+     */
+    public RowGroupFetch fetch(
+            RowGroupSurvivor survivor, FetchPlan plan, BudgetReservation reservation, boolean wantsTimings)
+            throws IOException {
+        long startNanos = wantsTimings ? System.nanoTime() : 0L;
         RowGroupChunks chunks = survivor.chunks();
         boolean speculative = reservation != BudgetReservation.NONE;
         List<Pooled> buffers = new ArrayList<>(plan.ranges().size());
@@ -102,10 +121,12 @@ public final class RowGroupFetcher {
                     throw new IOException("Short read for coalesced range at offset " + range.fileOffset()
                             + ": expected " + range.length() + " bytes, got " + read);
                 }
+                accumulator.add(FetchPurpose.PAGES, read);
                 rangeSegments.add(rangeSegment);
             }
             List<FetchedColumnChunk> columns = sliceColumns(plan, chunks, rangeSegments);
-            return new RowGroupFetch(buffers, columns, reservation);
+            long fetchNanos = wantsTimings ? System.nanoTime() - startNanos : 0L;
+            return new RowGroupFetch(buffers, columns, reservation, fetchNanos);
         } catch (IOException | RuntimeException e) {
             for (Pooled buffer : buffers) {
                 try {

@@ -22,6 +22,7 @@ import java.nio.file.Path;
 
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
+import io.tileverse.parquetry.observe.FetchAccumulator;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
@@ -39,11 +40,20 @@ final class TestFetchers {
 
     static RowGroupFetcher over(
             ByteRangeSource source, ParquetSchema fileSchema, ParquetSchema projectedSchema, SegmentPool pool) {
+        return over(source, fileSchema, projectedSchema, pool, FetchAccumulator.NONE);
+    }
+
+    static RowGroupFetcher over(
+            ByteRangeSource source,
+            ParquetSchema fileSchema,
+            ParquetSchema projectedSchema,
+            SegmentPool pool,
+            FetchAccumulator accumulator) {
         FetchBufferAllocator allocator = new FetchBufferAllocator(
                 pool,
                 FetchBudget.ofBytes(AMPLE_FETCH_BUDGET),
                 new FetchSpillStore(spillDir(), DiskBudget.ofBytes(AMPLE_DISK_BUDGET)));
-        return new RowGroupFetcher(source, fileSchema, projectedSchema, pool, allocator, 1 << 20, 8 << 20);
+        return new RowGroupFetcher(source, fileSchema, projectedSchema, pool, allocator, 1 << 20, 8 << 20, accumulator);
     }
 
     private static Path spillDir() {

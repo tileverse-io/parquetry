@@ -39,8 +39,12 @@ final class StreamingBatchSource implements BatchSource {
     private final DecodeBudget budget;
     private final BatchSpillStore spillStore;
     private final boolean spillEnabled;
+    private final boolean wantsTimings;
 
     private final BooleanSupplier giveUp;
+
+    // Written by the producer thread; the consumer reads it only after close() has joined the producer.
+    private long decodeNanos;
 
     // Written once by the coordinator right after submission, read once by the consumer in close().
     @SuppressWarnings("java:S3077")
@@ -52,11 +56,26 @@ final class StreamingBatchSource implements BatchSource {
             @NonNull DecodeBudget budget,
             @NonNull BatchSpillStore spillStore,
             boolean spillEnabled) {
+        this(handoff, driver, budget, spillStore, spillEnabled, false);
+    }
+
+    /**
+     * Same as the five-argument constructor, additionally timing the producer's driver calls when {@code wantsTimings}
+     * is on: the elapsed decode time accumulates into {@link #decodeNanos()}. When off (the default), no clock is read.
+     */
+    StreamingBatchSource(
+            @NonNull BatchHandoff handoff,
+            @NonNull RowGroupBatchDriver driver,
+            @NonNull DecodeBudget budget,
+            @NonNull BatchSpillStore spillStore,
+            boolean spillEnabled,
+            boolean wantsTimings) {
         this.handoff = handoff;
         this.driver = driver;
         this.budget = budget;
         this.spillStore = spillStore;
         this.spillEnabled = spillEnabled;
+        this.wantsTimings = wantsTimings;
         this.giveUp = handoff::isCancelled;
     }
 
@@ -71,8 +90,8 @@ final class StreamingBatchSource implements BatchSource {
     @SuppressWarnings("java:S1181") // an Error on the worker must reach the consumer, otherwise the hand-off hangs
     void runProducer() {
         try (driver) {
-            while (driver.hasMore() && !handoff.isCancelled()) {
-                ParquetRecordBatch batch = driver.nextBatch();
+            while (hasMoreTimed() && !handoff.isCancelled()) {
+                ParquetRecordBatch batch = nextBatchTimed();
                 handoff.put(admit(batch));
             }
             handoff.complete();
@@ -82,6 +101,28 @@ final class StreamingBatchSource implements BatchSource {
         } catch (RuntimeException | Error e) {
             handoff.fail(e);
         }
+    }
+
+    // hasMore is timed too: the late-materializing driver runs its phase-1 predicate scan on the first hasMore call.
+    // Only the driver calls are bracketed, never the hand-off, which may park waiting on the consumer.
+    private boolean hasMoreTimed() {
+        if (!wantsTimings) {
+            return driver.hasMore();
+        }
+        long start = System.nanoTime();
+        boolean more = driver.hasMore();
+        decodeNanos += System.nanoTime() - start;
+        return more;
+    }
+
+    private ParquetRecordBatch nextBatchTimed() {
+        if (!wantsTimings) {
+            return driver.nextBatch();
+        }
+        long start = System.nanoTime();
+        ParquetRecordBatch batch = driver.nextBatch();
+        decodeNanos += System.nanoTime() - start;
+        return batch;
     }
 
     /**
@@ -121,6 +162,33 @@ final class StreamingBatchSource implements BatchSource {
     @Override
     public ParquetRecordBatch next() {
         return handoff.next();
+    }
+
+    /**
+     * The driver's page counts. The consumer reads this only after {@link #close()} has joined the producer, hence the
+     * producer-thread writes to the page cursors happen-before this read.
+     */
+    @Override
+    public BatchRowGroupReader.PageCounts pageCounts() {
+        return driver.pageCounts();
+    }
+
+    /**
+     * The driver's decoded-row tally, under the same join as {@link #pageCounts()}: the consumer reads it only after
+     * {@link #close()} has awaited the producer.
+     */
+    @Override
+    public long rowsProduced() {
+        return driver.rowsProduced();
+    }
+
+    /**
+     * The producer's decode-time tally, under the same join as {@link #pageCounts()}: the consumer reads it only after
+     * {@link #close()} has awaited the producer.
+     */
+    @Override
+    public long decodeNanos() {
+        return decodeNanos;
     }
 
     @Override

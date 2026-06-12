@@ -49,8 +49,8 @@ import io.tileverse.parquetry.schema.ParquetSchema;
  * than letting a buffering stream stage hold every file's decoded batches at once. {@code rowGroups()} aggregates all
  * row groups and re-assigns sequential indices across readers. {@code count} over more than one file fans the per-file
  * counts out across virtual threads, bounded by the shared fetch and decode budgets in {@link ReadOptions}.
- * {@code explain} remains single-reader only and throws {@link UnsupportedOperationException} when more than one reader
- * is present.
+ * {@code explain} and {@code explainAnalyze} remain single-reader only and throw {@link UnsupportedOperationException}
+ * when more than one reader is present.
  *
  * <p>Schema check happens in the constructor: every reader must agree on {@link ParquetSchema} by equality.
  */
@@ -140,8 +140,14 @@ final class DefaultParquetDataset implements ParquetDataset {
 
     @Override
     public ExplainPlan explain(Predicate predicate, Projection projection, ReadOptions options) {
-        ensureSingleReader();
+        ensureSingleReader("explain");
         return readers.get(0).explain(predicate, projection, options);
+    }
+
+    @Override
+    public ExplainPlan explainAnalyze(Predicate predicate, Projection projection, ReadOptions options) {
+        ensureSingleReader("explainAnalyze");
+        return readers.get(0).explainAnalyze(predicate, projection, options);
     }
 
     @Override
@@ -198,9 +204,9 @@ final class DefaultParquetDataset implements ParquetDataset {
         return new IllegalStateException("Counting a dataset file failed", cause);
     }
 
-    private void ensureSingleReader() {
+    private void ensureSingleReader(String operation) {
         if (readers.size() > 1) {
-            throw new UnsupportedOperationException("explain over multi-file datasets is not implemented yet");
+            throw new UnsupportedOperationException(operation + " over multi-file datasets is not implemented yet");
         }
     }
 
