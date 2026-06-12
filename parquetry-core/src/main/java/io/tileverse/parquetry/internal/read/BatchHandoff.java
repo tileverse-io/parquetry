@@ -20,6 +20,7 @@ import java.io.UncheckedIOException;
 import java.util.NoSuchElementException;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -44,7 +45,7 @@ final class BatchHandoff implements AutoCloseable {
     private static final long POLL_MILLIS = 50L;
 
     private final BlockingQueue<Object> queue;
-    private final int capacity;
+    private final Semaphore slots;
     private final AtomicBoolean cancelled = new AtomicBoolean(false);
 
     // Written once by the producer before it enqueues the completion marker, read once by the consumer after it
@@ -59,19 +60,36 @@ final class BatchHandoff implements AutoCloseable {
         if (capacity <= 0) {
             throw new IllegalArgumentException("capacity must be > 0, got " + capacity);
         }
-        this.capacity = capacity;
+        this.slots = new Semaphore(capacity);
         // capacity + room for the completion marker, which keeps completion from blocking behind a full queue.
         this.queue = new LinkedBlockingQueue<>(capacity + 1);
     }
 
+    /**
+     * Enqueues one item, parking on a permit while the hand-off is full. A permit per queued item, released when the
+     * consumer takes one, keeps a waiting producer parked instead of polling the queue's size, which would spin a full
+     * decode worker at 100% whenever the consumer is the slower side. The poll interval only bounds how long a parked
+     * producer takes to notice cancellation.
+     */
     void put(@NonNull HandoffItem item) throws InterruptedException {
         while (!cancelled.get()) {
-            if (queue.size() < capacity && queue.offer(item, POLL_MILLIS, TimeUnit.MILLISECONDS)) {
-                if (cancelled.get()) {
-                    drainAndDiscard();
-                }
-                return;
+            if (!slots.tryAcquire(POLL_MILLIS, TimeUnit.MILLISECONDS)) {
+                continue;
             }
+            if (cancelled.get()) {
+                slots.release();
+                break;
+            }
+            // Permits bound queued items at capacity and the physical queue holds capacity + 1, leaving the
+            // reserved marker slot; with a permit held this offer cannot fail.
+            if (!queue.offer(item)) {
+                slots.release();
+                throw new IllegalStateException("Hand-off queue rejected an item within its permit bound");
+            }
+            if (cancelled.get()) {
+                drainAndDiscard();
+            }
+            return;
         }
         discardQuietly(item);
     }
@@ -111,6 +129,8 @@ final class BatchHandoff implements AutoCloseable {
             rethrowFailure();
             return false;
         }
+        // The taken item no longer occupies the hand-off; freeing its permit unparks a waiting producer.
+        slots.release();
         lookahead = (HandoffItem) taken;
         return true;
     }
