@@ -21,6 +21,8 @@ import java.util.Objects;
 import java.util.RandomAccess;
 
 import io.tileverse.parquetry.batch.ColumnVector;
+import io.tileverse.parquetry.batch.LevelListVector;
+import io.tileverse.parquetry.batch.LevelMapVector;
 import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.MapVector;
 import io.tileverse.parquetry.batch.StructVector;
@@ -87,6 +89,8 @@ public final class ListMaterializer {
         return switch (child) {
             case ListVector nested -> materializeAt(nested, i, schema);
             case MapVector nested -> MapMaterializer.materializeAt(nested, i, schema);
+            case LevelListVector nested -> LevelListMaterializer.materializeAt(nested, i);
+            case LevelMapVector nested -> LevelMapMaterializer.materializeAt(nested, i);
             case StructVector struct ->
                 struct.isValid(i) ? new DefaultParquetRecord(RowColumns.ofStruct(schema, struct), i) : null;
             default -> child.get(i);

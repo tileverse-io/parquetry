@@ -68,7 +68,13 @@ class BatchRowGroupReaderTest {
         ParquetSchema fileSchema = schema;
 
         try (BatchRowGroupReader reader = new BatchRowGroupReader(
-                TestDecodeBuffers.ample(), List.of(chunk), schema, fileSchema, OptionalInt.empty(), Optional.empty())) {
+                TestDecodeBuffers.ample(),
+                List.of(chunk),
+                schema,
+                fileSchema,
+                OptionalInt.empty(),
+                Optional.empty(),
+                BatchForm.ASSEMBLED)) {
             assertThat(reader.hasMore()).isTrue();
 
             try (ParquetRecordBatch batch = reader.nextBatch()) {
@@ -104,7 +110,8 @@ class BatchRowGroupReaderTest {
                 schema,
                 fileSchema,
                 OptionalInt.empty(),
-                Optional.empty())) {
+                Optional.empty(),
+                BatchForm.ASSEMBLED)) {
             assertThat(reader.hasMore()).isTrue();
 
             // First batch: capped at page 1 boundary (4 rows)
@@ -149,7 +156,13 @@ class BatchRowGroupReaderTest {
 
         // Cap at 3 rows; the page has 8 rows, so we should get ceil(8/3) = 3 batches: 3, 3, 2
         try (BatchRowGroupReader reader = new BatchRowGroupReader(
-                TestDecodeBuffers.ample(), List.of(chunk), schema, schema, OptionalInt.of(3), Optional.empty())) {
+                TestDecodeBuffers.ample(),
+                List.of(chunk),
+                schema,
+                schema,
+                OptionalInt.of(3),
+                Optional.empty(),
+                BatchForm.ASSEMBLED)) {
             try (ParquetRecordBatch b1 = reader.nextBatch()) {
                 assertThat(b1.rowCount()).isEqualTo(3);
             }
@@ -173,7 +186,13 @@ class BatchRowGroupReaderTest {
     void hasMoreFalseWhenNoProjectedLeaves() {
         ParquetSchema schema = flatSchema(); // empty schema
         try (BatchRowGroupReader reader = new BatchRowGroupReader(
-                TestDecodeBuffers.ample(), List.of(), schema, schema, OptionalInt.empty(), Optional.empty())) {
+                TestDecodeBuffers.ample(),
+                List.of(),
+                schema,
+                schema,
+                OptionalInt.empty(),
+                Optional.empty(),
+                BatchForm.ASSEMBLED)) {
             assertThat(reader.hasMore()).isFalse();
         }
     }
@@ -187,7 +206,13 @@ class BatchRowGroupReaderTest {
         ParquetSchema schema = flatSchema("a");
 
         try (BatchRowGroupReader reader = new BatchRowGroupReader(
-                TestDecodeBuffers.ample(), List.of(chunk), schema, schema, OptionalInt.empty(), Optional.empty())) {
+                TestDecodeBuffers.ample(),
+                List.of(chunk),
+                schema,
+                schema,
+                OptionalInt.empty(),
+                Optional.empty(),
+                BatchForm.ASSEMBLED)) {
             try (ParquetRecordBatch batch = reader.nextBatch()) {
                 assertThat(batch.rowCount()).isEqualTo(1);
             }
@@ -219,7 +244,8 @@ class BatchRowGroupReaderTest {
                 schema,
                 schema,
                 OptionalInt.empty(),
-                Optional.empty());
+                Optional.empty(),
+                BatchForm.ASSEMBLED);
 
         // Consume only the first batch (page 1). The reader still has page 2 loaded in each column.
         try (ParquetRecordBatch batch = reader.nextBatch()) {
@@ -245,7 +271,13 @@ class BatchRowGroupReaderTest {
         ParquetSchema schema = flatDoubleSchema("a");
 
         try (BatchRowGroupReader reader = new BatchRowGroupReader(
-                TestDecodeBuffers.ample(), List.of(chunk), schema, schema, OptionalInt.empty(), Optional.empty())) {
+                TestDecodeBuffers.ample(),
+                List.of(chunk),
+                schema,
+                schema,
+                OptionalInt.empty(),
+                Optional.empty(),
+                BatchForm.ASSEMBLED)) {
             try (ParquetRecordBatch batch = reader.nextBatch()) {
                 DoubleVector vec = (DoubleVector) batch.columns().get(PATH_A);
 
@@ -269,7 +301,13 @@ class BatchRowGroupReaderTest {
         ParquetSchema schema = flatByteArraySchema("a");
 
         try (BatchRowGroupReader reader = new BatchRowGroupReader(
-                TestDecodeBuffers.ample(), List.of(chunk), schema, schema, OptionalInt.empty(), Optional.empty())) {
+                TestDecodeBuffers.ample(),
+                List.of(chunk),
+                schema,
+                schema,
+                OptionalInt.empty(),
+                Optional.empty(),
+                BatchForm.ASSEMBLED)) {
             try (ParquetRecordBatch batch = reader.nextBatch()) {
                 BinaryVector binary = (BinaryVector) batch.columns().get(PATH_A);
 

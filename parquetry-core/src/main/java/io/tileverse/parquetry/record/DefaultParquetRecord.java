@@ -31,11 +31,15 @@ import io.tileverse.parquetry.batch.FloatVector;
 import io.tileverse.parquetry.batch.Int96Vector;
 import io.tileverse.parquetry.batch.IntSequence;
 import io.tileverse.parquetry.batch.IntVector;
+import io.tileverse.parquetry.batch.LevelListVector;
+import io.tileverse.parquetry.batch.LevelMapVector;
 import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.MapVector;
 import io.tileverse.parquetry.batch.StructVector;
 import io.tileverse.parquetry.batch.VariantVector;
+import io.tileverse.parquetry.materializer.LevelListMaterializer;
+import io.tileverse.parquetry.materializer.LevelMapMaterializer;
 import io.tileverse.parquetry.materializer.ListMaterializer;
 import io.tileverse.parquetry.materializer.MapMaterializer;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -383,10 +387,12 @@ public final class DefaultParquetRecord implements ParquetRecord {
         if (vec == null) {
             return null;
         }
-        if (!(vec instanceof ListVector list)) {
-            throw new ParquetSchemaException("Column " + cols.path(col).dot() + " is not a list column");
-        }
-        return (List<ParquetRecord>) ListMaterializer.materializeAt(list, rowIndex, cols.schema());
+        return switch (vec) {
+            case ListVector list -> (List<ParquetRecord>) ListMaterializer.materializeAt(list, rowIndex, cols.schema());
+            case LevelListVector list -> (List<ParquetRecord>) LevelListMaterializer.materializeAt(list, rowIndex);
+            default ->
+                throw new ParquetSchemaException("Column " + cols.path(col).dot() + " is not a list column");
+        };
     }
 
     // S1168: null distinguishes a null map cell from a present empty map
@@ -396,10 +402,12 @@ public final class DefaultParquetRecord implements ParquetRecord {
         if (vec == null) {
             return null;
         }
-        if (!(vec instanceof MapVector map)) {
-            throw new ParquetSchemaException("Column " + cols.path(col).dot() + " is not a map column");
-        }
-        return MapMaterializer.materializeAt(map, rowIndex, cols.schema());
+        return switch (vec) {
+            case MapVector map -> MapMaterializer.materializeAt(map, rowIndex, cols.schema());
+            case LevelMapVector map -> LevelMapMaterializer.materializeAt(map, rowIndex);
+            default ->
+                throw new ParquetSchemaException("Column " + cols.path(col).dot() + " is not a map column");
+        };
     }
 
     private Object getAt(RowColumns cols, int col) {
@@ -418,6 +426,8 @@ public final class DefaultParquetRecord implements ParquetRecord {
             case Int96Vector iv -> iv.get(rowIndex);
             case ListVector list -> ListMaterializer.materializeAt(list, rowIndex, cols.schema());
             case MapVector map -> MapMaterializer.materializeAt(map, rowIndex, cols.schema());
+            case LevelListVector list -> LevelListMaterializer.materializeAt(list, rowIndex);
+            case LevelMapVector map -> LevelMapMaterializer.materializeAt(map, rowIndex);
             case StructVector _ -> new DefaultParquetRecord(cols.structColumns(col), rowIndex);
             case VariantVector variant -> variant.get(rowIndex);
         };
@@ -441,6 +451,8 @@ public final class DefaultParquetRecord implements ParquetRecord {
             case Int96Vector _ -> "INT96";
             case ListVector _ -> "LIST";
             case MapVector _ -> "MAP";
+            case LevelListVector _ -> "LIST";
+            case LevelMapVector _ -> "MAP";
             case StructVector _ -> "STRUCT";
             case VariantVector _ -> "VARIANT";
         };

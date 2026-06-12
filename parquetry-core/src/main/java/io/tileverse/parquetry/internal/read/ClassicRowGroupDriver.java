@@ -29,16 +29,19 @@ final class ClassicRowGroupDriver implements RowGroupBatchDriver {
     private final RowGroupFetch fetch;
     private final BatchRowGroupReader reader;
 
+    @SuppressWarnings("java:S107") // the decode inputs plus the form flag; a parameter object would only relocate the
+    // arity
     ClassicRowGroupDriver(
             @NonNull DecodeBufferAllocator decodeBufferAllocator,
             @NonNull RowGroupFetch fetch,
             @NonNull ParquetSchema projectedSchema,
             @NonNull ParquetSchema fileSchema,
             @NonNull OptionalInt batchSizeCap,
-            @NonNull Optional<RowMask> rowMask) {
+            @NonNull Optional<RowMask> rowMask,
+            @NonNull BatchForm batchForm) {
         this.fetch = fetch;
         this.reader = new BatchRowGroupReader(
-                decodeBufferAllocator, fetch.columns(), projectedSchema, fileSchema, batchSizeCap, rowMask);
+                decodeBufferAllocator, fetch.columns(), projectedSchema, fileSchema, batchSizeCap, rowMask, batchForm);
     }
 
     @Override

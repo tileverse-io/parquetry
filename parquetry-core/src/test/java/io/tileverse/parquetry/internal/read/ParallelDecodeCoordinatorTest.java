@@ -237,7 +237,8 @@ class ParallelDecodeCoordinatorTest {
                     OptionalInt.empty(),
                     masks,
                     recordEvalRequired,
-                    Optional.empty());
+                    Optional.empty(),
+                    BatchForm.LEVELS);
         }
 
         private List<RowGroupSurvivor> survivors(ByteRangeSource source) {

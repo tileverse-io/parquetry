@@ -29,6 +29,8 @@ import io.tileverse.parquetry.batch.FixedLenBinaryVector;
 import io.tileverse.parquetry.batch.FloatVector;
 import io.tileverse.parquetry.batch.Int96Vector;
 import io.tileverse.parquetry.batch.IntVector;
+import io.tileverse.parquetry.batch.LevelListVector;
+import io.tileverse.parquetry.batch.LevelMapVector;
 import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.MapVector;
@@ -142,6 +144,9 @@ final class ParquetryColumnarEngine implements ColumnarEngine {
                 touchBinaries(variantVector.metadataColumn());
                 touchBinaries(variantVector.valueColumn());
             }
+            case LevelListVector _, LevelMapVector _ ->
+                throw new IllegalStateException(
+                        "the eager probe path never produces level-backed vectors; they belong to the streaming scan");
         }
     }
 

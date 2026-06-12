@@ -32,6 +32,8 @@ import io.tileverse.parquetry.batch.FixedLenBinaryVector;
 import io.tileverse.parquetry.batch.FloatVector;
 import io.tileverse.parquetry.batch.Int96Vector;
 import io.tileverse.parquetry.batch.IntVector;
+import io.tileverse.parquetry.batch.LevelListVector;
+import io.tileverse.parquetry.batch.LevelMapVector;
 import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.MapVector;
@@ -286,7 +288,7 @@ final class DremelAssembler {
      * level. A struct whose only descendants live under a repeated child cannot be addressed by slot index here and
      * stays all present; the enclosing list/map already restores its element-level validity.
      */
-    private Validity structValidity(SchemaNode.Group group, List<String> groupPath, int numSlots) {
+    Validity structValidity(SchemaNode.Group group, List<String> groupPath, int numSlots) {
         int structDefLevel = maxDef(groupPath);
         if (structDefLevel == 0) {
             return Validity.allValid(numSlots);
@@ -570,6 +572,8 @@ final class DremelAssembler {
                 case MapVector v -> compactMap(v, keptIndices);
                 case StructVector v -> compactStruct(v, keptIndices);
                 case VariantVector v -> compactVariant(v, keptIndices);
+                case LevelListVector _, LevelMapVector _ ->
+                    throw new IllegalStateException("level-backed vectors are never assembly children");
             };
         }
 

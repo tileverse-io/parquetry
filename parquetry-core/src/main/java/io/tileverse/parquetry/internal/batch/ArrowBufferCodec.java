@@ -33,6 +33,8 @@ import io.tileverse.parquetry.batch.FloatVector;
 import io.tileverse.parquetry.batch.Int96Vector;
 import io.tileverse.parquetry.batch.IntSequence;
 import io.tileverse.parquetry.batch.IntVector;
+import io.tileverse.parquetry.batch.LevelListVector;
+import io.tileverse.parquetry.batch.LevelMapVector;
 import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.MapVector;
@@ -45,6 +47,7 @@ import io.tileverse.parquetry.internal.arrow.buffer.EncodedBuffer.BufferRole;
 import io.tileverse.parquetry.internal.arrow.buffer.EncodedNode;
 import io.tileverse.parquetry.internal.arrow.buffer.LeafType;
 import io.tileverse.parquetry.internal.arrow.buffer.NodeEncoding;
+import io.tileverse.parquetry.internal.read.LevelVectorAssembler;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
@@ -117,6 +120,8 @@ final class ArrowBufferCodec {
             case StructVector structVector -> encodeStruct(structVector);
             case MapVector mapVector -> encodeMap(mapVector);
             case VariantVector variantVector -> encodeVariant(variantVector);
+            case LevelListVector levelList -> encode(LevelVectorAssembler.toArrowForm(levelList));
+            case LevelMapVector levelMap -> encode(LevelVectorAssembler.toArrowForm(levelMap));
         };
     }
 
