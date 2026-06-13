@@ -26,6 +26,7 @@ import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.format.OffsetIndex;
+import io.tileverse.parquetry.internal.filter.RecordAccessors;
 import io.tileverse.parquetry.internal.filter.RecordLevelEvaluator;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -188,7 +189,7 @@ public final class LateMaterializingRowGroupReader {
         for (int row = 0; row < batch.rowCount(); row++) {
             long absoluteRow = cursor.next();
             ParquetRecord rec = batch.materialize(row);
-            boolean passed = RecordLevelEvaluator.test(predicate, rec::get);
+            boolean passed = RecordLevelEvaluator.test(predicate, RecordAccessors.of(rec));
             selectionBuilder.accept(absoluteRow, passed);
         }
     }

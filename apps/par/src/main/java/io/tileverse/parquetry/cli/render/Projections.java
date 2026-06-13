@@ -18,10 +18,12 @@ package io.tileverse.parquetry.cli.render;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.ResolvedColumn;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
@@ -54,12 +56,29 @@ public final class Projections {
         }
         LinkedHashSet<ColumnPath> kept = new LinkedHashSet<>();
         for (String name : columns) {
-            ColumnPath path = ColumnPath.of(name.split("\\."));
-            SchemaNode node =
-                    schema.find(path).orElseThrow(() -> new IllegalArgumentException("unknown column '" + name + "'"));
-            kept.addAll(leavesUnder(path, node));
+            kept.addAll(leavesFor(name, schema));
         }
         return new Resolved(Projection.of(kept), List.copyOf(kept));
+    }
+
+    /**
+     * Resolves a single {@code --columns} name to the leaf paths it selects.
+     *
+     * <p>A name that matches a schema node directly (a physical leaf or a group) keeps the existing behavior: a group
+     * expands to every leaf beneath it. A name that matches no node directly is tried as a logical leaf path,
+     * descending the synthetic LIST {@code list}/{@code element} and MAP {@code key_value} levels to the physical leaf
+     * the file stores. A name matching neither is rejected.
+     */
+    private static List<ColumnPath> leavesFor(String name, ParquetSchema schema) {
+        ColumnPath path = ColumnPath.of(name.split("\\."));
+        Optional<SchemaNode> directMatch = schema.find(path);
+        if (directMatch.isPresent()) {
+            return leavesUnder(path, directMatch.orElseThrow());
+        }
+        return schema.resolve(path)
+                .map(ResolvedColumn::physical)
+                .map(List::of)
+                .orElseThrow(() -> new IllegalArgumentException("unknown column '" + name + "'"));
     }
 
     private static List<ColumnPath> leavesUnder(ColumnPath path, SchemaNode node) {

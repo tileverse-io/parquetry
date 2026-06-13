@@ -30,6 +30,7 @@ import com.google.errorprone.annotations.MustBeClosed;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.batch.VectorizedPredicateEvaluator;
 import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.internal.filter.RecordAccessors;
 import io.tileverse.parquetry.internal.filter.RecordLevelEvaluator;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -305,7 +306,7 @@ public final class BatchPipeline {
             while (rowIndex < batchRowCount) {
                 ParquetRecord row = currentBatch.materialize(rowIndex);
                 rowIndex++;
-                if (currentFilter == null || RecordLevelEvaluator.test(currentFilter, row::get)) {
+                if (currentFilter == null || RecordLevelEvaluator.test(currentFilter, RecordAccessors.of(row))) {
                     if (observe) {
                         matchedInCurrentRowGroup++;
                     }

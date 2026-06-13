@@ -18,6 +18,7 @@ package io.tileverse.parquetry.internal.filter;
 import java.util.ArrayList;
 import java.util.List;
 
+import io.tileverse.parquetry.filter.MatchAction;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -84,6 +85,7 @@ final class PredicateNormalizer {
             case Predicate.GeometryFilterPredicate _ -> {
                 /* opaque geometry leaf; column validated by the filter */
             }
+            case Predicate.Quantified(MatchAction _, Predicate leaf) -> validate(leaf, schema);
         }
     }
 
@@ -103,6 +105,8 @@ final class PredicateNormalizer {
             case Predicate.Or(List<Predicate> children) ->
                 new Predicate.Or(
                         children.stream().map(PredicateNormalizer::pushDownNot).toList());
+            case Predicate.Quantified(MatchAction match, Predicate leaf) ->
+                new Predicate.Quantified(match, pushDownNot(leaf));
             default -> p;
         };
     }
@@ -133,7 +137,27 @@ final class PredicateNormalizer {
             case Predicate.In _ -> new Predicate.Not(p);
             case Predicate.Spatial _ -> new Predicate.Not(p);
             case Predicate.GeometryFilterPredicate _ -> new Predicate.Not(p);
+            case Predicate.Quantified(MatchAction match, Predicate leaf) -> negateQuantified(match, leaf, p);
         };
+    }
+
+    /**
+     * Negates a quantified comparison over a repeated leaf via De Morgan over the quantifier: {@code not (ANY e: P)} is
+     * {@code ALL e: not P} and {@code not (ALL e: P)} is {@code ANY e: not P}. An exactly-one quantifier has no single
+     * complementary {@link MatchAction} (its negation is zero or two-or-more), and a leaf with no clean operator
+     * complement (In/Spatial/GeometryFilter) would nest a {@code Not} inside the quantifier; both keep the whole
+     * quantifier wrapped in {@code Not} for record-level evaluation.
+     */
+    private static Predicate negateQuantified(MatchAction match, Predicate leaf, Predicate original) {
+        if (match == MatchAction.ONE) {
+            return new Predicate.Not(original);
+        }
+        Predicate negatedLeaf = negate(leaf);
+        if (negatedLeaf instanceof Predicate.Not) {
+            return new Predicate.Not(original);
+        }
+        MatchAction flipped = match == MatchAction.ANY ? MatchAction.ALL : MatchAction.ANY;
+        return new Predicate.Quantified(flipped, negatedLeaf);
     }
 
     private static Predicate foldAlways(Predicate p) {

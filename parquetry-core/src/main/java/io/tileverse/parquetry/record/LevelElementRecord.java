@@ -320,6 +320,11 @@ public final class LevelElementRecord implements ParquetRecord {
     }
 
     @Override
+    public List<Object> multiValue(ColumnPath leafPath) {
+        return MultiValues.flatten(this, leafPath);
+    }
+
+    @Override
     public ParquetRecord detach() {
         int count = columnCount();
         ColumnPath[] paths = new ColumnPath[count];

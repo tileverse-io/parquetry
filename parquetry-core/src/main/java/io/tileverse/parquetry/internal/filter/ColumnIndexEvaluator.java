@@ -120,6 +120,10 @@ final class ColumnIndexEvaluator {
             case Predicate.IsNotNull(ColumnPath col) -> nullLeafRanges(col, columns, rowGroupRowCount, false);
             case Predicate.Spatial _ -> Optional.empty();
             case Predicate.GeometryFilterPredicate _ -> Optional.empty();
+            // Page-range pruning of a repeated leaf is not verified sound: empty-list rows have no element on any page
+            // and the element-to-page mapping does not line up with row ranges. A quantified leaf is therefore left for
+            // the record-level tier to evaluate.
+            case Predicate.Quantified _ -> Optional.empty();
         };
     }
 

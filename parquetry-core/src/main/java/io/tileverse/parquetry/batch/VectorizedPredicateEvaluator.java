@@ -23,8 +23,11 @@ import java.util.function.IntPredicate;
 import io.tileverse.parquetry.filter.GeometryFilter;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Value;
+import io.tileverse.parquetry.internal.filter.RecordAccessors;
+import io.tileverse.parquetry.internal.filter.RecordLevelEvaluator;
 import io.tileverse.parquetry.internal.filter.ValueComparison;
 import io.tileverse.parquetry.internal.filter.spatial.WkbEnvelope;
+import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
@@ -69,7 +72,22 @@ public final class VectorizedPredicateEvaluator {
             case Predicate.Spatial spatial -> spatialMask(batch, spatial, rowCount, false);
             case Predicate.GeometryFilterPredicate(GeometryFilter<?> filter) ->
                 geometryMask(batch, filter, rowCount, false);
+            case Predicate.Quantified q -> quantifiedMask(q, batch, rowCount);
         };
+    }
+
+    // A list/map leaf has no flat scalar vector to compare columnar-style; the existential/universal/exactly-one
+    // semantics only make sense over a row's element values. Materialize each row and reuse the record-level
+    // evaluator. Quantified is the multi-valued case, not the scalar hot path, hence a per-row fallback is acceptable.
+    private static BitSet quantifiedMask(Predicate.Quantified quantified, ParquetRecordBatch batch, int rowCount) {
+        BitSet matches = new BitSet(rowCount);
+        for (int row = 0; row < rowCount; row++) {
+            ParquetRecord rec = batch.materialize(row);
+            if (RecordLevelEvaluator.test(quantified, RecordAccessors.of(rec))) {
+                matches.set(row);
+            }
+        }
+        return matches;
     }
 
     private static BitSet all(int rowCount) {

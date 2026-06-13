@@ -19,13 +19,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
+import io.tileverse.parquetry.filter.MatchAction;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
-import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.ResolvedColumn;
 
 import net.sf.jsqlparser.expression.Expression;
 import net.sf.jsqlparser.expression.Function;
@@ -72,40 +73,38 @@ final class SqlPredicateTranslator {
 
     private Predicate comparison(ComparisonOperator comparison) {
         Column columnNode = requireColumnOnLeft(comparison.getLeftExpression());
-        ColumnPath path = pathOf(columnNode);
-        Pred.ColumnRef ref = Pred.col(path);
-        PrimitiveKind kind = kindOf(path);
+        ResolvedColumn resolved = resolve(columnNode);
+        Pred.ColumnRef ref = Pred.col(resolved.physical());
+        PrimitiveKind kind = resolved.kind();
         Expression value = comparison.getRightExpression();
-        return switch (comparison) {
-            case EqualsTo _ -> eq(ref, kind, value);
-            case NotEqualsTo _ -> notEq(ref, kind, value);
-            case GreaterThan _ -> gt(ref, kind, value);
-            case GreaterThanEquals _ -> gtEq(ref, kind, value);
-            case MinorThan _ -> lt(ref, kind, value);
-            case MinorThanEquals _ -> ltEq(ref, kind, value);
-            default -> throw unsupported(describe(comparison));
-        };
+        Predicate leaf =
+                switch (comparison) {
+                    case EqualsTo _ -> eq(ref, kind, value);
+                    case NotEqualsTo _ -> notEq(ref, kind, value);
+                    case GreaterThan _ -> gt(ref, kind, value);
+                    case GreaterThanEquals _ -> gtEq(ref, kind, value);
+                    case MinorThan _ -> lt(ref, kind, value);
+                    case MinorThanEquals _ -> ltEq(ref, kind, value);
+                    default -> throw unsupported(describe(comparison));
+                };
+        return quantifyIfRepeated(resolved, leaf);
     }
 
     private Predicate isNull(IsNullExpression isNull) {
         Column columnNode = requireColumnOnLeft(isNull.getLeftExpression());
-        Pred.ColumnRef ref = Pred.col(pathOf(columnNode));
-        if (isNull.isNot()) {
-            return ref.isNotNull();
-        }
-        return ref.isNull();
+        ResolvedColumn resolved = resolve(columnNode);
+        Pred.ColumnRef ref = Pred.col(resolved.physical());
+        Predicate leaf = isNull.isNot() ? ref.isNotNull() : ref.isNull();
+        return quantifyIfRepeated(resolved, leaf);
     }
 
     private Predicate in(InExpression in) {
         Column columnNode = requireColumnOnLeft(in.getLeftExpression());
-        ColumnPath path = pathOf(columnNode);
-        PrimitiveKind kind = kindOf(path);
-        List<Value> values = inValues(in, kind);
-        Predicate membership = new Predicate.In(path, values);
-        if (in.isNot()) {
-            return Pred.not(membership);
-        }
-        return membership;
+        ResolvedColumn resolved = resolve(columnNode);
+        List<Value> values = inValues(in, resolved.kind());
+        Predicate membership = new Predicate.In(resolved.physical(), values);
+        Predicate leaf = in.isNot() ? Pred.not(membership) : membership;
+        return quantifyIfRepeated(resolved, leaf);
     }
 
     private List<Value> inValues(InExpression in, PrimitiveKind kind) {
@@ -137,16 +136,14 @@ final class SqlPredicateTranslator {
 
     private Predicate between(Between between) {
         Column columnNode = requireColumnOnLeft(between.getLeftExpression());
-        ColumnPath path = pathOf(columnNode);
-        Pred.ColumnRef ref = Pred.col(path);
-        PrimitiveKind kind = kindOf(path);
+        ResolvedColumn resolved = resolve(columnNode);
+        Pred.ColumnRef ref = Pred.col(resolved.physical());
+        PrimitiveKind kind = resolved.kind();
         Predicate lowerBound = ordered(OrderedComparison.GT_EQ, ref, kind, between.getBetweenExpressionStart());
         Predicate upperBound = ordered(OrderedComparison.LT_EQ, ref, kind, between.getBetweenExpressionEnd());
         Predicate bounded = Pred.and(lowerBound, upperBound);
-        if (between.isNot()) {
-            return Pred.not(bounded);
-        }
-        return bounded;
+        Predicate leaf = between.isNot() ? Pred.not(bounded) : bounded;
+        return quantifyIfRepeated(resolved, leaf);
     }
 
     private Predicate eq(Pred.ColumnRef ref, PrimitiveKind kind, Expression value) {
@@ -213,17 +210,31 @@ final class SqlPredicateTranslator {
         throw new FilterParseException("expected a column on the left of the comparison, got: " + describe(left));
     }
 
+    /**
+     * Resolves a logical column reference to its physical leaf. A logical path addresses fields by their declared names
+     * (e.g. {@code addresses.locality}); resolution descends the synthetic LIST {@code list}/{@code element} and MAP
+     * {@code key_value} levels the file stores, yielding the physical leaf path and whether it crosses a repeated
+     * boundary.
+     */
+    private ResolvedColumn resolve(Column column) {
+        ColumnPath path = pathOf(column);
+        return schema.resolve(path).orElseThrow(() -> new FilterParseException("no such column: " + path.dot()));
+    }
+
     private ColumnPath pathOf(Column column) {
         return ColumnPath.of(column.getFullyQualifiedName().split("\\."));
     }
 
-    private PrimitiveKind kindOf(ColumnPath path) {
-        SchemaNode node =
-                schema.find(path).orElseThrow(() -> new FilterParseException("no such column: " + path.dot()));
-        if (node instanceof SchemaNode.Primitive primitive) {
-            return primitive.kind();
+    /**
+     * Wraps a scalar leaf comparison in an {@code ANY} quantifier when the resolved leaf is multi-valued (a list or map
+     * element). A single-valued leaf returns its comparison unchanged. Aggregating with {@code ANY} matches the row if
+     * any element satisfies the comparison, mirroring SQL's implicit existential quantification over repeated fields.
+     */
+    private Predicate quantifyIfRepeated(ResolvedColumn resolved, Predicate leaf) {
+        if (resolved.isRepeated()) {
+            return new Predicate.Quantified(MatchAction.ANY, leaf);
         }
-        throw new FilterParseException("column is not a leaf: " + path.dot());
+        return leaf;
     }
 
     private FilterParseException unsupported(String what) {

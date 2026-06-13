@@ -226,6 +226,11 @@ public final class DefaultParquetRecord implements ParquetRecord {
     }
 
     @Override
+    public List<Object> multiValue(ColumnPath leafPath) {
+        return MultiValues.flatten(this, leafPath);
+    }
+
+    @Override
     public ParquetRecord detach() {
         int count = columns.columnCount();
         ColumnPath[] paths = new ColumnPath[count];

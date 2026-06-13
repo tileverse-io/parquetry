@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
 
+import io.tileverse.parquetry.filter.MatchAction;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
@@ -72,7 +73,28 @@ final class BloomFilterEvaluator {
                 new PruningDecision.NotApplied(TIER, "spatial predicate not handled at BLOOM_FILTER tier");
             case Predicate.GeometryFilterPredicate _ ->
                 new PruningDecision.NotApplied(TIER, "GeometryFilter not handled at BLOOM_FILTER tier");
+            case Predicate.Quantified(MatchAction match, Predicate leaf) -> evaluateQuantified(match, leaf, blooms);
         };
+    }
+
+    /**
+     * An existential {@code ANY} over a repeated leaf may only eliminate the whole row group: if every probed value is
+     * definitely absent from the bloom then no row matches. The bloom tier never reports {@code PassedAll}, but the
+     * elimination-only guard is applied uniformly with the other tiers for safety; a row with an empty or all-null list
+     * fails {@code ANY} and still needs record-level confirmation. {@code ALL} and {@code ONE} are not decidable here.
+     */
+    private static PruningDecision evaluateQuantified(
+            MatchAction match, Predicate leaf, FilterPipeline.BloomFilterLookup blooms) {
+        if (match != MatchAction.ANY) {
+            return new PruningDecision.NotApplied(TIER, match + " over a repeated leaf is not pruned by bloom filters");
+        }
+        PruningDecision inner = evaluate(leaf, blooms);
+        if (inner instanceof PruningDecision.Eliminated) {
+            return inner;
+        }
+        return new PruningDecision.NotApplied(
+                TIER,
+                "ANY over a repeated leaf: row-group elimination only; per-row lists need record-level confirmation");
     }
 
     /**
