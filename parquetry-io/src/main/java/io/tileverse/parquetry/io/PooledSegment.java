@@ -17,14 +17,16 @@ package io.tileverse.parquetry.io;
 
 import java.lang.foreign.MemorySegment;
 
+import io.tileverse.parquetry.io.DefaultSegmentPool.Backing;
+
 /** A borrowed segment from {@link DefaultSegmentPool}; returns its backing on first {@link #close()}. */
 final class PooledSegment implements SegmentPool.Pooled {
 
     private final DefaultSegmentPool pool;
     private final MemorySegment view;
-    private MemorySegment backing;
+    private Backing backing;
 
-    PooledSegment(DefaultSegmentPool pool, MemorySegment backing, MemorySegment view) {
+    PooledSegment(DefaultSegmentPool pool, Backing backing, MemorySegment view) {
         this.pool = pool;
         this.backing = backing;
         this.view = view;

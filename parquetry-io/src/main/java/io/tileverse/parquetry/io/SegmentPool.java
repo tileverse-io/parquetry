@@ -42,6 +42,17 @@ public sealed interface SegmentPool permits DefaultSegmentPool {
     /** A point-in-time snapshot of this pool's accounting, for leak assertions and monitoring. */
     PoolStats stats();
 
+    /**
+     * Frees the native memory of every backing currently retained for reuse, releasing the pool's idle footprint
+     * deterministically. Call this when a private pool is done; outstanding borrows are unaffected and must be closed
+     * by their owners. The process-wide {@link #getDefault() default} lives for the JVM lifetime and is never closed.
+     *
+     * <p>Intentionally not {@link AutoCloseable}: most pools are short-lived and their retained backings are reclaimed
+     * at process exit, and requiring try-with-resources on every borrow site would obscure the borrow/return contract
+     * that actually governs memory. Closing is idempotent.
+     */
+    void close();
+
     /** Process-wide shared default: a JDK-only pool with the {@link Options#elastic() elastic} retention policy. */
     static SegmentPool getDefault() {
         return DefaultSegmentPool.INSTANCE;
