@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
 
+import io.tileverse.parquetry.filter.MatchAction;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
@@ -89,7 +90,30 @@ final class StatsEvaluator {
                 new PruningDecision.NotApplied(TIER, "spatial predicate handled by the bounds source");
             case Predicate.GeometryFilterPredicate _ ->
                 new PruningDecision.NotApplied(TIER, "GeometryFilter not handled at STATS tier");
+            case Predicate.Quantified(MatchAction match, Predicate leaf) ->
+                evaluateQuantified(match, leaf, columns, rowCount);
         };
+    }
+
+    /**
+     * An existential {@code ANY} over a repeated leaf may only eliminate the whole row group: if no element anywhere in
+     * the chunk matches the inner comparison then no row matches. It must never report {@code PassedAll}, because a row
+     * with an empty or all-null list has zero elements and therefore fails {@code ANY} even when every present element
+     * matches; such rows still need record-level confirmation. {@code ALL} and {@code ONE} aggregate across rows and
+     * cannot be decided from chunk statistics at all.
+     */
+    private static PruningDecision evaluateQuantified(
+            MatchAction match, Predicate leaf, FilterPipeline.ColumnStatsLookup columns, long rowCount) {
+        if (match != MatchAction.ANY) {
+            return new PruningDecision.NotApplied(TIER, match + " over a repeated leaf is not pruned by stats");
+        }
+        PruningDecision inner = evaluate(leaf, columns, rowCount);
+        if (inner instanceof PruningDecision.Eliminated) {
+            return inner;
+        }
+        return new PruningDecision.NotApplied(
+                TIER,
+                "ANY over a repeated leaf: row-group elimination only; per-row lists need record-level confirmation");
     }
 
     private static PruningDecision evaluateAnd(

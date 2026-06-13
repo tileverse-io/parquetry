@@ -267,9 +267,11 @@ public final class SchemaBuilder {
      * backward-compatibility rules. Legacy time and timestamp converted types are always UTC-adjusted; the legacy
      * encoding had no local-time form. {@code DECIMAL} reads its scale and precision off {@code element}.
      *
-     * <p>{@code LIST}, {@code MAP}, and {@code MAP_KEY_VALUE} are structural group annotations the Dremel assembler
-     * recognizes from the schema shape, not leaf logical types, and {@code INTERVAL} has no logical-type equivalent;
-     * all four are left without a backfilled annotation.
+     * <p>{@code LIST} and {@code MAP} are the structural group annotations the Dremel assembler classifies a group by;
+     * a legacy writer (duckdb, older parquet-mr) records only the converted type, and without this backfill such a list
+     * or map group is misread as a plain struct, collapsing its element wrapper and dropping every field past the
+     * first. {@code MAP_KEY_VALUE} annotates the inner {@code key_value} entry group, not the map itself, and
+     * {@code INTERVAL} has no logical-type equivalent; both are left without a backfilled annotation.
      */
     private static Optional<LogicalType> fromConvertedType(ConvertedType convertedType, SchemaElement element) {
         return switch (convertedType) {
@@ -293,7 +295,9 @@ public final class SchemaBuilder {
             case UINT_16 -> Optional.of(new LogicalType.IntType((byte) 16, false));
             case UINT_32 -> Optional.of(new LogicalType.IntType((byte) 32, false));
             case UINT_64 -> Optional.of(new LogicalType.IntType((byte) 64, false));
-            case LIST, MAP, MAP_KEY_VALUE, INTERVAL -> Optional.empty();
+            case LIST -> Optional.of(new LogicalType.ListType());
+            case MAP -> Optional.of(new LogicalType.MapType());
+            case MAP_KEY_VALUE, INTERVAL -> Optional.empty();
         };
     }
 

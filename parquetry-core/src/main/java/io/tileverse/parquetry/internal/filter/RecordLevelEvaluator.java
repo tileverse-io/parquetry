@@ -19,6 +19,7 @@ import java.lang.foreign.MemorySegment;
 import java.util.List;
 
 import io.tileverse.parquetry.filter.GeometryFilter;
+import io.tileverse.parquetry.filter.MatchAction;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.internal.filter.spatial.WkbEnvelope;
@@ -43,10 +44,12 @@ public final class RecordLevelEvaluator {
      * return is one of: Boolean / Integer / Long / Float / Double / String / {@link MemorySegment} (for binary / INT96)
      * / java.time.LocalDate / java.time.LocalDateTime, or {@code null} when the column is NULL for this row.
      */
-    @FunctionalInterface
     public interface RecordAccessor {
 
         Object value(ColumnPath path);
+
+        /** Flattened element values at a repeated leaf, for {@link Predicate.Quantified}. Empty when none. */
+        List<Object> multiValue(ColumnPath leafPath);
     }
 
     /** Returns {@code true} if {@code row} satisfies {@code predicate}. */
@@ -88,6 +91,37 @@ public final class RecordLevelEvaluator {
             case Predicate.IsNotNull(ColumnPath col) -> row.value(col) != null;
             case Predicate.Spatial spatial -> spatialHolds(spatial, row);
             case Predicate.GeometryFilterPredicate(GeometryFilter<?> filter) -> geometryFilterHolds(filter, row);
+            case Predicate.Quantified(MatchAction match, Predicate leaf) -> testQuantified(match, leaf, row);
+        };
+    }
+
+    private static boolean testQuantified(MatchAction match, Predicate leaf, RecordAccessor row) {
+        ColumnPath leafColumn = Predicate.columns(leaf).iterator().next();
+        List<Object> elements = row.multiValue(leafColumn);
+        int matches = 0;
+        for (Object element : elements) {
+            if (test(leaf, singletonAccessor(leafColumn, element))) {
+                matches++;
+            }
+        }
+        return switch (match) {
+            case ANY -> matches > 0;
+            case ALL -> matches == elements.size();
+            case ONE -> matches == 1;
+        };
+    }
+
+    private static RecordAccessor singletonAccessor(ColumnPath leafColumn, Object element) {
+        return new RecordAccessor() {
+            @Override
+            public Object value(ColumnPath path) {
+                return path.equals(leafColumn) ? element : null;
+            }
+
+            @Override
+            public List<Object> multiValue(ColumnPath path) {
+                return List.of();
+            }
         };
     }
 

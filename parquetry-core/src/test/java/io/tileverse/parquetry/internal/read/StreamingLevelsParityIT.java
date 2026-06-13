@@ -36,6 +36,7 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Value;
+import io.tileverse.parquetry.internal.filter.RecordAccessors;
 import io.tileverse.parquetry.internal.filter.RecordLevelEvaluator;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -157,7 +158,7 @@ class StreamingLevelsParityIT {
                 try (batch) {
                     for (int row = 0; row < batch.rowCount(); row++) {
                         ParquetRecord record = batch.materialize(row);
-                        if (RecordLevelEvaluator.test(predicate, record::get)) {
+                        if (RecordLevelEvaluator.test(predicate, RecordAccessors.of(record))) {
                             rows.add(record.detach());
                         }
                     }

@@ -90,6 +90,7 @@ public sealed interface Predicate {
             case IsNotNull isNotNull -> columns.add(isNotNull.col());
             case Spatial s -> columns.add(s.col());
             case GeometryFilterPredicate gfp -> columns.add(gfp.filter().column());
+            case Quantified q -> collectColumns(q.leaf(), columns);
         }
     }
 
@@ -116,6 +117,13 @@ public sealed interface Predicate {
     record IsNull(ColumnPath col) implements Predicate {}
 
     record IsNotNull(ColumnPath col) implements Predicate {}
+
+    /**
+     * A comparison over a repeated (list/map) leaf, aggregated by {@link MatchAction}. The wrapped {@code leaf} is one
+     * of the scalar comparison records whose column path is a physical repeated leaf. Single-valued leaves use the bare
+     * comparison and are never wrapped.
+     */
+    record Quantified(MatchAction match, Predicate leaf) implements Predicate {}
 
     record And(List<Predicate> children) implements Predicate {
         public And {

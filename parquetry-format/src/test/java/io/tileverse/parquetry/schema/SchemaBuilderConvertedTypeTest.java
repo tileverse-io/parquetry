@@ -37,7 +37,7 @@ import io.tileverse.parquetry.format.SchemaElement;
  * Backward compatibility: a leaf annotated only with the deprecated {@link ConvertedType} (no modern
  * {@link LogicalType}) must still gain the equivalent logical type. Files written by duckdb, older parquet-mr, and
  * other legacy writers carry only the converted type; without this backfill a {@code UTF8} string column reads as raw
- * binary.
+ * binary, and a {@code LIST} / {@code MAP} group is misclassified as a plain struct.
  */
 class SchemaBuilderConvertedTypeTest {
 
@@ -114,6 +114,27 @@ class SchemaBuilderConvertedTypeTest {
     }
 
     @Test
+    void listConvertedTypeBackfillsListTypeOnGroup() {
+        Optional<LogicalType> logicalType = groupLogicalType(ConvertedType.LIST);
+
+        assertThat(logicalType).contains(new LogicalType.ListType());
+    }
+
+    @Test
+    void mapConvertedTypeBackfillsMapTypeOnGroup() {
+        Optional<LogicalType> logicalType = groupLogicalType(ConvertedType.MAP);
+
+        assertThat(logicalType).contains(new LogicalType.MapType());
+    }
+
+    @Test
+    void mapKeyValueConvertedTypeStaysEmpty() {
+        Optional<LogicalType> logicalType = groupLogicalType(ConvertedType.MAP_KEY_VALUE);
+
+        assertThat(logicalType).isEmpty();
+    }
+
+    @Test
     void intervalHasNoLogicalEquivalentAndStaysEmpty() {
         Optional<LogicalType> logicalType = leafLogicalType(
                 PhysicalType.FIXED_LEN_BYTE_ARRAY, Optional.of(ConvertedType.INTERVAL), Optional.empty());
@@ -156,6 +177,39 @@ class SchemaBuilderConvertedTypeTest {
                 precision,
                 logicalType,
                 OptionalInt.empty());
+    }
+
+    /**
+     * The backfilled logical type of a group element annotated with {@code convertedType}. The group holds one leaf
+     * child so it is a well-formed group; only the group's own annotation is asserted.
+     */
+    private static Optional<LogicalType> groupLogicalType(ConvertedType convertedType) {
+        SchemaElement root = new SchemaElement(
+                Optional.empty(),
+                OptionalInt.empty(),
+                Optional.of(FieldRepetitionType.REQUIRED),
+                "root",
+                OptionalInt.of(1),
+                Optional.empty(),
+                OptionalInt.empty(),
+                OptionalInt.empty(),
+                Optional.empty(),
+                OptionalInt.empty());
+        SchemaElement group = new SchemaElement(
+                Optional.empty(),
+                OptionalInt.empty(),
+                Optional.of(FieldRepetitionType.OPTIONAL),
+                "group",
+                OptionalInt.of(1),
+                Optional.of(convertedType),
+                OptionalInt.empty(),
+                OptionalInt.empty(),
+                Optional.empty(),
+                OptionalInt.empty());
+        SchemaElement child = leaf(PhysicalType.BYTE_ARRAY, Optional.empty(), OptionalInt.empty(), OptionalInt.empty());
+        ParquetSchema schema = SchemaBuilder.build(List.of(root, group, child));
+        SchemaNode.Group groupNode = (SchemaNode.Group) schema.root().children().get(0);
+        return groupNode.logicalType();
     }
 
     private static Optional<LogicalType> build(SchemaElement leaf) {

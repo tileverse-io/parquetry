@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.function.Predicate;
 
+import io.tileverse.parquetry.filter.MatchAction;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.filter.explain.Tier;
@@ -77,7 +78,32 @@ final class DictionaryEvaluator {
                 new PruningDecision.NotApplied(TIER, "spatial predicate not handled at DICTIONARY tier");
             case io.tileverse.parquetry.filter.Predicate.GeometryFilterPredicate _ ->
                 new PruningDecision.NotApplied(TIER, "GeometryFilter not handled at DICTIONARY tier");
+            case io.tileverse.parquetry.filter.Predicate.Quantified(
+                    MatchAction match,
+                    io.tileverse.parquetry.filter.Predicate leaf) -> evaluateQuantified(match, leaf, dictionaries);
         };
+    }
+
+    /**
+     * An existential {@code ANY} over a repeated leaf may only eliminate the whole row group: if no dictionary value
+     * matches the inner comparison then no row matches. It must never report a non-elimination as conclusive, because a
+     * single-distinct-value dictionary could otherwise yield {@code PassedAll}; a row with an empty or all-null list
+     * fails {@code ANY} and still needs record-level confirmation. {@code ALL} and {@code ONE} are not decidable here.
+     */
+    private static PruningDecision evaluateQuantified(
+            MatchAction match,
+            io.tileverse.parquetry.filter.Predicate leaf,
+            FilterPipeline.DictionaryLookup dictionaries) {
+        if (match != MatchAction.ANY) {
+            return new PruningDecision.NotApplied(TIER, match + " over a repeated leaf is not pruned by dictionaries");
+        }
+        PruningDecision inner = evaluate(leaf, dictionaries);
+        if (inner instanceof PruningDecision.Eliminated) {
+            return inner;
+        }
+        return new PruningDecision.NotApplied(
+                TIER,
+                "ANY over a repeated leaf: row-group elimination only; per-row lists need record-level confirmation");
     }
 
     private static PruningDecision evalAnd(

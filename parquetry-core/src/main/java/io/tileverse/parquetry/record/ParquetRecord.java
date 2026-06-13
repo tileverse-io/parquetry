@@ -129,6 +129,14 @@ public sealed interface ParquetRecord permits DefaultParquetRecord, DetachedParq
     Object get(ColumnPath col);
 
     /**
+     * The flattened element values at a repeated (list/map) leaf {@code leafPath}: every value reached by descending
+     * struct children and list/map elements along the path. Returns an empty list when the leaf's repeated ancestor is
+     * empty, null, or absent. For a single-valued path this is the singleton of {@link #get(ColumnPath)} (or empty when
+     * the value is null).
+     */
+    List<Object> multiValue(ColumnPath leafPath);
+
+    /**
      * Returns a self-contained copy of this record that owns its data and stays valid after the producing batch closes.
      * Detaching is idempotent and shares the same immutable {@link #schema()} reference.
      */

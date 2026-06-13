@@ -23,6 +23,7 @@ import java.lang.foreign.ValueLayout;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -308,6 +309,16 @@ class RecordLevelEvaluatorTest {
     private static RecordLevelEvaluator.RecordAccessor row(Map<String, Object> values) {
         Map<ColumnPath, Object> byPath = new HashMap<>();
         values.forEach((k, v) -> byPath.put(ColumnPath.of(k), v));
-        return byPath::get;
+        return new RecordLevelEvaluator.RecordAccessor() {
+            @Override
+            public Object value(ColumnPath path) {
+                return byPath.get(path);
+            }
+
+            @Override
+            public List<Object> multiValue(ColumnPath leafPath) {
+                return List.of();
+            }
+        };
     }
 }

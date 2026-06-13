@@ -290,7 +290,18 @@ class LateMaterializingRowGroupReaderTest {
         List<MaterializedRow> matching = new ArrayList<>();
         for (long id = 0; id < ROW_COUNT; id++) {
             WriteValues values = valuesFor(id);
-            boolean passes = RecordLevelEvaluator.test(predicate, columnPath -> recordValue(columnPath, values));
+            RecordLevelEvaluator.RecordAccessor accessor = new RecordLevelEvaluator.RecordAccessor() {
+                @Override
+                public Object value(ColumnPath path) {
+                    return recordValue(path, values);
+                }
+
+                @Override
+                public List<Object> multiValue(ColumnPath leafPath) {
+                    return List.of();
+                }
+            };
+            boolean passes = RecordLevelEvaluator.test(predicate, accessor);
             if (passes) {
                 Long projectedId = outputSchema.leafColumns().contains(ID) ? values.id() : null;
                 Double projectedV = outputSchema.leafColumns().contains(V) ? values.v() : null;
