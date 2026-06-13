@@ -254,6 +254,36 @@ class SegmentPoolTest {
         }
 
         @Test
+        void evictedPooledBackingIsFreedDeterministically() {
+            DefaultSegmentPool pool = new DefaultSegmentPool(8192, 1024, 1024);
+            SegmentPool.Pooled retained = pool.borrow(512);
+            SegmentPool.Pooled evicted = pool.borrow(512);
+            MemorySegment evictedSegment = evicted.segment();
+            retained.close();
+            evicted.close();
+            assertThat(pool.stats().freeSegments())
+                    .as("one 1024-byte backing fills the cap; the second return is evicted")
+                    .isEqualTo(1);
+            assertThatThrownBy(() -> evictedSegment.get(ValueLayout.JAVA_BYTE, 0))
+                    .as("an evicted pooled backing frees its arena instead of waiting for GC")
+                    .isInstanceOf(IllegalStateException.class);
+        }
+
+        @Test
+        void closeFreesRetainedBackings() {
+            DefaultSegmentPool pool = new DefaultSegmentPool(8192, 1 << 20, 1024);
+            SegmentPool.Pooled pooled = pool.borrow(512);
+            MemorySegment segment = pooled.segment();
+            pooled.close();
+            assertThat(pool.stats().freeSegments()).isEqualTo(1);
+            pool.close();
+            assertThat(pool.stats().freeSegments()).isZero();
+            assertThatThrownBy(() -> segment.get(ValueLayout.JAVA_BYTE, 0))
+                    .as("pool close frees the retained backings")
+                    .isInstanceOf(IllegalStateException.class);
+        }
+
+        @Test
         void largeBufferIsFreedOnClose() {
             DefaultSegmentPool pool = new DefaultSegmentPool(1024, 1 << 20, 1024);
             SegmentPool.Pooled pooled = pool.borrow(8192);
