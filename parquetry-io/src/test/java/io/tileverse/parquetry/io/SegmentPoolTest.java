@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -96,13 +97,15 @@ class SegmentPoolTest {
 
     @Test
     void optionsRejectInvalidSizes() {
-        assertThatThrownBy(() -> new SegmentPool.Options(0, 1024, 1024, 8192))
+        assertThatThrownBy(() -> new SegmentPool.Options(0, 1024, 1024, 0, 8192))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new SegmentPool.Options(1024, -1, 1024, 8192))
+        assertThatThrownBy(() -> new SegmentPool.Options(1024, -1, 1024, 0, 8192))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new SegmentPool.Options(1024, 1024, -1, 8192))
+        assertThatThrownBy(() -> new SegmentPool.Options(1024, 1024, -1, 0, 8192))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new SegmentPool.Options(1024, 1024, 1024, 0))
+        assertThatThrownBy(() -> new SegmentPool.Options(1024, 1024, 1024, -1, 8192))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new SegmentPool.Options(1024, 1024, 1024, 0, 0))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -112,6 +115,7 @@ class SegmentPoolTest {
         assertThat(elastic.largeBufferThreshold()).isEqualTo(4L << 20);
         assertThat(elastic.maxPooledBytes()).isBetween(16L << 20, 512L << 20);
         assertThat(elastic.maxLargePooledBytes()).isBetween(64L << 20, 1024L << 20);
+        assertThat(elastic.idleRetentionNanos()).isEqualTo(TimeUnit.SECONDS.toNanos(60));
         assertThat(elastic.blockSize()).isEqualTo(8192);
     }
 
@@ -129,7 +133,7 @@ class SegmentPoolTest {
 
     @Test
     void createHonorsCustomOptions() {
-        SegmentPool pool = SegmentPool.create(new SegmentPool.Options(512 * 1024, 1L << 20, 1L << 20, 1024));
+        SegmentPool pool = SegmentPool.create(new SegmentPool.Options(512 * 1024, 1L << 20, 1L << 20, 0, 1024));
         pool.borrow(600 * 1024).close();
         assertThat(pool.stats().freeSegments())
                 .as("above the threshold: retained in the large class")
@@ -334,6 +338,63 @@ class SegmentPoolTest {
             SegmentPool.Pooled pooled = pool.borrow(8192);
             pooled.close();
             assertThatCode(pooled::close).doesNotThrowAnyException();
+        }
+
+        @Test
+        void reapIdleFreesBackingsPastTheIdleWindow() {
+            DefaultSegmentPool pool = new DefaultSegmentPool(8192, 1 << 20, 1 << 20, 1024);
+            SegmentPool.Pooled pooled = pool.borrow(512);
+            MemorySegment segment = pooled.segment();
+            pooled.close();
+            long retainedAtNanos = System.nanoTime();
+            assertThat(pool.stats().freeSegments()).isEqualTo(1);
+
+            long window = TimeUnit.SECONDS.toNanos(60);
+            pool.reapIdle(retainedAtNanos, window);
+            assertThat(pool.stats().freeSegments())
+                    .as("kept while still within the idle window")
+                    .isEqualTo(1);
+
+            pool.reapIdle(retainedAtNanos + window + 1, window);
+            assertThat(pool.stats().freeSegments())
+                    .as("freed once idle past the window")
+                    .isZero();
+            assertThatThrownBy(() -> segment.get(ValueLayout.JAVA_BYTE, 0))
+                    .as("a reaped backing's arena is closed")
+                    .isInstanceOf(IllegalStateException.class);
+        }
+
+        @Test
+        void reapIdleWithZeroThresholdKeepsBackings() {
+            DefaultSegmentPool pool = new DefaultSegmentPool(8192, 1 << 20, 1 << 20, 1024);
+            pool.borrow(512).close();
+            pool.reapIdle(System.nanoTime() + TimeUnit.SECONDS.toNanos(3600), 0);
+            assertThat(pool.stats().freeSegments())
+                    .as("a zero threshold disables reaping")
+                    .isEqualTo(1);
+        }
+
+        @Test
+        void abandonedPoolWithRunningReaperStaysCollectible() {
+            WeakReference<SegmentPool> ref = poolWithRunningReaper();
+            assertThat(awaitCollected(ref))
+                    .as(
+                            "a pool dropped without close() stays collectible because the reaper holds only a weak reference")
+                    .isTrue();
+        }
+
+        private static WeakReference<SegmentPool> poolWithRunningReaper() {
+            SegmentPool pool = SegmentPool.create(
+                    new SegmentPool.Options(8192, 1 << 20, 1 << 20, TimeUnit.SECONDS.toNanos(60), 1024));
+            pool.borrow(512).close();
+            return new WeakReference<>(pool);
+        }
+
+        private static boolean awaitCollected(WeakReference<?> ref) {
+            for (int attempt = 0; attempt < 50 && ref.get() != null; attempt++) {
+                System.gc();
+            }
+            return ref.get() == null;
         }
     }
 }

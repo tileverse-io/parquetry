@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.io;
 
 import java.lang.foreign.MemorySegment;
+import java.util.concurrent.TimeUnit;
 
 import io.tileverse.parquetry.io.limits.IoLimits;
 import io.tileverse.parquetry.io.limits.ResourceLimits;
@@ -75,8 +76,18 @@ public sealed interface SegmentPool permits DefaultSegmentPool {
      * breach its class's cap is freed at once rather than retained. Capacities round up to {@code blockSize} to make
      * reuse across nearby request sizes likely. A zero cap disables retention for that class entirely (every return in
      * it frees).
+     *
+     * <p>A positive {@code idleRetentionNanos} enables background idle decay: a retained backing left untouched for
+     * that long is freed by a per-pool background reaper thread, returning its native memory to the OS during quiet
+     * periods. Zero disables decay, keeping retained backings until they are reused, evicted by an over-cap return, or
+     * the pool closes.
      */
-    record Options(long largeBufferThreshold, long maxPooledBytes, long maxLargePooledBytes, int blockSize) {
+    record Options(
+            long largeBufferThreshold,
+            long maxPooledBytes,
+            long maxLargePooledBytes,
+            long idleRetentionNanos,
+            int blockSize) {
 
         public Options {
             if (largeBufferThreshold <= 0) {
@@ -88,6 +99,9 @@ public sealed interface SegmentPool permits DefaultSegmentPool {
             if (maxLargePooledBytes < 0) {
                 throw new IllegalArgumentException("maxLargePooledBytes must be >= 0, got " + maxLargePooledBytes);
             }
+            if (idleRetentionNanos < 0) {
+                throw new IllegalArgumentException("idleRetentionNanos must be >= 0, got " + idleRetentionNanos);
+            }
             if (blockSize <= 0) {
                 throw new IllegalArgumentException("blockSize must be > 0, got " + blockSize);
             }
@@ -95,9 +109,10 @@ public sealed interface SegmentPool permits DefaultSegmentPool {
 
         /**
          * The pod-sized policy: a 4 MB threshold (page-value segments and most coalesced fetch spans stay poolable), a
-         * small-buffer idle cap of one eighth of the off-heap allowance clamped to [16 MB, 512 MB], and a large-buffer
-         * idle cap of one quarter clamped to [64 MB, 1 GB] (coalesced fetch ranges dominate the large class, which gets
-         * the wider cap). Computed once; the limits probe reads container and filesystem facts.
+         * small-buffer idle cap of one eighth of the off-heap allowance clamped to [16 MB, 512 MB], a large-buffer idle
+         * cap of one quarter clamped to [64 MB, 1 GB] (coalesced fetch ranges dominate the large class, which gets the
+         * wider cap), and a 60-second idle-retention window after which the background reaper returns idle buffers to
+         * the OS. Computed once; the limits probe reads container and filesystem facts.
          */
         public static Options elastic() {
             return ElasticHolder.OPTIONS;
@@ -111,7 +126,8 @@ public sealed interface SegmentPool permits DefaultSegmentPool {
                         IoLimits.from(ResourceLimits.getDefault()).maxOffHeapBytes();
                 long maxPooledBytes = Math.clamp(maxOffHeapBytes / 8, 16L << 20, 512L << 20);
                 long maxLargePooledBytes = Math.clamp(maxOffHeapBytes / 4, 64L << 20, 1024L << 20);
-                return new Options(4L << 20, maxPooledBytes, maxLargePooledBytes, 8192);
+                long idleRetentionNanos = TimeUnit.SECONDS.toNanos(60);
+                return new Options(4L << 20, maxPooledBytes, maxLargePooledBytes, idleRetentionNanos, 8192);
             }
         }
     }
