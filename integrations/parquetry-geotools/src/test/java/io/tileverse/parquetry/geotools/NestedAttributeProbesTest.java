@@ -15,16 +15,18 @@
  */
 package io.tileverse.parquetry.geotools;
 
-import java.util.ArrayList;
+import static org.assertj.core.api.Assertions.assertThat;
+
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 import org.geotools.api.feature.simple.SimpleFeature;
 import org.geotools.api.feature.simple.SimpleFeatureType;
+import org.geotools.api.filter.Filter;
 import org.geotools.api.filter.FilterFactory;
 import org.geotools.api.filter.MultiValuedFilter.MatchAction;
 import org.geotools.api.filter.PropertyIsEqualTo;
-import org.geotools.api.filter.expression.Expression;
 import org.geotools.api.filter.expression.PropertyName;
 import org.geotools.factory.CommonFactoryFinder;
 import org.geotools.feature.simple.SimpleFeatureBuilder;
@@ -35,77 +37,74 @@ import org.geotools.filter.text.ecql.ECQL;
 import org.junit.jupiter.api.Test;
 
 /**
- * Exploratory spikes for the nested-attributes design. Each method prints what the GeoTools runtime actually does so
- * the implementation plan can be finalized against observed behavior rather than assumptions. Not assertions: the
- * output is read by hand.
+ * Regression tests that pin the GeoTools runtime behaviors the nested-attributes design depends on. A future GeoTools
+ * upgrade that changes any of these contracts fails here loudly rather than silently breaking the design.
  */
 class NestedAttributeProbesTest {
 
     private static final FilterFactory FF = CommonFactoryFinder.getFilterFactory();
 
+    /**
+     * GeoTools applies {@link MatchAction} over a collection-valued {@link PropertyName} with the same semantics core's
+     * quantified pushdown uses. Core pushdown and the GeoTools residual filter therefore agree on every row.
+     */
     @Test
-    void probeA_matchActionOverCollections() {
-        log("=== PROBE A: does GeoTools apply MatchAction over a collection-valued PropertyName? ===");
-        SimpleFeature multi = featureWithVals(List.of("a", "b", "c"));
-        SimpleFeature singleMatch = featureWithVals(List.of("b"));
-        SimpleFeature allMatch = featureWithVals(List.of("b", "b", "b"));
-        SimpleFeature twoMatches = featureWithVals(List.of("b", "b", "c"));
+    void geotoolsAppliesMatchActionOverCollections() {
+        SimpleFeature abc = featureWithVals(List.of("a", "b", "c"));
+        assertThat(eval(abc, "b", MatchAction.ANY)).isTrue();
+        assertThat(eval(abc, "z", MatchAction.ANY)).isFalse();
+        assertThat(eval(abc, "b", MatchAction.ALL)).isFalse();
+        assertThat(eval(abc, "b", MatchAction.ONE)).isTrue();
+
+        SimpleFeature bbb = featureWithVals(List.of("b", "b", "b"));
+        assertThat(eval(bbb, "b", MatchAction.ALL)).isTrue();
+
+        SimpleFeature bbc = featureWithVals(List.of("b", "b", "c"));
+        assertThat(eval(bbc, "b", MatchAction.ONE)).isFalse();
+
         SimpleFeature empty = featureWithVals(List.of());
-        SimpleFeature withNull = featureWithVals(Arrays.asList("a", null, "b"));
+        assertThat(eval(empty, "b", MatchAction.ANY)).isFalse();
+        assertThat(eval(empty, "b", MatchAction.ALL)).isTrue();
+        assertThat(eval(empty, "b", MatchAction.ONE)).isFalse();
 
-        log("ANY [a,b,c]=b      -> " + eval(multi, "b", MatchAction.ANY) + "   (expect core: true)");
-        log("ANY [a,b,c]=z      -> " + eval(multi, "z", MatchAction.ANY) + "   (expect core: false)");
-        log("ALL [a,b,c]=b      -> " + eval(multi, "b", MatchAction.ALL) + "   (expect core: false)");
-        log("ALL [b,b,b]=b      -> " + eval(allMatch, "b", MatchAction.ALL) + "   (expect core: true)");
-        log("ONE [a,b,c]=b      -> " + eval(multi, "b", MatchAction.ONE) + "   (expect core: true, 1 match)");
-        log("ONE [b,b,c]=b      -> " + eval(twoMatches, "b", MatchAction.ONE) + "   (expect core: false, 2 matches)");
-        log("ANY []=b           -> " + eval(empty, "b", MatchAction.ANY) + "   (expect core: false)");
-        log("ALL []=b           -> " + eval(empty, "b", MatchAction.ALL) + "   (expect core: true, vacuous)");
-        log("ONE []=b           -> " + eval(empty, "b", MatchAction.ONE) + "   (expect core: false)");
-        log("ANY [a,null,b]=b   -> " + eval(withNull, "b", MatchAction.ANY) + "   (null handling)");
-        log("ALL [a,null,b]=a   -> " + eval(withNull, "a", MatchAction.ALL) + "   (non-discriminating: b!=a anyway)");
         SimpleFeature aNull = featureWithVals(Arrays.asList("a", null));
-        log("ALL [a,null]=a     -> " + eval(aNull, "a", MatchAction.ALL)
-                + "   (core and GT agree: a null member is a non-match -> false)");
-        log("ONE [a,null]=a     -> " + eval(aNull, "a", MatchAction.ONE) + "   (core: 1 match -> true)");
+        assertThat(eval(aNull, "a", MatchAction.ANY)).isTrue();
+        assertThat(eval(aNull, "a", MatchAction.ALL)).isFalse();
+        assertThat(eval(aNull, "a", MatchAction.ONE)).isTrue();
     }
 
+    /**
+     * No base-classpath {@link PropertyAccessor} claims a nested path. A simple top-level attribute is claimed and
+     * reads back its collection value, but dotted and slashed nested names go unclaimed, which is what lets the
+     * design's HIGHEST_PRIORITY accessor win for those paths later.
+     */
     @Test
-    void probeB_accessorPrecedenceForDottedPaths() {
-        log("=== PROBE B: which PropertyAccessors claim nested paths when the TOP attribute exists? ===");
+    void noBaseAccessorClaimsNestedPaths() {
         SimpleFeature feature = featureWithNestedAttributes();
-        for (String path : List.of(
-                "addresses",
-                "addresses/locality",
-                "addresses.locality",
-                "categories/primary",
-                "categories.primary",
-                "missing/locality")) {
-            describeAccessors(feature, path);
-        }
+
+        List<PropertyAccessor> topLevel = findAccessors(feature, "addresses");
+        assertThat(topLevel).isNotEmpty();
+        assertThat(topLevel.get(0).get(feature, "addresses", Object.class)).isInstanceOf(List.class);
+
+        assertThat(findAccessors(feature, "addresses/locality")).isEmpty();
+        assertThat(findAccessors(feature, "addresses.locality")).isEmpty();
+        assertThat(findAccessors(feature, "categories/primary")).isEmpty();
+        assertThat(findAccessors(feature, "categories.primary")).isEmpty();
+        assertThat(findAccessors(feature, "missing/locality")).isEmpty();
     }
 
-    private SimpleFeature featureWithNestedAttributes() {
-        SimpleFeatureTypeBuilder typeBuilder = new SimpleFeatureTypeBuilder();
-        typeBuilder.setName("nested");
-        typeBuilder.add("id", String.class);
-        typeBuilder.add("addresses", List.class);
-        typeBuilder.add("categories", java.util.Map.class);
-        SimpleFeatureType type = typeBuilder.buildFeatureType();
-        SimpleFeatureBuilder featureBuilder = new SimpleFeatureBuilder(type);
-        featureBuilder.set("id", "f1");
-        featureBuilder.set("addresses", List.of(java.util.Map.of("locality", "NYC")));
-        featureBuilder.set("categories", java.util.Map.of("primary", "food"));
-        return featureBuilder.buildFeature("f1");
-    }
-
+    /**
+     * ECQL normalizes an unquoted dotted name to a slash-separated path, while a double-quoted name stays a literal
+     * dotted property name. The design relies on this to tell a nested traversal apart from a single attribute whose
+     * name happens to contain dots.
+     */
     @Test
-    void probeC_ecqlDottedVsQuoted() throws Exception {
-        log("=== PROBE C: ECQL parse of unquoted dotted vs double-quoted nested name ===");
-        describeEcql("categories.primary = 'x'");
-        describeEcql("\"categories.primary\" = 'x'");
-        describeEcql("brand.names.primary = 'x'");
-        describeEcql("\"addresses.list.element.locality\" = 'x'");
+    void ecqlNormalizesUnquotedDottedToSlash() throws Exception {
+        assertThat(propertyNameOf("categories.primary = 'x'")).isEqualTo("categories/primary");
+        assertThat(propertyNameOf("\"categories.primary\" = 'x'")).isEqualTo("categories.primary");
+        assertThat(propertyNameOf("brand.names.primary = 'x'")).isEqualTo("brand/names/primary");
+        assertThat(propertyNameOf("\"addresses.list.element.locality\" = 'x'"))
+                .isEqualTo("addresses.list.element.locality");
     }
 
     private boolean eval(SimpleFeature feature, String target, MatchAction matchAction) {
@@ -113,41 +112,16 @@ class NestedAttributeProbesTest {
         return filter.evaluate(feature);
     }
 
-    private void describeAccessors(SimpleFeature feature, String path) {
+    private List<PropertyAccessor> findAccessors(SimpleFeature feature, String path) {
         List<PropertyAccessor> accessors = PropertyAccessors.findPropertyAccessors(feature, path, null, null);
-        if (accessors == null || accessors.isEmpty()) {
-            log("path='" + path + "' -> NO accessor claims it");
-            return;
-        }
-        List<String> described = new ArrayList<>();
-        for (PropertyAccessor accessor : accessors) {
-            described.add(accessor.getClass().getSimpleName() + "[" + readValue(accessor, feature, path) + "]");
-        }
-        log("path='" + path + "' -> " + described);
+        return accessors == null ? List.of() : accessors;
     }
 
-    private String readValue(PropertyAccessor accessor, SimpleFeature feature, String path) {
-        try {
-            Object value = accessor.get(feature, path, Object.class);
-            return "get=" + value;
-        } catch (RuntimeException e) {
-            return "get threw " + e.getClass().getSimpleName();
-        }
-    }
-
-    private void describeEcql(String cql) throws Exception {
-        PropertyIsEqualTo filter = (PropertyIsEqualTo) ECQL.toFilter(cql);
-        log("ECQL " + cql);
-        log("     expr1=" + describeExpression(filter.getExpression1()) + "  expr2="
-                + describeExpression(filter.getExpression2()));
-    }
-
-    private String describeExpression(Expression expression) {
-        String type = expression.getClass().getSimpleName();
-        if (expression instanceof PropertyName propertyName) {
-            return type + "(propertyName='" + propertyName.getPropertyName() + "')";
-        }
-        return type + "(" + expression + ")";
+    private String propertyNameOf(String cql) throws Exception {
+        Filter filter = ECQL.toFilter(cql);
+        PropertyIsEqualTo equals = (PropertyIsEqualTo) filter;
+        PropertyName propertyName = (PropertyName) equals.getExpression1();
+        return propertyName.getPropertyName();
     }
 
     private SimpleFeature featureWithVals(List<?> vals) {
@@ -162,7 +136,17 @@ class NestedAttributeProbesTest {
         return featureBuilder.buildFeature("f1");
     }
 
-    private void log(String message) {
-        System.out.println("[PROBE] " + message);
+    private SimpleFeature featureWithNestedAttributes() {
+        SimpleFeatureTypeBuilder typeBuilder = new SimpleFeatureTypeBuilder();
+        typeBuilder.setName("nested");
+        typeBuilder.add("id", String.class);
+        typeBuilder.add("addresses", List.class);
+        typeBuilder.add("categories", Map.class);
+        SimpleFeatureType type = typeBuilder.buildFeatureType();
+        SimpleFeatureBuilder featureBuilder = new SimpleFeatureBuilder(type);
+        featureBuilder.set("id", "f1");
+        featureBuilder.set("addresses", List.of(Map.of("locality", "NYC")));
+        featureBuilder.set("categories", Map.of("primary", "food"));
+        return featureBuilder.buildFeature("f1");
     }
 }
