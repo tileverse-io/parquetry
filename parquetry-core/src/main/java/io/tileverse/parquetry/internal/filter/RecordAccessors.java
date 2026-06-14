@@ -37,6 +37,11 @@ public final class RecordAccessors {
             public List<Object> multiValue(ColumnPath leafPath) {
                 return rec.multiValue(leafPath);
             }
+
+            @Override
+            public int multiValueSize(ColumnPath leafPath) {
+                return rec.multiValueSize(leafPath);
+            }
         };
     }
 }

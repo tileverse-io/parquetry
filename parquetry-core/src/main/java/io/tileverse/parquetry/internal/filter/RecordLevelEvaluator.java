@@ -48,8 +48,21 @@ public final class RecordLevelEvaluator {
 
         Object value(ColumnPath path);
 
-        /** Flattened element values at a repeated leaf, for {@link Predicate.Quantified}. Empty when none. */
+        /**
+         * Flattened, NULL-FREE element values at a repeated leaf, for {@link Predicate.Quantified}. Empty when none.
+         * Null elements are excluded; a quantified evaluator that needs the full universe size uses
+         * {@link #multiValueSize(ColumnPath)}.
+         */
         List<Object> multiValue(ColumnPath leafPath);
+
+        /**
+         * The size of the repeated leaf's universe INCLUDING null elements. A null element is a present, non-matching
+         * member of the universe under ALL and ONE. The default falls back to the null-free count from
+         * {@link #multiValue(ColumnPath)}; accessors that can see null elements override this to include them.
+         */
+        default int multiValueSize(ColumnPath leafPath) {
+            return multiValue(leafPath).size();
+        }
     }
 
     /** Returns {@code true} if {@code row} satisfies {@code predicate}. */
@@ -98,6 +111,7 @@ public final class RecordLevelEvaluator {
     private static boolean testQuantified(MatchAction match, Predicate leaf, RecordAccessor row) {
         ColumnPath leafColumn = Predicate.columns(leaf).iterator().next();
         List<Object> elements = row.multiValue(leafColumn);
+        int universeSize = row.multiValueSize(leafColumn);
         int matches = 0;
         for (Object element : elements) {
             if (test(leaf, singletonAccessor(leafColumn, element))) {
@@ -106,7 +120,7 @@ public final class RecordLevelEvaluator {
         }
         return switch (match) {
             case ANY -> matches > 0;
-            case ALL -> matches == elements.size();
+            case ALL -> matches == universeSize;
             case ONE -> matches == 1;
         };
     }

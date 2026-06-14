@@ -46,6 +46,83 @@ final class MultiValues {
     }
 
     /**
+     * The size of the repeated leaf's universe INCLUDING null elements. {@link #flatten} drops nulls because callers
+     * read element values; quantified ALL/ONE evaluation needs the full count, where a null is a present non-matching
+     * member.
+     */
+    static int flattenSize(ParquetRecord rec, ColumnPath leafPath) {
+        int[] count = {0};
+        SchemaNode.Group root = rec.schema().root();
+        countAll(rec, root, leafPath, 0, count);
+        return count[0];
+    }
+
+    /**
+     * Counts every element of the slice {@code [from, end)} of {@code path}, null elements included, mirroring the
+     * descent in {@link #collect} but tallying rather than appending values.
+     */
+    private static void countAll(ParquetRecord rec, SchemaNode.Group group, ColumnPath path, int from, int[] count) {
+        Boundary boundary = firstRepeatedBoundary(group, path, from);
+        if (boundary == null) {
+            countLeafValue(rec, subPath(path, from, path.numParts()), count);
+            return;
+        }
+        ColumnPath containerPath = subPath(path, from, boundary.index());
+        if (isMapWrapper(boundary.repeatedGroup())) {
+            countFromMap(rec, containerPath, path, boundary.index(), count);
+            return;
+        }
+        countFromList(rec, boundary.repeatedGroup(), containerPath, path, boundary.index(), count);
+    }
+
+    private static void countLeafValue(ParquetRecord rec, ColumnPath leafSubPath, int[] count) {
+        if (rec.get(leafSubPath) != null) {
+            count[0]++;
+        }
+    }
+
+    private static void countFromList(
+            ParquetRecord rec,
+            SchemaNode.Group repeatedGroup,
+            ColumnPath containerPath,
+            ColumnPath path,
+            int boundary,
+            int[] count) {
+        Object container = rec.get(containerPath);
+        if (!(container instanceof List<?> elements)) {
+            return;
+        }
+        int tailFrom = boundary + 2;
+        SchemaNode.Group elementGroup = elementGroupOrNull(repeatedGroup);
+        for (Object element : elements) {
+            countListElement(element, elementGroup, path, tailFrom, count);
+        }
+    }
+
+    private static void countListElement(
+            Object element, SchemaNode.Group elementGroup, ColumnPath path, int tailFrom, int[] count) {
+        boolean primitiveEntry = tailFrom >= path.numParts();
+        if (primitiveEntry) {
+            count[0]++;
+            return;
+        }
+        if (element instanceof ParquetRecord rec) {
+            countAll(rec, elementGroup, path, tailFrom, count);
+        }
+    }
+
+    private static void countFromMap(
+            ParquetRecord rec, ColumnPath containerPath, ColumnPath path, int boundary, int[] count) {
+        Map<?, ?> map = rec.readMap(containerPath);
+        if (map == null) {
+            return;
+        }
+        String addressed = path.part(boundary + 1);
+        boolean keys = "key".equals(addressed);
+        count[0] += (keys ? map.keySet() : map.values()).size();
+    }
+
+    /**
      * Collects element values for the slice {@code [from, end)} of {@code path}, resolved within {@code group} on
      * {@code rec}. Plain struct segments are folded into a single multi-segment read; the first repeated boundary
      * splits the path: the list or map is read at the boundary, then each element re-enters this method for the tail.
