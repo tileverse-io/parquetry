@@ -82,8 +82,15 @@ final class QueryTranslator {
         return runSplitter(filter).getFilterPost();
     }
 
+    /**
+     * Runs the coarse capabilities split. The feature type is intentionally left null: a non-null type makes the
+     * splitter reject any property name that is not a flat attribute, which would throw on a nested leaf path such as
+     * {@code addresses/locality}. With no type the split rests on the capabilities alone, and nested-path resolution is
+     * left to {@link FilterToPredicate}, which validates the path against the schema and returns a residual when it
+     * does not resolve.
+     */
     private CapabilitiesFilterSplitter runSplitter(Filter filter) {
-        CapabilitiesFilterSplitter splitter = new CapabilitiesFilterSplitter(CAPABILITIES, mapping.featureType(), null);
+        CapabilitiesFilterSplitter splitter = new CapabilitiesFilterSplitter(CAPABILITIES, null, null);
         filter.accept(splitter, null);
         return splitter;
     }

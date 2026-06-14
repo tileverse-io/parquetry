@@ -425,7 +425,7 @@ final class GeoParquetSchemaMapper {
      * <p>Returns empty for {@code INT96} (a deprecated Impala timestamp format with no clean Java mapping) and for any
      * other kind where the logical type does not clarify the intended Java type.
      */
-    private static Optional<Class<?>> resolveBinding(PrimitiveKind kind, Optional<LogicalType> logical) {
+    static Optional<Class<?>> resolveBinding(PrimitiveKind kind, Optional<LogicalType> logical) {
         boolean isString =
                 logical.map(GeoParquetSchemaMapper::isStringLogicalType).orElse(false);
         return switch (kind) {

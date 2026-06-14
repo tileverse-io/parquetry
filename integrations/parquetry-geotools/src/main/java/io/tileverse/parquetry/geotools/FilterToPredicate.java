@@ -26,6 +26,7 @@ import org.geotools.api.filter.And;
 import org.geotools.api.filter.BinaryComparisonOperator;
 import org.geotools.api.filter.Filter;
 import org.geotools.api.filter.FilterFactory;
+import org.geotools.api.filter.MultiValuedFilter;
 import org.geotools.api.filter.Not;
 import org.geotools.api.filter.Or;
 import org.geotools.api.filter.PropertyIsBetween;
@@ -48,12 +49,17 @@ import org.geotools.util.Converters;
 import org.locationtech.jts.geom.Geometry;
 
 import io.tileverse.parquetry.filter.Bbox;
+import io.tileverse.parquetry.filter.MatchAction;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.geo.jts.JtsGeometryFilter;
 import io.tileverse.parquetry.geotools.GeoParquetSchemaMapper.AttributeMapping;
 import io.tileverse.parquetry.geotools.GeoParquetSchemaMapper.Mapping;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.ResolvedColumn;
+import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
  * Translates a GeoTools {@link Filter} into a parquetry {@link Predicate} plus a residual {@link Filter} for the part
@@ -75,6 +81,7 @@ final class FilterToPredicate {
     }
 
     private final Map<String, AttributeMapping> attributesByName;
+    private final ParquetSchema schema;
     private final CoordinateReferenceSystem nativeCrs;
     private final FilterFactory ff = CommonFactoryFinder.getFilterFactory();
 
@@ -84,6 +91,7 @@ final class FilterToPredicate {
             byName.put(attr.name(), attr);
         }
         this.attributesByName = Map.copyOf(byName);
+        this.schema = mapping.schema();
         this.nativeCrs = nativeCrs;
     }
 
@@ -190,31 +198,36 @@ final class FilterToPredicate {
     }
 
     private Optional<Predicate> comparison(BinaryComparisonOperator f, Op op) {
-        Optional<AttributeMapping> attr = property(f.getExpression1());
+        Optional<Leaf> leaf = leafColumn(f.getExpression1());
         Optional<Object> value = literal(f.getExpression2());
-        if (attr.isEmpty() || value.isEmpty()) {
+        if (leaf.isEmpty() || value.isEmpty()) {
             return Optional.empty();
         }
-        return build(attr.get(), op, value.get());
+        Leaf column = leaf.get();
+        return build(column.path(), column.binding(), op, value.get()).map(predicate -> column.quantify(predicate, f));
     }
 
     private Optional<Predicate> between(PropertyIsBetween f) {
-        Optional<AttributeMapping> attr = property(f.getExpression());
+        Optional<Leaf> leaf = leafColumn(f.getExpression());
         Optional<Object> lo = literal(f.getLowerBoundary());
         Optional<Object> hi = literal(f.getUpperBoundary());
-        if (attr.isEmpty() || lo.isEmpty() || hi.isEmpty()) {
+        if (leaf.isEmpty() || lo.isEmpty() || hi.isEmpty()) {
             return Optional.empty();
         }
-        Optional<Predicate> low = build(attr.get(), Op.GTE, lo.get());
-        Optional<Predicate> high = build(attr.get(), Op.LTE, hi.get());
+        Leaf column = leaf.get();
+        Optional<Predicate> low = build(column.path(), column.binding(), Op.GTE, lo.get());
+        Optional<Predicate> high = build(column.path(), column.binding(), Op.LTE, hi.get());
         if (low.isEmpty() || high.isEmpty()) {
             return Optional.empty();
         }
-        return Optional.of(Pred.and(low.get(), high.get()));
+        // A repeated leaf must have ONE element satisfy both bounds; quantify the whole conjunction, not each bound.
+        Predicate bounded = Pred.and(low.get(), high.get());
+        return Optional.of(column.quantify(bounded, f));
     }
 
     private Optional<Predicate> isNull(PropertyIsNull f) {
-        return property(f.getExpression()).map(attr -> Pred.col(attr.path()).isNull());
+        return leafColumn(f.getExpression())
+                .map(column -> column.quantify(Pred.col(column.path()).isNull(), f));
     }
 
     private Optional<Predicate> bbox(org.geotools.api.filter.spatial.BBOX f) {
@@ -277,9 +290,7 @@ final class FilterToPredicate {
         }
     }
 
-    private Optional<Predicate> build(AttributeMapping attr, Op op, Object rawValue) {
-        ColumnPath p = attr.path();
-        Class<?> binding = attr.binding();
+    private Optional<Predicate> build(ColumnPath p, Class<?> binding, Op op, Object rawValue) {
         if (binding == Integer.class) {
             Integer v = Converters.convert(rawValue, Integer.class);
             if (v == null || !isLossless(rawValue, v.doubleValue())) {
@@ -368,6 +379,83 @@ final class FilterToPredicate {
                     case GT -> Pred.col(p).gt(v);
                     case GTE -> Pred.col(p).gtEq(v);
                 });
+    }
+
+    /**
+     * A column a comparison can build against: its physical path, its Java binding for literal coercion, and whether it
+     * is a repeated (list/map element) leaf that an existential quantifier must aggregate over.
+     */
+    private record Leaf(ColumnPath path, Class<?> binding, boolean repeated) {
+
+        /** Wraps {@code leaf} in the filter's match-action quantifier when this column is repeated; else returns it. */
+        Predicate quantify(Predicate leaf, Filter filter) {
+            if (repeated) {
+                return new Predicate.Quantified(matchAction(filter), leaf);
+            }
+            return leaf;
+        }
+    }
+
+    /**
+     * Resolves the comparison operand to a buildable {@link Leaf}. A plain top-level scalar attribute uses the existing
+     * attribute mapping; any other property (a slash- or dot-separated nested path) is resolved against the schema as a
+     * nested leaf. Empty when the operand is not a property, names a geometry attribute, or does not resolve.
+     */
+    private Optional<Leaf> leafColumn(Expression e) {
+        if (!(e instanceof PropertyName name)) {
+            return Optional.empty();
+        }
+        String propertyName = name.getPropertyName();
+        AttributeMapping topLevel = attributesByName.get(propertyName);
+        if (isPlainScalar(topLevel)) {
+            return Optional.of(new Leaf(topLevel.path(), topLevel.binding(), false));
+        }
+        return resolveNestedLeaf(propertyName);
+    }
+
+    /** True when {@code attr} is a top-level, non-geometry, non-nested scalar attribute the existing path handles. */
+    private static boolean isPlainScalar(AttributeMapping attr) {
+        return attr != null && !attr.geometry() && attr.nestedType() == null;
+    }
+
+    /** Resolves a nested logical path (slash or dot separated) against the schema to its physical leaf, if present. */
+    private Optional<Leaf> resolveNestedLeaf(String propertyName) {
+        if (schema == null) {
+            return Optional.empty();
+        }
+        ColumnPath logical = logicalPath(propertyName);
+        Optional<ResolvedColumn> resolved = schema.resolve(logical);
+        if (resolved.isEmpty()) {
+            return Optional.empty();
+        }
+        ResolvedColumn column = resolved.get();
+        Optional<Class<?>> binding = leafBinding(column);
+        return binding.map(b -> new Leaf(column.physical(), b, column.isRepeated()));
+    }
+
+    /** The Java binding for the resolved leaf, picking String vs byte[] for a BYTE_ARRAY leaf from its logical type. */
+    private Optional<Class<?>> leafBinding(ResolvedColumn column) {
+        Optional<LogicalType> logicalType = schema.find(column.physical())
+                .filter(SchemaNode.Primitive.class::isInstance)
+                .flatMap(node -> ((SchemaNode.Primitive) node).logicalType());
+        return GeoParquetSchemaMapper.resolveBinding(column.kind(), logicalType);
+    }
+
+    /** Splits a property name on the ECQL slash form and the dotted programmatic form into a logical column path. */
+    private static ColumnPath logicalPath(String propertyName) {
+        return ColumnPath.of(propertyName.split("[/.]"));
+    }
+
+    /** Maps the GeoTools match action of a multi-valued filter to its parquetry equivalent; defaults to ANY. */
+    private static MatchAction matchAction(Filter filter) {
+        if (!(filter instanceof MultiValuedFilter multiValued)) {
+            return MatchAction.ANY;
+        }
+        return switch (multiValued.getMatchAction()) {
+            case ALL -> MatchAction.ALL;
+            case ONE -> MatchAction.ONE;
+            case ANY -> MatchAction.ANY;
+        };
     }
 
     private Optional<AttributeMapping> property(Expression e) {
