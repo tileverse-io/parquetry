@@ -25,15 +25,20 @@ import java.util.Optional;
 import java.util.OptionalInt;
 
 import org.geotools.api.feature.simple.SimpleFeatureType;
+import org.geotools.api.feature.type.AttributeDescriptor;
 import org.geotools.api.feature.type.GeometryDescriptor;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.Point;
 
+import io.tileverse.parquetry.catalog.ParquetDatasetCatalog;
 import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.geotools.GeoParquetSchemaMapper.AttributeMapping;
+import io.tileverse.parquetry.geotools.NestedType.ListType;
+import io.tileverse.parquetry.geotools.NestedType.MapType;
+import io.tileverse.parquetry.geotools.NestedType.StructType;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -115,6 +120,79 @@ class GeoParquetSchemaMapperTest {
             assertThat(mapping.attributes())
                     .allSatisfy(a -> assertThat(a.path()).isNotNull());
         }
+    }
+
+    @Test
+    void mapsNestedColumnsToSingleAttributesWithoutFlattening(@TempDir Path dir) throws Exception {
+        GeoParquetSchemaMapper.Mapping mapping = mapNestedFixture(dir);
+        SimpleFeatureType ft = mapping.featureType();
+
+        List<String> names = ft.getAttributeDescriptors().stream()
+                .map(AttributeDescriptor::getLocalName)
+                .toList();
+        assertThat(names).containsExactlyInAnyOrder("id", "geometry", "brand", "addresses", "tags");
+        assertThat(names)
+                .as("nested columns must not be flattened to dotted attribute names")
+                .doesNotContain("addresses.list.element.locality", "brand.name");
+    }
+
+    @Test
+    void bindsNestedAttributesToListOrMap(@TempDir Path dir) throws Exception {
+        SimpleFeatureType ft = mapNestedFixture(dir).featureType();
+
+        assertThat(ft.getDescriptor("addresses").getType().getBinding()).isEqualTo(List.class);
+        assertThat(ft.getDescriptor("brand").getType().getBinding()).isEqualTo(Map.class);
+        assertThat(ft.getDescriptor("tags").getType().getBinding()).isEqualTo(Map.class);
+    }
+
+    @Test
+    void recordsNestedTypeInDescriptorUserData(@TempDir Path dir) throws Exception {
+        SimpleFeatureType ft = mapNestedFixture(dir).featureType();
+
+        assertThat(ft.getDescriptor("addresses").getUserData().get(NestedTypes.USER_DATA_KEY))
+                .isInstanceOf(ListType.class);
+        assertThat(ft.getDescriptor("brand").getUserData().get(NestedTypes.USER_DATA_KEY))
+                .isInstanceOf(StructType.class);
+        assertThat(ft.getDescriptor("tags").getUserData().get(NestedTypes.USER_DATA_KEY))
+                .isInstanceOf(MapType.class);
+    }
+
+    @Test
+    void nestedAttributeMappingExposesItsTopLevelPathAndType(@TempDir Path dir) throws Exception {
+        GeoParquetSchemaMapper.Mapping mapping = mapNestedFixture(dir);
+
+        AttributeMapping addresses = attribute(mapping, "addresses");
+        assertThat(addresses.nestedType()).isInstanceOf(ListType.class);
+        assertThat(addresses.path()).isEqualTo(ColumnPath.of("addresses"));
+
+        AttributeMapping id = attribute(mapping, "id");
+        assertThat(id.nestedType()).isNull();
+    }
+
+    @Test
+    void keepsGeometryAsTheDefaultGeometryOverNestedColumns(@TempDir Path dir) throws Exception {
+        SimpleFeatureType ft = mapNestedFixture(dir).featureType();
+
+        GeometryDescriptor geom = ft.getGeometryDescriptor();
+        assertThat(geom).isNotNull();
+        assertThat(geom.getLocalName()).isEqualTo("geometry");
+        assertThat(geom.getType().getBinding()).isAssignableFrom(Geometry.class);
+    }
+
+    private static GeoParquetSchemaMapper.Mapping mapNestedFixture(Path dir) throws Exception {
+        Path file = dir.resolve("nested.parquet");
+        NestedFixtures.writeSample(file);
+        try (ParquetDatasetCatalog catalog = NestedFixtures.openCatalog(file)) {
+            ParquetDataset dataset = catalog.dataset("nested");
+            return GeoParquetSchemaMapper.map("nested", null, dataset.schema(), dataset.keyValueMetadata(), null);
+        }
+    }
+
+    private static AttributeMapping attribute(GeoParquetSchemaMapper.Mapping mapping, String name) {
+        return mapping.attributes().stream()
+                .filter(attr -> attr.name().equals(name))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("no attribute named '" + name + "'"));
     }
 
     @Test

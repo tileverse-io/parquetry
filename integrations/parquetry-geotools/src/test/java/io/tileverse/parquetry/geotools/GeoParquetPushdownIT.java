@@ -193,6 +193,9 @@ class GeoParquetPushdownIT {
             GeoParquetFeatureSource fs = (GeoParquetFeatureSource) store.getFeatureSource("example");
             // *a* matches 4 of 5; offset 1, limit 2 -> the 2nd and 3rd matches.
             Query q = new Query("example", FF.like(FF.property("name"), "*a*"));
+            // GeoTools applies offset via a sort-based pager that requires serializable attribute bindings; restrict
+            // to scalar properties (the nested bbox struct binds to a non-serializable Map and is not paged here).
+            q.setPropertyNames("name", "geometry");
             q.setStartIndex(1);
             q.setMaxFeatures(2);
             assertThat(count(fs.getReader(q))).isEqualTo(2);
@@ -251,6 +254,9 @@ class GeoParquetPushdownIT {
         try (GeoParquetDataStore store = store(dir)) {
             GeoParquetFeatureSource fs = (GeoParquetFeatureSource) store.getFeatureSource("example");
             Query q = new Query("example", FF.equals(FF.property("continent"), FF.literal("Africa")));
+            // GeoTools applies offset via a sort-based pager that requires serializable attribute bindings; restrict
+            // to scalar properties (the nested bbox struct binds to a non-serializable Map and is not paged here).
+            q.setPropertyNames("continent", "geometry");
             q.setStartIndex(1); // Africa matches 2; offset 1 -> 1 remaining
             assertThat(fs.getCount(q)).isEqualTo(count(fs.getReader(q))).isEqualTo(1);
         }
