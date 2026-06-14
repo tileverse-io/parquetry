@@ -224,7 +224,7 @@ public sealed interface Codec
 
         @Override
         public int decompress(MemorySegment src, MemorySegment output) {
-            return SnappyDecompressor.create().decompress(src, output);
+            return CompressionSupport.decompressReadingFrom(src, output, SnappyDecompressor.create()::decompress);
         }
 
         @Override
@@ -412,7 +412,7 @@ public sealed interface Codec
 
         @Override
         public int decompress(MemorySegment src, MemorySegment output) {
-            return Lz4Decompressor.create().decompress(src, output);
+            return CompressionSupport.decompressReadingFrom(src, output, Lz4Decompressor.create()::decompress);
         }
 
         @Override
@@ -501,7 +501,7 @@ public sealed interface Codec
 
         @Override
         public int decompress(MemorySegment src, MemorySegment output) {
-            return ZstdDecompressor.create().decompress(src, output);
+            return CompressionSupport.decompressReadingFrom(src, output, ZstdDecompressor.create()::decompress);
         }
 
         @Override
@@ -609,7 +609,7 @@ public sealed interface Codec
 
         @Override
         public int decompress(MemorySegment src, MemorySegment output) {
-            return new LzoDecompressor().decompress(src, output);
+            return CompressionSupport.decompressReadingFrom(src, output, new LzoDecompressor()::decompress);
         }
 
         @Override

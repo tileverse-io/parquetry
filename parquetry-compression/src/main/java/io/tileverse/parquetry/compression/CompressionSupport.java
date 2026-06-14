@@ -64,6 +64,31 @@ final class CompressionSupport {
         return out;
     }
 
+    /**
+     * Runs an aircompressor segment-to-segment decode, tolerating a read-only source without copying when the engine
+     * accepts one. The optimized decoder reads a read-only segment directly; the pure-Java fallback reaches the base
+     * address through {@code Unsafe} and refuses a read-only segment, and which decoder aircompressor picks varies by
+     * codec and platform (the Windows runner hits the fallback for snappy and zstd; macOS hits it for lzo). Only on
+     * that refusal, and only for a read-only source, is the source copied once to a writable heap segment and the
+     * decode retried. Writable sources and the optimized path never copy.
+     */
+    static int decompressReadingFrom(MemorySegment src, MemorySegment output, SegmentDecompressor decompressor) {
+        try {
+            return decompressor.decompress(src, output);
+        } catch (IllegalArgumentException refusal) {
+            if (!src.isReadOnly()) {
+                throw refusal;
+            }
+            return decompressor.decompress(MemorySegment.ofArray(src.toArray(JAVA_BYTE)), output);
+        }
+    }
+
+    /** An aircompressor decoder's segment-to-segment decompress method, returning the number of bytes written. */
+    @FunctionalInterface
+    interface SegmentDecompressor {
+        int decompress(MemorySegment src, MemorySegment output);
+    }
+
     static void writeFromSegment(MemorySegment src, OutputStream sink) throws IOException {
         byte[] buf = new byte[8192];
         long remaining = src.byteSize();

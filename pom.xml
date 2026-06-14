@@ -39,6 +39,7 @@
     <module>parquetry-io</module>
     <module>parquetry-compression</module>
     <module>parquetry-format</module>
+    <module>parquetry-avro</module>
     <module>parquetry-core</module>
     <module>parquetry-catalog</module>
     <module>parquetry-encryption</module>
