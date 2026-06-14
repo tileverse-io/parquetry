@@ -96,9 +96,14 @@ class SegmentPoolTest {
 
     @Test
     void optionsRejectInvalidSizes() {
-        assertThatThrownBy(() -> new SegmentPool.Options(0, 1024, 8192)).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new SegmentPool.Options(1024, -1, 8192)).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new SegmentPool.Options(1024, 1024, 0)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new SegmentPool.Options(0, 1024, 1024, 8192))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new SegmentPool.Options(1024, -1, 1024, 8192))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new SegmentPool.Options(1024, 1024, -1, 8192))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new SegmentPool.Options(1024, 1024, 1024, 0))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
@@ -106,6 +111,7 @@ class SegmentPoolTest {
         SegmentPool.Options elastic = SegmentPool.Options.elastic();
         assertThat(elastic.largeBufferThreshold()).isEqualTo(4L << 20);
         assertThat(elastic.maxPooledBytes()).isBetween(16L << 20, 512L << 20);
+        assertThat(elastic.maxLargePooledBytes()).isBetween(64L << 20, 1024L << 20);
         assertThat(elastic.blockSize()).isEqualTo(8192);
     }
 
@@ -123,15 +129,15 @@ class SegmentPoolTest {
 
     @Test
     void createHonorsCustomOptions() {
-        SegmentPool pool = SegmentPool.create(new SegmentPool.Options(512 * 1024, 1L << 20, 1024));
+        SegmentPool pool = SegmentPool.create(new SegmentPool.Options(512 * 1024, 1L << 20, 1L << 20, 1024));
         pool.borrow(600 * 1024).close();
         assertThat(pool.stats().freeSegments())
-                .as("above the custom threshold: never pooled")
-                .isZero();
+                .as("above the threshold: retained in the large class")
+                .isEqualTo(1);
         pool.borrow(400 * 1024).close();
         assertThat(pool.stats().freeSegments())
-                .as("below the custom threshold: pooled")
-                .isEqualTo(1);
+                .as("below the threshold: retained in the small class")
+                .isEqualTo(2);
     }
 
     @Test
@@ -154,21 +160,23 @@ class SegmentPoolTest {
     }
 
     @Test
-    void statsCountLargeUnpooledBorrows() {
-        DefaultSegmentPool pool = new DefaultSegmentPool(1024, 1 << 20, 1024);
+    void statsCountLargeBorrows() {
+        DefaultSegmentPool pool = new DefaultSegmentPool(1024, 1 << 20, 1 << 20, 1024);
         SegmentPool.Pooled large = pool.borrow(8192);
         assertThat(pool.stats().outstandingBorrows()).isEqualTo(1);
         large.close();
         large.close();
         assertThat(pool.stats().outstandingBorrows()).isZero();
         assertThat(pool.stats().totalBorrows()).isEqualTo(1);
-        assertThat(pool.stats().freeSegments()).isZero();
+        assertThat(pool.stats().freeSegments())
+                .as("the large buffer is retained for reuse")
+                .isEqualTo(1);
     }
 
     @Test
     void concurrentBorrowAndReturnStayConsistent() throws Exception {
         long maxPooledBytes = 8L * 8192;
-        DefaultSegmentPool pool = new DefaultSegmentPool(1 << 20, maxPooledBytes, 8192);
+        DefaultSegmentPool pool = new DefaultSegmentPool(1 << 20, maxPooledBytes, 1 << 20, 8192);
         AtomicBoolean failed = new AtomicBoolean(false);
         try (ExecutorService executor = Executors.newFixedThreadPool(8)) {
             for (int t = 0; t < 8; t++) {
@@ -196,15 +204,15 @@ class SegmentPoolTest {
     }
 
     /**
-     * Retention policy: small buffers are pooled and reused under a byte cap; large buffers are never retained and are
-     * freed deterministically when the borrower closes, instead of ratcheting native memory for the JVM lifetime.
+     * Retention policy: each size class reuses returned buffers under its own byte cap; a return that would breach a
+     * class's cap has its arena closed at once, freeing the native memory deterministically rather than parking it.
      */
     @Nested
     class Retention {
 
         @Test
         void smallBuffersArePooledAndReused() {
-            DefaultSegmentPool pool = new DefaultSegmentPool(8192, 1 << 20, 1024);
+            DefaultSegmentPool pool = new DefaultSegmentPool(8192, 1 << 20, 1 << 20, 1024);
             SegmentPool.Pooled first = pool.borrow(512);
             long address = first.segment().address();
             first.close();
@@ -217,9 +225,25 @@ class SegmentPoolTest {
         }
 
         @Test
+        void largeBuffersArePooledAndReused() {
+            DefaultSegmentPool pool = new DefaultSegmentPool(1024, 1 << 20, 1 << 20, 1024);
+            SegmentPool.Pooled first = pool.borrow(8192);
+            long address = first.segment().address();
+            first.close();
+            assertThat(pool.stats().freeSegments()).isEqualTo(1);
+            try (SegmentPool.Pooled second = pool.borrow(8192)) {
+                assertThat(second.segment().address())
+                        .as("reused large backing")
+                        .isEqualTo(address);
+                assertThat(pool.stats().freeSegments()).isZero();
+            }
+            assertThat(pool.stats().freeSegments()).isEqualTo(1);
+        }
+
+        @Test
         void pooledRetentionIsBoundedByBytes() {
             long maxPooledBytes = 4096;
-            DefaultSegmentPool pool = new DefaultSegmentPool(8192, maxPooledBytes, 1024);
+            DefaultSegmentPool pool = new DefaultSegmentPool(8192, maxPooledBytes, 1 << 20, 1024);
             List<SegmentPool.Pooled> held = new ArrayList<>();
             for (int i = 0; i < 10; i++) {
                 held.add(pool.borrow(512));
@@ -234,28 +258,37 @@ class SegmentPoolTest {
         }
 
         @Test
-        void largeBuffersAreNeverPooled() {
-            DefaultSegmentPool pool = new DefaultSegmentPool(1024, 1 << 20, 1024);
-            pool.borrow(8192).close();
-            assertThat(pool.stats().freeSegments()).isZero();
-            assertThat(pool.stats().retainedBytes()).isZero();
+        void largeRetentionIsBoundedByTheLargeCap() {
+            long maxLargePooledBytes = 4L * 8192;
+            DefaultSegmentPool pool = new DefaultSegmentPool(1024, 1 << 20, maxLargePooledBytes, 8192);
+            List<SegmentPool.Pooled> held = new ArrayList<>();
+            for (int i = 0; i < 10; i++) {
+                held.add(pool.borrow(8192));
+            }
+            for (SegmentPool.Pooled pooled : held) {
+                pooled.close();
+            }
+            assertThat(pool.stats().retainedBytes())
+                    .as("large retained bytes")
+                    .isLessThanOrEqualTo(maxLargePooledBytes);
+            assertThat(pool.stats().freeSegments())
+                    .as("8192-byte large backings retained under a 32768 cap")
+                    .isEqualTo(4);
         }
 
         @Test
-        void repeatedLargeBorrowsDoNotRatchet() {
-            DefaultSegmentPool pool = new DefaultSegmentPool(1024, 1 << 20, 1024);
-            for (int i = 0; i < 100; i++) {
-                pool.borrow(64 * 1024).close();
-                assertThat(pool.stats().freeSegments())
-                        .as("retained after large borrow %d", i)
-                        .isZero();
-            }
-            assertThat(pool.stats().retainedBytes()).isZero();
+        void smallAndLargeClassesRetainIndependently() {
+            DefaultSegmentPool pool = new DefaultSegmentPool(4096, 1 << 20, 1 << 20, 1024);
+            pool.borrow(2048).close();
+            pool.borrow(16384).close();
+            assertThat(pool.stats().freeSegments())
+                    .as("one small + one large backing, each in its own class")
+                    .isEqualTo(2);
         }
 
         @Test
         void evictedPooledBackingIsFreedDeterministically() {
-            DefaultSegmentPool pool = new DefaultSegmentPool(8192, 1024, 1024);
+            DefaultSegmentPool pool = new DefaultSegmentPool(8192, 1024, 1024, 1024);
             SegmentPool.Pooled retained = pool.borrow(512);
             SegmentPool.Pooled evicted = pool.borrow(512);
             MemorySegment evictedSegment = evicted.segment();
@@ -271,7 +304,7 @@ class SegmentPoolTest {
 
         @Test
         void closeFreesRetainedBackings() {
-            DefaultSegmentPool pool = new DefaultSegmentPool(8192, 1 << 20, 1024);
+            DefaultSegmentPool pool = new DefaultSegmentPool(8192, 1 << 20, 1 << 20, 1024);
             SegmentPool.Pooled pooled = pool.borrow(512);
             MemorySegment segment = pooled.segment();
             pooled.close();
@@ -284,17 +317,20 @@ class SegmentPoolTest {
         }
 
         @Test
-        void largeBufferIsFreedOnClose() {
-            DefaultSegmentPool pool = new DefaultSegmentPool(1024, 1 << 20, 1024);
+        void aBufferIsFreedWhenItsClassCannotRetainIt() {
+            DefaultSegmentPool pool = new DefaultSegmentPool(1024, 1 << 20, 0, 1024);
             SegmentPool.Pooled pooled = pool.borrow(8192);
             MemorySegment segment = pooled.segment();
             pooled.close();
-            assertThatThrownBy(() -> segment.get(ValueLayout.JAVA_BYTE, 0)).isInstanceOf(IllegalStateException.class);
+            assertThat(pool.stats().freeSegments()).isZero();
+            assertThatThrownBy(() -> segment.get(ValueLayout.JAVA_BYTE, 0))
+                    .as("a large class with no retention room frees the buffer on return")
+                    .isInstanceOf(IllegalStateException.class);
         }
 
         @Test
-        void largeBufferCloseIsIdempotent() {
-            DefaultSegmentPool pool = new DefaultSegmentPool(1024, 1 << 20, 1024);
+        void closeIsIdempotentForARetainedBuffer() {
+            DefaultSegmentPool pool = new DefaultSegmentPool(1024, 1 << 20, 1 << 20, 1024);
             SegmentPool.Pooled pooled = pool.borrow(8192);
             pooled.close();
             assertThatCode(pooled::close).doesNotThrowAnyException();

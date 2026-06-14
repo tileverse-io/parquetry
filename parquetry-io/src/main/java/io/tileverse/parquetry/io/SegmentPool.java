@@ -69,12 +69,14 @@ public sealed interface SegmentPool permits DefaultSegmentPool {
     }
 
     /**
-     * The pool's retention policy. Small buffers (rounded capacity at most {@code largeBufferThreshold}) are pooled for
-     * reuse up to {@code maxPooledBytes} of idle retention; larger buffers are freed deterministically when the
-     * borrower closes. Capacities round up to {@code blockSize} to make reuse across nearby request sizes likely. A
-     * zero {@code maxPooledBytes} disables retention entirely (every return frees).
+     * The pool's retention policy. Two size classes reuse returned buffers under separate idle-retention caps, with
+     * {@code largeBufferThreshold} as the dividing line: a buffer of rounded capacity at most the threshold reuses up
+     * to {@code maxPooledBytes} of idle retention, a larger one up to {@code maxLargePooledBytes}. A return that would
+     * breach its class's cap is freed at once rather than retained. Capacities round up to {@code blockSize} to make
+     * reuse across nearby request sizes likely. A zero cap disables retention for that class entirely (every return in
+     * it frees).
      */
-    record Options(long largeBufferThreshold, long maxPooledBytes, int blockSize) {
+    record Options(long largeBufferThreshold, long maxPooledBytes, long maxLargePooledBytes, int blockSize) {
 
         public Options {
             if (largeBufferThreshold <= 0) {
@@ -83,25 +85,34 @@ public sealed interface SegmentPool permits DefaultSegmentPool {
             if (maxPooledBytes < 0) {
                 throw new IllegalArgumentException("maxPooledBytes must be >= 0, got " + maxPooledBytes);
             }
+            if (maxLargePooledBytes < 0) {
+                throw new IllegalArgumentException("maxLargePooledBytes must be >= 0, got " + maxLargePooledBytes);
+            }
             if (blockSize <= 0) {
                 throw new IllegalArgumentException("blockSize must be > 0, got " + blockSize);
             }
         }
 
         /**
-         * The pod-sized policy: a 4 MB pooling threshold (page-value segments and most coalesced fetch spans stay
-         * poolable) and an idle-retention cap of one eighth of the off-heap allowance, clamped to [16 MB, 512 MB].
-         * Computed once; the limits probe reads container and filesystem facts.
+         * The pod-sized policy: a 4 MB threshold (page-value segments and most coalesced fetch spans stay poolable), a
+         * small-buffer idle cap of one eighth of the off-heap allowance clamped to [16 MB, 512 MB], and a large-buffer
+         * idle cap of one quarter clamped to [64 MB, 1 GB] (coalesced fetch ranges dominate the large class, which gets
+         * the wider cap). Computed once; the limits probe reads container and filesystem facts.
          */
         public static Options elastic() {
             return ElasticHolder.OPTIONS;
         }
 
         private static final class ElasticHolder {
-            private static final Options OPTIONS = new Options(
-                    4L << 20,
-                    Math.clamp(IoLimits.from(ResourceLimits.getDefault()).maxOffHeapBytes() / 8, 16L << 20, 512L << 20),
-                    8192);
+            private static final Options OPTIONS = elasticOptions();
+
+            private static Options elasticOptions() {
+                long maxOffHeapBytes =
+                        IoLimits.from(ResourceLimits.getDefault()).maxOffHeapBytes();
+                long maxPooledBytes = Math.clamp(maxOffHeapBytes / 8, 16L << 20, 512L << 20);
+                long maxLargePooledBytes = Math.clamp(maxOffHeapBytes / 4, 64L << 20, 1024L << 20);
+                return new Options(4L << 20, maxPooledBytes, maxLargePooledBytes, 8192);
+            }
         }
     }
 

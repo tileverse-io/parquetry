@@ -27,53 +27,64 @@ import java.util.concurrent.locks.ReentrantLock;
  * {@link SegmentPool#getDefault() default}. It reuses native memory across reads while keeping a long-running server's
  * native footprint flat.
  *
- * <p>The footprint problem it avoids: a pool that retained every returned buffer would grow to the largest size ever
- * requested and stay there for the life of the process; a single rare large request would pin that much native memory
- * forever. The pool prevents that by treating two size classes differently, with {@code largeBufferThreshold} as the
- * dividing line.
+ * <p>Reuse matters because {@link Arena#allocate} always zeroes its memory: a fetch span or a decompression output is
+ * allocated, fully overwritten, then discarded, and a fresh allocation per use pays that zeroing every time. Pooling
+ * pays the zeroing once and reuses the buffer; the cost shows up directly under heavy scans.
+ *
+ * <p>Two size classes share the same reuse machinery but keep separate idle-retention caps, letting the common buffers
+ * of each class reuse without a rare outlier pinning memory. {@code largeBufferThreshold} is the dividing line.
  *
  * <ul>
- *   <li><b>Small buffers</b> (rounded capacity at most {@code largeBufferThreshold}) are reused. They live in a free
- *       list sorted by capacity; a borrow takes the smallest free segment that fits, or allocates a fresh one when none
- *       does. Retained bytes never exceed {@code maxPooledBytes}; a return that would breach that cap is not kept, its
- *       native memory freed immediately instead.
- *   <li><b>Large buffers</b> (above the threshold) are never reused. Each is freed the moment its borrower closes. A
- *       rare heavy request thus leaves no lasting footprint, rather than parking a large backing for the JVM lifetime.
+ *   <li><b>Small buffers</b> (rounded capacity at most {@code largeBufferThreshold}) reuse up to {@code maxPooledBytes}
+ *       of idle retention.
+ *   <li><b>Large buffers</b> (above the threshold) reuse up to {@code maxLargePooledBytes}. Coalesced fetch ranges land
+ *       here; reusing them across row groups is the bulk of the saved zeroing.
  * </ul>
+ *
+ * <p>In each class a borrow takes the smallest free backing that fits, or allocates a fresh one; a return is retained
+ * for reuse while its class is under its cap, and otherwise has its arena closed at once, freeing the native memory
+ * deterministically. A return over the cap evicting the incoming backing keeps a freak oversized request from pinning
+ * memory: it is allocated, used, then freed on return rather than parked.
  *
  * <p>Every backing comes from an explicitly-closed {@link Arena}, never a GC-managed {@link Arena#ofAuto() auto} arena.
  * Auto-arena segments are reserved against {@code -XX:MaxDirectMemorySize} (they free on garbage collection, which the
  * JVM must drive under direct-memory pressure); explicitly-closed arenas are not. Sourcing the pool from explicit
  * arenas keeps the streaming working set off that ceiling, which would otherwise default to {@code -Xmx} and starve a
- * concurrent reader.
+ * concurrent reader. A per-backing arena (rather than one pool-wide arena) is what lets a single evicted backing free
+ * on its own.
  *
  * <p>Capacities are rounded up to {@code blockSize}, mapping requests of slightly different sizes onto one shared
  * capacity they can reuse from one another.
+ *
+ * <p>Idle backings are held until reused, evicted by an over-cap return, or {@link #close() released}; there is no
+ * time-based decay yet, leaving each class able to hold up to its cap of idle native memory between bursts.
  */
 final class DefaultSegmentPool implements SegmentPool {
 
     static final DefaultSegmentPool INSTANCE = fromOptions(SegmentPool.Options.elastic());
 
     static DefaultSegmentPool fromOptions(SegmentPool.Options options) {
-        return new DefaultSegmentPool(options.largeBufferThreshold(), options.maxPooledBytes(), options.blockSize());
+        return new DefaultSegmentPool(
+                options.largeBufferThreshold(),
+                options.maxPooledBytes(),
+                options.maxLargePooledBytes(),
+                options.blockSize());
     }
 
-    /** Rounded capacities at or below this are reused (pooled); larger ones are freed on return. */
+    /** Rounded capacities at or below this reuse from {@link #smallClass}; larger ones from {@link #largeClass}. */
     private final long largeBufferThreshold;
-
-    /** Upper bound on the total capacity held in {@link #free}; a return that would breach it is freed, not kept. */
-    private final long maxPooledBytes;
 
     /** Requested sizes round up to a multiple of this, mapping near-equal requests onto one reusable capacity. */
     private final int blockSize;
 
-    /** Guards the {@link #free} list and {@link #retainedBytes}; borrows and returns mutate both. */
+    /** Guards both size classes' free lists and retained-byte counters; borrows and returns mutate them. */
     private final ReentrantLock lock = new ReentrantLock();
 
-    /**
-     * Returned small backings available for reuse, sorted ascending by capacity to let a borrow take the smallest fit.
-     */
-    private final List<Backing> free = new ArrayList<>();
+    /** Reuse pool for buffers at or below {@link #largeBufferThreshold}. */
+    private final SizeClass smallClass;
+
+    /** Reuse pool for buffers above {@link #largeBufferThreshold} (coalesced fetch ranges, large decode buffers). */
+    private final SizeClass largeClass;
 
     /** Borrows handed out but not yet returned; reaching zero proves every borrowed segment was closed. */
     private final AtomicLong outstandingBorrows = new AtomicLong();
@@ -81,22 +92,23 @@ final class DefaultSegmentPool implements SegmentPool {
     /** Borrows ever made, never decremented; a monitoring counter, zero proves the pool was never drawn from. */
     private final AtomicLong totalBorrows = new AtomicLong();
 
-    /** Sum of the capacities currently in {@link #free}; kept at or below {@link #maxPooledBytes}. */
-    private long retainedBytes;
-
-    DefaultSegmentPool(long largeBufferThreshold, long maxPooledBytes, int blockSize) {
+    DefaultSegmentPool(long largeBufferThreshold, long maxPooledBytes, long maxLargePooledBytes, int blockSize) {
         if (largeBufferThreshold <= 0) {
             throw new IllegalArgumentException("largeBufferThreshold must be > 0, got " + largeBufferThreshold);
         }
         if (maxPooledBytes < 0) {
             throw new IllegalArgumentException("maxPooledBytes must be >= 0, got " + maxPooledBytes);
         }
+        if (maxLargePooledBytes < 0) {
+            throw new IllegalArgumentException("maxLargePooledBytes must be >= 0, got " + maxLargePooledBytes);
+        }
         if (blockSize <= 0) {
             throw new IllegalArgumentException("blockSize must be > 0, got " + blockSize);
         }
         this.largeBufferThreshold = largeBufferThreshold;
-        this.maxPooledBytes = maxPooledBytes;
         this.blockSize = blockSize;
+        this.smallClass = new SizeClass(maxPooledBytes);
+        this.largeClass = new SizeClass(maxLargePooledBytes);
     }
 
     @Override
@@ -105,18 +117,24 @@ final class DefaultSegmentPool implements SegmentPool {
             throw new IllegalArgumentException("byteSize must be >= 0, got " + byteSize);
         }
         long capacity = roundUpToBlockSize(byteSize);
-        Pooled borrowed =
-                capacity > largeBufferThreshold ? borrowUnpooled(byteSize, capacity) : borrowPooled(byteSize, capacity);
+        SizeClass sizeClass = capacity > largeBufferThreshold ? largeClass : smallClass;
+        Backing backing = takeFit(sizeClass, capacity);
+        if (backing == null) {
+            backing = allocateBacking(capacity);
+        }
+        MemorySegment view = backing.segment().asSlice(0, byteSize);
         outstandingBorrows.incrementAndGet();
         totalBorrows.incrementAndGet();
-        return borrowed;
+        return new PooledSegment(this, backing, view);
     }
 
     @Override
     public PoolStats stats() {
         lock.lock();
         try {
-            return new PoolStats(outstandingBorrows.get(), totalBorrows.get(), free.size(), retainedBytes);
+            int freeSegments = smallClass.size() + largeClass.size();
+            long retainedBytes = smallClass.retainedBytes() + largeClass.retainedBytes();
+            return new PoolStats(outstandingBorrows.get(), totalBorrows.get(), freeSegments, retainedBytes);
         } finally {
             lock.unlock();
         }
@@ -124,12 +142,11 @@ final class DefaultSegmentPool implements SegmentPool {
 
     @Override
     public void close() {
-        List<Backing> drained;
+        List<Backing> drained = new ArrayList<>();
         lock.lock();
         try {
-            drained = new ArrayList<>(free);
-            free.clear();
-            retainedBytes = 0;
+            drained.addAll(smallClass.drain());
+            drained.addAll(largeClass.drain());
         } finally {
             lock.unlock();
         }
@@ -143,46 +160,62 @@ final class DefaultSegmentPool implements SegmentPool {
         outstandingBorrows.decrementAndGet();
     }
 
-    private Pooled borrowUnpooled(long byteSize, long capacity) {
-        Arena arena = Arena.ofShared();
-        MemorySegment backing = arena.allocate(capacity);
-        MemorySegment view = backing.asSlice(0, byteSize);
-        return new UnpooledSegment(this, arena, view);
-    }
-
-    private Pooled borrowPooled(long byteSize, long capacity) {
-        Backing backing = takeFree(capacity);
-        if (backing == null) {
-            Arena arena = Arena.ofShared();
-            MemorySegment segment = arena.allocate(capacity);
-            backing = new Backing(arena, segment);
-        }
-        MemorySegment view = backing.segment().asSlice(0, byteSize);
-        return new PooledSegment(this, backing, view);
-    }
-
     void giveBack(Backing backing) {
         long size = backing.segment().byteSize();
-        boolean evict;
+        SizeClass sizeClass = size > largeBufferThreshold ? largeClass : smallClass;
+        boolean retained;
         lock.lock();
         try {
-            evict = retainedBytes + size > maxPooledBytes;
-            if (!evict) {
-                int index = insertionPoint(size);
-                free.add(index, backing);
-                retainedBytes += size;
-            }
+            retained = sizeClass.offer(backing);
         } finally {
             lock.unlock();
         }
-        if (evict) {
+        if (!retained) {
             backing.arena().close();
         }
     }
 
-    private Backing takeFree(long capacity) {
+    private Backing takeFit(SizeClass sizeClass, long capacity) {
         lock.lock();
         try {
+            return sizeClass.takeFit(capacity);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private static Backing allocateBacking(long capacity) {
+        Arena arena = Arena.ofShared();
+        MemorySegment segment = arena.allocate(capacity);
+        return new Backing(arena, segment);
+    }
+
+    private long roundUpToBlockSize(long byteSize) {
+        if (byteSize == 0) {
+            return blockSize;
+        }
+        return ((byteSize + blockSize - 1) / blockSize) * blockSize;
+    }
+
+    /** A pooled backing and the explicit arena that owns it; the arena is closed when the backing is evicted. */
+    record Backing(Arena arena, MemorySegment segment) {}
+
+    /**
+     * One size class's reuse state: a capacity-sorted free list of retained backings under a byte cap. Not thread-safe;
+     * the enclosing pool serializes every call through its single {@link #lock}.
+     */
+    private static final class SizeClass {
+
+        private final List<Backing> free = new ArrayList<>();
+        private final long maxRetainedBytes;
+        private long retainedBytes;
+
+        SizeClass(long maxRetainedBytes) {
+            this.maxRetainedBytes = maxRetainedBytes;
+        }
+
+        /** Removes and returns the smallest retained backing that fits {@code capacity}, or {@code null} when none. */
+        Backing takeFit(long capacity) {
             for (int i = 0; i < free.size(); i++) {
                 Backing candidate = free.get(i);
                 if (candidate.segment().byteSize() >= capacity) {
@@ -191,32 +224,46 @@ final class DefaultSegmentPool implements SegmentPool {
                 }
             }
             return null;
-        } finally {
-            lock.unlock();
         }
-    }
 
-    private int insertionPoint(long byteSize) {
-        int low = 0;
-        int high = free.size();
-        while (low < high) {
-            int mid = (low + high) >>> 1;
-            if (free.get(mid).segment().byteSize() >= byteSize) {
-                high = mid;
-            } else {
-                low = mid + 1;
+        /** Retains {@code backing} for reuse when it fits under the cap; returns whether it was retained. */
+        boolean offer(Backing backing) {
+            long size = backing.segment().byteSize();
+            if (retainedBytes + size > maxRetainedBytes) {
+                return false;
             }
+            free.add(insertionPoint(size), backing);
+            retainedBytes += size;
+            return true;
         }
-        return low;
-    }
 
-    /** A pooled backing and the explicit arena that owns it; the arena is closed when the backing is evicted. */
-    record Backing(Arena arena, MemorySegment segment) {}
-
-    private long roundUpToBlockSize(long byteSize) {
-        if (byteSize == 0) {
-            return blockSize;
+        List<Backing> drain() {
+            List<Backing> drained = new ArrayList<>(free);
+            free.clear();
+            retainedBytes = 0;
+            return drained;
         }
-        return ((byteSize + blockSize - 1) / blockSize) * blockSize;
+
+        int size() {
+            return free.size();
+        }
+
+        long retainedBytes() {
+            return retainedBytes;
+        }
+
+        private int insertionPoint(long byteSize) {
+            int low = 0;
+            int high = free.size();
+            while (low < high) {
+                int mid = (low + high) >>> 1;
+                if (free.get(mid).segment().byteSize() >= byteSize) {
+                    high = mid;
+                } else {
+                    low = mid + 1;
+                }
+            }
+            return low;
+        }
     }
 }
