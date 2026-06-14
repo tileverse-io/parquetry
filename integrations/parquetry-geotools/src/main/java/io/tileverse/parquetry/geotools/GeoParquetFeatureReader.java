@@ -96,7 +96,8 @@ final class GeoParquetFeatureReader implements FeatureReader<SimpleFeatureType, 
 
     /**
      * The GeoTools attribute value for {@code attr} on this row: a decoded {@link Geometry} for geometry columns, an
-     * owned {@code String} or {@code byte[]} for binary, a boxed primitive otherwise, or {@code null} for a null cell.
+     * owned, batch-independent value for nested columns (struct/list/map, translated by {@link NestedValues}), an owned
+     * {@code String} or {@code byte[]} for binary, a boxed primitive otherwise, or {@code null} for a null cell.
      */
     private Object attributeValue(ParquetRecord row, AttributeMapping attr) {
         ColumnPath path = attr.path();
@@ -105,6 +106,9 @@ final class GeoParquetFeatureReader implements FeatureReader<SimpleFeatureType, 
         }
         if (attr.geometry()) {
             return decodeGeometry(row, attr);
+        }
+        if (attr.nestedType() != null) {
+            return NestedValues.translate(row.get(path), attr.nestedType());
         }
         Class<?> binding = attr.binding();
         if (binding == String.class) {
