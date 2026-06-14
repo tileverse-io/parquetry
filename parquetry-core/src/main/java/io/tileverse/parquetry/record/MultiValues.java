@@ -53,18 +53,29 @@ final class MultiValues {
     static int flattenSize(ParquetRecord rec, ColumnPath leafPath) {
         int[] count = {0};
         SchemaNode.Group root = rec.schema().root();
-        countAll(rec, root, leafPath, 0, count);
+        boolean withinListElement = false;
+        countAll(rec, root, leafPath, 0, count, withinListElement);
         return count[0];
     }
 
     /**
-     * Counts every element of the slice {@code [from, end)} of {@code path}, null elements included, mirroring the
-     * descent in {@link #collect} but tallying rather than appending values.
+     * Counts every slot the slice {@code [from, end)} of {@code path} yields, mirroring the descent in {@link #collect}
+     * but tallying rather than appending values. A repeated leaf's universe includes a present slot whose resolved leaf
+     * value is null: a null primitive list element and a present struct element whose tail leaf is null are the same
+     * "slot with no value" and both count. The {@code withinListElement} flag distinguishes a single-valued top-level
+     * path (a null value contributes no slot, matching {@link #flatten}) from a list-element tail (each present element
+     * is one slot regardless of its leaf value).
      */
-    private static void countAll(ParquetRecord rec, SchemaNode.Group group, ColumnPath path, int from, int[] count) {
+    private static void countAll(
+            ParquetRecord rec,
+            SchemaNode.Group group,
+            ColumnPath path,
+            int from,
+            int[] count,
+            boolean withinListElement) {
         Boundary boundary = firstRepeatedBoundary(group, path, from);
         if (boundary == null) {
-            countLeafValue(rec, subPath(path, from, path.numParts()), count);
+            countLeafSlot(rec, subPath(path, from, path.numParts()), count, withinListElement);
             return;
         }
         ColumnPath containerPath = subPath(path, from, boundary.index());
@@ -75,8 +86,13 @@ final class MultiValues {
         countFromList(rec, boundary.repeatedGroup(), containerPath, path, boundary.index(), count);
     }
 
-    private static void countLeafValue(ParquetRecord rec, ColumnPath leafSubPath, int[] count) {
-        if (rec.get(leafSubPath) != null) {
+    /**
+     * A non-repeated tail resolves to one leaf. Within a list element that leaf is a present slot even when its value
+     * is null; at the top level a null value contributes no slot.
+     */
+    private static void countLeafSlot(
+            ParquetRecord rec, ColumnPath leafSubPath, int[] count, boolean withinListElement) {
+        if (withinListElement || rec.get(leafSubPath) != null) {
             count[0]++;
         }
     }
@@ -107,8 +123,16 @@ final class MultiValues {
             return;
         }
         if (element instanceof ParquetRecord rec) {
-            countAll(rec, elementGroup, path, tailFrom, count);
+            boolean withinListElement = true;
+            countAll(rec, elementGroup, path, tailFrom, count, withinListElement);
+            return;
         }
+        countNullStructElement(count);
+    }
+
+    /** A null struct element is a present list slot whose tail leaf has no value: one non-matching member. */
+    private static void countNullStructElement(int[] count) {
+        count[0]++;
     }
 
     private static void countFromMap(

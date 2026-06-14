@@ -66,7 +66,7 @@ class NestedAttributeProbesTest {
         log("ALL [a,null,b]=a   -> " + eval(withNull, "a", MatchAction.ALL) + "   (non-discriminating: b!=a anyway)");
         SimpleFeature aNull = featureWithVals(Arrays.asList("a", null));
         log("ALL [a,null]=a     -> " + eval(aNull, "a", MatchAction.ALL)
-                + "   (DISCRIMINATOR: core excludes null -> true; GT treats null as non-match -> false)");
+                + "   (core and GT agree: a null member is a non-match -> false)");
         log("ONE [a,null]=a     -> " + eval(aNull, "a", MatchAction.ONE) + "   (core: 1 match -> true)");
     }
 
