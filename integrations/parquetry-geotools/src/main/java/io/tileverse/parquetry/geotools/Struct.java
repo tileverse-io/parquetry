@@ -40,11 +40,11 @@ import io.tileverse.parquetry.geotools.NestedType.StructType;
 public final class Struct extends AbstractMap<String, Object> {
 
     private final StructType type;
-    private final Object[] values;
+    private final Object[] fieldValues;
 
-    public Struct(StructType type, Object[] values) {
+    public Struct(StructType type, Object[] fieldValues) {
         this.type = type;
-        this.values = values;
+        this.fieldValues = fieldValues;
     }
 
     /** The struct's nested type, shared across rows. */
@@ -58,7 +58,7 @@ public final class Struct extends AbstractMap<String, Object> {
         if (index < 0) {
             return null;
         }
-        return values[index];
+        return fieldValues[index];
     }
 
     @Override
@@ -74,9 +74,9 @@ public final class Struct extends AbstractMap<String, Object> {
     @Override
     public Set<Entry<String, Object>> entrySet() {
         List<Field> fields = type.fields();
-        Map<String, Object> view = new LinkedHashMap<>(fields.size());
+        Map<String, Object> view = LinkedHashMap.newLinkedHashMap(fields.size());
         for (int i = 0; i < fields.size(); i++) {
-            view.put(fields.get(i).name(), values[i]);
+            view.put(fields.get(i).name(), fieldValues[i]);
         }
         return Collections.unmodifiableSet(view.entrySet());
     }

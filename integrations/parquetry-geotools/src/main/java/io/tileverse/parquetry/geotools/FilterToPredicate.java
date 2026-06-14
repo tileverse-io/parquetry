@@ -292,49 +292,73 @@ final class FilterToPredicate {
 
     private Optional<Predicate> build(ColumnPath p, Class<?> binding, Op op, Object rawValue) {
         if (binding == Integer.class) {
-            Integer v = Converters.convert(rawValue, Integer.class);
-            if (v == null || !isLossless(rawValue, v.doubleValue())) {
-                return Optional.empty();
-            }
-            return ordered(p, op, v.intValue());
+            return buildInteger(p, op, rawValue);
         }
         if (binding == Long.class) {
-            Long v = Converters.convert(rawValue, Long.class);
-            if (v == null || !isLossless(rawValue, v.doubleValue())) {
-                return Optional.empty();
-            }
-            return ordered(p, op, v.longValue());
+            return buildLong(p, op, rawValue);
         }
         if (binding == Double.class) {
-            Double v = Converters.convert(rawValue, Double.class);
-            return v == null ? Optional.empty() : ordered(p, op, v.doubleValue());
+            return buildDouble(p, op, rawValue);
         }
         if (binding == Float.class) {
-            Float v = Converters.convert(rawValue, Float.class);
-            if (v == null || op != Op.EQ) {
-                return Optional.empty();
-            }
-            return Optional.of(Pred.col(p).eq(v.floatValue()));
+            return buildFloat(p, op, rawValue);
         }
         if (binding == String.class) {
-            String v = Converters.convert(rawValue, String.class);
-            if (v == null) {
-                return Optional.empty();
-            }
-            return switch (op) {
-                case EQ -> Optional.of(Pred.col(p).eq(v));
-                case NEQ -> Optional.of(Pred.col(p).notEq(v));
-                default -> Optional.empty();
-            };
+            return buildString(p, op, rawValue);
         }
         if (binding == Boolean.class) {
-            Boolean v = Converters.convert(rawValue, Boolean.class);
-            if (v == null || op != Op.EQ) {
-                return Optional.empty();
-            }
-            return Optional.of(Pred.col(p).eq(v.booleanValue()));
+            return buildBoolean(p, op, rawValue);
         }
         return Optional.empty();
+    }
+
+    private Optional<Predicate> buildInteger(ColumnPath p, Op op, Object rawValue) {
+        Integer v = Converters.convert(rawValue, Integer.class);
+        if (v == null || !isLossless(rawValue, v.doubleValue())) {
+            return Optional.empty();
+        }
+        return ordered(p, op, v.intValue());
+    }
+
+    private Optional<Predicate> buildLong(ColumnPath p, Op op, Object rawValue) {
+        Long v = Converters.convert(rawValue, Long.class);
+        if (v == null || !isLossless(rawValue, v.doubleValue())) {
+            return Optional.empty();
+        }
+        return ordered(p, op, v.longValue());
+    }
+
+    private Optional<Predicate> buildDouble(ColumnPath p, Op op, Object rawValue) {
+        Double v = Converters.convert(rawValue, Double.class);
+        return v == null ? Optional.empty() : ordered(p, op, v.doubleValue());
+    }
+
+    private Optional<Predicate> buildFloat(ColumnPath p, Op op, Object rawValue) {
+        Float v = Converters.convert(rawValue, Float.class);
+        if (v == null || op != Op.EQ) {
+            return Optional.empty();
+        }
+        return Optional.of(Pred.col(p).eq(v.floatValue()));
+    }
+
+    private Optional<Predicate> buildString(ColumnPath p, Op op, Object rawValue) {
+        String v = Converters.convert(rawValue, String.class);
+        if (v == null) {
+            return Optional.empty();
+        }
+        return switch (op) {
+            case EQ -> Optional.of(Pred.col(p).eq(v));
+            case NEQ -> Optional.of(Pred.col(p).notEq(v));
+            default -> Optional.empty();
+        };
+    }
+
+    private Optional<Predicate> buildBoolean(ColumnPath p, Op op, Object rawValue) {
+        Boolean v = Converters.convert(rawValue, Boolean.class);
+        if (v == null || op != Op.EQ) {
+            return Optional.empty();
+        }
+        return Optional.of(Pred.col(p).eq(v.booleanValue()));
     }
 
     /** True when {@code rawValue} converts to {@code converted} without loss (no fractional part dropped). */

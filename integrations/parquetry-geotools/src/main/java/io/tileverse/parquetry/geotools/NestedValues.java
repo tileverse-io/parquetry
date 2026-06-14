@@ -66,14 +66,14 @@ public final class NestedValues {
     }
 
     private static Object translateStruct(Object value, StructType type) {
-        if (!(value instanceof ParquetRecord record)) {
+        if (!(value instanceof ParquetRecord parquetRecord)) {
             return null;
         }
         List<Field> fields = type.fields();
         Object[] values = new Object[fields.size()];
         for (int i = 0; i < fields.size(); i++) {
             Field field = fields.get(i);
-            Object fieldValue = record.get(ColumnPath.of(field.name()));
+            Object fieldValue = parquetRecord.get(ColumnPath.of(field.name()));
             values[i] = translate(fieldValue, field.type());
         }
         return new Struct(type, values);
@@ -90,7 +90,7 @@ public final class NestedValues {
 
     private static Object translateMap(Object value, MapType type) {
         Map<?, ?> source = (Map<?, ?>) value;
-        Map<Object, Object> translated = new LinkedHashMap<>(source.size());
+        Map<Object, Object> translated = LinkedHashMap.newLinkedHashMap(source.size());
         for (Map.Entry<?, ?> entry : source.entrySet()) {
             Object key = translate(entry.getKey(), type.key());
             Object mapped = translate(entry.getValue(), type.value());
