@@ -12,7 +12,7 @@
   <description>Read-only GeoTools DataStore for GeoParquet, backed by the parquetry dataset catalog.</description>
 
   <properties>
-    <gt.version>35-RC</gt.version>
+    <gt.version>35.0</gt.version>
   </properties>
 
   <dependencyManagement>
@@ -101,7 +101,7 @@
   </dependencies>
 
   <repositories>
-    <!-- GeoTools 35-RC lives in the OSGeo release repo until 35 is final. -->
+    <!-- GeoTools 35.0 is published to the OSGeo release repo, not Maven Central. -->
     <repository>
       <releases>
         <enabled>true</enabled>

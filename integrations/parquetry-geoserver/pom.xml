@@ -21,9 +21,9 @@
   </licenses>
 
   <properties>
-    <gs.version>3.0-RC</gs.version>
-    <gt.version>35-RC</gt.version>
-    <!-- Jetty used only by the test-scope embedded launcher (Start); matches GeoServer 3.0-RC's Jetty. -->
+    <gs.version>3.0.0</gs.version>
+    <gt.version>35.0</gt.version>
+    <!-- Jetty used only by the test-scope embedded launcher (Start); matches GeoServer 3.0.0's Jetty. -->
     <jetty.version>12.1.8</jetty.version>
     <!-- The two Wicket widgets are verbatim GPL-2.0 code copied from GeoServer; we do not lint vendored sources. -->
     <sonar.exclusions>src/main/java/io/tileverse/parquetry/geoserver/web/RadioGroupParamPanel.java,src/main/java/io/tileverse/parquetry/geoserver/web/Select2ChoiceParamPanel.java</sonar.exclusions>
@@ -77,7 +77,7 @@
     <dependency>
       <groupId>org.wicketstuff</groupId>
       <artifactId>wicketstuff-select2</artifactId>
-      <version>10.7.0</version>
+      <version>10.9.2</version>
     </dependency>
 
     <!--
@@ -138,7 +138,7 @@
   </dependencies>
 
   <repositories>
-    <!-- GeoServer 3.0-RC / GeoTools 35-RC live in the OSGeo release repo until released. -->
+    <!-- GeoServer 3.0.0 / GeoTools 35.0 are published to the OSGeo release repo, not Maven Central. -->
     <repository>
       <releases>
         <enabled>true</enabled>
@@ -285,13 +285,36 @@
       </activation>
       <dependencyManagement>
         <dependencies>
-          <!-- GeoServer 3.0-RC mixes Spring 7.0.6 and 7.0.7 across its modules; the Spring BOM converges them. -->
+          <!-- GeoServer 3.0.0 mixes Spring 7.0.6 and 7.0.7 across its modules; the Spring BOM converges them. -->
           <dependency>
             <groupId>org.springframework</groupId>
             <artifactId>spring-framework-bom</artifactId>
             <version>7.0.7</version>
             <type>pom</type>
             <scope>import</scope>
+          </dependency>
+          <!-- wicketstuff-select2 pulls wicket-webjars, which drags wicket-core 10.8.0 and friends; pin the wicket
+               artifacts on GeoServer 3.0.0's 10.9.1. The wicket-bom POM is absent from the OSGeo repo; pin the
+               artifacts individually. -->
+          <dependency>
+            <groupId>org.apache.wicket</groupId>
+            <artifactId>wicket-core</artifactId>
+            <version>10.9.1</version>
+          </dependency>
+          <dependency>
+            <groupId>org.apache.wicket</groupId>
+            <artifactId>wicket-util</artifactId>
+            <version>10.9.1</version>
+          </dependency>
+          <dependency>
+            <groupId>org.apache.wicket</groupId>
+            <artifactId>wicket-request</artifactId>
+            <version>10.9.1</version>
+          </dependency>
+          <dependency>
+            <groupId>org.apache.wicket</groupId>
+            <artifactId>wicket-extensions</artifactId>
+            <version>10.9.1</version>
           </dependency>
           <!-- GeoServer/GeoTools bring two versions of commons-lang3 transitively; pin to the higher one. -->
           <dependency>
@@ -344,7 +367,7 @@
             <artifactId>jaxb-runtime</artifactId>
             <version>4.0.7</version>
           </dependency>
-          <!-- google-cloud-storage pulls checker-qual 3.49.0; gt-jdbc-postgis 35-RC pulls 3.52.0; pin to the higher. -->
+          <!-- google-cloud-storage pulls checker-qual 3.49.0; gt-jdbc-postgis 35.0 pulls 3.52.0; pin to the higher. -->
           <dependency>
             <groupId>org.checkerframework</groupId>
             <artifactId>checker-qual</artifactId>
