@@ -215,6 +215,11 @@ public final class DetachedParquetRecord implements ParquetRecord {
     }
 
     @Override
+    public int multiValueSize(ColumnPath leafPath) {
+        return MultiValues.flattenSize(this, leafPath);
+    }
+
+    @Override
     public ParquetRecord detach() {
         return this;
     }

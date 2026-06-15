@@ -88,14 +88,15 @@ class QuantifiedRecordLevelTest {
     }
 
     @Test
-    void nullElementsAreExcludedFromTheQuantifiedUniverse() {
-        // A present struct element with a null locality leaf contributes no value: multiValue excludes nulls.
-        // The quantified universe is therefore the single non-null "Berlin". ALL and ONE must not count the null
-        // element. This pins the intended "nulls excluded from the universe" behavior against silent drift.
+    void nullLeafValuesCountAsNonMatchingMembers() {
+        // A present struct element with a null locality leaf is a present member of the quantified universe whose value
+        // does not match. The universe is {"Berlin", null}: ANY sees the matching "Berlin"; ALL fails because the null
+        // member does not match; ONE holds because exactly one non-null member matches. This mirrors the GeoTools
+        // residual evaluator, where a null member of the value collection is a non-match.
         ParquetRecord row = rowWithNullableLocalities("Berlin", null);
 
         assertThat(evaluate(MatchAction.ANY, "Berlin", row)).isTrue();
-        assertThat(evaluate(MatchAction.ALL, "Berlin", row)).isTrue();
+        assertThat(evaluate(MatchAction.ALL, "Berlin", row)).isFalse();
         assertThat(evaluate(MatchAction.ONE, "Berlin", row)).isTrue();
     }
 

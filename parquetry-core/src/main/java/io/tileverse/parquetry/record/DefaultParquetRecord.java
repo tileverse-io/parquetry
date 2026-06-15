@@ -231,6 +231,11 @@ public final class DefaultParquetRecord implements ParquetRecord {
     }
 
     @Override
+    public int multiValueSize(ColumnPath leafPath) {
+        return MultiValues.flattenSize(this, leafPath);
+    }
+
+    @Override
     public ParquetRecord detach() {
         int count = columns.columnCount();
         ColumnPath[] paths = new ColumnPath[count];

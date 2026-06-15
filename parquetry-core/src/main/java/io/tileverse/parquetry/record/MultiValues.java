@@ -46,6 +46,107 @@ final class MultiValues {
     }
 
     /**
+     * The size of the repeated leaf's universe INCLUDING null elements. {@link #flatten} drops nulls because callers
+     * read element values; quantified ALL/ONE evaluation needs the full count, where a null is a present non-matching
+     * member.
+     */
+    static int flattenSize(ParquetRecord rec, ColumnPath leafPath) {
+        int[] count = {0};
+        SchemaNode.Group root = rec.schema().root();
+        boolean withinListElement = false;
+        countAll(rec, root, leafPath, 0, count, withinListElement);
+        return count[0];
+    }
+
+    /**
+     * Counts every slot the slice {@code [from, end)} of {@code path} yields, mirroring the descent in {@link #collect}
+     * but tallying rather than appending values. A repeated leaf's universe includes a present slot whose resolved leaf
+     * value is null: a null primitive list element and a present struct element whose tail leaf is null are the same
+     * "slot with no value" and both count. The {@code withinListElement} flag distinguishes a single-valued top-level
+     * path (a null value contributes no slot, matching {@link #flatten}) from a list-element tail (each present element
+     * is one slot regardless of its leaf value).
+     */
+    private static void countAll(
+            ParquetRecord rec,
+            SchemaNode.Group group,
+            ColumnPath path,
+            int from,
+            int[] count,
+            boolean withinListElement) {
+        Boundary boundary = firstRepeatedBoundary(group, path, from);
+        if (boundary == null) {
+            countLeafSlot(rec, subPath(path, from, path.numParts()), count, withinListElement);
+            return;
+        }
+        ColumnPath containerPath = subPath(path, from, boundary.index());
+        if (isMapWrapper(boundary.repeatedGroup())) {
+            countFromMap(rec, containerPath, path, boundary.index(), count);
+            return;
+        }
+        countFromList(rec, boundary.repeatedGroup(), containerPath, path, boundary.index(), count);
+    }
+
+    /**
+     * A non-repeated tail resolves to one leaf. Within a list element that leaf is a present slot even when its value
+     * is null; at the top level a null value contributes no slot.
+     */
+    private static void countLeafSlot(
+            ParquetRecord rec, ColumnPath leafSubPath, int[] count, boolean withinListElement) {
+        if (withinListElement || rec.get(leafSubPath) != null) {
+            count[0]++;
+        }
+    }
+
+    private static void countFromList(
+            ParquetRecord rec,
+            SchemaNode.Group repeatedGroup,
+            ColumnPath containerPath,
+            ColumnPath path,
+            int boundary,
+            int[] count) {
+        Object container = rec.get(containerPath);
+        if (!(container instanceof List<?> elements)) {
+            return;
+        }
+        int tailFrom = boundary + 2;
+        SchemaNode.Group elementGroup = elementGroupOrNull(repeatedGroup);
+        for (Object element : elements) {
+            countListElement(element, elementGroup, path, tailFrom, count);
+        }
+    }
+
+    private static void countListElement(
+            Object element, SchemaNode.Group elementGroup, ColumnPath path, int tailFrom, int[] count) {
+        boolean primitiveEntry = tailFrom >= path.numParts();
+        if (primitiveEntry) {
+            count[0]++;
+            return;
+        }
+        if (element instanceof ParquetRecord rec) {
+            boolean withinListElement = true;
+            countAll(rec, elementGroup, path, tailFrom, count, withinListElement);
+            return;
+        }
+        countNullStructElement(count);
+    }
+
+    /** A null struct element is a present list slot whose tail leaf has no value: one non-matching member. */
+    private static void countNullStructElement(int[] count) {
+        count[0]++;
+    }
+
+    private static void countFromMap(
+            ParquetRecord rec, ColumnPath containerPath, ColumnPath path, int boundary, int[] count) {
+        Map<?, ?> map = rec.readMap(containerPath);
+        if (map == null) {
+            return;
+        }
+        String addressed = path.part(boundary + 1);
+        boolean keys = "key".equals(addressed);
+        count[0] += (keys ? map.keySet() : map.values()).size();
+    }
+
+    /**
      * Collects element values for the slice {@code [from, end)} of {@code path}, resolved within {@code group} on
      * {@code rec}. Plain struct segments are folded into a single multi-segment read; the first repeated boundary
      * splits the path: the list or map is read at the boundary, then each element re-enters this method for the tail.

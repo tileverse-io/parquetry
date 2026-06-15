@@ -137,6 +137,13 @@ public sealed interface ParquetRecord permits DefaultParquetRecord, DetachedParq
     List<Object> multiValue(ColumnPath leafPath);
 
     /**
+     * The size of the repeated leaf's universe at {@code leafPath}, INCLUDING null elements. Unlike
+     * {@link #multiValue(ColumnPath)}, which drops nulls because callers read element values, this counts every present
+     * element. A quantified ALL/ONE filter treats a null element as a present, non-matching member of the universe.
+     */
+    int multiValueSize(ColumnPath leafPath);
+
+    /**
      * Returns a self-contained copy of this record that owns its data and stays valid after the producing batch closes.
      * Detaching is idempotent and shares the same immutable {@link #schema()} reference.
      */

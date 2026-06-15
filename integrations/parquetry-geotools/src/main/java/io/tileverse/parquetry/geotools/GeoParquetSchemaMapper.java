@@ -26,6 +26,8 @@ import java.util.Set;
 
 import org.geotools.api.feature.simple.SimpleFeatureType;
 import org.geotools.api.referencing.crs.CoordinateReferenceSystem;
+import org.geotools.data.nested.NestedType;
+import org.geotools.data.nested.NestedType.ListType;
 import org.geotools.feature.simple.SimpleFeatureTypeBuilder;
 import org.locationtech.jts.geom.Geometry;
 
@@ -33,7 +35,6 @@ import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
-import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.schema.geo.geoparquet.Covering;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
@@ -44,9 +45,11 @@ import io.tileverse.parquetry.schema.geo.projjson.Identifier;
  * Maps a GeoParquet {@link ParquetSchema} to a GeoTools {@link SimpleFeatureType} plus a reader-facing attribute
  * mapping.
  *
- * <p>Primitive leaves become typed attribute descriptors; geometry leaves (GEOMETRY or GEOGRAPHY logical type) become
- * geometry attributes with a resolved CRS. REPEATED leaves and primitive kinds without a natural Java binding are
- * silently skipped. Nested group paths flatten to dotted attribute names (e.g. {@code "address.city"}).
+ * <p>Each top-level field becomes one attribute. A primitive field becomes a typed scalar attribute; a geometry field
+ * (GEOMETRY or GEOGRAPHY logical type) becomes a geometry attribute with a resolved CRS; a {@code STRUCT}/{@code LIST}/
+ * {@code MAP} field becomes a single nested attribute whose value-object shape is recorded as a {@link NestedType} in
+ * the descriptor's user data (under {@link NestedType#USER_DATA_KEY}). Nested fields are not flattened into dotted
+ * attribute names. Primitive kinds without a natural Java binding are skipped.
  *
  * <p>The GeoParquet primary column (from the {@code "geo"} key-value metadata) becomes the default geometry on the
  * resulting feature type; if no primary column is declared, the first geometry column found takes that role.
@@ -59,33 +62,42 @@ final class GeoParquetSchemaMapper {
     private GeoParquetSchemaMapper() {}
 
     /**
-     * One mapped attribute: its feature-type local name, the parquet leaf path it reads from, whether it is a geometry
-     * attribute, and the Java binding class.
+     * One mapped attribute: its feature-type local name, the parquet path it reads from, whether it is a geometry
+     * attribute, the Java binding class, and - for {@code STRUCT}/{@code LIST}/{@code MAP} attributes - the nested
+     * value-object shape ({@code null} for scalar and geometry attributes).
      */
-    record AttributeMapping(String name, ColumnPath path, boolean geometry, Class<?> binding) {}
+    record AttributeMapping(String name, ColumnPath path, boolean geometry, Class<?> binding, NestedType nestedType) {
+
+        /** Convenience for a scalar or geometry attribute, which has no nested type. */
+        AttributeMapping(String name, ColumnPath path, boolean geometry, Class<?> binding) {
+            this(name, path, geometry, binding, null);
+        }
+    }
 
     /**
-     * The result of a schema mapping: the built feature type, the ordered list of attribute mappings, and the attribute
-     * that provides the feature id ({@link Optional#empty()} when none could be resolved, in which case the reader
-     * falls back to a synthetic per-read feature id).
+     * The result of a schema mapping: the built feature type, the source schema (for resolving nested property paths
+     * during filter push-down), the ordered list of attribute mappings, the attribute that provides the feature id
+     * ({@link Optional#empty()} when none could be resolved, in which case the reader falls back to a synthetic
+     * per-read feature id), and the resolved geometry SRIDs.
      */
     record Mapping(
             SimpleFeatureType featureType,
+            ParquetSchema schema,
             List<AttributeMapping> attributes,
             Optional<AttributeMapping> fidAttribute,
             Map<ColumnPath, Integer> geometrySrids) {
 
-        /** Convenience for the common case of a mapping with no feature id column. */
+        /** Convenience for the common case of a mapping with no source schema and no feature id column. */
         Mapping(SimpleFeatureType featureType, List<AttributeMapping> attributes) {
-            this(featureType, attributes, Optional.empty(), Map.of());
+            this(featureType, null, attributes, Optional.empty(), Map.of());
         }
 
-        /** Convenience for a mapping with a feature id but no resolved geometry SRIDs. */
+        /** Convenience for a mapping with a feature id but no source schema or resolved geometry SRIDs. */
         Mapping(
                 SimpleFeatureType featureType,
                 List<AttributeMapping> attributes,
                 Optional<AttributeMapping> fidAttribute) {
-            this(featureType, attributes, fidAttribute, Map.of());
+            this(featureType, null, attributes, fidAttribute, Map.of());
         }
     }
 
@@ -121,15 +133,8 @@ final class GeoParquetSchemaMapper {
         String defaultGeometryName = null;
         Set<ColumnPath> coveringColumns = coveringColumns(geo);
 
-        for (ColumnPath path : schema.leafColumns()) {
-            if (coveringColumns.contains(path)) {
-                continue;
-            }
-            SchemaNode.Primitive primitive = asMappablePrimitive(schema, path);
-            if (primitive == null) {
-                continue;
-            }
-            Optional<AttributeMapping> mapped = mapLeaf(path, primitive, geo, ftb);
+        for (SchemaNode child : schema.root().children()) {
+            Optional<AttributeMapping> mapped = mapTopLevelField(schema, child, geo, coveringColumns, ftb);
             if (mapped.isEmpty()) {
                 continue;
             }
@@ -139,7 +144,8 @@ final class GeoParquetSchemaMapper {
                 if (isDefaultGeometry(attr.name(), primaryGeometryColumn, defaultGeometryName)) {
                     defaultGeometryName = attr.name();
                 }
-                resolveSrid(path, primitive.logicalType(), geo).ifPresent(srid -> geometrySrids.put(path, srid));
+                Optional<LogicalType> logical = ((SchemaNode.Primitive) child).logicalType();
+                resolveSrid(attr.path(), logical, geo).ifPresent(srid -> geometrySrids.put(attr.path(), srid));
             }
         }
 
@@ -148,7 +154,116 @@ final class GeoParquetSchemaMapper {
         }
         List<AttributeMapping> mappedAttributes = List.copyOf(attributes);
         Optional<AttributeMapping> fid = resolveFidAttribute(typeName, configuredFidColumn, mappedAttributes);
-        return new Mapping(ftb.buildFeatureType(), mappedAttributes, fid, Map.copyOf(geometrySrids));
+        return new Mapping(ftb.buildFeatureType(), schema, mappedAttributes, fid, Map.copyOf(geometrySrids));
+    }
+
+    /**
+     * Maps a single top-level field to an {@link AttributeMapping} and registers its descriptor on the builder. A
+     * primitive field becomes a geometry or scalar attribute; a group becomes a nested attribute unless it is the
+     * GeoParquet bbox covering struct, which is skipped. Returns empty when the field has no natural binding.
+     */
+    private static Optional<AttributeMapping> mapTopLevelField(
+            ParquetSchema schema,
+            SchemaNode child,
+            Optional<GeoParquetMetadata> geo,
+            Set<ColumnPath> coveringColumns,
+            SimpleFeatureTypeBuilder ftb) {
+        ColumnPath path = ColumnPath.of(child.name());
+        if (child instanceof SchemaNode.Primitive primitive) {
+            return mapPrimitiveField(path, primitive, geo, ftb);
+        }
+        SchemaNode.Group group = (SchemaNode.Group) child;
+        if (isCoveringStruct(schema, group, coveringColumns)) {
+            return Optional.empty();
+        }
+        return Optional.of(mapNestedField(path, group, ftb));
+    }
+
+    /** Maps a top-level primitive field to a geometry attribute or a scalar attribute. */
+    private static Optional<AttributeMapping> mapPrimitiveField(
+            ColumnPath path,
+            SchemaNode.Primitive primitive,
+            Optional<GeoParquetMetadata> geo,
+            SimpleFeatureTypeBuilder ftb) {
+        Optional<LogicalType> logical = primitive.logicalType();
+        if (isGeometryType(logical)) {
+            return Optional.of(mapGeometryField(path, logical, geo, ftb));
+        }
+        return mapScalarField(path, primitive.kind(), logical, ftb);
+    }
+
+    /** Adds a geometry attribute descriptor and returns its mapping. */
+    private static AttributeMapping mapGeometryField(
+            ColumnPath path,
+            Optional<LogicalType> logical,
+            Optional<GeoParquetMetadata> geo,
+            SimpleFeatureTypeBuilder ftb) {
+        String attrName = path.dot();
+        CoordinateReferenceSystem crs = resolveCrs(path, logical, geo);
+        ftb.add(attrName, Geometry.class, crs);
+        return new AttributeMapping(attrName, path, true, Geometry.class);
+    }
+
+    /** Adds a scalar attribute descriptor and returns its mapping, or empty when the kind has no natural binding. */
+    private static Optional<AttributeMapping> mapScalarField(
+            ColumnPath path, PrimitiveKind kind, Optional<LogicalType> logical, SimpleFeatureTypeBuilder ftb) {
+        Optional<Class<?>> binding = resolveBinding(kind, logical);
+        if (binding.isEmpty()) {
+            return Optional.empty();
+        }
+        String attrName = path.dot();
+        ftb.add(attrName, binding.get());
+        return Optional.of(new AttributeMapping(attrName, path, false, binding.get()));
+    }
+
+    /**
+     * Adds a nested ({@code STRUCT}/{@code LIST}/{@code MAP}) attribute descriptor and returns its mapping. A list
+     * binds to {@link List}; a struct or map binds to {@link Map} (a struct value presents as a map keyed by field
+     * name). The {@link NestedType} is recorded in the descriptor user data for the reader and the filter push-down.
+     */
+    private static AttributeMapping mapNestedField(
+            ColumnPath path, SchemaNode.Group group, SimpleFeatureTypeBuilder ftb) {
+        NestedType nestedType = NestedTypes.of(group);
+        Class<?> binding = nestedBinding(nestedType);
+        String attrName = path.dot();
+        ftb.userData(NestedType.USER_DATA_KEY, nestedType);
+        ftb.add(attrName, binding);
+        return new AttributeMapping(attrName, path, false, binding, nestedType);
+    }
+
+    private static Class<?> nestedBinding(NestedType nestedType) {
+        if (nestedType instanceof ListType) {
+            return List.class;
+        }
+        return Map.class;
+    }
+
+    /**
+     * True when {@code group} is a GeoParquet bbox covering struct: a top-level group all of whose primitive leaf
+     * descendants are declared covering columns. Such a group holds per-row bounding boxes for spatial pruning, not
+     * user data, and must not appear as a feature attribute.
+     */
+    private static boolean isCoveringStruct(
+            ParquetSchema schema, SchemaNode.Group group, Set<ColumnPath> coveringColumns) {
+        if (coveringColumns.isEmpty()) {
+            return false;
+        }
+        List<ColumnPath> leaves = leafDescendants(schema, group.name());
+        if (leaves.isEmpty()) {
+            return false;
+        }
+        return coveringColumns.containsAll(leaves);
+    }
+
+    /** The leaf column paths under the top-level group named {@code groupName}. */
+    private static List<ColumnPath> leafDescendants(ParquetSchema schema, String groupName) {
+        List<ColumnPath> leaves = new ArrayList<>();
+        for (ColumnPath leaf : schema.leafColumns()) {
+            if (leaf.numParts() > 0 && leaf.part(0).equals(groupName)) {
+                leaves.add(leaf);
+            }
+        }
+        return leaves;
     }
 
     /**
@@ -214,72 +329,6 @@ final class GeoParquetSchemaMapper {
                 || binding == Long.class
                 || binding == Float.class
                 || binding == Double.class;
-    }
-
-    /**
-     * Returns the leaf as a non-repeated {@link SchemaNode.Primitive}, or {@code null} when the path is absent, refers
-     * to a group node, or is a repeated field (which cannot be represented as a flat attribute).
-     */
-    private static SchemaNode.Primitive asMappablePrimitive(ParquetSchema schema, ColumnPath path) {
-        Optional<SchemaNode> nodeOpt = schema.find(path);
-        if (nodeOpt.isEmpty()) {
-            return null;
-        }
-        if (!(nodeOpt.get() instanceof SchemaNode.Primitive primitive)) {
-            return null;
-        }
-        if (primitive.repetition() == Repetition.REPEATED) {
-            // Repeated fields map to lists - not representable as a flat SimpleFeatureType attribute.
-            return null;
-        }
-        return primitive;
-    }
-
-    /**
-     * Maps a single primitive leaf to an {@link AttributeMapping} and registers the corresponding descriptor on the
-     * builder. Returns empty when the leaf has no natural Java binding and should be skipped.
-     */
-    private static Optional<AttributeMapping> mapLeaf(
-            ColumnPath path,
-            SchemaNode.Primitive primitive,
-            Optional<GeoParquetMetadata> geo,
-            SimpleFeatureTypeBuilder ftb) {
-        String attrName = path.dot();
-        Optional<LogicalType> logical = primitive.logicalType();
-        if (isGeometryType(logical)) {
-            return Optional.of(mapGeometryLeaf(path, attrName, logical, geo, ftb));
-        }
-        return mapPrimitiveLeaf(path, attrName, primitive.kind(), logical, ftb);
-    }
-
-    /** Adds a geometry attribute descriptor and returns its mapping. */
-    private static AttributeMapping mapGeometryLeaf(
-            ColumnPath path,
-            String attrName,
-            Optional<LogicalType> logical,
-            Optional<GeoParquetMetadata> geo,
-            SimpleFeatureTypeBuilder ftb) {
-        CoordinateReferenceSystem crs = resolveCrs(path, logical, geo);
-        ftb.add(attrName, Geometry.class, crs);
-        return new AttributeMapping(attrName, path, true, Geometry.class);
-    }
-
-    /**
-     * Adds a non-geometry attribute descriptor and returns its mapping, or empty when the kind has no natural Java
-     * binding.
-     */
-    private static Optional<AttributeMapping> mapPrimitiveLeaf(
-            ColumnPath path,
-            String attrName,
-            PrimitiveKind kind,
-            Optional<LogicalType> logical,
-            SimpleFeatureTypeBuilder ftb) {
-        Optional<Class<?>> binding = resolveBinding(kind, logical);
-        if (binding.isEmpty()) {
-            return Optional.empty();
-        }
-        ftb.add(attrName, binding.get());
-        return Optional.of(new AttributeMapping(attrName, path, false, binding.get()));
     }
 
     /**
@@ -377,7 +426,7 @@ final class GeoParquetSchemaMapper {
      * <p>Returns empty for {@code INT96} (a deprecated Impala timestamp format with no clean Java mapping) and for any
      * other kind where the logical type does not clarify the intended Java type.
      */
-    private static Optional<Class<?>> resolveBinding(PrimitiveKind kind, Optional<LogicalType> logical) {
+    static Optional<Class<?>> resolveBinding(PrimitiveKind kind, Optional<LogicalType> logical) {
         boolean isString =
                 logical.map(GeoParquetSchemaMapper::isStringLogicalType).orElse(false);
         return switch (kind) {
