@@ -67,18 +67,30 @@ public class GeoParquetDataStoreEditPanel extends DefaultDataStoreEditPanel {
     protected Panel getInputComponent(
             String componentId, IModel<Map<String, Serializable>> paramsModel, ParamInfo paramMetadata) {
         String paramName = paramMetadata.getName();
-        Panel panel;
-        if (PROVIDER_KEY.equals(paramName)) {
-            panel = providerSelector(componentId, paramsModel, paramMetadata);
-        } else if (S3_REGION_KEY.equals(paramName)) {
-            panel = s3Region(componentId, paramsModel, paramMetadata);
-        } else {
-            panel = super.getInputComponent(componentId, paramsModel, paramMetadata);
-        }
-        panelsByKey.put(paramName, panel);
+        Panel panel = inputPanel(componentId, paramsModel, paramMetadata, paramName);
         panel.setOutputMarkupId(true);
-        panel.setOutputMarkupPlaceholderTag(true);
+        // Only the provider-dependent parameters take part in the show/hide toggle. The always-visible core
+        // parameters are left to the base panel and never cached or re-rendered here; in particular this keeps
+        // the namespace field under GeoServer's own namespace-follows-workspace synchronization.
+        if (!StorageParamVisibility.isAlwaysVisible(paramName)) {
+            panel.setOutputMarkupPlaceholderTag(true);
+            panelsByKey.put(paramName, panel);
+        }
         return panel;
+    }
+
+    private Panel inputPanel(
+            String componentId,
+            IModel<Map<String, Serializable>> paramsModel,
+            ParamInfo paramMetadata,
+            String paramName) {
+        if (PROVIDER_KEY.equals(paramName)) {
+            return providerSelector(componentId, paramsModel, paramMetadata);
+        }
+        if (S3_REGION_KEY.equals(paramName)) {
+            return s3Region(componentId, paramsModel, paramMetadata);
+        }
+        return super.getInputComponent(componentId, paramsModel, paramMetadata);
     }
 
     @Override
