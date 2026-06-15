@@ -27,6 +27,16 @@ class StorageParamVisibilityTest {
     }
 
     @Test
+    void alwaysVisibleCoversTheCoreParamsAndNothingElse() {
+        for (String key : new String[] {"filetype", "uri", "namespace", "fid", "storage.provider"}) {
+            assertThat(StorageParamVisibility.isAlwaysVisible(key)).as(key).isTrue();
+        }
+        assertThat(StorageParamVisibility.isAlwaysVisible("storage.s3.region")).isFalse();
+        assertThat(StorageParamVisibility.isAlwaysVisible("storage.caching.enabled"))
+                .isFalse();
+    }
+
+    @Test
     void backendParamsVisibleOnlyForTheirProvider() {
         assertThat(StorageParamVisibility.isVisible("storage.s3.region", "s3")).isTrue();
         assertThat(StorageParamVisibility.isVisible("storage.s3.region", "azure"))

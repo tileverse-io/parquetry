@@ -28,6 +28,16 @@ final class StorageParamVisibility {
 
     private StorageParamVisibility() {}
 
+    /**
+     * True for the core parameters that are shown regardless of the selected provider ({@code filetype}, {@code uri},
+     * {@code namespace}, {@code fid}, {@code storage.provider}). These do not take part in the provider-driven
+     * show/hide toggle, and the store edit panel leaves them to GeoServer's stock handling - in particular so the
+     * namespace field keeps following the workspace as GeoServer expects.
+     */
+    static boolean isAlwaysVisible(String paramKey) {
+        return ALWAYS_VISIBLE.contains(paramKey);
+    }
+
     static boolean isVisible(String paramKey, String providerId) {
         if (ALWAYS_VISIBLE.contains(paramKey)) {
             return true;

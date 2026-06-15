@@ -31,8 +31,10 @@ import io.tileverse.parquetry.tileverse.StorageFileSource;
 /** Opens a read-only GeoParquet {@link DataStore} from a dataset URI. */
 public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
 
-    public static final Param FILETYPE =
-            new Param("filetype", String.class, "Must be 'geoparquet'", true, "geoparquet");
+    // LEVEL "program" hides this fixed discriminator from the GeoServer store UI, mirroring how JDBC stores hide
+    // their "dbtype". The value is supplied from the default and never edited by the user.
+    public static final Param FILETYPE = new Param(
+            "filetype", String.class, "Must be 'geoparquet'", true, "geoparquet", Map.of(Param.LEVEL, "program"));
     public static final Param URIP = new Param("uri", String.class, "URI of a GeoParquet file (or directory)", true);
     public static final Param NAMESPACE = new Param("namespace", String.class, "Feature type namespace", false);
     public static final Param FID = new Param(
