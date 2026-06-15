@@ -27,6 +27,10 @@ import java.util.OptionalInt;
 import org.geotools.api.feature.simple.SimpleFeatureType;
 import org.geotools.api.feature.type.AttributeDescriptor;
 import org.geotools.api.feature.type.GeometryDescriptor;
+import org.geotools.data.nested.NestedType;
+import org.geotools.data.nested.NestedType.ListType;
+import org.geotools.data.nested.NestedType.MapType;
+import org.geotools.data.nested.NestedType.StructType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.locationtech.jts.geom.Geometry;
@@ -36,9 +40,6 @@ import io.tileverse.parquetry.catalog.ParquetDatasetCatalog;
 import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.geotools.GeoParquetSchemaMapper.AttributeMapping;
-import io.tileverse.parquetry.geotools.NestedType.ListType;
-import io.tileverse.parquetry.geotools.NestedType.MapType;
-import io.tileverse.parquetry.geotools.NestedType.StructType;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -149,11 +150,11 @@ class GeoParquetSchemaMapperTest {
     void recordsNestedTypeInDescriptorUserData(@TempDir Path dir) throws Exception {
         SimpleFeatureType ft = mapNestedFixture(dir).featureType();
 
-        assertThat(ft.getDescriptor("addresses").getUserData().get(NestedTypes.USER_DATA_KEY))
+        assertThat(ft.getDescriptor("addresses").getUserData().get(NestedType.USER_DATA_KEY))
                 .isInstanceOf(ListType.class);
-        assertThat(ft.getDescriptor("brand").getUserData().get(NestedTypes.USER_DATA_KEY))
+        assertThat(ft.getDescriptor("brand").getUserData().get(NestedType.USER_DATA_KEY))
                 .isInstanceOf(StructType.class);
-        assertThat(ft.getDescriptor("tags").getUserData().get(NestedTypes.USER_DATA_KEY))
+        assertThat(ft.getDescriptor("tags").getUserData().get(NestedType.USER_DATA_KEY))
                 .isInstanceOf(MapType.class);
     }
 

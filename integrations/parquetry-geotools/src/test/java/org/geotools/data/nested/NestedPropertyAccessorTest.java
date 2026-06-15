@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.geotools;
+package org.geotools.data.nested;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -26,6 +26,10 @@ import org.geotools.api.feature.simple.SimpleFeature;
 import org.geotools.api.feature.simple.SimpleFeatureType;
 import org.geotools.api.filter.FilterFactory;
 import org.geotools.api.filter.MultiValuedFilter.MatchAction;
+import org.geotools.data.nested.NestedType.Field;
+import org.geotools.data.nested.NestedType.ListType;
+import org.geotools.data.nested.NestedType.ScalarType;
+import org.geotools.data.nested.NestedType.StructType;
 import org.geotools.factory.CommonFactoryFinder;
 import org.geotools.feature.simple.SimpleFeatureBuilder;
 import org.geotools.feature.simple.SimpleFeatureTypeBuilder;
@@ -33,17 +37,12 @@ import org.geotools.filter.expression.PropertyAccessor;
 import org.geotools.filter.expression.PropertyAccessors;
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.geotools.NestedType.Field;
-import io.tileverse.parquetry.geotools.NestedType.ListType;
-import io.tileverse.parquetry.geotools.NestedType.ScalarType;
-import io.tileverse.parquetry.geotools.NestedType.StructType;
-
 /**
  * Verifies the registered {@link NestedPropertyAccessor} navigates a slash path into nested value objects with the same
  * semantics core's quantified pushdown uses, including keeping null leaf members so a residual {@code MatchAction}
  * agrees with the push-down answer.
  *
- * <p>Features are built by hand with the {@link NestedTypes#USER_DATA_KEY} user data the reader attaches, matching the
+ * <p>Features are built by hand with the {@link NestedType#USER_DATA_KEY} user data the reader attaches, matching the
  * {@code NestedFixtures} rows: addresses {@code LIST<STRUCT(locality, postcode)>} and a brand {@code STRUCT(name)}.
  */
 class NestedPropertyAccessorTest {
@@ -174,9 +173,9 @@ class NestedPropertyAccessorTest {
         SimpleFeatureTypeBuilder typeBuilder = new SimpleFeatureTypeBuilder();
         typeBuilder.setName("nested");
         typeBuilder.add("id", String.class);
-        typeBuilder.userData(NestedTypes.USER_DATA_KEY, ADDRESSES_TYPE);
+        typeBuilder.userData(NestedType.USER_DATA_KEY, ADDRESSES_TYPE);
         typeBuilder.add("addresses", List.class);
-        typeBuilder.userData(NestedTypes.USER_DATA_KEY, BRAND_TYPE);
+        typeBuilder.userData(NestedType.USER_DATA_KEY, BRAND_TYPE);
         typeBuilder.add("brand", Map.class);
         return typeBuilder.buildFeatureType();
     }

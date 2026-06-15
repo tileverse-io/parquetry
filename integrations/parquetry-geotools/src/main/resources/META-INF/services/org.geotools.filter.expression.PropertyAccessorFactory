@@ -1,1 +1,1 @@
-io.tileverse.parquetry.geotools.NestedPropertyAccessorFactory
+org.geotools.data.nested.NestedPropertyAccessorFactory

@@ -26,11 +26,12 @@ import java.util.Set;
 
 import org.geotools.api.feature.simple.SimpleFeatureType;
 import org.geotools.api.referencing.crs.CoordinateReferenceSystem;
+import org.geotools.data.nested.NestedType;
+import org.geotools.data.nested.NestedType.ListType;
 import org.geotools.feature.simple.SimpleFeatureTypeBuilder;
 import org.locationtech.jts.geom.Geometry;
 
 import io.tileverse.parquetry.format.LogicalType;
-import io.tileverse.parquetry.geotools.NestedType.ListType;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -47,7 +48,7 @@ import io.tileverse.parquetry.schema.geo.projjson.Identifier;
  * <p>Each top-level field becomes one attribute. A primitive field becomes a typed scalar attribute; a geometry field
  * (GEOMETRY or GEOGRAPHY logical type) becomes a geometry attribute with a resolved CRS; a {@code STRUCT}/{@code LIST}/
  * {@code MAP} field becomes a single nested attribute whose value-object shape is recorded as a {@link NestedType} in
- * the descriptor's user data (under {@link NestedTypes#USER_DATA_KEY}). Nested fields are not flattened into dotted
+ * the descriptor's user data (under {@link NestedType#USER_DATA_KEY}). Nested fields are not flattened into dotted
  * attribute names. Primitive kinds without a natural Java binding are skipped.
  *
  * <p>The GeoParquet primary column (from the {@code "geo"} key-value metadata) becomes the default geometry on the
@@ -225,7 +226,7 @@ final class GeoParquetSchemaMapper {
         NestedType nestedType = NestedTypes.of(group);
         Class<?> binding = nestedBinding(nestedType);
         String attrName = path.dot();
-        ftb.userData(NestedTypes.USER_DATA_KEY, nestedType);
+        ftb.userData(NestedType.USER_DATA_KEY, nestedType);
         ftb.add(attrName, binding);
         return new AttributeMapping(attrName, path, false, binding, nestedType);
     }

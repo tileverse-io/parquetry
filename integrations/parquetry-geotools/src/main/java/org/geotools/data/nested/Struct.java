@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.geotools;
+package org.geotools.data.nested;
 
 import java.util.AbstractMap;
 import java.util.Collections;
@@ -22,8 +22,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import io.tileverse.parquetry.geotools.NestedType.Field;
-import io.tileverse.parquetry.geotools.NestedType.StructType;
+import org.geotools.data.nested.NestedType.Field;
+import org.geotools.data.nested.NestedType.StructType;
 
 /**
  * A read-only {@link Map} view over one translated Parquet {@code STRUCT} value: its {@link StructType} and a

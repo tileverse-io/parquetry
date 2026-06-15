@@ -19,14 +19,15 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
+import org.geotools.data.nested.NestedType;
+import org.geotools.data.nested.NestedType.Field;
+import org.geotools.data.nested.NestedType.ListType;
+import org.geotools.data.nested.NestedType.MapType;
+import org.geotools.data.nested.NestedType.ScalarType;
+import org.geotools.data.nested.NestedType.StructType;
 import org.locationtech.jts.geom.Geometry;
 
 import io.tileverse.parquetry.format.LogicalType;
-import io.tileverse.parquetry.geotools.NestedType.Field;
-import io.tileverse.parquetry.geotools.NestedType.ListType;
-import io.tileverse.parquetry.geotools.NestedType.MapType;
-import io.tileverse.parquetry.geotools.NestedType.ScalarType;
-import io.tileverse.parquetry.geotools.NestedType.StructType;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
@@ -42,11 +43,6 @@ import io.tileverse.parquetry.schema.SchemaNode;
  * one-field struct.
  */
 final class NestedTypes {
-
-    /**
-     * The {@code AttributeDescriptor} user-data key under which the {@link NestedType} of a nested attribute is stored.
-     */
-    static final String USER_DATA_KEY = "parquetry.nestedType";
 
     private NestedTypes() {}
 

@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.geotools;
+package org.geotools.data.nested;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -111,7 +111,7 @@ final class NestedPropertyAccessor implements PropertyAccessor {
         if (descriptor == null) {
             return false;
         }
-        return descriptor.getUserData().containsKey(NestedTypes.USER_DATA_KEY);
+        return descriptor.getUserData().containsKey(NestedType.USER_DATA_KEY);
     }
 
     private static boolean isNestedPath(String xpath) {

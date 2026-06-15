@@ -20,16 +20,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.nio.file.Path;
 import java.util.List;
 
+import org.geotools.data.nested.NestedType;
+import org.geotools.data.nested.NestedType.Field;
+import org.geotools.data.nested.NestedType.ListType;
+import org.geotools.data.nested.NestedType.MapType;
+import org.geotools.data.nested.NestedType.ScalarType;
+import org.geotools.data.nested.NestedType.StructType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.catalog.ParquetDatasetCatalog;
 import io.tileverse.parquetry.dataset.ParquetDataset;
-import io.tileverse.parquetry.geotools.NestedType.Field;
-import io.tileverse.parquetry.geotools.NestedType.ListType;
-import io.tileverse.parquetry.geotools.NestedType.MapType;
-import io.tileverse.parquetry.geotools.NestedType.ScalarType;
-import io.tileverse.parquetry.geotools.NestedType.StructType;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**

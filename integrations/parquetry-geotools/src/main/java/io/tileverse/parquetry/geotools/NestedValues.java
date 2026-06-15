@@ -25,12 +25,17 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-import io.tileverse.parquetry.geotools.NestedType.Field;
-import io.tileverse.parquetry.geotools.NestedType.ListType;
-import io.tileverse.parquetry.geotools.NestedType.MapType;
-import io.tileverse.parquetry.geotools.NestedType.ScalarType;
-import io.tileverse.parquetry.geotools.NestedType.StructType;
-import io.tileverse.parquetry.geotools.NestedType.VariantType;
+import org.geotools.data.nested.NestedType;
+import org.geotools.data.nested.NestedType.Field;
+import org.geotools.data.nested.NestedType.ListType;
+import org.geotools.data.nested.NestedType.MapType;
+import org.geotools.data.nested.NestedType.ScalarType;
+import org.geotools.data.nested.NestedType.StructType;
+import org.geotools.data.nested.NestedType.VariantType;
+import org.geotools.data.nested.Struct;
+import org.geotools.data.nested.TypedList;
+import org.geotools.data.nested.TypedMap;
+
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 

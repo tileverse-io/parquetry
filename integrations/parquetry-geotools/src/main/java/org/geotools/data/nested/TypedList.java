@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.geotools;
+package org.geotools.data.nested;
 
 import java.util.AbstractList;
 import java.util.List;

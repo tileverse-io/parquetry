@@ -13,18 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.geotools;
+package org.geotools.data.nested;
 
 import java.util.List;
 
 /**
  * The shape of a nested GeoTools attribute: a struct, list, map, scalar leaf, or the Parquet Variant logical type.
  *
- * <p>This is the type metadata stored in an {@code AttributeDescriptor}'s user data (under
- * {@link NestedTypes#USER_DATA_KEY}) for attributes that map a Parquet {@code STRUCT}/{@code LIST}/{@code MAP} column
- * to a single nested feature attribute. {@link NestedTypes#of(io.tileverse.parquetry.schema.SchemaNode)} projects a
- * parquet schema node onto this ADT, dropping the synthetic {@code list}/{@code element} and
- * {@code key_value}/{@code key}/ {@code value} levels the file stores.
+ * <p>This is the type metadata stored in an {@code AttributeDescriptor}'s user data (under {@link #USER_DATA_KEY}) for
+ * attributes that map a nested column ({@code STRUCT}/{@code LIST}/{@code MAP}) to a single nested feature attribute.
  *
  * <ul>
  *   <li>{@link StructType} - an ordered set of named {@link Field}s.
@@ -40,6 +37,11 @@ public sealed interface NestedType
                 NestedType.MapType,
                 NestedType.ScalarType,
                 NestedType.VariantType {
+
+    /**
+     * The {@code AttributeDescriptor} user-data key under which the {@link NestedType} of a nested attribute is stored.
+     */
+    public static final String USER_DATA_KEY = "org.geotools.data.nested.NestedType";
 
     /** A named member of a {@link StructType}. */
     record Field(String name, NestedType type) {}

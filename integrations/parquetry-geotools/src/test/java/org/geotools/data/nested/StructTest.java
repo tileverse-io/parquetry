@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.geotools;
+package org.geotools.data.nested;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -23,11 +23,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.geotools.data.nested.NestedType.Field;
+import org.geotools.data.nested.NestedType.ScalarType;
+import org.geotools.data.nested.NestedType.StructType;
 import org.junit.jupiter.api.Test;
-
-import io.tileverse.parquetry.geotools.NestedType.Field;
-import io.tileverse.parquetry.geotools.NestedType.ScalarType;
-import io.tileverse.parquetry.geotools.NestedType.StructType;
 
 /**
  * Verifies that {@link Struct} presents a struct value as a read-only {@link Map} a generic JSON encoder can serialize.

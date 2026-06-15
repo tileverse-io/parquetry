@@ -23,6 +23,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
+import org.geotools.data.nested.NestedType;
+import org.geotools.data.nested.Struct;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
