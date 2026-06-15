@@ -75,6 +75,15 @@ class CodecTest {
                 Arguments.of("random4096", random(4096, 0xDEADBEEFL)));
     }
 
+    /** The codecs whose aircompressor backend reads the source through {@code Unsafe} and rejects a read-only one. */
+    static Stream<Arguments> unsafeBackedCodecs() {
+        return Stream.of(
+                Arguments.of("snappy", Codec.snappy()),
+                Arguments.of("zstd", Codec.zstd()),
+                Arguments.of("lz4Raw", Codec.lz4Raw()),
+                Arguments.of("lzo", Codec.lzo()));
+    }
+
     @Nested
     class SealedTypes {
 
@@ -334,6 +343,24 @@ class CodecTest {
                         .isInstanceOf(IOException.class);
             }
         }
+
+        @ParameterizedTest(name = "readOnlySource/{0}")
+        @MethodSource("io.tileverse.parquetry.compression.CodecTest#unsafeBackedCodecs")
+        void decompressesFromAReadOnlySource(String name, Codec codec) throws Exception {
+            byte[] payload = COMPRESSIBLE_PAYLOAD;
+            byte[] compressed;
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment src = arena.allocate(payload.length);
+                MemorySegment.copy(payload, 0, src, ValueLayout.JAVA_BYTE, 0, payload.length);
+                MemorySegment scratch = arena.allocate(codec.maxCompressedLength(payload.length));
+                int compressedLen = codec.compress(src, scratch);
+                compressed = scratch.asSlice(0, compressedLen).toArray(JAVA_BYTE);
+            }
+            MemorySegment readOnlySource = MemorySegment.ofArray(compressed).asReadOnly();
+            MemorySegment out = MemorySegment.ofArray(new byte[payload.length]);
+            codec.decompress(readOnlySource, out);
+            assertThat(out.toArray(JAVA_BYTE)).isEqualTo(payload);
+        }
     }
 
     @Nested
@@ -449,8 +476,10 @@ class CodecTest {
         @Test
         void rawBlockCodecsRejectSizeDiscovery() {
             MemorySegment src = MemorySegment.ofArray(new byte[] {0x01});
-            assertThatThrownBy(() -> Codec.lz4Raw().decompress(src)).isInstanceOf(UnsupportedOperationException.class);
-            assertThatThrownBy(() -> Codec.lzo().decompress(src)).isInstanceOf(UnsupportedOperationException.class);
+            Codec lz4Raw = Codec.lz4Raw();
+            Codec lzo = Codec.lzo();
+            assertThatThrownBy(() -> lz4Raw.decompress(src)).isInstanceOf(UnsupportedOperationException.class);
+            assertThatThrownBy(() -> lzo.decompress(src)).isInstanceOf(UnsupportedOperationException.class);
         }
     }
 
