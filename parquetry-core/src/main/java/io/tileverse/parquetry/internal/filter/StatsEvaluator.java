@@ -41,8 +41,9 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
  *
  * <p>The evaluator assumes the predicate has already been run through {@code PredicateNormalizer}: {@code Not} is
  * pushed to leaves, {@code Always} is folded, and nested {@code And}/{@code Or} are flattened. It only ever returns
- * {@link PruningDecision.Eliminated}, {@link PruningDecision.PassedAll}, or {@link PruningDecision.NotApplied} - the
- * stats tier cannot narrow to a subset of rows.
+ * {@link PruningDecision.Eliminated}, {@link PruningDecision.PassedAll}, {@link PruningDecision.Inconclusive} (the
+ * value fell within the column's min/max), or {@link PruningDecision.NotApplied} (no statistics to consult) - the stats
+ * tier cannot narrow to a subset of rows.
  */
 final class StatsEvaluator {
 
@@ -179,7 +180,7 @@ final class StatsEvaluator {
             if (cmpMin == 0 && cmpMax == 0 && rowCount > 0 && canProveAllMatch(range.kind(), range.nullCount())) {
                 return new PruningDecision.PassedAll(TIER, OP_EQ + col.dot() + ": single distinct value matches");
             }
-            return new PruningDecision.NotApplied(TIER, OP_EQ + col.dot() + ": value within [min, max]");
+            return new PruningDecision.Inconclusive(TIER, OP_EQ + col.dot() + ": value within [min, max]");
         });
     }
 
@@ -196,7 +197,7 @@ final class StatsEvaluator {
                 return new PruningDecision.Eliminated(
                         TIER, OP_NOT_EQ + col.dot() + ": column is single value equal to operand");
             }
-            return new PruningDecision.NotApplied(TIER, OP_NOT_EQ + col.dot() + ": value within [min, max]");
+            return new PruningDecision.Inconclusive(TIER, OP_NOT_EQ + col.dot() + ": value within [min, max]");
         });
     }
 
@@ -209,7 +210,7 @@ final class StatsEvaluator {
                     && canProveAllMatch(range.kind(), range.nullCount())) {
                 return new PruningDecision.PassedAll(TIER, OP_LT + col.dot() + ": value > max, no nulls");
             }
-            return new PruningDecision.NotApplied(TIER, OP_LT + col.dot() + ": value within (min, max]");
+            return new PruningDecision.Inconclusive(TIER, OP_LT + col.dot() + ": value within (min, max]");
         });
     }
 
@@ -222,7 +223,7 @@ final class StatsEvaluator {
                     && canProveAllMatch(range.kind(), range.nullCount())) {
                 return new PruningDecision.PassedAll(TIER, OP_LT_EQ + col.dot() + ": value >= max, no nulls");
             }
-            return new PruningDecision.NotApplied(TIER, OP_LT_EQ + col.dot() + ": value within [min, max)");
+            return new PruningDecision.Inconclusive(TIER, OP_LT_EQ + col.dot() + ": value within [min, max)");
         });
     }
 
@@ -235,7 +236,7 @@ final class StatsEvaluator {
                     && canProveAllMatch(range.kind(), range.nullCount())) {
                 return new PruningDecision.PassedAll(TIER, OP_GT + col.dot() + ": value < min, no nulls");
             }
-            return new PruningDecision.NotApplied(TIER, OP_GT + col.dot() + ": value within [min, max)");
+            return new PruningDecision.Inconclusive(TIER, OP_GT + col.dot() + ": value within [min, max)");
         });
     }
 
@@ -248,7 +249,7 @@ final class StatsEvaluator {
                     && canProveAllMatch(range.kind(), range.nullCount())) {
                 return new PruningDecision.PassedAll(TIER, OP_GT_EQ + col.dot() + ": value <= min, no nulls");
             }
-            return new PruningDecision.NotApplied(TIER, OP_GT_EQ + col.dot() + ": value within (min, max]");
+            return new PruningDecision.Inconclusive(TIER, OP_GT_EQ + col.dot() + ": value within (min, max]");
         });
     }
 
@@ -258,7 +259,7 @@ final class StatsEvaluator {
                 int cmpMin = ValueComparison.compareValues(v, range.min());
                 int cmpMax = ValueComparison.compareValues(v, range.max());
                 if (cmpMin >= 0 && cmpMax <= 0) {
-                    return new PruningDecision.NotApplied(
+                    return new PruningDecision.Inconclusive(
                             TIER, OP_IN + col.dot() + ": at least one value within [min, max]");
                 }
             }
@@ -278,7 +279,7 @@ final class StatsEvaluator {
         if (nullCount == rowCount) {
             return new PruningDecision.PassedAll(TIER, OP_IS_NULL + col.dot() + ": all rows null");
         }
-        return new PruningDecision.NotApplied(TIER, OP_IS_NULL + col.dot() + ": some nulls");
+        return new PruningDecision.Inconclusive(TIER, OP_IS_NULL + col.dot() + ": some nulls");
     }
 
     private static PruningDecision evalIsNotNull(ColumnPath col, FilterPipeline.ColumnStatsLookup cols, long rowCount) {
@@ -293,7 +294,7 @@ final class StatsEvaluator {
         if (nullCount == 0) {
             return new PruningDecision.PassedAll(TIER, OP_IS_NOT_NULL + col.dot() + ": no nulls");
         }
-        return new PruningDecision.NotApplied(TIER, OP_IS_NOT_NULL + col.dot() + ": some nulls");
+        return new PruningDecision.Inconclusive(TIER, OP_IS_NOT_NULL + col.dot() + ": some nulls");
     }
 
     /**

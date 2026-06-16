@@ -50,11 +50,11 @@ class BloomFilterEvaluatorTest {
     }
 
     @Test
-    void eqIntValuePresentInBloomIsNotApplied() {
+    void eqIntValuePresentInBloomIsInconclusive() {
         FilterPipeline.BloomFilterLookup blooms =
                 single("year", PrimitiveKind.INT32, bloomOver(SplitBlockBloomFilter.hashInt32(2020)));
         Predicate p = col("year").eq(2020);
-        assertThat(BloomFilterEvaluator.evaluate(p, blooms)).isInstanceOf(PruningDecision.NotApplied.class);
+        assertThat(BloomFilterEvaluator.evaluate(p, blooms)).isInstanceOf(PruningDecision.Inconclusive.class);
     }
 
     @Test
@@ -81,11 +81,11 @@ class BloomFilterEvaluatorTest {
     }
 
     @Test
-    void inOneValuePresentIsNotApplied() {
+    void inOneValuePresentIsInconclusive() {
         long h = SplitBlockBloomFilter.hashInt32(2);
         FilterPipeline.BloomFilterLookup blooms = single("status", PrimitiveKind.INT32, bloomOver(h));
         Predicate p = col("status").inInts(1, 2, 3);
-        assertThat(BloomFilterEvaluator.evaluate(p, blooms)).isInstanceOf(PruningDecision.NotApplied.class);
+        assertThat(BloomFilterEvaluator.evaluate(p, blooms)).isInstanceOf(PruningDecision.Inconclusive.class);
     }
 
     @Test
@@ -199,9 +199,9 @@ class BloomFilterEvaluatorTest {
                 single("ratio", PrimitiveKind.FLOAT, bloomOver(SplitBlockBloomFilter.hashFloat(present)));
         assertThat(BloomFilterEvaluator.evaluate(Pred.col("ratio").eq(99.0f), blooms))
                 .isInstanceOf(PruningDecision.Eliminated.class);
-        // Same probe value passes through as NotApplied.
+        // Same probe value passes through as Inconclusive (the bloom was consulted, value may be present).
         assertThat(BloomFilterEvaluator.evaluate(Pred.col("ratio").eq(present), blooms))
-                .isInstanceOf(PruningDecision.NotApplied.class);
+                .isInstanceOf(PruningDecision.Inconclusive.class);
     }
 
     @Test
@@ -212,7 +212,7 @@ class BloomFilterEvaluatorTest {
         assertThat(BloomFilterEvaluator.evaluate(Pred.col("ratio").eq(99.0), blooms))
                 .isInstanceOf(PruningDecision.Eliminated.class);
         assertThat(BloomFilterEvaluator.evaluate(Pred.col("ratio").eq(present), blooms))
-                .isInstanceOf(PruningDecision.NotApplied.class);
+                .isInstanceOf(PruningDecision.Inconclusive.class);
     }
 
     @Test
@@ -273,9 +273,9 @@ class BloomFilterEvaluatorTest {
         byte[] bytes = "Hello".getBytes(java.nio.charset.StandardCharsets.UTF_8);
         FilterPipeline.BloomFilterLookup blooms =
                 single("blob", PrimitiveKind.BYTE_ARRAY, bloomOver(SplitBlockBloomFilter.hashBytes(bytes)));
-        // Present binary -> NotApplied (might match).
+        // Present binary -> Inconclusive (might match).
         assertThat(BloomFilterEvaluator.evaluate(Pred.col("blob").eq(bytes), blooms))
-                .isInstanceOf(PruningDecision.NotApplied.class);
+                .isInstanceOf(PruningDecision.Inconclusive.class);
         // Absent binary -> Eliminated.
         assertThat(BloomFilterEvaluator.evaluate(Pred.col("blob").eq("not-here".getBytes()), blooms))
                 .isInstanceOf(PruningDecision.Eliminated.class);
@@ -287,7 +287,7 @@ class BloomFilterEvaluatorTest {
         FilterPipeline.BloomFilterLookup blooms =
                 single("fixed", PrimitiveKind.FIXED_LEN_BYTE_ARRAY, bloomOver(SplitBlockBloomFilter.hashBytes(bytes)));
         assertThat(BloomFilterEvaluator.evaluate(Pred.col("fixed").eq(bytes), blooms))
-                .isInstanceOf(PruningDecision.NotApplied.class);
+                .isInstanceOf(PruningDecision.Inconclusive.class);
         assertThat(BloomFilterEvaluator.evaluate(Pred.col("fixed").eq(new byte[] {9, 9, 9, 9}), blooms))
                 .isInstanceOf(PruningDecision.Eliminated.class);
     }
@@ -308,7 +308,7 @@ class BloomFilterEvaluatorTest {
         long h = SplitBlockBloomFilter.hashInt32((int) date.toEpochDay());
         FilterPipeline.BloomFilterLookup blooms = single("date", PrimitiveKind.INT32, bloomOver(h));
         assertThat(BloomFilterEvaluator.evaluate(Pred.col("date").eq(date), blooms))
-                .isInstanceOf(PruningDecision.NotApplied.class);
+                .isInstanceOf(PruningDecision.Inconclusive.class);
         assertThat(BloomFilterEvaluator.evaluate(Pred.col("date").eq(date.plusDays(1)), blooms))
                 .isInstanceOf(PruningDecision.Eliminated.class);
     }
@@ -329,7 +329,7 @@ class BloomFilterEvaluatorTest {
         FilterPipeline.BloomFilterLookup blooms =
                 single("ts", PrimitiveKind.INT64, bloomOver(SplitBlockBloomFilter.hashInt64(epochMillis)));
         assertThat(BloomFilterEvaluator.evaluate(Pred.col("ts").eq(ts, true), blooms))
-                .isInstanceOf(PruningDecision.NotApplied.class);
+                .isInstanceOf(PruningDecision.Inconclusive.class);
         assertThat(BloomFilterEvaluator.evaluate(Pred.col("ts").eq(ts.plusDays(1), true), blooms))
                 .isInstanceOf(PruningDecision.Eliminated.class);
     }

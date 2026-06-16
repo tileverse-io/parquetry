@@ -32,8 +32,9 @@ import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
  * Tier-2 (DICTIONARY) evaluator. Inspects a row group's loaded dictionary pages: if no dictionary value can satisfy the
- * predicate then the row group is eliminated. The dictionary doesn't carry null counts, so the evaluator never upgrades
- * to PassedAll - it only ever returns Eliminated or NotApplied.
+ * predicate then the row group is eliminated. The dictionary has no null counts; the evaluator never upgrades to
+ * PassedAll. It returns {@link PruningDecision.Eliminated}, {@link PruningDecision.Inconclusive} (at least one
+ * dictionary value matches), or {@link PruningDecision.NotApplied} (no dictionary loaded or an ineligible predicate).
  *
  * <p>The evaluator assumes the predicate has already been normalized (Not pushed to leaves, Always folded, nested
  * And/Or flattened).
@@ -151,7 +152,7 @@ final class DictionaryEvaluator {
         for (int i = 0; i < dict.size(); i++) {
             Object dv = dict.get(i);
             if (matches.test(dv)) {
-                return new PruningDecision.NotApplied(
+                return new PruningDecision.Inconclusive(
                         TIER, opLabel + " " + col.dot() + ": at least one dictionary value matches");
             }
         }

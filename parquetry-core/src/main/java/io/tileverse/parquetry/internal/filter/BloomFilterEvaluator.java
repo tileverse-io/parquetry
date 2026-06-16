@@ -39,8 +39,9 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
  * value is "definitely absent" from the bloom filter, the row group is eliminated.
  *
  * <p>Bloom filters answer only set-membership questions. The evaluator therefore only acts on {@code Eq} and {@code In}
- * leaves, and only when the column's value hash can be computed from the predicate-side {@link Value}. Everything else
- * (range comparisons, IS NULL, BBox, NOT) is {@link PruningDecision.NotApplied}.
+ * leaves, and only when the column's value hash can be computed from the predicate-side {@link Value}. A probe that
+ * cannot rule the value out is {@link PruningDecision.Inconclusive} (the bloom was loaded and consulted). Everything
+ * else (range comparisons, IS NULL, BBox, NOT, or no bloom filter loaded) is {@link PruningDecision.NotApplied}.
  *
  * <p>Like {@link DictionaryEvaluator}, the evaluator assumes the predicate has been normalized (Not pushed to leaves,
  * Always folded, nested And/Or flattened).
@@ -137,7 +138,7 @@ final class BloomFilterEvaluator {
             return new PruningDecision.NotApplied(TIER, "Eq " + col.dot() + ": value/kind not hashable for bloom");
         }
         if (cb.bloom().mightContain(hash.getAsLong())) {
-            return new PruningDecision.NotApplied(TIER, "Eq " + col.dot() + ": value may be present");
+            return new PruningDecision.Inconclusive(TIER, "Eq " + col.dot() + ": value may be present");
         }
         return new PruningDecision.Eliminated(TIER, "Eq " + col.dot() + ": value definitely absent");
     }
@@ -158,7 +159,8 @@ final class BloomFilterEvaluator {
                 return new PruningDecision.NotApplied(TIER, "In " + col.dot() + ": value/kind not hashable for bloom");
             }
             if (cb.bloom().mightContain(hash.getAsLong())) {
-                return new PruningDecision.NotApplied(TIER, "In " + col.dot() + ": at least one value may be present");
+                return new PruningDecision.Inconclusive(
+                        TIER, "In " + col.dot() + ": at least one value may be present");
             }
         }
         return new PruningDecision.Eliminated(TIER, "In " + col.dot() + ": every value definitely absent");

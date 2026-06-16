@@ -43,10 +43,10 @@ class DictionaryEvaluatorTest {
     }
 
     @Test
-    void eqValueInIntDictIsNotApplied() {
+    void eqValueInIntDictIsInconclusive() {
         FilterPipeline.DictionaryLookup dicts = single("status", new Dictionary.IntDict(intBuf(1, 2, 3)));
         Predicate p = col("status").eq(2);
-        assertThat(DictionaryEvaluator.evaluate(p, dicts)).isInstanceOf(PruningDecision.NotApplied.class);
+        assertThat(DictionaryEvaluator.evaluate(p, dicts)).isInstanceOf(PruningDecision.Inconclusive.class);
     }
 
     @Test
@@ -78,10 +78,10 @@ class DictionaryEvaluatorTest {
     }
 
     @Test
-    void inOneMatchingDictValueIsNotApplied() {
+    void inOneMatchingDictValueIsInconclusive() {
         FilterPipeline.DictionaryLookup dicts = single("status", new Dictionary.IntDict(intBuf(1, 2, 3)));
         Predicate p = col("status").inInts(3, 7);
-        assertThat(DictionaryEvaluator.evaluate(p, dicts)).isInstanceOf(PruningDecision.NotApplied.class);
+        assertThat(DictionaryEvaluator.evaluate(p, dicts)).isInstanceOf(PruningDecision.Inconclusive.class);
     }
 
     @Test
@@ -126,7 +126,7 @@ class DictionaryEvaluatorTest {
                 MemorySegment.ofArray("banana".getBytes(StandardCharsets.UTF_8))));
         FilterPipeline.DictionaryLookup dicts = single("fruit", dict);
         Predicate p = col("fruit").eq("apple");
-        assertThat(DictionaryEvaluator.evaluate(p, dicts)).isInstanceOf(PruningDecision.NotApplied.class);
+        assertThat(DictionaryEvaluator.evaluate(p, dicts)).isInstanceOf(PruningDecision.Inconclusive.class);
     }
 
     @Test

@@ -81,7 +81,9 @@ class BloomFilterFixtureTest {
                     .as("no tier should eliminate a value that the fixture actually contains")
                     .isNotEqualTo(RowGroupOutcome.ELIMINATED);
             PruningDecision bloom = decisionAt(plan, 0, Tier.BLOOM_FILTER);
-            assertThat(bloom).isInstanceOf(PruningDecision.NotApplied.class);
+            assertThat(bloom)
+                    .as("a probed value that may be present is Inconclusive, not NotApplied")
+                    .isInstanceOf(PruningDecision.Inconclusive.class);
         }
     }
 

@@ -158,6 +158,7 @@ final class AsciiTableRenderer {
             case PruningDecision.Eliminated _ -> "ELIM";
             case PruningDecision.PassedAll _ -> "passed";
             case PruningDecision.NarrowedTo n -> "NARROW " + n.ranges().totalRows() + "/" + rowCount;
+            case PruningDecision.Inconclusive _ -> "kept";
             case PruningDecision.NotApplied _ -> "n/a";
         };
     }
