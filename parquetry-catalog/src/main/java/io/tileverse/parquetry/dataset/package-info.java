@@ -18,5 +18,10 @@
  *
  * <p>A {@link io.tileverse.parquetry.dataset.ParquetDataset} reads 1..N files as one stream; it sits above the
  * single-file {@code io.tileverse.parquetry.data.ParquetReader} engine in {@code parquetry-core}.
+ *
+ * <p>The {@link io.tileverse.parquetry.dataset.Dataset} SPI facade and
+ * {@link io.tileverse.parquetry.dataset.DatasetCapabilities} describe a dataset independently of its backing, while the
+ * {@link io.tileverse.parquetry.dataset.FilePlan}/{@link io.tileverse.parquetry.dataset.PlannedFile} plan types expose
+ * which files a read will visit.
  */
 package io.tileverse.parquetry.dataset;

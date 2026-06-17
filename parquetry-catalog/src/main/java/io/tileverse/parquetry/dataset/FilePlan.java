@@ -13,10 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package io.tileverse.parquetry.dataset;
+
+import java.util.List;
+
 /**
- * Catalog abstraction: the {@link io.tileverse.parquetry.catalog.DatasetCatalog} SPI and
- * {@link io.tileverse.parquetry.catalog.CatalogCapabilities}, with the pure-parquet
- * {@link io.tileverse.parquetry.catalog.FileSourceCatalog} resolving discovered files into
- * {@link io.tileverse.parquetry.dataset.Dataset} instances by metadata-driven pruning.
+ * The ordered, pruned set of files a {@link Dataset} read will visit, each a {@link PlannedFile}; exposed for
+ * diagnostics (which files survived pruning). This is distinct from {@link FilesetReader}, the low-level index-based
+ * byte-source adapter consumed by {@link ParquetDataset#open(FilesetReader)}.
  */
-package io.tileverse.parquetry.catalog;
+public interface FilePlan {
+
+    List<PlannedFile> files();
+}

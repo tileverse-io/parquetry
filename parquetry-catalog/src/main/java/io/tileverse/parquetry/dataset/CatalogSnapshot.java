@@ -13,10 +13,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package io.tileverse.parquetry.dataset;
+
 /**
- * Catalog abstraction: the {@link io.tileverse.parquetry.catalog.DatasetCatalog} SPI and
- * {@link io.tileverse.parquetry.catalog.CatalogCapabilities}, with the pure-parquet
- * {@link io.tileverse.parquetry.catalog.FileSourceCatalog} resolving discovered files into
- * {@link io.tileverse.parquetry.dataset.Dataset} instances by metadata-driven pruning.
+ * A pinned snapshot of a versioned dataset (Iceberg); pure-parquet datasets report {@link java.util.Optional#empty()}.
  */
-package io.tileverse.parquetry.catalog;
+public record CatalogSnapshot(long snapshotId, long timestampMs) {}
