@@ -22,6 +22,7 @@ import static io.tileverse.parquetry.jackson.JacksonRecords.root;
 import static io.tileverse.parquetry.jackson.JacksonRecords.stringLeaf;
 import static io.tileverse.parquetry.jackson.JacksonRecords.struct;
 import static io.tileverse.parquetry.jackson.JacksonRecords.utf8;
+import static io.tileverse.parquetry.jackson.JacksonRecords.uuidLeaf;
 import static io.tileverse.parquetry.jackson.JacksonRecords.validBits;
 import static io.tileverse.parquetry.jackson.JacksonRecords.variant;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -32,6 +33,7 @@ import java.lang.foreign.MemorySegment;
 import java.util.Base64;
 import java.util.BitSet;
 import java.util.Map;
+import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
@@ -46,6 +48,7 @@ import io.tileverse.parquetry.batch.MapVector;
 import io.tileverse.parquetry.batch.StructVector;
 import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.batch.VariantVector;
+import io.tileverse.parquetry.data.UuidConverter;
 import io.tileverse.parquetry.data.variant.VariantEncoder;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -101,6 +104,23 @@ class JsonRecordEncoderTest {
             assertThat(node.get("blob").stringValue())
                     .isEqualTo(Base64.getEncoder().encodeToString(rawBlob));
             assertThat(node.has("absent")).isFalse();
+        }
+    }
+
+    @Test
+    void rendersUuidColumnAsCanonicalString() {
+        UUID uuid = UUID.fromString("0123456f-89ab-cdef-fedc-ba9876543210");
+        SchemaNode.Group rootGroup = root(uuidLeaf("id"));
+        ParquetSchema schema = new ParquetSchema(rootGroup);
+
+        Validity present = validBits(1);
+        Map<ColumnPath, ColumnVector> columns = Map.of(
+                ColumnPath.of("id"),
+                BinaryVector.materialized(new MemorySegment[] {UuidConverter.toReadOnlySegment(uuid)}, present));
+
+        try (DefaultParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 1, Arena.ofConfined())) {
+            JsonNode node = encode(schema, batch.materialize(0));
+            assertThat(node.get("id").stringValue()).isEqualTo(uuid.toString());
         }
     }
 
