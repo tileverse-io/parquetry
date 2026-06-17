@@ -46,6 +46,13 @@
       <artifactId>parquetry-geo-jts</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- Reads fixtures over tileverse-storage (HTTP/S3/...) when parquetry.probe.url is set, letting a
+         latency-injecting file server stand in for object storage. Transitively brings tileverse-storage-all. -->
+    <dependency>
+      <groupId>io.tileverse.parquetry</groupId>
+      <artifactId>parquetry-tileverse-storage</artifactId>
+      <version>${project.version}</version>
+    </dependency>
     <dependency>
       <groupId>org.apache.parquet</groupId>
       <artifactId>parquet-hadoop</artifactId>

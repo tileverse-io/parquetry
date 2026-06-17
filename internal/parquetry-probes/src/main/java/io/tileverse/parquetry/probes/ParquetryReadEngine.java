@@ -15,13 +15,21 @@
  */
 package io.tileverse.parquetry.probes;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.lang.foreign.MemorySegment;
+import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Properties;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+
+import io.tileverse.storage.RangeReader;
+import io.tileverse.storage.Storage;
+import io.tileverse.storage.StorageFactory;
 
 import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetRuntime;
@@ -36,6 +44,7 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.tileverse.ByteRangeSources;
 
 /**
  * parquetry's read arm. Opens the dataset once and reuses it across reads (the long-lived server model) and walks every
@@ -47,6 +56,8 @@ final class ParquetryReadEngine implements ReadEngine {
 
     private final ReadContext context;
     private ByteRangeSource source;
+    private Storage remoteStorage;
+    private RangeReader remoteReader;
     private ParquetReader reader;
     private long sink;
 
@@ -83,32 +94,98 @@ final class ParquetryReadEngine implements ReadEngine {
             return;
         }
         source.close();
+        closeRemote();
         source = null;
         reader = null;
+    }
+
+    /** Closes the tileverse-storage handles backing a remote read; a no-op for the local-file path. */
+    private void closeRemote() {
+        try {
+            if (remoteReader != null) {
+                remoteReader.close();
+                remoteReader = null;
+            }
+            if (remoteStorage != null) {
+                remoteStorage.close();
+                remoteStorage = null;
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 
     /** Opened once and reused across reads; synchronized so concurrent reads share a single open reader. */
     private synchronized ParquetReader reader() {
         if (reader == null) {
-            source = ByteRangeSource.ofFile(context.file());
+            source = openSource();
             reader = ParquetReader.open(source, runtime(), Optional.empty());
         }
         return reader;
     }
 
     /**
-     * Binds the read runtime. Honors {@code parquetry.probe.decodeAhead} to override the per-read decode-ahead window
-     * (how many row groups one read decodes concurrently); 1 makes a read effectively serial, which isolates intra-read
-     * parallelism from inter-read concurrency. Unset uses the default heuristic.
+     * Opens the byte source for the dataset. With {@code parquetry.probe.url} set, reads over the network through
+     * tileverse-storage (HTTP/S3/...), letting a latency-injecting file server stand in for object storage so the
+     * fetch-ahead prefetcher runs against real round-trip latency. Unset reads the local file directly.
+     */
+    private ByteRangeSource openSource() {
+        String url = System.getProperty("parquetry.probe.url");
+        if (url == null) {
+            return ByteRangeSource.ofFile(context.file());
+        }
+        return openRemoteSource(URI.create(url));
+    }
+
+    private ByteRangeSource openRemoteSource(URI fileUri) {
+        URI container = fileUri.resolve(".");
+        remoteStorage = StorageFactory.open(container, remoteStorageProperties());
+        remoteReader = remoteStorage.openRangeReader(fileUri);
+        return ByteRangeSources.from(remoteReader);
+    }
+
+    /**
+     * The Parquet-tuned storage cache configuration. Because parquetry already coalesces column chunks into
+     * row-group-sized ranges, the right cache granularity is one entry per coalesced range, not 64 KB blocks: block
+     * alignment would shatter each coalesced range into ~128 backend requests. Defaults therefore model the production
+     * intent - caching on, alignment off (cache native Parquet ranges) - matching what
+     * {@code parquetry-tileverse-storage} should set.
+     *
+     * <p>Override for benchmarking: {@code parquetry.probe.httpCache=false} turns caching off entirely, keeping the
+     * cross-read dedup from hiding fetch latency across measurement waves; {@code parquetry.probe.blockAligned=true}
+     * restores the tileverse-storage default 64 KB alignment (the pre-fix behavior, to measure the request-count
+     * blowup).
+     */
+    private static Properties remoteStorageProperties() {
+        Properties props = new Properties();
+        boolean caching = Boolean.parseBoolean(System.getProperty("parquetry.probe.httpCache", "true"));
+        boolean blockAligned = Boolean.getBoolean("parquetry.probe.blockAligned");
+        props.setProperty("storage.caching.enabled", Boolean.toString(caching));
+        props.setProperty("storage.caching.blockaligned", Boolean.toString(blockAligned));
+        return props;
+    }
+
+    /**
+     * Binds the read runtime. Honors two independent overrides so the two concurrency layers can be measured apart:
+     * {@code parquetry.probe.decodeAhead} sets the per-read decode-ahead window (how many row groups one read decodes
+     * concurrently; 0 decodes every row group inline), and {@code parquetry.probe.prefetchDepth} sets the fetch-ahead
+     * window (how many upcoming row-group byte fetches overlap the current decode; 0 fetches inline). Either unset
+     * keeps its default. Both unset uses the default heuristic runtime.
      */
     private static ParquetRuntime runtime() {
         String decodeAhead = System.getProperty("parquetry.probe.decodeAhead");
-        if (decodeAhead == null) {
+        String prefetchDepth = System.getProperty("parquetry.probe.prefetchDepth");
+        if (decodeAhead == null && prefetchDepth == null) {
             return ParquetRuntime.defaultRuntime();
         }
-        return ParquetRuntime.builder()
-                .maxDecodeAhead(Integer.parseInt(decodeAhead))
-                .build();
+        ParquetRuntime.Builder builder = ParquetRuntime.builder();
+        if (decodeAhead != null) {
+            builder.maxDecodeAhead(Integer.parseInt(decodeAhead));
+        }
+        if (prefetchDepth != null) {
+            builder.prefetchDepth(Integer.parseInt(prefetchDepth));
+        }
+        return builder.build();
     }
 
     /**
