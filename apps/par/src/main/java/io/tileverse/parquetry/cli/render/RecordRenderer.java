@@ -15,16 +15,10 @@
  */
 package io.tileverse.parquetry.cli.render;
 
-import static java.lang.foreign.ValueLayout.JAVA_BYTE;
-
 import java.io.PrintWriter;
 import java.lang.foreign.MemorySegment;
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
 import java.util.List;
-import java.util.Optional;
 
-import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.jackson.JsonRecordEncoder;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -130,19 +124,7 @@ public final class RecordRenderer {
     }
 
     private String binaryAsString(SchemaNode.Primitive primitive, MemorySegment value) {
-        byte[] raw = value.toArray(JAVA_BYTE);
-        if (isStringLike(primitive.logicalType())) {
-            return new String(raw, StandardCharsets.UTF_8);
-        }
-        return Base64.getEncoder().encodeToString(raw);
-    }
-
-    private static boolean isStringLike(Optional<LogicalType> logicalType) {
-        return logicalType
-                .map(type -> type instanceof LogicalType.StringType
-                        || type instanceof LogicalType.EnumType
-                        || type instanceof LogicalType.JsonType)
-                .orElse(false);
+        return JsonRecordEncoder.binaryScalarToString(primitive, value);
     }
 
     private String delimiter() {

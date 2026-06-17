@@ -18,6 +18,7 @@ package io.tileverse.parquetry.filter;
 import java.lang.foreign.MemorySegment;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 /**
  * Sealed value type for filter predicates. One case per Parquet primitive shape.
@@ -34,7 +35,8 @@ public sealed interface Value
                 Value.BinaryVal,
                 Value.StringVal,
                 Value.DateVal,
-                Value.TimestampVal {
+                Value.TimestampVal,
+                Value.UuidVal {
 
     record BoolVal(boolean value) implements Value {}
 
@@ -57,4 +59,11 @@ public sealed interface Value
     record DateVal(LocalDate value) implements Value {}
 
     record TimestampVal(LocalDateTime value, boolean adjustedToUTC) implements Value {}
+
+    /**
+     * A UUID predicate value. Compared in Parquet's unsigned byte order for FIXED_LEN_BYTE_ARRAY columns (via
+     * {@link io.tileverse.parquetry.data.UuidConverter#compareSegmentToUuid}), NOT {@link UUID#compareTo}, which is
+     * signed and would disagree with file statistics whenever a long's high bit differs.
+     */
+    record UuidVal(UUID value) implements Value {}
 }

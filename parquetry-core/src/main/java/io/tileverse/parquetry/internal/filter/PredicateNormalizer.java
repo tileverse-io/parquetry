@@ -18,6 +18,7 @@ package io.tileverse.parquetry.internal.filter;
 import java.util.ArrayList;
 import java.util.List;
 
+import io.tileverse.parquetry.data.UuidConverter;
 import io.tileverse.parquetry.filter.MatchAction;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Value;
@@ -70,7 +71,7 @@ final class PredicateNormalizer {
             case Predicate.In(ColumnPath col, List<Value> values) -> {
                 SchemaNode.Primitive prim = requirePrimitive(col, schema);
                 for (Value v : values) {
-                    requireCompatible(col, prim.kind(), v);
+                    requireCompatible(col, prim, v);
                 }
             }
             case Predicate.IsNull(ColumnPath col) -> requirePrimitive(col, schema);
@@ -223,7 +224,7 @@ final class PredicateNormalizer {
 
     private static void checkLeafColumn(ColumnPath path, ParquetSchema schema, Value v) {
         SchemaNode.Primitive prim = requirePrimitive(path, schema);
-        requireCompatible(path, prim.kind(), v);
+        requireCompatible(path, prim, v);
     }
 
     private static SchemaNode.Primitive requirePrimitive(ColumnPath path, ParquetSchema schema) {
@@ -236,14 +237,15 @@ final class PredicateNormalizer {
         return p;
     }
 
-    private static void requireCompatible(ColumnPath path, PrimitiveKind kind, Value v) {
-        if (!isCompatible(kind, v)) {
+    private static void requireCompatible(ColumnPath path, SchemaNode.Primitive prim, Value v) {
+        if (!isCompatible(prim, v)) {
             throw new ParquetSchemaException("Value of type " + v.getClass().getSimpleName()
-                    + " is not compatible with column " + path.dot() + " of type " + kind);
+                    + " is not compatible with column " + path.dot() + " of type " + prim.kind());
         }
     }
 
-    private static boolean isCompatible(PrimitiveKind kind, Value v) {
+    private static boolean isCompatible(SchemaNode.Primitive prim, Value v) {
+        PrimitiveKind kind = prim.kind();
         return switch (v) {
             case Value.BoolVal _ -> kind == PrimitiveKind.BOOLEAN;
             case Value.IntVal _ -> kind == PrimitiveKind.INT32;
@@ -257,6 +259,8 @@ final class PredicateNormalizer {
             case Value.BinaryVal _ -> kind == PrimitiveKind.BYTE_ARRAY || kind == PrimitiveKind.FIXED_LEN_BYTE_ARRAY;
             case Value.DateVal _ -> kind == PrimitiveKind.INT32;
             case Value.TimestampVal _ -> kind == PrimitiveKind.INT64 || kind == PrimitiveKind.INT96;
+            case Value.UuidVal _ ->
+                kind == PrimitiveKind.FIXED_LEN_BYTE_ARRAY && prim.typeLength().orElse(-1) == UuidConverter.BYTES;
         };
     }
 }

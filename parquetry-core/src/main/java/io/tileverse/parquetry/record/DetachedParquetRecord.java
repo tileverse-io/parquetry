@@ -22,7 +22,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
+import io.tileverse.parquetry.data.UuidConverter;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.ParquetSchemaException;
@@ -109,6 +111,19 @@ public final class DetachedParquetRecord implements ParquetRecord {
     }
 
     @Override
+    public UUID getUuid(int col) {
+        MemorySegment segment = binaryAt(col);
+        if (segment == null) {
+            return null;
+        }
+        if (segment.byteSize() != UuidConverter.BYTES) {
+            throw new ParquetSchemaException("Column " + paths[col].dot() + " is not a 16-byte fixed-length binary"
+                    + " column; requested getUuid");
+        }
+        return UuidConverter.fromSegment(segment, 0L);
+    }
+
+    @Override
     public <R> R readBinary(int col, BinaryView<R> view) {
         MemorySegment segment = binaryAt(col);
         return segment == null ? null : view.read(segment, 0L, segment.byteSize());
@@ -178,6 +193,11 @@ public final class DetachedParquetRecord implements ParquetRecord {
     @Override
     public byte[] getBinary(ColumnPath col) {
         return getBinary(requireIndex(col, "getBinary"));
+    }
+
+    @Override
+    public UUID getUuid(ColumnPath col) {
+        return getUuid(requireIndex(col, "getUuid"));
     }
 
     @Override

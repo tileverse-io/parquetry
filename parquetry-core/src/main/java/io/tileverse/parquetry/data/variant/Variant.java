@@ -29,6 +29,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+import io.tileverse.parquetry.data.UuidConverter;
 import io.tileverse.parquetry.format.ParquetFormatException;
 
 /**
@@ -206,9 +207,7 @@ public final class Variant {
 
     public UUID getUuid() {
         require(Type.UUID, "getUuid");
-        long high = readBigEndianLong(PAYLOAD_START);
-        long low = readBigEndianLong(PAYLOAD_START + Long.BYTES);
-        return new UUID(high, low);
+        return UuidConverter.fromSegment(value, PAYLOAD_START);
     }
 
     public int getDateDays() {
@@ -414,15 +413,6 @@ public final class Variant {
         for (int i = 0; i < width; i++) {
             int unsignedByte = value.get(JAVA_BYTE, offset + i) & 0xFF;
             result |= (long) unsignedByte << (8 * i);
-        }
-        return result;
-    }
-
-    private long readBigEndianLong(long offset) {
-        long result = 0L;
-        for (int i = 0; i < Long.BYTES; i++) {
-            int unsignedByte = value.get(JAVA_BYTE, offset + i) & 0xFF;
-            result = (result << 8) | unsignedByte;
         }
         return result;
     }

@@ -19,8 +19,10 @@ import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.function.Predicate;
 
+import io.tileverse.parquetry.data.UuidConverter;
 import io.tileverse.parquetry.filter.MatchAction;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
@@ -171,6 +173,8 @@ final class DictionaryEvaluator {
                 ValueComparison.compareBytes(MemorySegment.ofArray(qv.getBytes(StandardCharsets.UTF_8)), dv) == 0;
             case Value.BinaryVal(MemorySegment qv)
             when dictValue instanceof MemorySegment dv -> ValueComparison.compareBytes(qv, dv) == 0;
+            case Value.UuidVal(UUID qv)
+            when dictValue instanceof MemorySegment dv -> UuidConverter.compareSegmentToUuid(dv, qv) == 0;
             case Value.DateVal(java.time.LocalDate qv)
             when dictValue instanceof Integer dv -> (int) qv.toEpochDay() == dv;
             case Value.TimestampVal(java.time.LocalDateTime qv, boolean _)
@@ -193,6 +197,8 @@ final class DictionaryEvaluator {
                 ValueComparison.compareBytes(dv, MemorySegment.ofArray(qv.getBytes(StandardCharsets.UTF_8)));
             case Value.BinaryVal(MemorySegment qv)
             when dictValue instanceof MemorySegment dv -> ValueComparison.compareBytes(dv, qv);
+            case Value.UuidVal(UUID qv)
+            when dictValue instanceof MemorySegment dv -> UuidConverter.compareSegmentToUuid(dv, qv);
             case Value.DateVal(java.time.LocalDate qv)
             when dictValue instanceof Integer dv -> Integer.compare(dv, (int) qv.toEpochDay());
             case Value.TimestampVal(java.time.LocalDateTime qv, boolean _)

@@ -22,7 +22,9 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.UUID;
 
+import io.tileverse.parquetry.data.UuidConverter;
 import io.tileverse.parquetry.filter.Value;
 
 /**
@@ -69,6 +71,7 @@ public final class ValueComparison {
             when actual instanceof Integer av -> Integer.compare(av, (int) bv.toEpochDay());
             case Value.TimestampVal(LocalDateTime bv, boolean _)
             when actual instanceof LocalDateTime av -> av.compareTo(bv);
+            case Value.UuidVal(UUID bv) when actual instanceof MemorySegment av -> compareSegmentToUuidValue(av, bv);
             default -> 0;
         };
     }
@@ -100,6 +103,8 @@ public final class ValueComparison {
             when bound instanceof Value.IntVal(int bv) -> Integer.compare((int) qv.toEpochDay(), bv);
             case Value.TimestampVal(LocalDateTime qv, boolean _)
             when bound instanceof Value.LongVal(long bv) -> Long.compare(qv.toEpochSecond(ZoneOffset.UTC) * 1000L, bv);
+            case Value.UuidVal(UUID qv)
+            when bound instanceof Value.BinaryVal(MemorySegment bv) -> -compareSegmentToUuidValue(bv, qv);
             default -> 0;
         };
     }
@@ -159,8 +164,23 @@ public final class ValueComparison {
             case Value.BinaryVal(MemorySegment bv) -> compareBytes(actual, bv);
             case Value.StringVal(String bv) ->
                 compareBytes(actual, MemorySegment.ofArray(bv.getBytes(StandardCharsets.UTF_8)));
+            case Value.UuidVal(UUID bv) -> compareSegmentToUuidValue(actual, bv);
             default -> 0;
         };
+    }
+
+    /**
+     * Compares a binary segment against a UUID, tolerating a binary segment that is not exactly 16 bytes. The normal
+     * case takes the allocation-free fast path; a short or oversized segment (such as a truncated FLBA row-group
+     * statistic from a foreign writer) falls back to the same tolerant unsigned byte comparison the {@code BinaryVal}
+     * path uses, instead of reading past the segment's end. A UUID's unsigned byte order equals {@link #compareBytes}
+     * over its 16 bytes, hence the two paths agree on full-width segments.
+     */
+    private static int compareSegmentToUuidValue(MemorySegment segment, UUID uuid) {
+        if (segment.byteSize() == UuidConverter.BYTES) {
+            return UuidConverter.compareSegmentToUuid(segment, uuid);
+        }
+        return compareBytes(segment, UuidConverter.toReadOnlySegment(uuid));
     }
 
     /** Lexicographic unsigned byte comparison, mirroring Parquet's default ColumnOrder for binary columns. */

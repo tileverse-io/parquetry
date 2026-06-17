@@ -25,7 +25,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
+import io.tileverse.parquetry.data.UuidConverter;
 import io.tileverse.parquetry.data.variant.Variant;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -227,11 +229,19 @@ public final class JsonRecordEncoder {
             case INT64 -> generator.writeNumber((Long) value);
             case FLOAT -> generator.writeNumber((Float) value);
             case DOUBLE -> generator.writeNumber((Double) value);
-            default -> generator.writeString(binaryToString(primitive, (MemorySegment) value));
+            default -> generator.writeString(binaryScalarToString(primitive, (MemorySegment) value));
         }
     }
 
-    private static String binaryToString(SchemaNode.Primitive primitive, MemorySegment segment) {
+    /**
+     * Renders a binary-physical scalar to its display string: a UUID logical type as its canonical form, a string-like
+     * logical type (string, enum, JSON) as UTF-8 text, and any other binary as Base64. This is the single source of the
+     * binary-scalar display policy shared by the JSON encoder and the flat CLI renderer, keeping their outputs aligned.
+     */
+    public static String binaryScalarToString(SchemaNode.Primitive primitive, MemorySegment segment) {
+        if (primitive.logicalType().orElse(null) instanceof LogicalType.UuidType) {
+            return UuidConverter.fromSegment(segment).toString();
+        }
         byte[] raw = segment.toArray(JAVA_BYTE);
         if (JsonSchemaNodes.isStringLike(primitive.logicalType())) {
             return new String(raw, StandardCharsets.UTF_8);

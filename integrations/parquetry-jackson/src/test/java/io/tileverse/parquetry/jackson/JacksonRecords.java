@@ -49,6 +49,16 @@ final class JacksonRecords {
                 -1);
     }
 
+    static SchemaNode uuidLeaf(String name) {
+        return new SchemaNode.Primitive(
+                name,
+                Repetition.OPTIONAL,
+                PrimitiveKind.FIXED_LEN_BYTE_ARRAY,
+                OptionalInt.of(16),
+                Optional.of(new LogicalType.UuidType()),
+                -1);
+    }
+
     static SchemaNode.Group struct(String name, SchemaNode... children) {
         return new SchemaNode.Group(name, Repetition.OPTIONAL, java.util.List.of(children), Optional.empty(), -1);
     }
