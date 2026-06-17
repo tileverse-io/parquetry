@@ -50,6 +50,9 @@
           <include>parquet-testing/**</include>
           <include>geoparquet/test_data/**</include>
           <include>geoparquet/examples/**</include>
+          <include>geoparquet-testing/data/**</include>
+          <include>geoparquet-testing/samples/**</include>
+          <include>geoparquet-testing/bad_data/**</include>
           <include>parquetry/**</include>
           <include>avro-reference/**</include>
         </includes>

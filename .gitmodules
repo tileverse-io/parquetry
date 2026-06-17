@@ -4,3 +4,6 @@
 [submodule "internal/parquetry-testkit/src/main/resources/geoparquet"]
 	path = internal/parquetry-testkit/src/main/resources/geoparquet
 	url = https://github.com/opengeospatial/geoparquet.git
+[submodule "internal/parquetry-testkit/src/main/resources/geoparquet-testing"]
+	path = internal/parquetry-testkit/src/main/resources/geoparquet-testing
+	url = https://github.com/geoparquet/geoparquet-testing.git
