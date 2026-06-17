@@ -25,6 +25,7 @@ import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.format.LogicalType;
+import io.tileverse.parquetry.schema.geo.ParquetCrs;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
 import io.tileverse.parquetry.schema.geo.projjson.GeographicCRS;
 
@@ -55,7 +56,10 @@ class LogicalTypeGeometryWireTest {
         assertThat(geom.crs())
                 .as("PROJJSON on the wire should be parsed eagerly, not surfaced as a raw string")
                 .isPresent();
-        CoordinateReferenceSystem crs = geom.crs().orElseThrow();
+        assertThat(geom.crs().orElseThrow())
+                .as("inline PROJJSON should land as a ParquetCrs.Inline")
+                .isInstanceOf(ParquetCrs.Inline.class);
+        CoordinateReferenceSystem crs = ((ParquetCrs.Inline) geom.crs().orElseThrow()).projjson();
         assertThat(crs)
                 .as("type:GeographicCRS should land as a typed GeographicCRS record")
                 .isInstanceOf(GeographicCRS.class);
@@ -77,7 +81,58 @@ class LogicalTypeGeometryWireTest {
         assertThat(geog.crs())
                 .as("Geography PROJJSON is parsed eagerly into the typed ADT")
                 .isPresent();
-        assertThat(geog.crs().orElseThrow()).isInstanceOf(GeographicCRS.class);
+        assertThat(geog.crs().orElseThrow())
+                .as("inline PROJJSON should land as a ParquetCrs.Inline")
+                .isInstanceOf(ParquetCrs.Inline.class);
+        assertThat(((ParquetCrs.Inline) geog.crs().orElseThrow()).projjson()).isInstanceOf(GeographicCRS.class);
+    }
+
+    @Test
+    void readsGeometryWithAuthorityCodeCrs() throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        writeUnionVariantHeader(out, GEOMETRY_VARIANT);
+        writeStringField(out, 1, "EPSG:3857");
+        out.write(0);
+        out.write(0);
+
+        LogicalType.Geometry geom = (LogicalType.Geometry) read(out);
+        assertThat(geom.crs().orElseThrow())
+                .as("an authority:code native crs should parse to ParquetCrs.AuthorityCode")
+                .isEqualTo(new ParquetCrs.AuthorityCode("EPSG", "3857"));
+        assertThat(geom.crs().orElseThrow().epsgCode())
+                .as("EPSG:3857 exposes its EPSG code without a registry lookup")
+                .hasValue(3857);
+    }
+
+    @Test
+    void readsGeometryWithSridZeroAsUndefinedCrs() throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        writeUnionVariantHeader(out, GEOMETRY_VARIANT);
+        writeStringField(out, 1, "srid:0");
+        out.write(0);
+        out.write(0);
+
+        LogicalType.Geometry geom = (LogicalType.Geometry) read(out);
+        assertThat(geom.crs().orElseThrow())
+                .as("srid:0 should parse to ParquetCrs.Srid(0) (an undefined CRS, present but with no EPSG code)")
+                .isEqualTo(new ParquetCrs.Srid(0));
+        assertThat(geom.crs().orElseThrow().epsgCode())
+                .as("srid:0 denotes an undefined CRS and exposes no EPSG code")
+                .isEmpty();
+    }
+
+    @Test
+    void readsGeographyWithProjjsonKeyCrs() throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        writeUnionVariantHeader(out, GEOGRAPHY_VARIANT);
+        writeStringField(out, 1, "projjson:my-registry-key");
+        out.write(0);
+        out.write(0);
+
+        LogicalType.Geography geog = (LogicalType.Geography) read(out);
+        assertThat(geog.crs().orElseThrow())
+                .as("a projjson:key native crs should parse to ParquetCrs.ProjjsonKey")
+                .isEqualTo(new ParquetCrs.ProjjsonKey("my-registry-key"));
     }
 
     @Test

@@ -25,6 +25,7 @@ import java.util.OptionalInt;
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.format.LogicalType;
+import io.tileverse.parquetry.schema.geo.ParquetCrs;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
 import io.tileverse.parquetry.schema.geo.projjson.GeographicCRS;
 
@@ -116,7 +117,10 @@ class SchemaBuilderGeoTest {
         assertThat(geog.crs())
                 .as("inline PROJJSON should be parsed eagerly into the typed CRS ADT")
                 .isPresent();
-        CoordinateReferenceSystem crs = geog.crs().orElseThrow();
+        assertThat(geog.crs().orElseThrow())
+                .as("inline PROJJSON should land as a ParquetCrs.Inline")
+                .isInstanceOf(ParquetCrs.Inline.class);
+        CoordinateReferenceSystem crs = ((ParquetCrs.Inline) geog.crs().orElseThrow()).projjson();
         assertThat(crs)
                 .as("WGS 84 PROJJSON should land as a GeographicCRS record")
                 .isInstanceOf(GeographicCRS.class);
@@ -144,8 +148,8 @@ class SchemaBuilderGeoTest {
 
     @Test
     void nativeGeometryAnnotationWinsOverGeoMetadata() {
-        LogicalType.Geometry nativeType = new LogicalType.Geometry(Optional.<CoordinateReferenceSystem>of(
-                new GeographicCRS(Optional.of("EPSG:3857"), Optional.empty(), Optional.empty(), Optional.empty())));
+        LogicalType.Geometry nativeType = new LogicalType.Geometry(Optional.of(ParquetCrs.inline(
+                new GeographicCRS(Optional.of("EPSG:3857"), Optional.empty(), Optional.empty(), Optional.empty()))));
         ParquetSchema schemaWithNative = schemaWithAnnotation(nativeType);
 
         String geo = """
@@ -244,8 +248,9 @@ class SchemaBuilderGeoTest {
                 .isTrue();
     }
 
-    private static CoordinateReferenceSystem crs(String name) {
-        return new GeographicCRS(Optional.of(name), Optional.empty(), Optional.empty(), Optional.empty());
+    private static ParquetCrs crs(String name) {
+        return ParquetCrs.inline(
+                new GeographicCRS(Optional.of(name), Optional.empty(), Optional.empty(), Optional.empty()));
     }
 
     private static ParquetSchema schemaWithAnnotation(LogicalType annotation) {

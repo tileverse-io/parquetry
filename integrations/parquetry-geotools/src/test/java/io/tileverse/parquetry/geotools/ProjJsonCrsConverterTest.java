@@ -45,4 +45,43 @@ class ProjJsonCrsConverterTest {
         assertThat(CRS.lookupEpsgCode(crs, false)).isEqualTo(4326);
         assertThat(CRS.getAxisOrder(crs)).isEqualTo(CRS.AxisOrder.EAST_NORTH);
     }
+
+    @Test
+    void authorityCodeReferenceDecodesThroughTheRegistry() throws Exception {
+        org.geotools.api.referencing.crs.CoordinateReferenceSystem crs = ProjJsonCrsConverter.toGeoTools(
+                new io.tileverse.parquetry.schema.geo.ParquetCrs.AuthorityCode("EPSG", "3857"));
+        assertThat(CRS.lookupEpsgCode(crs, false)).isEqualTo(3857);
+        assertThat(CRS.getAxisOrder(crs)).isEqualTo(CRS.AxisOrder.EAST_NORTH);
+    }
+
+    @Test
+    void ogcCrs84ReferenceResolvesToWgs84LonLat() {
+        org.geotools.api.referencing.crs.CoordinateReferenceSystem crs = ProjJsonCrsConverter.toGeoTools(
+                new io.tileverse.parquetry.schema.geo.ParquetCrs.AuthorityCode("OGC", "CRS84"));
+        assertThat(crs).isNotNull();
+        assertThat(CRS.getAxisOrder(crs)).isEqualTo(CRS.AxisOrder.EAST_NORTH);
+    }
+
+    @Test
+    void sridReferenceDecodesAsEpsgCode() throws Exception {
+        org.geotools.api.referencing.crs.CoordinateReferenceSystem crs =
+                ProjJsonCrsConverter.toGeoTools(new io.tileverse.parquetry.schema.geo.ParquetCrs.Srid(3857));
+        assertThat(CRS.lookupEpsgCode(crs, false)).isEqualTo(3857);
+    }
+
+    @Test
+    void sridZeroReferenceIsUndefinedAndDefaultsToWgs84() {
+        org.geotools.api.referencing.crs.CoordinateReferenceSystem crs =
+                ProjJsonCrsConverter.toGeoTools(new io.tileverse.parquetry.schema.geo.ParquetCrs.Srid(0));
+        assertThat(crs).isNotNull();
+        assertThat(CRS.getAxisOrder(crs)).isEqualTo(CRS.AxisOrder.EAST_NORTH);
+    }
+
+    @Test
+    void unresolvableAuthorityCodeFallsBackToWgs84() {
+        org.geotools.api.referencing.crs.CoordinateReferenceSystem crs = ProjJsonCrsConverter.toGeoTools(
+                new io.tileverse.parquetry.schema.geo.ParquetCrs.AuthorityCode("EPSG", "999999"));
+        assertThat(crs).isNotNull();
+        assertThat(CRS.getAxisOrder(crs)).isEqualTo(CRS.AxisOrder.EAST_NORTH);
+    }
 }

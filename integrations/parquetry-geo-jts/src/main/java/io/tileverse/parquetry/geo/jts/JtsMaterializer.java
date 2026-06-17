@@ -32,8 +32,7 @@ import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaNode;
-import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
-import io.tileverse.parquetry.schema.geo.projjson.Identifier;
+import io.tileverse.parquetry.schema.geo.ParquetCrs;
 
 /**
  * Materializer that surfaces geometry-tagged columns as {@link Geometry} instances decoded from WKB.
@@ -47,12 +46,12 @@ import io.tileverse.parquetry.schema.geo.projjson.Identifier;
  * the schema at footer-read time on 1.x files, so the materializer only needs to inspect the schema's leaf annotations
  * to know which columns to decode.
  *
- * <p>SRID handling: the typed {@link CoordinateReferenceSystem} on the leaf's logical-type annotation is consulted at
- * construction time; when it has an {@code EPSG} {@link Identifier}, the decoded {@link Geometry} carries that SRID via
- * {@link Geometry#setSRID(int)}. Columns with no CRS, or with a CRS whose {@link Identifier#epsgCode()} is empty (e.g.
- * an inline PROJJSON document without an EPSG entry, or {@code OGC:CRS84}), keep JTS's default SRID (0). The spec maps
- * {@code Optional.empty()} CRS on a Geometry leaf to the GeoParquet default (OGC:CRS84); consumers that need
- * {@code 4326} for that case set it themselves on top of this materializer's output.
+ * <p>SRID handling: the native {@link ParquetCrs} on the leaf's logical-type annotation is consulted at construction
+ * time; when {@link ParquetCrs#epsgCode()} yields an EPSG code, the decoded {@link Geometry} carries that SRID via
+ * {@link Geometry#setSRID(int)}. Columns with no CRS, or with a CRS whose {@link ParquetCrs#epsgCode()} is empty (e.g.
+ * an inline PROJJSON document without an EPSG entry, {@code OGC:CRS84}, or {@code srid:0}), keep JTS's default SRID
+ * (0). The spec maps {@code Optional.empty()} CRS on a Geometry leaf to the GeoParquet default (OGC:CRS84); consumers
+ * that need {@code 4326} for that case set it themselves on top of this materializer's output.
  *
  * <p>This class is thread-safe: it holds only immutable column lookups and delegates WKB decoding to a shared,
  * thread-safe reader, hence a single materializer instance may be shared across reader threads.
@@ -85,7 +84,7 @@ public final class JtsMaterializer implements Materializer<Map<ColumnPath, Objec
     /**
      * Returns the EPSG SRID this materializer will stamp on geometries decoded from {@code path}, when one is
      * resolvable from the column's typed CRS. {@link OptionalInt#empty()} means either the column is not a geo column,
-     * its CRS is absent (spec-default OGC:CRS84), or its {@link Identifier} did not yield an EPSG code.
+     * its CRS is absent (spec-default OGC:CRS84), or its {@link ParquetCrs#epsgCode()} did not yield an EPSG code.
      */
     public OptionalInt sridFor(ColumnPath path) {
         Integer srid = sridByColumn.get(path);
@@ -142,26 +141,22 @@ public final class JtsMaterializer implements Materializer<Map<ColumnPath, Objec
     }
 
     /**
-     * Extracts the EPSG SRID from a Geometry / Geography logical type's typed CRS, if present. Surfaces empty when the
-     * CRS is absent (spec-default), the CRS has no {@link Identifier}, or the identifier is not an EPSG one.
+     * Extracts the EPSG SRID from a Geometry / Geography logical type's native CRS, if present. Returns empty when the
+     * CRS is absent (spec-default) or its EPSG code is not derivable without a registry lookup (a non-EPSG authority,
+     * {@code srid:0}, or a {@code projjson:} reference).
      */
     private static OptionalInt epsgSridFor(LogicalType lt) {
-        return crsOf(lt)
-                .flatMap(CoordinateReferenceSystem::id)
-                .map(Identifier::epsgCode)
-                .orElse(OptionalInt.empty());
+        return crsOf(lt).map(ParquetCrs::epsgCode).orElse(OptionalInt.empty());
     }
 
     // S7475 (drop the unused type from the unnamed pattern) is informational only - palantirJavaFormat 2.90 cannot
     // parse
     // the bare-underscore form Sonar suggests; see memory feedback-palantir-unnamed-pattern.
     @SuppressWarnings("java:S7475")
-    private static Optional<CoordinateReferenceSystem> crsOf(LogicalType lt) {
+    private static Optional<ParquetCrs> crsOf(LogicalType lt) {
         return switch (lt) {
-            case LogicalType.Geometry(Optional<CoordinateReferenceSystem> crs) -> crs;
-            case LogicalType.Geography(
-                    Optional<CoordinateReferenceSystem> crs,
-                    Optional<EdgeInterpolationAlgorithm> _) -> crs;
+            case LogicalType.Geometry(Optional<ParquetCrs> crs) -> crs;
+            case LogicalType.Geography(Optional<ParquetCrs> crs, Optional<EdgeInterpolationAlgorithm> _) -> crs;
             default -> Optional.empty();
         };
     }

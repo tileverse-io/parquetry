@@ -37,6 +37,7 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.geo.ParquetCrs;
 import io.tileverse.parquetry.schema.geo.geoparquet.Covering;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
@@ -371,10 +372,9 @@ final class GeoParquetSchemaMapper {
      */
     private static CoordinateReferenceSystem resolveCrs(
             ColumnPath path, Optional<LogicalType> logical, Optional<GeoParquetMetadata> geo) {
-        Optional<io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem> fromLogical =
-                logical.flatMap(lt -> extractCrsFromLogicalType(lt));
+        Optional<ParquetCrs> fromLogical = logical.flatMap(GeoParquetSchemaMapper::extractCrsFromLogicalType);
         if (fromLogical.isPresent()) {
-            return ProjJsonCrsConverter.toGeoTools(fromLogical);
+            return ProjJsonCrsConverter.toGeoTools(fromLogical.get());
         }
         Optional<io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem> fromMetadata = geo.flatMap(
                         g -> Optional.ofNullable(g.columns().get(path.dot())))
@@ -389,34 +389,26 @@ final class GeoParquetSchemaMapper {
      */
     private static OptionalInt resolveSrid(
             ColumnPath path, Optional<LogicalType> logical, Optional<GeoParquetMetadata> geo) {
-        Optional<io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem> crs =
-                logical.flatMap(GeoParquetSchemaMapper::extractCrsFromLogicalType);
-        if (crs.isEmpty()) {
-            crs = geo.flatMap(g -> Optional.ofNullable(g.columns().get(path.dot())))
-                    .flatMap(GeoColumn::crs);
+        Optional<ParquetCrs> fromLogical = logical.flatMap(GeoParquetSchemaMapper::extractCrsFromLogicalType);
+        if (fromLogical.isPresent()) {
+            return fromLogical.get().epsgCode();
         }
-        return crs.flatMap(io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem::id)
+        return geo.flatMap(g -> Optional.ofNullable(g.columns().get(path.dot())))
+                .flatMap(GeoColumn::crs)
+                .flatMap(io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem::id)
                 .map(Identifier::epsgCode)
                 .orElse(OptionalInt.empty());
     }
 
     /**
-     * Extracts the CRS from a GEOMETRY or GEOGRAPHY logical type. Returns empty for any other logical type. This method
-     * is only called after {@link #isGeometryType} has returned true; the other-type case should not arise.
+     * Extracts the native CRS from a GEOMETRY or GEOGRAPHY logical type. Returns empty for any other logical type. This
+     * method is only called after {@link #isGeometryType} has returned true; the other-type case should not arise.
      */
-    private static Optional<io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem>
-            extractCrsFromLogicalType(LogicalType lt) {
-        if (lt
-                instanceof
-                LogicalType.Geometry(
-                        Optional<io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem> crs)) {
+    private static Optional<ParquetCrs> extractCrsFromLogicalType(LogicalType lt) {
+        if (lt instanceof LogicalType.Geometry(Optional<ParquetCrs> crs)) {
             return crs;
         }
-        if (lt
-                instanceof
-                LogicalType.Geography(
-                        Optional<io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem> crs,
-                        var ignoredAlgorithm)) {
+        if (lt instanceof LogicalType.Geography(Optional<ParquetCrs> crs, var ignoredAlgorithm)) {
             return crs;
         }
         return Optional.empty();

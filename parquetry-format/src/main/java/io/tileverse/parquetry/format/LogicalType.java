@@ -17,7 +17,7 @@ package io.tileverse.parquetry.format;
 
 import java.util.Optional;
 
-import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
+import io.tileverse.parquetry.schema.geo.ParquetCrs;
 
 /**
  * Parquet logical-type annotation (Thrift union {@code LogicalType}).
@@ -137,21 +137,21 @@ public sealed interface LogicalType
     /**
      * GeoParquet 2.0 {@code GEOMETRY} logical type.
      *
-     * @param crs typed PROJJSON coordinate reference system when present; {@link Optional#empty()} means "use the
-     *     GeoParquet spec default" (typically OGC:CRS84). PROJJSON is parsed eagerly at footer-read time;
-     *     {@link CoordinateReferenceSystem.Unknown} surfaces any {@code type} discriminator not yet modeled, and a
-     *     malformed PROJJSON string degrades to {@link Optional#empty()} so the column is still readable.
+     * @param crs the native Parquet {@code crs} property when present; {@link Optional#empty()} means "use the
+     *     GeoParquet spec default" (typically OGC:CRS84). The property is parsed eagerly at footer-read time into a
+     *     {@link ParquetCrs} (inline PROJJSON or an {@code authority:code} / {@code srid:} / {@code projjson:}
+     *     reference); a blank or unclassifiable value degrades to {@link Optional#empty()} so the column stays
+     *     readable.
      */
-    record Geometry(Optional<CoordinateReferenceSystem> crs) implements LogicalType {}
+    record Geometry(Optional<ParquetCrs> crs) implements LogicalType {}
 
     /**
      * GeoParquet 2.0 {@code GEOGRAPHY} logical type.
      *
-     * @param crs typed PROJJSON coordinate reference system when present; {@link Optional#empty()} means "use the
+     * @param crs the native Parquet {@code crs} property when present; {@link Optional#empty()} means "use the
      *     GeoParquet spec default".
      * @param algorithm edge interpolation algorithm; {@link Optional#empty()} means "use the spec default"
      *     ({@code SPHERICAL}).
      */
-    record Geography(Optional<CoordinateReferenceSystem> crs, Optional<EdgeInterpolationAlgorithm> algorithm)
-            implements LogicalType {}
+    record Geography(Optional<ParquetCrs> crs, Optional<EdgeInterpolationAlgorithm> algorithm) implements LogicalType {}
 }

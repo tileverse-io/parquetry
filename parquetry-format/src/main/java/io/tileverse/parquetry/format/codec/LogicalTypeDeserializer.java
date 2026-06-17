@@ -25,6 +25,7 @@ import io.tileverse.parquetry.format.EdgeInterpolationAlgorithm;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.UnknownCodeException;
+import io.tileverse.parquetry.schema.geo.ParquetCrs;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
 import io.tileverse.parquetry.schema.geo.projjson.ProjJsonModule;
 
@@ -227,11 +228,11 @@ final class LogicalTypeDeserializer {
     }
 
     /**
-     * Reads {@code GeometryType}: crs (field 1, string, optional). The raw PROJJSON string is parsed eagerly into the
-     * typed {@link CoordinateReferenceSystem} ADT via {@link #parseCrs}.
+     * Reads {@code GeometryType}: crs (field 1, string, optional). The raw native {@code crs} string is parsed eagerly
+     * into the typed {@link ParquetCrs} ADT via {@link #parseCrs}.
      */
     private static LogicalType.Geometry readGeometry(CompactProtocolReader r) throws IOException {
-        Optional<CoordinateReferenceSystem> crs = Optional.empty();
+        Optional<ParquetCrs> crs = Optional.empty();
         int lastFieldId = 0;
         while (true) {
             FieldHeader fh = r.readFieldHeader(lastFieldId);
@@ -254,7 +255,7 @@ final class LogicalTypeDeserializer {
      * {@link EdgeInterpolationAlgorithm#valueOf(int)}; unknown codes are tolerated for forward-compat.
      */
     private static LogicalType.Geography readGeography(CompactProtocolReader r) throws IOException {
-        Optional<CoordinateReferenceSystem> crs = Optional.empty();
+        Optional<ParquetCrs> crs = Optional.empty();
         Optional<EdgeInterpolationAlgorithm> algorithm = Optional.empty();
         int lastFieldId = 0;
         while (true) {
@@ -281,19 +282,30 @@ final class LogicalTypeDeserializer {
     }
 
     /**
-     * Parses a PROJJSON string from the Thrift wire into the typed {@link CoordinateReferenceSystem} ADT. A blank or
-     * malformed PROJJSON value degrades to {@link Optional#empty()} with a WARN log entry; the column stays readable
-     * and the consumer falls back to the GeoParquet spec default (typically OGC:CRS84).
+     * Parses a native Parquet {@code crs} string from the Thrift wire into the typed {@link ParquetCrs} ADT. An inline
+     * PROJJSON document (the string starts with <code>{</code>) is parsed eagerly into {@link ParquetCrs.Inline}; any
+     * other value is classified into a reference form by {@link ParquetCrs#reference(String)}. A blank, malformed, or
+     * unclassifiable value degrades to {@link Optional#empty()} (a WARN log entry for malformed PROJJSON); the column
+     * stays readable and the consumer falls back to the GeoParquet spec default (typically OGC:CRS84).
      */
-    private static Optional<CoordinateReferenceSystem> parseCrs(String raw) {
+    private static Optional<ParquetCrs> parseCrs(String raw) {
         if (raw == null || raw.isBlank()) {
             return Optional.empty();
         }
+        String value = raw.strip();
+        if (value.startsWith("{")) {
+            return parseInlineProjjson(value);
+        }
+        return ParquetCrs.reference(value);
+    }
+
+    private static Optional<ParquetCrs> parseInlineProjjson(String projjson) {
         try {
-            return Optional.of(CRS_MAPPER.readValue(raw, CoordinateReferenceSystem.class));
-        } catch (JacksonException e) {
+            return Optional.of(ParquetCrs.inline(CRS_MAPPER.readValue(projjson, CoordinateReferenceSystem.class)));
+        } catch (JacksonException malformed) {
             LOG.warn(
-                    "Malformed PROJJSON on Geometry/Geography logical type; treating CRS as empty: {}", e.getMessage());
+                    "Malformed PROJJSON on Geometry/Geography logical type; treating CRS as empty: {}",
+                    malformed.getMessage());
             return Optional.empty();
         }
     }
