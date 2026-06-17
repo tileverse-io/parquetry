@@ -13,10 +13,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package io.tileverse.parquetry.dataset;
+
+import java.util.List;
+import java.util.Map;
+
+import io.tileverse.parquetry.io.FileEntry;
+
 /**
- * Catalog abstraction: the {@link io.tileverse.parquetry.catalog.DatasetCatalog} SPI and
- * {@link io.tileverse.parquetry.catalog.CatalogCapabilities}, with the pure-parquet
- * {@link io.tileverse.parquetry.catalog.FileSourceCatalog} resolving discovered files into
- * {@link io.tileverse.parquetry.dataset.Dataset} instances by metadata-driven pruning.
+ * One discovered dataset within a {@link io.tileverse.parquetry.catalog.FileSourceCatalog}: its NCName, the files that
+ * belong to it (in listing order), and the partition values shared by those files (empty when not hive-partitioned).
  */
-package io.tileverse.parquetry.catalog;
+public record DatasetUnit(String name, List<FileEntry> files, Map<String, String> partitionValues) {
+
+    public DatasetUnit {
+        files = List.copyOf(files);
+        partitionValues = Map.copyOf(partitionValues);
+    }
+}

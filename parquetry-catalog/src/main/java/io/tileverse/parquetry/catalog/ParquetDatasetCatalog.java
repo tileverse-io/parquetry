@@ -39,6 +39,9 @@ import io.tileverse.parquetry.io.FileSource;
  * <p>{@link #open(FileSource, CatalogOptions) open} eagerly opens every file and reads every footer, holding one byte
  * source per file open for the catalog's lifetime. Open-handle count and footer reads scale with the number of files; a
  * lazy, bounded version is a later increment.
+ *
+ * <p>For new code prefer {@link FileSourceCatalog}, which implements the {@link DatasetCatalog} SPI and resolves one or
+ * many datasets from a file listing (layer-per-file and hive-partition grouping).
  */
 public final class ParquetDatasetCatalog implements AutoCloseable {
 
