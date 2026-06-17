@@ -30,6 +30,7 @@ import io.tileverse.storage.WriteOptions;
 
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.tileverse.ByteRangeSources;
+import io.tileverse.parquetry.tileverse.ParquetStorage;
 
 /**
  * Resolves a CLI path or URI argument into a {@link RangeReader}. A bare path is normalised to an absolute
@@ -40,35 +41,46 @@ public final class UriResolver {
 
     private UriResolver() {}
 
-    /** Holds the open reader and its backing storage; closing this closes both, reader first. */
+    /**
+     * Holds the open {@link ByteRangeSource} and, for a remote URI, the tileverse-storage handles backing it. A local
+     * file is read through parquetry's native source, which owns its channel; a remote URI is read through a
+     * tileverse-storage {@link RangeReader} that the source borrows. Closing releases whichever backs this source.
+     */
     public static final class OpenFile implements AutoCloseable {
 
+        private final ByteRangeSource source;
         private final Storage storage;
         private final RangeReader reader;
-        private ByteRangeSource source;
 
-        OpenFile(Storage storage, RangeReader reader) {
+        private OpenFile(ByteRangeSource source, Storage storage, RangeReader reader) {
+            this.source = source;
             this.storage = storage;
             this.reader = reader;
         }
 
-        public RangeReader reader() {
-            return reader;
+        /** A local file read through parquetry's native source; {@link #close()} closes the source's channel. */
+        static OpenFile ofLocal(ByteRangeSource source) {
+            return new OpenFile(source, null, null);
         }
 
         /**
-         * Adapts the open reader to the parquetry read SPI. The returned source borrows the reader; this
-         * {@link OpenFile} keeps ownership and closes the reader.
+         * A remote URI read through tileverse-storage; the source borrows {@code reader}, closed with {@code storage}.
          */
+        static OpenFile ofStorage(Storage storage, RangeReader reader) {
+            return new OpenFile(ByteRangeSources.from(reader), storage, reader);
+        }
+
+        /** The open source, adapted to the parquetry read SPI. */
         public ByteRangeSource source() {
-            if (source == null) {
-                source = ByteRangeSources.from(reader);
-            }
             return source;
         }
 
         @Override
         public void close() throws IOException {
+            if (reader == null) {
+                source.close();
+                return;
+            }
             try {
                 reader.close();
             } finally {
@@ -111,30 +123,24 @@ public final class UriResolver {
     }
 
     /**
-     * Opens the path or URI with the given storage properties forwarded to {@link StorageFactory}. The caller supplies
-     * only the {@code storage.*} keys it cares about; {@code storage.uri} is set by the factory and must not be
-     * included.
+     * Opens the path or URI. A local {@code file} URI is read through parquetry's native filesystem source; a remote
+     * URI is opened through tileverse-storage with the given {@code storage.*} properties (and parquetry's cache
+     * tuning, see {@link ParquetStorage}). {@code storage.uri} is set by the factory and must not be included.
      */
     public static OpenFile open(String pathOrUri, Properties storageProperties) {
         URI target = toAbsoluteUri(pathOrUri);
+        if ("file".equals(target.getScheme())) {
+            return OpenFile.ofLocal(ByteRangeSource.ofFile(Path.of(target)));
+        }
         URI container = target.resolve(".");
-        Storage storage = StorageFactory.open(container, storageProperties);
+        Storage storage = ParquetStorage.open(container, storageProperties);
         try {
-            RangeReader reader = openReader(storage, target);
-            return new OpenFile(storage, reader);
+            RangeReader reader = storage.openRangeReader(target);
+            return OpenFile.ofStorage(storage, reader);
         } catch (RuntimeException e) {
             closeQuietly(storage);
             throw e;
         }
-    }
-
-    private static RangeReader openReader(Storage storage, URI target) {
-        if ("file".equals(target.getScheme())) {
-            // Decode percent-encoding (e.g. %20) back to the real filesystem name before Storage sees it.
-            String key = Path.of(target).getFileName().toString();
-            return storage.openRangeReader(key);
-        }
-        return storage.openRangeReader(target);
     }
 
     /**

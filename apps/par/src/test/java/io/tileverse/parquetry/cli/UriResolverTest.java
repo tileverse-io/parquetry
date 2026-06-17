@@ -25,8 +25,6 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.storage.RangeReader;
-
 import io.tileverse.parquetry.cli.UriResolver.Target;
 
 class UriResolverTest {
@@ -36,8 +34,7 @@ class UriResolverTest {
         Path file = dir.resolve("hello.bin");
         Files.write(file, new byte[] {1, 2, 3, 4});
         try (UriResolver.OpenFile open = UriResolver.open(file.toString())) {
-            RangeReader reader = open.reader();
-            assertThat(reader.size().getAsLong()).isEqualTo(4L);
+            assertThat(open.source().size()).isEqualTo(4L);
         }
     }
 
@@ -46,7 +43,7 @@ class UriResolverTest {
         Path file = dir.resolve("hello.bin");
         Files.write(file, new byte[] {9, 9});
         try (UriResolver.OpenFile open = UriResolver.open(file.toUri().toString())) {
-            assertThat(open.reader().size().getAsLong()).isEqualTo(2L);
+            assertThat(open.source().size()).isEqualTo(2L);
         }
     }
 
@@ -55,7 +52,7 @@ class UriResolverTest {
         Path file = dir.resolve("my data.bin");
         Files.write(file, new byte[] {7, 7, 7});
         try (UriResolver.OpenFile open = UriResolver.open(file.toString())) {
-            assertThat(open.reader().size().getAsLong()).isEqualTo(3L);
+            assertThat(open.source().size()).isEqualTo(3L);
         }
     }
 

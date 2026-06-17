@@ -24,7 +24,6 @@ import java.util.stream.Stream;
 
 import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageEntry;
-import io.tileverse.storage.StorageFactory;
 
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.FileEntry;
@@ -71,7 +70,7 @@ public final class StorageFileSource implements FileSource {
     public static StorageFileSource open(URI baseUri, String pattern, Properties props) {
         Objects.requireNonNull(baseUri, "baseUri");
         Objects.requireNonNull(pattern, "pattern");
-        Storage storage = StorageFactory.open(baseUri, props);
+        Storage storage = ParquetStorage.open(baseUri, props);
         return new StorageFileSource(storage, pattern, true);
     }
 

@@ -26,7 +26,8 @@ import org.geotools.api.data.DataStoreFactorySpi;
 
 import io.tileverse.parquetry.catalog.CatalogOptions;
 import io.tileverse.parquetry.catalog.ParquetDatasetCatalog;
-import io.tileverse.parquetry.tileverse.StorageFileSource;
+import io.tileverse.parquetry.io.FileSource;
+import io.tileverse.parquetry.tileverse.ParquetFileSources;
 
 /** Opens a read-only GeoParquet {@link DataStore} from a dataset URI. */
 public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
@@ -83,7 +84,7 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
         String pattern = filePattern(datasetUri);
         Properties storageProps = StorageParams.toProperties(params);
 
-        StorageFileSource source = StorageFileSource.open(base, pattern, storageProps);
+        FileSource source = ParquetFileSources.open(base, pattern, storageProps);
         ParquetDatasetCatalog catalog = ParquetDatasetCatalog.open(source, CatalogOptions.defaults());
 
         GeoParquetDataStore store = new GeoParquetDataStore(catalog);
