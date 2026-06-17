@@ -18,6 +18,7 @@ package io.tileverse.parquetry.record;
 import java.lang.foreign.MemorySegment;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -77,6 +78,14 @@ public sealed interface ParquetRecord permits DefaultParquetRecord, DetachedParq
     byte[] getBinary(int col);
 
     /**
+     * The {@link UUID} value at {@code col}, decoding a 16-byte big-endian FIXED_LEN_BYTE_ARRAY (Parquet's UUID logical
+     * type). Returns {@code null} when the column is NULL for this row. Throws a
+     * {@link io.tileverse.parquetry.schema.ParquetSchemaException} when the column is not a 16-byte fixed-length binary
+     * column, consistent with the other typed accessors.
+     */
+    UUID getUuid(int col);
+
+    /**
      * Reads the binary column at {@code col} in place: the view receives the value's own backing segment, the value's
      * offset within it, and its byte length, with no slice or copy. Returns the view's result, or {@code null} for a
      * null cell (the view is not invoked).
@@ -95,9 +104,12 @@ public sealed interface ParquetRecord permits DefaultParquetRecord, DetachedParq
     Map<?, ?> readMap(int col);
 
     /**
-     * The generic value at {@code col}: a boxed primitive, a read-only {@link MemorySegment} for binary/INT96, a live
-     * sub-record/list/map for nested columns, or {@code null}. This is the introspection path; typed and {@code read*}
-     * accessors are preferred on the hot path.
+     * The generic value at {@code col}: a boxed primitive, a read-only {@link MemorySegment} for binary / INT96 /
+     * FIXED_LEN_BYTE_ARRAY, a live sub-record/list/map for nested columns, or {@code null}. This is the introspection
+     * path and returns RAW PHYSICAL values regardless of logical type (a DATE comes back as the INT32 epoch day, a UUID
+     * column as its 16-byte segment). Logical materialization is the consumer's choice: inspect {@link #schema()} for
+     * the column's physical kind and logical type, then call the matching typed accessor (for example
+     * {@link #getUuid(ColumnPath)}). Typed and {@code read*} accessors are preferred on the hot path.
      */
     Object get(int col);
 
@@ -116,6 +128,9 @@ public sealed interface ParquetRecord permits DefaultParquetRecord, DetachedParq
     String getString(ColumnPath col);
 
     byte[] getBinary(ColumnPath col);
+
+    /** The {@link UUID} value at {@code col}; see {@link #getUuid(int)}. */
+    UUID getUuid(ColumnPath col);
 
     <R> R readBinary(ColumnPath col, BinaryView<R> view);
 

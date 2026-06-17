@@ -28,10 +28,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.UUID;
 
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.data.Compression;
 import io.tileverse.parquetry.data.ParquetWriteException;
+import io.tileverse.parquetry.data.UuidConverter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.format.ColumnChunk;
@@ -458,6 +460,12 @@ public final class RowGroupWriter implements AutoCloseable {
             byte[] copy = new byte[buffer.remaining()];
             buffer.duplicate().get(copy);
             return MemorySegment.ofArray(copy).asReadOnly();
+        }
+        if (value instanceof UUID uuid) {
+            if (leaf.kind() != PrimitiveKind.FIXED_LEN_BYTE_ARRAY) {
+                throw typeMismatch(leaf, value, "MemorySegment");
+            }
+            return UuidConverter.toReadOnlySegment(uuid);
         }
         throw typeMismatch(leaf, value, "MemorySegment");
     }

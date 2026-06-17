@@ -22,7 +22,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.UUID;
 
+import io.tileverse.parquetry.data.UuidConverter;
 import io.tileverse.parquetry.filter.MatchAction;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Value;
@@ -185,6 +187,9 @@ final class BloomFilterEvaluator {
             case Value.BinaryVal(MemorySegment qv)
             when kind == PrimitiveKind.BYTE_ARRAY || kind == PrimitiveKind.FIXED_LEN_BYTE_ARRAY ->
                 OptionalLong.of(hashSegment(qv));
+            case Value.UuidVal(UUID qv)
+            when kind == PrimitiveKind.FIXED_LEN_BYTE_ARRAY ->
+                OptionalLong.of(hashSegment(UuidConverter.toReadOnlySegment(qv)));
             case Value.DateVal(java.time.LocalDate qv)
             when kind == PrimitiveKind.INT32 -> OptionalLong.of(SplitBlockBloomFilter.hashInt32((int) qv.toEpochDay()));
             case Value.TimestampVal(java.time.LocalDateTime qv, boolean _)

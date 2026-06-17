@@ -21,6 +21,7 @@ import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import io.tileverse.parquetry.batch.BinaryVector;
 import io.tileverse.parquetry.batch.BooleanVector;
@@ -38,6 +39,7 @@ import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.MapVector;
 import io.tileverse.parquetry.batch.StructVector;
 import io.tileverse.parquetry.batch.VariantVector;
+import io.tileverse.parquetry.data.UuidConverter;
 import io.tileverse.parquetry.materializer.LevelListMaterializer;
 import io.tileverse.parquetry.materializer.LevelMapMaterializer;
 import io.tileverse.parquetry.materializer.ListMaterializer;
@@ -123,6 +125,11 @@ public final class DefaultParquetRecord implements ParquetRecord {
     }
 
     @Override
+    public UUID getUuid(int col) {
+        return getUuidAt(columns, col);
+    }
+
+    @Override
     public <R> R readBinary(int col, BinaryView<R> view) {
         return readBinaryAt(columns, col, READ_BINARY, view);
     }
@@ -193,6 +200,12 @@ public final class DefaultParquetRecord implements ParquetRecord {
     public byte[] getBinary(ColumnPath col) {
         Resolved leaf = require(col, "getBinary");
         return getBinaryAt(leaf.columns(), leaf.index());
+    }
+
+    @Override
+    public UUID getUuid(ColumnPath col) {
+        Resolved leaf = require(col, "getUuid");
+        return getUuidAt(leaf.columns(), leaf.index());
     }
 
     @Override
@@ -345,6 +358,17 @@ public final class DefaultParquetRecord implements ParquetRecord {
 
     private byte[] getBinaryAt(RowColumns cols, int col) {
         return readBinaryAt(cols, col, "getBinary", DefaultParquetRecord::toBytes);
+    }
+
+    private UUID getUuidAt(RowColumns cols, int col) {
+        ColumnVector vec = cols.vector(col);
+        if (vec == null || vec.isNull(rowIndex)) {
+            return null;
+        }
+        if (vec instanceof FixedLenBinaryVector fb && fb.byteWidth() == UuidConverter.BYTES) {
+            return UuidConverter.fromSegment(fb.get(rowIndex));
+        }
+        throw mismatch(cols, col, "getUuid");
     }
 
     private <R> R readBinaryAt(RowColumns cols, int col, String accessor, BinaryView<R> view) {

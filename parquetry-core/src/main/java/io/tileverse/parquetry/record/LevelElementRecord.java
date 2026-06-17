@@ -21,6 +21,7 @@ import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import io.tileverse.parquetry.batch.BinaryVector;
 import io.tileverse.parquetry.batch.BooleanVector;
@@ -37,6 +38,7 @@ import io.tileverse.parquetry.batch.ListMeta.FieldMeta;
 import io.tileverse.parquetry.batch.ListMeta.StructMeta;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.MapMeta;
+import io.tileverse.parquetry.data.UuidConverter;
 import io.tileverse.parquetry.data.variant.Variant;
 import io.tileverse.parquetry.data.variant.VariantMetadata;
 import io.tileverse.parquetry.materializer.LeafWindows;
@@ -168,6 +170,21 @@ public final class LevelElementRecord implements ParquetRecord {
     }
 
     @Override
+    public UUID getUuid(int col) {
+        FieldMeta field = field(col);
+        if (field.element() instanceof ElementMeta.Absent) {
+            return null;
+        }
+        if (field.element() instanceof ElementMeta.Scalar scalar
+                && leafAt(scalar) instanceof FixedLenBinaryVector fb
+                && fb.byteWidth() == UuidConverter.BYTES) {
+            MemorySegment slice = fb.get(positionOf(scalar));
+            return slice == null ? null : UuidConverter.fromSegment(slice);
+        }
+        throw mismatch(field, "getUuid");
+    }
+
+    @Override
     public <R> R readBinary(int col, BinaryView<R> view) {
         FieldMeta field = field(col);
         if (field.element() instanceof ElementMeta.Absent) {
@@ -286,6 +303,12 @@ public final class LevelElementRecord implements ParquetRecord {
     public byte[] getBinary(ColumnPath col) {
         Resolved resolved = require(col, "getBinary");
         return resolved.target().getBinary(resolved.index());
+    }
+
+    @Override
+    public UUID getUuid(ColumnPath col) {
+        Resolved resolved = require(col, "getUuid");
+        return resolved.target().getUuid(resolved.index());
     }
 
     @Override

@@ -21,6 +21,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.UUID;
 
 import io.tileverse.parquetry.schema.ColumnPath;
 
@@ -115,6 +116,18 @@ public final class Pred {
             return new Predicate.Eq(path, new Value.TimestampVal(v, utc));
         }
 
+        public Predicate eq(UUID v) {
+            return new Predicate.Eq(path, new Value.UuidVal(v));
+        }
+
+        public Predicate lt(UUID v) {
+            return new Predicate.Lt(path, new Value.UuidVal(v));
+        }
+
+        public Predicate gtEq(UUID v) {
+            return new Predicate.GtEq(path, new Value.UuidVal(v));
+        }
+
         public Predicate notEq(int v) {
             return new Predicate.NotEq(path, new Value.IntVal(v));
         }
@@ -188,6 +201,14 @@ public final class Pred {
         public Predicate inStrings(String... values) {
             List<Value> vals = new ArrayList<>(values.length);
             for (String v : values) vals.add(new Value.StringVal(v));
+            return new Predicate.In(path, vals);
+        }
+
+        public Predicate inUuids(UUID... values) {
+            List<Value> vals = new ArrayList<>(values.length);
+            for (UUID v : values) {
+                vals.add(new Value.UuidVal(v));
+            }
             return new Predicate.In(path, vals);
         }
 

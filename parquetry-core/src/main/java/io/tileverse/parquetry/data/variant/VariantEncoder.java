@@ -31,6 +31,8 @@ import java.util.Map;
 import java.util.TreeSet;
 import java.util.UUID;
 
+import io.tileverse.parquetry.data.UuidConverter;
+
 /**
  * Builds one Parquet Variant value in memory, then {@link #encode()} serializes it to a metadata dictionary and a value
  * buffer that the {@link Variant} navigator reads back byte-for-byte.
@@ -75,7 +77,6 @@ public final class VariantEncoder {
     private static final int DECIMAL4_MAX_BITS = 31;
     private static final int DECIMAL8_MAX_BITS = 63;
     private static final int DECIMAL16_MAX_BITS = 127;
-    private static final int UUID_BYTES = 16;
     private static final int INT128_BYTES = 16;
 
     private final Deque<Container> openContainers = new ArrayDeque<>();
@@ -155,10 +156,7 @@ public final class VariantEncoder {
     }
 
     public VariantEncoder addUuid(UUID uuid) {
-        byte[] payload = new byte[UUID_BYTES];
-        writeBigEndianLong(payload, 0, uuid.getMostSignificantBits());
-        writeBigEndianLong(payload, Long.BYTES, uuid.getLeastSignificantBits());
-        return add(new PrimitiveNode(PRIMITIVE_UUID, payload));
+        return add(new PrimitiveNode(PRIMITIVE_UUID, UuidConverter.toBytes(uuid)));
     }
 
     public VariantEncoder addBigDecimal(BigDecimal decimal) {
@@ -460,12 +458,6 @@ public final class VariantEncoder {
         System.arraycopy(length, 0, prefixed, 0, Integer.BYTES);
         System.arraycopy(bytes, 0, prefixed, Integer.BYTES, bytes.length);
         return prefixed;
-    }
-
-    private void writeBigEndianLong(byte[] target, int offset, long value) {
-        for (int i = 0; i < Long.BYTES; i++) {
-            target[offset + i] = (byte) ((value >>> (8 * (Long.BYTES - 1 - i))) & 0xFF);
-        }
     }
 
     private void writeLittleEndian(ByteArrayOutputStream out, int value, int width) {

@@ -41,8 +41,10 @@ public final class RecordLevelEvaluator {
 
     /**
      * Accessor for a single assembled record's column values, as seen by the record-level filter evaluator. The boxed
-     * return is one of: Boolean / Integer / Long / Float / Double / String / {@link MemorySegment} (for binary / INT96)
-     * / java.time.LocalDate / java.time.LocalDateTime, or {@code null} when the column is NULL for this row.
+     * return is the RAW physical value: Boolean / Integer / Long / Float / Double / {@link MemorySegment} (for binary,
+     * FIXED_LEN_BYTE_ARRAY, and INT96), or {@code null} when the column is NULL for this row. Logical interpretation -
+     * reading a DATE's INT32 as a calendar date, or a FIXED_LEN_BYTE_ARRAY UUID as a {@link java.util.UUID} - is the
+     * comparison layer's job in {@link ValueComparison}, not this accessor's.
      */
     public interface RecordAccessor {
 
