@@ -31,6 +31,7 @@ import org.assertj.core.api.recursive.comparison.RecursiveComparisonConfiguratio
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.format.codec.ParquetFormatDeserializer;
+import io.tileverse.parquetry.schema.geo.ParquetCrs;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystems;
 import io.tileverse.parquetry.schema.geo.projjson.GeographicCRS;
@@ -310,7 +311,7 @@ class ParquetFormatWriteTest {
         // ("concrete CRS records degrade
         // to Unknown on read-back") no longer applies.
         CoordinateReferenceSystem ogcCrs84 = CoordinateReferenceSystems.ogcCrs84();
-        LogicalType.Geometry lt = new LogicalType.Geometry(Optional.of(ogcCrs84));
+        LogicalType.Geometry lt = new LogicalType.Geometry(Optional.of(ParquetCrs.inline(ogcCrs84)));
 
         FileMetaData original = footerWithLogicalType(lt);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -325,8 +326,11 @@ class ParquetFormatWriteTest {
                                 LogicalType.Geometry.class,
                                 g -> assertThat(g.crs())
                                         .hasValueSatisfying(crs -> assertThat(crs)
-                                                .as("CRS reads back as the concrete record, not Unknown")
-                                                .isInstanceOf(GeographicCRS.class))));
+                                                .as("CRS reads back as inline PROJJSON, not Unknown")
+                                                .isInstanceOfSatisfying(
+                                                        ParquetCrs.Inline.class,
+                                                        inline -> assertThat(inline.projjson())
+                                                                .isInstanceOf(GeographicCRS.class)))));
     }
 
     @Test
@@ -334,8 +338,8 @@ class ParquetFormatWriteTest {
         // EPSG:4326 from the bundle exercises the Geography logical type's CRS round-trip alongside its algorithm.
         CoordinateReferenceSystem wgs84 =
                 CoordinateReferenceSystems.forEpsg(4326).orElseThrow();
-        LogicalType.Geography lt =
-                new LogicalType.Geography(Optional.of(wgs84), Optional.of(EdgeInterpolationAlgorithm.SPHERICAL));
+        LogicalType.Geography lt = new LogicalType.Geography(
+                Optional.of(ParquetCrs.inline(wgs84)), Optional.of(EdgeInterpolationAlgorithm.SPHERICAL));
 
         FileMetaData original = footerWithLogicalType(lt);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -343,6 +347,32 @@ class ParquetFormatWriteTest {
         FileMetaData parsed = ParquetFormatDeserializer.readFileMetaData(new ByteArrayInputStream(out.toByteArray()));
 
         assertThat(parsed).usingRecursiveComparison(recursiveCompare()).isEqualTo(original);
+    }
+
+    @Test
+    void logicalTypeGeometryRoundTripsNativeCrsReferenceForms() {
+        // The native Parquet crs property may be an authority:code or srid: reference (GeoParquet 2.0). Confirm both
+        // persist to the footer and parse back to the same ParquetCrs record, not just inline PROJJSON.
+        LogicalType.Geometry authorityCode =
+                new LogicalType.Geometry(Optional.of(new ParquetCrs.AuthorityCode("EPSG", "3857")));
+        assertNativeCrsRoundTrips(authorityCode, new ParquetCrs.AuthorityCode("EPSG", "3857"));
+
+        LogicalType.Geometry srid = new LogicalType.Geometry(Optional.of(new ParquetCrs.Srid(0)));
+        assertNativeCrsRoundTrips(srid, new ParquetCrs.Srid(0));
+    }
+
+    private static void assertNativeCrsRoundTrips(LogicalType.Geometry lt, ParquetCrs expected) {
+        FileMetaData original = footerWithLogicalType(lt);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ParquetFormat.writeFooter(out, original);
+        FileMetaData parsed = ParquetFormatDeserializer.readFileMetaData(new ByteArrayInputStream(out.toByteArray()));
+
+        SchemaElement leaf = parsed.schema().get(1);
+        assertThat(leaf.logicalType())
+                .hasValueSatisfying(logical -> assertThat(logical)
+                        .isInstanceOfSatisfying(
+                                LogicalType.Geometry.class,
+                                g -> assertThat(g.crs()).hasValue(expected)));
     }
 
     @Test

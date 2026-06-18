@@ -20,7 +20,7 @@ import java.util.Optional;
 
 import io.tileverse.parquetry.format.EdgeInterpolationAlgorithm;
 import io.tileverse.parquetry.format.LogicalType;
-import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
+import io.tileverse.parquetry.schema.geo.ParquetCrs;
 import io.tileverse.parquetry.schema.geo.projjson.ProjJsonModule;
 
 import tools.jackson.databind.json.JsonMapper;
@@ -118,7 +118,7 @@ final class LogicalTypeSerializer {
     private static void writeGeometry(CompactProtocolWriter w, LogicalType.Geometry g) throws IOException {
         w.writeFieldBegin((short) 17, CompactType.STRUCT);
         w.writeStructBegin();
-        Optional<CoordinateReferenceSystem> crs = g.crs();
+        Optional<ParquetCrs> crs = g.crs();
         if (crs.isPresent()) {
             w.writeStringField((short) 1, encodeCrs(crs.get()));
         }
@@ -130,7 +130,7 @@ final class LogicalTypeSerializer {
     private static void writeGeography(CompactProtocolWriter w, LogicalType.Geography g) throws IOException {
         w.writeFieldBegin((short) 18, CompactType.STRUCT);
         w.writeStructBegin();
-        Optional<CoordinateReferenceSystem> crs = g.crs();
+        Optional<ParquetCrs> crs = g.crs();
         if (crs.isPresent()) {
             w.writeStringField((short) 1, encodeCrs(crs.get()));
         }
@@ -143,12 +143,18 @@ final class LogicalTypeSerializer {
     }
 
     /**
-     * Renders a typed {@link CoordinateReferenceSystem} back to PROJJSON via {@link ProjJsonModule}'s symmetric
-     * serializer. Each concrete CRS record carries its {@code "type"} discriminator on output, so the resulting JSON
-     * round-trips back to the same concrete record through the matching deserializer.
+     * Renders a typed {@link ParquetCrs} back to its native Parquet {@code crs} string. An {@link ParquetCrs.Inline}
+     * CRS is written as PROJJSON via {@link ProjJsonModule}'s symmetric serializer (each record carries its
+     * {@code "type"} discriminator and the JSON round-trips back to the same record); the reference forms are written
+     * back as the {@code authority:code} / {@code srid:} / {@code projjson:} strings they were read from.
      */
-    private static String encodeCrs(CoordinateReferenceSystem crs) {
-        return CRS_MAPPER.writeValueAsString(crs);
+    private static String encodeCrs(ParquetCrs crs) {
+        return switch (crs) {
+            case ParquetCrs.Inline(var projjson) -> CRS_MAPPER.writeValueAsString(projjson);
+            case ParquetCrs.AuthorityCode(String authority, String code) -> authority + ":" + code;
+            case ParquetCrs.Srid(long id) -> ParquetCrs.SRID_PREFIX + id;
+            case ParquetCrs.ProjjsonKey(String key) -> ParquetCrs.PROJJSON_PREFIX + key;
+        };
     }
 
     private static void writeTimeUnitField(CompactProtocolWriter w, short fieldId, LogicalType.TimeUnit unit)

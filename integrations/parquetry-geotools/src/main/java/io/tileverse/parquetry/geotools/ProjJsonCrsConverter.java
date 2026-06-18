@@ -23,10 +23,11 @@ import org.geotools.api.referencing.crs.CoordinateReferenceSystem;
 import org.geotools.referencing.CRS;
 import org.geotools.referencing.crs.DefaultGeographicCRS;
 
+import io.tileverse.parquetry.schema.geo.ParquetCrs;
 import io.tileverse.parquetry.schema.geo.projjson.Identifier;
 
 /**
- * Resolves a GeoParquet PROJJSON CRS to a GeoTools {@link CoordinateReferenceSystem}.
+ * Resolves a GeoParquet CRS to a GeoTools {@link CoordinateReferenceSystem}.
  *
  * <p>Resolution order:
  *
@@ -36,10 +37,59 @@ import io.tileverse.parquetry.schema.geo.projjson.Identifier;
  *   <li>No PROJJSON or no recognisable identifier - defaults to {@link DefaultGeographicCRS#WGS84} (OGC:CRS84,
  *       lon/lat).
  * </ol>
+ *
+ * <p>The {@link #toGeoTools(ParquetCrs)} overload additionally resolves the native Parquet {@code crs} reference forms:
+ * an {@code authority:code} reference is decoded through the GeoTools registry, a {@code srid:} reference is treated as
+ * an EPSG code ({@code srid:0} is the undefined CRS), and a {@code projjson:} reference (which needs an out-of-band
+ * registry) falls back to the default.
  */
 final class ProjJsonCrsConverter {
 
     private ProjJsonCrsConverter() {}
+
+    /**
+     * Converts a native Parquet {@code crs} to a GeoTools CRS, resolving the reference forms through the GeoTools
+     * registry. Never null; defaults to WGS84 (lon/lat) when resolution fails or the CRS is undefined.
+     */
+    static CoordinateReferenceSystem toGeoTools(ParquetCrs crs) {
+        return switch (crs) {
+            case ParquetCrs.Inline(var projjson) -> toGeoTools(Optional.of(projjson));
+            case ParquetCrs.AuthorityCode(String authority, String code) -> resolveAuthorityCode(authority, code);
+            case ParquetCrs.Srid(long id) -> resolveEpsgSrid(id);
+            case ParquetCrs.ProjjsonKey _ -> DefaultGeographicCRS.WGS84;
+        };
+    }
+
+    /**
+     * Resolves an {@code authority:code} reference through the GeoTools registry (longitudeFirst=true). OGC:CRS84 is
+     * the GeoParquet default (lon/lat WGS84); any code the registry cannot decode falls back to WGS84.
+     */
+    private static CoordinateReferenceSystem resolveAuthorityCode(String authority, String code) {
+        boolean isOgcCrs84 = "OGC".equalsIgnoreCase(authority) && "CRS84".equalsIgnoreCase(code);
+        if (isOgcCrs84) {
+            return DefaultGeographicCRS.WGS84;
+        }
+        try {
+            return CRS.decode(authority + ":" + code, true);
+        } catch (FactoryException _) {
+            return DefaultGeographicCRS.WGS84;
+        }
+    }
+
+    /**
+     * Resolves a {@code srid:} reference as an EPSG code. A non-positive SRID is the undefined CRS and resolves to the
+     * WGS84 default, matching the lenient reader posture.
+     */
+    private static CoordinateReferenceSystem resolveEpsgSrid(long srid) {
+        if (srid <= 0) {
+            return DefaultGeographicCRS.WGS84;
+        }
+        try {
+            return CRS.decode("EPSG:" + srid, true);
+        } catch (FactoryException _) {
+            return DefaultGeographicCRS.WGS84;
+        }
+    }
 
     /**
      * Converts an optional PROJJSON CRS to a GeoTools CRS.

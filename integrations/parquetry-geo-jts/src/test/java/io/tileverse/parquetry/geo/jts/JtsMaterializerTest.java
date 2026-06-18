@@ -45,6 +45,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.geo.ParquetCrs;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
 import io.tileverse.parquetry.schema.geo.projjson.GeographicCRS;
 import io.tileverse.parquetry.schema.geo.projjson.Identifier;
@@ -113,7 +114,8 @@ class JtsMaterializerTest {
                 Optional.empty(),
                 Optional.empty(),
                 Optional.empty());
-        ParquetSchema schema = schemaWithGeometryAt("geometry", new LogicalType.Geometry(Optional.of(epsg3857)));
+        ParquetSchema schema =
+                schemaWithGeometryAt("geometry", new LogicalType.Geometry(Optional.of(ParquetCrs.inline(epsg3857))));
         GeometryFactory gf = new GeometryFactory();
         Point pt = gf.createPoint(new Coordinate(0.0, 0.0));
         MemorySegment wkb = MemorySegment.ofArray(new WKBWriter().write(pt)).asReadOnly();
@@ -157,11 +159,32 @@ class JtsMaterializerTest {
         // should not invent an SRID from the name alone.
         CoordinateReferenceSystem nameOnly =
                 new GeographicCRS(Optional.of("Some Local CRS"), Optional.empty(), Optional.empty(), Optional.empty());
-        ParquetSchema schema = schemaWithGeometryAt("geometry", new LogicalType.Geometry(Optional.of(nameOnly)));
+        ParquetSchema schema =
+                schemaWithGeometryAt("geometry", new LogicalType.Geometry(Optional.of(ParquetCrs.inline(nameOnly))));
 
         JtsMaterializer materializer = new JtsMaterializer(schema);
         assertThat(materializer.sridFor(GEOM))
                 .as("CRS without an Identifier should not yield an SRID")
+                .isEmpty();
+    }
+
+    @Test
+    void authorityCodeNativeCrsYieldsEpsgSrid() {
+        ParquetSchema schema = schemaWithGeometryAt(
+                "geometry", new LogicalType.Geometry(Optional.of(new ParquetCrs.AuthorityCode("EPSG", "3857"))));
+        JtsMaterializer materializer = new JtsMaterializer(schema);
+        assertThat(materializer.sridFor(GEOM))
+                .as("an EPSG:3857 native crs reference should stamp SRID 3857 without a registry lookup")
+                .hasValue(3857);
+    }
+
+    @Test
+    void sridZeroNativeCrsLeavesJtsDefaultSrid() {
+        ParquetSchema schema =
+                schemaWithGeometryAt("geometry", new LogicalType.Geometry(Optional.of(new ParquetCrs.Srid(0))));
+        JtsMaterializer materializer = new JtsMaterializer(schema);
+        assertThat(materializer.sridFor(GEOM))
+                .as("srid:0 denotes an undefined CRS and stamps no SRID")
                 .isEmpty();
     }
 

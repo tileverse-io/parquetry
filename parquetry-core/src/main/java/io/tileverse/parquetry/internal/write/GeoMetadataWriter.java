@@ -31,6 +31,7 @@ import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.geo.ParquetCrs;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystems;
 import io.tileverse.parquetry.schema.geo.projjson.ProjJsonModule;
@@ -99,7 +100,7 @@ public final class GeoMetadataWriter {
         Map<ColumnPath, LogicalType> overrides = LinkedHashMap.newLinkedHashMap(crsConfig.size());
         for (Map.Entry<String, CoordinateReferenceSystem> entry : crsConfig.entrySet()) {
             ColumnPath path = parseDotted(entry.getKey());
-            overrides.put(path, new LogicalType.Geometry(Optional.of(entry.getValue())));
+            overrides.put(path, new LogicalType.Geometry(Optional.of(ParquetCrs.inline(entry.getValue()))));
         }
         return schema.withLogicalTypes(overrides);
     }

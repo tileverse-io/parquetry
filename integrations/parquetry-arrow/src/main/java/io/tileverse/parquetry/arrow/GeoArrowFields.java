@@ -25,9 +25,9 @@ import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.geo.ParquetCrs;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
-import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
 
 import tools.jackson.databind.json.JsonMapper;
 
@@ -73,26 +73,40 @@ final class GeoArrowFields {
         Optional<SchemaNode> node = schema.find(path);
         if (node.isPresent() && node.get() instanceof SchemaNode.Primitive primitive) {
             Optional<LogicalType> logical = primitive.logicalType();
-            if (logical.isPresent()
-                    && logical.get() instanceof LogicalType.Geometry(Optional<CoordinateReferenceSystem> geomCrs)) {
-                return Optional.of(new GeometryInfo(geomCrs, "planar"));
+            if (logical.isPresent() && logical.get() instanceof LogicalType.Geometry(Optional<ParquetCrs> geomCrs)) {
+                return Optional.of(new GeometryInfo(geomCrs.map(GeoArrowFields::crsJsonValue), "planar"));
             }
             if (logical.isPresent()
                     && logical.get()
                             instanceof
                             LogicalType.Geography(
-                                    Optional<CoordinateReferenceSystem> geogCrs,
+                                    Optional<ParquetCrs> geogCrs,
                                     Optional<EdgeInterpolationAlgorithm> _)) {
-                return Optional.of(new GeometryInfo(geogCrs, "spherical"));
+                return Optional.of(new GeometryInfo(geogCrs.map(GeoArrowFields::crsJsonValue), "spherical"));
             }
         }
         if (geo.isPresent()) {
             GeoColumn column = geo.get().columns().get(path.dot());
             if (column != null) {
-                return Optional.of(new GeometryInfo(column.crs(), column.edges().orElse("planar")));
+                Optional<Object> crs = column.crs().map(Object.class::cast);
+                return Optional.of(new GeometryInfo(crs, column.edges().orElse("planar")));
             }
         }
         return Optional.empty();
+    }
+
+    /**
+     * Renders a native {@link ParquetCrs} as the GeoArrow {@code crs} metadata value: the inline PROJJSON document for
+     * {@link ParquetCrs.Inline}, otherwise the {@code authority:code} / {@code srid:} / {@code projjson:} reference
+     * string.
+     */
+    private static Object crsJsonValue(ParquetCrs crs) {
+        return switch (crs) {
+            case ParquetCrs.Inline(var projjson) -> projjson;
+            case ParquetCrs.AuthorityCode(String authority, String code) -> authority + ":" + code;
+            case ParquetCrs.Srid(long id) -> ParquetCrs.SRID_PREFIX + id;
+            case ParquetCrs.ProjjsonKey(String key) -> ParquetCrs.PROJJSON_PREFIX + key;
+        };
     }
 
     private static Map<String, String> fieldMetadata(GeometryInfo info) {
@@ -109,5 +123,5 @@ final class GeoArrowFields {
         return MAPPER.writeValueAsString(document);
     }
 
-    private record GeometryInfo(Optional<CoordinateReferenceSystem> crs, String edges) {}
+    private record GeometryInfo(Optional<Object> crs, String edges) {}
 }

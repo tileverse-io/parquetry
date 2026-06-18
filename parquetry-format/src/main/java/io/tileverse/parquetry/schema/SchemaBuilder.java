@@ -31,6 +31,7 @@ import io.tileverse.parquetry.format.FieldRepetitionType;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.SchemaElement;
+import io.tileverse.parquetry.schema.geo.ParquetCrs;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
@@ -187,11 +188,12 @@ public final class SchemaBuilder {
      * spec default {@code SPHERICAL}).
      */
     private static LogicalType deriveLogicalType(GeoColumn geoColumn) {
+        Optional<ParquetCrs> crs = geoColumn.crs().map(ParquetCrs::inline);
         String edges = geoColumn.edges().orElse("planar");
         if ("spherical".equalsIgnoreCase(edges)) {
-            return new LogicalType.Geography(geoColumn.crs(), Optional.<EdgeInterpolationAlgorithm>empty());
+            return new LogicalType.Geography(crs, Optional.<EdgeInterpolationAlgorithm>empty());
         }
-        return new LogicalType.Geometry(geoColumn.crs());
+        return new LogicalType.Geometry(crs);
     }
 
     /**
