@@ -1,0 +1,9 @@
+# Pinned toolchain for deterministic regeneration of the iceberg-geo-testbed
+# goldens. Byte-identical output depends on these exact versions (pyarrow stamps
+# its version into each Parquet footer's created_by string).
+pyiceberg[pyarrow]==0.11.1
+pyarrow==24.0.0
+geoarrow-pyarrow==0.2.0
+geoarrow-c==0.3.1
+shapely==2.1.2
+numpy==2.4.6
