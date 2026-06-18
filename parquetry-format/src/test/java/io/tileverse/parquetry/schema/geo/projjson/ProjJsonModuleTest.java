@@ -111,6 +111,9 @@ class ProjJsonModuleTest {
 
     @Test
     void missingTypeFallsBackToUnknownRecord() {
+        // A missing type is valid PROJJSON in a nested position (a base_crs may omit it), and the deserializer keeps it
+        // as Unknown with an empty rawType. A top-level CRS that omits the type is rejected by
+        // GeoParquetMetadata.parse, which knows the context.
         String json = "{\"name\": \"mystery CRS\"}";
         CoordinateReferenceSystem crs = MAPPER.readValue(json, CoordinateReferenceSystem.class);
         assertThat(crs).isInstanceOfSatisfying(CoordinateReferenceSystem.Unknown.class, u -> {

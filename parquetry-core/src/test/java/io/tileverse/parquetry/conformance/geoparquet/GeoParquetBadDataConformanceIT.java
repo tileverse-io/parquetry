@@ -22,6 +22,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -39,6 +40,7 @@ import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 /**
  * Reader-level negative conformance against the {@code geoparquet/geoparquet-testing} {@code bad_data/} tier.
@@ -95,6 +97,27 @@ class GeoParquetBadDataConformanceIT {
         assertThat(new WKBReader().read(wkb))
                 .as("a LineString header over a Point body still parses; only geometry_types validation catches it")
                 .isNotNull();
+    }
+
+    @Test
+    void malformedGeoMetadataIsRejectedByTheGeoParquetParser() {
+        // The generic reader degrades a corrupt 'geo' block to a non-geo read (everyBadFixture... pins that). The
+        // GeoParquet metadata parser, in contrast, rejects it: invalid JSON, and a 'crs' that is JSON but not valid
+        // PROJJSON (no 'type'). The metadata-vs-data and incomplete-schema violations are not parser-level and stay
+        // tolerated.
+        for (String fileName : List.of("geo-invalid-json.parquet", "crs-invalid-projjson.parquet")) {
+            String geo = geoMetadata(GeoParquetCorpus.badData().resolve(fileName));
+            assertThat(geo).as("%s exposes a 'geo' metadata key", fileName).isNotNull();
+            assertThatThrownBy(() -> GeoParquetMetadata.parse(geo))
+                    .as("%s: the GeoParquet metadata parser rejects the malformed 'geo' block", fileName)
+                    .isInstanceOf(RuntimeException.class);
+        }
+    }
+
+    private static String geoMetadata(Path file) {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            return ParquetReader.open(source).keyValueMetadata().get("geo");
+        }
     }
 
     @Test

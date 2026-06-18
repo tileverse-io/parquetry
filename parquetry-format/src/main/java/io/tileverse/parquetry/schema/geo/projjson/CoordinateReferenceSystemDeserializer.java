@@ -24,8 +24,12 @@ import tools.jackson.databind.deser.std.StdDeserializer;
 
 /**
  * Polymorphic deserializer for {@link CoordinateReferenceSystem}. Dispatches on the {@code "type"} JSON discriminator
- * to the corresponding record deserializer. Unknown discriminators (and the missing-type case) fall through to
- * {@link CoordinateReferenceSystem.Unknown} with the raw JSON node preserved.
+ * to the corresponding record deserializer. Both an unmodeled discriminator and a missing {@code "type"} fall through
+ * to {@link CoordinateReferenceSystem.Unknown} with the raw JSON node preserved; the two are distinguished by
+ * {@link CoordinateReferenceSystem.Unknown#rawType()} (the modeled discriminator vs the empty string for a missing
+ * one). A missing type is valid in a nested position - a PROJJSON {@code base_crs} may omit it - so it is not rejected
+ * here; a top-level CRS that omits it is caught where the top-level context is known (see
+ * {@code GeoParquetMetadata.parse}).
  */
 final class CoordinateReferenceSystemDeserializer extends StdDeserializer<CoordinateReferenceSystem> {
 
