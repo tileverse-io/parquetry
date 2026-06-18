@@ -7,3 +7,6 @@
 [submodule "internal/parquetry-testkit/src/main/resources/geoparquet-testing"]
 	path = internal/parquetry-testkit/src/main/resources/geoparquet-testing
 	url = https://github.com/geoparquet/geoparquet-testing.git
+[submodule "internal/parquetry-testkit/fixtures-gen/iceberg-geo-testbed"]
+	path = internal/parquetry-testkit/fixtures-gen/iceberg-geo-testbed
+	url = https://github.com/jatorre/iceberg-geo-testbed.git

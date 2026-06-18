@@ -20,5 +20,6 @@
     <module>parquetry-tileverse-storage</module>
     <module>parquetry-geotools</module>
     <module>parquetry-geoserver</module>
+    <module>parquetry-iceberg</module>
   </modules>
 </project>

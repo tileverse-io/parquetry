@@ -23,8 +23,10 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 import java.lang.foreign.MemorySegment;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.function.Function;
 
 import io.tileverse.parquetry.filter.MatchAction;
 import io.tileverse.parquetry.filter.Predicate;
@@ -45,7 +47,7 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
  * value fell within the column's min/max), or {@link PruningDecision.NotApplied} (no statistics to consult) - the stats
  * tier cannot narrow to a subset of rows.
  */
-final class StatsEvaluator {
+public final class StatsEvaluator {
 
     private static final Tier TIER = Tier.STATS;
 
@@ -61,15 +63,30 @@ final class StatsEvaluator {
 
     private StatsEvaluator() {}
 
+    /** A typed view of one column's statistics: kind plus already-decoded min/max and null count. */
+    public record ColumnSummary(PrimitiveKind kind, Optional<Value> min, Optional<Value> max, OptionalLong nullCount) {
+        public ColumnSummary {
+            Objects.requireNonNull(kind, "kind");
+            Objects.requireNonNull(min, "min");
+            Objects.requireNonNull(max, "max");
+            Objects.requireNonNull(nullCount, "nullCount");
+        }
+    }
+
+    /** Name-keyed lookup of typed per-column statistics. */
+    @FunctionalInterface
+    public interface TypedColumns {
+        Optional<ColumnSummary> get(ColumnPath path);
+    }
+
     /**
-     * Evaluates {@code predicate} against the given row group's column statistics.
+     * Evaluates {@code predicate} against already-decoded typed column statistics.
      *
      * @param predicate the normalized predicate
-     * @param columns lookup from column path to its stats (kind + Statistics)
+     * @param columns lookup from column path to its typed stats (kind + decoded min/max + nullCount)
      * @param rowCount total rows in the row group
      */
-    public static PruningDecision evaluate(
-            Predicate predicate, FilterPipeline.ColumnStatsLookup columns, long rowCount) {
+    public static PruningDecision evaluate(Predicate predicate, TypedColumns columns, long rowCount) {
         return switch (predicate) {
             case Predicate.Always(boolean value) ->
                 value
@@ -97,6 +114,34 @@ final class StatsEvaluator {
     }
 
     /**
+     * Evaluates {@code predicate} against the given row group's column statistics, decoding each column's PLAIN min/max
+     * bytes before delegating to the typed evaluator.
+     *
+     * @param predicate the normalized predicate
+     * @param columns lookup from column path to its stats (kind + Statistics)
+     * @param rowCount total rows in the row group
+     */
+    public static PruningDecision evaluate(
+            Predicate predicate, FilterPipeline.ColumnStatsLookup columns, long rowCount) {
+        return evaluate(predicate, decoding(columns), rowCount);
+    }
+
+    private static TypedColumns decoding(FilterPipeline.ColumnStatsLookup columns) {
+        return path -> columns.get(path).map(StatsEvaluator::summarize);
+    }
+
+    private static ColumnSummary summarize(FilterPipeline.ColumnStats cs) {
+        PrimitiveKind kind = cs.kind();
+        MemorySegment minBytes =
+                preferLatest(cs.statistics().minValue(), cs.statistics().min());
+        MemorySegment maxBytes =
+                preferLatest(cs.statistics().maxValue(), cs.statistics().max());
+        Optional<Value> min = minBytes == MemorySegment.NULL ? Optional.empty() : decode(kind, minBytes);
+        Optional<Value> max = maxBytes == MemorySegment.NULL ? Optional.empty() : decode(kind, maxBytes);
+        return new ColumnSummary(kind, min, max, cs.statistics().nullCount());
+    }
+
+    /**
      * An existential {@code ANY} over a repeated leaf may only eliminate the whole row group: if no element anywhere in
      * the chunk matches the inner comparison then no row matches. It must never report {@code PassedAll}, because a row
      * with an empty or all-null list has zero elements and therefore fails {@code ANY} even when every present element
@@ -104,7 +149,7 @@ final class StatsEvaluator {
      * cannot be decided from chunk statistics at all.
      */
     private static PruningDecision evaluateQuantified(
-            MatchAction match, Predicate leaf, FilterPipeline.ColumnStatsLookup columns, long rowCount) {
+            MatchAction match, Predicate leaf, TypedColumns columns, long rowCount) {
         if (match != MatchAction.ANY) {
             return new PruningDecision.NotApplied(TIER, match + " over a repeated leaf is not pruned by stats");
         }
@@ -117,8 +162,7 @@ final class StatsEvaluator {
                 "ANY over a repeated leaf: row-group elimination only; per-row lists need record-level confirmation");
     }
 
-    private static PruningDecision evaluateAnd(
-            List<Predicate> children, FilterPipeline.ColumnStatsLookup cols, long rowCount) {
+    private static PruningDecision evaluateAnd(List<Predicate> children, TypedColumns cols, long rowCount) {
         boolean allPassed = true;
         for (Predicate child : children) {
             PruningDecision d = evaluate(child, cols, rowCount);
@@ -134,8 +178,7 @@ final class StatsEvaluator {
                 : new PruningDecision.NotApplied(TIER, "AND children mixed");
     }
 
-    private static PruningDecision evaluateOr(
-            List<Predicate> children, FilterPipeline.ColumnStatsLookup cols, long rowCount) {
+    private static PruningDecision evaluateOr(List<Predicate> children, TypedColumns cols, long rowCount) {
         boolean anyPassed = false;
         boolean allEliminated = true;
         for (Predicate child : children) {
@@ -159,8 +202,7 @@ final class StatsEvaluator {
      * Handles {@code Not} wrappers that survived normalization (only In and the spatial relations do). Both turn into
      * NotApplied at the stats tier.
      */
-    private static PruningDecision evaluateNotLeaf(
-            Predicate child, FilterPipeline.ColumnStatsLookup cols, long rowCount) {
+    private static PruningDecision evaluateNotLeaf(Predicate child, TypedColumns cols, long rowCount) {
         PruningDecision inner = evaluate(child, cols, rowCount);
         return switch (inner) {
             case PruningDecision.Eliminated _ -> new PruningDecision.PassedAll(TIER, "NOT of eliminated child");
@@ -169,8 +211,7 @@ final class StatsEvaluator {
         };
     }
 
-    private static PruningDecision evalEq(
-            ColumnPath col, Value v, FilterPipeline.ColumnStatsLookup cols, long rowCount) {
+    private static PruningDecision evalEq(ColumnPath col, Value v, TypedColumns cols, long rowCount) {
         return withRange(col, cols, range -> {
             int cmpMin = ValueComparison.compareValues(v, range.min());
             int cmpMax = ValueComparison.compareValues(v, range.max());
@@ -184,8 +225,7 @@ final class StatsEvaluator {
         });
     }
 
-    private static PruningDecision evalNotEq(
-            ColumnPath col, Value v, FilterPipeline.ColumnStatsLookup cols, long rowCount) {
+    private static PruningDecision evalNotEq(ColumnPath col, Value v, TypedColumns cols, long rowCount) {
         return withRange(col, cols, range -> {
             int cmpMin = ValueComparison.compareValues(v, range.min());
             int cmpMax = ValueComparison.compareValues(v, range.max());
@@ -201,7 +241,7 @@ final class StatsEvaluator {
         });
     }
 
-    private static PruningDecision evalLt(ColumnPath col, Value v, FilterPipeline.ColumnStatsLookup cols) {
+    private static PruningDecision evalLt(ColumnPath col, Value v, TypedColumns cols) {
         return withRange(col, cols, range -> {
             if (ValueComparison.compareValues(v, range.min()) <= 0) {
                 return new PruningDecision.Eliminated(TIER, OP_LT + col.dot() + ": value <= min");
@@ -214,7 +254,7 @@ final class StatsEvaluator {
         });
     }
 
-    private static PruningDecision evalLtEq(ColumnPath col, Value v, FilterPipeline.ColumnStatsLookup cols) {
+    private static PruningDecision evalLtEq(ColumnPath col, Value v, TypedColumns cols) {
         return withRange(col, cols, range -> {
             if (ValueComparison.compareValues(v, range.min()) < 0) {
                 return new PruningDecision.Eliminated(TIER, OP_LT_EQ + col.dot() + ": value < min");
@@ -227,7 +267,7 @@ final class StatsEvaluator {
         });
     }
 
-    private static PruningDecision evalGt(ColumnPath col, Value v, FilterPipeline.ColumnStatsLookup cols) {
+    private static PruningDecision evalGt(ColumnPath col, Value v, TypedColumns cols) {
         return withRange(col, cols, range -> {
             if (ValueComparison.compareValues(v, range.max()) >= 0) {
                 return new PruningDecision.Eliminated(TIER, OP_GT + col.dot() + ": value >= max");
@@ -240,7 +280,7 @@ final class StatsEvaluator {
         });
     }
 
-    private static PruningDecision evalGtEq(ColumnPath col, Value v, FilterPipeline.ColumnStatsLookup cols) {
+    private static PruningDecision evalGtEq(ColumnPath col, Value v, TypedColumns cols) {
         return withRange(col, cols, range -> {
             if (ValueComparison.compareValues(v, range.max()) > 0) {
                 return new PruningDecision.Eliminated(TIER, OP_GT_EQ + col.dot() + ": value > max");
@@ -253,7 +293,7 @@ final class StatsEvaluator {
         });
     }
 
-    private static PruningDecision evalIn(ColumnPath col, List<Value> values, FilterPipeline.ColumnStatsLookup cols) {
+    private static PruningDecision evalIn(ColumnPath col, List<Value> values, TypedColumns cols) {
         return withRange(col, cols, range -> {
             for (Value v : values) {
                 int cmpMin = ValueComparison.compareValues(v, range.min());
@@ -267,7 +307,7 @@ final class StatsEvaluator {
         });
     }
 
-    private static PruningDecision evalIsNull(ColumnPath col, FilterPipeline.ColumnStatsLookup cols, long rowCount) {
+    private static PruningDecision evalIsNull(ColumnPath col, TypedColumns cols, long rowCount) {
         OptionalLong nullCountOpt = lookupNullCount(col, cols);
         if (nullCountOpt.isEmpty()) {
             return new PruningDecision.NotApplied(TIER, OP_IS_NULL + col.dot() + ": nullCount missing");
@@ -282,7 +322,7 @@ final class StatsEvaluator {
         return new PruningDecision.Inconclusive(TIER, OP_IS_NULL + col.dot() + ": some nulls");
     }
 
-    private static PruningDecision evalIsNotNull(ColumnPath col, FilterPipeline.ColumnStatsLookup cols, long rowCount) {
+    private static PruningDecision evalIsNotNull(ColumnPath col, TypedColumns cols, long rowCount) {
         OptionalLong nullCountOpt = lookupNullCount(col, cols);
         if (nullCountOpt.isEmpty()) {
             return new PruningDecision.NotApplied(TIER, OP_IS_NOT_NULL + col.dot() + ": nullCount missing");
@@ -311,38 +351,27 @@ final class StatsEvaluator {
         };
     }
 
-    private static OptionalLong lookupNullCount(ColumnPath col, FilterPipeline.ColumnStatsLookup cols) {
-        Optional<FilterPipeline.ColumnStats> stats = cols.get(col);
-        return stats.isPresent() ? stats.get().statistics().nullCount() : OptionalLong.empty();
+    private static OptionalLong lookupNullCount(ColumnPath col, TypedColumns cols) {
+        return cols.get(col).map(ColumnSummary::nullCount).orElseGet(OptionalLong::empty);
     }
 
     /**
      * Looks up the column's min/max range and dispatches to the supplied evaluator. Returns NotApplied if the stats
-     * lack the data we need (no entry, no min/max bytes, or a kind we don't know how to decode).
+     * lack the data we need (no entry, or no decoded min/max value).
      */
     private static PruningDecision withRange(
-            ColumnPath col,
-            FilterPipeline.ColumnStatsLookup cols,
-            java.util.function.Function<DecodedRange, PruningDecision> f) {
-        Optional<FilterPipeline.ColumnStats> stats = cols.get(col);
+            ColumnPath col, TypedColumns cols, Function<DecodedRange, PruningDecision> f) {
+        Optional<ColumnSummary> stats = cols.get(col);
         if (stats.isEmpty()) {
             return new PruningDecision.NotApplied(TIER, "no stats for " + col.dot());
         }
-        FilterPipeline.ColumnStats cs = stats.get();
-        MemorySegment minBytes =
-                preferLatest(cs.statistics().minValue(), cs.statistics().min());
-        MemorySegment maxBytes =
-                preferLatest(cs.statistics().maxValue(), cs.statistics().max());
-        if (minBytes == MemorySegment.NULL || maxBytes == MemorySegment.NULL) {
+        ColumnSummary cs = stats.get();
+        if (cs.min().isEmpty() || cs.max().isEmpty()) {
             return new PruningDecision.NotApplied(TIER, "min/max missing for " + col.dot());
         }
-        Optional<Value> minValue = decode(cs.kind(), minBytes);
-        Optional<Value> maxValue = decode(cs.kind(), maxBytes);
-        if (minValue.isEmpty() || maxValue.isEmpty()) {
-            return new PruningDecision.NotApplied(TIER, "unsupported kind " + cs.kind() + " for " + col.dot());
-        }
-        long nullCount = cs.statistics().nullCount().orElse(-1L);
-        return f.apply(new DecodedRange(cs.kind(), minValue.get(), maxValue.get(), nullCount));
+        long nullCount = cs.nullCount().orElse(-1L);
+        return f.apply(
+                new DecodedRange(cs.kind(), cs.min().orElseThrow(), cs.max().orElseThrow(), nullCount));
     }
 
     /** Newer writers populate minValue/maxValue; older writers populate min/max. */

@@ -34,7 +34,7 @@ import io.tileverse.parquetry.schema.SchemaNode;
  * flatten nested {@link Predicate.And} / {@link Predicate.Or} - and offers a separate schema-validation pass that
  * throws {@link ParquetSchemaException} for unknown columns or value/type mismatches.
  */
-final class PredicateNormalizer {
+public final class PredicateNormalizer {
 
     private PredicateNormalizer() {}
 

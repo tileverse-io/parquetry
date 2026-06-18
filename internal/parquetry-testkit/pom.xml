@@ -43,7 +43,8 @@
     <resources>
       <!-- Bundle only the corpus fixtures: all of parquet-testing and selected directories from the
            opengeospatial/geoparquet submodule, parquetry's own purpose-built fixtures under parquetry/, and the
-           vendored avro-reference files. The submodule .git pointer files are not resources. -->
+           vendored avro-reference and iceberg-geo-testbed goldens. The submodule .git pointer files are not
+           resources. -->
       <resource>
         <directory>src/main/resources</directory>
         <includes>
@@ -55,6 +56,7 @@
           <include>geoparquet-testing/bad_data/**</include>
           <include>parquetry/**</include>
           <include>avro-reference/**</include>
+          <include>iceberg-geo-testbed/**</include>
         </includes>
         <excludes>
           <exclude>**/.git</exclude>
