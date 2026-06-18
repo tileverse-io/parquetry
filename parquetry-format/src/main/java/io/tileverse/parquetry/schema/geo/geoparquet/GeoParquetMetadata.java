@@ -20,6 +20,8 @@ import java.util.Map;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import io.tileverse.parquetry.format.MalformedFileException;
+import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
 import io.tileverse.parquetry.schema.geo.projjson.ProjJsonModule;
 
 import tools.jackson.databind.json.JsonMapper;
@@ -54,7 +56,26 @@ public sealed interface GeoParquetMetadata
 
     /** Parses a GeoParquet {@code "geo"} JSON document into the typed ADT. */
     static GeoParquetMetadata parse(String geoJson) {
-        return DEFAULT_MAPPER.readValue(geoJson, GeoParquetMetadata.class);
+        GeoParquetMetadata metadata = DEFAULT_MAPPER.readValue(geoJson, GeoParquetMetadata.class);
+        rejectTypelessColumnCrs(metadata);
+        return metadata;
+    }
+
+    /**
+     * Rejects a column whose {@code crs} is JSON but not valid PROJJSON because it omits the required {@code "type"}. A
+     * missing type is legal in a nested PROJJSON position (a {@code base_crs} may omit it), but a column's top-level
+     * CRS may not; the deserializer marks that case as a {@link CoordinateReferenceSystem.Unknown} with an empty
+     * {@code rawType} (distinct from a forward-compat unknown discriminator, which keeps its name).
+     */
+    private static void rejectTypelessColumnCrs(GeoParquetMetadata metadata) {
+        metadata.columns()
+                .forEach((columnName, column) -> column.crs().ifPresent(crs -> {
+                    if (crs instanceof CoordinateReferenceSystem.Unknown unknown
+                            && unknown.rawType().isEmpty()) {
+                        throw new MalformedFileException("GeoParquet column \"" + columnName
+                                + "\" has a crs that is not valid PROJJSON: the required \"type\" field is missing");
+                    }
+                }));
     }
 
     /** GeoParquet 1.0.0 metadata. {@code covering} and {@code epoch} are not part of this spec generation. */
