@@ -21,15 +21,20 @@ import io.tileverse.parquetry.filter.RowRanges;
  * The outcome of applying a single filter {@link Tier} to a row group.
  *
  * <p>{@link Eliminated} short-circuits the pipeline for the row group. {@link PassedAll} keeps the row group fully
- * intact for downstream tiers. {@link NarrowedTo} carries forward a refined set of surviving rows. {@link NotApplied}
- * means the tier had no opinion (e.g., missing statistics) and the row group continues unchanged.
+ * intact for downstream tiers. {@link NarrowedTo} advances a refined set of surviving rows.
+ *
+ * <p>{@link Inconclusive} and {@link NotApplied} both keep the row group unchanged, but they mean different things and
+ * must not be conflated in output. {@link Inconclusive} means the tier did consult the relevant metadata (min/max, a
+ * loaded bloom filter, the geometry bounds) and could neither eliminate nor narrow the row group - the tier ran and the
+ * group survived. {@link NotApplied} means the tier never reached a verdict: the data it needs is absent (no
+ * statistics, no bloom filter loaded), the tier is turned off, or the predicate is ineligible for the tier.
  */
 public sealed interface PruningDecision {
 
     /** The tier that produced this decision. */
     Tier tier();
 
-    /** Human-readable reason, surfaced in ExplainPlan output. */
+    /** Human-readable reason, included in ExplainPlan output. */
     String reason();
 
     /** The tier proved no row in this row group can match the predicate. */
@@ -41,6 +46,16 @@ public sealed interface PruningDecision {
     /** The tier narrowed the surviving row set to {@code ranges}. */
     record NarrowedTo(Tier tier, RowRanges ranges, String reason) implements PruningDecision {}
 
-    /** The tier could not make a decision (e.g., statistics missing). The row group continues unchanged. */
+    /**
+     * The tier consulted its metadata but could neither eliminate nor narrow the row group. The tier ran against real
+     * data (e.g. a bloom probe returned "maybe present", or the value fell within the column's min/max); the row group
+     * continues unchanged. Distinct from {@link NotApplied}, where the tier had nothing to consult.
+     */
+    record Inconclusive(Tier tier, String reason) implements PruningDecision {}
+
+    /**
+     * The tier reached no verdict because it had no data to consult, is turned off, or the predicate is ineligible for
+     * the tier. The row group continues unchanged.
+     */
     record NotApplied(Tier tier, String reason) implements PruningDecision {}
 }

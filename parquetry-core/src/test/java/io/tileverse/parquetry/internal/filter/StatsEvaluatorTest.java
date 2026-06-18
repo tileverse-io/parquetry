@@ -54,10 +54,10 @@ class StatsEvaluatorTest {
     }
 
     @Test
-    void eqValueWithinRangeIsNotApplied() {
+    void eqValueWithinRangeIsInconclusive() {
         FilterPipeline.ColumnStatsLookup cols = single("year", PrimitiveKind.INT32, intStats(2010, 2020, 0));
         PruningDecision d = StatsEvaluator.evaluate(col("year").eq(2015), cols, ROW_COUNT);
-        assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
+        assertThat(d).isInstanceOf(PruningDecision.Inconclusive.class);
     }
 
     @Test
@@ -124,10 +124,10 @@ class StatsEvaluatorTest {
     }
 
     @Test
-    void inWithOneValueInsideRangeIsNotApplied() {
+    void inWithOneValueInsideRangeIsInconclusive() {
         FilterPipeline.ColumnStatsLookup cols = single("year", PrimitiveKind.INT32, intStats(2010, 2020, 0));
         PruningDecision d = StatsEvaluator.evaluate(col("year").inInts(2015, 2030), cols, ROW_COUNT);
-        assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
+        assertThat(d).isInstanceOf(PruningDecision.Inconclusive.class);
     }
 
     @Test
@@ -222,7 +222,7 @@ class StatsEvaluatorTest {
         FilterPipeline.ColumnStatsLookup cols =
                 single("name", PrimitiveKind.BYTE_ARRAY, binaryStats("alpha", "omega", 0));
         PruningDecision d = StatsEvaluator.evaluate(col("name").eq("mango"), cols, ROW_COUNT);
-        assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
+        assertThat(d).isInstanceOf(PruningDecision.Inconclusive.class);
     }
 
     @Test

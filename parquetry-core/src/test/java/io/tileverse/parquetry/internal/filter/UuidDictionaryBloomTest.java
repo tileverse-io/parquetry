@@ -57,10 +57,10 @@ class UuidDictionaryBloomTest {
     private static final UUID ABSENT = new UUID(0x1111111111111111L, 0x2222222222222222L);
 
     @Test
-    void dictionaryEqPresentUuidIsNotApplied() {
+    void dictionaryEqPresentUuidIsInconclusive() {
         FilterPipeline.DictionaryLookup dicts = single("id", uuidDict(LOW, HIGH));
         Predicate p = col("id").eq(LOW);
-        assertThat(DictionaryEvaluator.evaluate(p, dicts)).isInstanceOf(PruningDecision.NotApplied.class);
+        assertThat(DictionaryEvaluator.evaluate(p, dicts)).isInstanceOf(PruningDecision.Inconclusive.class);
     }
 
     @Test
@@ -81,11 +81,11 @@ class UuidDictionaryBloomTest {
     }
 
     @Test
-    void bloomEqPresentUuidIsNotApplied() {
+    void bloomEqPresentUuidIsInconclusive() {
         FilterPipeline.BloomFilterLookup blooms =
                 single("id", PrimitiveKind.FIXED_LEN_BYTE_ARRAY, bloomOver(hashOf(LOW)));
         Predicate p = col("id").eq(LOW);
-        assertThat(BloomFilterEvaluator.evaluate(p, blooms)).isInstanceOf(PruningDecision.NotApplied.class);
+        assertThat(BloomFilterEvaluator.evaluate(p, blooms)).isInstanceOf(PruningDecision.Inconclusive.class);
     }
 
     @Test
