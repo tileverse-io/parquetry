@@ -52,9 +52,9 @@ import io.tileverse.parquetry.schema.ColumnPath;
  *
  * <ul>
  *   <li>{@link #truncatedWkbIsRejectedByAConformantDecoder()} - {@code wkb-truncated}'s value is 13 bytes; decoded as a
- *       length-bounded value, JTS rejects it ("read past end of input"). parquetry's own {@code MemorySegmentWkbReader}
- *       is more lenient: it reads past the value length into adjacent bytes and yields a wrong-but-non-crashing point.
- *       The geo-jts {@code JtsMaterializerBadDataIT} pins that adapter behavior.
+ *       length-bounded value, it is rejected ("read past end of input"). Both JTS and parquetry's own
+ *       {@code MemorySegmentWkbReader} reject it, the latter because it bounds its walk to the value length; the
+ *       geo-jts {@code JtsMaterializerBadDataIT} pins that the materializer throws on this fixture.
  *   <li>{@link #wrongTypeWkbDecodesToAStructurallyValidButWrongGeometry()} - {@code wkb-wrong-type-byte} declares a
  *       LineString header over a Point body. The bytes still form a structurally-valid geometry (an empty LineString),
  *       so no decoder rejects it; only cross-checking the geometry against the declared {@code geometry_types} catches
