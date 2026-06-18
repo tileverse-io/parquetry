@@ -41,6 +41,8 @@ import org.locationtech.jts.io.WKBReader;
 import org.locationtech.jts.io.WKBWriter;
 import org.locationtech.jts.io.WKTReader;
 
+import io.tileverse.parquetry.format.MalformedFileException;
+
 /**
  * Correctness check for {@link MemorySegmentWkbReader} against JTS's own {@link WKBReader}. Each fixture geometry is
  * encoded to WKB by {@link WKBWriter} in both byte orders, then decoded by both readers; the results must agree on 2D
@@ -343,8 +345,8 @@ class MemorySegmentWkbReaderTest {
         byte[] bogus = {0x07, 0x00, 0x00, 0x00, 0x00};
         MemorySegment segment = MemorySegment.ofArray(bogus).asReadOnly();
         assertThatThrownBy(() -> reader.read(segment))
-                .as("invalid byte-order marker must throw IllegalStateException")
-                .isInstanceOf(IllegalStateException.class)
+                .as("invalid byte-order marker must throw MalformedFileException")
+                .isInstanceOf(MalformedFileException.class)
                 .hasMessageContaining("Failed to decode WKB geometry");
     }
 
@@ -353,8 +355,38 @@ class MemorySegmentWkbReaderTest {
         byte[] truncated = {0x01, 0x01, 0x00, 0x00, 0x00, 0x00};
         MemorySegment segment = MemorySegment.ofArray(truncated).asReadOnly();
         assertThatThrownBy(() -> reader.read(segment))
-                .as("a point WKB missing its ordinates must throw IllegalStateException")
-                .isInstanceOf(IllegalStateException.class)
+                .as("a point WKB missing its ordinates must throw MalformedFileException")
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("Failed to decode WKB geometry");
+    }
+
+    @Test
+    void truncatedValueInLargerBackingThrowsInsteadOfReadingPastItsLength() throws ParseException {
+        Geometry point = new WKTReader(PACKED_FACTORY).read("POINT (1 2)");
+        byte[] wkb = new WKBWriter(2, ByteOrderValues.LITTLE_ENDIAN).write(point);
+        // Put the value in a backing that continues with readable bytes past it; a decoder that ignored the value
+        // length would read those adjacent bytes as the missing Y ordinate instead of failing.
+        byte[] backingBytes = new byte[wkb.length + 8];
+        System.arraycopy(wkb, 0, backingBytes, 0, wkb.length);
+        MemorySegment backing = MemorySegment.ofArray(backingBytes).asReadOnly();
+
+        long truncatedLength = wkb.length - 8L; // drops the 8-byte Y ordinate from the value
+
+        assertThatThrownBy(() -> reader.read(backing, 0L, truncatedLength))
+                .as("a value truncated within a larger backing must throw, not read past its length")
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("Failed to decode WKB geometry");
+    }
+
+    @Test
+    void garbageElementCountIsRejectedWithoutAllocating() {
+        // A MultiPoint header (type 4) that claims ~2.1 billion members in a 9-byte value. Bounding the count to the
+        // value's remaining bytes rejects it instead of allocating a multi-gigabyte array.
+        byte[] bytes = {0x01, 0x04, 0x00, 0x00, 0x00, (byte) 0xff, (byte) 0xff, (byte) 0xff, 0x7f};
+        MemorySegment segment = MemorySegment.ofArray(bytes).asReadOnly();
+        assertThatThrownBy(() -> reader.read(segment))
+                .as("an element count that cannot fit the value must throw, not over-allocate")
+                .isInstanceOf(MalformedFileException.class)
                 .hasMessageContaining("Failed to decode WKB geometry");
     }
 }

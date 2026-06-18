@@ -17,6 +17,7 @@ package io.tileverse.parquetry.geo.jts;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -49,23 +50,18 @@ import tools.jackson.databind.json.JsonMapper;
  * violates. The reader-level negative conformance lives in {@code parquetry-core}; this pins the JTS adapter's leniency
  * over the same files.
  *
- * <p>The materializer is lenient: it validates almost nothing of the file against its own {@code geo} metadata, and its
- * WKB decoder does not cross-check the geometry against the declared {@code geometry_types}, {@code edges}, or
- * {@code crs}. This pins that posture as a tested contract: <b>every</b> {@code bad_data/} fixture materializes without
- * throwing. The violations the manifest catalogs - bbox / crs / edges / orientation / geometry-type / zm / epoch /
- * version mismatches, missing or malformed {@code geo} metadata, and even WKB-structural corruption - are all
- * tolerated. Enforcing them is the job of a geometry-engine or validation layer on top of the reader, not the reader.
- *
- * <p>Two cases are worth calling out because their leniency is wider than a metadata disagreement:
+ * <p>The materializer validates almost nothing of the file against its own {@code geo} metadata, and does not
+ * cross-check the geometry against the declared {@code geometry_types}, {@code edges}, or {@code crs} - those
+ * metadata-vs-data mismatches are tolerated (a validation layer's job). It does, however, bound the WKB walk to each
+ * value's length and reject a payload that runs past its own bytes:
  *
  * <ul>
- *   <li>{@code wkb-with-srid-prefix} - parquetry accepts EWKB (an SRID-prefixed WKB) even though GeoParquet disallows
- *       it.
- *   <li>{@code wkb-truncated} and {@code wkb-wrong-type-byte} - the WKB decoder does not bound its walk to the binary
- *       value's length; a truncated or mis-typed payload decodes to a wrong-but-non-crashing geometry (a truncated
- *       point reads adjacent bytes as coordinates; a body that disagrees with the header type yields an empty geometry
- *       of the declared type) rather than an error. {@link #wkbStructuralCorruptionReadsLenientlyWithoutThrowing()}
- *       pins this; a future stricter decoder flips the contract consciously.
+ *   <li><b>Must-detect:</b> {@code wkb-truncated} - the stored value is shorter than the geometry its header declares;
+ *       decoding throws rather than reading the adjacent bytes of the column window.
+ *   <li><b>Tolerated:</b> every metadata mismatch (bbox / crs / edges / orientation / geometry-type / zm / epoch /
+ *       version), missing or malformed {@code geo} metadata, {@code wkb-with-srid-prefix} (EWKB is accepted even though
+ *       GeoParquet disallows it), and {@code wkb-wrong-type-byte} (a LineString header over a Point body still forms a
+ *       structurally-valid empty LineString that only {@code geometry_types} validation catches).
  * </ul>
  *
  * <p>The suite also asserts the {@code bad_data/} directory and {@code manifest.json} stay in lockstep: a corpus
@@ -85,30 +81,35 @@ class JtsMaterializerBadDataIT {
         }
     }
 
+    /** Structurally corrupt WKB the materializer rejects; every other fixture is a tolerated metadata disagreement. */
+    private static final Set<String> MUST_DETECT = Set.of("wkb-truncated.parquet");
+
     static Stream<Arguments> badDataFiles() {
         return manifest().keySet().stream().sorted().map(Arguments::of);
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("badDataFiles")
-    void everyBadFixtureIsToleratedAndReadsWithoutThrowing(String fileName) {
+    void materializerPosture(String fileName) {
         Path file = BAD_DATA.resolve(fileName);
         assertThat(file).as("manifest entry %s has a fixture file", fileName).exists();
-        assertThatCode(() -> readAndMaterialize(file))
-                .as("%s is tolerated by the lenient reader and must read without throwing", fileName)
-                .doesNotThrowAnyException();
+
+        if (MUST_DETECT.contains(fileName)) {
+            assertThatThrownBy(() -> readAndMaterialize(file))
+                    .as("%s is a structurally corrupt WKB value the materializer must reject", fileName)
+                    .isInstanceOf(RuntimeException.class);
+        } else {
+            assertThatCode(() -> readAndMaterialize(file))
+                    .as("%s is a metadata-vs-data disagreement the materializer tolerates", fileName)
+                    .doesNotThrowAnyException();
+        }
     }
 
     @Test
-    void wkbStructuralCorruptionReadsLenientlyWithoutThrowing() {
-        Map<ColumnPath, Object> truncated = firstRow(BAD_DATA.resolve("wkb-truncated.parquet"));
-        assertThat(truncated.get(ColumnPath.of("geometry")))
-                .as("a truncated WKB point decodes to a (wrong) geometry rather than throwing")
-                .isInstanceOf(Geometry.class);
-
+    void wrongTypeWkbMaterializesToAStructurallyValidEmptyGeometry() {
         Map<ColumnPath, Object> wrongType = firstRow(BAD_DATA.resolve("wkb-wrong-type-byte.parquet"));
         assertThat(wrongType.get(ColumnPath.of("geometry")))
-                .as("a WKB whose header type disagrees with its body decodes to a geometry rather than throwing")
+                .as("a LineString header over a Point body materializes to an empty geometry, not an error")
                 .isInstanceOfSatisfying(
                         Geometry.class,
                         geometry -> assertThat(geometry.isEmpty())

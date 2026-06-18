@@ -35,6 +35,8 @@ import org.locationtech.jts.geom.Polygon;
 import org.locationtech.jts.geom.impl.PackedCoordinateSequence;
 import org.locationtech.jts.geom.impl.PackedCoordinateSequenceFactory;
 
+import io.tileverse.parquetry.format.MalformedFileException;
+
 /**
  * Thread-safe WKB-to-JTS reader that reads directly from a {@link MemorySegment} onto packed coordinate sequences,
  * without {@code WKBReader}, {@code InStream}, or any intermediate {@code byte[]} copy; state-free per call.
@@ -82,6 +84,9 @@ public final class MemorySegmentWkbReader {
     private static final int EWKB_FLAG_SRID = 0x20000000;
     private static final int EWKB_FLAG_MASK = EWKB_FLAG_Z | EWKB_FLAG_M | EWKB_FLAG_SRID;
 
+    /** Smallest on-wire size of one nested geometry: the byte-order byte plus the 4-byte type code. */
+    private static final int MIN_GEOMETRY_BYTES = Byte.BYTES + Integer.BYTES;
+
     private static final GeometryFactory DEFAULT_FACTORY = new GeometryFactory(new PackedCoordinateSequenceFactory());
 
     private final GeometryFactory geometryFactory;
@@ -105,31 +110,32 @@ public final class MemorySegmentWkbReader {
      *
      * @param wkb one geometry's WKB, with the byte-order byte at offset 0
      * @return the decoded JTS geometry
-     * @throws IllegalStateException when the bytes are not valid WKB (including out-of-bounds reads on truncated input)
+     * @throws MalformedFileException when the bytes are not valid WKB (including out-of-bounds reads on truncated
+     *     input)
      */
     public Geometry read(MemorySegment wkb) {
         return read(wkb, 0L, wkb.byteSize());
     }
 
     /**
-     * Decodes the WKB geometry that begins at {@code offset} of {@code backing}. The structure walk reads forward from
-     * {@code offset}; {@code length} bounds the value (out-of-bounds reads throw). This lets a caller decode straight
-     * from a column's backing window without minting a per-value slice.
+     * Decodes the WKB geometry in {@code backing} at {@code [offset, offset + length)}. The structure walk reads
+     * forward from {@code offset} and every read is bounded by {@code length}: a truncated or length-violating value
+     * throws rather than reading past its end into the adjacent bytes of {@code backing}. This lets a caller decode
+     * straight from a column's backing window without minting a per-value slice.
      *
      * @param backing the segment holding the WKB, with the byte-order byte at {@code offset}
      * @param offset the byte offset where this geometry's WKB begins
      * @param length the byte length of this geometry's value within {@code backing}
      * @return the decoded JTS geometry
-     * @throws IllegalStateException when the bytes are not valid WKB (including out-of-bounds reads on truncated input)
+     * @throws MalformedFileException when the bytes are not valid WKB (including reads past the value's length on
+     *     truncated input)
      */
-    // S1172: length is part of the BinaryView contract; the WKB walk is self-delimiting and reads only what it needs
-    @SuppressWarnings("java:S1172")
     public Geometry read(MemorySegment backing, long offset, long length) {
         try {
-            Cursor cursor = new Cursor(backing, offset);
+            Cursor cursor = new Cursor(backing, offset, length);
             return readGeometry(cursor);
         } catch (RuntimeException e) {
-            throw new IllegalStateException("Failed to decode WKB geometry: " + e.getMessage(), e);
+            throw new MalformedFileException("Failed to decode WKB geometry: " + e.getMessage(), e);
         }
     }
 
@@ -199,6 +205,7 @@ public final class MemorySegmentWkbReader {
         if (numRings == 0) {
             return geometryFactory.createPolygon();
         }
+        cursor.requireCount(numRings, Integer.BYTES);
         LinearRing shell = readRing(cursor, dims);
         LinearRing[] holes = new LinearRing[numRings - 1];
         for (int i = 0; i < holes.length; i++) {
@@ -215,6 +222,7 @@ public final class MemorySegmentWkbReader {
 
     private Geometry readMultiPoint(Cursor cursor) {
         int numElements = cursor.readInt();
+        cursor.requireCount(numElements, MIN_GEOMETRY_BYTES);
         Point[] points = new Point[numElements];
         for (int i = 0; i < numElements; i++) {
             points[i] = (Point) readGeometry(cursor);
@@ -224,6 +232,7 @@ public final class MemorySegmentWkbReader {
 
     private Geometry readMultiLineString(Cursor cursor) {
         int numElements = cursor.readInt();
+        cursor.requireCount(numElements, MIN_GEOMETRY_BYTES);
         LineString[] lines = new LineString[numElements];
         for (int i = 0; i < numElements; i++) {
             lines[i] = (LineString) readGeometry(cursor);
@@ -233,6 +242,7 @@ public final class MemorySegmentWkbReader {
 
     private Geometry readMultiPolygon(Cursor cursor) {
         int numElements = cursor.readInt();
+        cursor.requireCount(numElements, MIN_GEOMETRY_BYTES);
         Polygon[] polygons = new Polygon[numElements];
         for (int i = 0; i < numElements; i++) {
             polygons[i] = (Polygon) readGeometry(cursor);
@@ -242,6 +252,7 @@ public final class MemorySegmentWkbReader {
 
     private Geometry readGeometryCollection(Cursor cursor) {
         int numElements = cursor.readInt();
+        cursor.requireCount(numElements, MIN_GEOMETRY_BYTES);
         Geometry[] elements = new Geometry[numElements];
         for (int i = 0; i < numElements; i++) {
             elements[i] = readGeometry(cursor);
@@ -256,6 +267,7 @@ public final class MemorySegmentWkbReader {
      */
     private CoordinateSequence readCoordinates(Cursor cursor, int numPoints, Dimensions dims) {
         int dimension = dims.dimension();
+        cursor.requireCount(numPoints, dimension * Double.BYTES);
         double[] packed = new double[numPoints * dimension];
         cursor.copyDoubles(packed);
         return new PackedCoordinateSequence.Double(packed, dimension, dims.measures());
@@ -322,24 +334,53 @@ public final class MemorySegmentWkbReader {
     }
 
     /**
-     * Cursor over a WKB payload. Tracks the current byte-order context (each contained geometry can flip the order),
-     * the underlying segment, and the running read offset. Confined to one {@link #read(MemorySegment)} call.
+     * Cursor over one WKB value bounded to {@code [offset, offset + length)} of the backing segment. Every read is
+     * checked against that bound and a truncated or length-violating value throws instead of reading past its end into
+     * adjacent bytes. Tracks the current byte-order context (each contained geometry can flip the order) and the
+     * running read offset. Confined to one {@link #read(MemorySegment, long, long)} call.
      */
     private static final class Cursor {
 
         private final MemorySegment segment;
+        private final long limit;
         private long offset;
 
         private ValueLayout.OfInt intLayout;
         private ValueLayout.OfDouble doubleLayout;
 
-        Cursor(MemorySegment segment, long offset) {
+        Cursor(MemorySegment segment, long offset, long length) {
             this.segment = segment;
             this.offset = offset;
+            this.limit = offset + length;
+        }
+
+        private long remaining() {
+            return limit - offset;
+        }
+
+        /** Rejects a read that would pass the value's end - a truncated value rather than reading adjacent bytes. */
+        private void requireRemaining(long bytes) {
+            if (bytes > remaining()) {
+                throw new IndexOutOfBoundsException("WKB value is truncated: need " + bytes
+                        + " more byte(s) but the value has " + remaining() + " remaining");
+            }
+        }
+
+        /**
+         * Rejects a declared element count that cannot fit in the value's remaining bytes; {@code minBytesPerElement}
+         * is the smallest on-wire size of one element. Bounds the allocation a count drives before it is made, which
+         * stops a garbage count read from a malformed value from forcing a huge array.
+         */
+        void requireCount(int count, int minBytesPerElement) {
+            if (count < 0 || (long) count * minBytesPerElement > remaining()) {
+                throw new IndexOutOfBoundsException(
+                        "WKB element count " + count + " exceeds the value's remaining " + remaining() + " byte(s)");
+            }
         }
 
         /** Reads the byte-order byte at the cursor and sets the int/double layouts; called before each geometry. */
         void resetByteOrder() {
+            requireRemaining(Byte.BYTES);
             byte order = segment.get(JAVA_BYTE, offset++);
             switch (order) {
                 case WKB_LITTLE_ENDIAN -> {
@@ -357,6 +398,7 @@ public final class MemorySegmentWkbReader {
         }
 
         int readInt() {
+            requireRemaining(Integer.BYTES);
             int value = segment.get(intLayout, offset);
             offset += Integer.BYTES;
             return value;
@@ -364,6 +406,7 @@ public final class MemorySegmentWkbReader {
 
         /** Bulk-copies {@code dst.length} doubles in the current byte order, advancing past every copied byte. */
         void copyDoubles(double[] dst) {
+            requireRemaining((long) dst.length * Double.BYTES);
             MemorySegment.copy(segment, doubleLayout, offset, dst, 0, dst.length);
             offset += (long) dst.length * Double.BYTES;
         }
