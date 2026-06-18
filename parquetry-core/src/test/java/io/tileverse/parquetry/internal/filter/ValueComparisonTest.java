@@ -22,6 +22,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.UUID;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -37,6 +38,42 @@ class ValueComparisonTest {
     void boxedIntComparesToIntVal() {
         assertThat(ValueComparison.compareBoxed(5, new Value.IntVal(3))).isPositive();
         assertThat(ValueComparison.compareBoxed(3, new Value.IntVal(3))).isZero();
+    }
+
+    @Test
+    void compareValuesOrdersSameTypedStrings() {
+        assertThat(ValueComparison.compareValues(new Value.StringVal("a"), new Value.StringVal("b")))
+                .isNegative();
+        assertThat(ValueComparison.compareValues(new Value.StringVal("b"), new Value.StringVal("a")))
+                .isPositive();
+        assertThat(ValueComparison.compareValues(new Value.StringVal("a"), new Value.StringVal("a")))
+                .isZero();
+    }
+
+    @Test
+    void compareValuesOrdersSameTypedDates() {
+        LocalDate earlier = LocalDate.of(2020, 1, 1);
+        LocalDate later = LocalDate.of(2021, 1, 1);
+        assertThat(ValueComparison.compareValues(new Value.DateVal(earlier), new Value.DateVal(later)))
+                .isNegative();
+        assertThat(ValueComparison.compareValues(new Value.DateVal(later), new Value.DateVal(earlier)))
+                .isPositive();
+        assertThat(ValueComparison.compareValues(new Value.DateVal(earlier), new Value.DateVal(earlier)))
+                .isZero();
+    }
+
+    @Test
+    void compareValuesOrdersSameTypedUuidsUnsigned() {
+        // The high bit is set on the larger uuid; under signed long ordering it would compare LESS, hence
+        // this case pins that the engine uses unsigned byte ordering to agree with file statistics.
+        UUID highBitSet = UUID.fromString("ffffffff-0000-0000-0000-000000000000");
+        UUID allZero = UUID.fromString("00000000-0000-0000-0000-000000000000");
+        assertThat(ValueComparison.compareValues(new Value.UuidVal(allZero), new Value.UuidVal(highBitSet)))
+                .isNegative();
+        assertThat(ValueComparison.compareValues(new Value.UuidVal(highBitSet), new Value.UuidVal(allZero)))
+                .isPositive();
+        assertThat(ValueComparison.compareValues(new Value.UuidVal(highBitSet), new Value.UuidVal(highBitSet)))
+                .isZero();
     }
 
     @Test

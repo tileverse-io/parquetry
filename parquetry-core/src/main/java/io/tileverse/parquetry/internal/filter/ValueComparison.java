@@ -97,14 +97,26 @@ public final class ValueComparison {
             case Value.StringVal(String qv)
             when bound instanceof Value.BinaryVal(MemorySegment bv) ->
                 compareBytes(MemorySegment.ofArray(qv.getBytes(StandardCharsets.UTF_8)), bv);
+            // Same-typed pairs arise when both sides are produced as typed values (the Iceberg manifest-bound
+            // path), not the Parquet-statistics path that decodes binary columns to BinaryVal. Unsigned byte
+            // ordering keeps these in agreement with Parquet's default binary ColumnOrder and with file statistics.
+            case Value.StringVal(String qv)
+            when bound instanceof Value.StringVal(String bv) ->
+                compareBytes(
+                        MemorySegment.ofArray(qv.getBytes(StandardCharsets.UTF_8)),
+                        MemorySegment.ofArray(bv.getBytes(StandardCharsets.UTF_8)));
             case Value.BinaryVal(MemorySegment qv)
             when bound instanceof Value.BinaryVal(MemorySegment bv) -> compareBytes(qv, bv);
             case Value.DateVal(LocalDate qv)
             when bound instanceof Value.IntVal(int bv) -> Integer.compare((int) qv.toEpochDay(), bv);
+            case Value.DateVal(LocalDate qv) when bound instanceof Value.DateVal(LocalDate bv) -> qv.compareTo(bv);
             case Value.TimestampVal(LocalDateTime qv, boolean _)
             when bound instanceof Value.LongVal(long bv) -> Long.compare(qv.toEpochSecond(ZoneOffset.UTC) * 1000L, bv);
             case Value.UuidVal(UUID qv)
             when bound instanceof Value.BinaryVal(MemorySegment bv) -> -compareSegmentToUuidValue(bv, qv);
+            case Value.UuidVal(UUID qv)
+            when bound instanceof Value.UuidVal(UUID bv) ->
+                compareSegmentToUuidValue(UuidConverter.toReadOnlySegment(qv), bv);
             default -> 0;
         };
     }

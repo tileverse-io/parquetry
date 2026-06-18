@@ -50,7 +50,11 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
  * exactly as it was written; it does not normalize.
  */
 public sealed interface SpatialBoundsSource
-        permits NativeStatsSource, CoveringColumnSource, GeoJsonFileBoundsSource, EmptyBoundsSource {
+        permits NativeStatsSource,
+                CoveringColumnSource,
+                GeoJsonFileBoundsSource,
+                EmptyBoundsSource,
+                SuppliedBoundsSource {
 
     /** Bounds for {@code geometryColumn} across the whole file, or {@link Optional#empty()} when not known. */
     Optional<BoundingBox> fileBounds(ColumnPath geometryColumn);
