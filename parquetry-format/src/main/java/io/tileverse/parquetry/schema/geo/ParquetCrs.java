@@ -92,7 +92,7 @@ public sealed interface ParquetCrs
     private static Optional<ParquetCrs> parseSrid(String digits) {
         try {
             return Optional.of(new Srid(Long.parseLong(digits.strip())));
-        } catch (NumberFormatException notANumber) {
+        } catch (NumberFormatException _) {
             return Optional.empty();
         }
     }
@@ -126,7 +126,7 @@ public sealed interface ParquetCrs
             try {
                 int parsed = Integer.parseInt(code.strip());
                 return parsed >= 0 ? OptionalInt.of(parsed) : OptionalInt.empty();
-            } catch (NumberFormatException notANumber) {
+            } catch (NumberFormatException _) {
                 return OptionalInt.empty();
             }
         }

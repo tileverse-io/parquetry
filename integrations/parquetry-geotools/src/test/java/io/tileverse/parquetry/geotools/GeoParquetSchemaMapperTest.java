@@ -32,6 +32,7 @@ import org.geotools.data.nested.NestedType;
 import org.geotools.data.nested.NestedType.ListType;
 import org.geotools.data.nested.NestedType.MapType;
 import org.geotools.data.nested.NestedType.StructType;
+import org.geotools.referencing.CRS;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.locationtech.jts.geom.Geometry;
@@ -47,6 +48,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.geo.ParquetCrs;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
 class GeoParquetSchemaMapperTest {
@@ -252,6 +254,32 @@ class GeoParquetSchemaMapperTest {
         assertThat(attributeNames)
                 .as("the bbox covering is an internal spatial index, not a user attribute")
                 .doesNotContain("geom_bbox.xmin", "geom_bbox.ymin", "geom_bbox.xmax", "geom_bbox.ymax");
+    }
+
+    @Test
+    void resolvesNativeAuthorityCodeCrsToEpsg() throws Exception {
+        ParquetSchema schema = schemaWithNativeGeometryCrs(new ParquetCrs.AuthorityCode("EPSG", "3857"));
+
+        GeoParquetSchemaMapper.Mapping mapping = GeoParquetSchemaMapper.map("native", null, schema, Map.of(), null);
+        org.geotools.api.referencing.crs.CoordinateReferenceSystem crs =
+                mapping.featureType().getCoordinateReferenceSystem();
+
+        assertThat(CRS.lookupEpsgCode(crs, false))
+                .as("an EPSG:3857 native crs reference resolves to EPSG:3857 through the registry")
+                .isEqualTo(3857);
+    }
+
+    private static ParquetSchema schemaWithNativeGeometryCrs(ParquetCrs crs) {
+        SchemaNode.Primitive geom = new SchemaNode.Primitive(
+                "geom",
+                Repetition.OPTIONAL,
+                PrimitiveKind.BYTE_ARRAY,
+                OptionalInt.empty(),
+                Optional.of(new LogicalType.Geometry(Optional.of(crs))),
+                -1);
+        SchemaNode.Group root =
+                new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(geom), Optional.empty(), -1);
+        return new ParquetSchema(root);
     }
 
     private static ParquetSchema schemaWithDeclaredCovering() {

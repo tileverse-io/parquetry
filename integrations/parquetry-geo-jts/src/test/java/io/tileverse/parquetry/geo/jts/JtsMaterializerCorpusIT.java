@@ -40,13 +40,13 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
 /**
- * Positive conformance against the {@code geoparquet/geoparquet-testing} corpus ({@code data/} + {@code samples/}
- * tiers, GeoParquet 2.0). Every fixture must open, expose parseable {@code geo} metadata with a version, have at least
- * one geometry column recognized, and decode every geometry row through {@link JtsMaterializer} without error. This
- * pins that parquetry reads the full 2.0 fixture set; negative ({@code bad_data/}) and CRS-specific conformance live in
- * separate suites.
+ * Exercises {@link JtsMaterializer} over the {@code geoparquet/geoparquet-testing} corpus ({@code data/} +
+ * {@code samples/} tiers, GeoParquet 2.0): every fixture must open, expose parseable {@code geo} metadata with a
+ * version, have at least one geometry column recognized, and decode every geometry row through the materializer without
+ * error. The reader-level conformance lives in {@code parquetry-core}; this is the JTS adapter's view of the same
+ * files.
  */
-class GeoParquetTestingConformanceIT {
+class JtsMaterializerCorpusIT {
 
     private static final Path CORPUS = extractCorpus();
 

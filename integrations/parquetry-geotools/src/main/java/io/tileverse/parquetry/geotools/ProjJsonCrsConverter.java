@@ -71,7 +71,7 @@ final class ProjJsonCrsConverter {
         }
         try {
             return CRS.decode(authority + ":" + code, true);
-        } catch (FactoryException unresolved) {
+        } catch (FactoryException _) {
             return DefaultGeographicCRS.WGS84;
         }
     }
@@ -86,7 +86,7 @@ final class ProjJsonCrsConverter {
         }
         try {
             return CRS.decode("EPSG:" + srid, true);
-        } catch (FactoryException unresolved) {
+        } catch (FactoryException _) {
             return DefaultGeographicCRS.WGS84;
         }
     }

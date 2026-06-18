@@ -408,7 +408,7 @@ final class GeoParquetSchemaMapper {
         if (lt instanceof LogicalType.Geometry(Optional<ParquetCrs> crs)) {
             return crs;
         }
-        if (lt instanceof LogicalType.Geography(Optional<ParquetCrs> crs, var ignoredAlgorithm)) {
+        if (lt instanceof LogicalType.Geography(Optional<ParquetCrs> crs, var _)) {
             return crs;
         }
         return Optional.empty();

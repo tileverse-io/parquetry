@@ -350,6 +350,32 @@ class ParquetFormatWriteTest {
     }
 
     @Test
+    void logicalTypeGeometryRoundTripsNativeCrsReferenceForms() {
+        // The native Parquet crs property may be an authority:code or srid: reference (GeoParquet 2.0). Confirm both
+        // persist to the footer and parse back to the same ParquetCrs record, not just inline PROJJSON.
+        LogicalType.Geometry authorityCode =
+                new LogicalType.Geometry(Optional.of(new ParquetCrs.AuthorityCode("EPSG", "3857")));
+        assertNativeCrsRoundTrips(authorityCode, new ParquetCrs.AuthorityCode("EPSG", "3857"));
+
+        LogicalType.Geometry srid = new LogicalType.Geometry(Optional.of(new ParquetCrs.Srid(0)));
+        assertNativeCrsRoundTrips(srid, new ParquetCrs.Srid(0));
+    }
+
+    private static void assertNativeCrsRoundTrips(LogicalType.Geometry lt, ParquetCrs expected) {
+        FileMetaData original = footerWithLogicalType(lt);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ParquetFormat.writeFooter(out, original);
+        FileMetaData parsed = ParquetFormatDeserializer.readFileMetaData(new ByteArrayInputStream(out.toByteArray()));
+
+        SchemaElement leaf = parsed.schema().get(1);
+        assertThat(leaf.logicalType())
+                .hasValueSatisfying(logical -> assertThat(logical)
+                        .isInstanceOfSatisfying(
+                                LogicalType.Geometry.class,
+                                g -> assertThat(g.crs()).hasValue(expected)));
+    }
+
+    @Test
     void schemaElementWithAllOptionalsRoundTrips() {
         // The default leaf/root helpers leave typeLength (2), convertedType (6), scale (7), precision (8) empty.
         // A DECIMAL column exercises all four together, plus logicalType (10) and fieldId (11).
