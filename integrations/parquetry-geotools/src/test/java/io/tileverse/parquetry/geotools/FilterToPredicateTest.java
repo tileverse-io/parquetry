@@ -21,6 +21,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.UUID;
+import java.util.stream.Stream;
 
 import org.geotools.api.feature.simple.SimpleFeatureType;
 import org.geotools.api.filter.Filter;
@@ -33,6 +35,9 @@ import org.geotools.filter.text.ecql.ECQL;
 import org.geotools.referencing.CRS;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.Point;
@@ -43,6 +48,7 @@ import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.geotools.GeoParquetSchemaMapper.AttributeMapping;
 import io.tileverse.parquetry.geotools.GeoParquetSchemaMapper.Mapping;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -60,13 +66,15 @@ class FilterToPredicateTest {
         b.add("pop", Long.class);
         b.add("score", Double.class);
         b.add("active", Boolean.class);
+        b.add("guid", UUID.class);
         SimpleFeatureType ft = b.buildFeatureType();
         List<AttributeMapping> attrs = List.of(
                 new AttributeMapping("geom", ColumnPath.of("geometry"), true, Point.class),
                 new AttributeMapping("name", ColumnPath.of("name"), false, String.class),
                 new AttributeMapping("pop", ColumnPath.of("pop"), false, Long.class),
                 new AttributeMapping("score", ColumnPath.of("score"), false, Double.class),
-                new AttributeMapping("active", ColumnPath.of("active"), false, Boolean.class));
+                new AttributeMapping("active", ColumnPath.of("active"), false, Boolean.class),
+                new AttributeMapping("guid", ColumnPath.of("guid"), false, UUID.class));
         return new Mapping(ft, attrs);
     }
 
@@ -89,6 +97,32 @@ class FilterToPredicateTest {
         FilterToPredicate.Result r = translator().translate(f);
         assertThat(r.predicate()).isEqualTo(Pred.col(ColumnPath.of("name")).eq("AR"));
         assertThat(r.residual()).isEqualTo(Filter.INCLUDE);
+    }
+
+    @Test
+    void uuidEqualsTranslates() {
+        UUID id = UUID.fromString("00000000-0000-0000-0000-0000000000ab");
+        Filter f = FF.equals(FF.property("guid"), FF.literal(id.toString()));
+        FilterToPredicate.Result r = translator().translate(f);
+        assertThat(r.predicate()).isEqualTo(new Predicate.Eq(ColumnPath.of("guid"), new Value.UuidVal(id)));
+        assertThat(r.residual()).isEqualTo(Filter.INCLUDE);
+    }
+
+    // A UUID column pushes only equality with a parseable literal. An uncoercible literal or any non-EQ comparison
+    // cannot push (the unsigned byte order has no sound ordered/notEq push) and falls to the residual filter.
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("unpushableUuidFilters")
+    void unpushableUuidComparisonIsResidual(String name, Filter f) {
+        FilterToPredicate.Result r = translator().translate(f);
+        assertThat(r.predicate()).isEqualTo((Predicate) Predicate.ALWAYS_TRUE);
+        assertThat(r.residual()).isEqualTo(f);
+    }
+
+    private static Stream<Arguments> unpushableUuidFilters() {
+        String validUuid = "00000000-0000-0000-0000-0000000000ab";
+        return Stream.of(
+                Arguments.of("uncoercible literal on EQ", FF.equals(FF.property("guid"), FF.literal("not-a-uuid"))),
+                Arguments.of("valid literal on non-EQ", FF.notEqual(FF.property("guid"), FF.literal(validUuid))));
     }
 
     @Test

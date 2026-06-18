@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.BiFunction;
 
 import org.geotools.api.filter.And;
@@ -171,7 +172,19 @@ final class FilterToPredicate {
             Float v = Converters.convert(text, Float.class);
             return v == null ? null : new Value.FloatVal(v);
         }
+        if (binding == UUID.class) {
+            return parseUuid(text).map(Value.UuidVal::new).orElse(null);
+        }
         return null;
+    }
+
+    /** Parses a UUID from its canonical string form, or empty when the text is not a valid UUID. */
+    private static Optional<UUID> parseUuid(String text) {
+        try {
+            return Optional.of(UUID.fromString(text));
+        } catch (IllegalArgumentException _) {
+            return Optional.empty();
+        }
     }
 
     private Result and(And and) {
@@ -370,6 +383,9 @@ final class FilterToPredicate {
         if (binding == Boolean.class) {
             return buildBoolean(p, op, rawValue);
         }
+        if (binding == UUID.class) {
+            return buildUuid(p, op, rawValue);
+        }
         return Optional.empty();
     }
 
@@ -420,6 +436,19 @@ final class FilterToPredicate {
             return Optional.empty();
         }
         return Optional.of(Pred.col(p).eq(v.booleanValue()));
+    }
+
+    // Only equality pushes: the physical column is unsigned FIXED_LEN_BYTE_ARRAY, and core has no notEq(UUID) nor an
+    // ordered UUID comparison whose unsigned byte order would match a signed range push. Range/inequality stays
+    // residual.
+    private Optional<Predicate> buildUuid(ColumnPath p, Op op, Object rawValue) {
+        if (op != Op.EQ) {
+            return Optional.empty();
+        }
+        if (rawValue instanceof UUID u) {
+            return Optional.of(Pred.col(p).eq(u));
+        }
+        return parseUuid(rawValue.toString()).map(parsed -> Pred.col(p).eq(parsed));
     }
 
     /** True when {@code rawValue} converts to {@code converted} without loss (no fractional part dropped). */

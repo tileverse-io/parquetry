@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.stream.Stream;
 
 import org.geotools.api.data.FeatureReader;
@@ -97,7 +98,8 @@ final class GeoParquetFeatureReader implements FeatureReader<SimpleFeatureType, 
     /**
      * The GeoTools attribute value for {@code attr} on this row: a decoded {@link Geometry} for geometry columns, an
      * owned, batch-independent value for nested columns (struct/list/map, translated by {@link NestedValues}), an owned
-     * {@code String} or {@code byte[]} for binary, a boxed primitive otherwise, or {@code null} for a null cell.
+     * {@code String} for text, a {@link UUID} for a UUID column, an owned {@code byte[]} for other binary, a boxed
+     * primitive otherwise, or {@code null} for a null cell.
      */
     private Object attributeValue(ParquetRecord row, AttributeMapping attr) {
         ColumnPath path = attr.path();
@@ -113,6 +115,9 @@ final class GeoParquetFeatureReader implements FeatureReader<SimpleFeatureType, 
         Class<?> binding = attr.binding();
         if (binding == String.class) {
             return row.getString(path);
+        }
+        if (binding == UUID.class) {
+            return row.getUuid(path);
         }
         if (binding == byte[].class) {
             return row.getBinary(path);

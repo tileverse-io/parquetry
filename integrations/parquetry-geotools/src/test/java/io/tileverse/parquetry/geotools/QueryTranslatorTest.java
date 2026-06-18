@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 
 import org.geotools.api.data.Query;
 import org.geotools.api.feature.simple.SimpleFeatureType;
@@ -70,6 +71,18 @@ class QueryTranslatorTest {
         return new Mapping(base.featureType(), base.attributes(), Optional.of(fid));
     }
 
+    private static Mapping mappingWithUuidFid() {
+        SimpleFeatureTypeBuilder b = new SimpleFeatureTypeBuilder();
+        b.setName("t");
+        b.add("geom", Point.class);
+        b.add("guid", UUID.class);
+        SimpleFeatureType ft = b.buildFeatureType();
+        AttributeMapping fid = new AttributeMapping("guid", ColumnPath.of("guid"), false, UUID.class);
+        List<AttributeMapping> attrs =
+                List.of(new AttributeMapping("geom", ColumnPath.of("geometry"), true, Point.class), fid);
+        return new Mapping(ft, attrs, Optional.of(fid));
+    }
+
     @Test
     void idFilterWithoutFeatureIdColumnIsRejected() {
         QueryTranslator translator = new QueryTranslator(mapping());
@@ -111,6 +124,39 @@ class QueryTranslatorTest {
         Filter idFilter = FF.id(Set.of(FF.featureId("not-a-number")));
         QueryTranslator.TranslatedQuery t =
                 new QueryTranslator(mappingWithFid("pop")).translate(new Query("t", idFilter));
+        assertThat(t.predicate()).isEqualTo((Predicate) Predicate.ALWAYS_FALSE);
+    }
+
+    @Test
+    void idFilterWithUuidFeatureIdColumnPushesUuidValues() {
+        UUID u1 = UUID.fromString("00000000-0000-0000-0000-000000000001");
+        UUID u2 = UUID.fromString("00000000-0000-0000-0000-000000000002");
+        Filter idFilter = FF.id(Set.of(FF.featureId(u1.toString()), FF.featureId(u2.toString())));
+        QueryTranslator.TranslatedQuery t =
+                new QueryTranslator(mappingWithUuidFid()).translate(new Query("t", idFilter));
+        assertThat(t.predicate()).isInstanceOf(Predicate.In.class);
+        Predicate.In in = (Predicate.In) t.predicate();
+        assertThat(in.col()).isEqualTo(ColumnPath.of("guid"));
+        assertThat(in.values()).containsExactlyInAnyOrder(new Value.UuidVal(u1), new Value.UuidVal(u2));
+        assertThat(t.postFilter()).isEqualTo(idFilter);
+    }
+
+    @Test
+    void idFilterWithUuidColumnDropsUnparseableIds() {
+        UUID valid = UUID.fromString("00000000-0000-0000-0000-000000000001");
+        Filter idFilter = FF.id(Set.of(FF.featureId(valid.toString()), FF.featureId("not-a-uuid")));
+        QueryTranslator.TranslatedQuery t =
+                new QueryTranslator(mappingWithUuidFid()).translate(new Query("t", idFilter));
+        assertThat(t.predicate()).isInstanceOf(Predicate.In.class);
+        Predicate.In in = (Predicate.In) t.predicate();
+        assertThat(in.values()).containsExactly(new Value.UuidVal(valid));
+    }
+
+    @Test
+    void idFilterWithAllUnparseableUuidIdsIsAlwaysFalse() {
+        Filter idFilter = FF.id(Set.of(FF.featureId("not-a-uuid")));
+        QueryTranslator.TranslatedQuery t =
+                new QueryTranslator(mappingWithUuidFid()).translate(new Query("t", idFilter));
         assertThat(t.predicate()).isEqualTo((Predicate) Predicate.ALWAYS_FALSE);
     }
 
