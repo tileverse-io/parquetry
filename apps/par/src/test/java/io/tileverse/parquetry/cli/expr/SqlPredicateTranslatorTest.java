@@ -19,6 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -219,5 +220,41 @@ class SqlPredicateTranslatorTest {
     void inListOnIntColumnCoercesToIntVal() {
         Predicate.In in = (Predicate.In) parseNumeric("i32 IN (1, 2)");
         assertThat(in.values()).containsExactly(new Value.IntVal(1), new Value.IntVal(2));
+    }
+
+    private static final ParquetSchema UUID_COLUMN = Fixtures.uuidColumnSchema();
+
+    private static Predicate parseUuid(String filter) {
+        return FilterParser.parse(filter, UUID_COLUMN, Set.of());
+    }
+
+    @Test
+    void uuidEqualityCoercesLiteralToUuidVal() {
+        UUID uuid = UUID.fromString("12345678-1234-1234-1234-123456789abc");
+        Predicate.Eq eq = (Predicate.Eq) parseUuid("id = '12345678-1234-1234-1234-123456789abc'");
+        assertThat(eq.v()).isEqualTo(new Value.UuidVal(uuid));
+    }
+
+    @Test
+    void uuidInListCoercesLiteralsToUuidVal() {
+        UUID first = UUID.fromString("00000000-0000-0000-0000-000000000001");
+        UUID second = UUID.fromString("00000000-0000-0000-0000-000000000002");
+        Predicate.In in = (Predicate.In)
+                parseUuid("id IN ('00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002')");
+        assertThat(in.values()).containsExactly(new Value.UuidVal(first), new Value.UuidVal(second));
+    }
+
+    @Test
+    void uuidNotEqualsNegatesUuidEquality() {
+        UUID uuid = UUID.fromString("12345678-1234-1234-1234-123456789abc");
+        Predicate.Not not = (Predicate.Not) parseUuid("id <> '12345678-1234-1234-1234-123456789abc'");
+        Predicate.Eq eq = (Predicate.Eq) not.child();
+        assertThat(eq.v()).isEqualTo(new Value.UuidVal(uuid));
+    }
+
+    @Test
+    void uuidRangeRejected() {
+        assertThatThrownBy(() -> parseUuid("id > '12345678-1234-1234-1234-123456789abc'"))
+                .isInstanceOf(FilterParseException.class);
     }
 }

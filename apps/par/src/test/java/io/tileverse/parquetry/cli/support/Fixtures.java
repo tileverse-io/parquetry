@@ -75,6 +75,23 @@ public final class Fixtures {
         return new ParquetSchema(root);
     }
 
+    /**
+     * Schema-only fixture exposing a single {@code id} column declared as {@code FIXED_LEN_BYTE_ARRAY(16)} annotated
+     * with the {@link LogicalType.UuidType}, used to exercise the UUID literal coercion branches of the SQL filter
+     * translator.
+     */
+    public static ParquetSchema uuidColumnSchema() {
+        SchemaNode.Primitive id = new SchemaNode.Primitive(
+                "id",
+                Repetition.REQUIRED,
+                PrimitiveKind.FIXED_LEN_BYTE_ARRAY,
+                OptionalInt.of(16),
+                Optional.of(new LogicalType.UuidType()),
+                -1);
+        SchemaNode.Group root = new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(id), Optional.empty(), -1);
+        return new ParquetSchema(root);
+    }
+
     public static void writeCities(Path file) throws Exception {
         writeCities(file, Map.of());
     }
