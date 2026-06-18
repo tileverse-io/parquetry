@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
+import java.util.UUID;
 
 import org.geotools.api.feature.simple.SimpleFeatureType;
 import org.geotools.api.referencing.crs.CoordinateReferenceSystem;
@@ -328,7 +329,8 @@ final class GeoParquetSchemaMapper {
                 || binding == Integer.class
                 || binding == Long.class
                 || binding == Float.class
-                || binding == Double.class;
+                || binding == Double.class
+                || binding == UUID.class;
     }
 
     /**
@@ -429,6 +431,7 @@ final class GeoParquetSchemaMapper {
     static Optional<Class<?>> resolveBinding(PrimitiveKind kind, Optional<LogicalType> logical) {
         boolean isString =
                 logical.map(GeoParquetSchemaMapper::isStringLogicalType).orElse(false);
+        boolean isUuid = logical.map(lt -> lt instanceof LogicalType.UuidType).orElse(false);
         return switch (kind) {
             case BOOLEAN -> Optional.of(Boolean.class);
             case INT32 -> Optional.of(Integer.class);
@@ -436,7 +439,7 @@ final class GeoParquetSchemaMapper {
             case FLOAT -> Optional.of(Float.class);
             case DOUBLE -> Optional.of(Double.class);
             case BYTE_ARRAY -> Optional.of(isString ? String.class : byte[].class);
-            case FIXED_LEN_BYTE_ARRAY -> Optional.of(byte[].class);
+            case FIXED_LEN_BYTE_ARRAY -> Optional.of(isUuid ? UUID.class : byte[].class);
             // INT96 is a deprecated Impala timestamp with no standard Java binding; skip it.
             case INT96 -> Optional.empty();
         };

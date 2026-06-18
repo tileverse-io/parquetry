@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.UUID;
 
 import org.geotools.api.feature.simple.SimpleFeatureType;
 import org.geotools.api.feature.type.AttributeDescriptor;
@@ -98,6 +99,43 @@ class GeoParquetSchemaMapperTest {
         List<AttributeMapping> attributes = attributes();
         assertThatThrownBy(() -> GeoParquetSchemaMapper.resolveFidAttribute("t", "blob", attributes))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void bindsUuidLogicalTypeToJavaUuid() {
+        Optional<Class<?>> binding =
+                GeoParquetSchemaMapper.resolveBinding(PrimitiveKind.FIXED_LEN_BYTE_ARRAY, uuidLogicalType());
+        assertThat(binding).hasValue(UUID.class);
+    }
+
+    @Test
+    void bindsPlainFixedLenByteArrayToByteArray() {
+        Optional<Class<?>> binding =
+                GeoParquetSchemaMapper.resolveBinding(PrimitiveKind.FIXED_LEN_BYTE_ARRAY, Optional.empty());
+        assertThat(binding).hasValue(byte[].class);
+    }
+
+    @Test
+    void autoDetectsUuidIdColumnAsFeatureId() {
+        Optional<AttributeMapping> fid = GeoParquetSchemaMapper.resolveFidAttribute("t", null, attributesWithUuidId());
+        assertThat(fid).map(AttributeMapping::name).hasValue("id");
+    }
+
+    @Test
+    void configuredUuidColumnIsAcceptedAsFeatureId() {
+        Optional<AttributeMapping> fid = GeoParquetSchemaMapper.resolveFidAttribute("t", "id", attributesWithUuidId());
+        assertThat(fid).map(AttributeMapping::binding).hasValue(UUID.class);
+    }
+
+    private static Optional<LogicalType> uuidLogicalType() {
+        return Optional.of(new LogicalType.UuidType());
+    }
+
+    private static List<AttributeMapping> attributesWithUuidId() {
+        return List.of(
+                new AttributeMapping("geom", ColumnPath.of("geometry"), true, Point.class),
+                new AttributeMapping("id", ColumnPath.of("id"), false, UUID.class),
+                new AttributeMapping("name", ColumnPath.of("name"), false, String.class));
     }
 
     @Test
