@@ -385,6 +385,7 @@
             <excludeArtifact>parquetry-internal</excludeArtifact>
             <excludeArtifact>parquetry-testkit</excludeArtifact>
             <excludeArtifact>parquetry-benchmarks</excludeArtifact>
+            <excludeArtifact>parquetry-probes</excludeArtifact>
             <excludeArtifact>parquetry-coverage-report</excludeArtifact>
             <excludeArtifact>apps</excludeArtifact>
             <excludeArtifact>par</excludeArtifact>
