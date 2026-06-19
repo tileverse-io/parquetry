@@ -20,7 +20,6 @@ import java.io.UncheckedIOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.PathMatcher;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Stream;
@@ -59,11 +58,11 @@ public final class LocalFileSource implements FileSource {
 
     @Override
     public Stream<FileEntry> list() {
-        PathMatcher matcher = root.getFileSystem().getPathMatcher("glob:" + glob);
+        GlobMatcher matcher = GlobMatcher.compile(glob);
         try (Stream<Path> walk = Files.walk(root)) {
             List<FileEntry> matches = walk.filter(Files::isRegularFile)
                     .filter(path ->
-                            singleFile ? path.equals(root.resolve(glob)) : matcher.matches(root.relativize(path)))
+                            singleFile ? path.equals(root.resolve(glob)) : matcher.matches(relativePathOf(path)))
                     .map(this::toFileEntry)
                     .toList();
             return matches.stream();
@@ -73,9 +72,13 @@ public final class LocalFileSource implements FileSource {
     }
 
     private FileEntry toFileEntry(Path path) {
-        String relative = root.relativize(path).toString().replace('\\', '/');
+        String relative = relativePathOf(path);
         long size = sizeOf(path);
         return new LocalFileEntry(path, relative, size);
+    }
+
+    private String relativePathOf(Path path) {
+        return root.relativize(path).toString().replace('\\', '/');
     }
 
     private static long sizeOf(Path path) {
