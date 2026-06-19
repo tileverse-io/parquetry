@@ -18,6 +18,7 @@ package io.tileverse.parquetry.arrow;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
 import java.util.BitSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -66,6 +67,38 @@ class ArrowBatchEncoderTest {
         assertThat(recordBatch.nodes(0).length()).isEqualTo(3L);
         assertThat(recordBatch.nodes(0).nullCount()).isZero();
         assertThat(recordBatch.buffersLength()).isEqualTo(2); // validity + data
-        assertThat(message.bodyLength()).isEqualTo((long) encoded.body().length);
+        // An all-valid column needs no bitmap: its validity buffer is length 0.
+        assertThat(recordBatch.buffers(0).length()).isZero();
+        assertThat(recordBatch.buffers(1).length()).isPositive();
+        long bodyLength =
+                encoded.body().stream().mapToLong(MemorySegment::byteSize).sum();
+        assertThat(message.bodyLength()).isEqualTo(bodyLength);
+    }
+
+    @Test
+    void emitsAValidityBitmapWhenAColumnHasNulls() {
+        SchemaNode.Primitive id = new SchemaNode.Primitive(
+                "id", Repetition.OPTIONAL, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), 0);
+        ParquetSchema schema =
+                new ParquetSchema(new SchemaNode.Group("root", Repetition.REQUIRED, List.of(id), Optional.empty(), -1));
+        BitSet validBits = new BitSet();
+        validBits.set(0);
+        validBits.set(2); // row 1 null
+        Validity validity = Validity.of(validBits, 3);
+        Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
+        columns.put(ColumnPath.of("id"), IntVector.materialized(new int[] {10, 0, 30}, validity));
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 3, Arena.ofShared());
+
+        ArrowBatchEncoder.Encoded encoded = ArrowBatchEncoder.encode(batch);
+
+        Message message = Message.getRootAsMessage(encoded.metadata());
+        RecordBatch recordBatch = (RecordBatch) message.header(new RecordBatch());
+        assertThat(recordBatch.nodes(0).nullCount()).isEqualTo(1L);
+        assertThat(recordBatch.buffersLength()).isEqualTo(2); // validity + data
+        // A column with nulls emits a real (8-byte aligned) bitmap.
+        assertThat(recordBatch.buffers(0).length()).isPositive();
+        long bodyLength =
+                encoded.body().stream().mapToLong(MemorySegment::byteSize).sum();
+        assertThat(message.bodyLength()).isEqualTo(bodyLength);
     }
 }

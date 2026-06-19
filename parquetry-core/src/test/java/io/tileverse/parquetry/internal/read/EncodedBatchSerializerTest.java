@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.internal.batch;
+package io.tileverse.parquetry.internal.read;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -23,11 +23,13 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.arrow.columnar.ArrowBufferCodec;
+import io.tileverse.parquetry.arrow.columnar.EncodedBatch;
+import io.tileverse.parquetry.arrow.columnar.EncodedBuffer;
+import io.tileverse.parquetry.arrow.columnar.EncodedNode;
+import io.tileverse.parquetry.arrow.columnar.NodeEncoding;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.Validity;
-import io.tileverse.parquetry.internal.arrow.buffer.EncodedBuffer;
-import io.tileverse.parquetry.internal.arrow.buffer.EncodedNode;
-import io.tileverse.parquetry.internal.arrow.buffer.NodeEncoding;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 class EncodedBatchSerializerTest {

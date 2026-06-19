@@ -27,10 +27,9 @@ import java.nio.file.StandardOpenOption;
 import java.util.Optional;
 import java.util.concurrent.locks.ReentrantLock;
 
+import io.tileverse.parquetry.arrow.columnar.BatchArrowLayout;
+import io.tileverse.parquetry.arrow.columnar.EncodedBatch;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
-import io.tileverse.parquetry.internal.batch.BatchArrowLayout;
-import io.tileverse.parquetry.internal.batch.EncodedBatch;
-import io.tileverse.parquetry.internal.batch.EncodedBatchSerializer;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 import lombok.NonNull;

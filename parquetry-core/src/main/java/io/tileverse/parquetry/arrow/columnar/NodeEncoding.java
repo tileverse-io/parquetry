@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.internal.arrow.buffer;
+package io.tileverse.parquetry.arrow.columnar;
 
 /**
  * How an {@link EncodedNode}'s value buffers are laid out, picked by the encoder per column vector and read back by the

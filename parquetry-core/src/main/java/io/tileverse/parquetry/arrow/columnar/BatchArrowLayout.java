@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.internal.batch;
+package io.tileverse.parquetry.arrow.columnar;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -25,8 +25,6 @@ import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.format.LogicalType;
-import io.tileverse.parquetry.internal.arrow.buffer.EncodedNode;
-import io.tileverse.parquetry.internal.arrow.buffer.LeafType;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.ParquetSchemaException;

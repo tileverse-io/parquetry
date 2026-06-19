@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.internal.batch;
+package io.tileverse.parquetry.arrow.columnar;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.SequencedMap;
 import java.util.Set;
 
+import io.tileverse.parquetry.arrow.columnar.EncodedBuffer.BufferRole;
 import io.tileverse.parquetry.batch.BinaryVector;
 import io.tileverse.parquetry.batch.BooleanVector;
 import io.tileverse.parquetry.batch.ColumnVector;
@@ -41,12 +42,6 @@ import io.tileverse.parquetry.batch.MapVector;
 import io.tileverse.parquetry.batch.StructVector;
 import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.batch.VariantVector;
-import io.tileverse.parquetry.internal.arrow.buffer.ArrowBuffers;
-import io.tileverse.parquetry.internal.arrow.buffer.EncodedBuffer;
-import io.tileverse.parquetry.internal.arrow.buffer.EncodedBuffer.BufferRole;
-import io.tileverse.parquetry.internal.arrow.buffer.EncodedNode;
-import io.tileverse.parquetry.internal.arrow.buffer.LeafType;
-import io.tileverse.parquetry.internal.arrow.buffer.NodeEncoding;
 import io.tileverse.parquetry.internal.read.LevelVectorAssembler;
 import io.tileverse.parquetry.schema.ColumnPath;
 
@@ -73,7 +68,7 @@ import io.tileverse.parquetry.schema.ColumnPath;
  *
  * @see <a href="https://arrow.apache.org/docs/format/Columnar.html">Apache Arrow columnar format specification</a>
  */
-final class ArrowBufferCodec {
+public final class ArrowBufferCodec {
 
     private static final int VALIDITY_BUFFER = 0;
     private static final int DATA_BUFFER = 1;
@@ -103,7 +98,7 @@ final class ArrowBufferCodec {
     }
 
     /** Encodes {@code vector} into an Arrow field node with a validity buffer and a packed data buffer. */
-    static EncodedNode encode(ColumnVector vector) {
+    public static EncodedNode encode(ColumnVector vector) {
         return switch (vector) {
             case IntVector intVector -> fixedWidthNode(intVector, ArrowBuffers.encodeInts(intVector), INT32_WIDTH);
             case LongVector longVector -> fixedWidthNode(longVector, ArrowBuffers.encodeLongs(longVector), INT64_WIDTH);
@@ -125,7 +120,11 @@ final class ArrowBufferCodec {
         };
     }
 
-    /** Rebuilds the {@code type} column vector from {@code node}'s validity and data buffers. */
+    /**
+     * Rebuilds a primitive {@code type} column vector from {@code node}'s validity and data buffers. This overload
+     * handles only the leaf kinds named by {@link LeafType}; decode a list, struct, map, or Variant node through
+     * {@link #decode(EncodedNode, ColumnType)} instead, which descends into the node's children.
+     */
     static ColumnVector decode(EncodedNode node, LeafType type) {
         Validity validity = decodeValidity(node);
         int length = node.length();
@@ -147,7 +146,7 @@ final class ArrowBufferCodec {
      * node's children. Primitive types delegate to the leaf {@link #decode(EncodedNode, LeafType)} path; nested types
      * recurse one level at a time.
      */
-    static ColumnVector decode(EncodedNode node, ColumnType type) {
+    public static ColumnVector decode(EncodedNode node, ColumnType type) {
         return switch (type) {
             case ColumnType.Primitive(LeafType leaf) -> decode(node, leaf);
             case ColumnType.ListType(ColumnType element) -> decodeList(node, element);

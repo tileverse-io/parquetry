@@ -219,6 +219,34 @@ public final class BinaryVector implements ColumnVector {
     }
 
     @Override
+    public BinaryVector toConsolidated() {
+        if (indices == null) {
+            return this;
+        }
+        int rows = size();
+        int[] rowOffsets = new int[rows + 1];
+        long total = 0;
+        for (int row = 0; row < rows; row++) {
+            if (validity.isValid(row)) {
+                total += dictEntries[indices.get(row)].byteSize();
+            }
+        }
+        MemorySegment consolidatedBacking = MemorySegment.ofArray(new byte[Math.toIntExact(total)]);
+        long cursor = 0;
+        for (int row = 0; row < rows; row++) {
+            rowOffsets[row] = Math.toIntExact(cursor);
+            if (validity.isValid(row)) {
+                MemorySegment entry = dictEntries[indices.get(row)];
+                long length = entry.byteSize();
+                MemorySegment.copy(entry, 0L, consolidatedBacking, cursor, length);
+                cursor += length;
+            }
+        }
+        rowOffsets[rows] = Math.toIntExact(cursor);
+        return BinaryVector.of(consolidatedBacking, IntSequence.of(rowOffsets), validity);
+    }
+
+    @Override
     public long approximateHeapBytes() {
         if (indices != null) {
             return indices.heapBytes() + dictionaryEntryBytes() + validity.heapBytes();

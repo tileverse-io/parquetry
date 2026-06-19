@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.internal.batch;
+package io.tileverse.parquetry.internal.read;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -27,10 +27,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
-import io.tileverse.parquetry.internal.arrow.buffer.EncodedBuffer;
-import io.tileverse.parquetry.internal.arrow.buffer.EncodedBuffer.BufferRole;
-import io.tileverse.parquetry.internal.arrow.buffer.EncodedNode;
-import io.tileverse.parquetry.internal.arrow.buffer.NodeEncoding;
+import io.tileverse.parquetry.arrow.columnar.EncodedBatch;
+import io.tileverse.parquetry.arrow.columnar.EncodedBuffer;
+import io.tileverse.parquetry.arrow.columnar.EncodedBuffer.BufferRole;
+import io.tileverse.parquetry.arrow.columnar.EncodedNode;
+import io.tileverse.parquetry.arrow.columnar.NodeEncoding;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
@@ -39,7 +40,7 @@ import io.tileverse.parquetry.schema.ColumnPath;
  * verbatim in Arrow layout. Reading wraps each buffer span as a read-only heap {@link MemorySegment}, rebuilding a
  * batch the vector factories accept without re-copying buffer bytes through any other form.
  */
-public final class EncodedBatchSerializer {
+final class EncodedBatchSerializer {
 
     private static final int ENCODING_PLAIN = 0;
     private static final int ENCODING_FIXED_WIDTH = 1;
@@ -50,7 +51,7 @@ public final class EncodedBatchSerializer {
     }
 
     /** Serializes {@code batch} to a fresh read-only heap segment. */
-    public static MemorySegment serialize(EncodedBatch batch) {
+    static MemorySegment serialize(EncodedBatch batch) {
         ByteArrayOutputStream sink = new ByteArrayOutputStream();
         try (DataOutputStream out = new DataOutputStream(sink)) {
             out.writeInt(batch.rowCount());
@@ -68,7 +69,7 @@ public final class EncodedBatchSerializer {
     }
 
     /** Reads back a batch from a segment produced by {@link #serialize(EncodedBatch)}. */
-    public static EncodedBatch deserialize(MemorySegment segment) {
+    static EncodedBatch deserialize(MemorySegment segment) {
         byte[] bytes = segment.toArray(ValueLayout.JAVA_BYTE);
         try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(bytes))) {
             int rowCount = in.readInt();

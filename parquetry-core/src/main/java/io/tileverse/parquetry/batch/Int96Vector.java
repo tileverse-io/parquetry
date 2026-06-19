@@ -162,6 +162,22 @@ public final class Int96Vector implements ColumnVector {
     }
 
     @Override
+    public Int96Vector toConsolidated() {
+        if (!isDictionary()) {
+            return this;
+        }
+        int rows = size();
+        MemorySegment consolidatedBacking = MemorySegment.ofArray(new byte[Math.multiplyExact(rows, WIDTH)]);
+        for (int row = 0; row < rows; row++) {
+            if (validity.isValid(row)) {
+                MemorySegment entry = dictEntries[indices.get(row)];
+                MemorySegment.copy(entry, 0L, consolidatedBacking, (long) row * WIDTH, WIDTH);
+            }
+        }
+        return Int96Vector.of(consolidatedBacking, validity);
+    }
+
+    @Override
     public long approximateHeapBytes() {
         if (indices != null) {
             return indices.heapBytes() + dictionaryEntryBytes() + validity.heapBytes();

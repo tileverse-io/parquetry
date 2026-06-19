@@ -51,6 +51,7 @@ import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.batch.DoubleVector;
 import io.tileverse.parquetry.batch.FixedLenBinaryVector;
 import io.tileverse.parquetry.batch.FloatVector;
+import io.tileverse.parquetry.batch.IntSequence;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.batch.Validity;
@@ -342,6 +343,37 @@ class RoundTripTypesTest {
             assertThat(vector.get(1)).isEqualTo(200);
             assertThat(vector.isNull(2)).isTrue();
             assertThat(vector.isNull(3)).isTrue();
+        }
+    }
+
+    @Test
+    void roundTripsDictionaryEncodedStringColumn() throws Exception {
+        SchemaNode.Primitive name = leaf(
+                "name", PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.of(new LogicalType.StringType()), 0);
+        ParquetSchema schema = schema(name);
+        MemorySegment red = MemorySegment.ofArray("red".getBytes(StandardCharsets.UTF_8));
+        MemorySegment green = MemorySegment.ofArray("green".getBytes(StandardCharsets.UTF_8));
+        MemorySegment[] dictEntries = {red, green};
+        IntSequence indices = IntSequence.of(new int[] {0, 1, 0, 0});
+        BitSet validBits = new BitSet();
+        validBits.set(0);
+        validBits.set(1);
+        validBits.set(3);
+        Validity validity = Validity.of(validBits, 4);
+        BinaryVector column = BinaryVector.dictionary(dictEntries, indices, validity);
+
+        byte[] ipc = writeSingleColumn(schema, "name", column, 4);
+
+        try (RootAllocator allocator = new RootAllocator();
+                ArrowStreamReader reader = new ArrowStreamReader(new ByteArrayInputStream(ipc), allocator)) {
+            assertThat(reader.loadNextBatch()).isTrue();
+            VectorSchemaRoot root = reader.getVectorSchemaRoot();
+            assertThat(root.getRowCount()).isEqualTo(4);
+            VarCharVector vector = (VarCharVector) root.getVector("name");
+            assertThat(new String(vector.get(0), StandardCharsets.UTF_8)).isEqualTo("red");
+            assertThat(new String(vector.get(1), StandardCharsets.UTF_8)).isEqualTo("green");
+            assertThat(vector.isNull(2)).isTrue();
+            assertThat(new String(vector.get(3), StandardCharsets.UTF_8)).isEqualTo("red");
         }
     }
 }

@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.internal.batch;
+package io.tileverse.parquetry.arrow.columnar;
 
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -26,16 +26,13 @@ import java.util.BitSet;
 
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.arrow.columnar.EncodedBuffer.BufferRole;
 import io.tileverse.parquetry.batch.BinaryVector;
 import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.FixedLenBinaryVector;
 import io.tileverse.parquetry.batch.Int96Vector;
 import io.tileverse.parquetry.batch.IntSequence;
 import io.tileverse.parquetry.batch.Validity;
-import io.tileverse.parquetry.internal.arrow.buffer.ArrowBuffers;
-import io.tileverse.parquetry.internal.arrow.buffer.EncodedBuffer.BufferRole;
-import io.tileverse.parquetry.internal.arrow.buffer.EncodedNode;
-import io.tileverse.parquetry.internal.arrow.buffer.LeafType;
 
 class ArrowBufferCodecBinaryTest {
 
