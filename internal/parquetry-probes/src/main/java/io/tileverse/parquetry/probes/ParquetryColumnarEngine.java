@@ -35,6 +35,7 @@ import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.MapVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.batch.ShreddedVariantVector;
 import io.tileverse.parquetry.batch.StructVector;
 import io.tileverse.parquetry.batch.VariantVector;
 import io.tileverse.parquetry.data.ParquetReader;
@@ -144,6 +145,9 @@ final class ParquetryColumnarEngine implements ColumnarEngine {
                 touchBinaries(variantVector.metadataColumn());
                 touchBinaries(variantVector.valueColumn());
             }
+            case ShreddedVariantVector _ ->
+                throw new UnsupportedOperationException(
+                        "the eager probe path does not produce shredded variant vectors");
             case LevelListVector _, LevelMapVector _ ->
                 throw new IllegalStateException(
                         "the eager probe path never produces level-backed vectors; they belong to the streaming scan");

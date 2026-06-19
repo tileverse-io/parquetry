@@ -42,6 +42,7 @@ import io.tileverse.parquetry.batch.LevelListVector;
 import io.tileverse.parquetry.batch.Levels;
 import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.format.LogicalType;
+import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -338,6 +339,25 @@ class LevelListViewTest {
         }
     }
 
+    // a shredded Variant element (a Variant group with a typed_value child) under a list is rejected: the per-element
+    // level windows here materialize only the unshredded {metadata, value} pair, never the shredded subtree.
+    @Test
+    void shreddedVariantElementUnderListIsRejected() {
+        ParquetSchema schema = listOfShreddedVariantSchema();
+        ColumnPath metadataLeaf = ColumnPath.of("xs", "list", "element", "metadata");
+
+        BinaryVector leaf = BinaryVector.materialized(new MemorySegment[] {utf8("m")}, Validity.allValid(1));
+        assertThatThrownBy(() -> LevelListVector.of(
+                        schema,
+                        ColumnPath.of("xs"),
+                        Map.of(metadataLeaf, leaf),
+                        Map.of(metadataLeaf, leafLevels(new int[] {0}, new int[] {3}, new int[] {0, 1})),
+                        Validity.allValid(1),
+                        1))
+                .isInstanceOf(ParquetFormatException.class)
+                .hasMessageContaining("list or map");
+    }
+
     // heap accounting covers children, validity, and the row-start indexes.
     @Test
     void heapBytesCoversChildrenValidityAndRowStarts() {
@@ -415,6 +435,21 @@ class LevelListViewTest {
         SchemaNode.Group element =
                 new SchemaNode.Group("element", Repetition.OPTIONAL, List.of(v), Optional.empty(), -1);
         SchemaNode.Group middle = repeatedGroup("list", List.of(element));
+        SchemaNode.Group listGroup = listGroup("xs", Repetition.OPTIONAL, List.of(middle));
+        return rootSchema(listGroup);
+    }
+
+    private static ParquetSchema listOfShreddedVariantSchema() {
+        SchemaNode.Primitive metadata = primitive("metadata", Repetition.REQUIRED, PrimitiveKind.BYTE_ARRAY);
+        SchemaNode.Primitive value = primitive("value", Repetition.OPTIONAL, PrimitiveKind.BYTE_ARRAY);
+        SchemaNode.Primitive typedValue = primitive("typed_value", Repetition.OPTIONAL, PrimitiveKind.INT64);
+        SchemaNode.Group variant = new SchemaNode.Group(
+                "element",
+                Repetition.OPTIONAL,
+                List.of(metadata, value, typedValue),
+                Optional.of(new LogicalType.Variant()),
+                -1);
+        SchemaNode.Group middle = repeatedGroup("list", List.of(variant));
         SchemaNode.Group listGroup = listGroup("xs", Repetition.OPTIONAL, List.of(middle));
         return rootSchema(listGroup);
     }

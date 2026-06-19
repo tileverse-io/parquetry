@@ -37,6 +37,7 @@ import io.tileverse.parquetry.batch.LevelMapVector;
 import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.MapVector;
+import io.tileverse.parquetry.batch.ShreddedVariantVector;
 import io.tileverse.parquetry.batch.StructVector;
 import io.tileverse.parquetry.batch.VariantVector;
 import io.tileverse.parquetry.data.UuidConverter;
@@ -464,6 +465,7 @@ public final class DefaultParquetRecord implements ParquetRecord {
             case LevelMapVector map -> LevelMapMaterializer.materializeAt(map, rowIndex);
             case StructVector _ -> new DefaultParquetRecord(cols.structColumns(col), rowIndex);
             case VariantVector variant -> variant.get(rowIndex);
+            case ShreddedVariantVector variant -> variant.get(rowIndex);
         };
     }
 
@@ -489,6 +491,7 @@ public final class DefaultParquetRecord implements ParquetRecord {
             case LevelMapVector _ -> "MAP";
             case StructVector _ -> "STRUCT";
             case VariantVector _ -> "VARIANT";
+            case ShreddedVariantVector _ -> "VARIANT";
         };
     }
 

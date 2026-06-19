@@ -37,7 +37,8 @@ public sealed interface ColumnVector
                 LevelListVector,
                 LevelMapVector,
                 StructVector,
-                VariantVector {
+                VariantVector,
+                ShreddedVariantVector {
 
     /** Logical row count this vector holds. */
     int size();

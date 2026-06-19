@@ -37,9 +37,16 @@ import io.tileverse.parquetry.batch.LevelMapVector;
 import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.MapVector;
+import io.tileverse.parquetry.batch.ShreddedVariantVector;
+import io.tileverse.parquetry.batch.ShreddedVariantVector.ArrayInput;
+import io.tileverse.parquetry.batch.ShreddedVariantVector.ObjectInput;
+import io.tileverse.parquetry.batch.ShreddedVariantVector.ScalarInput;
+import io.tileverse.parquetry.batch.ShreddedVariantVector.TypedInput;
+import io.tileverse.parquetry.batch.ShreddedVariantVector.VariantInput;
 import io.tileverse.parquetry.batch.StructVector;
 import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.batch.VariantVector;
+import io.tileverse.parquetry.data.variant.ShreddedVariant;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -245,7 +252,11 @@ final class DremelAssembler {
         }
     }
 
-    /** Reconstructs an unshredded Variant group from its {@code metadata} and {@code value} binary leaves. */
+    /**
+     * Reconstructs a Variant group. An unshredded group has only {@code metadata} and {@code value} binary leaves; a
+     * shredded group additionally has a {@code typed_value} child whose subtree shreds scalars, object fields, or array
+     * elements into their own leaf vectors.
+     */
     final class Variants {
 
         private static final String METADATA_CHILD = "metadata";
@@ -253,7 +264,14 @@ final class DremelAssembler {
         private static final String TYPED_VALUE_CHILD = "typed_value";
 
         ColumnVector assemble(SchemaNode.Group group, List<String> groupPath, int parentRepLevel, int numSlots) {
-            rejectShredded(group);
+            if (findChild(group, TYPED_VALUE_CHILD) != null) {
+                return assembleShredded(group, groupPath, parentRepLevel, numSlots);
+            }
+            return assembleUnshredded(group, groupPath, parentRepLevel, numSlots);
+        }
+
+        private ColumnVector assembleUnshredded(
+                SchemaNode.Group group, List<String> groupPath, int parentRepLevel, int numSlots) {
             SchemaNode metadataChild = requireChild(group, METADATA_CHILD);
             SchemaNode valueChild = requireChild(group, VALUE_CHILD);
             BinaryVector metadataVec = (BinaryVector)
@@ -264,21 +282,151 @@ final class DremelAssembler {
             return new VariantVector(metadataVec, valueVec, validity, numSlots);
         }
 
-        private void rejectShredded(SchemaNode.Group group) {
-            for (SchemaNode child : group.children()) {
-                if (child.name().equals(TYPED_VALUE_CHILD)) {
-                    throw new ParquetFormatException("shredded variant is not yet supported");
-                }
+        private ColumnVector assembleShredded(
+                SchemaNode.Group group, List<String> groupPath, int parentRepLevel, int numSlots) {
+            SchemaNode metadataChild = requireChild(group, METADATA_CHILD);
+            BinaryVector metadataVec = (BinaryVector)
+                    assembleNode(metadataChild, concat(groupPath, METADATA_CHILD), parentRepLevel, numSlots);
+            BinaryVector valueVec = optionalBinaryChild(group, groupPath, VALUE_CHILD, parentRepLevel, numSlots);
+
+            ShreddedVariant model = ShreddedVariant.classify(group);
+            SchemaNode typedValueChild = requireChild(group, TYPED_VALUE_CHILD);
+            TypedInput typed =
+                    buildTyped(typedValueChild, concat(groupPath, TYPED_VALUE_CHILD), parentRepLevel, numSlots);
+            VariantInput root = new VariantInput(valueVec, typed);
+            Validity validity = structValidity(group, groupPath, numSlots);
+            return new ShreddedVariantVector(metadataVec, model, root, validity, numSlots);
+        }
+
+        private TypedInput buildTyped(SchemaNode typedValueNode, List<String> path, int parentRepLevel, int numSlots) {
+            if (typedValueNode instanceof SchemaNode.Primitive) {
+                return new ScalarInput(assembleNode(typedValueNode, path, parentRepLevel, numSlots));
             }
+            SchemaNode.Group typedGroup = (SchemaNode.Group) typedValueNode;
+            if (isArrayTypedValue(typedGroup)) {
+                return buildArray(typedGroup, path, parentRepLevel, numSlots);
+            }
+            return buildObject(typedGroup, path, parentRepLevel, numSlots);
+        }
+
+        /**
+         * Builds an array typed_value: per-row offsets and presence from the descendant leaf's level streams, plus the
+         * element {@code {value, typed_value}} input compacted to the elements the rows keep. Mirrors {@link Lists} so
+         * the offsets and validity match the list reconstruction the rest of the reader produces.
+         */
+        private ArrayInput buildArray(SchemaNode.Group listGroup, List<String> path, int parentRepLevel, int numSlots) {
+            SchemaNode.Group elementGroup = (SchemaNode.Group) lists.elementNode(listGroup);
+            List<String> elementPath = lists.elementPath(listGroup, path);
+            ColumnPath structureLeaf = findFirstDescendantLeafPath(listGroup, path);
+            if (structureLeaf == null) {
+                return emptyArray(numSlots);
+            }
+            RepeatedLayout layout = computeRepeatedLayout(path, structureLeaf, parentRepLevel, numSlots);
+            int elementRepLevel = repLevel(repeatedChildPath(path));
+            VariantInput rawElement = buildField(elementGroup, elementPath, elementRepLevel, layout.elementCount());
+            VariantInput compactedElement = compactInput(rawElement, layout.keptElementIndices());
+            return new ArrayInput(layout.offsets(), layout.validity(), compactedElement);
+        }
+
+        /**
+         * An array with no present descendant leaf: every row is a present-but-empty array. The offsets are all zero
+         * and the element input holds no slots.
+         */
+        private ArrayInput emptyArray(int numSlots) {
+            int[] offsets = new int[numSlots + 1];
+            VariantInput element = new VariantInput(null, null);
+            return new ArrayInput(offsets, Validity.allValid(numSlots), element);
+        }
+
+        private boolean isArrayTypedValue(SchemaNode.Group typedGroup) {
+            return typedGroup.logicalType().orElse(null) instanceof LogicalType.ListType;
+        }
+
+        private ObjectInput buildObject(
+                SchemaNode.Group typedGroup, List<String> path, int parentRepLevel, int numSlots) {
+            Validity presence = structValidity(typedGroup, path, numSlots);
+            Map<String, VariantInput> fields = new LinkedHashMap<>();
+            for (SchemaNode fieldNode : typedGroup.children()) {
+                SchemaNode.Group fieldGroup = (SchemaNode.Group) fieldNode;
+                VariantInput fieldInput =
+                        buildField(fieldGroup, concat(path, fieldGroup.name()), parentRepLevel, numSlots);
+                fields.put(fieldGroup.name(), fieldInput);
+            }
+            return new ObjectInput(presence, fields);
+        }
+
+        private VariantInput buildField(
+                SchemaNode.Group fieldGroup, List<String> fieldPath, int parentRepLevel, int numSlots) {
+            BinaryVector fieldValue = optionalBinaryChild(fieldGroup, fieldPath, VALUE_CHILD, parentRepLevel, numSlots);
+            SchemaNode typedValueChild = findChild(fieldGroup, TYPED_VALUE_CHILD);
+            TypedInput fieldTyped = typedValueChild == null
+                    ? null
+                    : buildTyped(typedValueChild, concat(fieldPath, TYPED_VALUE_CHILD), parentRepLevel, numSlots);
+            return new VariantInput(fieldValue, fieldTyped);
+        }
+
+        /**
+         * Drops phantom elements from an element input subtree, keeping only the slots {@code keptIndices} retains. The
+         * element's {@code value} leaf and its typed representation are each compacted at the same kept indices; the
+         * recursion mirrors {@link Compaction} so that a nested array re-indexes its offsets and gathers its own kept
+         * child elements.
+         */
+        private VariantInput compactInput(VariantInput input, int[] keptIndices) {
+            BinaryVector value =
+                    input.value() == null ? null : (BinaryVector) Compaction.compact(input.value(), keptIndices);
+            TypedInput typed = compactTyped(input.typed(), keptIndices);
+            return new VariantInput(value, typed);
+        }
+
+        private TypedInput compactTyped(TypedInput typed, int[] keptIndices) {
+            return switch (typed) {
+                case null -> null;
+                case ScalarInput scalar -> new ScalarInput(Compaction.compact(scalar.vector(), keptIndices));
+                case ObjectInput object -> compactObject(object, keptIndices);
+                case ArrayInput array -> compactArray(array, keptIndices);
+            };
+        }
+
+        private ObjectInput compactObject(ObjectInput object, int[] keptIndices) {
+            Validity presence = Compaction.gatherValidity(object.presence(), keptIndices);
+            Map<String, VariantInput> fields = new LinkedHashMap<>();
+            for (Map.Entry<String, VariantInput> field : object.fields().entrySet()) {
+                fields.put(field.getKey(), compactInput(field.getValue(), keptIndices));
+            }
+            return new ObjectInput(presence, fields);
+        }
+
+        private ArrayInput compactArray(ArrayInput array, int[] keptIndices) {
+            Compaction.OffsetGather gather = Compaction.gatherOffsets(array.offsets(), keptIndices);
+            Validity presence = Compaction.gatherValidity(array.presence(), keptIndices);
+            VariantInput element = compactInput(array.element(), gather.childIndices());
+            return new ArrayInput(gather.offsets(), presence, element);
+        }
+
+        private BinaryVector optionalBinaryChild(
+                SchemaNode.Group group, List<String> groupPath, String name, int parentRepLevel, int numSlots) {
+            SchemaNode child = findChild(group, name);
+            if (child == null) {
+                return null;
+            }
+            return (BinaryVector) assembleNode(child, concat(groupPath, name), parentRepLevel, numSlots);
         }
 
         private SchemaNode requireChild(SchemaNode.Group group, String name) {
+            SchemaNode child = findChild(group, name);
+            if (child == null) {
+                throw new ParquetFormatException("variant group is missing required child '" + name + "'");
+            }
+            return child;
+        }
+
+        private SchemaNode findChild(SchemaNode.Group group, String name) {
             for (SchemaNode child : group.children()) {
                 if (child.name().equals(name)) {
                     return child;
                 }
             }
-            throw new ParquetFormatException("variant group is missing required child '" + name + "'");
+            return null;
         }
     }
 
@@ -515,7 +663,7 @@ final class DremelAssembler {
      * {@link ListVector} / {@link MapVector} / {@link StructVector} / {@link VariantVector} children by gathering their
      * per-row state at the kept indices.
      */
-    private static final class Compaction {
+    static final class Compaction {
 
         private Compaction() {}
 
@@ -572,6 +720,9 @@ final class DremelAssembler {
                 case MapVector v -> compactMap(v, keptIndices);
                 case StructVector v -> compactStruct(v, keptIndices);
                 case VariantVector v -> compactVariant(v, keptIndices);
+                case ShreddedVariantVector _ ->
+                    throw new ParquetFormatException(
+                            "reading a shredded Variant nested under a list or map is not supported");
                 case LevelListVector _, LevelMapVector _ ->
                     throw new IllegalStateException("level-backed vectors are never assembly children");
             };
@@ -640,6 +791,19 @@ final class DremelAssembler {
         @SuppressWarnings("java:S6218") // internal gather carrier, never compared by value
         private record ChildGather(int[] offsets, int[] childIndices) {}
 
+        /**
+         * Re-indexes a flat offsets array ({@code length = rows + 1}) to the kept rows, collecting the element indices
+         * each kept row spans into a contiguous list. The companion to {@link #gatherNestedRows} for inputs that hold
+         * their per-row ranges as a plain offsets array rather than a vector.
+         */
+        static OffsetGather gatherOffsets(int[] offsets, int[] keptIndices) {
+            ChildGather gather = gatherNestedRows(row -> offsets[row], row -> offsets[row + 1], keptIndices);
+            return new OffsetGather(gather.offsets(), gather.childIndices());
+        }
+
+        @SuppressWarnings("java:S6218") // internal gather carrier, never compared by value
+        record OffsetGather(int[] offsets, int[] childIndices) {}
+
         // Compaction keeps a value for every kept index, null rows included; the gathered validity preserves the
         // null mask. Read the backing array directly to keep the parked value for kept null rows instead of failing
         // fast.
@@ -697,7 +861,10 @@ final class DremelAssembler {
         }
 
         private static Validity gatherValidity(ColumnVector v, int[] keptIndices) {
-            Validity source = v.validity();
+            return gatherValidity(v.validity(), keptIndices);
+        }
+
+        static Validity gatherValidity(Validity source, int[] keptIndices) {
             BitSet out = new BitSet(keptIndices.length);
             for (int i = 0; i < keptIndices.length; i++) {
                 if (source.isValid(keptIndices[i])) {

@@ -16,7 +16,6 @@
 package io.tileverse.parquetry.internal.read;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.MemorySegment;
 import java.util.BitSet;
@@ -29,12 +28,13 @@ import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.batch.BinaryVector;
 import io.tileverse.parquetry.batch.ColumnVector;
+import io.tileverse.parquetry.batch.LongVector;
+import io.tileverse.parquetry.batch.ShreddedVariantVector;
 import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.batch.VariantVector;
 import io.tileverse.parquetry.data.variant.Variant;
 import io.tileverse.parquetry.data.variant.VariantEncoder;
 import io.tileverse.parquetry.format.LogicalType;
-import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -62,21 +62,24 @@ class VariantAssemblyTest {
     }
 
     @Test
-    void shreddedVariantIsRejected() {
+    void shreddedVariantAssemblesIntoShreddedVector() {
         VariantEncoder.Encoded encoded = singleFieldObject("n", 7);
+        long[] typedValues = {42L};
         Map<ColumnPath, ColumnVector> leafVectors = Map.of(
                 ColumnPath.of("v", "metadata"), oneRow(encoded.metadata()),
-                ColumnPath.of("v", "value"), oneRow(encoded.value()),
-                ColumnPath.of("v", "typed_value"), oneRow(encoded.value()));
+                ColumnPath.of("v", "value"), allNullBinaryRow(),
+                ColumnPath.of("v", "typed_value"),
+                        LongVector.materialized(typedValues, Validity.allValid(typedValues.length)));
 
-        ParquetSchema shreddedSchema = shreddedVariantSchema();
-        Map<ColumnPath, int[]> noRepLevels = Map.of();
-        Map<ColumnPath, int[]> noDefLevels = Map.of();
-        assertThatThrownBy(() ->
-                        NestedVectorAssembler.assembleNested(shreddedSchema, leafVectors, noRepLevels, noDefLevels, 1))
-                .as("shredded variant assembly rejection")
-                .isInstanceOf(ParquetFormatException.class)
-                .hasMessageContaining("shredded");
+        Map<ColumnPath, ColumnVector> assembled =
+                NestedVectorAssembler.assembleNested(shreddedScalarVariantSchema(), leafVectors, Map.of(), Map.of(), 1);
+
+        ColumnVector wrapper = assembled.get(ColumnPath.of("v"));
+        assertThat(wrapper).as("assembled wrapper kind").isInstanceOf(ShreddedVariantVector.class);
+        Variant value = ((ShreddedVariantVector) wrapper).get(0);
+        assertThat(value.getLong())
+                .as("scalar typed_value reconstructed through the shredded wrapper")
+                .isEqualTo(42L);
     }
 
     private static VariantEncoder.Encoded singleFieldObject(String field, int value) {
@@ -93,12 +96,25 @@ class VariantAssemblyTest {
         return BinaryVector.materialized(new MemorySegment[] {bytes}, Validity.of(valid, 1));
     }
 
+    private static BinaryVector allNullBinaryRow() {
+        return BinaryVector.materialized(new MemorySegment[1], Validity.of(new BitSet(1), 1));
+    }
+
     private static ParquetSchema variantSchema() {
         return schemaWith(List.of(binaryLeaf("metadata"), binaryLeaf("value")));
     }
 
-    private static ParquetSchema shreddedVariantSchema() {
-        return schemaWith(List.of(binaryLeaf("metadata"), binaryLeaf("value"), binaryLeaf("typed_value")));
+    private static ParquetSchema shreddedScalarVariantSchema() {
+        return schemaWith(List.of(
+                binaryLeaf("metadata"),
+                optionalBinaryLeaf("value"),
+                new SchemaNode.Primitive(
+                        "typed_value",
+                        Repetition.OPTIONAL,
+                        PrimitiveKind.INT64,
+                        OptionalInt.empty(),
+                        Optional.empty(),
+                        -1)));
     }
 
     private static ParquetSchema schemaWith(List<SchemaNode> variantChildren) {
@@ -111,5 +127,10 @@ class VariantAssemblyTest {
     private static SchemaNode binaryLeaf(String name) {
         return new SchemaNode.Primitive(
                 name, Repetition.REQUIRED, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1);
+    }
+
+    private static SchemaNode optionalBinaryLeaf(String name) {
+        return new SchemaNode.Primitive(
+                name, Repetition.OPTIONAL, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1);
     }
 }

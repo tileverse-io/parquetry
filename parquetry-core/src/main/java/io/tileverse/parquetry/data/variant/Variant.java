@@ -86,6 +86,16 @@ public final class Variant {
         return new Variant(value, metadata);
     }
 
+    /** The canonical serialized form: the metadata bytes followed by the value bytes. */
+    public byte[] serialize() {
+        byte[] metadataBytes = metadata.rawBytes();
+        byte[] valueBytes = value.toArray(JAVA_BYTE);
+        byte[] result = new byte[metadataBytes.length + valueBytes.length];
+        System.arraycopy(metadataBytes, 0, result, 0, metadataBytes.length);
+        System.arraycopy(valueBytes, 0, result, metadataBytes.length, valueBytes.length);
+        return result;
+    }
+
     /**
      * Returns a copy of this value backed by fresh read-only heap segments, decoupled from the batch's page buffer.
      * Both the value bytes and the shared metadata dictionary are copied, letting the result outlive the batch it came

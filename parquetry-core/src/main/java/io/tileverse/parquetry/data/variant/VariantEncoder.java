@@ -32,6 +32,7 @@ import java.util.TreeSet;
 import java.util.UUID;
 
 import io.tileverse.parquetry.data.UuidConverter;
+import io.tileverse.parquetry.format.ParquetFormatException;
 
 /**
  * Builds one Parquet Variant value in memory, then {@link #encode()} serializes it to a metadata dictionary and a value
@@ -94,12 +95,7 @@ public final class VariantEncoder {
      * @throws IllegalStateException if nothing was added, or if an object or array is still open
      */
     public Encoded encode() {
-        if (root == null) {
-            throw new IllegalStateException("nothing was added to encode");
-        }
-        if (!openContainers.isEmpty()) {
-            throw new IllegalStateException("an object or array is still open");
-        }
+        requireCompleteTopLevelValue();
         List<String> dictionary = buildSortedDictionary();
         Map<String, Integer> keyIds = idsByKey(dictionary);
         MemorySegment metadata = encodeMetadata(dictionary);
@@ -107,8 +103,58 @@ public final class VariantEncoder {
         return new Encoded(metadata, value);
     }
 
+    /**
+     * Serializes the built value into a read-only value buffer, resolving object field names against an existing
+     * metadata dictionary rather than building a fresh one. Call once after the top-level value is complete and every
+     * opened object or array has been closed.
+     *
+     * @param metadata the dictionary that already holds every object field name in the built value
+     * @return the read-only value segment the {@link Variant} navigator reads back against {@code metadata}
+     * @throws IllegalStateException if nothing was added, or if an object or array is still open
+     * @throws ParquetFormatException if an object field name is absent from {@code metadata}
+     */
+    public MemorySegment encodeValue(VariantMetadata metadata) {
+        requireCompleteTopLevelValue();
+        Map<String, Integer> keyIds = idsFromMetadata(root, metadata);
+        return encodeValue(root, keyIds);
+    }
+
+    private void requireCompleteTopLevelValue() {
+        if (root == null) {
+            throw new IllegalStateException("nothing was added to encode");
+        }
+        if (!openContainers.isEmpty()) {
+            throw new IllegalStateException("an object or array is still open");
+        }
+    }
+
+    private Map<String, Integer> idsFromMetadata(Node node, VariantMetadata metadata) {
+        TreeSet<String> keys = new TreeSet<>();
+        collectKeys(node, keys);
+        Map<String, Integer> ids = new LinkedHashMap<>();
+        for (String key : keys) {
+            int id = metadata.idOf(key);
+            if (id < 0) {
+                throw new ParquetFormatException("variant field name is absent from the metadata dictionary: " + key);
+            }
+            ids.put(key, id);
+        }
+        return ids;
+    }
+
     public VariantEncoder addNull() {
         return add(new PrimitiveNode(PRIMITIVE_NULL, new byte[0]));
+    }
+
+    /**
+     * Splices a pre-encoded value buffer in verbatim, copying its bytes as the value of the current position. The bytes
+     * are emitted unchanged by {@link #encodeValue(VariantMetadata)} and any field ids they reference must already
+     * resolve against the metadata dictionary passed there.
+     *
+     * @param preEncodedValue a value buffer produced by a prior encode
+     */
+    public VariantEncoder addEncoded(MemorySegment preEncodedValue) {
+        return add(new RawValueNode(preEncodedValue.toArray(ValueLayout.JAVA_BYTE)));
     }
 
     public VariantEncoder addBoolean(boolean value) {
@@ -332,12 +378,20 @@ public final class VariantEncoder {
             writeObject(out, object, keyIds);
             return;
         }
+        if (node instanceof RawValueNode raw) {
+            writeRawValue(out, raw);
+            return;
+        }
         writeArray(out, (ArrayNode) node, keyIds);
     }
 
     private void writePrimitive(ByteArrayOutputStream out, PrimitiveNode primitive) {
         out.write(header(BASIC_TYPE_PRIMITIVE, primitive.typeId()));
         out.writeBytes(primitive.payload());
+    }
+
+    private void writeRawValue(ByteArrayOutputStream out, RawValueNode raw) {
+        out.writeBytes(raw.bytes());
     }
 
     private void writeShortString(ByteArrayOutputStream out, ShortStringNode shortString) {
@@ -422,26 +476,15 @@ public final class VariantEncoder {
     }
 
     private int header(int basicType, int valueHeader) {
-        return (basicType & 0x03) | (valueHeader << 2);
+        return VariantBytes.header(basicType, valueHeader);
     }
 
     private byte[] decimalPayload(int scale, BigInteger unscaled, int unscaledBytes) {
         byte[] payload = new byte[1 + unscaledBytes];
         payload[0] = (byte) scale;
-        byte[] littleEndian = twosComplementLittleEndian(unscaled, unscaledBytes);
+        byte[] littleEndian = VariantBytes.twosComplementLittleEndian(unscaled, unscaledBytes);
         System.arraycopy(littleEndian, 0, payload, 1, unscaledBytes);
         return payload;
-    }
-
-    private byte[] twosComplementLittleEndian(BigInteger value, int width) {
-        byte[] bigEndian = value.toByteArray();
-        byte[] littleEndian = new byte[width];
-        byte signExtension = (value.signum() < 0) ? (byte) 0xFF : (byte) 0x00;
-        for (int i = 0; i < width; i++) {
-            int bigEndianIndex = bigEndian.length - 1 - i;
-            littleEndian[i] = (bigEndianIndex >= 0) ? bigEndian[bigEndianIndex] : signExtension;
-        }
-        return littleEndian;
     }
 
     private byte[] littleEndian(long value, int width) {
@@ -483,7 +526,7 @@ public final class VariantEncoder {
         return MemorySegment.ofArray(bytes).asReadOnly();
     }
 
-    private sealed interface Node permits PrimitiveNode, ShortStringNode, ObjectNode, ArrayNode {}
+    private sealed interface Node permits PrimitiveNode, ShortStringNode, ObjectNode, ArrayNode, RawValueNode {}
 
     private interface Container {}
 
@@ -493,6 +536,9 @@ public final class VariantEncoder {
 
     @SuppressWarnings("java:S6218")
     private record ShortStringNode(byte[] utf8) implements Node {}
+
+    @SuppressWarnings("java:S6218")
+    private record RawValueNode(byte[] bytes) implements Node {}
 
     private static final class ObjectNode implements Node, Container {
         private final Map<String, Node> fields = new LinkedHashMap<>();

@@ -39,6 +39,7 @@ import io.tileverse.parquetry.batch.LevelMapVector;
 import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.MapVector;
+import io.tileverse.parquetry.batch.ShreddedVariantVector;
 import io.tileverse.parquetry.batch.StructVector;
 import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.batch.VariantVector;
@@ -115,6 +116,8 @@ public final class ArrowBufferCodec {
             case StructVector structVector -> encodeStruct(structVector);
             case MapVector mapVector -> encodeMap(mapVector);
             case VariantVector variantVector -> encodeVariant(variantVector);
+            case ShreddedVariantVector _ ->
+                throw new UnsupportedOperationException("shredded variant Arrow encoding is not supported");
             case LevelListVector levelList -> encode(LevelVectorAssembler.toArrowForm(levelList));
             case LevelMapVector levelMap -> encode(LevelVectorAssembler.toArrowForm(levelMap));
         };
