@@ -48,6 +48,15 @@ final class CompactProtocolReader {
         return (raw >>> 1) ^ -(raw & 1);
     }
 
+    /** Reads a Thrift {@code i8}: one raw signed byte (not zigzag-encoded). */
+    public byte readI8() throws IOException {
+        int b = in.read();
+        if (b < 0) {
+            throw new EOFException("EOF reading i8");
+        }
+        return (byte) b;
+    }
+
     public double readDouble() throws IOException {
         byte[] buf = readN(8);
         long bits = (buf[0] & 0xffL)

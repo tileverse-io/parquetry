@@ -322,7 +322,7 @@ final class LogicalTypeDeserializer {
             }
             lastFieldId = fh.fieldId();
             switch (fh.fieldId()) {
-                case 1 -> bitWidth = (byte) r.readI32();
+                case 1 -> bitWidth = r.readI8();
                 case 2 -> isSigned = fh.type() == CompactType.BOOLEAN_TRUE;
                 default -> r.skipField(fh.type());
             }

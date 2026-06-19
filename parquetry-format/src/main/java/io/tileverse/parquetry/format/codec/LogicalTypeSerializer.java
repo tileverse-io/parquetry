@@ -106,9 +106,7 @@ final class LogicalTypeSerializer {
     private static void writeIntType(CompactProtocolWriter w, LogicalType.IntType i) throws IOException {
         w.writeFieldBegin((short) 10, CompactType.STRUCT);
         w.writeStructBegin();
-        // IntType.bitWidth is declared as i8 in parquet.thrift but the deserializer reads it as i32; keep the
-        // serializer symmetric so the wire bytes round-trip identically.
-        w.writeI32Field((short) 1, i.bitWidth());
+        w.writeByteField((short) 1, i.bitWidth());
         w.writeBoolField((short) 2, i.isSigned());
         w.writeFieldStop();
         w.writeStructEnd();
