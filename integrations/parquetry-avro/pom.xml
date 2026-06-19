@@ -3,7 +3,7 @@
   <modelVersion>4.0.0</modelVersion>
   <parent>
     <groupId>io.tileverse.parquetry</groupId>
-    <artifactId>parquetry-parent</artifactId>
+    <artifactId>parquetry-integrations</artifactId>
     <version>${revision}</version>
   </parent>
   <artifactId>parquetry-avro</artifactId>
