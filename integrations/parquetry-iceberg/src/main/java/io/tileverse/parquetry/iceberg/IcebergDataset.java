@@ -19,6 +19,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.stream.Stream;
 
 import com.google.errorprone.annotations.MustBeClosed;
@@ -30,6 +31,10 @@ import io.tileverse.parquetry.dataset.DatasetCapabilities;
 import io.tileverse.parquetry.dataset.DatasetCapabilities.FileStatsSource;
 import io.tileverse.parquetry.dataset.FilesetReader;
 import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.dataset.explain.DatasetExplainPlan;
+import io.tileverse.parquetry.dataset.explain.FileExplain;
+import io.tileverse.parquetry.dataset.explain.Outcome;
+import io.tileverse.parquetry.dataset.explain.Totals;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
@@ -156,15 +161,42 @@ final class IcebergDataset implements Dataset {
     }
 
     @Override
-    public ExplainPlan explain(Predicate predicate, Projection projection, ReadOptions options) {
-        List<Integer> survivors = prune(predicate).survivorIndices();
-        if (survivors.isEmpty()) {
-            // File-level elimination is not representable in the single-file ExplainPlan; multi-file and
-            // elimination-aware explain are future work. Fall back to a structural plan over all files.
-            return openSurvivors(allIndices()).explain(predicate, projection, options);
+    public DatasetExplainPlan explain(Predicate predicate, Projection projection, ReadOptions options) {
+        return buildExplain(predicate, projection, options, false);
+    }
+
+    @Override
+    public DatasetExplainPlan explainAnalyze(Predicate predicate, Projection projection, ReadOptions options) {
+        return buildExplain(predicate, projection, options, true);
+    }
+
+    private DatasetExplainPlan buildExplain(
+            Predicate predicate, Projection projection, ReadOptions options, boolean analyze) {
+        List<FileExplain> files = new ArrayList<>(dataFiles.size());
+        for (int index = 0; index < fileStats.size(); index++) {
+            PruningDecision decision = FilePruner.evaluate(predicate, fileStats.get(index));
+            files.add(fileExplain(index, decision, predicate, projection, options, analyze));
         }
-        ParquetDataset query = openSurvivors(survivors);
-        return query.explain(predicate, projection, options);
+        return new DatasetExplainPlan(predicate, files, Totals.from(files));
+    }
+
+    private FileExplain fileExplain(
+            int index,
+            PruningDecision decision,
+            Predicate predicate,
+            Projection projection,
+            ReadOptions options,
+            boolean analyze) {
+        IcebergManifests.DataFileRef ref = dataFiles.get(index);
+        OptionalLong recordCount = OptionalLong.of(ref.recordCount());
+        if (decision instanceof PruningDecision.Eliminated ruledOut) {
+            return new FileExplain(ref.location(), Outcome.SKIP, ruledOut.reason(), recordCount, Optional.empty());
+        }
+        ParquetDataset survivor = openSurvivors(List.of(index));
+        ExplainPlan plan = analyze
+                ? survivor.explainAnalyze(predicate, projection, options)
+                : survivor.explain(predicate, projection, options);
+        return new FileExplain(ref.location(), Outcome.KEEP, "kept", recordCount, Optional.of(plan));
     }
 
     /** The survivor indices and eliminated files from a single pruning pass over every data file. */
@@ -184,14 +216,6 @@ final class IcebergDataset implements Dataset {
             }
         }
         return new PruningResult(survivorIndices, eliminated);
-    }
-
-    private List<Integer> allIndices() {
-        List<Integer> all = new ArrayList<>(sources.size());
-        for (int index = 0; index < sources.size(); index++) {
-            all.add(index);
-        }
-        return all;
     }
 
     private ParquetDataset openSurvivors(List<Integer> survivorIndices) {
