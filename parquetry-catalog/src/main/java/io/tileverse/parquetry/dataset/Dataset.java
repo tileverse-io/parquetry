@@ -21,9 +21,9 @@ import java.util.stream.Stream;
 import com.google.errorprone.annotations.MustBeClosed;
 
 import io.tileverse.parquetry.data.ReadOptions;
+import io.tileverse.parquetry.dataset.explain.DatasetExplainPlan;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
-import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -53,5 +53,9 @@ public interface Dataset {
 
     long count(Predicate predicate, ReadOptions options);
 
-    ExplainPlan explain(Predicate predicate, Projection projection, ReadOptions options);
+    /** Explains how a query prunes files and how each kept file is read, without executing the read. */
+    DatasetExplainPlan explain(Predicate predicate, Projection projection, ReadOptions options);
+
+    /** Like {@link #explain} but executes the read of each kept file and annotates it with its execution stats. */
+    DatasetExplainPlan explainAnalyze(Predicate predicate, Projection projection, ReadOptions options);
 }

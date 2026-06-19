@@ -15,13 +15,19 @@
  */
 package io.tileverse.parquetry.dataset;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.stream.Stream;
 
 import com.google.errorprone.annotations.MustBeClosed;
 
 import io.tileverse.parquetry.data.ReadOptions;
+import io.tileverse.parquetry.dataset.explain.DatasetExplainPlan;
+import io.tileverse.parquetry.dataset.explain.FileExplain;
+import io.tileverse.parquetry.dataset.explain.Outcome;
+import io.tileverse.parquetry.dataset.explain.Totals;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
@@ -84,7 +90,20 @@ public final class FileSourceDataset implements Dataset {
     }
 
     @Override
-    public ExplainPlan explain(Predicate predicate, Projection projection, ReadOptions options) {
-        return delegate.explain(predicate, projection, options);
+    public DatasetExplainPlan explain(Predicate predicate, Projection projection, ReadOptions options) {
+        ExplainPlan plan = delegate.explain(predicate, projection, options);
+        return single(predicate, plan);
+    }
+
+    @Override
+    public DatasetExplainPlan explainAnalyze(Predicate predicate, Projection projection, ReadOptions options) {
+        ExplainPlan plan = delegate.explainAnalyze(predicate, projection, options);
+        return single(predicate, plan);
+    }
+
+    private DatasetExplainPlan single(Predicate predicate, ExplainPlan plan) {
+        FileExplain file = new FileExplain(name, Outcome.KEEP, "kept", OptionalLong.empty(), Optional.of(plan));
+        List<FileExplain> files = List.of(file);
+        return new DatasetExplainPlan(predicate, files, Totals.from(files));
     }
 }
