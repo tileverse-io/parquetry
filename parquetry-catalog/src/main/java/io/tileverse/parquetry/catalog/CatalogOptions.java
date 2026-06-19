@@ -18,16 +18,11 @@ package io.tileverse.parquetry.catalog;
 import java.util.Objects;
 import java.util.Optional;
 
-/**
- * Catalog construction options: an optional dataset-name override and an optional cap on the hive-partition depth used
- * to group files into datasets. Schema-union controls arrive in later increments without changing the {@code open}
- * signature.
- */
-public record CatalogOptions(Optional<String> datasetName, Optional<Integer> maxHiveDepth) {
+/** Catalog construction options. The only knob is an optional dataset-name override. */
+public record CatalogOptions(Optional<String> datasetName) {
 
     public CatalogOptions {
         Objects.requireNonNull(datasetName, "datasetName");
-        Objects.requireNonNull(maxHiveDepth, "maxHiveDepth");
     }
 
     public static CatalogOptions defaults() {
@@ -40,20 +35,14 @@ public record CatalogOptions(Optional<String> datasetName, Optional<Integer> max
 
     public static final class Builder {
         private Optional<String> datasetName = Optional.empty();
-        private Integer maxHiveDepth;
 
         public Builder datasetName(String name) {
             this.datasetName = Optional.ofNullable(name);
             return this;
         }
 
-        public Builder maxHiveDepth(Integer value) {
-            this.maxHiveDepth = value;
-            return this;
-        }
-
         public CatalogOptions build() {
-            return new CatalogOptions(datasetName, Optional.ofNullable(maxHiveDepth));
+            return new CatalogOptions(datasetName);
         }
     }
 }

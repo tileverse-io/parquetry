@@ -24,7 +24,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 
 import io.tileverse.parquetry.catalog.CatalogOptions;
-import io.tileverse.parquetry.catalog.ParquetDatasetCatalog;
+import io.tileverse.parquetry.catalog.FilesetCatalog;
 import io.tileverse.parquetry.io.LocalFileSource;
 
 /**
@@ -68,10 +68,10 @@ final class NestedFixtures {
     /**
      * Opens {@code file} as a single-dataset catalog named {@code nested}, mirroring how {@code GeoParquetReadIT} opens
      * a GeoParquet file: a {@link LocalFileSource#file(Path) single-file source} passed to
-     * {@link ParquetDatasetCatalog#open(io.tileverse.parquetry.io.FileSource, CatalogOptions)}.
+     * {@link FilesetCatalog#open(io.tileverse.parquetry.io.FileSource, CatalogOptions)}.
      */
-    static ParquetDatasetCatalog openCatalog(Path file) {
-        return ParquetDatasetCatalog.open(
+    static FilesetCatalog openCatalog(Path file) {
+        return FilesetCatalog.open(
                 LocalFileSource.file(file),
                 CatalogOptions.builder().datasetName("nested").build());
     }
@@ -105,7 +105,7 @@ final class NestedFixtures {
         return "[{'locality': 'NYC', 'postcode': '10001'}, {'locality': NULL, 'postcode': '00000'}]";
     }
 
-    private static String sqlPath(Path file) {
+    public static String sqlPath(Path file) {
         return file.toAbsolutePath().toString().replace("'", "''");
     }
 }

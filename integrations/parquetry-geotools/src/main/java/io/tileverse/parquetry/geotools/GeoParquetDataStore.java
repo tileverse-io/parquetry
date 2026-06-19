@@ -25,10 +25,12 @@ import org.geotools.data.store.ContentEntry;
 import org.geotools.data.store.ContentFeatureSource;
 import org.geotools.feature.NameImpl;
 
-import io.tileverse.parquetry.catalog.ParquetDatasetCatalog;
+import io.tileverse.parquetry.catalog.DatasetCatalog;
+import io.tileverse.parquetry.dataset.Dataset;
+import io.tileverse.parquetry.dataset.GeoParquetDataset;
 
 /**
- * Read-only GeoTools DataStore over a parquetry {@link ParquetDatasetCatalog}.
+ * Read-only GeoTools DataStore over a parquetry {@link DatasetCatalog}.
  *
  * <p>Each dataset name in the catalog appears as a type name. The store delegates schema, count, and bounds resolution
  * to {@link GeoParquetFeatureSource}; actual record reading is not implemented in this increment.
@@ -38,14 +40,30 @@ import io.tileverse.parquetry.catalog.ParquetDatasetCatalog;
  */
 public final class GeoParquetDataStore extends ContentDataStore implements AutoCloseable {
 
-    private final ParquetDatasetCatalog catalog;
+    private final DatasetCatalog catalog;
 
     /** Name of the column to use as the feature id, or null to auto-detect a column named {@code "id"}. */
     private volatile String fidColumn;
 
-    /** Creates a store backed by the given catalog. The store takes ownership of the catalog. */
-    public GeoParquetDataStore(ParquetDatasetCatalog catalog) {
+    /**
+     * Creates a store backed by the given catalog. The store takes ownership of the catalog.
+     *
+     * @throws IllegalArgumentException if any dataset in the catalog is not a {@link GeoParquetDataset}; this store is
+     *     GeoParquet-specific and rejects a non-geo catalog at construction rather than at first query
+     */
+    public GeoParquetDataStore(DatasetCatalog catalog) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
+        requireGeoParquetDatasets(catalog);
+    }
+
+    private static void requireGeoParquetDatasets(DatasetCatalog catalog) {
+        for (String name : catalog.datasets()) {
+            Dataset dataset = catalog.dataset(name);
+            if (!(dataset instanceof GeoParquetDataset)) {
+                throw new IllegalArgumentException(
+                        "dataset '" + name + "' is not a GeoParquet dataset; this store requires GeoParquet datasets");
+            }
+        }
     }
 
     /** Sets the column to use as the feature id; null restores auto-detection of a column named {@code "id"}. */
@@ -60,7 +78,7 @@ public final class GeoParquetDataStore extends ContentDataStore implements AutoC
 
     @Override
     protected List<Name> createTypeNames() throws IOException {
-        return catalog.datasetNames().stream()
+        return catalog.datasets().stream()
                 .map(name -> (Name) new NameImpl(getNamespaceURI(), name))
                 .toList();
     }
@@ -71,7 +89,7 @@ public final class GeoParquetDataStore extends ContentDataStore implements AutoC
     }
 
     /** Returns the catalog backing this store. */
-    ParquetDatasetCatalog catalog() {
+    DatasetCatalog catalog() {
         return catalog;
     }
 

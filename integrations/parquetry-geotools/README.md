@@ -82,7 +82,7 @@ form. See the `parquetry-geoserver` module for the provider-driven edit panel.
   a query does not use.
 - **Feature cap** (`canLimit`): `maxFeatures` stops the lazy read early.
 - **Count** (`getCount`): a fully pushable filter counts through
-  `ParquetDataset.count(predicate)` (statistics-based, no record materialization);
+  `GeoParquetDataset.count(predicate)` (statistics-based, no record materialization);
   a query with a residual falls back to iterating.
 
 The pushed predicate is always a sound necessary condition of the full filter,
@@ -114,7 +114,7 @@ GeoTools Query (filter, propertyNames, maxFeatures)
 GeoParquetFeatureSource --QueryTranslator--> (Predicate, residual Filter, Projection)
         |
         v
-ParquetDatasetCatalog -> ParquetDataset.read(predicate, projection, JtsMaterializer)
+FilesetCatalog (a DatasetCatalog) -> GeoParquetDataset.read(predicate, projection, JtsMaterializer)
         |
         v
 Stream<SimpleFeature> -> FilteringFeatureReader(residual) -> ReTypeFeatureReader -> MaxFeatureReader

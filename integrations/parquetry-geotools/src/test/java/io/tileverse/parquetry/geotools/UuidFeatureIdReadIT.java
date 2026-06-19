@@ -37,7 +37,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.catalog.CatalogOptions;
-import io.tileverse.parquetry.catalog.ParquetDatasetCatalog;
+import io.tileverse.parquetry.catalog.FilesetCatalog;
 import io.tileverse.parquetry.io.LocalFileSource;
 
 /**
@@ -63,7 +63,7 @@ class UuidFeatureIdReadIT {
     @Test
     void materializesUuidColumnAndCanonicalFeatureId(@TempDir Path dir) throws Exception {
         Path file = writeUuidGeoParquet(dir.resolve("uuid.parquet"));
-        ParquetDatasetCatalog catalog = ParquetDatasetCatalog.open(
+        FilesetCatalog catalog = FilesetCatalog.open(
                 LocalFileSource.file(file),
                 CatalogOptions.builder().datasetName("uuid").build());
         try (GeoParquetDataStore store = new GeoParquetDataStore(catalog)) {
@@ -138,7 +138,7 @@ class UuidFeatureIdReadIT {
     }
 
     private static GeoParquetDataStore open(Path file) {
-        ParquetDatasetCatalog catalog = ParquetDatasetCatalog.open(
+        FilesetCatalog catalog = FilesetCatalog.open(
                 LocalFileSource.file(file),
                 CatalogOptions.builder().datasetName("uuid").build());
         return new GeoParquetDataStore(catalog);

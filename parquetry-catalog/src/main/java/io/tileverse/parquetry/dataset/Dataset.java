@@ -24,6 +24,7 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.explain.DatasetExplainPlan;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -52,6 +53,15 @@ public interface Dataset {
     <T> Stream<T> read(Predicate predicate, Projection projection, Materializer<T> materializer, ReadOptions options);
 
     long count(Predicate predicate, ReadOptions options);
+
+    /**
+     * The bounding box of the rows matching {@code predicate}, or empty when not cheaply known. The unfiltered case
+     * (predicate reduces to always-true) returns the dataset's aggregated extent; a filtered case may return empty,
+     * leaving the caller to compute it. The default returns empty for datasets without a spatial extent.
+     */
+    default Optional<BoundingBox> bounds(Predicate predicate, ReadOptions options) {
+        return Optional.empty();
+    }
 
     /** Explains how a query prunes files and how each kept file is read, without executing the read. */
     DatasetExplainPlan explain(Predicate predicate, Projection projection, ReadOptions options);

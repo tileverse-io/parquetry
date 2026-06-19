@@ -30,7 +30,7 @@ import org.geotools.feature.simple.SimpleFeatureBuilder;
 import org.locationtech.jts.geom.Geometry;
 
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.dataset.Dataset;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.geo.jts.MemorySegmentWkbReader;
@@ -39,7 +39,7 @@ import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
- * Streams a {@link ParquetDataset} and builds one {@link SimpleFeature} per row.
+ * Streams a {@link Dataset} and builds one {@link SimpleFeature} per row.
  *
  * <p>Each row is the lazy {@link ParquetRecord} view: attributes are pulled by typed accessor as the feature is built,
  * and geometry columns decode in place from the record's WKB with no intermediate map or per-value slice.
@@ -60,7 +60,7 @@ final class GeoParquetFeatureReader implements FeatureReader<SimpleFeatureType, 
             SimpleFeatureType readType,
             List<AttributeMapping> attributes,
             Map<ColumnPath, Integer> geometrySrids,
-            ParquetDataset dataset,
+            Dataset dataset,
             Predicate predicate,
             Projection projection,
             Optional<AttributeMapping> fidAttribute) {

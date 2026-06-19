@@ -38,7 +38,8 @@ import org.junit.jupiter.api.io.TempDir;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.Point;
 
-import io.tileverse.parquetry.catalog.ParquetDatasetCatalog;
+import io.tileverse.parquetry.catalog.FilesetCatalog;
+import io.tileverse.parquetry.dataset.GeoParquetDataset;
 import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.geotools.GeoParquetSchemaMapper.AttributeMapping;
@@ -49,6 +50,7 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.schema.geo.ParquetCrs;
+import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
 class GeoParquetSchemaMapperTest {
@@ -145,8 +147,10 @@ class GeoParquetSchemaMapperTest {
         Path file = TestCorpus.extractFile("geoparquet/examples/example.parquet", dir);
         try (ByteRangeSource src = ByteRangeSource.ofFile(file)) {
             ParquetDataset ds = ParquetDataset.open(src);
+            Optional<GeoParquetMetadata> geo =
+                    Optional.of(GeoParquetMetadata.parse(ds.keyValueMetadata().get("geo")));
             GeoParquetSchemaMapper.Mapping mapping =
-                    GeoParquetSchemaMapper.map("example", null, ds.schema(), ds.keyValueMetadata(), null);
+                    GeoParquetSchemaMapper.map("example", null, ds.schema(), geo, null);
             SimpleFeatureType ft = mapping.featureType();
 
             GeometryDescriptor geom = ft.getGeometryDescriptor();
@@ -223,9 +227,9 @@ class GeoParquetSchemaMapperTest {
     private static GeoParquetSchemaMapper.Mapping mapNestedFixture(Path dir) throws Exception {
         Path file = dir.resolve("nested.parquet");
         NestedFixtures.writeSample(file);
-        try (ParquetDatasetCatalog catalog = NestedFixtures.openCatalog(file)) {
-            ParquetDataset dataset = catalog.dataset("nested");
-            return GeoParquetSchemaMapper.map("nested", null, dataset.schema(), dataset.keyValueMetadata(), null);
+        try (FilesetCatalog catalog = NestedFixtures.openCatalog(file)) {
+            GeoParquetDataset dataset = (GeoParquetDataset) catalog.dataset("nested");
+            return GeoParquetSchemaMapper.map("nested", null, dataset.schema(), dataset.geoMetadata(), null);
         }
     }
 
@@ -244,8 +248,8 @@ class GeoParquetSchemaMapperTest {
                 "geometry_types":[],"covering":{"bbox":{"xmin":["geom_bbox","xmin"],"ymin":["geom_bbox","ymin"],\
                 "xmax":["geom_bbox","xmax"],"ymax":["geom_bbox","ymax"]}}}}}""";
 
-        GeoParquetSchemaMapper.Mapping mapping =
-                GeoParquetSchemaMapper.map("countries", null, schema, Map.of("geo", geoJson), null);
+        GeoParquetSchemaMapper.Mapping mapping = GeoParquetSchemaMapper.map(
+                "countries", null, schema, Optional.of(GeoParquetMetadata.parse(geoJson)), null);
 
         List<String> attributeNames = mapping.featureType().getAttributeDescriptors().stream()
                 .map(descriptor -> descriptor.getLocalName())
@@ -260,7 +264,8 @@ class GeoParquetSchemaMapperTest {
     void resolvesNativeAuthorityCodeCrsToEpsg() throws Exception {
         ParquetSchema schema = schemaWithNativeGeometryCrs(new ParquetCrs.AuthorityCode("EPSG", "3857"));
 
-        GeoParquetSchemaMapper.Mapping mapping = GeoParquetSchemaMapper.map("native", null, schema, Map.of(), null);
+        GeoParquetSchemaMapper.Mapping mapping =
+                GeoParquetSchemaMapper.map("native", null, schema, Optional.empty(), null);
         org.geotools.api.referencing.crs.CoordinateReferenceSystem crs =
                 mapping.featureType().getCoordinateReferenceSystem();
 

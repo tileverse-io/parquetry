@@ -29,8 +29,8 @@ import org.geotools.data.nested.NestedType.StructType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.catalog.ParquetDatasetCatalog;
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.catalog.FilesetCatalog;
+import io.tileverse.parquetry.dataset.Dataset;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
@@ -45,8 +45,8 @@ class NestedTypesTest {
         Path file = dir.resolve("nested.parquet");
         NestedFixtures.writeSample(file);
 
-        try (ParquetDatasetCatalog catalog = NestedFixtures.openCatalog(file)) {
-            ParquetDataset dataset = catalog.dataset("nested");
+        try (FilesetCatalog catalog = NestedFixtures.openCatalog(file)) {
+            Dataset dataset = catalog.dataset("nested");
             List<SchemaNode> top = dataset.schema().root().children();
 
             assertScalarLeavesAreFlat(top);

@@ -18,6 +18,7 @@ package io.tileverse.parquetry.geotools;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Path;
+import java.util.Optional;
 
 import org.geotools.api.feature.simple.SimpleFeatureType;
 import org.geotools.referencing.CRS;
@@ -27,6 +28,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 
 import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
 /**
@@ -58,8 +60,9 @@ class GeoParquetCrsResolutionIT {
         Path file = TestCorpus.extractFile("geoparquet-testing/data/crs/" + fixture, dir);
         try (ByteRangeSource src = ByteRangeSource.ofFile(file)) {
             ParquetDataset ds = ParquetDataset.open(src);
-            GeoParquetSchemaMapper.Mapping mapping =
-                    GeoParquetSchemaMapper.map(fixture, null, ds.schema(), ds.keyValueMetadata(), null);
+            Optional<GeoParquetMetadata> geo =
+                    Optional.of(GeoParquetMetadata.parse(ds.keyValueMetadata().get("geo")));
+            GeoParquetSchemaMapper.Mapping mapping = GeoParquetSchemaMapper.map(fixture, null, ds.schema(), geo, null);
             SimpleFeatureType ft = mapping.featureType();
             org.geotools.api.referencing.crs.CoordinateReferenceSystem crs = ft.getCoordinateReferenceSystem();
 

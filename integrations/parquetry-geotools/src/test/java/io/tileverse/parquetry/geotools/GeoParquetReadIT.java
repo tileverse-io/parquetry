@@ -28,7 +28,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.locationtech.jts.geom.Geometry;
 
 import io.tileverse.parquetry.catalog.CatalogOptions;
-import io.tileverse.parquetry.catalog.ParquetDatasetCatalog;
+import io.tileverse.parquetry.catalog.FilesetCatalog;
 import io.tileverse.parquetry.io.LocalFileSource;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
@@ -37,7 +37,7 @@ class GeoParquetReadIT {
     @Test
     void readsEveryFeatureWithGeometryAndAttributes(@TempDir Path dir) throws Exception {
         Path file = TestCorpus.extractFile("geoparquet/examples/example.parquet", dir);
-        ParquetDatasetCatalog catalog = ParquetDatasetCatalog.open(
+        FilesetCatalog catalog = FilesetCatalog.open(
                 LocalFileSource.file(file),
                 CatalogOptions.builder().datasetName("example").build());
         try (GeoParquetDataStore store = new GeoParquetDataStore(catalog)) {
