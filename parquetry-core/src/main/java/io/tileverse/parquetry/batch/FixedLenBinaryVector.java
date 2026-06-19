@@ -194,6 +194,22 @@ public final class FixedLenBinaryVector implements ColumnVector {
     }
 
     @Override
+    public FixedLenBinaryVector toConsolidated() {
+        if (!isDictionary()) {
+            return this;
+        }
+        int rows = size();
+        MemorySegment consolidatedBacking = MemorySegment.ofArray(new byte[Math.multiplyExact(rows, byteWidth)]);
+        for (int row = 0; row < rows; row++) {
+            if (validity.isValid(row)) {
+                MemorySegment entry = dictEntries[indices.get(row)];
+                MemorySegment.copy(entry, 0L, consolidatedBacking, (long) row * byteWidth, byteWidth);
+            }
+        }
+        return FixedLenBinaryVector.of(consolidatedBacking, byteWidth, validity);
+    }
+
+    @Override
     public long approximateHeapBytes() {
         if (indices != null) {
             return indices.heapBytes() + dictionaryEntryBytes() + validity.heapBytes();

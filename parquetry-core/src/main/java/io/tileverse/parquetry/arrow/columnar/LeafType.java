@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.internal.arrow.buffer;
+package io.tileverse.parquetry.arrow.columnar;
 
 /**
  * Tells the Arrow-buffer codec which {@code ColumnVector} type to rebuild from an {@link EncodedNode}. This is the

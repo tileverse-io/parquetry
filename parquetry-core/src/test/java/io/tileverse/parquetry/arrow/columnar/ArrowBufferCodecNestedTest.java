@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.internal.batch;
+package io.tileverse.parquetry.arrow.columnar;
 
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -36,8 +36,6 @@ import io.tileverse.parquetry.batch.MapVector;
 import io.tileverse.parquetry.batch.StructVector;
 import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.batch.VariantVector;
-import io.tileverse.parquetry.internal.arrow.buffer.EncodedNode;
-import io.tileverse.parquetry.internal.arrow.buffer.LeafType;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 class ArrowBufferCodecNestedTest {

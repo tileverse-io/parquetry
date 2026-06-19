@@ -13,11 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.internal.batch;
+package io.tileverse.parquetry.arrow.columnar;
 
 import java.util.List;
 
-import io.tileverse.parquetry.internal.arrow.buffer.EncodedNode;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**

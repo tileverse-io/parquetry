@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.internal.batch;
+package io.tileverse.parquetry.arrow.columnar;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -28,8 +28,6 @@ import io.tileverse.parquetry.batch.FloatVector;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.Validity;
-import io.tileverse.parquetry.internal.arrow.buffer.EncodedNode;
-import io.tileverse.parquetry.internal.arrow.buffer.LeafType;
 
 class ArrowBufferCodecPrimitivesTest {
 

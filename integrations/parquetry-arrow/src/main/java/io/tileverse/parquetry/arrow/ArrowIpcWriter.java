@@ -19,6 +19,9 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
+import java.nio.channels.Channels;
+import java.nio.channels.WritableByteChannel;
+import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
 
@@ -33,7 +36,11 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 /**
  * Writes an Arrow IPC stream (streaming format) for a sequence of {@link ParquetRecordBatch}: a Schema message, one
  * RecordBatch message per batch, then end-of-stream. The projected schema is validated up front; an unsupported column
- * fails before any byte is written. The caller's {@link OutputStream} is flushed but left open.
+ * fails before any byte is written.
+ *
+ * <p>The {@link OutputStream} overload flushes the stream after writing the complete IPC stream, but does not close it,
+ * ensuring a buffered sink (or a process that exits without flushing) does not drop the trailing bytes. The
+ * {@link WritableByteChannel} overload neither flushes nor closes the channel; the caller owns it.
  */
 public final class ArrowIpcWriter {
 
@@ -44,24 +51,36 @@ public final class ArrowIpcWriter {
             Optional<GeoParquetMetadata> geo,
             Stream<ParquetRecordBatch> batches,
             OutputStream out) {
+        write(projectedSchema, geo, batches, Channels.newChannel(out));
+        try {
+            out.flush();
+        } catch (IOException e) {
+            throw new UncheckedIOException("failed flushing Arrow IPC stream", e);
+        }
+    }
+
+    public static void write(
+            ParquetSchema projectedSchema,
+            Optional<GeoParquetMetadata> geo,
+            Stream<ParquetRecordBatch> batches,
+            WritableByteChannel channel) {
         GeoArrowFields geometry = GeoArrowFields.resolve(projectedSchema, geo);
         validate(projectedSchema);
         try {
             ByteBuffer schemaMessage = ArrowSchemaEncoder.encode(projectedSchema, geometry);
-            IpcFraming.writeMessage(out, schemaMessage, new byte[0]);
-            writeBatches(batches, out);
-            IpcFraming.writeEndOfStream(out);
-            out.flush();
+            IpcFraming.writeMessage(channel, schemaMessage, List.of());
+            writeBatches(batches, channel);
+            IpcFraming.writeEndOfStream(channel);
         } catch (IOException e) {
             throw new UncheckedIOException("failed writing Arrow IPC stream", e);
         }
     }
 
-    private static void writeBatches(Stream<ParquetRecordBatch> batches, OutputStream out) {
+    private static void writeBatches(Stream<ParquetRecordBatch> batches, WritableByteChannel channel) {
         batches.forEach(batch -> {
             try (batch) {
                 ArrowBatchEncoder.Encoded encoded = ArrowBatchEncoder.encode(batch);
-                IpcFraming.writeMessage(out, encoded.metadata(), encoded.body());
+                IpcFraming.writeMessage(channel, encoded.metadata(), encoded.body());
             } catch (IOException e) {
                 throw new UncheckedIOException("failed writing Arrow record batch", e);
             }

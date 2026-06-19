@@ -86,4 +86,13 @@ public sealed interface ColumnVector
         throw new UnsupportedOperationException(
                 getClass().getSimpleName() + " materializes through the materializer rather than get");
     }
+
+    /**
+     * Returns a dictionary-free equivalent of this vector: a dictionary-encoded leaf expands its per-row indexes into a
+     * consolidated backing, every other vector returns itself unchanged. Output formats that do not encode a dictionary
+     * (Arrow IPC) consolidate first; the spill path keeps the dictionary form.
+     */
+    default ColumnVector toConsolidated() {
+        return this;
+    }
 }
