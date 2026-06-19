@@ -15,19 +15,16 @@
  */
 package io.tileverse.parquetry.dataset;
 
-import java.util.List;
-import java.util.Map;
+import java.util.Optional;
 
-import io.tileverse.parquetry.io.FileEntry;
+import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 /**
- * One discovered dataset within a {@link io.tileverse.parquetry.catalog.FileSourceCatalog}: its NCName, the files that
- * belong to it (in listing order), and the partition values shared by those files (empty when not hive-partitioned).
+ * A {@link Dataset} backed by GeoParquet files, adding access to the dataset's aggregated GeoParquet {@code "geo"}
+ * metadata. Backends whose geo is not GeoParquet (Iceberg native geometry) implement plain {@link Dataset} instead.
  */
-public record DatasetUnit(String name, List<FileEntry> files, Map<String, String> partitionValues) {
+public interface GeoParquetDataset extends Dataset {
 
-    public DatasetUnit {
-        files = List.copyOf(files);
-        partitionValues = Map.copyOf(partitionValues);
-    }
+    /** The aggregated GeoParquet metadata across the dataset's files, or empty for a non-geo dataset. */
+    Optional<GeoParquetMetadata> geoMetadata();
 }
