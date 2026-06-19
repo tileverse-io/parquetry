@@ -23,9 +23,10 @@ import java.util.Properties;
 import org.geotools.api.data.DataAccessFactory.Param;
 import org.geotools.api.data.DataStore;
 import org.geotools.api.data.DataStoreFactorySpi;
+import org.geotools.api.data.Parameter;
 
 import io.tileverse.parquetry.catalog.CatalogOptions;
-import io.tileverse.parquetry.catalog.ParquetDatasetCatalog;
+import io.tileverse.parquetry.catalog.FilesetCatalog;
 import io.tileverse.parquetry.io.FileSource;
 import io.tileverse.parquetry.tileverse.ParquetFileSources;
 
@@ -35,7 +36,7 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
     // LEVEL "program" hides this fixed discriminator from the GeoServer store UI, mirroring how JDBC stores hide
     // their "dbtype". The value is supplied from the default and never edited by the user.
     public static final Param FILETYPE = new Param(
-            "filetype", String.class, "Must be 'geoparquet'", true, "geoparquet", Map.of(Param.LEVEL, "program"));
+            "filetype", String.class, "Must be 'geoparquet'", true, "geoparquet", Map.of(Parameter.LEVEL, "program"));
     public static final Param URIP = new Param("uri", String.class, "URI of a GeoParquet file (or directory)", true);
     public static final Param NAMESPACE = new Param("namespace", String.class, "Feature type namespace", false);
     public static final Param FID = new Param(
@@ -85,7 +86,7 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
         Properties storageProps = StorageParams.toProperties(params);
 
         FileSource source = ParquetFileSources.open(base, pattern, storageProps);
-        ParquetDatasetCatalog catalog = ParquetDatasetCatalog.open(source, CatalogOptions.defaults());
+        FilesetCatalog catalog = FilesetCatalog.open(source, CatalogOptions.defaults());
 
         GeoParquetDataStore store = new GeoParquetDataStore(catalog);
         if (namespace != null) {
@@ -117,15 +118,21 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
     /**
      * Returns the glob pattern to use when listing files under the base container.
      *
-     * <p>For a directory URI, the pattern is {@code *.parquet}. For a single-file URI, the file name is wrapped in
-     * brace-expansion syntax (e.g. {@code {example.parquet}}) so that the Storage backend's pattern parser treats it as
-     * a glob rather than as a directory prefix, which would cause it to look for a subdirectory named after the file.
+     * <p>A directory URI matches every {@code .parquet} at any depth (recursive, the Ant/DuckDB convention), letting a
+     * flat directory of part files and a Hive-partitioned tree both resolve as one dataset. The pattern is
+     * {@code **}{@code /*.parquet}: {@code *.parquet} alone would match only the top level (one segment), while the
+     * JDK-misleading {@code **}{@code /} requires at least one directory; {@code **}{@code /*.parquet} matches the
+     * top-level file and the nested one alike.
+     *
+     * <p>For a single-file URI, the file name is wrapped in brace-expansion syntax (e.g. {@code {example.parquet}}) to
+     * make the Storage backend's pattern parser treat it as a glob rather than as a directory prefix, which would cause
+     * it to look for a subdirectory named after the file.
      */
     private static String filePattern(URI uri) {
         String path = uri.getPath();
         boolean isFile = path != null && path.toLowerCase().endsWith(".parquet");
         if (!isFile) {
-            return "*.parquet";
+            return "**/*.parquet";
         }
         String fileName = path.substring(path.lastIndexOf('/') + 1);
         return "{" + fileName + "}";

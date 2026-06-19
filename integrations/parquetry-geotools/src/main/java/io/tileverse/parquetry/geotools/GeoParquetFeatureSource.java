@@ -37,14 +37,15 @@ import org.geotools.data.store.ContentFeatureSource;
 import org.geotools.feature.simple.SimpleFeatureTypeBuilder;
 import org.geotools.geometry.jts.ReferencedEnvelope;
 
-import io.tileverse.parquetry.catalog.ParquetDatasetCatalog;
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.catalog.DatasetCatalog;
+import io.tileverse.parquetry.data.ReadOptions;
+import io.tileverse.parquetry.dataset.Dataset;
+import io.tileverse.parquetry.dataset.GeoParquetDataset;
+import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.format.BoundingBox;
-import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
-import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 /**
- * Read-only feature source over a single dataset from a {@link ParquetDatasetCatalog}.
+ * Read-only feature source over a single dataset from a {@link DatasetCatalog}.
  *
  * <p>Query filtering is pushed down to the read path. The query splits into spatial and attribute filters that
  * translate into a parquetry predicate (with exact geometry tests where the relation supports them), a column
@@ -53,12 +54,12 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
  * {@link GeoParquetFeatureReader} and layers GeoTools decorators that apply the residual filter, retype to the
  * requested attributes, and enforce the feature cap.
  *
- * <p>Unfiltered and fully-pushable counts delegate to {@link ParquetDataset#count()}; unfiltered bounds read the
- * file-level bbox recorded in GeoParquet metadata.
+ * <p>Unfiltered and fully-pushable counts delegate to the dataset's count optimization; unfiltered bounds come from the
+ * dataset's aggregated spatial extent.
  */
 final class GeoParquetFeatureSource extends ContentFeatureSource {
 
-    private final ParquetDatasetCatalog catalog;
+    private final DatasetCatalog catalog;
 
     /**
      * Lazily built on first call; protected by the instance monitor so concurrent schema resolution does not duplicate
@@ -66,13 +67,17 @@ final class GeoParquetFeatureSource extends ContentFeatureSource {
      */
     private GeoParquetSchemaMapper.Mapping mapping;
 
-    GeoParquetFeatureSource(ContentEntry entry, ParquetDatasetCatalog catalog) {
+    GeoParquetFeatureSource(ContentEntry entry, DatasetCatalog catalog) {
         super(entry, Query.ALL);
         this.catalog = catalog;
     }
 
-    private ParquetDataset dataset() {
-        return catalog.dataset(getEntry().getTypeName());
+    private GeoParquetDataset dataset() {
+        Dataset ds = catalog.dataset(getEntry().getTypeName());
+        if (ds instanceof GeoParquetDataset geo) {
+            return geo;
+        }
+        throw new IllegalStateException("dataset '" + ds.name() + "' is not a GeoParquetDataset");
     }
 
     /**
@@ -83,14 +88,14 @@ final class GeoParquetFeatureSource extends ContentFeatureSource {
      */
     synchronized GeoParquetSchemaMapper.Mapping mapping() throws IOException {
         if (mapping == null) {
-            ParquetDataset ds = dataset();
+            GeoParquetDataset ds = dataset();
             String fidColumn = ((GeoParquetDataStore) getDataStore()).fidColumn();
             try {
                 mapping = GeoParquetSchemaMapper.map(
                         getEntry().getTypeName(),
                         getDataStore().getNamespaceURI(),
                         ds.schema(),
-                        ds.keyValueMetadata(),
+                        ds.geoMetadata(),
                         fidColumn);
             } catch (IllegalArgumentException badConfiguration) {
                 throw new IOException(badConfiguration.getMessage(), badConfiguration);
@@ -118,7 +123,7 @@ final class GeoParquetFeatureSource extends ContentFeatureSource {
         if (t.postFilter() != Filter.INCLUDE) {
             return -1;
         }
-        long raw = dataset().count(t.predicate());
+        long raw = dataset().count(t.predicate(), ReadOptions.DEFAULTS);
         // Clamp to Integer.MAX_VALUE; realistic GeoParquet files are smaller.
         int count = raw > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) raw;
         if (!hasOffset(query) && !query.isMaxFeaturesUnlimited()) {
@@ -134,39 +139,21 @@ final class GeoParquetFeatureSource extends ContentFeatureSource {
     }
 
     /**
-     * Returns the file-level bounding box for unfiltered queries from the GeoParquet {@code "geo"} metadata, or
-     * {@code null} when a filter is present or the metadata is absent.
+     * Returns the dataset's aggregated bounding box for unfiltered queries, or {@code null} when a filter is present or
+     * the dataset has no usable spatial extent.
      */
     @Override
     protected ReferencedEnvelope getBoundsInternal(Query query) throws IOException {
         if (!isUnfiltered(query)) {
             return null;
         }
-        Optional<BoundingBox> bbox = primaryGeometryBbox();
+        Optional<BoundingBox> bbox = dataset().bounds(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
         if (bbox.isEmpty()) {
             return null;
         }
         BoundingBox b = bbox.get();
         SimpleFeatureType ft = getSchema();
         return new ReferencedEnvelope(b.xmin(), b.xmax(), b.ymin(), b.ymax(), ft.getCoordinateReferenceSystem());
-    }
-
-    /**
-     * Reads the primary geometry column's bounding box from GeoParquet {@code "geo"} key-value metadata. Returns empty
-     * when the metadata is absent, unparseable, or the column has no bbox.
-     */
-    private Optional<BoundingBox> primaryGeometryBbox() {
-        String geoJson = dataset().keyValueMetadata().get("geo");
-        if (geoJson == null || geoJson.isBlank()) {
-            return Optional.empty();
-        }
-        try {
-            GeoParquetMetadata geo = GeoParquetMetadata.parse(geoJson);
-            GeoColumn primary = geo.columns().get(geo.primaryColumn());
-            return primary == null ? Optional.empty() : primary.bbox();
-        } catch (RuntimeException e) {
-            return Optional.empty();
-        }
     }
 
     /** Returns {@code true} when the query has no filter or an INCLUDE filter. */

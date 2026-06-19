@@ -28,8 +28,11 @@ import org.geotools.data.nested.Struct;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.catalog.ParquetDatasetCatalog;
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.catalog.FilesetCatalog;
+import io.tileverse.parquetry.data.ReadOptions;
+import io.tileverse.parquetry.dataset.Dataset;
+import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.SchemaNode;
@@ -49,10 +52,11 @@ class NestedValuesTest {
         NestedFixtures.writeSample(file);
 
         List<Object> translatedPerRow = new ArrayList<>();
-        try (ParquetDatasetCatalog catalog = NestedFixtures.openCatalog(file)) {
-            ParquetDataset dataset = catalog.dataset("nested");
+        try (FilesetCatalog catalog = NestedFixtures.openCatalog(file)) {
+            Dataset dataset = catalog.dataset("nested");
             NestedType addressesType = addressesType(dataset);
-            try (Stream<ParquetRecord> rows = dataset.read()) {
+            try (Stream<ParquetRecord> rows =
+                    dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 rows.forEachOrdered(
                         row -> translatedPerRow.add(NestedValues.translate(row.get(ADDRESSES), addressesType)));
             }
@@ -102,7 +106,7 @@ class NestedValuesTest {
         }
     }
 
-    private NestedType addressesType(ParquetDataset dataset) {
+    private NestedType addressesType(Dataset dataset) {
         SchemaNode node = dataset.schema().root().children().stream()
                 .filter(child -> child.name().equals("addresses"))
                 .findFirst()

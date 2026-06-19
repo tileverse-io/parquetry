@@ -25,8 +25,11 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.catalog.ParquetDatasetCatalog;
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.catalog.FilesetCatalog;
+import io.tileverse.parquetry.data.ReadOptions;
+import io.tileverse.parquetry.dataset.GeoParquetDataset;
+import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.SchemaNode;
 
@@ -44,30 +47,30 @@ class NestedFixturesTest {
         assertThat(file).exists();
         assertThat(Files.size(file)).isPositive();
 
-        try (ParquetDatasetCatalog catalog = NestedFixtures.openCatalog(file)) {
-            ParquetDataset dataset = catalog.dataset("nested");
+        try (FilesetCatalog catalog = NestedFixtures.openCatalog(file)) {
+            GeoParquetDataset dataset = (GeoParquetDataset) catalog.dataset("nested");
             assertTopLevelColumns(dataset);
             assertGeoMetadataPresent(dataset);
             assertFirstRowReadable(dataset);
         }
     }
 
-    private void assertTopLevelColumns(ParquetDataset dataset) {
+    private void assertTopLevelColumns(GeoParquetDataset dataset) {
         List<String> columns = dataset.schema().root().children().stream()
                 .map(SchemaNode::name)
                 .toList();
         assertThat(columns).containsExactlyInAnyOrder("id", "geometry", "brand", "addresses", "tags");
     }
 
-    private void assertGeoMetadataPresent(ParquetDataset dataset) {
-        assertThat(dataset.keyValueMetadata())
-                .as("DuckDB writes the GeoParquet 'geo' key-value metadata for the geometry column")
-                .containsKey("geo");
-        assertThat(dataset.keyValueMetadata().get("geo")).contains("geometry");
+    private void assertGeoMetadataPresent(GeoParquetDataset dataset) {
+        assertThat(dataset.geoMetadata())
+                .as("DuckDB writes the GeoParquet 'geo' metadata for the geometry column")
+                .isPresent();
+        assertThat(dataset.geoMetadata().orElseThrow().primaryColumn()).isEqualTo("geometry");
     }
 
-    private void assertFirstRowReadable(ParquetDataset dataset) {
-        try (Stream<ParquetRecord> rows = dataset.read()) {
+    private void assertFirstRowReadable(GeoParquetDataset dataset) {
+        try (Stream<ParquetRecord> rows = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
             ParquetRecord first = rows.findFirst().orElseThrow();
             assertThat(first).isNotNull();
         }

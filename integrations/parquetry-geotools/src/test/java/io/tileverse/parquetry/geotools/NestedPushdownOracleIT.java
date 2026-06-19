@@ -35,7 +35,7 @@ import org.geotools.filter.text.ecql.ECQL;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.catalog.ParquetDatasetCatalog;
+import io.tileverse.parquetry.catalog.FilesetCatalog;
 
 /**
  * Cross-checks the GeoTools DataStore's nested-path filter push-down against DuckDB's {@code list_filter} semantics
@@ -62,7 +62,7 @@ class NestedPushdownOracleIT {
     private Set<Integer> dataStoreMatches(Path file, Filter filter) throws Exception {
         Set<Integer> ids = new TreeSet<>();
         Query query = new Query("nested", filter);
-        try (ParquetDatasetCatalog catalog = NestedFixtures.openCatalog(file);
+        try (FilesetCatalog catalog = NestedFixtures.openCatalog(file);
                 GeoParquetDataStore store = new GeoParquetDataStore(catalog)) {
             GeoParquetFeatureSource fs = (GeoParquetFeatureSource) store.getFeatureSource("nested");
             try (FeatureReader<SimpleFeatureType, SimpleFeature> reader = fs.getReader(query)) {

@@ -104,12 +104,12 @@ final class GeoParquetSchemaMapper {
     }
 
     /**
-     * Maps the given schema and key-value metadata to a {@link Mapping}.
+     * Maps the given schema and GeoParquet metadata to a {@link Mapping}.
      *
      * @param typeName local name for the resulting feature type
      * @param namespaceUri optional namespace URI; may be null
      * @param schema the parquet schema from the file footer
-     * @param kvMetadata file-level key-value metadata (used to extract the GeoParquet {@code "geo"} block)
+     * @param geo the dataset's aggregated GeoParquet metadata; empty yields a geometryless feature type
      * @param configuredFidColumn the column to use as the feature id, or null to auto-detect a column named
      *     {@code "id"}
      * @return the completed mapping
@@ -118,9 +118,8 @@ final class GeoParquetSchemaMapper {
             String typeName,
             String namespaceUri,
             ParquetSchema schema,
-            Map<String, String> kvMetadata,
+            Optional<GeoParquetMetadata> geo,
             String configuredFidColumn) {
-        Optional<GeoParquetMetadata> geo = parseGeoMetadata(kvMetadata);
         String primaryGeometryColumn =
                 geo.map(GeoParquetMetadata::primaryColumn).orElse(null);
 
@@ -340,22 +339,6 @@ final class GeoParquetSchemaMapper {
      */
     private static boolean isDefaultGeometry(String attrName, String primaryGeometryColumn, String currentDefault) {
         return attrName.equals(primaryGeometryColumn) || (primaryGeometryColumn == null && currentDefault == null);
-    }
-
-    /**
-     * Parses the GeoParquet {@code "geo"} JSON from the file's key-value metadata. Returns empty when the key is absent
-     * or the JSON is malformed.
-     */
-    private static Optional<GeoParquetMetadata> parseGeoMetadata(Map<String, String> kvMetadata) {
-        String geoJson = kvMetadata.get("geo");
-        if (geoJson == null || geoJson.isBlank()) {
-            return Optional.empty();
-        }
-        try {
-            return Optional.of(GeoParquetMetadata.parse(geoJson));
-        } catch (RuntimeException e) {
-            return Optional.empty();
-        }
     }
 
     /** Returns true when the logical type is a GEOMETRY or GEOGRAPHY annotation (GeoParquet 2.0 native types). */

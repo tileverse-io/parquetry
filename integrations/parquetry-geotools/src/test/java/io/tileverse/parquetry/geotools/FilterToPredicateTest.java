@@ -43,8 +43,8 @@ import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.Point;
 import org.locationtech.jts.geom.Polygon;
 
-import io.tileverse.parquetry.catalog.ParquetDatasetCatalog;
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.catalog.FilesetCatalog;
+import io.tileverse.parquetry.dataset.GeoParquetDataset;
 import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
@@ -353,10 +353,9 @@ class FilterToPredicateTest {
     private static FilterToPredicate nestedTranslator(Path dir) throws Exception {
         Path file = dir.resolve("nested.parquet");
         NestedFixtures.writeSample(file);
-        try (ParquetDatasetCatalog catalog = NestedFixtures.openCatalog(file)) {
-            ParquetDataset dataset = catalog.dataset("nested");
-            Mapping mapping =
-                    GeoParquetSchemaMapper.map("nested", null, dataset.schema(), dataset.keyValueMetadata(), null);
+        try (FilesetCatalog catalog = NestedFixtures.openCatalog(file)) {
+            GeoParquetDataset dataset = (GeoParquetDataset) catalog.dataset("nested");
+            Mapping mapping = GeoParquetSchemaMapper.map("nested", null, dataset.schema(), dataset.geoMetadata(), null);
             CoordinateReferenceSystem crs = mapping.featureType().getCoordinateReferenceSystem();
             ColumnPath physicalLocality = dataset.schema()
                     .resolve(ColumnPath.of("addresses", "locality"))

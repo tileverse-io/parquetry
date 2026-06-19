@@ -38,7 +38,7 @@ import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.Polygon;
 
 import io.tileverse.parquetry.catalog.CatalogOptions;
-import io.tileverse.parquetry.catalog.ParquetDatasetCatalog;
+import io.tileverse.parquetry.catalog.FilesetCatalog;
 import io.tileverse.parquetry.io.LocalFileSource;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
@@ -48,7 +48,7 @@ class GeoParquetPushdownIT {
 
     private static GeoParquetDataStore store(Path dir) throws Exception {
         Path file = TestCorpus.extractFile("geoparquet/examples/example.parquet", dir);
-        ParquetDatasetCatalog catalog = ParquetDatasetCatalog.open(
+        FilesetCatalog catalog = FilesetCatalog.open(
                 LocalFileSource.file(file),
                 CatalogOptions.builder().datasetName("example").build());
         return new GeoParquetDataStore(catalog);

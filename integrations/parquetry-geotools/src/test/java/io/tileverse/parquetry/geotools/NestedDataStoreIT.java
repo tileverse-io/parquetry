@@ -39,7 +39,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.locationtech.jts.geom.Geometry;
 
-import io.tileverse.parquetry.catalog.ParquetDatasetCatalog;
+import io.tileverse.parquetry.catalog.FilesetCatalog;
 import io.tileverse.parquetry.record.ParquetRecord;
 
 /**
@@ -112,7 +112,7 @@ class NestedDataStoreIT {
 
     private Map<Integer, SimpleFeature> readMatchedFeatures(Path file, Query query) throws Exception {
         List<SimpleFeature> features = new ArrayList<>();
-        try (ParquetDatasetCatalog catalog = NestedFixtures.openCatalog(file);
+        try (FilesetCatalog catalog = NestedFixtures.openCatalog(file);
                 GeoParquetDataStore store = new GeoParquetDataStore(catalog)) {
             GeoParquetFeatureSource fs = (GeoParquetFeatureSource) store.getFeatureSource("nested");
             try (FeatureReader<SimpleFeatureType, SimpleFeature> reader = fs.getReader(query)) {

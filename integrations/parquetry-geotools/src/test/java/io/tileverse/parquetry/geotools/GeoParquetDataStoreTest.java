@@ -26,15 +26,15 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.catalog.CatalogOptions;
-import io.tileverse.parquetry.catalog.ParquetDatasetCatalog;
+import io.tileverse.parquetry.catalog.FilesetCatalog;
 import io.tileverse.parquetry.io.LocalFileSource;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
 class GeoParquetDataStoreTest {
 
-    private ParquetDatasetCatalog openExample(Path dir) throws Exception {
+    private FilesetCatalog openExample(Path dir) throws Exception {
         Path file = TestCorpus.extractFile("geoparquet/examples/example.parquet", dir);
-        return ParquetDatasetCatalog.open(
+        return FilesetCatalog.open(
                 LocalFileSource.file(file),
                 CatalogOptions.builder().datasetName("example").build());
     }
