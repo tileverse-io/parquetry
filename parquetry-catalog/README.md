@@ -12,19 +12,17 @@ module's SPI.
 ## Two packages
 
 - **`io.tileverse.parquetry.catalog`** - the connection. `DatasetCatalog` is the SPI; `CatalogCapabilities` describes
-  what the connection can do; `FileSourceCatalog` is the pure-parquet implementation.
+  what the connection can do; `FilesetCatalog` is the pure-parquet implementation.
 - **`io.tileverse.parquetry.dataset`** - the queryable view. `Dataset` is the per-dataset facade;
-  `DatasetCapabilities` describes one dataset; `ParquetDataset` reads 1..N same-schema files as one stream above the
-  core `ParquetReader`.
+  `GeoParquetDataset extends Dataset` adds `geoMetadata()` for GeoParquet-backed datasets; `DatasetCapabilities`
+  describes one dataset; `ParquetDataset` reads 1..N same-schema files as one stream above the core `ParquetReader`.
 
 ## The SPI
 
 ```
 DatasetCatalog  ──datasets()──▶  names
        │
-       └──dataset(name)──▶  Dataset ──read/count/explain──▶  records
-                               │
-                               └──plan(predicate)──▶  FilePlan ──files()──▶  PlannedFile
+       └──dataset(name)──▶  Dataset ──read/count/bounds/explain──▶  records
 ```
 
 ```java
@@ -43,13 +41,22 @@ public interface Dataset {
     Stream<ParquetRecord> read(Predicate predicate, Projection projection, ReadOptions options);
     <T> Stream<T> read(Predicate predicate, Projection projection, Materializer<T> materializer, ReadOptions options);
     long count(Predicate predicate, ReadOptions options);
+    Optional<BoundingBox> bounds(Predicate predicate, ReadOptions options);  // default: empty
     ExplainPlan explain(Predicate predicate, Projection projection, ReadOptions options);
+}
+
+public interface GeoParquetDataset extends Dataset {
+    Optional<GeoParquetMetadata> geoMetadata();    // aggregated "geo" metadata across the files
 }
 ```
 
 The read/count/explain methods mirror the single-file engine; the catalog adds the name, capabilities, the optional
-snapshot, and (later) partition awareness. Every `read(...)` returns a closeable `Stream` - use try-with-resources, or
-the in-flight row-group buffers leak.
+snapshot, and (later) partition awareness. `bounds(predicate, options)` returns the aggregated spatial extent for the
+unfiltered case (the predicate reduces to always-true) and empty for a filtered query for now, leaving the caller to
+compute it; it also returns empty for a dataset without a spatial extent. A GeoParquet-backed dataset implements
+`GeoParquetDataset`, exposing the aggregated `"geo"` metadata via `geoMetadata()`; backends whose geometry is not
+GeoParquet (Iceberg native geometry) implement plain `Dataset`. Every `read(...)` returns a closeable `Stream` - use
+try-with-resources, or the in-flight row-group buffers leak.
 
 ## Capabilities: ask, do not probe
 
@@ -71,40 +78,34 @@ defaults are safe-false, and `require*` guards turn an unsupported request into 
 
 ## Implementations
 
-- **`FileSourceCatalog`** (pure-parquet, in this module) - reads the files of a `FileSource` as one or more datasets.
-  A single file or single-unit listing yields one dataset; a directory of heterogeneous files or hive-partitioned trees
-  yields many. It opens every file eagerly and owns the byte sources; `close()` releases them and the `FileSource`.
-- **`ParquetDatasetCatalog`** (legacy) - resolves a base location to a single named dataset. Still works; new code
-  should prefer `FileSourceCatalog`, which implements the `DatasetCatalog` SPI and resolves one or many datasets.
+- **`FilesetCatalog`** (pure-parquet, in this module) - resolves exactly one merged dataset from a `FileSource`,
+  whether that source is a single file, a glob or directory of same-schema files, or a Hive-partitioned tree. All
+  matched files must agree on schema by equality. It opens every file eagerly and owns the byte sources; `close()`
+  releases them and the `FileSource`.
 - **External backends** implement `DatasetCatalog` directly. The Iceberg backend (`parquetry-iceberg`) resolves a table
   from its metadata, follows the pinned snapshot through the manifests, and prunes data files by their manifest bounds.
 
-## Discovery: how a listing becomes datasets
+## Discovery: how a listing becomes a dataset
 
-`HivePartitionResolver` shapes a flat file listing into named `DatasetUnit`s. The listing (a glob or directory) is only
-the discovery mechanism; how those files group into datasets is configured through `CatalogOptions.maxHiveDepth()`, never
-inferred from the data:
-
-- files with no `key=value` path segments become one dataset each (layer-per-file - a directory of `pois.parquet`,
-  `buildings.parquet`, ...);
-- hive-partitioned trees (`theme=buildings/type=building/...`) group by their partition keys up to `maxHiveDepth` levels;
-- `maxHiveDepth` absent means all levels discriminate; `0` folds every file into one dataset; a negative value is
-  rejected.
-
-Files within one dataset must agree on schema by equality; merge across siblings is never implicit.
+The listing (a glob or directory) is the discovery mechanism: all listed files form one merged dataset and must agree
+on schema by equality. Hive `key=value/...` path segments are a physical-column **pruning** aid, never a dataset
+discriminator: the whole tree is one dataset. `HivePartitionResolver.partitionValues(relativePath)` parses a file's
+`key=value` segments (`theme=buildings/type=building/...`) into an ordered map, and each partition value becomes an
+exact `min == max` file statistic on its column, fed to the engine's `FilePruner` to skip files that cannot match. A
+partition key whose column is absent from the files (a path-only key) is rejected at open with an
+`IllegalStateException`. A file with no `key=value` segments has no partitions.
 
 ## Reading a dataset
 
 ```java
 try (FileSource source = LocalFileSource.directory(dir, "*.parquet");
-        FileSourceCatalog catalog = FileSourceCatalog.open(source, CatalogOptions.defaults())) {
+        FilesetCatalog catalog = FilesetCatalog.open(source, CatalogOptions.defaults())) {
 
-    for (String name : catalog.datasets()) {
-        Dataset dataset = catalog.dataset(name);
-        Predicate where = new Predicate.Gt(ColumnPath.of("population"), new Value.LongVal(10_000));
-        try (Stream<ParquetRecord> rows = dataset.read(where, Projection.ALL, ReadOptions.DEFAULTS)) {
-            rows.forEach(this::handle);
-        }
+    String name = catalog.datasets().get(0);
+    Dataset dataset = catalog.dataset(name);
+    Predicate where = new Predicate.Gt(ColumnPath.of("population"), new Value.LongVal(10_000));
+    try (Stream<ParquetRecord> rows = dataset.read(where, Projection.ALL, ReadOptions.DEFAULTS)) {
+        rows.forEach(this::handle);
     }
 }
 ```
