@@ -336,7 +336,8 @@ public final class ColumnChunkWriter implements AutoCloseable {
                     io.tileverse.parquetry.batch.LevelListVector _,
                     io.tileverse.parquetry.batch.LevelMapVector _,
                     io.tileverse.parquetry.batch.StructVector _,
-                    io.tileverse.parquetry.batch.VariantVector _ ->
+                    io.tileverse.parquetry.batch.VariantVector _,
+                    io.tileverse.parquetry.batch.ShreddedVariantVector _ ->
                 throw new ParquetWriteException(
                         "appendVector: column " + leaf.name() + " uses unsupported vector kind " + vector.getClass());
         }

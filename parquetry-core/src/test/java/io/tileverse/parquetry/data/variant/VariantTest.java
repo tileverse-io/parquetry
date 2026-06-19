@@ -173,4 +173,28 @@ class VariantTest {
             assertThat(array.getElement(1).type()).as("null element").isEqualTo(Variant.Type.NULL);
         }
     }
+
+    @Nested
+    class Serialize {
+
+        @Test
+        void serializeIsMetadataFollowedByValue() {
+            VariantEncoder.Encoded encoded = new VariantEncoder()
+                    .startObject()
+                    .field("n")
+                    .addInt(42)
+                    .endObject()
+                    .encode();
+            VariantMetadata metadata = new VariantMetadata(encoded.metadata());
+            Variant variant = Variant.of(encoded.value(), metadata);
+
+            byte[] metadataBytes = encoded.metadata().toArray(ValueLayout.JAVA_BYTE);
+            byte[] valueBytes = encoded.value().toArray(ValueLayout.JAVA_BYTE);
+            byte[] expected = new byte[metadataBytes.length + valueBytes.length];
+            System.arraycopy(metadataBytes, 0, expected, 0, metadataBytes.length);
+            System.arraycopy(valueBytes, 0, expected, metadataBytes.length, valueBytes.length);
+
+            assertThat(variant.serialize()).as("metadata ++ value").isEqualTo(expected);
+        }
+    }
 }

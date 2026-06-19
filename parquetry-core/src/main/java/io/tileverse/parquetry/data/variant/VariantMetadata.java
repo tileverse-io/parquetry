@@ -55,6 +55,11 @@ public final class VariantMetadata {
         return dictionarySize;
     }
 
+    /** The underlying metadata buffer as a fresh {@code byte[]}. */
+    byte[] rawBytes() {
+        return segment.toArray(ValueLayout.JAVA_BYTE);
+    }
+
     /**
      * Returns a copy of this dictionary backed by a fresh read-only heap segment, decoupled from the batch's page
      * buffer.

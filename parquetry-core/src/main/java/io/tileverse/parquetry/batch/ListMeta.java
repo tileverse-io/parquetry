@@ -237,10 +237,19 @@ public record ListMeta(
         return new ElementMeta.VariantLeaves(presenceDef, metadataLeaf, valueLeaf);
     }
 
+    /**
+     * Rejects a shredded Variant element under a list or map. A shredded Variant is a Variant group that has a
+     * {@code typed_value} child alongside its {@code metadata} and {@code value} leaves; the per-element level windows
+     * this navigation reads materialize only the unshredded {@code {metadata, value}} pair, never the shredded
+     * {@code typed_value} subtree. Top-level and struct-nested shredded Variants are supported through the eager
+     * assembler, which both {@code readBatches} and the streaming row path route Variant groups through; only a Variant
+     * that descends from a repeated (list or map) group reaches this navigation and has no reconstruction here.
+     */
     private static void rejectShredded(SchemaNode.Group group) {
         for (SchemaNode child : group.children()) {
             if (child.name().equals("typed_value")) {
-                throw new ParquetFormatException("shredded variant is not yet supported");
+                throw new ParquetFormatException(
+                        "reading a shredded Variant nested under a list or map is not supported");
             }
         }
     }
