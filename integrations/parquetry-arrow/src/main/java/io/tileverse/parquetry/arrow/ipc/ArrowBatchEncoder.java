@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.arrow;
+package io.tileverse.parquetry.arrow.ipc;
 
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
