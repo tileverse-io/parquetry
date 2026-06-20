@@ -19,7 +19,7 @@ import java.io.OutputStream;
 import java.util.Optional;
 import java.util.stream.Stream;
 
-import io.tileverse.parquetry.arrow.ArrowIpcWriter;
+import io.tileverse.parquetry.arrow.ipc.ArrowIpcWriter;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.ParquetDataset;

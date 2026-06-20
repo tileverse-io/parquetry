@@ -13,17 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.arrow;
+package io.tileverse.parquetry.arrow.ipc;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
+import java.io.OutputStream;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.BitSet;
 import java.util.LinkedHashMap;
@@ -33,12 +36,9 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.stream.Stream;
 
-import org.apache.arrow.c.ArrowArrayStream;
-import org.apache.arrow.c.Data;
-import org.apache.arrow.memory.RootAllocator;
-import org.apache.arrow.vector.ipc.ArrowStreamReader;
-import org.duckdb.DuckDBConnection;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.batch.BinaryVector;
 import io.tileverse.parquetry.batch.ColumnVector;
@@ -54,42 +54,70 @@ import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
- * Proves DuckDB consumes our Arrow IPC streaming output in-memory through the Arrow C Data Interface. The IPC bytes are
- * re-read with the canonical {@link ArrowStreamReader}, exported as an {@link ArrowArrayStream} over the C Data
- * Interface, and registered as a DuckDB virtual table. This path needs neither network access nor a DuckDB extension.
+ * Proves DuckDB reads our Arrow IPC streaming output through its {@code read_arrow} table function. The IPC stream is
+ * written to a temporary {@code .arrows} file via a {@link OutputStream} (not an in-memory buffer) so the check also
+ * exercises the file-backed path that large streams take.
+ *
+ * <p>{@code read_arrow} ships in DuckDB's {@code arrow} community extension, which DuckDB downloads on demand. When the
+ * download is unavailable (offline build), the test aborts via a JUnit assumption rather than failing.
  */
-class DuckDbRegisterArrowStreamIT {
+class DuckDbReadArrowFileIT {
 
     @Test
-    void duckDbConsumesRegisteredArrowStream() throws Exception {
-        byte[] ipc = writeKnownBatch();
+    void duckDbReadsArrowFile(@TempDir Path tempDir) throws Exception {
+        Path arrowFile = tempDir.resolve("interop.arrows");
+        writeKnownBatch(arrowFile);
 
-        try (RootAllocator allocator = new RootAllocator();
-                ArrowStreamReader reader = new ArrowStreamReader(new ByteArrayInputStream(ipc), allocator);
-                ArrowArrayStream stream = ArrowArrayStream.allocateNew(allocator)) {
-            Data.exportArrayStream(allocator, reader, stream);
-            try (DuckDBConnection conn = (DuckDBConnection) DriverManager.getConnection("jdbc:duckdb:")) {
-                conn.registerArrowStream("arrow_data", stream);
-                assertCountAndSum(conn);
-            }
+        try (Connection conn = DriverManager.getConnection("jdbc:duckdb:")) {
+            loadArrowExtensionOrAbort(conn);
+            assertCountAndSum(conn, arrowFile);
+            assertNamesInIdOrder(conn, arrowFile);
         }
     }
 
-    private void assertCountAndSum(DuckDBConnection conn) throws Exception {
+    private void writeKnownBatch(Path arrowFile) throws Exception {
+        ParquetSchema schema = idAndNameSchema();
+        ParquetRecordBatch batch = idAndNameBatch(schema);
+        try (OutputStream out = Files.newOutputStream(arrowFile)) {
+            ArrowIpcWriter.write(schema, Optional.empty(), Stream.of(batch), out);
+        }
+    }
+
+    private void loadArrowExtensionOrAbort(Connection conn) {
+        try (Statement install = conn.createStatement()) {
+            install.execute("INSTALL arrow FROM community");
+            install.execute("LOAD arrow");
+        } catch (SQLException e) {
+            Assumptions.abort("DuckDB 'arrow' community extension unavailable (offline?): " + e.getMessage());
+        }
+    }
+
+    private void assertCountAndSum(Connection conn, Path arrowFile) throws SQLException {
+        String sql = "SELECT count(*) AS n, sum(id) AS s FROM read_arrow('" + sqlPath(arrowFile) + "')";
         try (Statement stmt = conn.createStatement();
-                ResultSet rs = stmt.executeQuery("SELECT count(*) AS n, sum(id) AS s FROM arrow_data")) {
+                ResultSet rs = stmt.executeQuery(sql)) {
             assertThat(rs.next()).isTrue();
             assertThat(rs.getLong("n")).isEqualTo(3L);
             assertThat(rs.getLong("s")).isEqualTo(6L);
         }
     }
 
-    private byte[] writeKnownBatch() {
-        ParquetSchema schema = idAndNameSchema();
-        ParquetRecordBatch batch = idAndNameBatch(schema);
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        ArrowIpcWriter.write(schema, Optional.empty(), Stream.of(batch), out);
-        return out.toByteArray();
+    private void assertNamesInIdOrder(Connection conn, Path arrowFile) throws SQLException {
+        String sql = "SELECT name FROM read_arrow('" + sqlPath(arrowFile) + "') ORDER BY id";
+        try (Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery(sql)) {
+            assertThat(rs.next()).isTrue();
+            assertThat(rs.getString("name")).isEqualTo("alpha");
+            assertThat(rs.next()).isTrue();
+            assertThat(rs.getString("name")).isEqualTo("beta");
+            assertThat(rs.next()).isTrue();
+            assertThat(rs.getString("name")).isEqualTo("gamma");
+            assertThat(rs.next()).isFalse();
+        }
+    }
+
+    private static String sqlPath(Path arrowFile) {
+        return arrowFile.toAbsolutePath().toString().replace("'", "''");
     }
 
     private static ParquetSchema idAndNameSchema() {
