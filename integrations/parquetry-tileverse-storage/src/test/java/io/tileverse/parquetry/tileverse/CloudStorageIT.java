@@ -33,9 +33,9 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.testcontainers.containers.localstack.LocalStackContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.localstack.LocalStackContainer;
 import org.testcontainers.utility.DockerImageName;
 
 import io.tileverse.storage.RangeReader;
@@ -85,9 +85,8 @@ class CloudStorageIT {
 
     @Container
     @SuppressWarnings("resource")
-    static LocalStackContainer localstack = new LocalStackContainer(
-                    DockerImageName.parse("localstack/localstack:3.2.0"))
-            .withServices(LocalStackContainer.Service.S3);
+    static LocalStackContainer localstack =
+            new LocalStackContainer(DockerImageName.parse("localstack/localstack:3.2.0")).withServices("s3");
 
     private static S3Client s3Client;
     private static StaticCredentialsProvider credentials;

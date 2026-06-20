@@ -94,7 +94,7 @@
 
     <junit.version>5.11.3</junit.version>
     <assertj.version>3.26.3</assertj.version>
-    <testcontainers.version>1.21.4</testcontainers.version>
+    <testcontainers.version>2.0.5</testcontainers.version>
     <jts.version>1.20.0</jts.version>
     <jsqlparser.version>5.3</jsqlparser.version>
     <arrow.version>19.0.0</arrow.version>
