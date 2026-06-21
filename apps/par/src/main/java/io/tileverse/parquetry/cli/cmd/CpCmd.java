@@ -19,9 +19,12 @@ import java.net.URI;
 import java.nio.file.Path;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import io.tileverse.parquetry.cli.DstStorageOptions;
@@ -48,6 +51,7 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystems;
 
+import picocli.CommandLine;
 import picocli.CommandLine.ArgGroup;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Mixin;
@@ -79,6 +83,9 @@ public final class CpCmd implements Callable<Integer> {
 
     @ArgGroup(validate = false, heading = DstStorageOptions.HEADING)
     private DstStorageOptions dstStorage = new DstStorageOptions();
+
+    @ArgGroup(exclusive = true, multiplicity = "0..1", heading = "%nRow group sizing:%n")
+    private RowGroupSizing rowGroupSizing;
 
     @Override
     public Integer call() throws Exception {
@@ -139,11 +146,13 @@ public final class CpCmd implements Callable<Integer> {
             String sourceFileName,
             Map<String, String> sourceKeyValue)
             throws Exception {
-        WriteOptions writeOptions = buildWriteOptions(writeSchema, writerTempDir(sourceFileName), sourceKeyValue);
+        WriteOptions.RowGroupSize rowGroupSize = resolveRowGroupSize();
+        WriteOptions writeOptions =
+                buildWriteOptions(writeSchema, writerTempDir(sourceFileName), sourceKeyValue, rowGroupSize);
         long limit = options.limit == null ? Long.MAX_VALUE : options.limit;
         try (UriResolver.OpenSink sink =
                 UriResolver.openForWrite(dst, sourceFileName, overwrite, dstStorage.toProperties())) {
-            writeAndFinalize(dataset, writeSchema, projection, predicate, writeOptions, limit, sink);
+            writeAndFinalize(dataset, writeSchema, projection, predicate, writeOptions, rowGroupSize, limit, sink);
             sink.commit();
         }
     }
@@ -159,11 +168,12 @@ public final class CpCmd implements Callable<Integer> {
             Projections.Resolved projection,
             Predicate predicate,
             WriteOptions writeOptions,
+            WriteOptions.RowGroupSize rowGroupSize,
             long limit,
             UriResolver.OpenSink sink) {
         try (ParquetWriter writer = ParquetWriter.create(sink.out(), writeSchema, writeOptions);
                 Stream<ParquetRecord> rows = dataset.read(predicate, projection.projection(), ReadOptions.DEFAULTS)) {
-            ParquetRecordBatchBuilder appender = writer.appender();
+            ParquetRecordBatchBuilder appender = openAppender(writer, rowGroupSize);
             RecordCopier copier = RecordCopier.forSchema(writeSchema);
             long written = 0;
             Iterator<ParquetRecord> it = rows.iterator();
@@ -188,8 +198,14 @@ public final class CpCmd implements Callable<Integer> {
     }
 
     private static WriteOptions buildWriteOptions(
-            ParquetSchema writeSchema, Path tempDir, Map<String, String> sourceKeyValue) {
+            ParquetSchema writeSchema,
+            Path tempDir,
+            Map<String, String> sourceKeyValue,
+            WriteOptions.RowGroupSize rowGroupSize) {
         WriteOptions.Builder builder = WriteOptions.builder().tempDir(tempDir);
+        if (rowGroupSize != null) {
+            builder.rowGroupSize(rowGroupSize);
+        }
         for (ColumnPath leaf : writeSchema.leafColumns()) {
             SchemaNode node = writeSchema.find(leaf).orElseThrow();
             SchemaNode.Primitive prim = (SchemaNode.Primitive) node;
@@ -200,6 +216,86 @@ public final class CpCmd implements Callable<Integer> {
         forwardOpaqueMetadata(builder, sourceKeyValue);
         collectGeometryColumns(builder, writeSchema, sourceKeyValue);
         return builder.build();
+    }
+
+    /**
+     * Resolves the row-group sizing override from the CLI flags, or {@code null} to keep the writer's adaptive default.
+     */
+    private WriteOptions.RowGroupSize resolveRowGroupSize() {
+        if (rowGroupSizing == null) {
+            return null;
+        }
+        if (rowGroupSizing.rows != null) {
+            return WriteOptions.RowGroupSize.rows(rowGroupSizing.rows);
+        }
+        return WriteOptions.RowGroupSize.bytes(rowGroupSizing.bytes);
+    }
+
+    /**
+     * Picks the appender's batch granularity. A row-count target caps the batch to that target, which lets a small
+     * target seal a row group at exactly the requested count while {@link #MAX_COPY_BATCH_ROWS} keeps a large target
+     * from buffering an unbounded number of rows. Byte targets and the adaptive default use the standard batch size.
+     */
+    private static ParquetRecordBatchBuilder openAppender(
+            ParquetWriter writer, WriteOptions.RowGroupSize rowGroupSize) {
+        if (rowGroupSize instanceof WriteOptions.RowGroupSize.Rows(long rows)) {
+            int batchRows = (int) Math.min(rows, MAX_COPY_BATCH_ROWS);
+            return writer.appender(batchRows);
+        }
+        return writer.appender();
+    }
+
+    private static long parseByteSize(String text) {
+        Matcher matcher = BYTE_SIZE_PATTERN.matcher(text);
+        if (!matcher.matches()) {
+            throw new IllegalArgumentException(
+                    "invalid size '" + text + "'; use a byte count or a value like 256MB (units K, M, G are binary)");
+        }
+        long value = Long.parseLong(matcher.group(1));
+        long multiplier = byteUnitMultiplier(matcher.group(2).toUpperCase(Locale.ROOT));
+        return Math.multiplyExact(value, multiplier);
+    }
+
+    private static long byteUnitMultiplier(String unit) {
+        return switch (unit) {
+            case "", "B" -> 1L;
+            case "K", "KB", "KIB" -> 1024L;
+            case "M", "MB", "MIB" -> 1024L * 1024L;
+            case "G", "GB", "GIB" -> 1024L * 1024L * 1024L;
+            default ->
+                throw new IllegalArgumentException("unsupported size unit '" + unit + "'; use K, M, or G (binary)");
+        };
+    }
+
+    /** Maximum rows the copy appender buffers per batch; also bounds where a row-count target seals a row group. */
+    private static final int MAX_COPY_BATCH_ROWS = 8192;
+
+    private static final Pattern BYTE_SIZE_PATTERN = Pattern.compile("\\s*(\\d+)\\s*([A-Za-z]*)\\s*");
+
+    /** Parses {@code --row-group-bytes} values like {@code 256MB} into an uncompressed byte count. */
+    static final class ByteSizeConverter implements CommandLine.ITypeConverter<Long> {
+        @Override
+        public Long convert(String value) {
+            return parseByteSize(value);
+        }
+    }
+
+    /** Mutually-exclusive row-group sizing overrides; the writer's adaptive byte budget applies when unset. */
+    static final class RowGroupSizing {
+
+        @Option(
+                names = "--row-group-rows",
+                paramLabel = "<n>",
+                description = "Seal each row group after N rows. Overrides the default byte-budget sizing.")
+        Long rows;
+
+        @Option(
+                names = "--row-group-bytes",
+                paramLabel = "<size>",
+                converter = ByteSizeConverter.class,
+                description = "Seal each row group near SIZE of uncompressed data, e.g. 256MB or 268435456. "
+                        + "Overrides the default sizing. Units K, M, G are binary.")
+        Long bytes;
     }
 
     /**
