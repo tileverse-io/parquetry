@@ -70,6 +70,25 @@ final class FileChannelByteSink implements ByteSink {
     }
 
     @Override
+    public void transferFrom(FileChannel src, long srcPosition, long count) {
+        long remaining = count;
+        long pos = srcPosition;
+        try {
+            while (remaining > 0L) {
+                long transferred = src.transferTo(pos, remaining, channel);
+                if (transferred == 0L) {
+                    throw new IOException("FileChannel.transferTo made no progress");
+                }
+                pos += transferred;
+                remaining -= transferred;
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException("transferFrom failed at position " + position, e);
+        }
+        position += count;
+    }
+
+    @Override
     public long position() {
         return position;
     }

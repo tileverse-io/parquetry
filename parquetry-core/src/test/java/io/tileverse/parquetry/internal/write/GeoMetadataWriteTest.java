@@ -36,7 +36,6 @@ import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.GeoParquetMetadataMode;
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
-import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.KeyValue;
 import io.tileverse.parquetry.format.LogicalType;
@@ -73,8 +72,9 @@ class GeoMetadataWriteTest {
         Path file = tempDir.resolve("dual.parquet");
         byte[] wkb = wkbPoint(1.0, 2.0);
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            writer.write(
-                    WriteRow.of(Map.of(ColumnPath.of("geometry"), MemorySegment.ofArray(wkb), ColumnPath.of("id"), 1)));
+            writer.writeBatch(WriteFixtures.batch(
+                    schema,
+                    List.of(Map.of(ColumnPath.of("geometry"), MemorySegment.ofArray(wkb), ColumnPath.of("id"), 1))));
         }
 
         FileMetaData footer = readFooter(file);
@@ -142,11 +142,11 @@ class GeoMetadataWriteTest {
         Path file = tempDir.resolve("multi-geo.parquet");
         byte[] geometryWkb = wkbPoint(10.0, 20.0);
         byte[] centroidWkb = wkbPoint(15.0, 25.0);
+        Map<ColumnPath, Object> values = new HashMap<>();
+        values.put(ColumnPath.of("geometry"), MemorySegment.ofArray(geometryWkb));
+        values.put(ColumnPath.of("centroid"), MemorySegment.ofArray(centroidWkb));
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            Map<ColumnPath, Object> values = new HashMap<>();
-            values.put(ColumnPath.of("geometry"), MemorySegment.ofArray(geometryWkb));
-            values.put(ColumnPath.of("centroid"), MemorySegment.ofArray(centroidWkb));
-            writer.write(values::get);
+            writer.writeBatch(WriteFixtures.batch(schema, List.of(values)));
         }
 
         FileMetaData footer = readFooter(file);
@@ -171,11 +171,11 @@ class GeoMetadataWriteTest {
                 .rowGroupSize(RowGroupSize.rows(2))
                 .build();
         Path file = tempDir.resolve("bbox-union.parquet");
+        // Two batches of two rows each land in two row groups under the rows(2) policy, exercising the
+        // per-row-group bbox union in the emitted GeoParquet JSON.
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            writer.write(geometryRow(0.0, 0.0));
-            writer.write(geometryRow(1.0, 1.0));
-            writer.write(geometryRow(-5.0, -3.0));
-            writer.write(geometryRow(4.0, 6.0));
+            writer.writeBatch(WriteFixtures.batch(schema, List.of(geometryRow(0.0, 0.0), geometryRow(1.0, 1.0))));
+            writer.writeBatch(WriteFixtures.batch(schema, List.of(geometryRow(-5.0, -3.0), geometryRow(4.0, 6.0))));
         }
 
         FileMetaData footer = readFooter(file);
@@ -217,15 +217,14 @@ class GeoMetadataWriteTest {
 
     private static void writePointFile(Path file, ParquetSchema schema, WriteOptions options, double x, double y)
             throws Exception {
-        byte[] wkb = wkbPoint(x, y);
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            writer.write(WriteRow.of(Map.of(ColumnPath.of("geometry"), MemorySegment.ofArray(wkb))));
+            writer.writeBatch(WriteFixtures.batch(schema, List.of(geometryRow(x, y))));
         }
     }
 
-    private static WriteRow geometryRow(double x, double y) {
+    private static Map<ColumnPath, Object> geometryRow(double x, double y) {
         byte[] wkb = wkbPoint(x, y);
-        return WriteRow.of(Map.of(ColumnPath.of("geometry"), MemorySegment.ofArray(wkb)));
+        return Map.of(ColumnPath.of("geometry"), MemorySegment.ofArray(wkb));
     }
 
     private static FileMetaData readFooter(Path file) {

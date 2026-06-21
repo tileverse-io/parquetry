@@ -15,7 +15,10 @@
  */
 package io.tileverse.parquetry.io;
 
+import java.io.IOException;
+import java.io.OutputStream;
 import java.io.UncheckedIOException;
+import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
@@ -33,6 +36,23 @@ public interface ByteSink extends AutoCloseable {
 
     /** Total bytes appended so far; equals the final byte length once {@link #close()} runs. */
     long position();
+
+    /**
+     * Appends {@code count} bytes from {@code src} starting at {@code srcPosition} to the end of this sink. The default
+     * memory-maps the source region and appends it; {@link #position()} advances by {@code count}. File-backed sinks
+     * override this to perform a zero-copy channel-to-channel transfer instead.
+     */
+    default void transferFrom(FileChannel src, long srcPosition, long count) {
+        if (count == 0L) {
+            return;
+        }
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment region = src.map(FileChannel.MapMode.READ_ONLY, srcPosition, count, arena);
+            write(region);
+        } catch (IOException e) {
+            throw new UncheckedIOException("transferFrom failed", e);
+        }
+    }
 
     /** Narrowed: no checked exception (matches parquetry's RuntimeException-only public API). */
     @Override
@@ -54,5 +74,14 @@ public interface ByteSink extends AutoCloseable {
      */
     static ByteSink ofChannel(FileChannel channel) {
         return FileChannelByteSink.borrowing(Objects.requireNonNull(channel, "channel"));
+    }
+
+    /**
+     * Wraps an {@link OutputStream} and OWNS it; {@link #close()} closes the stream, which commits an object-storage
+     * upload whose backing stream commits on close. This is the write counterpart used when the destination is an
+     * {@link OutputStream}, whether a local file stream or a tileverse-storage object stream.
+     */
+    static ByteSink ofOutputStream(OutputStream out) {
+        return new OutputStreamByteSink(Objects.requireNonNull(out, "out"));
     }
 }

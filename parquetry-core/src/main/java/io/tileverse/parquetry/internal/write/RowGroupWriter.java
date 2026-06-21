@@ -16,9 +16,8 @@
 package io.tileverse.parquetry.internal.write;
 
 import java.io.IOException;
-import java.lang.foreign.MemorySegment;
+import java.io.UncheckedIOException;
 import java.nio.channels.FileChannel;
-import java.nio.channels.WritableByteChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -28,20 +27,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
-import java.util.UUID;
 
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.data.Compression;
 import io.tileverse.parquetry.data.ParquetWriteException;
-import io.tileverse.parquetry.data.UuidConverter;
 import io.tileverse.parquetry.data.WriteOptions;
-import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.PageLocation;
 import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.RowGroup;
+import io.tileverse.parquetry.io.ByteSink;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -63,10 +60,10 @@ import lombok.NonNull;
  * the dataset-level benchmark says otherwise. The per-column writers themselves are still single-threaded and
  * independently owned: a future move to parallel consolidation is a local change at this layer.
  *
- * <p>The writer copies each column's temp file straight into the supplied {@link WritableByteChannel} and rewrites
- * every {@link OffsetIndex} entry to absolute file offsets in the process. Bloom filter blobs and column / offset
- * indexes are returned in the {@link RowGroupFlushResult}; the dataset-level writer is responsible for placing them in
- * the file between row groups and the footer.
+ * <p>The writer copies each column's temp file straight into the supplied {@link ByteSink} and rewrites every
+ * {@link OffsetIndex} entry to absolute file offsets in the process. Bloom filter blobs and column / offset indexes are
+ * returned in the {@link RowGroupFlushResult}; the dataset-level writer is responsible for placing them in the file
+ * between row groups and the footer.
  */
 public final class RowGroupWriter implements AutoCloseable {
 
@@ -81,7 +78,7 @@ public final class RowGroupWriter implements AutoCloseable {
     private boolean flushed;
     private boolean closed;
 
-    public RowGroupWriter(WriteOptions options, ParquetSchema schema, Path tempDir) throws IOException {
+    public RowGroupWriter(WriteOptions options, ParquetSchema schema, Path tempDir) {
         this(options, schema, tempDir, 0L);
     }
 
@@ -91,8 +88,7 @@ public final class RowGroupWriter implements AutoCloseable {
      * {@link ColumnMetaData} and {@link OffsetIndex} entry match the file's true byte layout.
      */
     public RowGroupWriter(
-            @NonNull WriteOptions options, @NonNull ParquetSchema schema, @NonNull Path tempDir, long baseFileOffset)
-            throws IOException {
+            @NonNull WriteOptions options, @NonNull ParquetSchema schema, @NonNull Path tempDir, long baseFileOffset) {
         if (baseFileOffset < 0L) {
             throw new IllegalArgumentException("baseFileOffset must be non-negative: " + baseFileOffset);
         }
@@ -100,32 +96,25 @@ public final class RowGroupWriter implements AutoCloseable {
         this.tempDir = tempDir;
         this.currentFileOffset = baseFileOffset;
 
-        Files.createDirectories(tempDir);
+        createTempDir(tempDir);
 
         this.leaves = openLeafBindings(options, schema, tempDir);
         this.leafByPath = indexByPath(leaves);
     }
 
-    /**
-     * Appends one row by pulling each leaf's value out of {@code row} and dispatching it to the matching
-     * {@link ColumnChunkWriter}. Required columns must carry a non-null value; optional columns may return {@code null}
-     * from {@link WriteRow#value(ColumnPath)} to record an absent leaf.
-     */
-    public void append(@NonNull WriteRow row) {
-        if (flushed) {
-            throw new ParquetWriteException("Cannot append after flushTo on RowGroupWriter");
+    private static void createTempDir(Path tempDir) {
+        try {
+            Files.createDirectories(tempDir);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to create row-group temp directory " + tempDir, e);
         }
-        for (LeafBinding binding : leaves) {
-            appendOne(binding, row.value(binding.path));
-        }
-        rowCount++;
     }
 
     /**
      * Appends one whole batch of rows by walking each column vector cell by cell and dispatching to the matching typed
      * {@link ColumnChunkWriter} method. Nulls go through {@link ColumnChunkWriter#appendNull}; non-nulls go through the
-     * primitive-kind-specialised {@code appendXxx} so the dictionary attempt, statistics, and bloom filter stay in sync
-     * with the per-row write path.
+     * primitive-kind-specialised {@code appendXxx}, keeping the dictionary attempt, statistics, and bloom filter in
+     * sync.
      */
     public void appendBatch(@NonNull ParquetRecordBatch batch) {
         if (flushed) {
@@ -153,7 +142,7 @@ public final class RowGroupWriter implements AutoCloseable {
      * <p>Throws {@link ParquetWriteException} when called on a row group that received no appends: Parquet readers
      * reject empty row groups, and silently skipping the flush would lose the writer state.
      */
-    public RowGroupFlushResult flushTo(@NonNull WritableByteChannel out) throws IOException {
+    public RowGroupFlushResult flushTo(@NonNull ByteSink out) {
         if (flushed) {
             throw new ParquetWriteException("flushTo already called on RowGroupWriter");
         }
@@ -171,7 +160,7 @@ public final class RowGroupWriter implements AutoCloseable {
         long dictionaryBytes = 0L;
 
         for (LeafBinding binding : leaves) {
-            ColumnChunkResult result = binding.writer.finishChunk();
+            ColumnChunkResult result = finishChunk(binding);
             long absoluteFirstDataPageOffset = currentFileOffset + result.firstDataPageOffset();
             long absoluteDictionaryPageOffset =
                     result.dictionaryPageOffset() < 0L ? -1L : currentFileOffset + result.dictionaryPageOffset();
@@ -216,8 +205,16 @@ public final class RowGroupWriter implements AutoCloseable {
         return new RowGroupFlushResult(rowGroup, totalCompressed, dictionaryBytes, artifacts);
     }
 
+    private static ColumnChunkResult finishChunk(LeafBinding binding) {
+        try {
+            return binding.writer.finishChunk();
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to finish column chunk " + binding.path.dot(), e);
+        }
+    }
+
     @Override
-    public void close() throws IOException {
+    public void close() {
         if (closed) {
             return;
         }
@@ -225,11 +222,11 @@ public final class RowGroupWriter implements AutoCloseable {
         if (flushed) {
             return;
         }
-        IOException firstFailure = null;
+        RuntimeException firstFailure = null;
         for (LeafBinding binding : leaves) {
             try {
                 discardUnflushedWriter(binding);
-            } catch (IOException e) {
+            } catch (RuntimeException e) {
                 if (firstFailure == null) {
                     firstFailure = e;
                 } else {
@@ -239,32 +236,6 @@ public final class RowGroupWriter implements AutoCloseable {
         }
         if (firstFailure != null) {
             throw firstFailure;
-        }
-    }
-
-    /** Schema-driven dispatch from a boxed value to the matching typed {@code appendXxx} on the column writer. */
-    private void appendOne(LeafBinding binding, Object value) {
-        ColumnChunkWriter writer = binding.writer;
-        SchemaNode.Primitive leaf = binding.leaf;
-        if (value == null) {
-            if (leaf.repetition() == Repetition.REQUIRED) {
-                throw new ParquetWriteException("Null value for required column " + leaf.name());
-            }
-            writer.appendNull(0, 0);
-            return;
-        }
-        int defLevel = leaf.repetition() == Repetition.REQUIRED ? 0 : 1;
-        switch (leaf.kind()) {
-            case INT32 -> writer.appendInt(asInt(value, leaf), 0, defLevel);
-            case INT64 -> writer.appendLong(asLong(value, leaf), 0, defLevel);
-            case FLOAT -> writer.appendFloat(asFloat(value, leaf), 0, defLevel);
-            case DOUBLE -> writer.appendDouble(asDouble(value, leaf), 0, defLevel);
-            case BOOLEAN -> writer.appendBoolean(asBoolean(value, leaf), 0, defLevel);
-            case BYTE_ARRAY -> writer.appendBinary(asReadOnlySegment(value, leaf), 0, defLevel);
-            case FIXED_LEN_BYTE_ARRAY -> writer.appendFixedLenBinary(asReadOnlySegment(value, leaf), 0, defLevel);
-            case INT96 ->
-                throw new ParquetWriteException(
-                        "INT96 columns require typed appendInt96 on the column writer; not supported via WriteRow");
         }
     }
 
@@ -299,32 +270,25 @@ public final class RowGroupWriter implements AutoCloseable {
         return segments;
     }
 
-    private void copyTempFileTo(Path tempFile, WritableByteChannel out, long expectedBytes) throws IOException {
+    private void copyTempFileTo(Path tempFile, ByteSink out, long expectedBytes) {
         try (FileChannel in = FileChannel.open(tempFile, StandardOpenOption.READ)) {
             long actual = in.size();
             if (actual != expectedBytes) {
                 throw new ParquetWriteException("Temp file " + tempFile + " size " + actual + " does not match "
                         + "ColumnChunkResult.compressedBytes " + expectedBytes);
             }
-            transferAll(in, out, expectedBytes);
+            out.transferFrom(in, 0L, expectedBytes);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to copy temp file " + tempFile + " into the sink", e);
         }
     }
 
-    private static void transferAll(FileChannel src, WritableByteChannel dst, long expectedBytes) throws IOException {
-        long position = 0L;
-        long remaining = expectedBytes;
-        while (remaining > 0L) {
-            long transferred = src.transferTo(position, remaining, dst);
-            if (transferred == 0L) {
-                throw new IOException("FileChannel.transferTo made no progress");
-            }
-            position += transferred;
-            remaining -= transferred;
+    private void deleteTempFile(Path tempFile) {
+        try {
+            Files.deleteIfExists(tempFile);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to delete temp file " + tempFile, e);
         }
-    }
-
-    private void deleteTempFile(Path tempFile) throws IOException {
-        Files.deleteIfExists(tempFile);
     }
 
     private OffsetIndex rebaseOffsetIndex(OffsetIndex offsetIndex, long base) {
@@ -338,18 +302,19 @@ public final class RowGroupWriter implements AutoCloseable {
         return new OffsetIndex(shifted, offsetIndex.unencodedByteArrayDataBytes());
     }
 
-    private void discardUnflushedWriter(LeafBinding binding) throws IOException {
+    private void discardUnflushedWriter(LeafBinding binding) {
         try {
             binding.writer.close();
         } catch (ParquetWriteException _) {
-            /* writer carried pending values; the explicit close throws but we still want temp-file cleanup */
+            /* writer held pending values; the explicit close throws but we still want temp-file cleanup */
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to close column writer for " + binding.path.dot(), e);
         } finally {
-            Files.deleteIfExists(binding.tempFile);
+            deleteTempFile(binding.tempFile);
         }
     }
 
-    private static List<LeafBinding> openLeafBindings(WriteOptions options, ParquetSchema schema, Path tempDir)
-            throws IOException {
+    private static List<LeafBinding> openLeafBindings(WriteOptions options, ParquetSchema schema, Path tempDir) {
         List<ColumnPath> leafPaths = schema.leafColumns();
         List<LeafBinding> bindings = new ArrayList<>(leafPaths.size());
         for (ColumnPath path : leafPaths) {
@@ -360,12 +325,21 @@ public final class RowGroupWriter implements AutoCloseable {
                 throw new ParquetWriteException("Schema field " + path.dot() + " is a group, not a primitive leaf");
             }
             rejectRepeatedLeaf(path, leaf);
+            bindings.add(openLeafBinding(options, tempDir, path, leaf));
+        }
+        return bindings;
+    }
+
+    private static LeafBinding openLeafBinding(
+            WriteOptions options, Path tempDir, ColumnPath path, SchemaNode.Primitive leaf) {
+        try {
             Path tempFile = Files.createTempFile(tempDir, "rgw-" + safeFileName(path) + "-", ".tmp");
             ColumnChunkWriter writer = new ColumnChunkWriter(options, leaf, tempFile);
             Compression compression = resolveCompression(options, leaf.name());
-            bindings.add(new LeafBinding(path, leaf, writer, tempFile, compression));
+            return new LeafBinding(path, leaf, writer, tempFile, compression);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to open column writer for " + path.dot(), e);
         }
-        return bindings;
     }
 
     private static void rejectRepeatedLeaf(ColumnPath path, SchemaNode.Primitive leaf) {
@@ -406,73 +380,6 @@ public final class RowGroupWriter implements AutoCloseable {
             case BYTE_ARRAY -> PhysicalType.BYTE_ARRAY;
             case FIXED_LEN_BYTE_ARRAY -> PhysicalType.FIXED_LEN_BYTE_ARRAY;
         };
-    }
-
-    private static int asInt(Object value, SchemaNode.Primitive leaf) {
-        if (value instanceof Integer i) {
-            return i;
-        }
-        throw typeMismatch(leaf, value, "Integer");
-    }
-
-    private static long asLong(Object value, SchemaNode.Primitive leaf) {
-        if (value instanceof Long l) {
-            return l;
-        }
-        if (value instanceof Integer i) {
-            return i.longValue();
-        }
-        throw typeMismatch(leaf, value, "Long");
-    }
-
-    private static float asFloat(Object value, SchemaNode.Primitive leaf) {
-        if (value instanceof Float f) {
-            return f;
-        }
-        throw typeMismatch(leaf, value, "Float");
-    }
-
-    private static double asDouble(Object value, SchemaNode.Primitive leaf) {
-        if (value instanceof Double d) {
-            return d;
-        }
-        if (value instanceof Float f) {
-            return f.doubleValue();
-        }
-        throw typeMismatch(leaf, value, "Double");
-    }
-
-    private static boolean asBoolean(Object value, SchemaNode.Primitive leaf) {
-        if (value instanceof Boolean b) {
-            return b;
-        }
-        throw typeMismatch(leaf, value, "Boolean");
-    }
-
-    private static MemorySegment asReadOnlySegment(Object value, SchemaNode.Primitive leaf) {
-        if (value instanceof MemorySegment segment) {
-            return segment.isReadOnly() ? segment : segment.asReadOnly();
-        }
-        if (value instanceof byte[] bytes) {
-            return MemorySegment.ofArray(bytes).asReadOnly();
-        }
-        if (value instanceof java.nio.ByteBuffer buffer) {
-            byte[] copy = new byte[buffer.remaining()];
-            buffer.duplicate().get(copy);
-            return MemorySegment.ofArray(copy).asReadOnly();
-        }
-        if (value instanceof UUID uuid) {
-            if (leaf.kind() != PrimitiveKind.FIXED_LEN_BYTE_ARRAY) {
-                throw typeMismatch(leaf, value, "MemorySegment");
-            }
-            return UuidConverter.toReadOnlySegment(uuid);
-        }
-        throw typeMismatch(leaf, value, "MemorySegment");
-    }
-
-    private static ParquetWriteException typeMismatch(SchemaNode.Primitive leaf, Object value, String expected) {
-        String actual = value == null ? "null" : value.getClass().getName();
-        return new ParquetWriteException("Column " + leaf.name() + " expects " + expected + " values, got " + actual);
     }
 
     /** Returns the schema this writer was constructed with; useful for the dataset-level writer. */

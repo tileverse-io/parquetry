@@ -24,7 +24,6 @@ import java.lang.foreign.MemorySegment;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -40,7 +39,6 @@ import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.EncodingPolicy;
-import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.format.ColumnChunk;
@@ -99,11 +97,13 @@ class WriterCompressionTest {
         WriteOptions options =
                 options().defaultCompression(Compression.brotli()).build();
         Path file = tempDir.resolve("brotli.parquet");
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (int i = 0; i < 200; i++) {
+            rows.add(Map.of(ColumnPath.of("id"), i));
+        }
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
             assertThatThrownBy(() -> {
-                        for (int i = 0; i < 200; i++) {
-                            writer.write(rowOf(Map.of(ColumnPath.of("id"), i)));
-                        }
+                        writer.writeBatch(WriteFixtures.batch(schema, rows));
                         writer.flushRowGroup();
                     })
                     .satisfiesAnyOf(
@@ -121,13 +121,15 @@ class WriterCompressionTest {
                 .build();
         Path file = tempDir.resolve("per-column.parquet");
 
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (int i = 0; i < 200; i++) {
+            rows.add(Map.of(
+                    ColumnPath.of("a"), i,
+                    ColumnPath.of("b"), i + 1,
+                    ColumnPath.of("c"), i + 2));
+        }
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            for (int i = 0; i < 200; i++) {
-                writer.write(rowOf(Map.of(
-                        ColumnPath.of("a"), i,
-                        ColumnPath.of("b"), i + 1,
-                        ColumnPath.of("c"), i + 2)));
-            }
+            writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
 
         assertThat(columnMetadata(file, "a").codec()).isEqualTo(CompressionCodec.SNAPPY);
@@ -160,10 +162,12 @@ class WriterCompressionTest {
         Path file = tempDir.resolve(expectedWire.name() + ".parquet");
 
         int rows = 1_000;
+        List<Map<ColumnPath, Object>> rowMaps = new ArrayList<>();
+        for (int i = 0; i < rows; i++) {
+            rowMaps.add(Map.of(ColumnPath.of("id"), i));
+        }
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            for (int i = 0; i < rows; i++) {
-                writer.write(rowOf(Map.of(ColumnPath.of("id"), i)));
-            }
+            writer.writeBatch(WriteFixtures.batch(schema, rowMaps));
         }
 
         ColumnMetaData meta = columnMetadata(file, "id");
@@ -186,10 +190,12 @@ class WriterCompressionTest {
                 .defaultCompression(codec)
                 .encodingPolicy("v", EncodingPolicy.FORCE_PLAIN)
                 .build();
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (int i = 0; i < 10_000; i++) {
+            rows.add(Map.of(ColumnPath.of("v"), 42));
+        }
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            for (int i = 0; i < 10_000; i++) {
-                writer.write(rowOf(Map.of(ColumnPath.of("v"), 42)));
-            }
+            writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
     }
 
@@ -206,11 +212,6 @@ class WriterCompressionTest {
     private static SchemaNode.Primitive requiredInt32(String name) {
         return new SchemaNode.Primitive(
                 name, Repetition.REQUIRED, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
-    }
-
-    private static WriteRow rowOf(Map<ColumnPath, Object> values) {
-        Map<ColumnPath, Object> copy = new HashMap<>(values);
-        return copy::get;
     }
 
     private static List<Integer> readInts(Path file, String columnName) {

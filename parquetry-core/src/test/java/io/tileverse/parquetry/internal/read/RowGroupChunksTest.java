@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -32,7 +32,6 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
-import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.ColumnMetaData;
@@ -45,6 +44,7 @@ import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnPageStats;
 import io.tileverse.parquetry.internal.filter.bloom.BloomFilterReader;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
+import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -357,10 +357,12 @@ class RowGroupChunksTest {
         ParquetSchema schema = flatSchema(requiredInt64("v"));
         WriteOptions options =
                 WriteOptions.builder().tempDir(tempDir).pageValueLimit(2).build();
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (long i = 0; i < 8; i++) {
+            rows.add(Map.of(V, i));
+        }
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            for (long i = 0; i < 8; i++) {
-                writer.write(rowOf(Map.of(V, i)));
-            }
+            writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
         return file;
     }
@@ -380,11 +382,6 @@ class RowGroupChunksTest {
     private static SchemaNode.Primitive requiredInt64(String name) {
         return new SchemaNode.Primitive(
                 name, Repetition.REQUIRED, PrimitiveKind.INT64, OptionalInt.empty(), Optional.empty(), -1);
-    }
-
-    private static WriteRow rowOf(Map<ColumnPath, Object> values) {
-        Map<ColumnPath, Object> copy = new HashMap<>(values);
-        return copy::get;
     }
 
     /**

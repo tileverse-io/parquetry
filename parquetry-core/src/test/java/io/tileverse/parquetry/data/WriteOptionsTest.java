@@ -25,7 +25,6 @@ import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -54,6 +53,7 @@ import io.tileverse.parquetry.format.PageHeader;
 import io.tileverse.parquetry.format.PageType;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
+import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.observe.WriteObserver;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -212,6 +212,39 @@ class WriteOptionsTest {
         WriteOptions.Builder b = WriteOptions.builder();
 
         assertThatThrownBy(() -> b.expectedRowCount(-1L)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void bytesPolicyAboveTheLimitIsRejected() {
+        long aboveLimit = WriteOptions.MAX_ROW_GROUP_BYTES_LIMIT + 1L;
+        WriteOptions.Builder builder = WriteOptions.builder().rowGroupSize(WriteOptions.RowGroupSize.bytes(aboveLimit));
+        assertThatThrownBy(builder::build)
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("maximum row-group byte limit");
+    }
+
+    @Test
+    void bytesPolicyAtTheLimitBuilds() {
+        WriteOptions options = WriteOptions.builder()
+                .rowGroupSize(WriteOptions.RowGroupSize.bytes(WriteOptions.MAX_ROW_GROUP_BYTES_LIMIT))
+                .build();
+
+        assertThat(options.rowGroupSize())
+                .isEqualTo(WriteOptions.RowGroupSize.bytes(WriteOptions.MAX_ROW_GROUP_BYTES_LIMIT));
+    }
+
+    @Test
+    void bytesPolicyBelowTheLimitBuilds() {
+        WriteOptions options = WriteOptions.builder()
+                .rowGroupSize(WriteOptions.RowGroupSize.bytes(128L << 20))
+                .build();
+
+        assertThat(options.rowGroupSize()).isEqualTo(WriteOptions.RowGroupSize.bytes(128L << 20));
+    }
+
+    @Test
+    void limitIsBelowIntMaxWithHeadroom() {
+        assertThat(WriteOptions.MAX_ROW_GROUP_BYTES_LIMIT).isLessThan(Integer.MAX_VALUE);
     }
 
     @Test
@@ -578,12 +611,14 @@ class WriteOptionsTest {
                     .encodingPolicy("geometry", EncodingPolicy.FORCE_PLAIN)
                     .build();
             Path file = tempDir.resolve("geom-plain.parquet");
+            List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+            for (int i = 0; i < 32; i++) {
+                rows.add(Map.of(
+                        ColumnPath.of("geometry"),
+                        MemorySegment.ofArray(wkbPoint(i * 0.1, i * 0.2)).asReadOnly()));
+            }
             try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-                for (int i = 0; i < 32; i++) {
-                    writer.write(rowOf(Map.of(
-                            ColumnPath.of("geometry"),
-                            MemorySegment.ofArray(wkbPoint(i * 0.1, i * 0.2)).asReadOnly())));
-                }
+                writer.writeBatch(WriteFixtures.batch(schema, rows));
             }
 
             List<Encoding> encodings = readDataPageEncodings(file, "geometry");
@@ -618,10 +653,12 @@ class WriteOptionsTest {
                 throws Exception {
             ParquetSchema schema = flatSchema(requiredInt32(column));
             Path file = tempDir.resolve(column + "-" + System.nanoTime() + ".parquet");
+            List<Map<ColumnPath, Object>> rowMaps = new ArrayList<>();
+            for (int i = 0; i < rows; i++) {
+                rowMaps.add(Map.of(ColumnPath.of(column), valueAt.applyAsInt(i)));
+            }
             try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-                for (int i = 0; i < rows; i++) {
-                    writer.write(rowOf(Map.of(ColumnPath.of(column), valueAt.applyAsInt(i))));
-                }
+                writer.writeBatch(WriteFixtures.batch(schema, rowMaps));
             }
             return file;
         }
@@ -641,11 +678,6 @@ class WriteOptionsTest {
         private SchemaNode.Primitive requiredBinary(String name) {
             return new SchemaNode.Primitive(
                     name, Repetition.REQUIRED, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1);
-        }
-
-        private WriteRow rowOf(Map<ColumnPath, Object> values) {
-            Map<ColumnPath, Object> copy = new HashMap<>(values);
-            return copy::get;
         }
 
         private byte[] wkbPoint(double x, double y) {

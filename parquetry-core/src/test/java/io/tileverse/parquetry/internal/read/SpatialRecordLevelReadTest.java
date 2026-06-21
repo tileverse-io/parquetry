@@ -35,11 +35,11 @@ import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
-import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -79,12 +79,14 @@ class SpatialRecordLevelReadTest {
                 .crsEpsg("geometry", 4326)
                 .build();
         fixtureFile = tempDir.resolve("spatial.parquet");
+        List<Map<ColumnPath, Object>> rows = List.of(
+                row(0, 0, 0, 2, 2),
+                row(1, 5, 5, 7, 7),
+                row(2, 0, 0, 10, 10),
+                row(3, 4, 4, 9, 9),
+                row(4, 12, 12, 14, 14));
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(fixtureFile), schema, options)) {
-            writer.write(row(0, 0, 0, 2, 2));
-            writer.write(row(1, 5, 5, 7, 7));
-            writer.write(row(2, 0, 0, 10, 10));
-            writer.write(row(3, 4, 4, 9, 9));
-            writer.write(row(4, 12, 12, 14, 14));
+            writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
     }
 
@@ -130,9 +132,9 @@ class SpatialRecordLevelReadTest {
         return ids;
     }
 
-    private static WriteRow row(int id, double minX, double minY, double maxX, double maxY) {
+    private static Map<ColumnPath, Object> row(int id, double minX, double minY, double maxX, double maxY) {
         MemorySegment geom = Wkb.fromWkt(rectangleWkt(minX, minY, maxX, maxY));
-        return WriteRow.of(Map.of(ColumnPath.of("geometry"), geom, ColumnPath.of("id"), id));
+        return Map.of(ColumnPath.of("geometry"), geom, ColumnPath.of("id"), id);
     }
 
     /** Closed-ring rectangular polygon in WKT, corners walked counter-clockwise: SW -> SE -> NE -> NW -> SW. */

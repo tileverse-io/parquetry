@@ -34,11 +34,11 @@ import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
-import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -94,15 +94,17 @@ class SpatialDegradationTest {
                 .crsEpsg("geometry", 4326)
                 .build();
         Path file = tempDir.resolve("spread.parquet");
+        List<Map<ColumnPath, Object>> rows = List.of(
+                geoRow(0, 0, 0, 3, 3), // disjoint from query [4,4-8,8]
+                geoRow(1, 7, 7, 10, 10), // overlaps query on SE corner
+                geoRow(2, 0, 7, 3, 10), // disjoint from query
+                geoRow(3, 7, 0, 10, 3), // disjoint from query
+                geoRow(4, 4, 4, 6, 6), // inside query, intersects
+                geoRow(5, 3, 3, 7, 7), // overlaps query
+                geoRow(6, 11, 11, 13, 13), // completely disjoint
+                geoRow(7, 0, 0, 10, 10)); // covers query entirely
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            writer.write(geoRow(0, 0, 0, 3, 3)); // disjoint from query [4,4-8,8]
-            writer.write(geoRow(1, 7, 7, 10, 10)); // overlaps query on SE corner
-            writer.write(geoRow(2, 0, 7, 3, 10)); // disjoint from query
-            writer.write(geoRow(3, 7, 0, 10, 3)); // disjoint from query
-            writer.write(geoRow(4, 4, 4, 6, 6)); // inside query, intersects
-            writer.write(geoRow(5, 3, 3, 7, 7)); // overlaps query
-            writer.write(geoRow(6, 11, 11, 13, 13)); // completely disjoint
-            writer.write(geoRow(7, 0, 0, 10, 10)); // covers query entirely
+            writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
 
         // Union of all bboxes is [0,0-13,13], which overlaps [4,4-8,8] -> no row group eliminated.
@@ -138,12 +140,14 @@ class SpatialDegradationTest {
                 .crsEpsg("geometry", 4326)
                 .build();
         Path file = tempDir.resolve("not_covered.parquet");
+        List<Map<ColumnPath, Object>> rows = List.of(
+                geoRow(0, 1, 1, 3, 3), // covered by q
+                geoRow(1, 0, 0, 5, 5), // equal to q -> covered
+                geoRow(2, 4, 4, 8, 8), // escapes (maxX=8 > 5)
+                geoRow(3, 6, 6, 9, 9), // entirely outside q
+                geoRow(4, -1, 2, 3, 4)); // escapes (minX=-1 < 0)
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            writer.write(geoRow(0, 1, 1, 3, 3)); // covered by q
-            writer.write(geoRow(1, 0, 0, 5, 5)); // equal to q -> covered
-            writer.write(geoRow(2, 4, 4, 8, 8)); // escapes (maxX=8 > 5)
-            writer.write(geoRow(3, 6, 6, 9, 9)); // entirely outside q
-            writer.write(geoRow(4, -1, 2, 3, 4)); // escapes (minX=-1 < 0)
+            writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
 
         Predicate notCoveredBy = new Predicate.Not(Pred.col("geometry").bboxCoveredBy(Bbox.of2d(0, 0, 5, 5)));
@@ -165,10 +169,12 @@ class SpatialDegradationTest {
         ParquetSchema schema = flatSchema(requiredInt32("id"), requiredInt32("value"));
         WriteOptions options = WriteOptions.builder().tempDir(tempDir).build();
         Path file = tempDir.resolve("plain.parquet");
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            rows.add(Map.of(ColumnPath.of("id"), i, ColumnPath.of("value"), i));
+        }
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            for (int i = 0; i < 10; i++) {
-                writer.write(WriteRow.of(Map.of(ColumnPath.of("id"), i, ColumnPath.of("value"), i)));
-            }
+            writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
 
         List<Integer> ids = readIds(file, Pred.col("value").gt(5));
@@ -190,9 +196,9 @@ class SpatialDegradationTest {
         return ids;
     }
 
-    private static WriteRow geoRow(int id, double minX, double minY, double maxX, double maxY) {
+    private static Map<ColumnPath, Object> geoRow(int id, double minX, double minY, double maxX, double maxY) {
         MemorySegment geom = Wkb.fromWkt(rectangleWkt(minX, minY, maxX, maxY));
-        return WriteRow.of(Map.of(ColumnPath.of("geometry"), geom, ColumnPath.of("id"), id));
+        return Map.of(ColumnPath.of("geometry"), geom, ColumnPath.of("id"), id);
     }
 
     /** Closed-ring rectangular polygon in WKT, corners walked counter-clockwise: SW -> SE -> NE -> NW -> SW. */

@@ -15,16 +15,13 @@
  */
 package io.tileverse.parquetry.data;
 
-import java.io.BufferedOutputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.io.OutputStream;
+import java.io.UncheckedIOException;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-import java.nio.channels.Channels;
-import java.nio.channels.WritableByteChannel;
 import java.nio.file.FileSystem;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -43,6 +40,7 @@ import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
@@ -61,6 +59,7 @@ import io.tileverse.parquetry.internal.write.GeoColumnSummary;
 import io.tileverse.parquetry.internal.write.GeoMetadataWriter;
 import io.tileverse.parquetry.internal.write.RowGroupFlushResult;
 import io.tileverse.parquetry.internal.write.RowGroupWriter;
+import io.tileverse.parquetry.io.ByteSink;
 import io.tileverse.parquetry.observe.IndexesWritten;
 import io.tileverse.parquetry.observe.RowGroupFlushed;
 import io.tileverse.parquetry.observe.WriteObserver;
@@ -73,16 +72,21 @@ import lombok.NonNull;
 
 /**
  * Write entry point for emitting a single Parquet file. Owns the full file lifecycle: the leading {@code PAR1} magic,
- * one or more row groups (each consolidated in turn into the caller's {@link WritableByteChannel sink}), the
- * column-index / offset-index / bloom-filter blobs that follow every row group, the GeoParquet metadata when
- * configured, and the trailing {@code FileMetaData} footer, footer length, and tail {@code PAR1}.
+ * one or more row groups (each consolidated in turn into the caller's {@link ByteSink sink}), the column-index /
+ * offset-index / bloom-filter blobs that follow every row group, the GeoParquet metadata when configured, and the
+ * trailing {@code FileMetaData} footer, footer length, and tail {@code PAR1}.
+ *
+ * <p>The writer never closes the sink it is given; the caller owns the sink's lifecycle. On the success path the caller
+ * commits by closing the sink after a successful {@link #close()}; on the failure path the caller does not close the
+ * sink (and closes its backing storage instead). A close that finalizes the footer does not commit by itself.
  *
  * <p>Writers are not thread-safe; one logical record stream per instance. {@link #close()} is required: it
  * force-flushes the in-flight row group, writes the footer, and deletes the temp directory backing the per-column
  * accumulators. Close is idempotent. On any internal failure the writer enters a terminal failed state; subsequent
  * record-emitting calls throw {@link ParquetWriteException}, and {@link #close()} cleans up without writing a footer.
- * An interrupt mid-stream emerges as {@link java.io.InterruptedIOException} on the next record-emitting call, with the
- * interrupt status restored and the writer transitioned to failed.
+ * An interrupt mid-stream emerges as an {@link java.io.UncheckedIOException} wrapping an
+ * {@link java.io.InterruptedIOException} on the next record-emitting call, with the interrupt status restored and the
+ * writer transitioned to failed.
  *
  * <p>The class is non-final and the file-layout helpers ({@link #flushCurrentRowGroup flushCurrentRowGroup},
  * {@link #placeIndexBlobsAndPatch placeIndexBlobsAndPatch}, {@link #writeBloomFilters writeBloomFilters},
@@ -99,19 +103,20 @@ public class ParquetWriter implements AutoCloseable {
     private static final byte[] MAGIC = {'P', 'A', 'R', '1'};
     private static final String GEO_KEY = "geo";
     private static final String CREATED_BY = "parquetry";
-    private static final int THRIFT_VIEW_BUFFER_BYTES = 8192;
 
-    private final CountingWritableByteChannel out;
+    private final ByteSink out;
     private final WriteOptions options;
     private final WriteObserver observer;
     private final ParquetSchema schema;
     private final Path tempDir;
     private final GeoMetadataWriter geoWriter;
+    private final long maxRowGroupBytesLimit;
     private final List<RowGroup> completedRowGroups = new ArrayList<>();
     private final Map<ColumnPath, GeoColumnSummary> geoSummaries = new LinkedHashMap<>();
     private final Instant writerStart = Instant.now();
 
     private RowGroupWriter currentRowGroup;
+    private ParquetRecordBatchBuilder activeAppender;
     private Instant currentRowGroupStart = Instant.now();
     private long totalRows;
     private long lastProgressMilestone;
@@ -121,43 +126,63 @@ public class ParquetWriter implements AutoCloseable {
     private boolean closed;
     private boolean failed;
 
-    /** Opens a writer with {@link WriteOptions#defaults()}. The caller retains ownership of {@code sink}. */
-    public static ParquetWriter create(WritableByteChannel sink, ParquetSchema schema) throws IOException {
+    /**
+     * Opens a writer with {@link WriteOptions#defaults()}. The writer never closes {@code sink}; the caller owns it.
+     */
+    public static ParquetWriter create(ByteSink sink, ParquetSchema schema) {
         return create(sink, schema, WriteOptions.defaults());
     }
 
-    /** Opens a writer with the supplied options. The caller retains ownership of {@code sink}. */
+    /** Opens a writer with the supplied options. The writer never closes {@code sink}; the caller owns it. */
     public static ParquetWriter create(
-            @NonNull WritableByteChannel sink, @NonNull ParquetSchema rawSchema, @NonNull WriteOptions options)
-            throws IOException {
+            @NonNull ByteSink sink, @NonNull ParquetSchema rawSchema, @NonNull WriteOptions options) {
+        return assembleWriter(sink, rawSchema, options, WriteOptions.MAX_ROW_GROUP_BYTES_LIMIT);
+    }
 
+    /**
+     * Package-private factory used by {@link #create} and by tests that need a reduced {@code maxRowGroupBytesLimit}. A
+     * tiny limit lets a test trip the row-group byte safety valve without accumulating the production limit's worth of
+     * bytes.
+     */
+    static ParquetWriter assembleWriter(
+            @NonNull ByteSink sink,
+            @NonNull ParquetSchema rawSchema,
+            @NonNull WriteOptions options,
+            long maxRowGroupBytesLimit) {
         GeoMetadataWriter geoWriter = new GeoMetadataWriter(options);
         ParquetSchema schema = geoWriter.applyV2LogicalTypes(rawSchema);
         Path tempDir = createTempDir(options);
-        CountingWritableByteChannel counted = new CountingWritableByteChannel(sink);
-        writeLeadingMagic(counted, tempDir);
-        RowGroupWriter first = openRowGroupWriter(options, schema, tempDir, counted.bytesWritten());
-        return new ParquetWriter(counted, options, schema, tempDir, geoWriter, first);
+        writeLeadingMagic(sink, tempDir);
+        RowGroupWriter first = openRowGroupWriter(options, schema, tempDir, sink.position());
+        return new ParquetWriter(sink, options, schema, tempDir, geoWriter, first, maxRowGroupBytesLimit);
     }
 
-    /** Convenience overload; shims to the {@link WritableByteChannel} factory via {@link Channels#newChannel}. */
-    public static ParquetWriter create(OutputStream out, ParquetSchema schema) throws IOException {
+    /**
+     * Convenience overload wrapping {@code out} in a {@link ByteSink} via {@link ByteSink#ofOutputStream}. The writer
+     * never closes the sink, and therefore never closes {@code out}; the caller keeps ownership and closes {@code out}
+     * to commit after a successful {@link #close()}.
+     */
+    public static ParquetWriter create(OutputStream out, ParquetSchema schema) {
         return create(out, schema, WriteOptions.defaults());
     }
 
-    /** Convenience overload; shims to the {@link WritableByteChannel} factory via {@link Channels#newChannel}. */
-    public static ParquetWriter create(OutputStream out, ParquetSchema schema, WriteOptions options)
-            throws IOException {
-        return create(Channels.newChannel(out), schema, options);
+    /**
+     * Convenience overload wrapping {@code out} in a {@link ByteSink} via {@link ByteSink#ofOutputStream}. The writer
+     * never closes the sink, and therefore never closes {@code out}; the caller keeps ownership and closes {@code out}
+     * to commit after a successful {@link #close()}.
+     */
+    public static ParquetWriter create(OutputStream out, ParquetSchema schema, WriteOptions options) {
+        return create(ByteSink.ofOutputStream(out), schema, options);
     }
 
     protected ParquetWriter(
-            CountingWritableByteChannel out,
+            ByteSink out,
             WriteOptions options,
             ParquetSchema schema,
             Path tempDir,
             GeoMetadataWriter geoWriter,
-            RowGroupWriter first) {
+            RowGroupWriter first,
+            long maxRowGroupBytesLimit) {
         this.out = out;
         this.options = options;
         this.observer = options.writeObserver();
@@ -165,45 +190,86 @@ public class ParquetWriter implements AutoCloseable {
         this.tempDir = tempDir;
         this.geoWriter = geoWriter;
         this.currentRowGroup = first;
+        this.maxRowGroupBytesLimit = maxRowGroupBytesLimit;
     }
 
-    /** Appends one row to the in-flight row group, flushing to a new row group when the sizing policy trips. */
-    public void write(WriteRow row) throws IOException {
+    /** Appends a whole batch of rows via the vectorised column-chunk path. */
+    public void writeBatch(@NonNull ParquetRecordBatch batch) {
         checkInterrupt();
         checkOpen();
-        try {
-            fireWriteStartedOnce();
-            currentRowGroup.append(row);
-            totalRows++;
-            maybeFireProgress();
-            maybeFlushRowGroup();
-        } catch (IOException | RuntimeException e) {
-            markFailed();
-            throw e;
-        }
+        appendBatchToCurrentRowGroup(batch);
     }
 
-    /** Appends a whole batch of rows. Equivalent to one {@link #write} call per row, but takes a vectorised path. */
-    public void writeBatch(@NonNull ParquetRecordBatch batch) throws IOException {
+    /**
+     * Appends a batch during {@link #close()} when the writer has already transitioned to closed. Skips the open check
+     * that {@link #writeBatch} applies, because draining the active appender's trailing rows is part of closing, not a
+     * post-close write.
+     */
+    void writeClosingBatch(@NonNull ParquetRecordBatch batch) {
         checkInterrupt();
-        checkOpen();
+        appendBatchToCurrentRowGroup(batch);
+    }
+
+    private void appendBatchToCurrentRowGroup(ParquetRecordBatch batch) {
         try {
             fireWriteStartedOnce();
             currentRowGroup.appendBatch(batch);
             totalRows += batch.rowCount();
             maybeFireProgress();
             maybeFlushRowGroup();
-        } catch (IOException | RuntimeException e) {
+        } catch (RuntimeException e) {
             markFailed();
             throw e;
         }
     }
 
     /**
+     * A row-appender bound to this writer that auto-flushes a batch every
+     * {@value ParquetRecordBatchBuilder#DEFAULT_BATCH_ROWS} rows.
+     *
+     * <p>The writer flushes the appender's pending rows during {@link #close()}, hence an explicit
+     * {@link ParquetRecordBatchBuilder#flush()} is optional; the appender must be used before the writer is closed. One
+     * appender per writer is the expected use; obtaining a second appender flushes the first one's pending rows.
+     */
+    public ParquetRecordBatchBuilder appender() {
+        return appender(ParquetRecordBatchBuilder.DEFAULT_BATCH_ROWS);
+    }
+
+    /**
+     * A row-appender bound to this writer that auto-flushes a batch every {@code batchRows} rows. The writer flushes
+     * the appender's pending rows during {@link #close()}; one appender per writer is the expected use.
+     */
+    public ParquetRecordBatchBuilder appender(int batchRows) {
+        return appender(batchRows, ParquetRecordBatchBuilder.DEFAULT_BATCH_BYTES);
+    }
+
+    /**
+     * A row-appender that auto-flushes when it reaches {@code batchRows} rows or its accumulated cells reach
+     * {@code batchBytes}. Package-private so tests can drive the byte threshold with a small value instead of writing
+     * the production-sized default; the public {@link #appender(int)} uses
+     * {@value ParquetRecordBatchBuilder#DEFAULT_BATCH_BYTES}.
+     */
+    ParquetRecordBatchBuilder appender(int batchRows, long batchBytes) {
+        checkOpen();
+        if (batchRows <= 0) {
+            throw new IllegalArgumentException("batchRows must be positive: " + batchRows);
+        }
+        if (batchBytes <= 0) {
+            throw new IllegalArgumentException("batchBytes must be positive: " + batchBytes);
+        }
+        if (activeAppender != null) {
+            activeAppender.flush();
+        }
+        ParquetRecordBatchBuilder builder = ParquetRecordBatchBuilder.boundTo(this, schema, batchRows, batchBytes);
+        this.activeAppender = builder;
+        return builder;
+    }
+
+    /**
      * Explicitly closes the current row group and starts a new one. No-ops when the current row group has received no
      * rows; callers can use this as an opportunistic flush hint without tracking row counts.
      */
-    public void flushRowGroup() throws IOException {
+    public void flushRowGroup() {
         checkInterrupt();
         checkOpen();
         if (currentRowGroup.rowCount() == 0L) {
@@ -211,7 +277,7 @@ public class ParquetWriter implements AutoCloseable {
         }
         try {
             flushCurrentRowGroup();
-        } catch (IOException | RuntimeException e) {
+        } catch (RuntimeException e) {
             markFailed();
             throw e;
         }
@@ -224,7 +290,7 @@ public class ParquetWriter implements AutoCloseable {
 
     /** Total bytes written to the caller's sink so far, including magic and footer when present. */
     public long totalBytes() {
-        return out.bytesWritten();
+        return out.position();
     }
 
     /** Row groups that have already been consolidated to the output stream. */
@@ -234,10 +300,11 @@ public class ParquetWriter implements AutoCloseable {
 
     /**
      * Finishes the file: force-flushes the current row group when non-empty, places the GeoParquet metadata, writes the
-     * footer, footer length, and trailing magic, then deletes the temp directory.
+     * footer, footer length, and trailing magic, then deletes the temp directory. The sink is left open; the caller
+     * commits by closing the sink after this returns successfully.
      */
     @Override
-    public void close() throws IOException {
+    public void close() {
         if (closed) {
             return;
         }
@@ -247,9 +314,10 @@ public class ParquetWriter implements AutoCloseable {
             return;
         }
         try {
+            flushActiveAppender();
             finishLastRowGroup();
             writeFooter();
-        } catch (IOException | RuntimeException e) {
+        } catch (RuntimeException e) {
             cleanupAfterFailure();
             throw e;
         }
@@ -257,8 +325,19 @@ public class ParquetWriter implements AutoCloseable {
         fireOnClose();
     }
 
+    /**
+     * Flushes a writer-bound appender's trailing partial batch into the current row group before it is finalized.
+     * Without this, the rows accumulated since the last auto-flush are lost when the caller forgets an explicit flush.
+     * No-op when the appender is empty or absent.
+     */
+    private void flushActiveAppender() {
+        if (activeAppender != null) {
+            activeAppender.flushOnClose();
+        }
+    }
+
     /** Flushes the in-flight row group when non-empty; otherwise just closes its temp resources. */
-    private void finishLastRowGroup() throws IOException {
+    private void finishLastRowGroup() {
         if (currentRowGroup.rowCount() > 0L) {
             flushCurrentRowGroup();
         } else {
@@ -271,7 +350,7 @@ public class ParquetWriter implements AutoCloseable {
      * row-group-flushed progress event, and opens a fresh row-group writer. Subclasses may override to inject custom
      * post-flush bookkeeping, but must preserve the invariant that {@link #currentRowGroup} is non-null on return.
      */
-    protected void flushCurrentRowGroup() throws IOException {
+    protected void flushCurrentRowGroup() {
         RowGroupFlushResult flushed = currentRowGroup.flushTo(out);
         currentRowGroup.close();
         RowGroup patched = placeIndexBlobsAndPatch(flushed);
@@ -281,7 +360,7 @@ public class ParquetWriter implements AutoCloseable {
         accumulateColumnDataBytes(patched, flushed);
         fireRowGroupFlushed(rowGroupIndex, patched, flushed);
         fireIndexesWritten(patched);
-        currentRowGroup = openRowGroupWriter(options, schema, tempDir, out.bytesWritten());
+        currentRowGroup = openRowGroupWriter(options, schema, tempDir, out.position());
         currentRowGroupStart = Instant.now();
     }
 
@@ -294,7 +373,7 @@ public class ParquetWriter implements AutoCloseable {
      * Trips the row-group flush when the sizing policy says the current row group is full. Subclasses may override to
      * implement a richer sizing policy (e.g. based on column cardinality or external signals).
      */
-    protected void maybeFlushRowGroup() throws IOException {
+    protected void maybeFlushRowGroup() {
         OptionalLong targetRows = RowGroupSizingPolicy.targetRows(options);
         if (targetRows.isPresent() && currentRowGroup.rowCount() >= targetRows.getAsLong()) {
             flushCurrentRowGroup();
@@ -302,6 +381,11 @@ public class ParquetWriter implements AutoCloseable {
         }
         long targetBytes = RowGroupSizingPolicy.targetBytes(options);
         if (targetBytes != Long.MAX_VALUE && currentRowGroup.estimatedUncompressedBytes() >= targetBytes) {
+            flushCurrentRowGroup();
+            return;
+        }
+        // Hard ceiling independent of any byte policy: keep per-row-group byte counts within an int.
+        if (currentRowGroup.estimatedUncompressedBytes() >= maxRowGroupBytesLimit) {
             flushCurrentRowGroup();
         }
     }
@@ -311,7 +395,7 @@ public class ParquetWriter implements AutoCloseable {
      * {@link RowGroup} whose column metadata points at the placed blobs. Subclasses may override to change the layout
      * order or to skip individual index types.
      */
-    protected RowGroup placeIndexBlobsAndPatch(RowGroupFlushResult flushed) throws IOException {
+    protected RowGroup placeIndexBlobsAndPatch(RowGroupFlushResult flushed) {
         List<ColumnChunk> sourceChunks = flushed.rowGroup().columns();
         List<RowGroupFlushResult.ColumnArtifacts> artifacts = flushed.columnArtifacts();
         List<long[]> bloomPlacements = writeBloomFilters(artifacts);
@@ -327,7 +411,7 @@ public class ParquetWriter implements AutoCloseable {
      * Writes the bloom-filter blob for every column artifact and returns one {@code {offset, length}} pair per column.
      * Columns without a bloom filter get {@code {-1, -1}}.
      */
-    protected List<long[]> writeBloomFilters(List<RowGroupFlushResult.ColumnArtifacts> artifacts) throws IOException {
+    protected List<long[]> writeBloomFilters(List<RowGroupFlushResult.ColumnArtifacts> artifacts) {
         List<long[]> placements = new ArrayList<>(artifacts.size());
         for (RowGroupFlushResult.ColumnArtifacts artifact : artifacts) {
             placements.add(writeOneBloomFilter(artifact.bloomFilterBytes()));
@@ -339,19 +423,14 @@ public class ParquetWriter implements AutoCloseable {
      * Writes the column-index blob for every column artifact and returns one {@code {offset, length}} pair per column.
      * Columns without a column index get {@code {-1, -1}}.
      */
-    protected List<long[]> writeColumnIndexes(List<RowGroupFlushResult.ColumnArtifacts> artifacts) throws IOException {
+    protected List<long[]> writeColumnIndexes(List<RowGroupFlushResult.ColumnArtifacts> artifacts) {
         List<long[]> placements = new ArrayList<>(artifacts.size());
         for (RowGroupFlushResult.ColumnArtifacts artifact : artifacts) {
             if (artifact.columnIndex() == null) {
                 placements.add(absentPlacement());
                 continue;
             }
-            long offset = out.bytesWritten();
-            BufferedOutputStream view = bufferedStreamView(out);
-            ParquetFormat.writeColumnIndex(view, artifact.columnIndex());
-            view.flush();
-            long length = out.bytesWritten() - offset;
-            placements.add(new long[] {offset, length});
+            placements.add(writeThriftBlob(buffer -> ParquetFormat.writeColumnIndex(buffer, artifact.columnIndex())));
         }
         return placements;
     }
@@ -360,19 +439,14 @@ public class ParquetWriter implements AutoCloseable {
      * Writes the offset-index blob for every column artifact and returns one {@code {offset, length}} pair per column.
      * Columns without an offset index get {@code {-1, -1}}.
      */
-    protected List<long[]> writeOffsetIndexes(List<RowGroupFlushResult.ColumnArtifacts> artifacts) throws IOException {
+    protected List<long[]> writeOffsetIndexes(List<RowGroupFlushResult.ColumnArtifacts> artifacts) {
         List<long[]> placements = new ArrayList<>(artifacts.size());
         for (RowGroupFlushResult.ColumnArtifacts artifact : artifacts) {
             if (artifact.offsetIndex() == null) {
                 placements.add(absentPlacement());
                 continue;
             }
-            long offset = out.bytesWritten();
-            BufferedOutputStream view = bufferedStreamView(out);
-            ParquetFormat.writeOffsetIndex(view, artifact.offsetIndex());
-            view.flush();
-            long length = out.bytesWritten() - offset;
-            placements.add(new long[] {offset, length});
+            placements.add(writeThriftBlob(buffer -> ParquetFormat.writeOffsetIndex(buffer, artifact.offsetIndex())));
         }
         return placements;
     }
@@ -382,7 +456,7 @@ public class ParquetWriter implements AutoCloseable {
      * footer length, and the trailing magic. Subclasses may override to inject extra fields, but must keep the
      * footer-length and trailing-magic suffix intact.
      */
-    protected void writeFooter() throws IOException {
+    protected void writeFooter() {
         List<SchemaElement> elements = SchemaElementWriter.flatten(schema);
         List<KeyValue> keyValueMetadata = buildKeyValueMetadata();
         FileMetaData footer = FileMetaData.builder()
@@ -395,12 +469,8 @@ public class ParquetWriter implements AutoCloseable {
                 .columnOrders(Optional.of(typeDefinedColumnOrders()))
                 .build();
 
-        long footerStart = out.bytesWritten();
-        BufferedOutputStream view = bufferedStreamView(out);
-        ParquetFormat.writeFooter(view, footer);
-        view.flush();
-        long footerEnd = out.bytesWritten();
-        int footerLength = Math.toIntExact(footerEnd - footerStart);
+        long[] placement = writeThriftBlob(buffer -> ParquetFormat.writeFooter(buffer, footer));
+        int footerLength = Math.toIntExact(placement[1]);
         writeFooterTrailer(footerLength);
     }
 
@@ -439,7 +509,7 @@ public class ParquetWriter implements AutoCloseable {
      * writer.
      */
     protected static RowGroupWriter openRowGroupWriter(
-            WriteOptions options, ParquetSchema schema, Path tempDir, long baseFileOffset) throws IOException {
+            WriteOptions options, ParquetSchema schema, Path tempDir, long baseFileOffset) {
         return new RowGroupWriter(options, schema, tempDir, baseFileOffset);
     }
 
@@ -454,14 +524,15 @@ public class ParquetWriter implements AutoCloseable {
     }
 
     /**
-     * Throws {@link InterruptedIOException} when the current thread carries an interrupt, after marking the writer
-     * failed and restoring the interrupt status. Subclasses may override to add cooperative cancellation hooks.
+     * Throws an {@link UncheckedIOException} wrapping an {@link InterruptedIOException} when the current thread has a
+     * pending interrupt, after marking the writer failed and restoring the interrupt status. Subclasses may override to
+     * add cooperative cancellation hooks.
      */
-    protected void checkInterrupt() throws InterruptedIOException {
+    protected void checkInterrupt() {
         if (Thread.interrupted()) {
             markFailed();
             Thread.currentThread().interrupt();
-            throw new InterruptedIOException("ParquetWriter interrupted");
+            throw new UncheckedIOException(new InterruptedIOException("ParquetWriter interrupted"));
         }
     }
 
@@ -476,7 +547,7 @@ public class ParquetWriter implements AutoCloseable {
     protected void cleanupAfterFailure() {
         try {
             currentRowGroup.close();
-        } catch (IOException | RuntimeException _) {
+        } catch (RuntimeException _) {
             /* best effort: failure path */
         }
         deleteTempDirQuietly(tempDir);
@@ -497,10 +568,9 @@ public class ParquetWriter implements AutoCloseable {
             return;
         }
         long cadence = options.writeObserverCadenceRows();
-        long milestone = (totalRows / cadence) * cadence;
-        if (milestone > lastProgressMilestone) {
-            lastProgressMilestone = milestone;
-            observer.onRowsWritten(milestone);
+        while (lastProgressMilestone + cadence <= totalRows) {
+            lastProgressMilestone += cadence;
+            observer.onRowsWritten(lastProgressMilestone);
         }
     }
 
@@ -567,23 +637,37 @@ public class ParquetWriter implements AutoCloseable {
 
     // --- private helpers below this line ---
 
-    private long[] writeOneBloomFilter(MemorySegment bloomBytes) throws IOException {
+    /**
+     * Serializes one footer / column-index / offset-index blob into a bounded byte array, then appends it to the sink
+     * in a single write. These blobs are file-metadata sized; the per-blob array is acceptable where a per-row array
+     * would not be. Returns the {@code {offset, length}} placement of the blob in the file.
+     */
+    private long[] writeThriftBlob(Consumer<ByteArrayOutputStream> serializer) {
+        long offset = out.position();
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        serializer.accept(buffer);
+        byte[] bytes = buffer.toByteArray();
+        out.write(MemorySegment.ofArray(bytes));
+        return new long[] {offset, bytes.length};
+    }
+
+    private long[] writeOneBloomFilter(MemorySegment bloomBytes) {
         if (bloomBytes == null || bloomBytes == MemorySegment.NULL || bloomBytes.byteSize() == 0L) {
             return absentPlacement();
         }
-        long offset = out.bytesWritten();
+        long offset = out.position();
         BloomFilterHeader header = new BloomFilterHeader(
                 (int) bloomBytes.byteSize(),
                 BloomFilterHeader.Algorithm.SPLIT_BLOCK,
                 BloomFilterHeader.HashStrategy.XXHASH,
                 BloomFilterHeader.Compression.UNCOMPRESSED);
-        BufferedOutputStream view = bufferedStreamView(out);
-        ParquetFormat.writeBloomFilterHeader(view, header);
-        view.flush();
         byte[] bitset = bloomBytes.toArray(ValueLayout.JAVA_BYTE);
-        writeFully(out, ByteBuffer.wrap(bitset));
-        long length = out.bytesWritten() - offset;
-        return new long[] {offset, length};
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        ParquetFormat.writeBloomFilterHeader(buffer, header);
+        buffer.writeBytes(bitset);
+        byte[] bytes = buffer.toByteArray();
+        out.write(MemorySegment.ofArray(bytes));
+        return new long[] {offset, bytes.length};
     }
 
     private List<ColumnChunk> patchColumnChunks(
@@ -651,12 +735,15 @@ public class ParquetWriter implements AutoCloseable {
         }
     }
 
-    private void writeFooterTrailer(int footerLength) throws IOException {
-        ByteBuffer lenBuf = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN);
-        lenBuf.putInt(footerLength);
-        lenBuf.flip();
-        writeFully(out, lenBuf);
-        writeFully(out, ByteBuffer.wrap(MAGIC));
+    private void writeFooterTrailer(int footerLength) {
+        // The footer length is a 4-byte little-endian int per the parquet-format trailer layout.
+        byte[] trailer = new byte[4 + MAGIC.length];
+        trailer[0] = (byte) (footerLength & 0xff);
+        trailer[1] = (byte) ((footerLength >>> 8) & 0xff);
+        trailer[2] = (byte) ((footerLength >>> 16) & 0xff);
+        trailer[3] = (byte) ((footerLength >>> 24) & 0xff);
+        System.arraycopy(MAGIC, 0, trailer, 4, MAGIC.length);
+        out.write(MemorySegment.ofArray(trailer));
     }
 
     // --- static helpers below this line ---
@@ -673,18 +760,22 @@ public class ParquetWriter implements AutoCloseable {
      *
      * <p>The directory is deleted when the writer closes (success or failure path).
      */
-    private static Path createTempDir(WriteOptions options) throws IOException {
+    private static Path createTempDir(WriteOptions options) {
         Path parent = options.tempDir();
         if (!Files.exists(parent)) {
-            throw new IOException("WriteOptions.tempDir does not exist: " + parent);
+            throw new ParquetWriteException("WriteOptions.tempDir does not exist: " + parent);
         }
         if (!Files.isDirectory(parent)) {
-            throw new IOException("WriteOptions.tempDir is not a directory: " + parent);
+            throw new ParquetWriteException("WriteOptions.tempDir is not a directory: " + parent);
         }
         if (!Files.isWritable(parent)) {
-            throw new IOException("WriteOptions.tempDir is not writable: " + parent);
+            throw new ParquetWriteException("WriteOptions.tempDir is not writable: " + parent);
         }
-        return Files.createTempDirectory(parent, "parquetry-write-", ownerOnlyAttributes(parent.getFileSystem()));
+        try {
+            return Files.createTempDirectory(parent, "parquetry-write-", ownerOnlyAttributes(parent.getFileSystem()));
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to create writer temp directory under " + parent, e);
+        }
     }
 
     private static FileAttribute<?>[] ownerOnlyAttributes(FileSystem fs) {
@@ -696,12 +787,12 @@ public class ParquetWriter implements AutoCloseable {
         return new FileAttribute<?>[] {PosixFilePermissions.asFileAttribute(ownerRwx)};
     }
 
-    private static void writeLeadingMagic(CountingWritableByteChannel counted, Path tempDir) throws IOException {
+    private static void writeLeadingMagic(ByteSink sink, Path tempDir) {
         try {
-            writeFully(counted, ByteBuffer.wrap(MAGIC));
-        } catch (IOException io) {
+            sink.write(MemorySegment.ofArray(MAGIC));
+        } catch (RuntimeException e) {
             deleteTempDirQuietly(tempDir);
-            throw io;
+            throw e;
         }
     }
 
@@ -798,58 +889,6 @@ public class ParquetWriter implements AutoCloseable {
             });
         } catch (IOException _) {
             /* best effort */
-        }
-    }
-
-    /**
-     * Wraps the channel in a {@link BufferedOutputStream} for the byte-at-a-time Thrift compact-protocol writes.
-     * Callers MUST invoke {@code flush()} before snapshotting {@code out.bytesWritten()} again; the buffered bytes only
-     * land on the channel after the flush.
-     */
-    private static BufferedOutputStream bufferedStreamView(WritableByteChannel ch) {
-        return new BufferedOutputStream(Channels.newOutputStream(ch), THRIFT_VIEW_BUFFER_BYTES);
-    }
-
-    private static void writeFully(WritableByteChannel ch, ByteBuffer buf) throws IOException {
-        while (buf.hasRemaining()) {
-            ch.write(buf);
-        }
-    }
-
-    /**
-     * Counts every byte written through this channel; lets {@code ParquetWriter} refer to absolute file offsets.
-     *
-     * <p>The wrapped channel is never closed by this class: {@code ParquetWriter} does not own the caller's sink.
-     */
-    static final class CountingWritableByteChannel implements WritableByteChannel {
-
-        private final WritableByteChannel delegate;
-        private long bytesWritten;
-        private boolean open = true;
-
-        CountingWritableByteChannel(WritableByteChannel delegate) {
-            this.delegate = delegate;
-        }
-
-        long bytesWritten() {
-            return bytesWritten;
-        }
-
-        @Override
-        public int write(ByteBuffer src) throws IOException {
-            int written = delegate.write(src);
-            bytesWritten += written;
-            return written;
-        }
-
-        @Override
-        public boolean isOpen() {
-            return open && delegate.isOpen();
-        }
-
-        @Override
-        public void close() {
-            open = false;
         }
     }
 }

@@ -45,12 +45,12 @@ import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
+import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.GeoParquetMetadataMode;
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
-import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.GeometryFilter;
 import io.tileverse.parquetry.filter.Predicate;
@@ -205,9 +205,16 @@ public class SpatialGateBenchmark {
         List<GeoRow> rows = buildRows(rowsPerGroup, ringVertices);
 
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+            ParquetRecordBatchBuilder appender = writer.appender();
             for (GeoRow row : rows) {
-                writer.write(row);
+                appender.setBinary(0, row.geom());
+                appender.setInt(1, row.id());
+                for (int col = 0; col < row.width(); col++) {
+                    appender.setInt(2 + col, (row.id() + col) % 97);
+                }
+                appender.endRow();
             }
+            appender.flush();
         }
     }
 
@@ -393,36 +400,8 @@ public class SpatialGateBenchmark {
         }
     }
 
-    // --- WriteRow adapter ---
+    // --- row holder ---
 
-    /**
-     * Reused across the write loop; holds one row's id and WKB geometry plus {@code width} extra INT32 output columns
-     * without allocating a map per row.
-     */
-    private static final class GeoRow implements WriteRow {
-        private final int id;
-        private final MemorySegment geom;
-        private final int width;
-
-        GeoRow(int id, MemorySegment geom, int width) {
-            this.id = id;
-            this.geom = geom;
-            this.width = width;
-        }
-
-        @Override
-        public Object value(ColumnPath path) {
-            if (path.equals(GEOMETRY_COL)) {
-                return geom;
-            }
-            if (path.equals(ID_COL)) {
-                return id;
-            }
-            // extra value columns are named "v0", "v1", ... - parse the index from the name
-            String name = path.dot();
-            int col = Integer.parseInt(name.substring(1));
-            // deterministic value: (id + col) mod some prime, keeping ints cheap to decode
-            return (id + col) % 97;
-        }
-    }
+    /** One row's id, WKB geometry, and the count of extra INT32 output columns the writer materializes. */
+    private record GeoRow(int id, MemorySegment geom, int width) {}
 }

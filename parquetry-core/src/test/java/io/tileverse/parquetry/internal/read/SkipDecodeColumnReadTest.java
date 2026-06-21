@@ -35,7 +35,6 @@ import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
-import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.filter.RowRanges.Range;
 import io.tileverse.parquetry.format.ColumnChunk;
@@ -45,6 +44,7 @@ import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
+import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -188,10 +188,12 @@ class SkipDecodeColumnReadTest {
     private Path writeRequiredLongs() throws Exception {
         Path file = tempDir.resolve("skip-required.parquet");
         ParquetSchema schema = flatSchema(requiredInt64("v"));
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (int v = 0; v < ROW_COUNT; v++) {
+            rows.add(requiredRow(v));
+        }
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, pageEvery())) {
-            for (int v = 0; v < ROW_COUNT; v++) {
-                writer.write(requiredRow(v));
-            }
+            writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
         return file;
     }
@@ -199,10 +201,12 @@ class SkipDecodeColumnReadTest {
     private Path writeNullableLongs() throws Exception {
         Path file = tempDir.resolve("skip-nullable.parquet");
         ParquetSchema schema = flatSchema(optionalInt64("v"));
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (int v = 0; v < ROW_COUNT; v++) {
+            rows.add(nullableRow(v));
+        }
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, pageEvery())) {
-            for (int v = 0; v < ROW_COUNT; v++) {
-                writer.write(nullableRow(v));
-            }
+            writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
         return file;
     }
@@ -242,17 +246,16 @@ class SkipDecodeColumnReadTest {
                 name, Repetition.OPTIONAL, PrimitiveKind.INT64, OptionalInt.empty(), Optional.empty(), -1);
     }
 
-    private static WriteRow requiredRow(int v) {
-        Map<ColumnPath, Object> values = Map.of(V, (long) v);
-        return values::get;
+    private static Map<ColumnPath, Object> requiredRow(int v) {
+        return Map.of(V, (long) v);
     }
 
-    private static WriteRow nullableRow(int v) {
+    private static Map<ColumnPath, Object> nullableRow(int v) {
         Map<ColumnPath, Object> values = new HashMap<>();
         if (!isNullRow(v)) {
             values.put(V, (long) v);
         }
-        return values::get;
+        return values;
     }
 
     private record DrainResult(List<Long> values, List<Boolean> nulls, long decodedValueCount) {}

@@ -31,11 +31,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.ParquetWriteException;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
-import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.format.LogicalType;
@@ -60,9 +60,9 @@ class UuidWriteRoundTripTest {
         Path file = tempDir.resolve("uuid.parquet");
 
         WriteOptions options = WriteOptions.builder().tempDir(tempDir).build();
+        List<Map<ColumnPath, Object>> rowMaps = List.of(Map.of(ColumnPath.of("id"), a), Map.of(ColumnPath.of("id"), b));
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            writer.write(rowOf(Map.of(ColumnPath.of("id"), a)));
-            writer.write(rowOf(Map.of(ColumnPath.of("id"), b)));
+            writer.writeBatch(WriteFixtures.batch(schema, rowMaps));
         }
 
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
@@ -75,17 +75,14 @@ class UuidWriteRoundTripTest {
     }
 
     @Test
-    void rejectsUuidValueWrittenIntoByteArrayColumn() throws Exception {
+    void rejectsValueAuthoredWithTheWrongTypeForAColumn() {
         ParquetSchema schema = flatSchema(byteArrayColumn("text"));
-        Path file = tempDir.resolve("text.parquet");
+        ParquetRecordBatchBuilder builder = ParquetRecordBatchBuilder.forSchema(schema);
+        ColumnPath text = ColumnPath.of("text");
 
-        WriteOptions options = WriteOptions.builder().tempDir(tempDir).build();
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            assertThatThrownBy(() -> writer.write(rowOf(Map.of(ColumnPath.of("text"), UUID.randomUUID()))))
-                    .isInstanceOf(ParquetWriteException.class)
-                    .hasMessageContaining("text")
-                    .hasMessageContaining("MemorySegment");
-        }
+        assertThatThrownBy(() -> builder.setInt(text, 42))
+                .isInstanceOf(ParquetWriteException.class)
+                .hasMessageContaining("does not accept");
     }
 
     private static SchemaNode.Primitive byteArrayColumn(String name) {
@@ -107,9 +104,5 @@ class UuidWriteRoundTripTest {
         List<SchemaNode> children = Stream.of(leaves).map(f -> (SchemaNode) f).toList();
         SchemaNode.Group root = new SchemaNode.Group("schema", Repetition.REQUIRED, children, Optional.empty(), -1);
         return new ParquetSchema(root);
-    }
-
-    private static WriteRow rowOf(Map<ColumnPath, Object> values) {
-        return values::get;
     }
 }

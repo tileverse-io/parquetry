@@ -30,9 +30,9 @@ import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
 import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
-import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -75,12 +75,12 @@ final class SyntheticParquet {
     /** Writes one file of {@code (id, value=id*0.25)} rows in the given id order, under the supplied write options. */
     static void writeIdValueFile(Path file, WriteOptions options, long[] ids) throws IOException {
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), idValueSchema(), options)) {
-            IdValueRow row = new IdValueRow();
+            ParquetRecordBatchBuilder appender = writer.appender();
             for (long id : ids) {
-                row.id = id;
-                row.value = id * 0.25;
-                writer.write(row);
+                appender.setLong(0, id).setDouble(1, id * 0.25);
+                appender.endRow();
             }
+            appender.flush();
         }
     }
 
@@ -134,11 +134,15 @@ final class SyntheticParquet {
     static void writeWideFile(Path file, WriteOptions options, long[] ids, int valueColumns) throws IOException {
         ParquetSchema schema = wideSchema(valueColumns);
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            WideRow row = new WideRow();
+            ParquetRecordBatchBuilder appender = writer.appender();
             for (long id : ids) {
-                row.id = id;
-                writer.write(row);
+                appender.setLong(0, id);
+                for (int col = 0; col < valueColumns; col++) {
+                    appender.setDouble(1 + col, id * (col + 1) * 0.5);
+                }
+                appender.endRow();
             }
+            appender.flush();
         }
     }
 
@@ -180,39 +184,6 @@ final class SyntheticParquet {
         @Override
         public void close() {
             source.close();
-        }
-    }
-
-    /** Reused across the write loop to avoid allocating a map per row. */
-    private static final class IdValueRow implements WriteRow {
-        private long id;
-        private double value;
-
-        @Override
-        public Object value(ColumnPath path) {
-            if (path.equals(ID)) {
-                return id;
-            }
-            return value;
-        }
-    }
-
-    /**
-     * Reused across the wide-table write loop. Each output column value is {@code id * (col + 1) * 0.5}, making the
-     * values deterministic without any extra per-row allocation.
-     */
-    private static final class WideRow implements WriteRow {
-        private long id;
-
-        @Override
-        public Object value(ColumnPath path) {
-            if (path.equals(ID)) {
-                return id;
-            }
-            // paths are "v0", "v1", ... - parse the column index from the dot-joined name
-            String name = path.dot();
-            int col = Integer.parseInt(name.substring(1));
-            return id * (col + 1) * 0.5;
         }
     }
 }

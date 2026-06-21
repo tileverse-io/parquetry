@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.lang.foreign.MemorySegment;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -35,7 +36,6 @@ import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
-import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
@@ -44,6 +44,7 @@ import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
+import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -147,13 +148,14 @@ class OffsetIndexSingleReadTest {
         ParquetSchema schema = idValueSchema();
         WriteOptions options =
                 WriteOptions.builder().tempDir(tempDir).pageValueLimit(5).build();
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (int i = 0; i < 50; i++) {
+            long id = i;
+            double value = id * 0.5;
+            rows.add(Map.of(ID, id, VALUE, value));
+        }
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            for (int i = 0; i < 50; i++) {
-                final long id = i;
-                final double value = id * 0.5;
-                Map<ColumnPath, Object> rowValues = Map.of(ID, id, VALUE, value);
-                writer.write((WriteRow) rowValues::get);
-            }
+            writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
         return file;
     }

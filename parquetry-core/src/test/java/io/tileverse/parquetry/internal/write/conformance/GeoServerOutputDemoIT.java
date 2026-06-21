@@ -34,10 +34,10 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
-import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
@@ -48,6 +48,7 @@ import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.format.SchemaElement;
+import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -84,9 +85,11 @@ class GeoServerOutputDemoIT {
 
         List<Feature> features = generateFeatures(FEATURE_COUNT);
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+            ParquetRecordBatchBuilder appender = writer.appender((int) ROWS_PER_RG);
             for (Feature feature : features) {
-                writer.write(toRow(feature));
+                WriteFixtures.appendRow(appender, schema, toRow(feature));
             }
+            appender.flush();
         }
 
         FileMetaData footer = readFooter(file);
@@ -128,9 +131,11 @@ class GeoServerOutputDemoIT {
         long baseline = runtime.totalMemory() - runtime.freeMemory();
 
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+            ParquetRecordBatchBuilder appender = writer.appender((int) ROWS_PER_RG);
             for (int i = 0; i < FEATURE_COUNT; i++) {
-                writer.write(toRow(buildFeature(i)));
+                WriteFixtures.appendRow(appender, schema, toRow(buildFeature(i)));
             }
+            appender.flush();
         }
 
         long peakUsed = runtime.totalMemory() - runtime.freeMemory();
@@ -159,12 +164,12 @@ class GeoServerOutputDemoIT {
         return new Feature(i, "feature-" + i, wkbPoint(x, y));
     }
 
-    private static WriteRow toRow(Feature feature) {
+    private static Map<ColumnPath, Object> toRow(Feature feature) {
         Map<ColumnPath, Object> values = new HashMap<>(3);
         values.put(ColumnPath.of("id"), feature.id());
         values.put(ColumnPath.of("name"), MemorySegment.ofArray(feature.name().getBytes(StandardCharsets.UTF_8)));
         values.put(ColumnPath.of("geometry"), MemorySegment.ofArray(feature.wkb()));
-        return values::get;
+        return values;
     }
 
     // --- schema + footer helpers ---

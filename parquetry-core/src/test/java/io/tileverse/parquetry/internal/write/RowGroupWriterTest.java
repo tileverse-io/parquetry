@@ -37,7 +37,6 @@ import org.junit.jupiter.api.io.TempDir;
 import io.tileverse.parquetry.data.ParquetWriteException;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.EncodingPolicy;
-import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.PageHeader;
@@ -51,7 +50,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
-import io.tileverse.parquetry.testsupport.ByteArrayWritableChannel;
+import io.tileverse.parquetry.testsupport.ByteArrayByteSink;
 
 class RowGroupWriterTest {
 
@@ -66,12 +65,14 @@ class RowGroupWriterTest {
                 .encodingPolicy("id", EncodingPolicy.FORCE_PLAIN)
                 .build();
 
-        ByteArrayWritableChannel sink = new ByteArrayWritableChannel();
+        ByteArrayByteSink sink = new ByteArrayByteSink();
         RowGroupFlushResult flushed;
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (int i = 0; i < 100; i++) {
+            rows.add(Map.of(ColumnPath.of("id"), i));
+        }
         try (RowGroupWriter rgw = new RowGroupWriter(options, schema, tempDir)) {
-            for (int i = 0; i < 100; i++) {
-                rgw.append(row(Map.of(ColumnPath.of("id"), i)));
-            }
+            rgw.appendBatch(WriteFixtures.batch(schema, rows));
             flushed = rgw.flushTo(sink);
         }
 
@@ -106,18 +107,20 @@ class RowGroupWriterTest {
                 .encodingPolicy("name", EncodingPolicy.FORCE_PLAIN)
                 .build();
 
-        ByteArrayWritableChannel sink = new ByteArrayWritableChannel();
+        ByteArrayByteSink sink = new ByteArrayByteSink();
         RowGroupFlushResult flushed;
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (int i = 0; i < 50; i++) {
+            rows.add(Map.of(
+                    ColumnPath.of("id"),
+                    i,
+                    ColumnPath.of("timestamp"),
+                    1_000_000L + i,
+                    ColumnPath.of("name"),
+                    wrap("name-" + i)));
+        }
         try (RowGroupWriter rgw = new RowGroupWriter(options, schema, tempDir)) {
-            for (int i = 0; i < 50; i++) {
-                rgw.append(row(Map.of(
-                        ColumnPath.of("id"),
-                        i,
-                        ColumnPath.of("timestamp"),
-                        1_000_000L + i,
-                        ColumnPath.of("name"),
-                        wrap("name-" + i))));
-            }
+            rgw.appendBatch(WriteFixtures.batch(schema, rows));
             flushed = rgw.flushTo(sink);
         }
 
@@ -145,7 +148,7 @@ class RowGroupWriterTest {
     void emptyRowGroupRejectsFlush() throws Exception {
         ParquetSchema schema = flatSchema(requiredInt32("id"));
         WriteOptions options = options().build();
-        ByteArrayWritableChannel sink = new ByteArrayWritableChannel();
+        ByteArrayByteSink sink = new ByteArrayByteSink();
         try (RowGroupWriter rgw = new RowGroupWriter(options, schema, tempDir)) {
             assertThatThrownBy(() -> rgw.flushTo(sink))
                     .isInstanceOf(ParquetWriteException.class)
@@ -158,14 +161,16 @@ class RowGroupWriterTest {
         ParquetSchema schema = flatSchema(requiredInt32("color_id"), requiredInt32("brightness"));
         WriteOptions options = options().pageValueLimit(64).build();
 
-        ByteArrayWritableChannel sink = new ByteArrayWritableChannel();
+        ByteArrayByteSink sink = new ByteArrayByteSink();
         RowGroupFlushResult flushed;
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (int i = 0; i < 500; i++) {
+            rows.add(Map.of(
+                    ColumnPath.of("color_id"), i % 4,
+                    ColumnPath.of("brightness"), i % 8));
+        }
         try (RowGroupWriter rgw = new RowGroupWriter(options, schema, tempDir)) {
-            for (int i = 0; i < 500; i++) {
-                rgw.append(row(Map.of(
-                        ColumnPath.of("color_id"), i % 4,
-                        ColumnPath.of("brightness"), i % 8)));
-            }
+            rgw.appendBatch(WriteFixtures.batch(schema, rows));
             flushed = rgw.flushTo(sink);
         }
 
@@ -202,12 +207,14 @@ class RowGroupWriterTest {
                 .encodingPolicy("b", EncodingPolicy.FORCE_PLAIN)
                 .build();
 
-        ByteArrayWritableChannel sink = new ByteArrayWritableChannel();
+        ByteArrayByteSink sink = new ByteArrayByteSink();
         RowGroupFlushResult flushed;
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (int i = 0; i < 64; i++) {
+            rows.add(Map.of(ColumnPath.of("a"), i, ColumnPath.of("b"), i * 2));
+        }
         try (RowGroupWriter rgw = new RowGroupWriter(options, schema, tempDir)) {
-            for (int i = 0; i < 64; i++) {
-                rgw.append(row(Map.of(ColumnPath.of("a"), i, ColumnPath.of("b"), i * 2)));
-            }
+            rgw.appendBatch(WriteFixtures.batch(schema, rows));
             flushed = rgw.flushTo(sink);
         }
 
@@ -237,11 +244,13 @@ class RowGroupWriterTest {
     void tempFilesAreCleanedUpAfterFlush() throws Exception {
         ParquetSchema schema = flatSchema(requiredInt32("a"), requiredInt32("b"));
         WriteOptions options = options().build();
-        ByteArrayWritableChannel sink = new ByteArrayWritableChannel();
+        ByteArrayByteSink sink = new ByteArrayByteSink();
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            rows.add(Map.of(ColumnPath.of("a"), i, ColumnPath.of("b"), i + 1));
+        }
         try (RowGroupWriter rgw = new RowGroupWriter(options, schema, tempDir)) {
-            for (int i = 0; i < 10; i++) {
-                rgw.append(row(Map.of(ColumnPath.of("a"), i, ColumnPath.of("b"), i + 1)));
-            }
+            rgw.appendBatch(WriteFixtures.batch(schema, rows));
             rgw.flushTo(sink);
         }
         assertThat(listTempFiles()).isEmpty();
@@ -252,7 +261,7 @@ class RowGroupWriterTest {
         ParquetSchema schema = flatSchema(requiredInt32("a"));
         WriteOptions options = options().build();
         RowGroupWriter rgw = new RowGroupWriter(options, schema, tempDir);
-        rgw.append(row(Map.of(ColumnPath.of("a"), 1)));
+        rgw.appendBatch(WriteFixtures.batch(schema, List.of(Map.of(ColumnPath.of("a"), 1))));
         rgw.close();
         assertThat(listTempFiles())
                 .as("close without flushTo must delete every per-column temp file it created")
@@ -269,16 +278,18 @@ class RowGroupWriterTest {
                 .encodingPolicy("nullable", EncodingPolicy.FORCE_PLAIN)
                 .build();
 
-        ByteArrayWritableChannel sink = new ByteArrayWritableChannel();
+        ByteArrayByteSink sink = new ByteArrayByteSink();
         RowGroupFlushResult flushed;
-        try (RowGroupWriter rgw = new RowGroupWriter(options, schema, tempDir)) {
-            for (int i = 0; i < 10; i++) {
-                Map<ColumnPath, Object> values = new HashMap<>();
-                if (i % 2 == 0) {
-                    values.put(ColumnPath.of("nullable"), i);
-                }
-                rgw.append(row(values));
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            Map<ColumnPath, Object> values = new HashMap<>();
+            if (i % 2 == 0) {
+                values.put(ColumnPath.of("nullable"), i);
             }
+            rows.add(values);
+        }
+        try (RowGroupWriter rgw = new RowGroupWriter(options, schema, tempDir)) {
+            rgw.appendBatch(WriteFixtures.batch(schema, rows));
             flushed = rgw.flushTo(sink);
         }
 
@@ -313,11 +324,6 @@ class RowGroupWriterTest {
 
     private static WriteOptions.Builder options() {
         return WriteOptions.builder();
-    }
-
-    private static WriteRow row(Map<ColumnPath, Object> values) {
-        Map<ColumnPath, Object> copy = Map.copyOf(values);
-        return copy::get;
     }
 
     private static MemorySegment wrap(String s) {

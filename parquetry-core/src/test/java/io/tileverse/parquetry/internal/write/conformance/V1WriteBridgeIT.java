@@ -47,7 +47,7 @@ import org.junit.jupiter.api.io.TempDir;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.ParquetVersion;
-import io.tileverse.parquetry.data.WriteRow;
+import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -113,7 +113,8 @@ class V1WriteBridgeIT {
                 .crsEpsg("geometry", 4326)
                 .build();
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            writer.write(WriteRow.of(Map.of(ColumnPath.of("geometry"), MemorySegment.ofArray(wkbPoint(1.0, 2.0)))));
+            writer.writeBatch(WriteFixtures.batch(
+                    schema, List.of(Map.of(ColumnPath.of("geometry"), MemorySegment.ofArray(wkbPoint(1.0, 2.0))))));
         }
 
         ParquetMetadata metadata = readFooterViaParquetJava(file);
@@ -192,9 +193,7 @@ class V1WriteBridgeIT {
             Path file, ParquetSchema schema, WriteOptions options, List<Map<ColumnPath, Object>> rows)
             throws IOException {
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            for (Map<ColumnPath, Object> row : rows) {
-                writer.write(WriteRow.of(row));
-            }
+            writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
     }
 

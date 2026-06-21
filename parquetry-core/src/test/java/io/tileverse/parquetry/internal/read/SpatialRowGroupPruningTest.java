@@ -37,7 +37,6 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.GeoParquetMetadataMode;
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
-import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.GeometryFilter;
 import io.tileverse.parquetry.filter.Pred;
@@ -46,6 +45,7 @@ import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.filter.explain.Tier;
+import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -172,23 +172,29 @@ class SpatialRowGroupPruningTest {
                 .build();
         Path file = tempDir.resolve("clustered.parquet");
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            writeCluster(writer, 0, 0.0);
-            writeCluster(writer, 1, 100.0);
-            writeCluster(writer, 2, 200.0);
-            writeCluster(writer, 3, 300.0);
+            writeCluster(writer, schema, 0, 0.0);
+            writeCluster(writer, schema, 1, 100.0);
+            writeCluster(writer, schema, 2, 200.0);
+            writeCluster(writer, schema, 3, 300.0);
         }
         return file;
     }
 
-    /** Writes {@link #ROWS_PER_GROUP} unit rectangles spread across the cluster's [origin..origin+10] square. */
-    private static void writeCluster(ParquetWriter writer, int clusterIndex, double origin) throws IOException {
+    /**
+     * Writes {@link #ROWS_PER_GROUP} unit rectangles spread across the cluster's [origin..origin+10] square as one
+     * batch, which the {@link RowGroupSize#rows(int)} policy turns into a single dedicated row group.
+     */
+    private static void writeCluster(ParquetWriter writer, ParquetSchema schema, int clusterIndex, double origin)
+            throws IOException {
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
         for (int i = 0; i < ROWS_PER_GROUP; i++) {
             int id = clusterIndex * ROWS_PER_GROUP + i;
             double minX = origin + i * 2.0;
             double minY = origin + i * 2.0;
             String wkt = rectangleWkt(minX, minY, minX + 1.0, minY + 1.0);
-            writer.write(WriteRow.of(Map.of(ColumnPath.of("geometry"), Wkb.fromWkt(wkt), ColumnPath.of("id"), id)));
+            rows.add(Map.of(ColumnPath.of("geometry"), Wkb.fromWkt(wkt), ColumnPath.of("id"), id));
         }
+        writer.writeBatch(WriteFixtures.batch(schema, rows));
     }
 
     private static List<Integer> readIds(Path file, Predicate predicate, ReadOptions options) {

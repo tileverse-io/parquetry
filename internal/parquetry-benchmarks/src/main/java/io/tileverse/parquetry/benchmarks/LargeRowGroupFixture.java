@@ -23,10 +23,9 @@ import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
 
+import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
-import io.tileverse.parquetry.data.WriteRow;
-import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
@@ -49,8 +48,6 @@ import io.tileverse.parquetry.schema.SchemaNode;
  */
 final class LargeRowGroupFixture {
 
-    static final ColumnPath ID = ColumnPath.of("id");
-
     private LargeRowGroupFixture() {}
 
     /**
@@ -67,11 +64,15 @@ final class LargeRowGroupFixture {
                 .encodingPolicy("id", WriteOptions.EncodingPolicy.FORCE_PLAIN)
                 .build();
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            WideRow row = new WideRow();
+            ParquetRecordBatchBuilder appender = writer.appender();
             for (long index = 0; index < rows; index++) {
-                row.id = index;
-                writer.write(row);
+                appender.setLong(0, index);
+                for (int col = 0; col < wideColumns; col++) {
+                    appender.setDouble(1 + col, index * (col + 1) * 0.5);
+                }
+                appender.endRow();
             }
+            appender.flush();
         }
     }
 
@@ -97,28 +98,5 @@ final class LargeRowGroupFixture {
 
     private static SchemaNode.Primitive required(String name, PrimitiveKind kind) {
         return new SchemaNode.Primitive(name, Repetition.REQUIRED, kind, OptionalInt.empty(), Optional.empty(), -1);
-    }
-
-    /**
-     * Reused across the write loop to avoid a per-row map. Each payload column derives from the row index, keeping the
-     * file deterministic: {@code v{c}} is {@code id * (c + 1) * 0.5}.
-     */
-    private static final class WideRow implements WriteRow {
-
-        private long id;
-
-        @Override
-        public Object value(ColumnPath path) {
-            if (path.equals(ID)) {
-                return id;
-            }
-            return id * (columnIndex(path) + 1) * 0.5;
-        }
-
-        private int columnIndex(ColumnPath path) {
-            // Payload columns are named v0..vN by wideSchema; the index is the digits after the leading 'v'.
-            String name = path.dot();
-            return Integer.parseInt(name.substring(1));
-        }
     }
 }

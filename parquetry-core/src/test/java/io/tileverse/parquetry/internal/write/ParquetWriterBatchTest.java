@@ -24,7 +24,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.BitSet;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -47,7 +46,6 @@ import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
-import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
@@ -184,7 +182,7 @@ class ParquetWriterBatchTest {
         Path parquetFile = tempDir.resolve("mixed.parquet");
 
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
-            writer.write(row(Map.of(ColumnPath.of("id"), 100)));
+            writer.writeBatch(WriteFixtures.batch(schema, List.of(Map.of(ColumnPath.of("id"), 100))));
             int[] batchValues = {200, 201, 202};
             BitSet validBits = new BitSet(3);
             validBits.set(0, 3);
@@ -193,7 +191,7 @@ class ParquetWriterBatchTest {
                     buildBatch(schema, 3, Map.of(ColumnPath.of("id"), IntVector.materialized(batchValues, valid)))) {
                 writer.writeBatch(batch);
             }
-            writer.write(row(Map.of(ColumnPath.of("id"), 300)));
+            writer.writeBatch(WriteFixtures.batch(schema, List.of(Map.of(ColumnPath.of("id"), 300))));
         }
 
         List<Map<String, Object>> readBack = readAll(parquetFile, schema);
@@ -236,11 +234,6 @@ class ParquetWriterBatchTest {
             ParquetSchema schema, int rowCount, Map<ColumnPath, ColumnVector> columns) {
         Map<ColumnPath, ColumnVector> view = new LinkedHashMap<>(columns);
         return new DefaultParquetRecordBatch(schema, view, rowCount, Arena.ofShared());
-    }
-
-    private static WriteRow row(Map<ColumnPath, Object> values) {
-        Map<ColumnPath, Object> copy = new HashMap<>(values);
-        return copy::get;
     }
 
     private static List<Map<String, Object>> readAll(Path parquetFile, ParquetSchema schema) {

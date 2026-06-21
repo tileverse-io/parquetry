@@ -45,12 +45,12 @@ import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
+import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.GeoParquetMetadataMode;
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
-import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
@@ -209,9 +209,13 @@ public class SpatialPruningBenchmark {
         }
 
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+            ParquetRecordBatchBuilder appender = writer.appender();
             for (GeometryRow row : rows) {
-                writer.write(row);
+                appender.setBinary(0, row.geom());
+                appender.setInt(1, row.id());
+                appender.endRow();
             }
+            appender.flush();
         }
     }
 
@@ -320,28 +324,11 @@ public class SpatialPruningBenchmark {
         return new ParquetSchema(root);
     }
 
-    // --- WriteRow adapter ---
+    // --- row holder ---
 
     private static final String GEOMETRY_NAME = "geometry";
-    private static final ColumnPath GEOMETRY_COL = ColumnPath.of(GEOMETRY_NAME);
     private static final ColumnPath ID_COL = ColumnPath.of("id");
 
-    /** Reused across the write loop; holds one row's id and WKB geometry without allocating a map per row. */
-    private static final class GeometryRow implements WriteRow {
-        private final int id;
-        private final MemorySegment geom;
-
-        GeometryRow(int id, MemorySegment geom) {
-            this.id = id;
-            this.geom = geom;
-        }
-
-        @Override
-        public Object value(ColumnPath path) {
-            if (path.equals(GEOMETRY_COL)) {
-                return geom;
-            }
-            return id;
-        }
-    }
+    /** One row's id and WKB geometry. */
+    private record GeometryRow(int id, MemorySegment geom) {}
 }

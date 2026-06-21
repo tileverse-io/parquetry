@@ -20,6 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -31,6 +32,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -107,10 +109,12 @@ class PagePruningReadTest {
         ParquetSchema schema = flatSchema(requiredInt32("v"), requiredInt32("tag"));
         WriteOptions options =
                 WriteOptions.builder().tempDir(tempDir).pageValueLimit(8).build();
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (int v = 0; v < 100; v++) {
+            rows.add(row(v, v * 10));
+        }
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            for (int v = 0; v < 100; v++) {
-                writer.write(row(v, v * 10));
-            }
+            writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
         return file;
     }
@@ -126,8 +130,7 @@ class PagePruningReadTest {
                 name, Repetition.REQUIRED, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
     }
 
-    private static WriteRow row(int v, int tag) {
-        Map<ColumnPath, Object> values = Map.of(V, v, TAG, tag);
-        return values::get;
+    private static Map<ColumnPath, Object> row(int v, int tag) {
+        return Map.of(V, v, TAG, tag);
     }
 }

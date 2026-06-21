@@ -37,7 +37,6 @@ import org.junit.jupiter.api.io.TempDir;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
-import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.format.ColumnIndex;
@@ -47,6 +46,7 @@ import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.internal.filter.RecordLevelEvaluator;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
+import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -334,24 +334,25 @@ class LateMaterializingRowGroupReaderTest {
         ParquetSchema schema = fileSchema();
         WriteOptions options =
                 WriteOptions.builder().tempDir(tempDir).pageValueLimit(4).build();
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (long id = 0; id < ROW_COUNT; id++) {
+            rows.add(row(id));
+        }
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            for (long id = 0; id < ROW_COUNT; id++) {
-                writer.write(row(id));
-            }
+            writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
         return file;
     }
 
-    private static WriteRow row(long id) {
+    private static Map<ColumnPath, Object> row(long id) {
         WriteValues values = valuesFor(id);
-        Map<ColumnPath, Object> cells = Map.of(
+        return Map.of(
                 ID,
                 values.id(),
                 V,
                 values.v(),
                 NAME,
                 MemorySegment.ofArray(values.name().getBytes(StandardCharsets.UTF_8)));
-        return cells::get;
     }
 
     private static WriteValues valuesFor(long id) {

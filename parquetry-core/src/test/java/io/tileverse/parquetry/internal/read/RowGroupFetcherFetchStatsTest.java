@@ -19,6 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -30,10 +31,10 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
-import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
+import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.observe.FetchAccumulator;
@@ -125,10 +126,12 @@ class RowGroupFetcherFetchStatsTest {
         Path file = tempDir.resolve("fetch-stats.parquet");
         ParquetSchema schema = flatSchema();
         WriteOptions options = WriteOptions.builder().tempDir(tempDir).build();
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (int v = 0; v < 64; v++) {
+            rows.add(Map.of(V, v));
+        }
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            for (int v = 0; v < 64; v++) {
-                writer.write(row(v));
-            }
+            writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
         return file;
     }
@@ -139,10 +142,5 @@ class RowGroupFetcherFetchStatsTest {
         List<SchemaNode> children = Stream.<SchemaNode>of(leaf).toList();
         SchemaNode.Group root = new SchemaNode.Group("schema", Repetition.REQUIRED, children, Optional.empty(), -1);
         return new ParquetSchema(root);
-    }
-
-    private static WriteRow row(int v) {
-        Map<ColumnPath, Object> values = Map.of(V, v);
-        return values::get;
     }
 }
