@@ -35,15 +35,20 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
 final class PartitionValueParser {
 
     /** Hive writes this literal as the path segment for a null partition value. */
-    private static final String HIVE_NULL_PARTITION = "__HIVE_DEFAULT_PARTITION__";
+    static final String HIVE_NULL_PARTITION = "__HIVE_DEFAULT_PARTITION__";
 
     private PartitionValueParser() {}
+
+    /** Whether {@code raw} is Hive's null-partition sentinel path segment. */
+    static boolean isNullPartition(String raw) {
+        return HIVE_NULL_PARTITION.equals(raw);
+    }
 
     static Optional<Value> parse(String raw, PrimitiveKind kind, Optional<LogicalType> logicalType) {
         if (raw == null) {
             return Optional.empty();
         }
-        if (HIVE_NULL_PARTITION.equals(raw)) {
+        if (isNullPartition(raw)) {
             return Optional.empty();
         }
         if (logicalType.orElse(null) instanceof LogicalType.DateType) {

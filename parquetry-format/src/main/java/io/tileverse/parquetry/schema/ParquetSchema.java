@@ -285,6 +285,21 @@ public record ParquetSchema(SchemaNode.Group root) {
     }
 
     /**
+     * A new schema with {@code leaves} added as additional top-level columns after the existing ones. Used to present
+     * synthesized columns (e.g. Hive path-only partition columns) that no file physically holds.
+     */
+    public ParquetSchema withAppendedLeaves(List<SchemaNode.Primitive> leaves) {
+        if (leaves.isEmpty()) {
+            return this;
+        }
+        List<SchemaNode> children = new ArrayList<>(root().children());
+        children.addAll(leaves);
+        SchemaNode.Group augmentedRoot = new SchemaNode.Group(
+                root().name(), root().repetition(), children, root().logicalType(), root().fieldId());
+        return new ParquetSchema(augmentedRoot);
+    }
+
+    /**
      * Returns a copy of this schema with the logical-type annotation overridden on each leaf listed in
      * {@code overrides}. Leaves not in {@code overrides} are returned unchanged. Used by the GeoParquet 1.x metadata
      * bridge at {@code ParquetDataset.open()} time to synthesize {@code Geometry} / {@code Geography} logical types on

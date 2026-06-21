@@ -27,13 +27,17 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
+import io.tileverse.parquetry.filter.ConstantColumn;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.filter.Query;
+import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.internal.read.FetchBudget;
 import io.tileverse.parquetry.internal.read.TestParquetFiles;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
+import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
  * Proves that early-terminating a read over a multi-file dataset drains the segment pool across every reader. A
@@ -76,6 +80,55 @@ class MultiReaderEarlyCloseTest {
 
         assertThat(pool.stats().outstandingBorrows())
                 .as("buffers borrowed across both readers are returned on early close")
+                .isZero();
+        assertThat(budget.available())
+                .as("reserved fetch budget is restored across both readers on early close")
+                .isEqualTo(capacityBefore);
+    }
+
+    /**
+     * The synthetic-column read path flattens each file's augmented batches into rows with
+     * {@code readBatches(query).flatMap(ConstantColumnBatches::rows)}, where each rows substream attaches
+     * {@code onClose(batch::close)}. A consumer that takes a few rows and then closes the stream early - while a later
+     * batch is still in flight - must still close that in-flight batch. Driving {@link ParquetDataset#read(Query,
+     * ReadOptions)} with a constant column exercises that {@code flatMap} layer; the pool and budget returning to their
+     * pre-read baselines prove the early close cascades to the open batch.
+     */
+    @Test
+    void earlyCloseOfConstantColumnReadReleasesInFlightBatch(@TempDir Path tmp) throws Exception {
+        int rowsPerFile = 4_000;
+        Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(tmp, rowsPerFile);
+        SegmentPool pool = SegmentPool.create();
+        FetchBudget budget = FetchBudget.ofMaxMemoryFraction(0.1);
+        long capacityBefore = budget.available();
+
+        try (ByteRangeSource first = TestParquetFiles.openRangeReader(file);
+                ByteRangeSource second = TestParquetFiles.openRangeReader(file)) {
+
+            OpenOptions openOptions = OpenOptions.builder()
+                    .runtime(ParquetRuntime.builder()
+                            .segmentPool(pool)
+                            .fetchBudget(budget)
+                            .prefetchDepth(4)
+                            .build())
+                    .build();
+            ParquetDataset dataset = ParquetDataset.open(twoFileFileset(first, second), openOptions);
+
+            ConstantColumn region = new ConstantColumn(ColumnPath.of("region"), new Value.StringVal("emea"));
+            Query query = new Query(Predicate.ALWAYS_TRUE, Projection.ALL, List.of(region));
+
+            try (Stream<ParquetRecord> stream = dataset.read(query, ReadOptions.DEFAULTS)) {
+                Iterator<ParquetRecord> it = stream.iterator();
+                // Drain the first reader and step one row into the second, then close without draining the rest.
+                for (int consumed = 0; consumed <= rowsPerFile; consumed++) {
+                    assertThat(it.hasNext()).isTrue();
+                    it.next();
+                }
+            }
+        }
+
+        assertThat(pool.stats().outstandingBorrows())
+                .as("the in-flight constant-column batch returns its borrowed buffers on early close")
                 .isZero();
         assertThat(budget.available())
                 .as("reserved fetch budget is restored across both readers on early close")

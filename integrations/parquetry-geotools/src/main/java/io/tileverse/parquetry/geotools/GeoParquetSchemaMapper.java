@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.geotools;
 
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -407,9 +408,10 @@ final class GeoParquetSchemaMapper {
         boolean isString =
                 logical.map(GeoParquetSchemaMapper::isStringLogicalType).orElse(false);
         boolean isUuid = logical.map(lt -> lt instanceof LogicalType.UuidType).orElse(false);
+        boolean isDate = logical.map(lt -> lt instanceof LogicalType.DateType).orElse(false);
         return switch (kind) {
             case BOOLEAN -> Optional.of(Boolean.class);
-            case INT32 -> Optional.of(Integer.class);
+            case INT32 -> Optional.of(isDate ? Date.class : Integer.class);
             case INT64 -> Optional.of(Long.class);
             case FLOAT -> Optional.of(Float.class);
             case DOUBLE -> Optional.of(Double.class);

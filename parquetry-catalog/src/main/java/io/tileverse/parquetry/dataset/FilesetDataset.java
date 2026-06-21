@@ -16,21 +16,30 @@
 package io.tileverse.parquetry.dataset;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.Set;
+import java.util.function.IntFunction;
 import java.util.stream.Stream;
 
 import com.google.errorprone.annotations.MustBeClosed;
 
+import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.explain.DatasetExplainPlan;
 import io.tileverse.parquetry.dataset.explain.FileExplain;
 import io.tileverse.parquetry.dataset.explain.Outcome;
 import io.tileverse.parquetry.dataset.explain.Totals;
+import io.tileverse.parquetry.filter.ConstantColumn;
+import io.tileverse.parquetry.filter.ConstantFolding;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.filter.Query;
+import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.filter.prune.FilePruner;
@@ -39,6 +48,7 @@ import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
+import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
@@ -53,6 +63,9 @@ public final class FilesetDataset implements GeoParquetDataset {
 
     private final String name;
     private final ParquetDataset allFiles;
+    private final ParquetSchema augmentedSchema;
+    private final HivePartitioning partitioning;
+    private final List<Map<String, String>> perFilePartitions;
     private final List<ByteRangeSource> sources;
     private final List<String> locations;
     private final List<FileStats> partitionStats;
@@ -63,19 +76,42 @@ public final class FilesetDataset implements GeoParquetDataset {
     public FilesetDataset(
             String name,
             ParquetDataset allFiles,
+            PartitionContext partitions,
             List<ByteRangeSource> sources,
             List<String> locations,
-            List<FileStats> partitionStats,
             DatasetCapabilities capabilities,
             Optional<GeoParquetMetadata> geoMetadata) {
         this.name = Objects.requireNonNull(name, "name");
         this.allFiles = Objects.requireNonNull(allFiles, "allFiles");
+        Objects.requireNonNull(partitions, "partitions");
+        this.augmentedSchema = partitions.augmentedSchema();
+        this.partitioning = partitions.partitioning();
+        this.perFilePartitions = partitions.perFilePartitions();
+        this.partitionStats = partitions.partitionStats();
         this.sources = List.copyOf(sources);
         this.locations = List.copyOf(locations);
-        this.partitionStats = List.copyOf(partitionStats);
         this.capabilities = Objects.requireNonNull(capabilities, "capabilities");
         this.geoMetadata = Objects.requireNonNull(geoMetadata, "geoMetadata");
         this.aggregatedBounds = geoMetadata.flatMap(FilesetDataset::primaryBbox);
+    }
+
+    /**
+     * The partition and synthesis inputs the catalog assembles for one dataset: the schema with synthetic partition
+     * leaves appended, the bound partitioning, each file's resolved partition values, and each file's partition-derived
+     * {@link FileStats} used for pruning. Lists are defensively copied.
+     */
+    public record PartitionContext(
+            ParquetSchema augmentedSchema,
+            HivePartitioning partitioning,
+            List<Map<String, String>> perFilePartitions,
+            List<FileStats> partitionStats) {
+
+        public PartitionContext {
+            Objects.requireNonNull(augmentedSchema, "augmentedSchema");
+            Objects.requireNonNull(partitioning, "partitioning");
+            perFilePartitions = List.copyOf(perFilePartitions);
+            partitionStats = List.copyOf(partitionStats);
+        }
     }
 
     @Override
@@ -85,7 +121,7 @@ public final class FilesetDataset implements GeoParquetDataset {
 
     @Override
     public ParquetSchema schema() {
-        return allFiles.schema();
+        return augmentedSchema;
     }
 
     @Override
@@ -114,17 +150,38 @@ public final class FilesetDataset implements GeoParquetDataset {
     @Override
     @MustBeClosed
     public Stream<ParquetRecord> read(Predicate predicate, Projection projection, ReadOptions options) {
-        ParquetDataset query = surviving(predicate);
-        if (query == null) {
-            return Stream.empty();
+        if (!referencesSynthetic(predicate, projection)) {
+            return readAllFiles(predicate, projection, options);
         }
-        return query.read(predicate, projection, options);
+        return concatSurvivors(predicate, index -> readOneFile(index, predicate, projection, options));
     }
 
+    /**
+     * Reads batches shaped by {@code predicate} and {@code projection}, appending any projected synthetic columns as
+     * constant columns per file. Mirrors {@link #read(Predicate, Projection, ReadOptions)} at the batch level for
+     * batch-oriented consumers (such as the Arrow bridge).
+     */
+    @MustBeClosed
+    public Stream<ParquetRecordBatch> readBatches(Predicate predicate, Projection projection, ReadOptions options) {
+        if (!referencesSynthetic(predicate, projection)) {
+            return readAllFileBatches(predicate, projection, options);
+        }
+        return concatSurvivors(predicate, index -> readOneFileBatches(index, predicate, projection, options));
+    }
+
+    /**
+     * The materializer read path does not yet synthesize path-only partition columns; a query referencing a synthetic
+     * column throws {@link UnsupportedOperationException}. Use {@link #read(Predicate, Projection, ReadOptions)} for
+     * synthesized columns.
+     */
     @Override
     @MustBeClosed
     public <T> Stream<T> read(
             Predicate predicate, Projection projection, Materializer<T> materializer, ReadOptions options) {
+        if (referencesSynthetic(predicate, projection)) {
+            throw new UnsupportedOperationException(
+                    "the materializer read path does not yet support synthesized partition columns; use read(predicate, projection, options)");
+        }
         ParquetDataset query = surviving(predicate);
         if (query == null) {
             return Stream.empty();
@@ -134,11 +191,169 @@ public final class FilesetDataset implements GeoParquetDataset {
 
     @Override
     public long count(Predicate predicate, ReadOptions options) {
+        if (!referencesSynthetic(predicate, Projection.ALL)) {
+            return countAllFiles(predicate, options);
+        }
+        long total = 0L;
+        for (int index : pruneSurvivors(predicate)) {
+            Predicate residual = residualFor(index, predicate);
+            if (residual.equals(Predicate.ALWAYS_FALSE)) {
+                continue;
+            }
+            ParquetDataset oneFile = ParquetDataset.open(new SurvivorFileset(sources, List.of(index)));
+            total += oneFile.count(residual, options);
+        }
+        return total;
+    }
+
+    @MustBeClosed
+    private Stream<ParquetRecord> readAllFiles(Predicate predicate, Projection projection, ReadOptions options) {
+        ParquetDataset query = surviving(predicate);
+        if (query == null) {
+            return Stream.empty();
+        }
+        return query.read(predicate, projection, options);
+    }
+
+    @MustBeClosed
+    private Stream<ParquetRecordBatch> readAllFileBatches(
+            Predicate predicate, Projection projection, ReadOptions options) {
+        ParquetDataset query = surviving(predicate);
+        if (query == null) {
+            return Stream.empty();
+        }
+        return query.readBatches(Query.of(predicate, projection), options);
+    }
+
+    private long countAllFiles(Predicate predicate, ReadOptions options) {
         ParquetDataset query = surviving(predicate);
         if (query == null) {
             return 0L;
         }
         return query.count(predicate, options);
+    }
+
+    /**
+     * Concatenates the per-file streams of the files surviving {@code predicate}; each one-file stream's resources
+     * close with the composed stream.
+     */
+    @MustBeClosed
+    private <T> Stream<T> concatSurvivors(Predicate predicate, IntFunction<Stream<T>> oneFile) {
+        return pruneSurvivors(predicate).stream().flatMap(oneFile::apply);
+    }
+
+    @MustBeClosed
+    private Stream<ParquetRecord> readOneFile(
+            int index, Predicate predicate, Projection projection, ReadOptions options) {
+        Query query = oneFileQuery(index, predicate, projection);
+        if (query == null) {
+            return Stream.empty();
+        }
+        ParquetDataset oneFile = ParquetDataset.open(new SurvivorFileset(sources, List.of(index)));
+        return oneFile.read(query, options);
+    }
+
+    @MustBeClosed
+    private Stream<ParquetRecordBatch> readOneFileBatches(
+            int index, Predicate predicate, Projection projection, ReadOptions options) {
+        Query query = oneFileQuery(index, predicate, projection);
+        if (query == null) {
+            return Stream.empty();
+        }
+        ParquetDataset oneFile = ParquetDataset.open(new SurvivorFileset(sources, List.of(index)));
+        return oneFile.readBatches(query, options);
+    }
+
+    /**
+     * The one-file {@link Query} for the file at {@code index}: the predicate folded against this file's synthetic
+     * constants, the projection split to its physical columns, and the projected synthetic columns appended as
+     * constants. Returns null when the folded predicate is always false (the file is skipped).
+     */
+    private Query oneFileQuery(int index, Predicate predicate, Projection projection) {
+        Predicate residual = residualFor(index, predicate);
+        if (residual.equals(Predicate.ALWAYS_FALSE)) {
+            return null;
+        }
+        Map<String, String> filePartitions = perFilePartitions.get(index);
+        Projection physical = physicalProjection(projection);
+        List<ConstantColumn> constants = projectedConstants(projection, filePartitions);
+        return new Query(residual, physical, constants);
+    }
+
+    private Predicate residualFor(int index, Predicate predicate) {
+        Map<String, String> filePartitions = perFilePartitions.get(index);
+        Map<ColumnPath, Value> constants = partitioning.constantMap(filePartitions);
+        return ConstantFolding.fold(predicate, constants, partitioning.nullColumns(filePartitions));
+    }
+
+    /**
+     * The physical column projection: {@link Projection#ALL} unchanged, else the named columns minus synthetic ones.
+     * When every requested column is synthetic the physical set is empty; the batch reader derives the row count from
+     * decoded columns and would emit no rows. Project one cheap physical leaf instead so each file row is enumerated
+     * and the synthetic constants are appended to it.
+     */
+    private Projection physicalProjection(Projection projection) {
+        if (projection instanceof Projection.Columns(Set<ColumnPath> kept)) {
+            Set<ColumnPath> physical = new LinkedHashSet<>(kept);
+            physical.removeAll(partitioning.syntheticPaths());
+            if (physical.isEmpty()) {
+                return rowEnumerationProjection();
+            }
+            return Projection.of(physical);
+        }
+        return projection;
+    }
+
+    /** A projection of a single physical leaf, used to drive row enumeration when only synthetic columns are read. */
+    private Projection rowEnumerationProjection() {
+        ColumnPath firstLeaf = allFiles.schema().leafColumns().get(0);
+        return Projection.of(Set.of(firstLeaf));
+    }
+
+    /** The projected synthetic columns of this file as constant output columns. */
+    private List<ConstantColumn> projectedConstants(Projection projection, Map<String, String> filePartitions) {
+        List<ConstantColumn> all = partitioning.constantsFor(filePartitions);
+        if (projection instanceof Projection.Columns(Set<ColumnPath> keptColumns)) {
+            List<ConstantColumn> kept = new ArrayList<>();
+            for (ConstantColumn constant : all) {
+                if (keptColumns.contains(constant.path())) {
+                    kept.add(constant);
+                }
+            }
+            return kept;
+        }
+        return all;
+    }
+
+    /**
+     * Whether {@code predicate} or {@code projection} references a synthetic (path-only) column. Only then does a read
+     * fold per file and append constants; otherwise the all-files fast path stays.
+     */
+    private boolean referencesSynthetic(Predicate predicate, Projection projection) {
+        if (!partitioning.hasSynthetic()) {
+            return false;
+        }
+        return projectionNamesSynthetic(projection) || predicateNamesSynthetic(predicate);
+    }
+
+    private boolean projectionNamesSynthetic(Projection projection) {
+        if (projection instanceof Projection.Columns(Set<ColumnPath> kept)) {
+            return intersectsSynthetic(kept);
+        }
+        return true;
+    }
+
+    private boolean predicateNamesSynthetic(Predicate predicate) {
+        return intersectsSynthetic(Predicate.columns(predicate));
+    }
+
+    private boolean intersectsSynthetic(Set<ColumnPath> columns) {
+        for (ColumnPath synthetic : partitioning.syntheticPaths()) {
+            if (columns.contains(synthetic)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
@@ -173,10 +388,15 @@ public final class FilesetDataset implements GeoParquetDataset {
         if (decision instanceof PruningDecision.Eliminated ruledOut) {
             return new FileExplain(location, Outcome.SKIP, ruledOut.reason(), recordCount, Optional.empty());
         }
+        Predicate residual = residualFor(index, predicate);
+        if (residual.equals(Predicate.ALWAYS_FALSE)) {
+            return new FileExplain(location, Outcome.SKIP, "partition value excluded", recordCount, Optional.empty());
+        }
+        Projection physical = physicalProjection(projection);
         ParquetDataset survivor = ParquetDataset.open(new SurvivorFileset(sources, List.of(index)));
         ExplainPlan plan = analyze
-                ? survivor.explainAnalyze(predicate, projection, options)
-                : survivor.explain(predicate, projection, options);
+                ? survivor.explainAnalyze(residual, physical, options)
+                : survivor.explain(residual, physical, options);
         return new FileExplain(location, Outcome.KEEP, "kept", recordCount, Optional.of(plan));
     }
 

@@ -15,6 +15,9 @@
  */
 package io.tileverse.parquetry.geotools;
 
+import java.time.LocalDate;
+import java.time.ZoneOffset;
+import java.util.Date;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -122,7 +125,19 @@ final class GeoParquetFeatureReader implements FeatureReader<SimpleFeatureType, 
         if (binding == byte[].class) {
             return row.getBinary(path);
         }
+        if (binding == Date.class) {
+            return epochDayToDate(row.getInt(path));
+        }
         return row.get(path);
+    }
+
+    /**
+     * Converts a Parquet DATE value (days since the Unix epoch) to a {@link Date} at UTC midnight, the GeoTools binding
+     * for a date-only attribute.
+     */
+    private static Date epochDayToDate(int epochDay) {
+        return Date.from(
+                LocalDate.ofEpochDay(epochDay).atStartOfDay(ZoneOffset.UTC).toInstant());
     }
 
     /** Decodes the geometry column in place from the record's WKB and stamps the column's EPSG SRID when resolved. */

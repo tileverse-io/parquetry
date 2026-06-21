@@ -18,12 +18,10 @@ package io.tileverse.parquetry.catalog;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.stream.Stream;
 
 import io.tileverse.parquetry.data.RowGroupSummary;
@@ -49,10 +47,10 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
  *
  * <p>Open reads each file's footer in a gather pass (schema, GeoParquet {@code geo} metadata, row count, and Hive
  * partition values) and again when the all-files dataset opens; composing the already-opened single-file readers into
- * the multi-file dataset is a possible follow-up. From the gathered metadata the partition keys are bound to physical
- * columns ({@link HivePartitioning#bind}, which throws on a path-only key), the per-file {@code geo} metadata is
- * unioned ({@link GeoMetadataAggregator#aggregate}), and one {@link FilesetDataset} is built with per-file partition
- * {@link FileStats} for pruning.
+ * the multi-file dataset is a possible follow-up. From the gathered metadata the partition keys are bound
+ * ({@link HivePartitioning#bind}: a key matching a physical column prunes that column, a path-only key is synthesized
+ * into an appended column), the per-file {@code geo} metadata is unioned ({@link GeoMetadataAggregator#aggregate}), and
+ * one {@link FilesetDataset} is built with per-file partition {@link FileStats} for pruning.
  *
  * <p>Hive {@code key=value} segments are a physical-column pruning aid, never a dataset discriminator: the whole tree
  * is one dataset. The footer reads at open are the known scale ceiling, acceptable for moderate file counts.
@@ -79,11 +77,12 @@ public final class FilesetCatalog implements DatasetCatalog {
     }
 
     /**
-     * Opens a catalog over {@code source}. Every file is opened immediately, all files must share a schema by equality,
-     * and every Hive partition key must resolve to a physical column.
+     * Opens a catalog over {@code source}. Every file is opened immediately and all files must share a schema by
+     * equality. A Hive partition key matching a physical column prunes that column; a path-only key is synthesized into
+     * an appended column.
      *
      * @throws IllegalArgumentException if {@code source} lists no files
-     * @throws IllegalStateException if the files do not share a schema, or a partition key is path-only
+     * @throws IllegalStateException if the files do not share a schema
      * @throws io.tileverse.parquetry.format.ParquetFormatException if any footer fails to conform to the spec
      * @throws java.io.UncheckedIOException if any source fails to deliver bytes
      */
@@ -112,13 +111,13 @@ public final class FilesetCatalog implements DatasetCatalog {
         }
     }
 
+    @SuppressWarnings("java:S2259") // open() guarantees at least one file; the loop always assigns unifiedSchema
     private static Dataset buildDataset(
             List<FileEntry> files, List<ByteRangeSource> opened, CatalogOptions options, URI root) {
         List<GeoParquetMetadata> perFileGeo = new ArrayList<>();
         List<Map<String, String>> perFilePartitions = new ArrayList<>(files.size());
         List<Long> perFileRowCounts = new ArrayList<>(files.size());
         ParquetSchema unifiedSchema = null;
-        Set<String> partitionKeys = new LinkedHashSet<>();
         for (int index = 0; index < files.size(); index++) {
             ParquetDataset fileDataset = ParquetDataset.open(opened.get(index));
             ParquetSchema schema = fileDataset.schema();
@@ -131,11 +130,11 @@ public final class FilesetCatalog implements DatasetCatalog {
             Map<String, String> partitions =
                     HivePartitionResolver.partitionValues(files.get(index).relativePath());
             perFilePartitions.add(partitions);
-            partitionKeys.addAll(partitions.keySet());
             perFileRowCounts.add(totalRowCount(fileDataset));
         }
 
-        HivePartitioning partitioning = HivePartitioning.bind(partitionKeys, unifiedSchema);
+        HivePartitioning partitioning = HivePartitioning.bind(perFilePartitions, unifiedSchema);
+        ParquetSchema augmentedSchema = unifiedSchema.withAppendedLeaves(partitioning.syntheticLeaves());
         List<FileStats> stats = new ArrayList<>(files.size());
         for (int index = 0; index < files.size(); index++) {
             stats.add(partitioning.fileStats(perFilePartitions.get(index), perFileRowCounts.get(index)));
@@ -146,7 +145,9 @@ public final class FilesetCatalog implements DatasetCatalog {
         DatasetCapabilities caps = capabilities(partitioning, aggregatedGeo);
         String name = options.datasetName().orElseGet(() -> deriveName(files, root));
         List<String> locations = files.stream().map(FileEntry::relativePath).toList();
-        return new FilesetDataset(name, allFiles, opened, locations, stats, caps, aggregatedGeo);
+        FilesetDataset.PartitionContext partitions =
+                new FilesetDataset.PartitionContext(augmentedSchema, partitioning, perFilePartitions, stats);
+        return new FilesetDataset(name, allFiles, partitions, opened, locations, caps, aggregatedGeo);
     }
 
     /**

@@ -16,7 +16,6 @@
 package io.tileverse.parquetry.geotools;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -28,6 +27,7 @@ import java.sql.Statement;
 
 import org.geotools.api.data.Query;
 import org.geotools.api.data.SimpleFeatureSource;
+import org.geotools.api.feature.simple.SimpleFeatureType;
 import org.geotools.api.filter.Filter;
 import org.geotools.api.filter.FilterFactory;
 import org.geotools.factory.CommonFactoryFinder;
@@ -74,14 +74,21 @@ class HivePruningDataStoreIT {
     }
 
     @Test
-    void pathOnlyPartitionColumnFailsFast(@TempDir Path root) throws Exception {
-        writePathOnlyPartitionedTree(root, 2024, 3);
+    void pathOnlyPartitionColumnIsSynthesizedIntoTheType(@TempDir Path root) throws Exception {
+        int rowCount = 3;
+        writePathOnlyPartitionedTree(root, 2024, rowCount);
 
-        LocalFileSource source = LocalFileSource.directory(root, "**.parquet");
-        CatalogOptions options = CatalogOptions.defaults();
-        assertThatThrownBy(() -> FilesetCatalog.open(source, options))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("path-only");
+        try (FilesetCatalog catalog =
+                        FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults());
+                GeoParquetDataStore store = new GeoParquetDataStore(catalog)) {
+
+            String typeName = store.getTypeNames()[0];
+            SimpleFeatureType schema = store.getSchema(typeName);
+            assertThat(schema.getDescriptor("year")).isNotNull();
+
+            SimpleFeatureSource fs = store.getFeatureSource(typeName);
+            assertThat(fs.getCount(Query.ALL)).isEqualTo(rowCount);
+        }
     }
 
     /**

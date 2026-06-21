@@ -74,6 +74,13 @@
       <artifactId>assertj-core</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- Dataset engine: tests open a ParquetDataset to produce batches with constant columns. -->
+    <dependency>
+      <groupId>io.tileverse.parquetry</groupId>
+      <artifactId>parquetry-catalog</artifactId>
+      <version>${project.version}</version>
+      <scope>test</scope>
+    </dependency>
     <!-- Bundled corpus + classpath extractor; reactor-only. -->
     <dependency>
       <groupId>io.tileverse.parquetry</groupId>

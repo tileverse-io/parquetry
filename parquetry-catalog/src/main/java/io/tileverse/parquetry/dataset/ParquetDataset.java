@@ -31,7 +31,11 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.RowGroupSummary;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.filter.Query;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
+import io.tileverse.parquetry.internal.filter.PredicateNormalizer;
+import io.tileverse.parquetry.internal.filter.RecordAccessors;
+import io.tileverse.parquetry.internal.filter.RecordLevelEvaluator;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -139,6 +143,38 @@ public sealed interface ParquetDataset permits DefaultParquetDataset {
     @MustBeClosed
     <T> Stream<T> readBatches(
             Predicate predicate, Projection projection, BatchMaterializer<T> materializer, ReadOptions options);
+
+    /** Reads batches shaped by {@code query}, including any constant output columns. */
+    @MustBeClosed
+    default Stream<ParquetRecordBatch> readBatches(Query query, ReadOptions options) {
+        Stream<ParquetRecordBatch> physical = readBatches(query.predicate(), query.projection(), options);
+        if (query.constantColumns().isEmpty()) {
+            return physical;
+        }
+        return physical.map(batch -> ConstantColumnBatches.append(batch, query.constantColumns()));
+    }
+
+    /**
+     * Reads records shaped by {@code query}, including any constant output columns.
+     *
+     * <p>The constant-free case delegates to {@link #read(Predicate, Projection, ReadOptions)}, which applies the
+     * record-level filter tier. The constant-column case builds records from {@link #readBatches(Query, ReadOptions)},
+     * which only prunes; a surviving batch may still hold rows that fail the predicate. This method therefore
+     * re-applies the predicate per record so both cases return exactly the rows that satisfy {@code query.predicate()}.
+     */
+    @MustBeClosed
+    default Stream<ParquetRecord> read(Query query, ReadOptions options) {
+        if (query.constantColumns().isEmpty()) {
+            return read(query.predicate(), query.projection(), options);
+        }
+        Predicate residual = PredicateNormalizer.normalize(query.predicate());
+        if (residual instanceof Predicate.Always(boolean value) && value) {
+            return readBatches(query, options).flatMap(ConstantColumnBatches::rows);
+        }
+        return readBatches(query, options)
+                .flatMap(ConstantColumnBatches::rows)
+                .filter(record -> RecordLevelEvaluator.test(residual, RecordAccessors.of(record)));
+    }
 
     /**
      * Runs the filter pipeline without reading any column data; returns the {@link ExplainPlan} describing per-tier

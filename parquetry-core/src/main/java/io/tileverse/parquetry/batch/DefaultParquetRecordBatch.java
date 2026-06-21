@@ -17,6 +17,7 @@ package io.tileverse.parquetry.batch;
 
 import java.lang.foreign.Arena;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -25,6 +26,7 @@ import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.record.RowColumns;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.SchemaNode;
 
 import lombok.NonNull;
 
@@ -47,6 +49,23 @@ public final class DefaultParquetRecordBatch implements ParquetRecordBatch {
     public static DefaultParquetRecordBatch ofHeap(
             @NonNull ParquetSchema projectedSchema, @NonNull Map<ColumnPath, ColumnVector> columns, int rowCount) {
         return new DefaultParquetRecordBatch(projectedSchema, columns, rowCount, Arena.ofShared());
+    }
+
+    /**
+     * A batch with the same rows as {@code base} plus the given constant columns appended, under {@code base}'s schema
+     * extended by {@code constantLeaves} (in order). Closing the returned batch also closes {@code base}.
+     */
+    public static DefaultParquetRecordBatch withConstantColumns(
+            ParquetRecordBatch base,
+            List<SchemaNode.Primitive> constantLeaves,
+            Map<ColumnPath, ColumnVector> constantColumns) {
+        ParquetSchema augmentedSchema = base.projectedSchema().withAppendedLeaves(constantLeaves);
+        Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>(base.columns());
+        columns.putAll(constantColumns);
+        DefaultParquetRecordBatch augmented =
+                DefaultParquetRecordBatch.ofHeap(augmentedSchema, columns, base.rowCount());
+        augmented.attachReleaseAction(base::close);
+        return augmented;
     }
 
     public DefaultParquetRecordBatch(
