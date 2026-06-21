@@ -21,7 +21,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -36,6 +35,7 @@ import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.explain.RowGroupPlan;
+import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.observe.QueryObserver;
 import io.tileverse.parquetry.observe.QueryStarted;
@@ -158,10 +158,14 @@ class ExplainAnalyzeIT {
         Path file = tmp.resolve("explain-analyze.parquet");
         try (OutputStream out = Files.newOutputStream(file);
                 ParquetWriter writer = ParquetWriter.create(out, schema, options)) {
+            ParquetRecordBatchBuilder appender = writer.appender(1);
             for (int i = 0; i < 9; i++) {
-                writer.write(row(Map.of(
-                        ColumnPath.of("id"), (long) i,
-                        ColumnPath.of("payload"), (long) (i * 1000))));
+                WriteFixtures.appendRow(
+                        appender,
+                        schema,
+                        Map.of(
+                                ColumnPath.of("id"), (long) i,
+                                ColumnPath.of("payload"), (long) (i * 1000)));
             }
         }
         return file;
@@ -176,10 +180,5 @@ class ExplainAnalyzeIT {
     private static SchemaNode.Primitive requiredInt64(String name) {
         return new SchemaNode.Primitive(
                 name, Repetition.REQUIRED, PrimitiveKind.INT64, OptionalInt.empty(), Optional.empty(), -1);
-    }
-
-    private static WriteRow row(Map<ColumnPath, Object> values) {
-        Map<ColumnPath, Object> copy = new HashMap<>(values);
-        return copy::get;
     }
 }

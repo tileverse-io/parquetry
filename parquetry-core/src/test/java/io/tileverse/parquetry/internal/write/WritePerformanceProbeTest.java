@@ -19,6 +19,7 @@ import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -37,7 +38,6 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.ParquetVersion;
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
-import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
@@ -134,10 +134,12 @@ class WritePerformanceProbeTest {
         ParquetSchema schema = syntheticSchema();
         Path file = tempDir.resolve(label + "-synthetic.parquet");
         long startNanos = System.nanoTime();
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (int i = 0; i < SYNTHETIC_ROW_COUNT; i++) {
+            rows.add(syntheticRow(i));
+        }
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            for (int i = 0; i < SYNTHETIC_ROW_COUNT; i++) {
-                writer.write(syntheticRow(i));
-            }
+            writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
         long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;
         long size = Files.size(file);
@@ -159,7 +161,7 @@ class WritePerformanceProbeTest {
                 long[] counter = {0L};
                 records.forEach(parquetRecord -> {
                     try {
-                        writer.write(toWriteRow(schema, parquetRecord));
+                        writer.writeBatch(WriteFixtures.batch(schema, List.of(toRowMap(schema, parquetRecord))));
                     } catch (Exception e) {
                         throw new RuntimeException(e);
                     }
@@ -175,7 +177,7 @@ class WritePerformanceProbeTest {
                 label, rowCount, size, elapsedMs, input.getFileName()));
     }
 
-    private static WriteRow toWriteRow(ParquetSchema schema, ParquetRecord parquetRecord) {
+    private static Map<ColumnPath, Object> toRowMap(ParquetSchema schema, ParquetRecord parquetRecord) {
         Map<ColumnPath, Object> values = new HashMap<>();
         for (ColumnPath leaf : schema.leafColumns()) {
             if (parquetRecord.isNull(leaf)) {
@@ -183,7 +185,7 @@ class WritePerformanceProbeTest {
             }
             values.put(leaf, parquetRecord.get(leaf));
         }
-        return values::get;
+        return values;
     }
 
     // --- synthetic data ---
@@ -205,7 +207,7 @@ class WritePerformanceProbeTest {
         return new SchemaNode.Primitive(name, Repetition.REQUIRED, kind, OptionalInt.empty(), Optional.empty(), -1);
     }
 
-    private static WriteRow syntheticRow(int i) {
+    private static Map<ColumnPath, Object> syntheticRow(int i) {
         Map<ColumnPath, Object> values = new HashMap<>(5);
         values.put(ColumnPath.of("id"), (long) i);
         values.put(ColumnPath.of("ts"), 1_700_000_000_000L + i);
@@ -213,6 +215,6 @@ class WritePerformanceProbeTest {
         values.put(ColumnPath.of("flag"), i % 8);
         values.put(
                 ColumnPath.of("label"), MemorySegment.ofArray(("label-" + (i % 64)).getBytes(StandardCharsets.UTF_8)));
-        return values::get;
+        return values;
     }
 }

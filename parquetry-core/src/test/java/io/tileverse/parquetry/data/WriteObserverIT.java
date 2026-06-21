@@ -20,7 +20,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.ByteArrayOutputStream;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -31,6 +30,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
+import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.observe.IndexesWritten;
 import io.tileverse.parquetry.observe.RowGroupFlushed;
 import io.tileverse.parquetry.observe.WriteObserver;
@@ -60,15 +60,40 @@ class WriteObserverIT {
                 .build();
 
         try (ParquetWriter writer = ParquetWriter.create(new ByteArrayOutputStream(), schema, options)) {
+            ParquetRecordBatchBuilder appender = writer.appender(ROWS_PER_GROUP);
             for (int i = 0; i < TOTAL_ROWS; i++) {
-                writer.write(row(Map.of(ColumnPath.of("id"), i)));
+                WriteFixtures.appendRow(appender, schema, Map.of(ColumnPath.of("id"), i));
             }
+            appender.flush();
         }
 
         assertWriteStartedFiredOnce(recorder, schema);
         assertRowGroupsFlushed(recorder, schema);
         assertIndexesWritten(recorder);
         assertWriteFinished(recorder);
+    }
+
+    @Test
+    void everyProgressMilestoneFiresInOrderWithinASingleFlush(@TempDir Path tempDir) throws Exception {
+        ParquetSchema schema = flatSchema(requiredInt32("id"));
+        RecordingObserver recorder = new RecordingObserver();
+        long cadence = 1000L;
+        int rowCount = 8000;
+        WriteOptions options = WriteOptions.builder()
+                .tempDir(tempDir)
+                .writeObserverCadenceRows(cadence)
+                .writeObserver(recorder)
+                .build();
+
+        try (ParquetWriter writer = ParquetWriter.create(new ByteArrayOutputStream(), schema, options)) {
+            ParquetRecordBatchBuilder appender = writer.appender(rowCount + 1);
+            for (int i = 0; i < rowCount; i++) {
+                WriteFixtures.appendRow(appender, schema, Map.of(ColumnPath.of("id"), i));
+            }
+            appender.flush();
+        }
+
+        assertThat(recorder.rowsWritten).containsExactly(1000L, 2000L, 3000L, 4000L, 5000L, 6000L, 7000L, 8000L);
     }
 
     private void assertWriteStartedFiredOnce(RecordingObserver recorder, ParquetSchema schema) {
@@ -113,10 +138,16 @@ class WriteObserverIT {
         private final List<RowGroupFlushed> flushed = new ArrayList<>();
         private final List<IndexesWritten> indexes = new ArrayList<>();
         private final List<WriteStats> finished = new ArrayList<>();
+        private final List<Long> rowsWritten = new ArrayList<>();
 
         @Override
         public void onWriteStarted(WriteStarted event) {
             started.add(event);
+        }
+
+        @Override
+        public void onRowsWritten(long totalRows) {
+            rowsWritten.add(totalRows);
         }
 
         @Override
@@ -144,10 +175,5 @@ class WriteObserverIT {
     private static SchemaNode.Primitive requiredInt32(String name) {
         return new SchemaNode.Primitive(
                 name, Repetition.REQUIRED, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
-    }
-
-    private static WriteRow row(Map<ColumnPath, Object> values) {
-        Map<ColumnPath, Object> copy = new HashMap<>(values);
-        return copy::get;
     }
 }

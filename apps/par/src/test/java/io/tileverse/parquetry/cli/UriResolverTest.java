@@ -123,6 +123,7 @@ class UriResolverTest {
         byte[] payload = {1, 2, 3, 4, 5};
         try (UriResolver.OpenSink sink = UriResolver.openForWrite(file.toString(), "ignored.parquet", false, null)) {
             sink.out().write(payload);
+            sink.commit();
         }
         assertThat(file).exists();
         assertThat(Files.readAllBytes(file)).isEqualTo(payload);
@@ -133,6 +134,7 @@ class UriResolverTest {
         byte[] payload = {6, 7, 8};
         try (UriResolver.OpenSink sink = UriResolver.openForWrite(dir.toString() + "/", "src.parquet", false, null)) {
             sink.out().write(payload);
+            sink.commit();
         }
         Path written = dir.resolve("src.parquet");
         assertThat(written).exists();
@@ -157,7 +159,34 @@ class UriResolverTest {
         byte[] payload = {9, 9};
         try (UriResolver.OpenSink sink = UriResolver.openForWrite(file.toString(), "ignored.parquet", true, null)) {
             sink.out().write(payload);
+            sink.commit();
         }
         assertThat(Files.readAllBytes(file)).isEqualTo(payload);
+    }
+
+    @Test
+    void abortLeavesNoVisibleDestinationFile(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("out.parquet");
+        byte[] payload = {1, 2, 3, 4, 5};
+        try (UriResolver.OpenSink sink = UriResolver.openForWrite(file.toString(), "ignored.parquet", false, null)) {
+            sink.out().write(payload);
+            sink.abort();
+        }
+        assertThat(file)
+                .as("an aborted write never renames its temp file into place")
+                .doesNotExist();
+    }
+
+    @Test
+    void closeWithoutCommitAbortsAndLeavesNoVisibleDestinationFile(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("out.parquet");
+        byte[] payload = {1, 2, 3, 4, 5};
+        try (UriResolver.OpenSink sink = UriResolver.openForWrite(file.toString(), "ignored.parquet", false, null)) {
+            sink.out().write(payload);
+            // No commit(): an unwinding try-with-resources must default to abort, not a silent commit.
+        }
+        assertThat(file)
+                .as("a sink closed without commit() must abort, leaving no visible destination")
+                .doesNotExist();
     }
 }

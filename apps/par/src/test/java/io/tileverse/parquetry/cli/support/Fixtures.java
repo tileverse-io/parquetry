@@ -22,15 +22,14 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 
+import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
-import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -107,10 +106,12 @@ public final class Fixtures {
         WriteOptions options = builder.build();
         try (OutputStream out = Files.newOutputStream(file);
                 ParquetWriter writer = ParquetWriter.create(out, schema, options)) {
-            writer.write(city(1, "Rosario", 1_300_000L, false));
-            writer.write(city(2, "Cordoba", 1_400_000L, false));
-            writer.write(city(3, "Buenos Aires", 3_100_000L, true));
-            writer.write(city(4, null, 500L, false));
+            ParquetRecordBatchBuilder appender = writer.appender();
+            city(appender, 1, "Rosario", 1_300_000L, false);
+            city(appender, 2, "Cordoba", 1_400_000L, false);
+            city(appender, 3, "Buenos Aires", 3_100_000L, true);
+            city(appender, 4, null, 500L, false);
+            appender.flush();
         }
     }
 
@@ -140,16 +141,17 @@ public final class Fixtures {
                 .build();
         try (OutputStream out = Files.newOutputStream(file);
                 ParquetWriter writer = ParquetWriter.create(out, schema, options)) {
-            writer.write(geoCity(1, -60.65, -32.94));
-            writer.write(geoCity(2, -64.18, -31.42));
+            ParquetRecordBatchBuilder appender = writer.appender();
+            geoCity(appender, 1, -60.65, -32.94);
+            geoCity(appender, 2, -64.18, -31.42);
+            appender.flush();
         }
     }
 
-    private static WriteRow geoCity(int id, double lon, double lat) {
-        Map<ColumnPath, Object> values = new HashMap<>();
-        values.put(ID, id);
-        values.put(GEOMETRY, MemorySegment.ofArray(wkbPoint(lon, lat)));
-        return values::get;
+    private static void geoCity(ParquetRecordBatchBuilder appender, int id, double lon, double lat) {
+        appender.setInt(ID, id);
+        appender.setBinary(GEOMETRY, MemorySegment.ofArray(wkbPoint(lon, lat)));
+        appender.endRow();
     }
 
     private static byte[] wkbPoint(double x, double y) {
@@ -161,13 +163,16 @@ public final class Fixtures {
         return bb.array();
     }
 
-    private static WriteRow city(int id, String name, long pop, boolean capital) {
-        Map<ColumnPath, Object> values = new HashMap<>();
-        values.put(ID, id);
-        values.put(NAME, name == null ? null : MemorySegment.ofArray(name.getBytes(StandardCharsets.UTF_8)));
-        values.put(POP, pop);
-        values.put(CAPITAL, capital);
-        return values::get;
+    private static void city(ParquetRecordBatchBuilder appender, int id, String name, long pop, boolean capital) {
+        appender.setInt(ID, id);
+        if (name == null) {
+            appender.setNull(NAME);
+        } else {
+            appender.setBinary(NAME, MemorySegment.ofArray(name.getBytes(StandardCharsets.UTF_8)));
+        }
+        appender.setLong(POP, pop);
+        appender.setBoolean(CAPITAL, capital);
+        appender.endRow();
     }
 
     private static SchemaNode.Primitive primitive(

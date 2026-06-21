@@ -36,9 +36,9 @@ import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
-import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -271,18 +271,18 @@ class LateMaterializationReadTest {
                 .rowGroupSize(rowGroupSize)
                 .pageValueLimit(8)
                 .build();
+        // One batch per row keeps the writer's per-row row-group sizing decisions, which the multi-row-group
+        // tests rely on to spread rows across several row groups.
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
             for (long id = 0; id < ROW_COUNT; id++) {
-                writer.write(row(id));
+                writer.writeBatch(WriteFixtures.batch(schema, List.of(row(id))));
             }
         }
         return file;
     }
 
-    private static WriteRow row(long id) {
-        Map<ColumnPath, Object> cells =
-                Map.of(ID, id, V, id * 1.5, NAME, ("row-" + id).getBytes(StandardCharsets.UTF_8), TAG, (int) (id * 10));
-        return cells::get;
+    private static Map<ColumnPath, Object> row(long id) {
+        return Map.of(ID, id, V, id * 1.5, NAME, ("row-" + id).getBytes(StandardCharsets.UTF_8), TAG, (int) (id * 10));
     }
 
     private static ParquetSchema fileSchema() {

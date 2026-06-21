@@ -37,7 +37,6 @@ import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
-import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.format.ColumnChunk;
@@ -104,10 +103,12 @@ class DictionaryOverflowReadbackTest {
                 .dictionaryByteLimit(40)
                 .build();
         Path file = tempDir.resolve(kind + "-overflow.parquet");
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (int i = 0; i < ROWS; i++) {
+            rows.add(singleColumnRow(col, valueAt.apply(i)));
+        }
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            for (int i = 0; i < ROWS; i++) {
-                writer.write(singleColumnRow(col, valueAt.apply(i)));
-            }
+            writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
         assertThat(dictionaryPageWritten(file, col))
                 .as("the overflow chunk must keep its dictionary page")
@@ -152,10 +153,10 @@ class DictionaryOverflowReadbackTest {
         return MemorySegment.ofArray(value.getBytes(StandardCharsets.UTF_8));
     }
 
-    private static WriteRow singleColumnRow(ColumnPath col, Object value) {
+    private static Map<ColumnPath, Object> singleColumnRow(ColumnPath col, Object value) {
         Map<ColumnPath, Object> row = new HashMap<>(1);
         row.put(col, value);
-        return row::get;
+        return row;
     }
 
     private static ParquetSchema flatSchema(SchemaNode.Primitive leaf) {

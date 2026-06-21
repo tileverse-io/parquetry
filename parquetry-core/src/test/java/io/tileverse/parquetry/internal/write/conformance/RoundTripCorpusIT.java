@@ -38,6 +38,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
@@ -218,10 +219,43 @@ class RoundTripCorpusIT {
             }
         }
         WriteOptions options = builder.build();
+        List<ColumnPath> leaves = schema.leafColumns();
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(destination), schema, options)) {
+            ParquetRecordBatchBuilder appender = writer.appender();
             for (RowSnapshot row : rows) {
-                writer.write(row::valueOf);
+                appendSnapshotRow(appender, schema, leaves, row);
             }
+            appender.flush();
+        }
+    }
+
+    private static void appendSnapshotRow(
+            ParquetRecordBatchBuilder appender, ParquetSchema schema, List<ColumnPath> leaves, RowSnapshot row) {
+        for (ColumnPath leaf : leaves) {
+            appendSnapshotCell(appender, primitiveAt(schema, leaf), leaf, row.valueOf(leaf));
+        }
+        appender.endRow();
+    }
+
+    private static SchemaNode.Primitive primitiveAt(ParquetSchema schema, ColumnPath leaf) {
+        return (SchemaNode.Primitive)
+                schema.find(leaf).orElseThrow(() -> new IllegalStateException("missing leaf " + leaf));
+    }
+
+    private static void appendSnapshotCell(
+            ParquetRecordBatchBuilder appender, SchemaNode.Primitive leaf, ColumnPath path, Object value) {
+        if (value == null) {
+            appender.setNull(path);
+            return;
+        }
+        switch (leaf.kind()) {
+            case INT32 -> appender.setInt(path, (Integer) value);
+            case INT64 -> appender.setLong(path, (Long) value);
+            case FLOAT -> appender.setFloat(path, (Float) value);
+            case DOUBLE -> appender.setDouble(path, (Double) value);
+            case BOOLEAN -> appender.setBoolean(path, (Boolean) value);
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> appender.setBinary(path, (MemorySegment) value);
+            case INT96 -> throw new IllegalStateException("INT96 columns are excluded from the round-trip corpus");
         }
     }
 

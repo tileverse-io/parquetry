@@ -19,7 +19,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.file.Path;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -30,6 +29,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
+import io.tileverse.parquetry.internal.write.WriteFixtures;
+import io.tileverse.parquetry.io.ByteSink;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -113,10 +114,37 @@ class RowGroupSizingTest {
                 .build();
         ByteArrayOutputStream sink = new ByteArrayOutputStream();
         try (ParquetWriter writer = ParquetWriter.create(sink, schema, options)) {
+            ParquetRecordBatchBuilder appender = writer.appender(1);
             for (int i = 0; i < 9; i++) {
-                writer.write(row(Map.of(ColumnPath.of("id"), i)));
+                WriteFixtures.appendRow(appender, schema, Map.of(ColumnPath.of("id"), i));
             }
             assertThat(writer.rowGroupsWritten()).isEqualTo(2L);
+        }
+    }
+
+    @Test
+    void limitForcesRowGroupFlushUnderRowsPolicy() throws Exception {
+        WriteOptions options = WriteOptions.builder()
+                .tempDir(tempDir)
+                .rowGroupSize(RowGroupSize.rows(10_000_000L))
+                .build();
+
+        long rowGroups = writeManyRowsWithTinyLimitAndCountRowGroups(options, 50_000, 4_096L);
+
+        assertThat(rowGroups).isGreaterThan(1L);
+    }
+
+    private long writeManyRowsWithTinyLimitAndCountRowGroups(WriteOptions options, int rows, long tinyLimit)
+            throws Exception {
+        ParquetSchema schema = flatSchema(requiredInt32("id"));
+        ByteArrayOutputStream sink = new ByteArrayOutputStream();
+        try (ParquetWriter writer =
+                ParquetWriter.assembleWriter(ByteSink.ofOutputStream(sink), schema, options, tinyLimit)) {
+            ParquetRecordBatchBuilder appender = writer.appender(1);
+            for (int i = 0; i < rows; i++) {
+                WriteFixtures.appendRow(appender, schema, Map.of(ColumnPath.of("id"), i));
+            }
+            return writer.rowGroupsWritten();
         }
     }
 
@@ -131,10 +159,5 @@ class RowGroupSizingTest {
     private static SchemaNode.Primitive requiredInt32(String name) {
         return new SchemaNode.Primitive(
                 name, Repetition.REQUIRED, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
-    }
-
-    private static WriteRow row(Map<ColumnPath, Object> values) {
-        Map<ColumnPath, Object> copy = new HashMap<>(values);
-        return copy::get;
     }
 }

@@ -33,7 +33,6 @@ import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
-import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.filter.RowRanges.Range;
 import io.tileverse.parquetry.format.ColumnChunk;
@@ -43,6 +42,7 @@ import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
+import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -134,10 +134,12 @@ class MaskedColumnReadTest {
         ParquetSchema schema = flatSchema(requiredInt32("v"));
         WriteOptions options =
                 WriteOptions.builder().tempDir(tempDir).pageValueLimit(2).build();
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (int v = 0; v < 8; v++) {
+            rows.add(Map.of(V, v));
+        }
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            for (int v = 0; v < 8; v++) {
-                writer.write(row(v));
-            }
+            writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
         return file;
     }
@@ -155,10 +157,5 @@ class MaskedColumnReadTest {
     private static SchemaNode.Primitive requiredInt32(String name) {
         return new SchemaNode.Primitive(
                 name, Repetition.REQUIRED, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
-    }
-
-    private static WriteRow row(int v) {
-        Map<ColumnPath, Object> values = Map.of(V, v);
-        return values::get;
     }
 }

@@ -47,10 +47,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.data.Compression;
+import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
-import io.tileverse.parquetry.data.WriteRow;
+import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -232,9 +233,12 @@ class ParquetJavaCompatIT {
     private static void writeRows(
             Path file, ParquetSchema schema, WriteOptions options, List<Map<ColumnPath, Object>> rows)
             throws IOException {
+        // One row per appender batch lets the writer's own row-group sizing policy place boundaries exactly, which the
+        // multi-row-group compatibility case depends on.
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+            ParquetRecordBatchBuilder appender = writer.appender(1);
             for (Map<ColumnPath, Object> row : rows) {
-                writer.write(WriteRow.of(row));
+                WriteFixtures.appendRow(appender, schema, row);
             }
         }
     }

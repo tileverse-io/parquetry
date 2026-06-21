@@ -31,14 +31,15 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
-import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.format.LogicalType;
+import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -72,9 +73,11 @@ class UuidColumnRoundTripIT {
                 .build();
         ParquetSchema schema = flatSchema(uuidColumn("id"));
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+            ParquetRecordBatchBuilder appender = writer.appender(100);
             for (UUID u : all) {
-                writer.write(rowOf(Map.of(ID, u)));
+                WriteFixtures.appendRow(appender, schema, Map.of(ID, u));
             }
+            appender.flush();
         }
 
         UUID target = all.get(523);
@@ -111,9 +114,5 @@ class UuidColumnRoundTripIT {
         List<SchemaNode> children = Stream.of(leaves).map(f -> (SchemaNode) f).toList();
         SchemaNode.Group root = new SchemaNode.Group("schema", Repetition.REQUIRED, children, Optional.empty(), -1);
         return new ParquetSchema(root);
-    }
-
-    private static WriteRow rowOf(Map<ColumnPath, Object> values) {
-        return values::get;
     }
 }

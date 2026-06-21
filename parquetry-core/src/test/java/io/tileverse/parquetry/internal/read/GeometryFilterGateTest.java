@@ -39,10 +39,10 @@ import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
-import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.filter.GeometryFilter;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -89,15 +89,17 @@ class GeometryFilterGateTest {
         ParquetSchema schema = flatSchema(requiredBinary("geometry"), requiredInt32("id"));
         WriteOptions options = WriteOptions.builder().tempDir(tempDir).build();
         fixtureFile = tempDir.resolve("geomfilter.parquet");
+        List<Map<ColumnPath, Object>> rows = List.of(
+                pointRow(0, 0.0, 0.0),
+                pointRow(1, 1.0, 1.0),
+                pointRow(2, 3.0, 1.0), // inside [2,0 - 6,2]
+                pointRow(3, 5.0, 1.0), // inside [2,0 - 6,2]
+                pointRow(4, 7.0, 1.0),
+                pointRow(5, 8.0, 3.0),
+                pointRow(6, 1.0, 3.0),
+                pointRow(7, 9.0, 9.0));
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(fixtureFile), schema, options)) {
-            writer.write(pointRow(0, 0.0, 0.0));
-            writer.write(pointRow(1, 1.0, 1.0));
-            writer.write(pointRow(2, 3.0, 1.0)); // inside [2,0 - 6,2]
-            writer.write(pointRow(3, 5.0, 1.0)); // inside [2,0 - 6,2]
-            writer.write(pointRow(4, 7.0, 1.0));
-            writer.write(pointRow(5, 8.0, 3.0));
-            writer.write(pointRow(6, 1.0, 3.0));
-            writer.write(pointRow(7, 9.0, 9.0));
+            writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
     }
 
@@ -175,9 +177,9 @@ class GeometryFilterGateTest {
         return ids;
     }
 
-    private static WriteRow pointRow(int id, double x, double y) {
+    private static Map<ColumnPath, Object> pointRow(int id, double x, double y) {
         MemorySegment geom = Wkb.fromWkt("POINT (%s %s)".formatted(x, y));
-        return WriteRow.of(Map.of(GEOM, geom, ID, id));
+        return Map.of(GEOM, geom, ID, id);
     }
 
     /**

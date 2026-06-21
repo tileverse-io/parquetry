@@ -23,7 +23,6 @@ import java.io.StringWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.UUID;
@@ -37,11 +36,11 @@ import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
 
 import io.tileverse.parquetry.cli.support.Fixtures;
+import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.UuidConverter;
 import io.tileverse.parquetry.data.WriteOptions;
-import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -118,11 +117,12 @@ class RecordRendererTest {
         WriteOptions options = WriteOptions.builder()
                 .tempDir(file.toAbsolutePath().getParent())
                 .build();
-        Map<ColumnPath, Object> row = Map.of(ColumnPath.of("id"), UuidConverter.toReadOnlySegment(value));
-        WriteRow writeRow = row::get;
         try (OutputStream sink = Files.newOutputStream(file);
                 ParquetWriter writer = ParquetWriter.create(sink, schema, options)) {
-            writer.write(writeRow);
+            ParquetRecordBatchBuilder appender = writer.appender();
+            appender.setBinary(ColumnPath.of("id"), UuidConverter.toReadOnlySegment(value));
+            appender.endRow();
+            appender.flush();
         }
     }
 

@@ -31,7 +31,7 @@ import io.tileverse.parquetry.cli.UriResolver;
 import io.tileverse.parquetry.cli.expr.FilterParser;
 import io.tileverse.parquetry.cli.expr.GeometryColumns;
 import io.tileverse.parquetry.cli.render.Projections;
-import io.tileverse.parquetry.cli.render.RecordToWriteRow;
+import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
@@ -89,7 +89,7 @@ public final class CpCmd implements Callable<Integer> {
             ParquetSchema sourceSchema = dataset.schema();
             Projections.Resolved projection = Projections.resolve(options.columns, sourceSchema);
             ParquetSchema writeSchema = buildWriteSchema(sourceSchema, projection);
-            RecordToWriteRow.requireWritable(writeSchema);
+            RecordCopier.requireWritable(writeSchema);
             Set<ColumnPath> geometryColumns = GeometryColumns.resolve(sourceSchema, dataset.keyValueMetadata());
             Predicate predicate = buildPredicate(sourceSchema, geometryColumns);
             writeAll(dataset, writeSchema, projection, predicate, sourceFileName, dataset.keyValueMetadata());
@@ -142,15 +142,36 @@ public final class CpCmd implements Callable<Integer> {
         WriteOptions writeOptions = buildWriteOptions(writeSchema, writerTempDir(sourceFileName), sourceKeyValue);
         long limit = options.limit == null ? Long.MAX_VALUE : options.limit;
         try (UriResolver.OpenSink sink =
-                        UriResolver.openForWrite(dst, sourceFileName, overwrite, dstStorage.toProperties());
-                ParquetWriter writer = ParquetWriter.create(sink.out(), writeSchema, writeOptions);
+                UriResolver.openForWrite(dst, sourceFileName, overwrite, dstStorage.toProperties())) {
+            writeAndFinalize(dataset, writeSchema, projection, predicate, writeOptions, limit, sink);
+            sink.commit();
+        }
+    }
+
+    /**
+     * Streams every surviving record into the writer and finalizes the file. The writer is closed (which writes the
+     * footer) before {@code writeAll} commits the destination. A failure anywhere in here leaves the sink uncommitted
+     * and the try-with-resources aborts it; a failed copy never leaves a visible footerless destination.
+     */
+    private void writeAndFinalize(
+            ParquetDataset dataset,
+            ParquetSchema writeSchema,
+            Projections.Resolved projection,
+            Predicate predicate,
+            WriteOptions writeOptions,
+            long limit,
+            UriResolver.OpenSink sink) {
+        try (ParquetWriter writer = ParquetWriter.create(sink.out(), writeSchema, writeOptions);
                 Stream<ParquetRecord> rows = dataset.read(predicate, projection.projection(), ReadOptions.DEFAULTS)) {
+            ParquetRecordBatchBuilder appender = writer.appender();
+            RecordCopier copier = RecordCopier.forSchema(writeSchema);
             long written = 0;
             Iterator<ParquetRecord> it = rows.iterator();
             while (it.hasNext() && written < limit) {
-                writer.write(RecordToWriteRow.adapt(it.next()));
+                copier.copyInto(appender, it.next());
                 written++;
             }
+            appender.flush();
         }
     }
 
@@ -177,12 +198,12 @@ public final class CpCmd implements Callable<Integer> {
             }
         }
         forwardOpaqueMetadata(builder, sourceKeyValue);
-        carryGeometryColumns(builder, writeSchema, sourceKeyValue);
+        collectGeometryColumns(builder, writeSchema, sourceKeyValue);
         return builder.build();
     }
 
     /**
-     * Carries the source's file-level key-value metadata into the copy, minus the reserved GeoParquet {@code geo}
+     * Forwards the source's file-level key-value metadata into the copy, minus the reserved GeoParquet {@code geo}
      * block, which the writer regenerates from the geometry columns. This preserves opaque metadata the CLI does not
      * interpret (pandas, custom application keys) across a copy.
      */
@@ -195,12 +216,12 @@ public final class CpCmd implements Callable<Integer> {
     }
 
     /**
-     * Re-declares the source's geometry columns that survive the projection so the writer regenerates the GeoParquet
-     * footer block for the output. The block must be regenerated rather than copied: its bounding box and geometry
-     * types are derived from the rows actually written (which a filter or projection may narrow), and a geometry column
-     * dropped by the projection must leave no dangling entry behind.
+     * Re-declares the source's geometry columns that survive the projection, letting the writer regenerate the
+     * GeoParquet footer block for the output. The block must be regenerated rather than copied: its bounding box and
+     * geometry types are derived from the rows actually written (which a filter or projection may narrow), and a
+     * geometry column dropped by the projection must leave no dangling entry behind.
      */
-    private static void carryGeometryColumns(
+    private static void collectGeometryColumns(
             WriteOptions.Builder builder, ParquetSchema writeSchema, Map<String, String> sourceKeyValue) {
         String geoJson = sourceKeyValue.get(GEO_METADATA_KEY);
         if (geoJson == null) {

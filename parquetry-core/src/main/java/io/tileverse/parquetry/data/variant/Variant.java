@@ -31,6 +31,7 @@ import java.util.UUID;
 
 import io.tileverse.parquetry.data.UuidConverter;
 import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.io.Segments;
 
 /**
  * A lazy, random-access view over one Parquet Variant value. Wraps the value buffer slice for this node plus the shared
@@ -102,8 +103,7 @@ public final class Variant {
      * from.
      */
     public Variant detach() {
-        MemorySegment detachedValue =
-                MemorySegment.ofArray(value.toArray(JAVA_BYTE)).asReadOnly();
+        MemorySegment detachedValue = Segments.toHeapReadOnly(value);
         return new Variant(detachedValue, metadata.detach());
     }
 

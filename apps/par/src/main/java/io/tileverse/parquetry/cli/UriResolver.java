@@ -90,14 +90,21 @@ public final class UriResolver {
     }
 
     /**
-     * Holds the open output stream and its backing storage; closing this closes both. The stream is closed first
-     * because closing it commits the write (the local backend renames its temp file into place, cloud backends finish
-     * their multipart upload); the storage is then closed even when the stream close fails.
+     * Holds the open output stream and its backing storage, with a commit-on-success contract. Closing the stream is
+     * what commits the write (the local backend renames its temp file into place, cloud backends finish their multipart
+     * upload). The caller commits ONLY after the writer has finalized the footer, by calling {@link #commit()}. On any
+     * failure the caller calls {@link #abort()}, which closes the storage without committing the stream, leaving no
+     * visible partial object or file.
+     *
+     * <p>{@link #close()} is an abort: it is the safe default when a try-with-resources unwinds without an explicit
+     * commit (for instance because the write loop threw).
      */
     public static final class OpenSink implements AutoCloseable {
 
         private final Storage storage;
         private final OutputStream out;
+        private boolean committed;
+        private boolean closed;
 
         OpenSink(Storage storage, OutputStream out) {
             this.storage = storage;
@@ -108,13 +115,42 @@ public final class UriResolver {
             return out;
         }
 
-        @Override
-        public void close() throws IOException {
+        /**
+         * Commits the write: closes the stream (which makes the destination visible), then closes the storage. Call
+         * only after the writer has successfully finalized the file.
+         */
+        public void commit() throws IOException {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            committed = true;
             try {
                 out.close();
             } finally {
                 storage.close();
             }
+        }
+
+        /**
+         * Aborts the write: closes the storage without committing the stream, leaving no visible destination object or
+         * file. Best-effort and idempotent.
+         */
+        public void abort() {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            closeQuietly(storage);
+        }
+
+        /** Defaults to {@link #abort()} so an unwinding try-with-resources never commits a footerless destination. */
+        @Override
+        public void close() {
+            if (committed) {
+                return;
+            }
+            abort();
         }
     }
 

@@ -85,6 +85,12 @@ public record WriteOptions(
 
     private static final String RESERVED_GEO_KEY = "geo";
 
+    /**
+     * Maximum accepted row-group byte size: 2^31 minus 2^20, below 2^31 with roughly 1 MiB of headroom for buffer slack
+     * on top of the accumulated tally. Per-row-group byte counts and buffer sizes stay within an int.
+     */
+    public static final long MAX_ROW_GROUP_BYTES_LIMIT = (1L << 31) - (1L << 20);
+
     public WriteOptions {
         if (pageValueLimit <= 0) {
             throw new IllegalArgumentException("pageValueLimit must be positive: " + pageValueLimit);
@@ -102,6 +108,11 @@ public record WriteOptions(
         if (writeObserverCadenceRows <= 0) {
             throw new IllegalArgumentException(
                     "writeObserverCadenceRows must be positive: " + writeObserverCadenceRows);
+        }
+        if (rowGroupSize instanceof RowGroupSize.Bytes(long uncompressedByteThreshold)
+                && uncompressedByteThreshold > MAX_ROW_GROUP_BYTES_LIMIT) {
+            throw new IllegalArgumentException("rowGroupSize bytes threshold " + uncompressedByteThreshold
+                    + " exceeds the maximum row-group byte limit " + MAX_ROW_GROUP_BYTES_LIMIT);
         }
         // V1.1 page format cannot carry the GeoParquet 2.0 native logical types; coerce the metadata mode for
         // coherence.

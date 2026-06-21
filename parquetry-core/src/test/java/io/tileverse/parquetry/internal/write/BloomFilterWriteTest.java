@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -34,7 +34,6 @@ import org.junit.jupiter.api.io.TempDir;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.BloomFilterConfig;
-import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.FileMetaData;
@@ -69,10 +68,12 @@ class BloomFilterWriteTest {
             inserted[i] = 1_000_000_000L + (long) i;
         }
 
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (long value : inserted) {
+            rows.add(Map.of(ColumnPath.of("id"), value));
+        }
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            for (long value : inserted) {
-                writer.write(rowOf(Map.of(ColumnPath.of("id"), value)));
-            }
+            writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
 
         SplitBlockBloomFilter filter = loadBloomFilter(file, "id");
@@ -107,13 +108,15 @@ class BloomFilterWriteTest {
 
         int rows = 5_000;
         byte[][] payloads = new byte[rows][];
+        List<Map<ColumnPath, Object>> rowMaps = new ArrayList<>();
+        for (int i = 0; i < rows; i++) {
+            payloads[i] = ("payload-" + i).getBytes(StandardCharsets.UTF_8);
+            rowMaps.add(Map.of(
+                    ColumnPath.of("name"),
+                    java.lang.foreign.MemorySegment.ofArray(payloads[i]).asReadOnly()));
+        }
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            for (int i = 0; i < rows; i++) {
-                payloads[i] = ("payload-" + i).getBytes(StandardCharsets.UTF_8);
-                writer.write(rowOf(Map.of(
-                        ColumnPath.of("name"),
-                        java.lang.foreign.MemorySegment.ofArray(payloads[i]).asReadOnly())));
-            }
+            writer.writeBatch(WriteFixtures.batch(schema, rowMaps));
         }
 
         SplitBlockBloomFilter filter = loadBloomFilter(file, "name");
@@ -130,10 +133,12 @@ class BloomFilterWriteTest {
         WriteOptions options = options().build();
         Path file = tempDir.resolve("no-bloom.parquet");
 
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            rows.add(Map.of(ColumnPath.of("id"), i));
+        }
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            for (int i = 0; i < 10; i++) {
-                writer.write(rowOf(Map.of(ColumnPath.of("id"), i)));
-            }
+            writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
 
         ColumnMetaData meta = columnMetadata(file, "id");
@@ -148,13 +153,15 @@ class BloomFilterWriteTest {
                 options().bloomFilter("a", new BloomFilterConfig(0.01, 1_000L)).build();
         Path file = tempDir.resolve("selective-bloom.parquet");
 
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (int i = 0; i < 100; i++) {
+            rows.add(Map.of(
+                    ColumnPath.of("a"), i,
+                    ColumnPath.of("b"), i + 1,
+                    ColumnPath.of("c"), i + 2));
+        }
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            for (int i = 0; i < 100; i++) {
-                writer.write(rowOf(Map.of(
-                        ColumnPath.of("a"), i,
-                        ColumnPath.of("b"), i + 1,
-                        ColumnPath.of("c"), i + 2)));
-            }
+            writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
 
         assertThat(columnMetadata(file, "a").bloomFilterOffset()).isPresent();
@@ -171,12 +178,14 @@ class BloomFilterWriteTest {
 
         int distinctCategories = 8;
         int rowsPerCategory = 200;
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            for (int repeat = 0; repeat < rowsPerCategory; repeat++) {
-                for (int cat = 0; cat < distinctCategories; cat++) {
-                    writer.write(rowOf(Map.of(ColumnPath.of("category"), cat)));
-                }
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (int repeat = 0; repeat < rowsPerCategory; repeat++) {
+            for (int cat = 0; cat < distinctCategories; cat++) {
+                rows.add(Map.of(ColumnPath.of("category"), cat));
             }
+        }
+        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+            writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
 
         ColumnMetaData meta = columnMetadata(file, "category");
@@ -200,10 +209,12 @@ class BloomFilterWriteTest {
         WriteOptions options = options().bloomFilter("value", cfg).build();
         Path file = tempDir.resolve("sized-bloom.parquet");
 
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (int i = 0; i < 1_000; i++) {
+            rows.add(Map.of(ColumnPath.of("value"), i));
+        }
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            for (int i = 0; i < 1_000; i++) {
-                writer.write(rowOf(Map.of(ColumnPath.of("value"), i)));
-            }
+            writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
 
         SplitBlockBloomFilter filter = loadBloomFilter(file, "value");
@@ -243,11 +254,6 @@ class BloomFilterWriteTest {
     private static SchemaNode.Primitive requiredBinary(String name) {
         return new SchemaNode.Primitive(
                 name, Repetition.REQUIRED, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1);
-    }
-
-    private static WriteRow rowOf(Map<ColumnPath, Object> values) {
-        Map<ColumnPath, Object> copy = new HashMap<>(values);
-        return copy::get;
     }
 
     private static SplitBlockBloomFilter loadBloomFilter(Path file, String columnName) {

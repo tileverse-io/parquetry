@@ -20,6 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -33,6 +34,7 @@ import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.explain.RowGroupOutcome;
 import io.tileverse.parquetry.filter.explain.RowGroupPlan;
+import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -70,10 +72,12 @@ class PagePruningExplainTest {
         ParquetSchema schema = flatSchema(requiredInt32("v"));
         WriteOptions options =
                 WriteOptions.builder().tempDir(tempDir).pageValueLimit(2).build();
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (int v = 0; v < 8; v++) {
+            rows.add(Map.of(V, v));
+        }
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            for (int v = 0; v < 8; v++) {
-                writer.write(row(v));
-            }
+            writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
         return file;
     }
@@ -87,10 +91,5 @@ class PagePruningExplainTest {
     private static SchemaNode.Primitive requiredInt32(String name) {
         return new SchemaNode.Primitive(
                 name, Repetition.REQUIRED, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
-    }
-
-    private static WriteRow row(int v) {
-        Map<ColumnPath, Object> values = Map.of(V, v);
-        return values::get;
     }
 }

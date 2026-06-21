@@ -31,6 +31,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -96,11 +97,10 @@ class RecordLevelFilterTest {
         Path file = tempDir.resolve("record-filter.parquet");
         ParquetSchema schema = flatSchema(requiredInt32("pop"), requiredInt32("id"));
         WriteOptions options = WriteOptions.builder().tempDir(tempDir).build();
+        List<Map<ColumnPath, Object>> rows =
+                List.of(row(500_000, 1), row(1_500_000, 2), row(800_000, 3), row(2_000_000, 4));
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
-            writer.write(row(500_000, 1));
-            writer.write(row(1_500_000, 2));
-            writer.write(row(800_000, 3));
-            writer.write(row(2_000_000, 4));
+            writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
         return file;
     }
@@ -116,8 +116,7 @@ class RecordLevelFilterTest {
                 name, Repetition.REQUIRED, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
     }
 
-    private static WriteRow row(int pop, int id) {
-        Map<ColumnPath, Object> values = Map.of(POP, pop, ID, id);
-        return values::get;
+    private static Map<ColumnPath, Object> row(int pop, int id) {
+        return Map.of(POP, pop, ID, id);
     }
 }

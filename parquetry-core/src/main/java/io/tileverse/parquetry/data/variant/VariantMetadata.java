@@ -20,6 +20,7 @@ import java.lang.foreign.ValueLayout;
 import java.nio.charset.StandardCharsets;
 
 import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.io.Segments;
 
 /**
  * Reads a Parquet Variant metadata buffer: the key dictionary shared by a value's objects. The buffer is a header byte,
@@ -65,8 +66,7 @@ public final class VariantMetadata {
      * buffer.
      */
     public VariantMetadata detach() {
-        MemorySegment copy =
-                MemorySegment.ofArray(segment.toArray(ValueLayout.JAVA_BYTE)).asReadOnly();
+        MemorySegment copy = Segments.toHeapReadOnly(segment);
         return new VariantMetadata(copy);
     }
 

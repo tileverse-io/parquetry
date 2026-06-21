@@ -41,9 +41,9 @@ import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
-import io.tileverse.parquetry.data.WriteRow;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -120,9 +120,10 @@ class LateMaterializationCorrectnessTest {
                 .rowGroupSize(WriteOptions.RowGroupSize.rows(30))
                 .pageValueLimit(8)
                 .build();
+        // One batch per row keeps the writer's per-row 30-row-group boundaries, which the pruning cases rely on.
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(fixtureFile), schema, options)) {
             for (long id = 0; id < ROW_COUNT; id++) {
-                writer.write(buildRow(id));
+                writer.writeBatch(WriteFixtures.batch(schema, List.of(buildRow(id))));
             }
         }
     }
@@ -450,13 +451,13 @@ class LateMaterializationCorrectnessTest {
         return new SchemaNode.Primitive(name, Repetition.OPTIONAL, kind, OptionalInt.empty(), Optional.empty(), -1);
     }
 
-    private static WriteRow buildRow(long id) {
+    private static Map<ColumnPath, Object> buildRow(long id) {
         Map<ColumnPath, Object> cells = new HashMap<>();
         cells.put(ID, id);
         cells.put(I32, id % I32_NULL_STRIDE == 0 ? null : i32ValueFor(id));
         cells.put(I64, i64ValueFor(id));
         cells.put(D, dValueFor(id));
         cells.put(NAME, id % NAME_NULL_STRIDE == 0 ? null : nameValueFor(id).getBytes(StandardCharsets.UTF_8));
-        return cells::get;
+        return cells;
     }
 }
