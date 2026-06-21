@@ -22,6 +22,21 @@
         <type>pom</type>
         <scope>import</scope>
       </dependency>
+      <!-- Converges the tileverse-storage transitive versions pulled in via parquetry-tileverse-storage. -->
+      <dependency>
+        <groupId>io.tileverse</groupId>
+        <artifactId>tileverse-bom</artifactId>
+        <version>${tileverse-storage.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <!-- Not managed by tileverse-bom; pin to the version tileverse-storage's gcs module resolves. -->
+      <dependency>
+        <groupId>io.aiven</groupId>
+        <artifactId>testcontainers-fake-gcs-server</artifactId>
+        <version>0.3.0</version>
+        <scope>test</scope>
+      </dependency>
     </dependencies>
   </dependencyManagement>
 
@@ -39,6 +54,11 @@
     <dependency>
       <groupId>io.tileverse.parquetry</groupId>
       <artifactId>parquetry-avro</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.tileverse.parquetry</groupId>
+      <artifactId>parquetry-tileverse-storage</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
@@ -71,6 +91,36 @@
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-simple</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>s3</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.azure</groupId>
+      <artifactId>azure-storage-blob</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-azure</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.google.cloud</groupId>
+      <artifactId>google-cloud-storage</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.aiven</groupId>
+      <artifactId>testcontainers-fake-gcs-server</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>

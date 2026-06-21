@@ -15,8 +15,13 @@
  */
 package io.tileverse.parquetry.iceberg;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
+import java.util.stream.Stream;
 
 import io.tileverse.parquetry.io.ByteRangeSource;
 
@@ -43,6 +48,38 @@ public final class LocalIcebergFileIO implements IcebergFileIO {
         }
         String relative = location.substring(prefix.length());
         return ByteRangeSource.ofFile(physicalRoot.resolve(relative));
+    }
+
+    @Override
+    public List<String> list(String prefix) {
+        Objects.requireNonNull(prefix, "prefix");
+        Path directory = physicalDirectoryFor(prefix);
+        if (!Files.isDirectory(directory)) {
+            return List.of();
+        }
+        String base = stripTrailingSlash(prefix);
+        return childLocations(directory, base);
+    }
+
+    private Path physicalDirectoryFor(String prefix) {
+        String normalized = prefix.equals(logicalRoot) ? logicalRoot + "/" : prefix;
+        String requiredPrefix = logicalRoot + "/";
+        if (!normalized.startsWith(requiredPrefix)) {
+            throw new IcebergFormatException("prefix is outside the table root " + logicalRoot + ": " + prefix);
+        }
+        String relative = stripTrailingSlash(normalized.substring(requiredPrefix.length()));
+        return relative.isEmpty() ? physicalRoot : physicalRoot.resolve(relative);
+    }
+
+    private static List<String> childLocations(Path directory, String base) {
+        try (Stream<Path> children = Files.list(directory)) {
+            List<String> locations = new ArrayList<>();
+            children.forEach(child -> locations.add(base + "/" + child.getFileName()));
+            locations.sort(String::compareTo);
+            return List.copyOf(locations);
+        } catch (IOException e) {
+            throw new IcebergFormatException("cannot list " + directory, e);
+        }
     }
 
     private static String stripTrailingSlash(String value) {

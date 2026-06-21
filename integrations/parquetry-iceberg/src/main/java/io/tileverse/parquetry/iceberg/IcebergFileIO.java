@@ -15,6 +15,8 @@
  */
 package io.tileverse.parquetry.iceberg;
 
+import java.util.List;
+
 import io.tileverse.parquetry.io.ByteRangeSource;
 
 /**
@@ -25,6 +27,12 @@ public interface IcebergFileIO extends AutoCloseable {
 
     /** Opens a fresh byte source over {@code location} (an absolute URI string). The caller owns and closes it. */
     ByteRangeSource open(String location);
+
+    /**
+     * Absolute locations of the entries directly under {@code prefix}; empty when the backend cannot list (for example
+     * HTTP).
+     */
+    List<String> list(String prefix);
 
     @Override
     default void close() {}
