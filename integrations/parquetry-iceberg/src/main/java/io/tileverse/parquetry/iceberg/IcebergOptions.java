@@ -16,13 +16,18 @@
 package io.tileverse.parquetry.iceberg;
 
 import java.util.Objects;
+import java.util.Optional;
 import java.util.OptionalLong;
 
-/** Options for opening an Iceberg table. {@code snapshotId} pins a specific snapshot; absent means the current one. */
-public record IcebergOptions(OptionalLong snapshotId) {
+/**
+ * Options for opening an Iceberg table. {@code snapshotId} pins a specific snapshot; absent means the current one.
+ * {@code metadataLocation} pins an explicit metadata-document URI; absent means resolve the current one.
+ */
+public record IcebergOptions(OptionalLong snapshotId, Optional<String> metadataLocation) {
 
     public IcebergOptions {
         Objects.requireNonNull(snapshotId, "snapshotId");
+        Objects.requireNonNull(metadataLocation, "metadataLocation");
     }
 
     public static IcebergOptions defaults() {
@@ -35,6 +40,7 @@ public record IcebergOptions(OptionalLong snapshotId) {
 
     public static final class Builder {
         private OptionalLong snapshotId = OptionalLong.empty();
+        private Optional<String> metadataLocation = Optional.empty();
 
         private Builder() {}
 
@@ -43,8 +49,13 @@ public record IcebergOptions(OptionalLong snapshotId) {
             return this;
         }
 
+        public Builder metadataLocation(String value) {
+            this.metadataLocation = Optional.of(Objects.requireNonNull(value, "metadataLocation"));
+            return this;
+        }
+
         public IcebergOptions build() {
-            return new IcebergOptions(snapshotId);
+            return new IcebergOptions(snapshotId, metadataLocation);
         }
     }
 }

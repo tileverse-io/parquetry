@@ -15,8 +15,10 @@
  */
 package io.tileverse.parquetry.iceberg;
 
-import java.io.IOException;
-import java.nio.file.Files;
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -54,19 +56,37 @@ public final class IcebergCatalog implements DatasetCatalog {
         this.io = io;
     }
 
-    /** Opens an Iceberg table from a local table directory (reads {@code v1.metadata.json}). */
+    /** Opens an Iceberg table from a local table directory, resolving the current {@code vN.metadata.json}. */
     public static IcebergCatalog openLocal(Path tableDir, IcebergOptions options) {
         Objects.requireNonNull(tableDir, "tableDir");
         Objects.requireNonNull(options, "options");
-        String json = readMetadataJson(tableDir);
+        String physicalTableLocation = tableDir.toUri().toString();
+        IcebergFileIO bootstrap = new LocalIcebergFileIO(physicalTableLocation, tableDir);
+        String metadataLocation = IcebergMetadataResolver.resolve(bootstrap, physicalTableLocation, options);
+        String json = readJson(bootstrap, metadataLocation);
         IcebergTableMetadata metadata = IcebergTableMetadata.read(json, options);
         IcebergFileIO io = new LocalIcebergFileIO(metadata.tableLocation(), tableDir);
-        String tableName = tableName(tableDir);
-        return open(tableName, metadata, io);
+        return openWithMetadata(tableName(tableDir), metadata, io);
+    }
+
+    /**
+     * Opens an Iceberg table whose bytes are served by {@code io} (for example a {@link StorageIcebergFileIO} over
+     * object storage). {@code tableLocation} must match the table location recorded in the metadata and the root
+     * {@code io} maps. The returned catalog owns {@code io} and closes it in {@link #close()} (a no-op for an IO over a
+     * borrowed Storage).
+     */
+    public static IcebergCatalog open(String tableLocation, IcebergFileIO io, IcebergOptions options) {
+        Objects.requireNonNull(tableLocation, "tableLocation");
+        Objects.requireNonNull(io, "io");
+        Objects.requireNonNull(options, "options");
+        String metadataLocation = IcebergMetadataResolver.resolve(io, tableLocation, options);
+        String json = readJson(io, metadataLocation);
+        IcebergTableMetadata metadata = IcebergTableMetadata.read(json, options);
+        return openWithMetadata(tableNameFromLocation(tableLocation), metadata, io);
     }
 
     /** Opens a table given parsed metadata and a file IO. The IO is owned by the returned catalog. */
-    static IcebergCatalog open(String tableName, IcebergTableMetadata metadata, IcebergFileIO io) {
+    static IcebergCatalog openWithMetadata(String tableName, IcebergTableMetadata metadata, IcebergFileIO io) {
         Objects.requireNonNull(tableName, "tableName");
         Objects.requireNonNull(metadata, "metadata");
         Objects.requireNonNull(io, "io");
@@ -143,22 +163,29 @@ public final class IcebergCatalog implements DatasetCatalog {
         return probe.schema();
     }
 
-    private static String readMetadataJson(Path tableDir) {
-        Path metadataDir = tableDir.resolve("metadata");
-        Path versioned = metadataDir.resolve("v1.metadata.json");
-        try {
-            if (Files.exists(versioned)) {
-                return Files.readString(versioned);
+    private static String readJson(IcebergFileIO io, String location) {
+        try (ByteRangeSource source = io.open(location)) {
+            long size = source.size();
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment segment = arena.allocate(size);
+                source.readFully(0, segment);
+                byte[] bytes = segment.toArray(ValueLayout.JAVA_BYTE);
+                return new String(bytes, StandardCharsets.UTF_8);
             }
-            throw new IcebergFormatException("no metadata.json under " + metadataDir);
-        } catch (IOException e) {
-            throw new IcebergFormatException("cannot read metadata.json under " + metadataDir, e);
         }
     }
 
     private static String tableName(Path tableDir) {
         Path fileName = tableDir.getFileName();
         return fileName == null ? "table" : fileName.toString();
+    }
+
+    private static String tableNameFromLocation(String tableLocation) {
+        String trimmed =
+                tableLocation.endsWith("/") ? tableLocation.substring(0, tableLocation.length() - 1) : tableLocation;
+        int lastSlash = trimmed.lastIndexOf('/');
+        String lastSegment = lastSlash < 0 ? trimmed : trimmed.substring(lastSlash + 1);
+        return lastSegment.isEmpty() ? "table" : lastSegment;
     }
 
     private static RuntimeException closeAll(List<ByteRangeSource> sources, IcebergFileIO io) {

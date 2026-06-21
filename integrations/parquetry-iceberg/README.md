@@ -19,8 +19,13 @@ five-rung ladder: L0 cannot read, L1 full scan works, L2 spatial predicates retu
 fires from the manifest geometry bounds, L4 row-group pruning inside a file. This module reads the testbed's V1/V2/V3
 fixtures at **L3** today: full scans return every row, a bounding-box predicate over a native V3 `geometry` column
 returns the correct rows, and a regional query skips the data files whose manifest bounds fall outside it (on the
-`v3_geometry` fixture a California-window query reads 1 of the 10 files). L4 (row-group pruning inside a file from the
-manifest bounds) is next; see the roadmap.
+`v3_geometry` fixture a California-window query reads 1 of the 10 files). The same read path serves a table over
+`tileverse-storage` (S3, Azure Blob, GCS, HTTP), not only local files, and resolves the table's current metadata
+document automatically.
+
+The next work is read coverage rather than another pruning rung: field-id-resolved reads, partitioned tables, and
+merge-on-read deletes. L4 (row-group pruning inside a file from the manifest bounds) is a later refinement. See "What it
+does not do yet".
 
 ## Reading a table
 
@@ -41,29 +46,48 @@ try (IcebergCatalog catalog = IcebergCatalog.openLocal(tableDir, IcebergOptions.
 `IcebergOptions.builder().snapshotId(id).build()` pins a specific snapshot; the default pins the table's current
 snapshot. The catalog owns the byte sources it opens; `close()` releases them.
 
+To read a table over object storage, supply a `tileverse-storage` `Storage` rooted at the table and pass the table's
+location as the logical root:
+
+```java
+try (IcebergCatalog catalog = IcebergCatalog.open(
+        tableLocation, StorageIcebergFileIO.over(storage, tableLocation), IcebergOptions.defaults())) {
+    Dataset table = catalog.dataset(catalog.datasets().get(0));
+    // ... read as above
+}
+```
+
+`StorageIcebergFileIO.over(storage, ...)` borrows the `Storage` (the caller closes it); `owning(storage, ...)` hands its
+lifecycle to the catalog. For an HTTP-served table, which cannot list a directory, pin the metadata document:
+`IcebergOptions.builder().metadataLocation(tableLocation + "/metadata/v3.metadata.json").build()`.
+
 ## What it reads
 
-- The filesystem table layout: `<table>/metadata/v1.metadata.json` -> the pinned snapshot -> its manifest list -> the
-  data manifests -> the data files.
+- The table layout: `<table>/metadata/<version>.metadata.json` -> the pinned snapshot -> its manifest list -> the data
+  manifests -> the data files.
 - Format versions 1, 2, and 3, including native V3 `geometry` data files (Parquet's `Geometry` logical type, WKB).
 - Copy-on-write tables (data files only).
 - Data files are read by their own schema; the dataset's schema and field ids come from the data files.
 - Bounding-box spatial predicates, evaluated record-by-record against the geometry column through the engine's existing
   spatial contract.
-- Manifest-bound file pruning: a query's numeric and geometry bounds are matched against each data file's recorded
-  manifest bounds, and files that cannot contribute a matching row are skipped before they are read. Geometry bounds in
-  both the `packed_xy` and `wkb_point` encodings are decoded; a geography bound that wraps the antimeridian is kept
+- Manifest-bound file pruning: a query's scalar and geometry bounds are matched against each data file's recorded
+  manifest bounds, and files that cannot contribute a matching row are skipped before they are read. Scalar bounds
+  decode for `int`, `long`, `float`, `double`, `boolean`, `date`, `string`, and `uuid` columns; geometry bounds decode
+  in both the `packed_xy` and `wkb_point` encodings. A geography bound that wraps the antimeridian is kept
   conservatively. Pruning never changes results - a kept file is still filtered at row-group and record level.
-- Byte access through an `IcebergFileIO`; the bundled `LocalIcebergFileIO` serves a local table directory, which is what
-  the tests and a local lakehouse use.
+- Dataset-level explain and analyze that report the file dimension: how many data files a query keeps and skips, with
+  each skipped file's elimination reason and each kept file's row-group plan.
+- The current-snapshot metadata document, resolved in order: an explicit `IcebergOptions.metadataLocation`, else
+  `metadata/version-hint.text`, else the highest `vN.metadata.json` found by listing `metadata/`.
+- Byte access through an `IcebergFileIO`: `LocalIcebergFileIO` serves a local table directory, and `StorageIcebergFileIO`
+  serves a table over a `tileverse-storage` `Storage` - S3, Azure Blob, GCS, or HTTP. The catalog either borrows a
+  caller-owned `Storage` or takes ownership of one it is given. A backend that cannot list a directory (HTTP) needs the
+  explicit `metadataLocation`, since version resolution by listing is unavailable there.
 
 ## What it does not do yet
 
 Where a feature is not implemented, the reader fails fast with a clear message rather than returning wrong rows.
 
-- **Row-group pruning inside a file from manifest bounds (L4).** File-level pruning skips whole files; the manifest
-  bounds are not yet pushed down to skip individual row groups within a kept file. A multi-file explain plan that names
-  the skipped files is also future work.
 - **Field-id-resolved projection and schema evolution.** Columns are matched by name, which is correct when a table's
   files match its schema. Reading across a rename, an added or dropped column, or a promoted type by Iceberg field id is
   not yet implemented.
@@ -71,11 +95,13 @@ Where a feature is not implemented, the reader fails fast with a clear message r
   implemented.
 - **Merge-on-read.** A snapshot that references delete manifests (positional or equality deletes, deletion vectors)
   fails fast; copy-on-write tables read correctly.
-- **Cloud storage.** Only local files are served today. S3, Azure, GCS, and HTTP through `tileverse-storage` are a
-  planned `IcebergFileIO`.
-- **Catalog services and version resolution.** Only a direct `v1.metadata.json` is read; `version-hint.text`,
-  highest-version metadata selection, and REST or other catalog services are not yet wired. One table is exposed per
-  catalog.
+- **Manifest bounds for some column types.** Bounds decode for the scalar and geometry types listed above. A bound on a
+  `timestamp`, `time`, `decimal`, `fixed`, or `binary` column is not yet decoded. A predicate on such a column does not
+  prune files; the file is kept and filtered row by row, which is correct but reads more than strictly necessary.
+- **Row-group pruning inside a file from manifest bounds (L4).** File-level pruning skips whole files; the manifest
+  bounds are not yet pushed down to skip individual row groups within a kept file.
+- **Catalog services and multiple tables.** The current metadata document is resolved by listing or an explicit
+  location, but REST or other catalog services are not wired, and one table is exposed per catalog.
 
 ## License
 
