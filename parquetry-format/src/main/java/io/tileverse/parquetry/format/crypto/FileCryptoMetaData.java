@@ -18,6 +18,8 @@ package io.tileverse.parquetry.format.crypto;
 import java.lang.foreign.MemorySegment;
 import java.util.Optional;
 
+import io.tileverse.parquetry.io.Segments;
+
 /**
  * Stub. Real fields: encryptionAlgorithm, keyMetadata.
  *
@@ -27,13 +29,6 @@ import java.util.Optional;
 public record FileCryptoMetaData(Optional<EncryptionAlgorithm> encryptionAlgorithm, MemorySegment keyMetadata) {
 
     public FileCryptoMetaData {
-        keyMetadata = readOnlyOrAbsent(keyMetadata);
-    }
-
-    private static MemorySegment readOnlyOrAbsent(MemorySegment segment) {
-        if (segment == null) {
-            return MemorySegment.NULL;
-        }
-        return segment.isReadOnly() ? segment : segment.asReadOnly();
+        keyMetadata = Segments.readOnlyOrAbsent(keyMetadata);
     }
 }

@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Optional;
 
 import io.tileverse.parquetry.format.crypto.EncryptionAlgorithm;
+import io.tileverse.parquetry.io.Segments;
 
 import lombok.Builder;
 
@@ -67,13 +68,6 @@ public record FileMetaData(
         createdBy = createdBy == null ? Optional.empty() : createdBy;
         columnOrders = columnOrders == null ? Optional.empty() : columnOrders.map(List::copyOf);
         encryptionAlgorithm = encryptionAlgorithm == null ? Optional.empty() : encryptionAlgorithm;
-        footerSigningKeyMetadata = readOnlyOrAbsent(footerSigningKeyMetadata);
-    }
-
-    private static MemorySegment readOnlyOrAbsent(MemorySegment segment) {
-        if (segment == null) {
-            return MemorySegment.NULL;
-        }
-        return segment.isReadOnly() ? segment : segment.asReadOnly();
+        footerSigningKeyMetadata = Segments.readOnlyOrAbsent(footerSigningKeyMetadata);
     }
 }

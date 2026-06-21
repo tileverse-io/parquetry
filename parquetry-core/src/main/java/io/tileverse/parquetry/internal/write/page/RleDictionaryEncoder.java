@@ -46,7 +46,9 @@ public final class RleDictionaryEncoder implements Encoder<int[]> {
         header.put((byte) bitWidth);
         header.flip();
         ChannelWrites.writeFully(dst, header);
-        int payloadBytes = RleBitPackedHybridWriter.write(values, n, bitWidth, dst);
+        int payloadBytes = (bitWidth == 0)
+                ? RleBitPackedHybridWriter.writeZeroWidthRun(n, dst)
+                : RleBitPackedHybridWriter.write(values, n, bitWidth, dst);
         return 1 + payloadBytes;
     }
 

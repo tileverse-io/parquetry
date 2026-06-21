@@ -31,4 +31,20 @@ public final class Segments {
     public static MemorySegment toHeapReadOnly(MemorySegment source) {
         return MemorySegment.ofArray(source.toArray(ValueLayout.JAVA_BYTE)).asReadOnly();
     }
+
+    /**
+     * Returns a read-only view of {@code source} while preserving the {@link MemorySegment#NULL} absent sentinel by
+     * identity. A {@code null} reference or {@link MemorySegment#NULL} maps back to {@link MemorySegment#NULL}.
+     *
+     * <p>Format records use {@code segment == MemorySegment.NULL} to mark an optional binary field as absent, and their
+     * serializers omit the field on that exact identity. Calling {@link MemorySegment#asReadOnly()} on the sentinel
+     * returns a fresh zero-length segment that no longer compares equal to it, which would turn an absent field into a
+     * present zero-byte one that strict Parquet readers reject. Guarding the sentinel keeps the absence intact.
+     */
+    public static MemorySegment readOnlyOrAbsent(MemorySegment source) {
+        if (source == null || source == MemorySegment.NULL) {
+            return MemorySegment.NULL;
+        }
+        return source.isReadOnly() ? source : source.asReadOnly();
+    }
 }

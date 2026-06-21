@@ -77,6 +77,27 @@ public final class RleBitPackedHybridWriter {
         return payload.length;
     }
 
+    /**
+     * Encode {@code n} all-zero values as a single bit-width-0 RLE run: one varint run header and no value bytes.
+     * Returns bytes written.
+     *
+     * <p>{@link #write} drops a bit-width-0 stream to zero bytes, which is what level streams need (Parquet omits level
+     * data when the max level is 0). A dictionary index stream cannot drop it: even when the chunk dictionary holds a
+     * single value and every index is 0, the reader must still learn how many values the page holds. An empty stream
+     * makes a strict reader throw "Reading past RLE/BitPacking stream" when it reads the first value, because the run
+     * header that declares the value count is missing.
+     */
+    public static int writeZeroWidthRun(int n, WritableByteChannel dst) throws IOException {
+        if (n == 0) {
+            return 0;
+        }
+        ByteArrayOutputStream scratch = new ByteArrayOutputStream();
+        writeRleRun(scratch, n, 0, 0);
+        byte[] payload = scratch.toByteArray();
+        ChannelWrites.writeFully(dst, ByteBuffer.wrap(payload));
+        return payload.length;
+    }
+
     /** Return the length of the run of equal values starting at {@code start}. */
     private static int scanRunLength(int[] values, int start, int n) {
         int end = start + 1;

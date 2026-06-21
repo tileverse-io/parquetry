@@ -17,10 +17,13 @@ package io.tileverse.parquetry.internal.write.page;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.io.ByteArrayInputStream;
+import java.io.InputStream;
 import java.lang.foreign.MemorySegment;
 import java.nio.IntBuffer;
 import java.util.stream.Stream;
 
+import org.apache.parquet.column.values.rle.RunLengthBitPackingHybridDecoder;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -82,6 +85,29 @@ class RleDictionaryEncoderTest {
             values[i] = i;
         }
         return values;
+    }
+
+    @Test
+    void bitWidthZeroStreamIsReadableByAStrictReader() throws Exception {
+        // A column chunk whose dictionary holds a single distinct value indexes every page entry as 0, which yields a
+        // zero bit width. parquetry's own decoder tolerates an empty index stream at bit width 0, but a strict reader
+        // (parquet-java) reads the leading bit-width byte and then needs a run header declaring the value count; an
+        // empty stream makes it throw "Reading past RLE/BitPacking stream". The encoder must emit the run header.
+        int[] indexes = filled(40, 0);
+        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        new RleDictionaryEncoder().encode(indexes, indexes.length, out);
+        byte[] encoded = out.toByteArray();
+
+        assertThat(encoded[0]).as("bit width byte").isZero();
+        assertThat(encoded).as("run header present after the bit-width byte").hasSizeGreaterThan(1);
+
+        int bitWidth = encoded[0] & 0xff;
+        try (InputStream body = new ByteArrayInputStream(encoded, 1, encoded.length - 1)) {
+            RunLengthBitPackingHybridDecoder decoder = new RunLengthBitPackingHybridDecoder(bitWidth, body);
+            for (int i = 0; i < indexes.length; i++) {
+                assertThat(decoder.readInt()).as("index %d", i).isZero();
+            }
+        }
     }
 
     @ParameterizedTest(name = "{0}")
