@@ -163,6 +163,51 @@ class CpCmdTest {
         assertThat(code).isEqualTo(CliExitCode.GENERIC);
     }
 
+    @Test
+    void rowGroupRowsFlagSealsRowGroupsAtTheRequestedCount(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("cities.parquet");
+        Path dst = dir.resolve("split.parquet");
+        Fixtures.writeCities(src);
+
+        int code = Par.newCommandLine().execute("cp", src.toString(), dst.toString(), "--row-group-rows", "2");
+        assertThat(code).isZero();
+        assertThat(rowCount(dst)).isEqualTo(4L);
+        assertThat(rowGroupCount(dst)).isEqualTo(2);
+    }
+
+    @Test
+    void rowGroupBytesFlagAcceptsASizeSuffix(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("cities.parquet");
+        Path dst = dir.resolve("byte-sized.parquet");
+        Fixtures.writeCities(src);
+
+        int code = Par.newCommandLine().execute("cp", src.toString(), dst.toString(), "--row-group-bytes", "256MB");
+        assertThat(code).isZero();
+        assertThat(rowCount(dst)).isEqualTo(4L);
+    }
+
+    @Test
+    void rejectsBothRowGroupSizingFlagsAtOnce(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("cities.parquet");
+        Path dst = dir.resolve("dst.parquet");
+        Fixtures.writeCities(src);
+
+        int code = Par.newCommandLine()
+                .execute("cp", src.toString(), dst.toString(), "--row-group-rows", "2", "--row-group-bytes", "1MB");
+        assertThat(code).isEqualTo(CliExitCode.USAGE);
+    }
+
+    @Test
+    void rejectsAnInvalidRowGroupBytesValue(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("cities.parquet");
+        Path dst = dir.resolve("dst.parquet");
+        Fixtures.writeCities(src);
+
+        int code =
+                Par.newCommandLine().execute("cp", src.toString(), dst.toString(), "--row-group-bytes", "not-a-size");
+        assertThat(code).isEqualTo(CliExitCode.USAGE);
+    }
+
     private static long rowCount(Path file) throws Exception {
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
@@ -171,6 +216,14 @@ class CpCmdTest {
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 return rows.count();
             }
+        }
+    }
+
+    private static int rowGroupCount(Path file) throws Exception {
+        try (Storage storage = StorageFactory.open(file.getParent().toUri());
+                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
+            ParquetDataset dataset = ParquetDataset.open(ByteRangeSources.from(reader));
+            return dataset.rowGroups().size();
         }
     }
 }
