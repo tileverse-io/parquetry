@@ -21,6 +21,7 @@ import java.util.OptionalInt;
 import java.util.OptionalLong;
 
 import io.tileverse.parquetry.format.crypto.ColumnCryptoMetaData;
+import io.tileverse.parquetry.io.Segments;
 
 import lombok.Builder;
 
@@ -66,13 +67,6 @@ public record ColumnChunk(
         columnIndexOffset = columnIndexOffset == null ? OptionalLong.empty() : columnIndexOffset;
         columnIndexLength = columnIndexLength == null ? OptionalInt.empty() : columnIndexLength;
         cryptoMetadata = cryptoMetadata == null ? Optional.empty() : cryptoMetadata;
-        encryptedColumnMetadata = readOnlyOrAbsent(encryptedColumnMetadata);
-    }
-
-    private static MemorySegment readOnlyOrAbsent(MemorySegment segment) {
-        if (segment == null) {
-            return MemorySegment.NULL;
-        }
-        return segment.isReadOnly() ? segment : segment.asReadOnly();
+        encryptedColumnMetadata = Segments.readOnlyOrAbsent(encryptedColumnMetadata);
     }
 }

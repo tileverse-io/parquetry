@@ -178,6 +178,76 @@ class ParquetJavaCompatIT {
         }
     }
 
+    @Test
+    void allNullColumnsParseThroughParquetJava() throws Exception {
+        // An all-null column records a null count but no min/max. The absent min/max must be omitted on the wire; a
+        // present zero-byte min/max makes parquet-java's footer parse throw in IntStatistics.setMinMaxFromBytes.
+        ParquetSchema schema = nullableIntAndDoubleSchema();
+        int rowCount = 500;
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>(rowCount);
+        for (int i = 0; i < rowCount; i++) {
+            rows.add(new HashMap<>());
+        }
+        Path file = tempDir.resolve("all-null.parquet");
+        writeRows(file, schema, WriteOptions.builder().tempDir(tempDir).build(), rows);
+
+        ParquetMetadata metadata = readFooterViaParquetJava(file);
+        for (BlockMetaData block : metadata.getBlocks()) {
+            for (ColumnChunkMetaData chunk : block.getColumns()) {
+                String column = chunk.getPath().toDotString();
+                assertThat(chunk.getStatistics().getNumNulls())
+                        .as("null count for %s", column)
+                        .isEqualTo(rowCount);
+                assertThat(chunk.getStatistics().hasNonNullValue())
+                        .as("no min/max recorded for %s", column)
+                        .isFalse();
+            }
+        }
+
+        List<GenericRecord> read = readWithAvro(file);
+        assertThat(read).hasSize(rowCount);
+        for (GenericRecord row : read) {
+            assertThat(row.get("level")).isNull();
+            assertThat(row.get("height")).isNull();
+        }
+    }
+
+    @Test
+    void singleDistinctValueAcrossPagesReadsThroughParquetJava() throws Exception {
+        // A chunk dictionary with one distinct value indexes every entry as 0, a zero-bit-width index stream. The
+        // values span two data pages, placing a page of non-null indices after an all-null page. The index stream must
+        // still emit a run header; an empty one makes parquet-java throw "Reading past RLE/BitPacking stream" when it
+        // reads the first value of the second page.
+        ParquetSchema schema = nullableIntAndDoubleSchema();
+        int rowCount = 40;
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>(rowCount);
+        for (int i = 0; i < rowCount; i++) {
+            Map<ColumnPath, Object> row = new HashMap<>(1);
+            if (i >= 20 && i % 2 == 0) {
+                row.put(ColumnPath.of("level"), 7);
+            }
+            rows.add(row);
+        }
+        Path file = tempDir.resolve("single-distinct-two-page.parquet");
+        WriteOptions options =
+                WriteOptions.builder().tempDir(tempDir).pageValueLimit(20).build();
+        writeRows(file, schema, options, rows);
+
+        List<GenericRecord> read = readWithAvro(file);
+        assertThat(read).hasSize(rowCount);
+        int nonNull = 0;
+        for (int i = 0; i < rowCount; i++) {
+            Object level = read.get(i).get("level");
+            if (i >= 20 && i % 2 == 0) {
+                assertThat(((Number) level).intValue()).as("row %d", i).isEqualTo(7);
+                nonNull++;
+            } else {
+                assertThat(level).as("row %d", i).isNull();
+            }
+        }
+        assertThat(nonNull).isEqualTo(10);
+    }
+
     // --- row construction + comparison ---
 
     private static List<Map<ColumnPath, Object>> syntheticRows(int count) {
@@ -281,6 +351,17 @@ class ParquetJavaCompatIT {
 
     private static SchemaNode.Primitive primitive(String name, PrimitiveKind kind) {
         return new SchemaNode.Primitive(name, Repetition.REQUIRED, kind, OptionalInt.empty(), Optional.empty(), -1);
+    }
+
+    private static ParquetSchema nullableIntAndDoubleSchema() {
+        List<SchemaNode> children = List.of(
+                optionalPrimitive("level", PrimitiveKind.INT32), optionalPrimitive("height", PrimitiveKind.DOUBLE));
+        SchemaNode.Group root = new SchemaNode.Group("schema", Repetition.REQUIRED, children, Optional.empty(), -1);
+        return new ParquetSchema(root);
+    }
+
+    private static SchemaNode.Primitive optionalPrimitive(String name, PrimitiveKind kind) {
+        return new SchemaNode.Primitive(name, Repetition.OPTIONAL, kind, OptionalInt.empty(), Optional.empty(), -1);
     }
 
     private static ParquetSchema singleBinaryColumnSchema(String name) {

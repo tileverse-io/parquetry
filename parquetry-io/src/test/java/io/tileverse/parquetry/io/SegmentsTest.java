@@ -53,4 +53,46 @@ class SegmentsTest {
 
         assertThat(copy.get(ValueLayout.JAVA_BYTE, 0)).isEqualTo((byte) 10);
     }
+
+    @Test
+    void readOnlyOrAbsentMapsNullReferenceToAbsentSentinel() {
+        assertThat(Segments.readOnlyOrAbsent(null)).isSameAs(MemorySegment.NULL);
+    }
+
+    @Test
+    void readOnlyOrAbsentKeepsAbsentSentinelIdentity() {
+        // The absent sentinel must come back by identity: asReadOnly() would return a fresh zero-length segment that
+        // fails the {@code == MemorySegment.NULL} test the format serializers use to omit an optional binary field.
+        assertThat(Segments.readOnlyOrAbsent(MemorySegment.NULL)).isSameAs(MemorySegment.NULL);
+    }
+
+    @Test
+    void readOnlyOrAbsentMakesWritableSegmentReadOnly() {
+        MemorySegment writable = MemorySegment.ofArray(new byte[] {1, 2, 3});
+
+        MemorySegment result = Segments.readOnlyOrAbsent(writable);
+
+        assertThat(result.isReadOnly()).isTrue();
+        assertThat(result.toArray(ValueLayout.JAVA_BYTE)).containsExactly(1, 2, 3);
+    }
+
+    @Test
+    void readOnlyOrAbsentReturnsAlreadyReadOnlySegmentUnchanged() {
+        MemorySegment readOnly = MemorySegment.ofArray(new byte[] {4, 5, 6}).asReadOnly();
+
+        assertThat(Segments.readOnlyOrAbsent(readOnly)).isSameAs(readOnly);
+    }
+
+    @Test
+    void readOnlyOrAbsentKeepsAnEmptyPayloadPresent() {
+        // A legitimately empty payload (e.g. an empty-string min for a BYTE_ARRAY column) is a present zero-byte value,
+        // distinct from the absent sentinel; it must not be folded into MemorySegment.NULL.
+        MemorySegment empty = MemorySegment.ofArray(new byte[0]);
+
+        MemorySegment result = Segments.readOnlyOrAbsent(empty);
+
+        assertThat(result).isNotEqualTo(MemorySegment.NULL);
+        assertThat(result.byteSize()).isZero();
+        assertThat(result.isReadOnly()).isTrue();
+    }
 }

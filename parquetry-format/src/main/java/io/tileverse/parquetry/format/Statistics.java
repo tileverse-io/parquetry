@@ -18,6 +18,8 @@ package io.tileverse.parquetry.format;
 import java.lang.foreign.MemorySegment;
 import java.util.OptionalLong;
 
+import io.tileverse.parquetry.io.Segments;
+
 import lombok.Builder;
 
 /**
@@ -59,18 +61,11 @@ public record Statistics(
         boolean isMinValueExact) {
 
     public Statistics {
-        max = readOnlyOrAbsent(max);
-        min = readOnlyOrAbsent(min);
+        max = Segments.readOnlyOrAbsent(max);
+        min = Segments.readOnlyOrAbsent(min);
         nullCount = nullCount == null ? OptionalLong.empty() : nullCount;
         distinctCount = distinctCount == null ? OptionalLong.empty() : distinctCount;
-        maxValue = readOnlyOrAbsent(maxValue);
-        minValue = readOnlyOrAbsent(minValue);
-    }
-
-    private static MemorySegment readOnlyOrAbsent(MemorySegment segment) {
-        if (segment == null) {
-            return MemorySegment.NULL;
-        }
-        return segment.isReadOnly() ? segment : segment.asReadOnly();
+        maxValue = Segments.readOnlyOrAbsent(maxValue);
+        minValue = Segments.readOnlyOrAbsent(minValue);
     }
 }
