@@ -44,6 +44,7 @@ import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.LocalFileSource;
+import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.testsupport.CorpusFixtures;
 
 class FilesetCatalogTest {
@@ -156,15 +157,19 @@ class FilesetCatalogTest {
     }
 
     @Test
-    void pathOnlyPartitionColumnFailsFast(@TempDir Path root) throws Exception {
-        Path part = Files.createDirectories(root.resolve("year=2024"));
-        writeNoYearFile(part.resolve("a.parquet"), 3);
-
-        LocalFileSource source = LocalFileSource.directory(root, "**.parquet");
-        CatalogOptions options = CatalogOptions.defaults();
-        assertThatThrownBy(() -> FilesetCatalog.open(source, options))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("path-only");
+    void pathOnlyPartitionColumnIsSynthesized(@TempDir Path root) throws Exception {
+        Path part2023 = Files.createDirectories(root.resolve("year=2023"));
+        Path part2024 = Files.createDirectories(root.resolve("year=2024"));
+        writeNoYearFile(part2023.resolve("a.parquet"), 4);
+        writeNoYearFile(part2024.resolve("b.parquet"), 3);
+        try (FilesetCatalog catalog =
+                FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
+            Dataset ds = catalog.dataset(catalog.datasets().get(0));
+            assertThat(ds.schema().leafColumns()).contains(ColumnPath.of("year"));
+            assertThat(ds.capabilities().partitionModel()).isEqualTo(DatasetCapabilities.PartitionModel.HIVE_PATH);
+            assertThat(ds.count(Pred.col("year").eq(2024L), ReadOptions.DEFAULTS))
+                    .isEqualTo(3);
+        }
     }
 
     @Test
