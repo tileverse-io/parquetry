@@ -130,7 +130,10 @@ public final class StatsEvaluator {
         return path -> columns.get(path).map(StatsEvaluator::summarize);
     }
 
-    private static ColumnSummary summarize(FilterPipeline.ColumnStats cs) {
+    /**
+     * Decodes one column's raw min/max statistic bytes (preferring the typed stats) into a typed {@link ColumnSummary}.
+     */
+    public static ColumnSummary summarize(FilterPipeline.ColumnStats cs) {
         PrimitiveKind kind = cs.kind();
         MemorySegment minBytes =
                 preferLatest(cs.statistics().minValue(), cs.statistics().min());

@@ -38,10 +38,12 @@ import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.filter.explain.RowGroupOutcome;
 import io.tileverse.parquetry.filter.explain.RowGroupPlan;
+import io.tileverse.parquetry.filter.prune.FileStats;
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.KeyValue;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
@@ -49,8 +51,11 @@ import io.tileverse.parquetry.internal.filter.FilterPipeline;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.BloomFilterLookup;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnPageStatsLookup;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnStatsLookup;
+import io.tileverse.parquetry.internal.filter.StatsEvaluator;
+import io.tileverse.parquetry.internal.filter.StatsEvaluator.ColumnSummary;
 import io.tileverse.parquetry.internal.filter.bloom.BloomFilterReader;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
+import io.tileverse.parquetry.internal.filter.prune.FooterStatsAggregator;
 import io.tileverse.parquetry.internal.filter.spatial.SpatialBoundsSource;
 import io.tileverse.parquetry.internal.filter.spatial.SpatialCoveringRewrite;
 import io.tileverse.parquetry.internal.read.BatchForm;
@@ -83,6 +88,7 @@ import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaBuilder;
+import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 import lombok.NonNull;
@@ -113,7 +119,7 @@ public class ParquetReader {
      * allocating nothing. The drain consumes the stream only to force the projected columns to decode and to run the
      * record-level filter, then discards the result.
      */
-    private static final Materializer<Boolean> DISCARD_MATERIALIZER = (projectedSchema, row) -> Boolean.TRUE;
+    private static final Materializer<Boolean> DISCARD_MATERIALIZER = (_, _) -> Boolean.TRUE;
 
     private final ByteRangeSource source;
     private final FileMetaData footer;
@@ -181,6 +187,97 @@ public class ParquetReader {
     /** Returns a public view of the row groups in file order. */
     public List<RowGroupSummary> rowGroups() {
         return rowGroupView;
+    }
+
+    /**
+     * The footer-aggregated prunable statistics for this file: per-column min/max/null-count combined across the file's
+     * row groups, the geometry bounding box for each geometry column, and the record count. Reads only the cached
+     * footer metadata, no page data. The result feeds {@link io.tileverse.parquetry.filter.prune.FilePruner} for
+     * whole-file pruning, mirroring the Iceberg manifest-bounds path with the footer as the source.
+     */
+    public FileStats fileStats() {
+        List<RowGroupChunks> groups = rowGroupChunks();
+        FileStats.Builder builder = FileStats.builder().recordCount(recordCount(groups));
+        Set<ColumnPath> geometryColumns = geometryColumnPaths();
+        for (ColumnPath leaf : fileSchema.leafColumns()) {
+            if (geometryColumns.contains(leaf)) {
+                continue;
+            }
+            FooterStatsAggregator.aggregate(columnSummaries(groups, leaf))
+                    .ifPresent(stats -> builder.column(leaf, stats));
+        }
+        addGeometryBounds(builder, geometryColumns);
+        return builder.build();
+    }
+
+    private static long recordCount(List<RowGroupChunks> groups) {
+        long total = 0L;
+        for (RowGroupChunks group : groups) {
+            total += group.numRows();
+        }
+        return total;
+    }
+
+    private static List<Optional<ColumnSummary>> columnSummaries(List<RowGroupChunks> groups, ColumnPath leaf) {
+        List<Optional<ColumnSummary>> summaries = new ArrayList<>(groups.size());
+        for (RowGroupChunks group : groups) {
+            summaries.add(safeSummary(group, leaf));
+        }
+        return summaries;
+    }
+
+    /**
+     * Decodes one row group's statistics for {@code leaf}, best-effort: a truncated or malformed footer value degrades
+     * that row group's column to no statistics rather than failing the read. The aggregate then leaves the column out
+     * of pruning. This mirrors the Iceberg manifest path, which never lets an unreadable bound fail a read.
+     */
+    private static Optional<ColumnSummary> safeSummary(RowGroupChunks group, ColumnPath leaf) {
+        Optional<FilterPipeline.ColumnStats> stats = group.stats(leaf);
+        if (stats.isEmpty()) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(StatsEvaluator.summarize(stats.orElseThrow()));
+        } catch (RuntimeException _) {
+            // A malformed or truncated footer value disables pruning for this column; it never fails the read.
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * The geometry leaf columns, kept out of the numeric statistics. A GeoParquet 1.x file names its (top-level)
+     * geometry columns only in the {@code geo} metadata; a GeoParquet 2.0 file annotates the leaf with a
+     * GEOMETRY/GEOGRAPHY logical type. Honoring both keeps a WKB column out of {@code columns()} regardless of which
+     * encoding wrote it, even when the two disagree.
+     */
+    private Set<ColumnPath> geometryColumnPaths() {
+        Set<ColumnPath> paths = new LinkedHashSet<>();
+        geoMetadata.ifPresent(geo -> geo.columns().keySet().forEach(name -> paths.add(ColumnPath.of(name))));
+        for (ColumnPath leaf : fileSchema.leafColumns()) {
+            if (isGeometryLeaf(leaf)) {
+                paths.add(leaf);
+            }
+        }
+        return paths;
+    }
+
+    private boolean isGeometryLeaf(ColumnPath leaf) {
+        return fileSchema.find(leaf).orElse(null) instanceof SchemaNode.Primitive primitive
+                && primitive.logicalType().map(ParquetReader::isGeometryLike).orElse(false);
+    }
+
+    private static boolean isGeometryLike(LogicalType logicalType) {
+        return logicalType instanceof LogicalType.Geometry || logicalType instanceof LogicalType.Geography;
+    }
+
+    private void addGeometryBounds(FileStats.Builder builder, Set<ColumnPath> geometryColumns) {
+        if (geometryColumns.isEmpty()) {
+            return;
+        }
+        SpatialBoundsSource bounds = SpatialBoundsSource.of(footer, fileSchema, geoMetadata);
+        for (ColumnPath geometry : geometryColumns) {
+            bounds.fileBounds(geometry).ifPresent(box -> builder.geometryBounds(geometry, box));
+        }
     }
 
     /** Streams rows matching {@code predicate} under {@code projection}, materialized via the default record shape. */
@@ -812,7 +909,7 @@ public class ParquetReader {
             LongConsumer pipelineNanosSink) {
         try (Stream<Boolean> rows = buildRowStream(
                 predicate, projection, DISCARD_MATERIALIZER, drainOptions, accumulator, pipelineNanosSink)) {
-            rows.forEach(row -> {});
+            rows.forEach(_ -> {});
         }
     }
 
