@@ -136,17 +136,6 @@ class MultiReaderEarlyCloseTest {
     }
 
     private static FilesetReader twoFileFileset(ByteRangeSource first, ByteRangeSource second) {
-        List<ByteRangeSource> sources = List.of(first, second);
-        return new FilesetReader() {
-            @Override
-            public ByteRangeSource openFile(int index) {
-                return sources.get(index);
-            }
-
-            @Override
-            public int fileCount() {
-                return sources.size();
-            }
-        };
+        return TestFilesets.of(List.of(first, second));
     }
 }

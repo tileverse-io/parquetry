@@ -38,6 +38,7 @@ import io.tileverse.parquetry.data.RowGroupSummary;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
+import io.tileverse.parquetry.filter.prune.FileStats;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -101,6 +102,12 @@ final class DefaultParquetDataset implements ParquetDataset {
     @Override
     public List<RowGroupSummary> rowGroups() {
         return rowGroups;
+    }
+
+    @Override
+    public FileStats fileStats() {
+        ensureSingleReader("fileStats");
+        return readers.get(0).fileStats();
     }
 
     @Override
