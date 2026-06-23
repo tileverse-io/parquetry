@@ -24,7 +24,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Stream;
 
-import io.tileverse.parquetry.data.RowGroupSummary;
 import io.tileverse.parquetry.dataset.Dataset;
 import io.tileverse.parquetry.dataset.DatasetCapabilities;
 import io.tileverse.parquetry.dataset.FilesetDataset;
@@ -116,7 +115,7 @@ public final class FilesetCatalog implements DatasetCatalog {
             List<FileEntry> files, List<ByteRangeSource> opened, CatalogOptions options, URI root) {
         List<GeoParquetMetadata> perFileGeo = new ArrayList<>();
         List<Map<String, String>> perFilePartitions = new ArrayList<>(files.size());
-        List<Long> perFileRowCounts = new ArrayList<>(files.size());
+        List<FileStats> perFileFooterStats = new ArrayList<>(files.size());
         ParquetSchema unifiedSchema = null;
         for (int index = 0; index < files.size(); index++) {
             ParquetDataset fileDataset = ParquetDataset.open(opened.get(index));
@@ -130,14 +129,16 @@ public final class FilesetCatalog implements DatasetCatalog {
             Map<String, String> partitions =
                     HivePartitionResolver.partitionValues(files.get(index).relativePath());
             perFilePartitions.add(partitions);
-            perFileRowCounts.add(totalRowCount(fileDataset));
+            perFileFooterStats.add(fileDataset.fileStats());
         }
 
         HivePartitioning partitioning = HivePartitioning.bind(perFilePartitions, unifiedSchema);
         ParquetSchema augmentedSchema = unifiedSchema.withAppendedLeaves(partitioning.syntheticLeaves());
         List<FileStats> stats = new ArrayList<>(files.size());
         for (int index = 0; index < files.size(); index++) {
-            stats.add(partitioning.fileStats(perFilePartitions.get(index), perFileRowCounts.get(index)));
+            FileStats footer = perFileFooterStats.get(index);
+            FileStats hive = partitioning.fileStats(perFilePartitions.get(index), footer.recordCount());
+            stats.add(footer.withOverrides(hive));
         }
 
         Optional<GeoParquetMetadata> aggregatedGeo = GeoMetadataAggregator.aggregate(perFileGeo);
@@ -186,14 +187,6 @@ public final class FilesetCatalog implements DatasetCatalog {
                 .cheapCount(true)
                 .cheapBounds(aggregatedGeo.isPresent())
                 .build();
-    }
-
-    private static long totalRowCount(ParquetDataset fileDataset) {
-        long total = 0L;
-        for (RowGroupSummary rowGroup : fileDataset.rowGroups()) {
-            total += rowGroup.rowCount();
-        }
-        return total;
     }
 
     @Override

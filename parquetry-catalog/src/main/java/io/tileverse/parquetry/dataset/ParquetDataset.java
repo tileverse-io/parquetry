@@ -33,6 +33,7 @@ import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Query;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
+import io.tileverse.parquetry.filter.prune.FileStats;
 import io.tileverse.parquetry.internal.filter.PredicateNormalizer;
 import io.tileverse.parquetry.internal.filter.RecordAccessors;
 import io.tileverse.parquetry.internal.filter.RecordLevelEvaluator;
@@ -80,6 +81,13 @@ public sealed interface ParquetDataset permits DefaultParquetDataset {
 
     /** Returns a public view of the row groups, in file order. */
     List<RowGroupSummary> rowGroups();
+
+    /**
+     * The footer-aggregated prunable statistics for this dataset's single file. Defined only for a one-file dataset; a
+     * multi-file dataset has no single file aggregate and throws {@link UnsupportedOperationException} (consistent with
+     * {@code explain}).
+     */
+    FileStats fileStats();
 
     /**
      * Reads every record into the canonical {@link ParquetRecord} view, applying no predicate or projection.

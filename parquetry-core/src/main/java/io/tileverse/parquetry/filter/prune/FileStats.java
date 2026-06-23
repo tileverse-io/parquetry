@@ -39,6 +39,22 @@ public record FileStats(
         return new Builder();
     }
 
+    /**
+     * Returns these statistics with {@code overrides} layered on top: an overriding column or geometry bound replaces
+     * the one of the same path, while this file's record count is kept. The overriding entry is treated as exact - for
+     * example a Hive partition-path value, which holds for every row in the partition - and therefore wins on any key
+     * collision. The two are usually disjoint (a footer aggregate plus path-only partition columns); the override rule
+     * only matters when a partition key also names a physical column.
+     */
+    public FileStats withOverrides(FileStats overrides) {
+        Builder builder = builder().recordCount(recordCount);
+        columns.forEach(builder::column);
+        geometryBounds.forEach(builder::geometryBounds);
+        overrides.columns().forEach(builder::column);
+        overrides.geometryBounds().forEach(builder::geometryBounds);
+        return builder.build();
+    }
+
     public static final class Builder {
         private final Map<ColumnPath, ColumnStatistics> columns = new LinkedHashMap<>();
         private final Map<ColumnPath, BoundingBox> geometryBounds = new LinkedHashMap<>();
