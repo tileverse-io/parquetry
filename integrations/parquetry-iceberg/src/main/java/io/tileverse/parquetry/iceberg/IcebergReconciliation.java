@@ -1,0 +1,147 @@
+/*
+ * Copyright (c) 2026 Multivers.io
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.tileverse.parquetry.iceberg;
+
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+
+import io.tileverse.parquetry.filter.OutputColumn;
+import io.tileverse.parquetry.filter.Value;
+import io.tileverse.parquetry.iceberg.IcebergFileSchema.FileColumn;
+import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.PrimitiveKind;
+
+/**
+ * Matches one Iceberg data file's columns back to the table's current schema by field id.
+ *
+ * <p>Given the table's {@link IcebergSchema} and a single file's {@link IcebergFileSchema}, this decides whether the
+ * file can be read untouched by name (the fast path) or must be presented through an ordered output shape that renames,
+ * reorders, null-fills, promotes, and drops columns to match the table. The output shape presents one
+ * {@link OutputColumn} per table field, in table order.
+ *
+ * <p>Known limitations: drops are honored only when reconciliation is otherwise triggered (a file that differs from the
+ * table by a pure drop takes the pass-through path and keeps the extra column, acceptable because real evolved tables
+ * combine changes); reconciliation assumes top-level field ids are unique (Iceberg guarantees this, and
+ * {@link IcebergFileSchema} resolves a duplicate id last-wins); decimal widening and date-to-timestamp promotions are
+ * deferred until the widening substrate supports them.
+ */
+final class IcebergReconciliation {
+
+    private IcebergReconciliation() {}
+
+    /** Either read the file untouched by name, or present it through an ordered output shape. */
+    record Reconciliation(boolean passThrough, List<OutputColumn> output) {
+
+        Reconciliation {
+            output = List.copyOf(output);
+        }
+
+        static Reconciliation ofPassThrough() {
+            return new Reconciliation(true, List.of());
+        }
+
+        static Reconciliation ofReconciled(List<OutputColumn> output) {
+            return new Reconciliation(false, output);
+        }
+    }
+
+    /** Reconciles {@code file} against {@code table}, returning the fast path when possible. */
+    static Reconciliation reconcile(IcebergSchema table, IcebergFileSchema file) {
+        if (canPassThrough(table, file)) {
+            return Reconciliation.ofPassThrough();
+        }
+        return Reconciliation.ofReconciled(presentTableFields(table, file));
+    }
+
+    private static boolean canPassThrough(IcebergSchema table, IcebergFileSchema file) {
+        if (!file.hasFieldIds()) {
+            return true;
+        }
+        for (IcebergField field : table.fields()) {
+            if (!isSatisfiedAsIs(field, file)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isSatisfiedAsIs(IcebergField field, IcebergFileSchema file) {
+        Optional<FileColumn> column = file.byFieldId(field.fieldId());
+        if (column.isEmpty()) {
+            return false;
+        }
+        FileColumn fileColumn = column.get();
+        boolean sameName = fileColumn.path().name().equals(field.name());
+        boolean sameKind = fileColumn.kind() == IcebergSchema.kindOf(field);
+        return sameName && sameKind;
+    }
+
+    private static List<OutputColumn> presentTableFields(IcebergSchema table, IcebergFileSchema file) {
+        List<OutputColumn> output = new ArrayList<>(table.fields().size());
+        for (IcebergField field : table.fields()) {
+            output.add(presentField(field, file));
+        }
+        return output;
+    }
+
+    private static OutputColumn presentField(IcebergField field, IcebergFileSchema file) {
+        Optional<FileColumn> column = file.byFieldId(field.fieldId());
+        if (column.isEmpty()) {
+            return injectNullColumn(field);
+        }
+        return presentExistingColumn(field, column.get());
+    }
+
+    private static OutputColumn presentExistingColumn(IcebergField field, FileColumn fileColumn) {
+        ColumnPath name = ColumnPath.of(field.name());
+        PrimitiveKind expectedKind = IcebergSchema.kindOf(field);
+        if (fileColumn.kind() == expectedKind) {
+            return new OutputColumn.Physical(name, fileColumn.path());
+        }
+        if (isSanctionedWidening(fileColumn.kind(), expectedKind)) {
+            return new OutputColumn.Promoted(name, fileColumn.path(), expectedKind);
+        }
+        throw new IcebergFormatException("cannot reconcile field %s: file type %s is not promotable to %s"
+                .formatted(field.name(), fileColumn.kind(), expectedKind));
+    }
+
+    private static OutputColumn injectNullColumn(IcebergField field) {
+        return new OutputColumn.Null(ColumnPath.of(field.name()), nullTypeOf(field));
+    }
+
+    private static boolean isSanctionedWidening(PrimitiveKind fileKind, PrimitiveKind expectedKind) {
+        boolean intToLong = fileKind == PrimitiveKind.INT32 && expectedKind == PrimitiveKind.INT64;
+        boolean floatToDouble = fileKind == PrimitiveKind.FLOAT && expectedKind == PrimitiveKind.DOUBLE;
+        return intToLong || floatToDouble;
+    }
+
+    private static Value nullTypeOf(IcebergField field) {
+        return switch (field.type()) {
+            case "int" -> new Value.IntVal(0);
+            case "long" -> new Value.LongVal(0L);
+            case "float" -> new Value.FloatVal(0f);
+            case "double" -> new Value.DoubleVal(0d);
+            case "boolean" -> new Value.BoolVal(false);
+            case "date" -> new Value.DateVal(LocalDate.EPOCH);
+            case "string" -> new Value.StringVal("");
+            default ->
+                throw new IcebergFormatException("cannot inject a null column for added field %s of unsupported type %s"
+                        .formatted(field.name(), field.type()));
+        };
+    }
+}

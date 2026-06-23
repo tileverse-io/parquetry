@@ -204,6 +204,18 @@ class PredicateNormalizerTest {
     }
 
     @Test
+    void validateAcceptsLongBoundOnInt32Column() {
+        ParquetSchema schema = singleColumn("n", PrimitiveKind.INT32);
+        PredicateNormalizer.validate(col("n").gt(5_000L), schema);
+    }
+
+    @Test
+    void validateAcceptsIntBoundOnInt64Column() {
+        ParquetSchema schema = singleColumn("n", PrimitiveKind.INT64);
+        PredicateNormalizer.validate(col("n").gt(5_000), schema);
+    }
+
+    @Test
     void validateRejectsBboxOnNonBinaryColumn() {
         ParquetSchema schema = flatSchema();
         Predicate p = col("year").intersects(Bbox.of2d(0, 0, 1, 1));

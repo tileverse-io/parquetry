@@ -23,9 +23,9 @@ returns the correct rows, and a regional query skips the data files whose manife
 `tileverse-storage` (S3, Azure Blob, GCS, HTTP), not only local files, and resolves the table's current metadata
 document automatically.
 
-The next work is read coverage rather than another pruning rung: field-id-resolved reads, partitioned tables, and
-merge-on-read deletes. L4 (row-group pruning inside a file from the manifest bounds) is a later refinement. See "What it
-does not do yet".
+Field-id-resolved reads (schema evolution by Iceberg field id) now work. The next work is read coverage rather than
+another pruning rung: partitioned tables and merge-on-read deletes. L4 (row-group pruning inside a file from the manifest
+bounds) is a later refinement. See "What it does not do yet".
 
 ## Reading a table
 
@@ -67,7 +67,10 @@ lifecycle to the catalog. For an HTTP-served table, which cannot list a director
   manifests -> the data files.
 - Format versions 1, 2, and 3, including native V3 `geometry` data files (Parquet's `Geometry` logical type, WKB).
 - Copy-on-write tables (data files only).
-- Data files are read by their own schema; the dataset's schema and field ids come from the data files.
+- The table's current schema, presented from the metadata. Each data file's columns are matched to it by Iceberg field
+  id, keeping a read correct across a rename, an added column (read as null), a dropped column, a reordered column, or an
+  `int`-to-`long` promotion. A file whose schema already matches the table reads untouched (the common case); a file
+  without field ids falls back to name matching.
 - Bounding-box spatial predicates, evaluated record-by-record against the geometry column through the engine's existing
   spatial contract.
 - Manifest-bound file pruning: a query's scalar and geometry bounds are matched against each data file's recorded
@@ -88,9 +91,16 @@ lifecycle to the catalog. For an HTTP-served table, which cannot list a director
 
 Where a feature is not implemented, the reader fails fast with a clear message rather than returning wrong rows.
 
-- **Field-id-resolved projection and schema evolution.** Columns are matched by name, which is correct when a table's
-  files match its schema. Reading across a rename, an added or dropped column, or a promoted type by Iceberg field id is
-  not yet implemented.
+- **Nested field-id reconciliation and some promotions.** Top-level columns reconcile by Iceberg field id. A nested
+  struct, list, or map column is read by name, not reconciled by field id. The sanctioned type promotions are
+  `int`-to-`long` and `float`-to-`double`; `decimal` widening and `date`-to-`timestamp` are not yet wired. An added
+  column reads as null for `int`, `long`, `float`, `double`, `boolean`, `date`, and `string`; an added `binary`,
+  `geometry`, or `geography` column fails fast. An exact engine-backed geometry filter (the JTS `GeometryFilter` SPI)
+  pushed against a column that the table renamed is not yet supported, since the filter binds to its column at
+  construction; the engine-free bounding-box predicates work across a rename. Restricting an evolved-file read to a
+  caller's column projection is a later refinement; an evolved file presents every table field, and a column promoted
+  `int`-to-`long` does not prune by manifest bounds (the recorded bound predates the promotion) and is kept and filtered
+  row by row.
 - **Partitioned tables.** A non-empty partition spec fails fast. Identity-partition value reconstruction is not yet
   implemented.
 - **Merge-on-read.** A snapshot that references delete manifests (positional or equality deletes, deletion vectors)

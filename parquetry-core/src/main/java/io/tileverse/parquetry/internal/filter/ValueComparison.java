@@ -54,6 +54,10 @@ public final class ValueComparison {
             case Value.BoolVal(boolean bv) when actual instanceof Boolean av -> Boolean.compare(av, bv);
             case Value.IntVal(int bv) when actual instanceof Integer av -> Integer.compare(av, bv);
             case Value.LongVal(long bv) when actual instanceof Long av -> Long.compare(av, bv);
+            // Int and long widen to each other for Iceberg's lossless int-to-long promotion: a long-column actual
+            // bound against an int predicate, and an int-column actual bound against a long predicate.
+            case Value.IntVal(int bv) when actual instanceof Long av -> Long.compare(av, bv);
+            case Value.LongVal(long bv) when actual instanceof Integer av -> Long.compare(av, bv);
             case Value.FloatVal(float bv) when actual instanceof Float av -> Float.compare(av, bv);
             case Value.DoubleVal(double bv) when actual instanceof Double av -> Double.compare(av, bv);
             case Value.DoubleVal(double bv) when actual instanceof Float av -> Double.compare(av, bv);
@@ -90,6 +94,9 @@ public final class ValueComparison {
             case Value.BoolVal(boolean qv) when bound instanceof Value.BoolVal(boolean bv) -> Boolean.compare(qv, bv);
             case Value.IntVal(int qv) when bound instanceof Value.IntVal(int bv) -> Integer.compare(qv, bv);
             case Value.LongVal(long qv) when bound instanceof Value.LongVal(long bv) -> Long.compare(qv, bv);
+            // Int and long widen to each other for Iceberg's lossless int-to-long promotion.
+            case Value.IntVal(int qv) when bound instanceof Value.LongVal(long bv) -> Long.compare(qv, bv);
+            case Value.LongVal(long qv) when bound instanceof Value.IntVal(int bv) -> Long.compare(qv, bv);
             case Value.FloatVal(float qv) when bound instanceof Value.FloatVal(float bv) -> Float.compare(qv, bv);
             case Value.DoubleVal(double qv) when bound instanceof Value.DoubleVal(double bv) -> Double.compare(qv, bv);
             case Value.DoubleVal(double qv) when bound instanceof Value.FloatVal(float bv) -> Double.compare(qv, bv);
@@ -129,6 +136,8 @@ public final class ValueComparison {
     public static int compareInt(int actual, Value bound) {
         return switch (bound) {
             case Value.IntVal(int bv) -> Integer.compare(actual, bv);
+            // A long-valued predicate reaches an INT32 column under Iceberg's lossless int-to-long promotion.
+            case Value.LongVal(long bv) -> Long.compare(actual, bv);
             case Value.DateVal(LocalDate bv) -> Integer.compare(actual, (int) bv.toEpochDay());
             default -> 0;
         };
@@ -136,7 +145,12 @@ public final class ValueComparison {
 
     /** Compares a primitive {@code long} against a {@link Value} without boxing; agrees with {@link #compareBoxed}. */
     public static int compareLong(long actual, Value bound) {
-        return bound instanceof Value.LongVal(long bv) ? Long.compare(actual, bv) : 0;
+        return switch (bound) {
+            case Value.LongVal(long bv) -> Long.compare(actual, bv);
+            // An int-valued predicate reaches an INT64 column under Iceberg's lossless int-to-long promotion.
+            case Value.IntVal(int bv) -> Long.compare(actual, bv);
+            default -> 0;
+        };
     }
 
     /**

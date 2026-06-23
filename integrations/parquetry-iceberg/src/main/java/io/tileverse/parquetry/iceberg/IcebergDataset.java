@@ -16,11 +16,13 @@
 package io.tileverse.parquetry.iceberg;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 
@@ -37,16 +39,22 @@ import io.tileverse.parquetry.dataset.explain.DatasetExplainPlan;
 import io.tileverse.parquetry.dataset.explain.FileExplain;
 import io.tileverse.parquetry.dataset.explain.Outcome;
 import io.tileverse.parquetry.dataset.explain.Totals;
+import io.tileverse.parquetry.filter.ConstantFolding;
+import io.tileverse.parquetry.filter.OutputColumn;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.filter.Query;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.filter.prune.FilePruner;
 import io.tileverse.parquetry.filter.prune.FileStats;
+import io.tileverse.parquetry.iceberg.IcebergReconciliation.Reconciliation;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
+import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.PrimitiveKind;
 
 /**
  * A {@link Dataset} over one Iceberg table at a pinned snapshot. Before each query the dataset prunes the snapshot's
@@ -55,13 +63,14 @@ import io.tileverse.parquetry.schema.ParquetSchema;
  * filtered at row-group and record level during the read. The result is identical to scanning every file.
  *
  * <p>The byte sources are pre-opened and owned by the {@link IcebergCatalog}; the per-query {@link ParquetDataset}
- * borrows the survivor subset and never closes them. Data files are read by their own schema in this cut.
+ * borrows the survivor subset and never closes them. The dataset presents the table's current schema and reconciles
+ * each data file's columns to it by Iceberg field id; a file whose schema already matches the table reads untouched.
  */
 final class IcebergDataset implements Dataset {
 
     private final String name;
     private final CatalogSnapshot snapshot;
-    private final ParquetSchema schema;
+    private final IcebergSchema icebergSchema;
     private final List<IcebergManifests.DataFileRef> dataFiles;
     private final List<FileStats> fileStats;
     private final List<ByteRangeSource> sources;
@@ -70,13 +79,13 @@ final class IcebergDataset implements Dataset {
     IcebergDataset(
             String name,
             CatalogSnapshot snapshot,
-            ParquetSchema schema,
+            IcebergSchema icebergSchema,
             List<IcebergManifests.DataFileRef> dataFiles,
             List<FileStats> fileStats,
             List<ByteRangeSource> sources) {
         this.name = Objects.requireNonNull(name, "name");
         this.snapshot = Objects.requireNonNull(snapshot, "snapshot");
-        this.schema = Objects.requireNonNull(schema, "schema");
+        this.icebergSchema = Objects.requireNonNull(icebergSchema, "icebergSchema");
         this.dataFiles = List.copyOf(dataFiles);
         this.fileStats = List.copyOf(fileStats);
         this.sources = List.copyOf(sources);
@@ -100,7 +109,7 @@ final class IcebergDataset implements Dataset {
 
     @Override
     public ParquetSchema schema() {
-        return schema;
+        return icebergSchema.parquetSchema();
     }
 
     @Override
@@ -137,7 +146,17 @@ final class IcebergDataset implements Dataset {
         if (survivors.isEmpty()) {
             return Stream.empty();
         }
-        return survivors.stream().flatMap(index -> perFile(index).read(predicate, projection, options));
+        return survivors.stream().flatMap(index -> readOneFile(index, predicate, projection, options));
+    }
+
+    @MustBeClosed
+    private Stream<ParquetRecord> readOneFile(
+            int index, Predicate predicate, Projection projection, ReadOptions options) {
+        Query query = oneFileQuery(index, predicate, projection);
+        if (query == null) {
+            return Stream.empty();
+        }
+        return perFile(index).read(query, options);
     }
 
     @Override
@@ -148,7 +167,26 @@ final class IcebergDataset implements Dataset {
         if (survivors.isEmpty()) {
             return Stream.empty();
         }
-        return survivors.stream().flatMap(index -> perFile(index).read(predicate, projection, materializer, options));
+        return survivors.stream().flatMap(index -> readOneFile(index, predicate, projection, materializer, options));
+    }
+
+    /**
+     * The materializer read of one survivor. A pass-through file reads natively, applying the materializer in the
+     * engine. A reconciled file reads reconciled (table-named) records through the {@link Query} path and applies the
+     * materializer per record against that record's own reconciled schema, which describes the columns the record
+     * holds.
+     */
+    @MustBeClosed
+    private <T> Stream<T> readOneFile(
+            int index, Predicate predicate, Projection projection, Materializer<T> materializer, ReadOptions options) {
+        Query query = oneFileQuery(index, predicate, projection);
+        if (query == null) {
+            return Stream.empty();
+        }
+        if (query.output().isEmpty()) {
+            return perFile(index).read(query.predicate(), query.projection(), materializer, options);
+        }
+        return perFile(index).read(query, options).map(record -> materializer.materialize(record.schema(), record));
     }
 
     @Override
@@ -157,9 +195,14 @@ final class IcebergDataset implements Dataset {
         if (survivors.isEmpty()) {
             return 0L;
         }
-        return survivors.stream()
-                .mapToLong(index -> perFile(index).count(predicate, options))
-                .sum();
+        long total = 0L;
+        for (int index : survivors) {
+            Query query = oneFileQuery(index, predicate, Projection.ALL);
+            if (query != null) {
+                total += perFile(index).count(query, options);
+            }
+        }
+        return total;
     }
 
     @Override
@@ -194,10 +237,13 @@ final class IcebergDataset implements Dataset {
         if (decision instanceof PruningDecision.Eliminated ruledOut) {
             return new FileExplain(ref.location(), Outcome.SKIP, ruledOut.reason(), recordCount, Optional.empty());
         }
+        Query query = oneFileQuery(index, predicate, projection);
+        if (query == null) {
+            return new FileExplain(
+                    ref.location(), Outcome.SKIP, "added-column null fold", recordCount, Optional.empty());
+        }
         ParquetDataset survivor = perFile(index);
-        ExplainPlan plan = analyze
-                ? survivor.explainAnalyze(predicate, projection, options)
-                : survivor.explain(predicate, projection, options);
+        ExplainPlan plan = analyze ? survivor.explainAnalyze(query, options) : survivor.explain(query, options);
         return new FileExplain(ref.location(), Outcome.KEEP, "kept", recordCount, Optional.of(plan));
     }
 
@@ -218,6 +264,77 @@ final class IcebergDataset implements Dataset {
             }
         }
         return new PruningResult(survivorIndices, eliminated);
+    }
+
+    /**
+     * The one-file {@link Query} for the data file at {@code index}, reconciled against the table's current schema by
+     * field id.
+     *
+     * <p>A file that matches the table by name (or has no field ids) is read untouched by name through the identity
+     * {@link Query#of}, which preserves nested and lineage columns the table schema does not model and keeps the corpus
+     * fast path free of any output shaping.
+     *
+     * <p>An evolved file is read through a reconciled output shape. The predicate is folded against the columns the
+     * table adds (which are null in this file): a leaf over an added column collapses, and a predicate that folds to
+     * always-false skips the file (this method returns null). The pushdown projection is the physical sources the
+     * output actually reads; when the output is only injected nulls or constants, one cheap physical leaf still drives
+     * row enumeration. Evolved files present every table field; restricting the presented set to the caller projection
+     * is a later optimization.
+     */
+    private Query oneFileQuery(int index, Predicate predicate, Projection projection) {
+        IcebergFileSchema file = IcebergFileSchema.of(perFile(index).schema());
+        Reconciliation recon = IcebergReconciliation.reconcile(icebergSchema, file);
+        if (recon.passThrough()) {
+            return Query.of(predicate, projection);
+        }
+        Predicate folded = ConstantFolding.fold(predicate, Map.of(), addedNullColumns(recon));
+        if (folded.equals(Predicate.ALWAYS_FALSE)) {
+            return null;
+        }
+        Projection pushdown = pushdownProjection(recon, perFile(index).schema());
+        return new Query(folded, pushdown, recon.output());
+    }
+
+    /** The names of the table columns this file does not hold, which reconciliation presents as typed nulls. */
+    private static Set<ColumnPath> addedNullColumns(Reconciliation recon) {
+        Set<ColumnPath> nulls = new LinkedHashSet<>();
+        for (OutputColumn column : recon.output()) {
+            if (column instanceof OutputColumn.Null injected) {
+                nulls.add(injected.name());
+            }
+        }
+        return nulls;
+    }
+
+    /**
+     * The physical columns the reconciled output reads: every {@link OutputColumn.Physical} and
+     * {@link OutputColumn.Promoted} source. When the output is only injected nulls or constants there is no physical
+     * source to read; one cheap leaf is projected to enumerate the file's rows.
+     */
+    private static Projection pushdownProjection(Reconciliation recon, ParquetSchema fileSchema) {
+        Set<ColumnPath> sources = new LinkedHashSet<>();
+        for (OutputColumn column : recon.output()) {
+            physicalSource(column).ifPresent(sources::add);
+        }
+        if (sources.isEmpty()) {
+            return Projection.of(Set.of(fileSchema.leafColumns().get(0)));
+        }
+        return Projection.of(sources);
+    }
+
+    private static Optional<ColumnPath> physicalSource(OutputColumn column) {
+        return switch (column) {
+            case OutputColumn.Physical(ColumnPath _, ColumnPath source) -> Optional.of(source);
+            case OutputColumn.Promoted(ColumnPath _, ColumnPath source, PrimitiveKind _) -> Optional.of(source);
+            case OutputColumn.Constant _, OutputColumn.Null _ -> Optional.empty();
+        };
+    }
+
+    /**
+     * Test hook: the one-file {@link Query} reconciliation builds for {@code index}, identity for a pass-through file.
+     */
+    Query oneFileQueryForTest(int index, Predicate predicate, Projection projection) {
+        return oneFileQuery(index, predicate, projection);
     }
 
     /**

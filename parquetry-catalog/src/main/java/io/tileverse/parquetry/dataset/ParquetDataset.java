@@ -17,6 +17,7 @@ package io.tileverse.parquetry.dataset;
 
 import java.nio.channels.FileChannel;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
@@ -30,18 +31,22 @@ import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.RowGroupSummary;
+import io.tileverse.parquetry.filter.OutputColumn;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Query;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.prune.FileStats;
+import io.tileverse.parquetry.internal.filter.PredicateColumns;
 import io.tileverse.parquetry.internal.filter.PredicateNormalizer;
 import io.tileverse.parquetry.internal.filter.RecordAccessors;
 import io.tileverse.parquetry.internal.filter.RecordLevelEvaluator;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
+import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.PrimitiveKind;
 
 /**
  * Public facade for reading one or many Parquet files that share the same schema.
@@ -153,14 +158,47 @@ public sealed interface ParquetDataset permits DefaultParquetDataset {
     <T> Stream<T> readBatches(
             Predicate predicate, Projection projection, BatchMaterializer<T> materializer, ReadOptions options);
 
-    /** Reads batches shaped by {@code query}, applying its ordered output shape when one is present. */
+    /**
+     * Reads batches shaped by {@code query}, applying its ordered output shape when one is present.
+     *
+     * <p>When the output renames a column, {@code query.predicate()} references the presented (output) name while the
+     * file-level pushdown needs the physical name. This method lowers the predicate from output names to physical names
+     * via the output mapping before pushing it down, then shapes each surviving batch into the output order.
+     *
+     * <p>Only {@link OutputColumn.Physical} and {@link OutputColumn.Promoted} contribute to that mapping;
+     * {@link OutputColumn.Constant} and {@link OutputColumn.Null} have no physical source. The contract is therefore
+     * that predicate leaves over injected (constant or null) columns are already folded out by the caller before the
+     * {@link Query} is built; a predicate leaf naming an injected column would lower to a physical name the file does
+     * not have and the pushdown would reject it.
+     */
     @MustBeClosed
     default Stream<ParquetRecordBatch> readBatches(Query query, ReadOptions options) {
-        Stream<ParquetRecordBatch> physical = readBatches(query.predicate(), query.projection(), options);
         if (query.output().isEmpty()) {
-            return physical;
+            return readBatches(query.predicate(), query.projection(), options);
         }
+        Predicate lowered = lowerToPhysicalColumns(query.predicate(), query.output());
+        Stream<ParquetRecordBatch> physical = readBatches(lowered, query.projection(), options);
         return physical.map(batch -> OutputBatches.shape(batch, query.output()));
+    }
+
+    /**
+     * Lowers {@code predicate} from output (presented) column names to file-physical names using the source mapping of
+     * {@code output}. Each {@link OutputColumn.Physical} and {@link OutputColumn.Promoted} maps its presented name to
+     * its physical source; injected columns contribute nothing.
+     */
+    private static Predicate lowerToPhysicalColumns(Predicate predicate, List<OutputColumn> output) {
+        Map<ColumnPath, ColumnPath> outputToPhysical = new HashMap<>();
+        for (OutputColumn column : output) {
+            switch (column) {
+                case OutputColumn.Physical(ColumnPath name, ColumnPath source) -> outputToPhysical.put(name, source);
+                case OutputColumn.Promoted(ColumnPath name, ColumnPath source, PrimitiveKind _) ->
+                    outputToPhysical.put(name, source);
+                case OutputColumn.Constant _, OutputColumn.Null _ -> {
+                    /* injected column has no physical source */
+                }
+            }
+        }
+        return PredicateColumns.remap(predicate, outputToPhysical);
     }
 
     /**
@@ -183,6 +221,44 @@ public sealed interface ParquetDataset permits DefaultParquetDataset {
         return readBatches(query, options)
                 .flatMap(ConstantColumnBatches::rows)
                 .filter(record -> RecordLevelEvaluator.test(residual, RecordAccessors.of(record)));
+    }
+
+    /**
+     * Counts the rows matching {@code query}, lowering its predicate from output names to physical names the same way
+     * {@link #readBatches(Query, ReadOptions)} does.
+     *
+     * <p>The output shape never changes a row count: it only renames, reorders, or injects columns over rows the
+     * predicate already selects. Only the predicate namespace needs lowering, after which this delegates to
+     * {@link #count(Predicate, ReadOptions)}.
+     */
+    default long count(Query query, ReadOptions options) {
+        Predicate lowered = lowerToPhysicalColumns(query.predicate(), query.output());
+        return count(lowered, options);
+    }
+
+    /**
+     * Explains {@code query}, lowering its predicate from output names to physical names the same way
+     * {@link #readBatches(Query, ReadOptions)} does.
+     *
+     * <p>The pruning plan is computed over physical columns, which the output shape does not change. Only the predicate
+     * namespace needs lowering, after which this delegates to {@link #explain(Predicate, Projection, ReadOptions)}.
+     */
+    default ExplainPlan explain(Query query, ReadOptions options) {
+        Predicate lowered = lowerToPhysicalColumns(query.predicate(), query.output());
+        return explain(lowered, query.projection(), options);
+    }
+
+    /**
+     * Explains and analyzes {@code query}, lowering its predicate from output names to physical names the same way
+     * {@link #readBatches(Query, ReadOptions)} does.
+     *
+     * <p>Both the pruning plan and the measured drain run over physical columns, which the output shape does not
+     * change. Only the predicate namespace needs lowering, after which this delegates to
+     * {@link #explainAnalyze(Predicate, Projection, ReadOptions)}.
+     */
+    default ExplainPlan explainAnalyze(Query query, ReadOptions options) {
+        Predicate lowered = lowerToPhysicalColumns(query.predicate(), query.output());
+        return explainAnalyze(lowered, query.projection(), options);
     }
 
     /**

@@ -165,7 +165,16 @@ final class IcebergTableMetadata {
         }
         int id = requiredInt(fieldNode, "id");
         String name = requiredString(fieldNode, "name");
-        return Optional.of(new IcebergField(id, name, type.stringValue()));
+        boolean required = optionalBoolean(fieldNode, "required");
+        return Optional.of(new IcebergField(id, name, type.stringValue(), required));
+    }
+
+    private static boolean optionalBoolean(JsonNode node, String field) {
+        JsonNode value = node.get(field);
+        if (value == null || value.isNull() || !value.isBoolean()) {
+            return false;
+        }
+        return value.booleanValue();
     }
 
     private static JsonNode snapshotNode(JsonNode root, long snapshotId) {

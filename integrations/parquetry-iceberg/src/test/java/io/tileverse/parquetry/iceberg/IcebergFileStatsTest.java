@@ -55,7 +55,8 @@ class IcebergFileStatsTest {
                 Map.of());
 
         List<IcebergField> fields = List.of(
-                new IcebergField(GEOM_FIELD_ID, "geom", "geometry"), new IcebergField(VAL_FIELD_ID, "val", "long"));
+                new IcebergField(GEOM_FIELD_ID, "geom", "geometry", false),
+                new IcebergField(VAL_FIELD_ID, "val", "long", false));
 
         FileStats stats = IcebergFileStats.from(ref, fields);
 
@@ -75,7 +76,8 @@ class IcebergFileStatsTest {
                 Map.of());
 
         List<IcebergField> fields = List.of(
-                new IcebergField(GEOM_FIELD_ID, "geom", "geometry"), new IcebergField(VAL_FIELD_ID, "val", "long"));
+                new IcebergField(GEOM_FIELD_ID, "geom", "geometry", false),
+                new IcebergField(VAL_FIELD_ID, "val", "long", false));
 
         FileStats stats = IcebergFileStats.from(ref, fields);
 
@@ -92,7 +94,7 @@ class IcebergFileStatsTest {
                 Map.of(VAL_FIELD_ID, leLong(VAL_UPPER)),
                 Map.of());
 
-        List<IcebergField> fields = List.of(new IcebergField(VAL_FIELD_ID, "amount", "decimal"));
+        List<IcebergField> fields = List.of(new IcebergField(VAL_FIELD_ID, "amount", "decimal", false));
 
         FileStats stats = IcebergFileStats.from(ref, fields);
 
