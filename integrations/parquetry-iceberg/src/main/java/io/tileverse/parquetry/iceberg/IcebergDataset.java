@@ -17,9 +17,11 @@ package io.tileverse.parquetry.iceberg;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 
 import com.google.errorprone.annotations.MustBeClosed;
@@ -63,6 +65,7 @@ final class IcebergDataset implements Dataset {
     private final List<IcebergManifests.DataFileRef> dataFiles;
     private final List<FileStats> fileStats;
     private final List<ByteRangeSource> sources;
+    private final Map<Integer, ParquetDataset> perFileDatasets = new ConcurrentHashMap<>();
 
     IcebergDataset(
             String name,
@@ -134,8 +137,7 @@ final class IcebergDataset implements Dataset {
         if (survivors.isEmpty()) {
             return Stream.empty();
         }
-        ParquetDataset query = openSurvivors(survivors);
-        return query.read(predicate, projection, options);
+        return survivors.stream().flatMap(index -> perFile(index).read(predicate, projection, options));
     }
 
     @Override
@@ -146,8 +148,7 @@ final class IcebergDataset implements Dataset {
         if (survivors.isEmpty()) {
             return Stream.empty();
         }
-        ParquetDataset query = openSurvivors(survivors);
-        return query.read(predicate, projection, materializer, options);
+        return survivors.stream().flatMap(index -> perFile(index).read(predicate, projection, materializer, options));
     }
 
     @Override
@@ -156,8 +157,9 @@ final class IcebergDataset implements Dataset {
         if (survivors.isEmpty()) {
             return 0L;
         }
-        ParquetDataset query = openSurvivors(survivors);
-        return query.count(predicate, options);
+        return survivors.stream()
+                .mapToLong(index -> perFile(index).count(predicate, options))
+                .sum();
     }
 
     @Override
@@ -192,7 +194,7 @@ final class IcebergDataset implements Dataset {
         if (decision instanceof PruningDecision.Eliminated ruledOut) {
             return new FileExplain(ref.location(), Outcome.SKIP, ruledOut.reason(), recordCount, Optional.empty());
         }
-        ParquetDataset survivor = openSurvivors(List.of(index));
+        ParquetDataset survivor = perFile(index);
         ExplainPlan plan = analyze
                 ? survivor.explainAnalyze(predicate, projection, options)
                 : survivor.explain(predicate, projection, options);
@@ -218,8 +220,14 @@ final class IcebergDataset implements Dataset {
         return new PruningResult(survivorIndices, eliminated);
     }
 
-    private ParquetDataset openSurvivors(List<Integer> survivorIndices) {
-        return ParquetDataset.open(new SurvivorFileset(sources, survivorIndices));
+    /**
+     * The single-file {@link ParquetDataset} over the data file at {@code index}, parsed once and reused across queries
+     * and threads. {@code computeIfAbsent} gives one footer parse per index even under concurrent reads; the dataset
+     * borrows the catalog's shared source, which the catalog owns and closes.
+     */
+    private ParquetDataset perFile(int index) {
+        return perFileDatasets.computeIfAbsent(
+                index, i -> ParquetDataset.open(new SurvivorFileset(sources, List.of(i))));
     }
 
     /**

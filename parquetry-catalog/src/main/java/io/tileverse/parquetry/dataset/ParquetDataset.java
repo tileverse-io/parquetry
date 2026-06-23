@@ -24,6 +24,7 @@ import java.util.stream.Stream;
 import com.google.errorprone.annotations.MustBeClosed;
 
 import io.tileverse.parquetry.batch.BatchMaterializer;
+import io.tileverse.parquetry.batch.OutputBatches;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ParquetReader;
 import io.tileverse.parquetry.data.ParquetRuntime;
@@ -152,27 +153,27 @@ public sealed interface ParquetDataset permits DefaultParquetDataset {
     <T> Stream<T> readBatches(
             Predicate predicate, Projection projection, BatchMaterializer<T> materializer, ReadOptions options);
 
-    /** Reads batches shaped by {@code query}, including any constant output columns. */
+    /** Reads batches shaped by {@code query}, applying its ordered output shape when one is present. */
     @MustBeClosed
     default Stream<ParquetRecordBatch> readBatches(Query query, ReadOptions options) {
         Stream<ParquetRecordBatch> physical = readBatches(query.predicate(), query.projection(), options);
-        if (query.constantColumns().isEmpty()) {
+        if (query.output().isEmpty()) {
             return physical;
         }
-        return physical.map(batch -> ConstantColumnBatches.append(batch, query.constantColumns()));
+        return physical.map(batch -> OutputBatches.shape(batch, query.output()));
     }
 
     /**
-     * Reads records shaped by {@code query}, including any constant output columns.
+     * Reads records shaped by {@code query}, applying its ordered output shape when one is present.
      *
-     * <p>The constant-free case delegates to {@link #read(Predicate, Projection, ReadOptions)}, which applies the
-     * record-level filter tier. The constant-column case builds records from {@link #readBatches(Query, ReadOptions)},
-     * which only prunes; a surviving batch may still hold rows that fail the predicate. This method therefore
-     * re-applies the predicate per record so both cases return exactly the rows that satisfy {@code query.predicate()}.
+     * <p>The identity case (empty output) delegates to {@link #read(Predicate, Projection, ReadOptions)}, which applies
+     * the record-level filter tier. The shaped case builds records from {@link #readBatches(Query, ReadOptions)}, which
+     * only prunes; a surviving batch may still hold rows that fail the predicate. This method therefore re-applies the
+     * predicate per record so both cases return exactly the rows that satisfy {@code query.predicate()}.
      */
     @MustBeClosed
     default Stream<ParquetRecord> read(Query query, ReadOptions options) {
-        if (query.constantColumns().isEmpty()) {
+        if (query.output().isEmpty()) {
             return read(query.predicate(), query.projection(), options);
         }
         Predicate residual = PredicateNormalizer.normalize(query.predicate());

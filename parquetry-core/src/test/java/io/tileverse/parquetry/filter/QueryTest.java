@@ -27,27 +27,27 @@ import io.tileverse.parquetry.schema.ColumnPath;
 class QueryTest {
 
     @Test
-    void defaultsToScanEverythingWithNoConstants() {
+    void ofDefaultsToTheIdentityOutputShape() {
         Query query = Query.of(Predicate.ALWAYS_TRUE, Projection.ALL);
         assertThat(query.predicate()).isEqualTo(Predicate.ALWAYS_TRUE);
         assertThat(query.projection()).isEqualTo(Projection.ALL);
-        assertThat(query.constantColumns()).isEmpty();
+        assertThat(query.output()).isEmpty();
     }
 
     @Test
-    void keepsConstantColumnsInOrder() {
-        ConstantColumn a = new ConstantColumn(ColumnPath.of("year"), new Value.IntVal(2024));
-        ConstantColumn b = new ConstantColumn(ColumnPath.of("month"), new Value.IntVal(1));
+    void keepsOutputColumnsInOrder() {
+        OutputColumn a = new OutputColumn.Constant(ColumnPath.of("year"), new Value.IntVal(2024));
+        OutputColumn b = new OutputColumn.Constant(ColumnPath.of("month"), new Value.IntVal(1));
         Query query = new Query(Predicate.ALWAYS_TRUE, Projection.ALL, List.of(a, b));
-        assertThat(query.constantColumns()).containsExactly(a, b);
+        assertThat(query.output()).containsExactly(a, b);
     }
 
     @Test
-    void constantColumnsAreDefensivelyCopied() {
-        List<ConstantColumn> mutable = new ArrayList<>();
-        mutable.add(new ConstantColumn(ColumnPath.of("year"), new Value.IntVal(2024)));
+    void outputColumnsAreDefensivelyCopied() {
+        List<OutputColumn> mutable = new ArrayList<>();
+        mutable.add(new OutputColumn.Constant(ColumnPath.of("year"), new Value.IntVal(2024)));
         Query query = new Query(Predicate.ALWAYS_TRUE, Projection.ALL, mutable);
         mutable.clear();
-        assertThat(query.constantColumns()).hasSize(1);
+        assertThat(query.output()).hasSize(1);
     }
 }

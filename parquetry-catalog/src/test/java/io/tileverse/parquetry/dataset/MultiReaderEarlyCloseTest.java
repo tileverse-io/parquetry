@@ -18,6 +18,7 @@ package io.tileverse.parquetry.dataset;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.stream.Stream;
@@ -27,7 +28,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.filter.ConstantColumn;
+import io.tileverse.parquetry.filter.OutputColumn;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Query;
@@ -114,8 +115,12 @@ class MultiReaderEarlyCloseTest {
                     .build();
             ParquetDataset dataset = ParquetDataset.open(twoFileFileset(first, second), openOptions);
 
-            ConstantColumn region = new ConstantColumn(ColumnPath.of("region"), new Value.StringVal("emea"));
-            Query query = new Query(Predicate.ALWAYS_TRUE, Projection.ALL, List.of(region));
+            List<OutputColumn> output = new ArrayList<>();
+            for (ColumnPath leaf : dataset.schema().leafColumns()) {
+                output.add(new OutputColumn.Physical(leaf, leaf));
+            }
+            output.add(new OutputColumn.Constant(ColumnPath.of("region"), new Value.StringVal("emea")));
+            Query query = new Query(Predicate.ALWAYS_TRUE, Projection.ALL, output);
 
             try (Stream<ParquetRecord> stream = dataset.read(query, ReadOptions.DEFAULTS)) {
                 Iterator<ParquetRecord> it = stream.iterator();
