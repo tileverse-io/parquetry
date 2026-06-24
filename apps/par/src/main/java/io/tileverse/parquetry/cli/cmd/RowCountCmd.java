@@ -18,16 +18,14 @@ package io.tileverse.parquetry.cli.cmd;
 import java.util.Set;
 import java.util.concurrent.Callable;
 
+import io.tileverse.parquetry.cli.DatasetResolver;
 import io.tileverse.parquetry.cli.GlobalOptions;
 import io.tileverse.parquetry.cli.StorageOptions;
-import io.tileverse.parquetry.cli.UriResolver;
 import io.tileverse.parquetry.cli.expr.FilterParser;
 import io.tileverse.parquetry.cli.expr.GeometryColumns;
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.data.ReadOptions;
+import io.tileverse.parquetry.dataset.Dataset;
 import io.tileverse.parquetry.filter.Predicate;
-import io.tileverse.parquetry.format.FileMetaData;
-import io.tileverse.parquetry.format.ParquetFormat;
-import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
@@ -55,38 +53,21 @@ public final class RowCountCmd implements Callable<Integer> {
 
     @Override
     public Integer call() throws Exception {
-        try (UriResolver.OpenFile open = UriResolver.open(uri, storage.toProperties())) {
-            long count;
-            if (options.filter == null) {
-                // Read only the footer: no data pages needed, one round trip.
-                count = countAll(open.source());
-            } else {
-                count = countMatching(open.source());
-            }
+        try (DatasetResolver.OpenDataset open = DatasetResolver.open(uri, storage.toProperties())) {
+            Dataset dataset = open.dataset();
+            Predicate predicate = buildPredicate(dataset);
+            long count = dataset.count(predicate, ReadOptions.DEFAULTS);
             spec.commandLine().getOut().println(count);
             return 0;
         }
     }
 
-    /**
-     * Returns the exact row count stored in the Parquet footer without scanning any data pages. This is the fast path
-     * when no filter is given.
-     */
-    private long countAll(ByteRangeSource source) {
-        FileMetaData footer = ParquetFormat.readFooter(source);
-        return footer.numRows();
-    }
-
-    /**
-     * Counts the rows that match the filter predicate. Delegates to {@link ParquetDataset#count}, which decodes only
-     * the predicate's columns and counts the matches columnar without assembling records, and sums fully-matched row
-     * groups from metadata with no decode.
-     */
-    private long countMatching(ByteRangeSource source) {
-        ParquetDataset dataset = ParquetDataset.open(source);
+    private Predicate buildPredicate(Dataset dataset) {
+        if (options.filter == null) {
+            return Predicate.ALWAYS_TRUE;
+        }
         ParquetSchema schema = dataset.schema();
-        Set<ColumnPath> geometryColumns = GeometryColumns.resolve(schema, dataset.keyValueMetadata());
-        Predicate predicate = FilterParser.parse(options.filter, schema, geometryColumns);
-        return dataset.count(predicate);
+        Set<ColumnPath> geometryColumns = GeometryColumns.resolve(schema, DatasetResolver.geoMetadataOf(dataset));
+        return FilterParser.parse(options.filter, schema, geometryColumns);
     }
 }

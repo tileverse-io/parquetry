@@ -47,9 +47,40 @@ public final class ParquetFileSources {
         return StorageFileSource.open(baseUri, glob, properties);
     }
 
+    /**
+     * Opens a {@link FileSource} over a SINGLE file/object {@code objectUri}, opened directly (no directory listing).
+     * For a remote object this reads by key (a GET-class lookup), which lets a credential with only GET (no LIST)
+     * permission serve the object.
+     *
+     * <p>The {@code container + key} model drops the URI query string. A presigned {@code ?X-Amz-Signature=...} URL
+     * therefore does not authenticate through this path. Presigned-URL query auth is not supported here.
+     */
+    public static FileSource openObject(URI objectUri, Properties properties) {
+        Objects.requireNonNull(objectUri, "objectUri");
+        Objects.requireNonNull(properties, "properties");
+        if (isLocal(objectUri)) {
+            return LocalFileSource.file(toLocalPath(objectUri));
+        }
+        URI container = objectUri.resolve(".");
+        String key = objectKey(objectUri);
+        return StorageFileSource.object(container, key, properties);
+    }
+
     private static boolean isLocal(URI baseUri) {
         String scheme = baseUri.getScheme();
         return scheme == null || "file".equals(scheme);
+    }
+
+    /**
+     * The object key of a remote URI: its final path segment, percent-decoded (e.g. {@code %20} back to a space) to the
+     * real key the Storage backend expects.
+     */
+    private static String objectKey(URI objectUri) {
+        String path = objectUri.getPath();
+        if (path == null || path.isEmpty()) {
+            throw new IllegalArgumentException("object URI has no path segment: " + objectUri);
+        }
+        return path.substring(path.lastIndexOf('/') + 1);
     }
 
     private static Path toLocalPath(URI baseUri) {

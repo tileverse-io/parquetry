@@ -18,17 +18,17 @@ package io.tileverse.parquetry.cli.cmd;
 import java.util.Set;
 import java.util.concurrent.Callable;
 
+import io.tileverse.parquetry.cli.DatasetResolver;
 import io.tileverse.parquetry.cli.GlobalOptions;
 import io.tileverse.parquetry.cli.StorageOptions;
-import io.tileverse.parquetry.cli.UriResolver;
 import io.tileverse.parquetry.cli.expr.FilterParser;
 import io.tileverse.parquetry.cli.expr.GeometryColumns;
 import io.tileverse.parquetry.cli.render.Projections;
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.dataset.Dataset;
+import io.tileverse.parquetry.dataset.explain.DatasetExplainPlan;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
-import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.observe.QueryObserver;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -42,7 +42,9 @@ import picocli.CommandLine.ParameterException;
 import picocli.CommandLine.Parameters;
 import picocli.CommandLine.Spec;
 
-@Command(name = "explain", description = "Print the filter/scan plan for a Parquet file.")
+@Command(
+        name = "explain",
+        description = "Print the file-pruning and scan plan for a Parquet file, directory, or Iceberg table.")
 public final class ExplainCmd implements Callable<Integer> {
 
     private static final QueryObserver WANTS_TIMINGS = new QueryObserver() {
@@ -72,20 +74,20 @@ public final class ExplainCmd implements Callable<Integer> {
 
     @Override
     public Integer call() throws Exception {
-        try (UriResolver.OpenFile open = UriResolver.open(uri, storage.toProperties())) {
-            ParquetDataset dataset = ParquetDataset.open(open.source());
+        try (DatasetResolver.OpenDataset open = DatasetResolver.open(uri, storage.toProperties())) {
+            Dataset dataset = open.dataset();
             ParquetSchema schema = dataset.schema();
-            Set<ColumnPath> geometryColumns = GeometryColumns.resolve(schema, dataset.keyValueMetadata());
+            Set<ColumnPath> geometryColumns = GeometryColumns.resolve(schema, DatasetResolver.geoMetadataOf(dataset));
             Predicate predicate = buildPredicate(schema, geometryColumns);
             Projection projection = Projections.resolve(options.columns, schema).projection();
-            ExplainPlan plan = plan(dataset, predicate, projection);
+            DatasetExplainPlan plan = plan(dataset, predicate, projection);
             String rendered = renderPlan(plan);
             spec.commandLine().getOut().println(rendered);
             return 0;
         }
     }
 
-    private ExplainPlan plan(ParquetDataset dataset, Predicate predicate, Projection projection) {
+    private DatasetExplainPlan plan(Dataset dataset, Predicate predicate, Projection projection) {
         if (!analyze) {
             return dataset.explain(predicate, projection, ReadOptions.DEFAULTS);
         }
@@ -102,7 +104,7 @@ public final class ExplainCmd implements Callable<Integer> {
         return FilterParser.parse(options.filter, schema, geometryColumns);
     }
 
-    private String renderPlan(ExplainPlan plan) {
+    private String renderPlan(DatasetExplainPlan plan) {
         if (options.format == null || options.format == GlobalOptions.Format.TEXT) {
             return plan.toAsciiTable();
         }

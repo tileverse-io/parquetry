@@ -17,10 +17,12 @@ package io.tileverse.parquetry.tileverse;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Properties;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -29,6 +31,7 @@ import org.junit.jupiter.api.io.TempDir;
 import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
 
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.FileEntry;
 import io.tileverse.parquetry.io.FileSource;
 
@@ -61,6 +64,24 @@ class StorageFileSourceTest {
             }
             assertThat(files).extracting(FileEntry::relativePath).containsExactly("a.parquet", "b.parquet");
             assertThat(files).extracting(FileEntry::sizeBytes).containsExactly(4L, 6L);
+        }
+    }
+
+    @Test
+    void singleObjectOpensWithoutListing(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("data.parquet"), "DATA");
+        URI objectUri = dir.resolve("data.parquet").toUri();
+
+        try (FileSource source = ParquetFileSources.openObject(objectUri, new Properties())) {
+            List<FileEntry> entries;
+            try (Stream<FileEntry> s = source.list()) {
+                entries = s.toList();
+            }
+            assertThat(entries).hasSize(1);
+            assertThat(entries.get(0).relativePath()).isEqualTo("data.parquet");
+            try (ByteRangeSource bytes = entries.get(0).open()) {
+                assertThat(bytes.size()).isPositive();
+            }
         }
     }
 }

@@ -19,6 +19,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.URI;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.stream.Stream;
 
@@ -39,6 +40,9 @@ import io.tileverse.parquetry.io.FileSource;
  *   <li>{@link #over(Storage, String)} - borrows an existing Storage; {@link #close()} is a no-op (the caller closes
  *       the Storage).
  *   <li>{@link #open(URI, String, Properties)} - opens a Storage for the given URI; {@link #close()} closes it.
+ *   <li>{@link #object(URI, String, Properties)} - opens a Storage and yields exactly one entry for a known key,
+ *       reading it directly via the range reader without ever listing the prefix. This lets a credential with only GET
+ *       (no LIST) permission open a single remote object.
  * </ul>
  */
 public final class StorageFileSource implements FileSource {
@@ -46,11 +50,13 @@ public final class StorageFileSource implements FileSource {
     private final Storage storage;
     private final String pattern;
     private final boolean ownsStorage;
+    private final boolean singleObject;
 
-    private StorageFileSource(Storage storage, String pattern, boolean ownsStorage) {
+    private StorageFileSource(Storage storage, String pattern, boolean ownsStorage, boolean singleObject) {
         this.storage = storage;
         this.pattern = pattern;
         this.ownsStorage = ownsStorage;
+        this.singleObject = singleObject;
     }
 
     /**
@@ -60,7 +66,7 @@ public final class StorageFileSource implements FileSource {
     public static StorageFileSource over(Storage storage, String pattern) {
         Objects.requireNonNull(storage, "storage");
         Objects.requireNonNull(pattern, "pattern");
-        return new StorageFileSource(storage, pattern, false);
+        return new StorageFileSource(storage, pattern, false, false);
     }
 
     /**
@@ -71,7 +77,19 @@ public final class StorageFileSource implements FileSource {
         Objects.requireNonNull(baseUri, "baseUri");
         Objects.requireNonNull(pattern, "pattern");
         Storage storage = ParquetStorage.open(baseUri, props);
-        return new StorageFileSource(storage, pattern, true);
+        return new StorageFileSource(storage, pattern, true, false);
+    }
+
+    /**
+     * Opens a {@link Storage} for {@code baseUri} and returns a source over the single object at {@code key}. The
+     * single entry is resolved with {@link Storage#stat(String)} (a HEAD-style, GET-class lookup) and read directly via
+     * the range reader; the prefix is never listed. {@link #close()} closes the Storage.
+     */
+    public static StorageFileSource object(URI baseUri, String key, Properties props) {
+        Objects.requireNonNull(baseUri, "baseUri");
+        Objects.requireNonNull(key, "key");
+        Storage storage = ParquetStorage.open(baseUri, props);
+        return new StorageFileSource(storage, key, true, true);
     }
 
     @Override
@@ -81,10 +99,26 @@ public final class StorageFileSource implements FileSource {
 
     @Override
     public Stream<FileEntry> list() {
+        if (singleObject) {
+            return listSingleObject();
+        }
         return storage.list(pattern)
                 .filter(StorageEntry.File.class::isInstance)
                 .map(StorageEntry.File.class::cast)
                 .map(entry -> new StorageFileEntry(storage, entry.key(), entry.size()));
+    }
+
+    /**
+     * Yields the single object at {@code pattern} (the literal key in single-object mode) using a HEAD-style
+     * {@link Storage#stat(String)} for the size, never a LIST on the prefix. An absent object yields an empty stream,
+     * which the catalog reports as "no files found".
+     */
+    private Stream<FileEntry> listSingleObject() {
+        Optional<StorageEntry.File> stat = storage.stat(pattern);
+        if (stat.isEmpty()) {
+            return Stream.of();
+        }
+        return Stream.of(new StorageFileEntry(storage, pattern, stat.get().size()));
     }
 
     /**

@@ -20,10 +20,12 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 import org.apache.avro.Schema;
 import org.apache.avro.generic.GenericData;
@@ -43,6 +45,8 @@ import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.FileEntry;
+import io.tileverse.parquetry.io.FileSource;
 import io.tileverse.parquetry.io.LocalFileSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.testsupport.CorpusFixtures;
@@ -111,6 +115,35 @@ class FilesetCatalogTest {
         CatalogOptions options = CatalogOptions.defaults();
         assertThatThrownBy(() -> FilesetCatalog.open(emptySource, options))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void emptySourceIsClosedBeforeRejecting() {
+        ClosingSpyFileSource source = new ClosingSpyFileSource();
+        CatalogOptions options = CatalogOptions.defaults();
+        assertThatThrownBy(() -> FilesetCatalog.open(source, options)).isInstanceOf(IllegalArgumentException.class);
+        assertThat(source.closed).isTrue();
+    }
+
+    /** A {@link FileSource} that lists nothing and records whether it was closed. */
+    private static final class ClosingSpyFileSource implements FileSource {
+
+        private boolean closed;
+
+        @Override
+        public URI root() {
+            return URI.create("memory:///empty");
+        }
+
+        @Override
+        public Stream<FileEntry> list() {
+            return Stream.empty();
+        }
+
+        @Override
+        public void close() {
+            closed = true;
+        }
     }
 
     @Test

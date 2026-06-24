@@ -55,4 +55,16 @@ class ParquetFileSourcesTest {
         assertThat(source).isInstanceOf(LocalFileSource.class);
         assertThat(source.list().map(FileEntry::relativePath)).containsExactly("only.parquet");
     }
+
+    @Test
+    void openObjectOnLocalFileRoutesToNativeLocalSource() throws Exception {
+        Files.createFile(tempDir.resolve("only.parquet"));
+        Files.createFile(tempDir.resolve("other.parquet"));
+
+        FileSource source =
+                ParquetFileSources.openObject(tempDir.resolve("only.parquet").toUri(), new Properties());
+
+        assertThat(source).isInstanceOf(LocalFileSource.class);
+        assertThat(source.list().map(FileEntry::relativePath)).containsExactly("only.parquet");
+    }
 }

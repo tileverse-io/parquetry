@@ -22,9 +22,9 @@ import java.util.stream.Stream;
 import io.tileverse.parquetry.arrow.ipc.ArrowIpcWriter;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ReadOptions;
+import io.tileverse.parquetry.dataset.FilesetDataset;
 import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.filter.Predicate;
-import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
@@ -51,37 +51,51 @@ public final class ArrowOutput {
             Optional<GeoParquetMetadata> geo,
             ArrowOutputRequest request,
             OutputStream out) {
-        if (!request.hasFilter() && request.limit() == Long.MAX_VALUE) {
-            writeFastPath(dataset, projectedSchema, geo, request.projection(), out);
+        if (canFastPath(request)) {
+            try (Stream<ParquetRecordBatch> batches =
+                    dataset.readBatches(Predicate.ALWAYS_TRUE, request.projection(), ReadOptions.DEFAULTS)) {
+                ArrowIpcWriter.write(projectedSchema, geo, batches, out);
+            }
             return;
         }
-        writeRecordPath(dataset, projectedSchema, geo, request, out);
+        try (Stream<ParquetRecord> records =
+                dataset.read(request.predicate(), request.projection(), ReadOptions.DEFAULTS)) {
+            writeRecordPath(records, projectedSchema, geo, request, out);
+        }
     }
 
-    private static void writeFastPath(
-            ParquetDataset dataset,
+    public static void write(
+            FilesetDataset dataset,
             ParquetSchema projectedSchema,
             Optional<GeoParquetMetadata> geo,
-            Projection projection,
+            ArrowOutputRequest request,
             OutputStream out) {
-        try (Stream<ParquetRecordBatch> batches =
-                dataset.readBatches(Predicate.ALWAYS_TRUE, projection, ReadOptions.DEFAULTS)) {
-            ArrowIpcWriter.write(projectedSchema, geo, batches, out);
+        if (canFastPath(request)) {
+            try (Stream<ParquetRecordBatch> batches =
+                    dataset.readBatches(Predicate.ALWAYS_TRUE, request.projection(), ReadOptions.DEFAULTS)) {
+                ArrowIpcWriter.write(projectedSchema, geo, batches, out);
+            }
+            return;
         }
+        try (Stream<ParquetRecord> records =
+                dataset.read(request.predicate(), request.projection(), ReadOptions.DEFAULTS)) {
+            writeRecordPath(records, projectedSchema, geo, request, out);
+        }
+    }
+
+    private static boolean canFastPath(ArrowOutputRequest request) {
+        return !request.hasFilter() && request.limit() == Long.MAX_VALUE;
     }
 
     private static void writeRecordPath(
-            ParquetDataset dataset,
+            Stream<ParquetRecord> records,
             ParquetSchema projectedSchema,
             Optional<GeoParquetMetadata> geo,
             ArrowOutputRequest request,
             OutputStream out) {
         long limit = request.limit();
-        try (Stream<ParquetRecord> records =
-                dataset.read(request.predicate(), request.projection(), ReadOptions.DEFAULTS)) {
-            Stream<ParquetRecord> limited = (limit == Long.MAX_VALUE) ? records : records.limit(limit);
-            Stream<ParquetRecordBatch> batches = RecordBatchPacker.pack(limited, projectedSchema, TARGET_BATCH_ROWS);
-            ArrowIpcWriter.write(projectedSchema, geo, batches, out);
-        }
+        Stream<ParquetRecord> limited = (limit == Long.MAX_VALUE) ? records : records.limit(limit);
+        Stream<ParquetRecordBatch> batches = RecordBatchPacker.pack(limited, projectedSchema, TARGET_BATCH_ROWS);
+        ArrowIpcWriter.write(projectedSchema, geo, batches, out);
     }
 }

@@ -57,6 +57,26 @@ class RowCountCmdTest {
     }
 
     @Test
+    void countsADirectoryAsOneDataset(@TempDir Path dir) throws Exception {
+        Fixtures.writeCities(dir.resolve("a.parquet"));
+        Fixtures.writeCities(dir.resolve("b.parquet"));
+        StringWriter single = new StringWriter();
+        CommandLine one = Par.newCommandLine();
+        one.setOut(new PrintWriter(single));
+        one.execute("row-count", dir.resolve("a.parquet").toString());
+
+        StringWriter merged = new StringWriter();
+        CommandLine all = Par.newCommandLine();
+        all.setOut(new PrintWriter(merged));
+        int code = all.execute("row-count", dir.toString());
+
+        assertThat(code).isZero();
+        long perFile = Long.parseLong(single.toString().trim());
+        long total = Long.parseLong(merged.toString().trim());
+        assertThat(total).isEqualTo(perFile * 2);
+    }
+
+    @Test
     void badFilterExitsFive(@TempDir Path dir) throws Exception {
         Path file = dir.resolve("cities.parquet");
         Fixtures.writeCities(file);

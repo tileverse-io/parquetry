@@ -128,6 +128,38 @@ class CatCmdTest {
     }
 
     @Test
+    void catsADirectoryAsOneDataset(@TempDir Path dir) throws Exception {
+        Fixtures.writeCities(dir.resolve("a.parquet"));
+        Fixtures.writeCities(dir.resolve("b.parquet"));
+        StringWriter single = new StringWriter();
+        CommandLine one = Par.newCommandLine();
+        one.setOut(new PrintWriter(single));
+        one.execute("cat", dir.resolve("a.parquet").toString());
+
+        StringWriter merged = new StringWriter();
+        CommandLine all = Par.newCommandLine();
+        all.setOut(new PrintWriter(merged));
+        int code = all.execute("cat", dir.toString());
+
+        assertThat(code).isZero();
+        long perFile = single.toString().lines().count();
+        long total = merged.toString().lines().count();
+        assertThat(total).isEqualTo(perFile * 2);
+    }
+
+    @Test
+    void arrowOverIcebergFailsClearly(@TempDir Path tmp) {
+        Path tableDir = TestCorpus.extractDirectory("iceberg-geo-testbed/v3_geometry", tmp);
+        StringWriter err = new StringWriter();
+        CommandLine cmd = Par.newCommandLine();
+        cmd.setErr(new PrintWriter(err));
+        int code = cmd.execute("cat", tableDir.toString(), "-o", "arrow");
+        // picocli maps ParameterException to exit code 2.
+        assertThat(code).isEqualTo(2);
+        assertThat(err.toString()).contains("arrow");
+    }
+
+    @Test
     void unsupportedFilterPointsAtFilterHelp(@TempDir Path dir) throws Exception {
         Path file = dir.resolve("cities.parquet");
         Fixtures.writeCities(file);

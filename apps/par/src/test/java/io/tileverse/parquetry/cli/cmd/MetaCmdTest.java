@@ -69,6 +69,17 @@ class MetaCmdTest {
     }
 
     @Test
+    void metaOverADirectoryFailsClearly(@TempDir Path dir) throws Exception {
+        Fixtures.writeCities(dir.resolve("a.parquet"));
+        StringWriter err = new StringWriter();
+        CommandLine cmd = Par.newCommandLine();
+        cmd.setErr(new PrintWriter(err));
+        int code = cmd.execute("meta", dir.toString());
+        assertThat(code).isNotZero();
+        assertThat(err.toString()).containsIgnoringCase("single file");
+    }
+
+    @Test
     void jsonIncludesKeyValueMetadataObject(@TempDir Path dir) throws Exception {
         Path file = dir.resolve("geo.parquet");
         Fixtures.writeGeoCities(file);
