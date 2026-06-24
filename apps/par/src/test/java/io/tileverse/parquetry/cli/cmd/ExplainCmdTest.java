@@ -26,6 +26,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.cli.Par;
 import io.tileverse.parquetry.cli.support.Fixtures;
+import io.tileverse.parquetry.testkit.TestCorpus;
 
 import picocli.CommandLine;
 
@@ -120,5 +121,48 @@ class ExplainCmdTest {
         assertThat(code).isZero();
         // --analyze always measures per-phase timing, which adds the "time" column.
         assertThat(out.toString()).contains("actual").contains("time");
+    }
+
+    @Test
+    void explainsADirectoryAsOneDataset(@TempDir Path dir) throws Exception {
+        Fixtures.writeCities(dir.resolve("a.parquet"));
+        Fixtures.writeCities(dir.resolve("b.parquet"));
+        StringWriter out = new StringWriter();
+        CommandLine cmd = Par.newCommandLine();
+        cmd.setOut(new PrintWriter(out));
+        int code = cmd.execute("explain", dir.toString());
+        assertThat(code).isZero();
+        // Flat directory, no partition columns: both files kept, none pruned.
+        assertThat(out.toString()).contains("2 kept").contains("0 skipped");
+    }
+
+    @Test
+    void singleFileShowsAOneFileDatasetTable(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("cities.parquet");
+        Fixtures.writeCities(file);
+        StringWriter out = new StringWriter();
+        CommandLine cmd = Par.newCommandLine();
+        cmd.setOut(new PrintWriter(out));
+        int code = cmd.execute("explain", file.toString());
+        assertThat(code).isZero();
+        assertThat(out.toString()).contains("1 kept").contains("cities").contains("KEEP");
+    }
+
+    @Test
+    void prunesIcebergFilesByGeometryBounds(@TempDir Path tmp) {
+        Path tableDir = TestCorpus.extractDirectory("iceberg-geo-testbed/v3_geometry", tmp);
+        StringWriter out = new StringWriter();
+        CommandLine cmd = Par.newCommandLine();
+        cmd.setOut(new PrintWriter(out));
+        int code = cmd.execute(
+                "explain", tableDir.toString(), "--filter", "ST_Intersects(geom, ST_MakeEnvelope(-124, 32, -114, 42))");
+        assertThat(code).isZero();
+        String report = out.toString();
+        // A California window keeps california.parquet and prunes the other nine by manifest bounds.
+        assertThat(report)
+                .contains("1 kept, 9 skipped")
+                .contains("california.parquet")
+                .contains("SKIP")
+                .contains("skipped");
     }
 }

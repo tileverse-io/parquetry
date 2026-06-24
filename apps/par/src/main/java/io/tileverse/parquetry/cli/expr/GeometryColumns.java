@@ -41,11 +41,23 @@ public final class GeometryColumns {
 
     private GeometryColumns() {}
 
-    public static Set<ColumnPath> resolve(ParquetSchema schema, Map<String, String> keyValueMetadata) {
+    public static Set<ColumnPath> resolve(ParquetSchema schema, Optional<GeoParquetMetadata> geoMetadata) {
         Set<ColumnPath> geometryColumns = new LinkedHashSet<>();
         addLogicalTypeGeometries(schema, geometryColumns);
-        addGeoMetadataColumns(keyValueMetadata, geometryColumns);
+        geoMetadata.ifPresent(metadata -> addGeoMetadataColumns(metadata, geometryColumns));
         return geometryColumns;
+    }
+
+    public static Set<ColumnPath> resolve(ParquetSchema schema, Map<String, String> keyValueMetadata) {
+        return resolve(schema, parseGeoMetadata(keyValueMetadata));
+    }
+
+    private static Optional<GeoParquetMetadata> parseGeoMetadata(Map<String, String> keyValueMetadata) {
+        String geoJson = keyValueMetadata.get(GEO_METADATA_KEY);
+        if (geoJson == null) {
+            return Optional.empty();
+        }
+        return Optional.of(GeoParquetMetadata.parse(geoJson));
     }
 
     private static void addLogicalTypeGeometries(ParquetSchema schema, Set<ColumnPath> geometryColumns) {
@@ -57,12 +69,7 @@ public final class GeometryColumns {
         }
     }
 
-    private static void addGeoMetadataColumns(Map<String, String> keyValueMetadata, Set<ColumnPath> geometryColumns) {
-        String geoJson = keyValueMetadata.get(GEO_METADATA_KEY);
-        if (geoJson == null) {
-            return;
-        }
-        GeoParquetMetadata metadata = GeoParquetMetadata.parse(geoJson);
+    private static void addGeoMetadataColumns(GeoParquetMetadata metadata, Set<ColumnPath> geometryColumns) {
         for (String columnName : metadata.columns().keySet()) {
             geometryColumns.add(ColumnPath.of(columnName.split("\\.")));
         }

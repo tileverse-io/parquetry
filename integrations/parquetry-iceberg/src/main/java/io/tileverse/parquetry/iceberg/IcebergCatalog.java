@@ -24,6 +24,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
+import io.tileverse.storage.Storage;
+
 import io.tileverse.parquetry.catalog.CatalogCapabilities;
 import io.tileverse.parquetry.catalog.CatalogCapabilities.SchemaSource;
 import io.tileverse.parquetry.catalog.DatasetCatalog;
@@ -82,6 +84,39 @@ public final class IcebergCatalog implements DatasetCatalog {
         String json = readJson(io, metadataLocation);
         IcebergTableMetadata metadata = IcebergTableMetadata.read(json, options);
         return openWithMetadata(tableNameFromLocation(tableLocation), metadata, io);
+    }
+
+    /**
+     * Opens an Iceberg table whose bytes are served by {@code storage} rooted at the table's physical location,
+     * resolving the current {@code vN.metadata.json} and reconciling the table's recorded logical location against the
+     * physical storage the same way {@link #openLocal} does for local tables. The returned catalog owns {@code storage}
+     * and closes it in {@link #close()}.
+     */
+    public static IcebergCatalog openStorage(String physicalLocation, Storage storage, IcebergOptions options) {
+        Objects.requireNonNull(physicalLocation, "physicalLocation");
+        Objects.requireNonNull(storage, "storage");
+        Objects.requireNonNull(options, "options");
+        IcebergTableMetadata metadata;
+        StorageIcebergFileIO io;
+        try {
+            StorageIcebergFileIO bootstrap = StorageIcebergFileIO.over(storage, physicalLocation);
+            String metadataLocation = IcebergMetadataResolver.resolve(bootstrap, physicalLocation, options);
+            String json = readJson(bootstrap, metadataLocation);
+            metadata = IcebergTableMetadata.read(json, options);
+            io = StorageIcebergFileIO.owning(storage, metadata.tableLocation());
+        } catch (RuntimeException failure) {
+            closeStorageQuietly(storage, failure);
+            throw failure;
+        }
+        return openWithMetadata(tableNameFromLocation(metadata.tableLocation()), metadata, io);
+    }
+
+    private static void closeStorageQuietly(Storage storage, RuntimeException failure) {
+        try {
+            storage.close();
+        } catch (Exception closeFailure) {
+            failure.addSuppressed(closeFailure);
+        }
     }
 
     /** Opens a table given parsed metadata and a file IO. The IO is owned by the returned catalog. */

@@ -166,7 +166,9 @@ public final class UriResolver {
     public static OpenFile open(String pathOrUri, Properties storageProperties) {
         URI target = toAbsoluteUri(pathOrUri);
         if ("file".equals(target.getScheme())) {
-            return OpenFile.ofLocal(ByteRangeSource.ofFile(Path.of(target)));
+            Path path = Path.of(target);
+            requireNotDirectory(path);
+            return OpenFile.ofLocal(ByteRangeSource.ofFile(path));
         }
         URI container = target.resolve(".");
         Storage storage = ParquetStorage.open(container, storageProperties);
@@ -176,6 +178,16 @@ public final class UriResolver {
         } catch (RuntimeException e) {
             closeQuietly(storage);
             throw e;
+        }
+    }
+
+    /**
+     * Guards the single-file read commands against a directory argument, which would otherwise fail with a low-level
+     * read error when the directory's bytes are parsed as a Parquet footer.
+     */
+    private static void requireNotDirectory(Path path) {
+        if (Files.isDirectory(path)) {
+            throw new IllegalArgumentException("this command operates on a single file, not a directory: " + path);
         }
     }
 

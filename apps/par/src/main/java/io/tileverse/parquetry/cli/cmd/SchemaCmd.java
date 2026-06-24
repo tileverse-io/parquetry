@@ -18,11 +18,10 @@ package io.tileverse.parquetry.cli.cmd;
 import java.io.PrintWriter;
 import java.util.concurrent.Callable;
 
+import io.tileverse.parquetry.cli.DatasetResolver;
 import io.tileverse.parquetry.cli.GlobalOptions;
 import io.tileverse.parquetry.cli.StorageOptions;
-import io.tileverse.parquetry.cli.UriResolver;
 import io.tileverse.parquetry.cli.render.SchemaRenderer;
-import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 import picocli.CommandLine.ArgGroup;
@@ -32,7 +31,7 @@ import picocli.CommandLine.Model.CommandSpec;
 import picocli.CommandLine.Parameters;
 import picocli.CommandLine.Spec;
 
-@Command(name = "schema", description = "Print the Parquet message-type tree.")
+@Command(name = "schema", description = "Print the Parquet message-type tree of a file, directory, or Iceberg table.")
 public final class SchemaCmd implements Callable<Integer> {
 
     @Parameters(index = "0", paramLabel = "<uri>", description = "Parquet file path or URI.")
@@ -49,9 +48,8 @@ public final class SchemaCmd implements Callable<Integer> {
 
     @Override
     public Integer call() throws Exception {
-        try (UriResolver.OpenFile open = UriResolver.open(uri, storage.toProperties())) {
-            ParquetDataset dataset = ParquetDataset.open(open.source());
-            ParquetSchema schema = dataset.schema();
+        try (DatasetResolver.OpenDataset open = DatasetResolver.open(uri, storage.toProperties())) {
+            ParquetSchema schema = open.dataset().schema();
             PrintWriter out = spec.commandLine().getOut();
             if (options.format == GlobalOptions.Format.JSON) {
                 SchemaRenderer.writeJson(out, schema);

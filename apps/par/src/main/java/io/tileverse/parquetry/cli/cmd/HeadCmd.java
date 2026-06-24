@@ -17,7 +17,9 @@ package io.tileverse.parquetry.cli.cmd;
 
 import picocli.CommandLine.Command;
 
-@Command(name = "head", description = "Decode the first rows to stdout (jsonl by default).")
+@Command(
+        name = "head",
+        description = "Decode the first rows of a file, directory, or Iceberg table to stdout (jsonl by default).")
 public final class HeadCmd extends CatCmd {
 
     @Override

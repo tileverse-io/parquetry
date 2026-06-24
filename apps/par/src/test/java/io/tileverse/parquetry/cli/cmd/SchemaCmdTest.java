@@ -42,4 +42,16 @@ class SchemaCmdTest {
         assertThat(code).isZero();
         assertThat(out.toString()).contains("id", "INT32", "name");
     }
+
+    @Test
+    void printsTheUnifiedSchemaOfADirectory(@TempDir Path dir) throws Exception {
+        Fixtures.writeCities(dir.resolve("a.parquet"));
+        Fixtures.writeCities(dir.resolve("b.parquet"));
+        StringWriter out = new StringWriter();
+        CommandLine cmd = Par.newCommandLine();
+        cmd.setOut(new PrintWriter(out));
+        int code = cmd.execute("schema", dir.toString());
+        assertThat(code).isZero();
+        assertThat(out.toString()).contains("pop").contains("name");
+    }
 }

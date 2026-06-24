@@ -22,9 +22,9 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Stream;
 
+import io.tileverse.parquetry.cli.DatasetResolver;
 import io.tileverse.parquetry.cli.GlobalOptions;
 import io.tileverse.parquetry.cli.StorageOptions;
-import io.tileverse.parquetry.cli.UriResolver;
 import io.tileverse.parquetry.cli.arrow.ArrowOutput;
 import io.tileverse.parquetry.cli.arrow.ArrowOutputRequest;
 import io.tileverse.parquetry.cli.expr.FilterParser;
@@ -32,7 +32,8 @@ import io.tileverse.parquetry.cli.expr.GeometryColumns;
 import io.tileverse.parquetry.cli.render.Projections;
 import io.tileverse.parquetry.cli.render.RecordRenderer;
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.dataset.Dataset;
+import io.tileverse.parquetry.dataset.FilesetDataset;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -48,7 +49,7 @@ import picocli.CommandLine.ParameterException;
 import picocli.CommandLine.Parameters;
 import picocli.CommandLine.Spec;
 
-@Command(name = "cat", description = "Decode rows to stdout (jsonl by default).")
+@Command(name = "cat", description = "Decode rows of a file, directory, or Iceberg table to stdout (jsonl by default).")
 public class CatCmd implements Callable<Integer> {
 
     @Parameters(index = "0", paramLabel = "<uri>", description = "Parquet file path or URI.")
@@ -67,11 +68,11 @@ public class CatCmd implements Callable<Integer> {
     @SuppressWarnings("java:S3516")
     @Override
     public Integer call() throws Exception {
-        try (UriResolver.OpenFile open = UriResolver.open(uri, storage.toProperties())) {
-            ParquetDataset dataset = ParquetDataset.open(open.source());
+        try (DatasetResolver.OpenDataset open = DatasetResolver.open(uri, storage.toProperties())) {
+            Dataset dataset = open.dataset();
             ParquetSchema schema = dataset.schema();
             Projections.Resolved projection = Projections.resolve(options.columns, schema);
-            Set<ColumnPath> geometryColumns = GeometryColumns.resolve(schema, dataset.keyValueMetadata());
+            Set<ColumnPath> geometryColumns = GeometryColumns.resolve(schema, DatasetResolver.geoMetadataOf(dataset));
             Predicate predicate = buildPredicate(schema, geometryColumns);
             long limit = options.limit == null ? defaultLimit() : options.limit;
             if (options.format == GlobalOptions.Format.ARROW) {
@@ -92,16 +93,18 @@ public class CatCmd implements Callable<Integer> {
     // S106: binary Arrow output is written to the real process stdout, bypassing the text writer.
     @SuppressWarnings("java:S106")
     private void writeArrow(
-            ParquetDataset dataset,
-            ParquetSchema schema,
-            Projections.Resolved projection,
-            Predicate predicate,
-            long limit) {
+            Dataset dataset, ParquetSchema schema, Projections.Resolved projection, Predicate predicate, long limit) {
+        if (!(dataset instanceof FilesetDataset fileset)) {
+            throw new ParameterException(
+                    spec.commandLine(),
+                    "arrow output is not yet supported over this dataset kind (e.g. an Iceberg table);"
+                            + " use a single file, directory, or glob");
+        }
         ParquetSchema projectedSchema = projectedSchema(schema, projection);
-        Optional<GeoParquetMetadata> geo = geoMetadata(dataset);
+        Optional<GeoParquetMetadata> geo = DatasetResolver.geoMetadataOf(dataset);
         ArrowOutputRequest request =
                 new ArrowOutputRequest(predicate, projection.projection(), options.filter != null, limit);
-        ArrowOutput.write(dataset, projectedSchema, geo, request, System.out);
+        ArrowOutput.write(fileset, projectedSchema, geo, request, System.out);
     }
 
     private ParquetSchema projectedSchema(ParquetSchema schema, Projections.Resolved projection) {
@@ -109,14 +112,6 @@ public class CatCmd implements Callable<Integer> {
             return schema;
         }
         return schema.project(Set.copyOf(projection.keptLeaves()));
-    }
-
-    private Optional<GeoParquetMetadata> geoMetadata(ParquetDataset dataset) {
-        String geoJson = dataset.keyValueMetadata().get("geo");
-        if (geoJson == null) {
-            return Optional.empty();
-        }
-        return Optional.of(GeoParquetMetadata.parse(geoJson));
     }
 
     private Predicate buildPredicate(ParquetSchema schema, Set<ColumnPath> geometryColumns) {
@@ -127,7 +122,7 @@ public class CatCmd implements Callable<Integer> {
     }
 
     private void emitRows(
-            ParquetDataset dataset,
+            Dataset dataset,
             Predicate predicate,
             Projections.Resolved projection,
             long limit,

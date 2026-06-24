@@ -32,6 +32,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 class GeometryColumnsTest {
 
@@ -73,6 +74,22 @@ class GeometryColumnsTest {
         Set<ColumnPath> resolved = GeometryColumns.resolve(schema, keyValueMetadata);
 
         assertThat(resolved).containsExactlyInAnyOrder(ColumnPath.of("geometry"), ColumnPath.of("geom"));
+    }
+
+    @Test
+    void resolvesFromParsedGeoMetadata() {
+        ParquetSchema schema = Fixtures.geoCitiesSchema();
+        GeoParquetMetadata geo = GeoParquetMetadata.parse("{\"version\":\"1.1.0\",\"primary_column\":\"geometry\","
+                + "\"columns\":{\"geometry\":{\"encoding\":\"WKB\",\"geometry_types\":[]}}}");
+        Set<ColumnPath> columns = GeometryColumns.resolve(schema, Optional.of(geo));
+        assertThat(columns).contains(ColumnPath.of("geometry"));
+    }
+
+    @Test
+    void resolvesEmptyGeoMetadataFromSchemaOnly() {
+        ParquetSchema schema = Fixtures.citiesSchema();
+        Set<ColumnPath> columns = GeometryColumns.resolve(schema, Optional.empty());
+        assertThat(columns).isEmpty();
     }
 
     private static ParquetSchema schemaWithGeometryLeaf() {

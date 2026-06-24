@@ -91,7 +91,12 @@ public final class FilesetCatalog implements DatasetCatalog {
 
         List<FileEntry> files = listSorted(source);
         if (files.isEmpty()) {
-            throw new IllegalArgumentException("no files found at " + source.root());
+            RuntimeException cleanup = closeAll(List.of(), source);
+            IllegalArgumentException failure = new IllegalArgumentException("no files found at " + source.root());
+            if (cleanup != null) {
+                failure.addSuppressed(cleanup);
+            }
+            throw failure;
         }
 
         List<ByteRangeSource> opened = new ArrayList<>(files.size());
