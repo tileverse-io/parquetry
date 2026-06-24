@@ -56,18 +56,35 @@ class ArrowFieldTypeTest {
     }
 
     @Test
-    void rejectsInt96() {
-        SchemaNode.Primitive int96Leaf = leaf(PrimitiveKind.INT96, Optional.empty());
-        assertThatThrownBy(() -> ArrowFieldType.of(int96Leaf))
-                .isInstanceOf(UnsupportedFeatureException.class)
-                .hasMessageContaining("INT96");
+    void mapsInt96ToMicrosecondTimestamp() {
+        ArrowFieldType type = ArrowFieldType.of(leaf(PrimitiveKind.INT96, Optional.empty()));
+        assertThat(type.kind()).isEqualTo(ArrowFieldType.Kind.TIMESTAMP);
+        assertThat(type.timeUnit()).isEqualTo(ArrowFieldType.TimeUnit.MICROSECOND);
+        assertThat(type.utcAdjusted()).isFalse();
+        assertThat(type.valueTransform()).isEqualTo(ArrowFieldType.ValueTransform.INT96_TO_TIMESTAMP);
     }
 
     @Test
-    void rejectsDecimal() {
-        SchemaNode.Primitive decimalLeaf = leaf(PrimitiveKind.INT32, Optional.of(new LogicalType.Decimal(2, 9)));
+    void mapsDecimalToDecimal128() {
+        ArrowFieldType type = ArrowFieldType.of(leaf(PrimitiveKind.INT32, Optional.of(new LogicalType.Decimal(2, 9))));
+        assertThat(type.kind()).isEqualTo(ArrowFieldType.Kind.DECIMAL);
+        assertThat(type.bitWidth()).isEqualTo(128);
+        assertThat(type.precision()).isEqualTo(9);
+        assertThat(type.scale()).isEqualTo(2);
+        assertThat(type.valueTransform()).isEqualTo(ArrowFieldType.ValueTransform.DECIMAL128);
+    }
+
+    @Test
+    void rejectsDecimalPrecisionAboveDecimal128Limit() {
+        SchemaNode.Primitive decimalLeaf = new SchemaNode.Primitive(
+                "c",
+                Repetition.OPTIONAL,
+                PrimitiveKind.FIXED_LEN_BYTE_ARRAY,
+                OptionalInt.of(17),
+                Optional.of(new LogicalType.Decimal(2, 40)),
+                0);
         assertThatThrownBy(() -> ArrowFieldType.of(decimalLeaf))
                 .isInstanceOf(UnsupportedFeatureException.class)
-                .hasMessageContaining("DECIMAL");
+                .hasMessageContaining("precision");
     }
 }

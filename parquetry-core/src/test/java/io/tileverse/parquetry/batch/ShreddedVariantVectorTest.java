@@ -161,6 +161,40 @@ class ShreddedVariantVectorTest {
         assertThat(second.serialize()).as("cached bytes equal the reference").isEqualTo(serialized(reference));
     }
 
+    @Test
+    void toUnshreddedMatchesPerRowReconstructionIncludingNulls() {
+        VariantEncoder.Encoded[] references = {
+            new VariantEncoder().addLong(7L).encode(),
+            new VariantEncoder().addLong(11L).encode(),
+            new VariantEncoder().addLong(13L).encode()
+        };
+        BinaryVector metadataColumn = sharedMetadataColumn(references, 3);
+        ShreddedVariant.Scalar model = scalar(PrimitiveKind.INT64, 6);
+        LongVector typedColumn = LongVector.materialized(new long[] {7L, 11L, 13L}, Validity.allValid(3));
+        VariantInput root = new VariantInput(allNullValueLeaf(3), new ScalarInput(typedColumn));
+
+        BitSet validBits = new BitSet(3);
+        validBits.set(0);
+        validBits.set(2); // row 1 is null
+        Validity validity = Validity.of(validBits, 3);
+        ShreddedVariantVector shredded = new ShreddedVariantVector(metadataColumn, model, root, validity, 3);
+
+        VariantVector unshredded = shredded.toUnshredded();
+
+        assertThat(unshredded.size()).isEqualTo(3);
+        for (int row = 0; row < 3; row++) {
+            Variant fromShredded = shredded.get(row);
+            Variant fromUnshredded = unshredded.get(row);
+            if (fromShredded == null) {
+                assertThat(fromUnshredded).as("row %d null", row).isNull();
+            } else {
+                assertThat(fromUnshredded.serialize())
+                        .as("row %d canonical bytes match the shredded reconstruction", row)
+                        .isEqualTo(fromShredded.serialize());
+            }
+        }
+    }
+
     private static byte[] serialized(VariantEncoder.Encoded encoded) {
         return concat(encoded.metadata(), encoded.value());
     }

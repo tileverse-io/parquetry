@@ -21,6 +21,10 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.BitSet;
 import java.util.LinkedHashMap;
@@ -31,13 +35,19 @@ import java.util.OptionalInt;
 import java.util.stream.Stream;
 
 import org.apache.arrow.memory.RootAllocator;
+import org.apache.arrow.memory.util.Float16;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.DateDayVector;
+import org.apache.arrow.vector.DecimalVector;
 import org.apache.arrow.vector.FixedSizeBinaryVector;
+import org.apache.arrow.vector.Float2Vector;
 import org.apache.arrow.vector.Float4Vector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.TimeStampMicroTZVector;
+import org.apache.arrow.vector.TimeStampMicroVector;
+import org.apache.arrow.vector.UInt4Vector;
+import org.apache.arrow.vector.UInt8Vector;
 import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -51,6 +61,7 @@ import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.batch.DoubleVector;
 import io.tileverse.parquetry.batch.FixedLenBinaryVector;
 import io.tileverse.parquetry.batch.FloatVector;
+import io.tileverse.parquetry.batch.Int96Vector;
 import io.tileverse.parquetry.batch.IntSequence;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
@@ -233,6 +244,75 @@ class RoundTripTypesTest {
         }
     }
 
+    private static byte[] halfFloatLE(float value) {
+        short bits = Float16.toFloat16(value);
+        return ByteBuffer.allocate(2)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .putShort(bits)
+                .array();
+    }
+
+    @Test
+    void roundTripsFloat16Column() throws Exception {
+        SchemaNode.Primitive half = leaf(
+                "half",
+                PrimitiveKind.FIXED_LEN_BYTE_ARRAY,
+                OptionalInt.of(2),
+                Optional.of(new LogicalType.Float16Type()),
+                0);
+        ParquetSchema schema = schema(half);
+        BitSet validBits = new BitSet();
+        validBits.set(0);
+        validBits.set(2);
+        Validity validity = Validity.of(validBits, 3);
+        FixedLenBinaryVector column =
+                FixedLenBinaryVector.materialized(segments(halfFloatLE(1.5f), null, halfFloatLE(-2.25f)), 2, validity);
+
+        byte[] ipc = writeSingleColumn(schema, "half", column, 3);
+
+        try (RootAllocator allocator = new RootAllocator();
+                ArrowStreamReader reader = new ArrowStreamReader(new ByteArrayInputStream(ipc), allocator)) {
+            assertThat(reader.loadNextBatch()).isTrue();
+            VectorSchemaRoot root = reader.getVectorSchemaRoot();
+            Float2Vector vector = (Float2Vector) root.getVector("half");
+            assertThat(vector.getValueAsFloat(0)).isEqualTo(1.5f);
+            assertThat(vector.isNull(1)).isTrue();
+            assertThat(vector.getValueAsFloat(2)).isEqualTo(-2.25f);
+        }
+    }
+
+    private static byte[] int96Bytes(long nanosOfDay, int julianDay) {
+        return ByteBuffer.allocate(12)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .putLong(nanosOfDay)
+                .putInt(julianDay)
+                .array();
+    }
+
+    @Test
+    void roundTripsInt96TimestampColumn() throws Exception {
+        SchemaNode.Primitive ts = leaf("ts", PrimitiveKind.INT96, OptionalInt.empty(), Optional.empty(), 0);
+        ParquetSchema schema = schema(ts);
+        BitSet validBits = new BitSet();
+        validBits.set(0);
+        validBits.set(1);
+        Validity validity = Validity.of(validBits, 3);
+        Int96Vector column = Int96Vector.materialized(
+                segments(int96Bytes(0L, 2_440_588), int96Bytes(1_000_000L, 2_440_589), null), validity);
+
+        byte[] ipc = writeSingleColumn(schema, "ts", column, 3);
+
+        try (RootAllocator allocator = new RootAllocator();
+                ArrowStreamReader reader = new ArrowStreamReader(new ByteArrayInputStream(ipc), allocator)) {
+            assertThat(reader.loadNextBatch()).isTrue();
+            VectorSchemaRoot root = reader.getVectorSchemaRoot();
+            TimeStampMicroVector vector = (TimeStampMicroVector) root.getVector("ts");
+            assertThat(vector.get(0)).isZero();
+            assertThat(vector.get(1)).isEqualTo(86_400_000_000L + 1_000L);
+            assertThat(vector.isNull(2)).isTrue();
+        }
+    }
+
     @Test
     void roundTripsDateAndTimestampColumns() throws Exception {
         SchemaNode.Primitive day =
@@ -270,6 +350,48 @@ class RoundTripTypesTest {
             TimeStampMicroTZVector timestamps = (TimeStampMicroTZVector) root.getVector("ts");
             assertThat(timestamps.get(0)).isEqualTo(1_700_000_000_000_000L);
             assertThat(timestamps.get(1)).isEqualTo(1_700_000_001_000_000L);
+        }
+    }
+
+    @Test
+    void roundTripsUnsignedIntColumns() throws Exception {
+        SchemaNode.Primitive u32 = leaf(
+                "u32",
+                PrimitiveKind.INT32,
+                OptionalInt.empty(),
+                Optional.of(new LogicalType.IntType((byte) 32, false)),
+                0);
+        SchemaNode.Primitive u64 = leaf(
+                "u64",
+                PrimitiveKind.INT64,
+                OptionalInt.empty(),
+                Optional.of(new LogicalType.IntType((byte) 64, false)),
+                1);
+        ParquetSchema schema = schema(u32, u64);
+        BitSet validBits = new BitSet();
+        validBits.set(0, 2);
+        Validity validity = Validity.of(validBits, 2);
+        Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
+        // 0xFFFFFFFF as a signed int is -1; an unsigned reader must see 4294967295.
+        columns.put(
+                ColumnPath.of("u32"), io.tileverse.parquetry.batch.IntVector.materialized(new int[] {-1, 7}, validity));
+        // 0xFFFFFFFFFFFFFFFF as a signed long is -1; an unsigned reader must see 18446744073709551615.
+        columns.put(ColumnPath.of("u64"), LongVector.materialized(new long[] {-1L, 7L}, validity));
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 2, Arena.ofShared());
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ArrowIpcWriter.write(schema, Optional.empty(), Stream.of(batch), out);
+
+        try (RootAllocator allocator = new RootAllocator();
+                ArrowStreamReader reader =
+                        new ArrowStreamReader(new ByteArrayInputStream(out.toByteArray()), allocator)) {
+            assertThat(reader.loadNextBatch()).isTrue();
+            VectorSchemaRoot root = reader.getVectorSchemaRoot();
+            UInt4Vector u32Vector = (UInt4Vector) root.getVector("u32");
+            UInt8Vector u64Vector = (UInt8Vector) root.getVector("u64");
+            assertThat(u32Vector.getValueAsLong(0)).isEqualTo(4_294_967_295L);
+            assertThat(u32Vector.getValueAsLong(1)).isEqualTo(7L);
+            assertThat(u64Vector.getObjectNoOverflow(0)).isEqualTo(new BigInteger("18446744073709551615"));
+            assertThat(u64Vector.getObjectNoOverflow(1)).isEqualTo(BigInteger.valueOf(7L));
         }
     }
 
@@ -343,6 +465,74 @@ class RoundTripTypesTest {
             assertThat(vector.get(1)).isEqualTo(200);
             assertThat(vector.isNull(2)).isTrue();
             assertThat(vector.isNull(3)).isTrue();
+        }
+    }
+
+    private static byte[] bigEndian8(long value) {
+        return ByteBuffer.allocate(8).putLong(value).array();
+    }
+
+    @Test
+    void roundTripsDecimalColumnsFromAllCarriers() throws Exception {
+        SchemaNode.Primitive d32 =
+                leaf("d32", PrimitiveKind.INT32, OptionalInt.empty(), Optional.of(new LogicalType.Decimal(2, 9)), 0);
+        SchemaNode.Primitive d64 =
+                leaf("d64", PrimitiveKind.INT64, OptionalInt.empty(), Optional.of(new LogicalType.Decimal(2, 18)), 1);
+        SchemaNode.Primitive dFixed = leaf(
+                "dFixed",
+                PrimitiveKind.FIXED_LEN_BYTE_ARRAY,
+                OptionalInt.of(8),
+                Optional.of(new LogicalType.Decimal(2, 18)),
+                2);
+        SchemaNode.Primitive dBytes = leaf(
+                "dBytes",
+                PrimitiveKind.BYTE_ARRAY,
+                OptionalInt.empty(),
+                Optional.of(new LogicalType.Decimal(2, 10)),
+                3);
+        ParquetSchema schema = schema(d32, d64, dFixed, dBytes);
+
+        BitSet validBits = new BitSet();
+        validBits.set(0, 2);
+        Validity validity = Validity.of(validBits, 2);
+        Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
+        columns.put(
+                ColumnPath.of("d32"),
+                io.tileverse.parquetry.batch.IntVector.materialized(new int[] {12345, -678}, validity));
+        columns.put(ColumnPath.of("d64"), LongVector.materialized(new long[] {123456789012L, -42L}, validity));
+        columns.put(
+                ColumnPath.of("dFixed"),
+                FixedLenBinaryVector.materialized(segments(bigEndian8(123456789012L), bigEndian8(-42L)), 8, validity));
+        columns.put(
+                ColumnPath.of("dBytes"),
+                BinaryVector.materialized(
+                        segments(
+                                BigInteger.valueOf(98765).toByteArray(),
+                                BigInteger.valueOf(-1).toByteArray()),
+                        validity));
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 2, Arena.ofShared());
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ArrowIpcWriter.write(schema, Optional.empty(), Stream.of(batch), out);
+
+        try (RootAllocator allocator = new RootAllocator();
+                ArrowStreamReader reader =
+                        new ArrowStreamReader(new ByteArrayInputStream(out.toByteArray()), allocator)) {
+            assertThat(reader.loadNextBatch()).isTrue();
+            VectorSchemaRoot root = reader.getVectorSchemaRoot();
+            assertThat(((DecimalVector) root.getVector("d32")).getObject(0))
+                    .isEqualByComparingTo(new BigDecimal("123.45"));
+            assertThat(((DecimalVector) root.getVector("d32")).getObject(1))
+                    .isEqualByComparingTo(new BigDecimal("-6.78"));
+            assertThat(((DecimalVector) root.getVector("d64")).getObject(0))
+                    .isEqualByComparingTo(new BigDecimal("1234567890.12"));
+            assertThat(((DecimalVector) root.getVector("dFixed")).getObject(0))
+                    .isEqualByComparingTo(new BigDecimal("1234567890.12"));
+            assertThat(((DecimalVector) root.getVector("dFixed")).getObject(1))
+                    .isEqualByComparingTo(new BigDecimal("-0.42"));
+            assertThat(((DecimalVector) root.getVector("dBytes")).getObject(0))
+                    .isEqualByComparingTo(new BigDecimal("987.65"));
+            assertThat(((DecimalVector) root.getVector("dBytes")).getObject(1))
+                    .isEqualByComparingTo(new BigDecimal("-0.01"));
         }
     }
 
