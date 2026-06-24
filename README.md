@@ -38,7 +38,7 @@ Published under the `io.tileverse.parquetry` group. Current version is `1.0-SNAP
 </dependency>
 ```
 
-Add `parquetry-geo-jts` to materialize geometries as JTS objects. A `parquetry-bom` is provided to align module versions.
+Geometry decoding to JTS objects ships in `parquetry-core` (package `io.tileverse.parquetry.geo`). A `parquetry-bom` is provided to align module versions.
 
 ## Usage
 
@@ -124,10 +124,10 @@ Modules are grouped by role. The foundation - the BOMs and the layered engine - 
 ```
 dependencies/, bom/                      # dependency and version management
 parquetry-format                         # the Parquet and Thrift wire model (read + write)
-parquetry-core                           # schema, codecs, reader/writer, filter pushdown, batch API
+parquetry-core                           # schema, codecs, reader/writer, filter pushdown, batch API, JTS geometry
 parquetry-encryption, parquetry-variant  # placeholders: modular encryption, the Variant logical type
 integrations/                            # adapters to other ecosystems
-  parquetry-geo-jts                      # materialize decoded geometries as JTS objects
+  parquetry-geotools                     # a GeoTools DataStore reading GeoParquet
 apps/                                    # end-user applications (a CLI lands here), as they arrive
 internal/                                # not published; build and dev only
   parquetry-coverage-report              # aggregated JaCoCo coverage (under the coverage profile)

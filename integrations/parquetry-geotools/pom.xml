@@ -48,11 +48,6 @@
     </dependency>
     <dependency>
       <groupId>io.tileverse.parquetry</groupId>
-      <artifactId>parquetry-geo-jts</artifactId>
-      <version>${project.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>io.tileverse.parquetry</groupId>
       <artifactId>parquetry-tileverse-storage</artifactId>
       <version>${project.version}</version>
     </dependency>

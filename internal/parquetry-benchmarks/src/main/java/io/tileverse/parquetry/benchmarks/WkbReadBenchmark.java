@@ -42,7 +42,7 @@ import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
-import io.tileverse.parquetry.geo.jts.MemorySegmentWkbReader;
+import io.tileverse.parquetry.geo.MemorySegmentWkbReader;
 
 /**
  * Head-to-head decode cost of two WKB-to-JTS readers over one representative geometry per (shape, size) combination.

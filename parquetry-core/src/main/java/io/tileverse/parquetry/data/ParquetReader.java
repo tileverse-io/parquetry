@@ -1220,7 +1220,7 @@ public class ParquetReader {
     /**
      * Builds the parquetry {@link ParquetSchema} from the footer, folding GeoParquet 1.x's {@code "geo"} key-value
      * metadata into native Geometry / Geography logical-type annotations on WKB columns that lack one. Downstream code
-     * (e.g. the JtsMaterializer in parquetry-geo-jts) then sees one shape regardless of file version.
+     * (e.g. the JtsMaterializer in {@code io.tileverse.parquetry.geo}) then sees one shape regardless of file version.
      */
     private static ParquetSchema buildFileSchema(FileMetaData footer, Map<String, String> kvMetadata) {
         return SchemaBuilder.build(footer.schema(), kvMetadata);

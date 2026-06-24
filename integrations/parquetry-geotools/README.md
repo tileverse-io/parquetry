@@ -15,7 +15,7 @@ feature cap, and counting down into the parquetry read path.
   attributes, structs flatten to dotted names, and the CRS resolves EPSG-first
   from the GeoParquet metadata (`ProjJsonCrsConverter`, defaulting to
   `OGC:CRS84`).
-- Decodes WKB geometries to JTS through `parquetry-geo-jts`'s `JtsMaterializer`.
+- Decodes WKB geometries to JTS through `parquetry-core`'s `JtsMaterializer`.
 - Pushes query work down (see below) rather than scanning every row and column.
 
 ## Connection parameters
@@ -69,7 +69,7 @@ form. See the `parquetry-geoserver` module for the provider-driven edit panel.
 - **Spatial filters** push exactly. A `BBOX` lowers to a bounding-box
   intersection; `Intersects` / `Contains` / `Within` / `Crosses` / `Overlaps` /
   `Touches` / `Disjoint` / `Equals` / `DWithin` push as exact JTS geometry tests
-  with sound bounding-box pruning (`parquetry-geo-jts`'s `JtsGeometryFilter`). A
+  with sound bounding-box pruning (`parquetry-core`'s `JtsGeometryFilter`). A
   renderer's multi-bbox cross-dateline filter (`OR(BBOX, BBOX)`) pushes as a
   disjunction and prunes each box independently, never scanning the region
   between them. A spatial literal whose CRS differs from the dataset's native CRS

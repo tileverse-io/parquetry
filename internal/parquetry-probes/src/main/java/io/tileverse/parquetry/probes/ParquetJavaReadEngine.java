@@ -38,7 +38,7 @@ import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName;
 import org.apache.parquet.schema.Type;
 
 import io.tileverse.parquetry.filter.Predicate;
-import io.tileverse.parquetry.geo.jts.JtsGeometryFilter;
+import io.tileverse.parquetry.geo.JtsGeometryFilter;
 import io.tileverse.parquetry.internal.filter.spatial.WkbEnvelope;
 
 /**

@@ -44,7 +44,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
  * (GeoParquet 2.0). This is the source-of-truth check that {@code parquetry-core} reads the corpus, independent of any
  * integration adapter: every fixture must open, expose parseable {@code geo} metadata, recognize its geometry leaf via
  * the native logical type, and hand back a length-bounded WKB value that a conformant decoder (JTS) accepts for every
- * row. The geo-jts and geotools suites cover the same files through their own materializer and CRS resolver.
+ * row. The JTS materializer and geotools suites cover the same files through their own materializer and CRS resolver.
  */
 class GeoParquetReadConformanceIT {
 

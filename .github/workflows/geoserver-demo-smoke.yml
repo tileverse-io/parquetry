@@ -1,8 +1,8 @@
 name: GeoServer Demo Smoke Test
 
 on:
-  # The plugin depends transitively on parquetry-core, -format, -io, -geo-jts and
-  # -tileverse-storage, so a change anywhere in the code can break the demo. Run on any
+  # The plugin depends transitively on parquetry-core, -format, -io and
+  # -tileverse-storage; a change anywhere in the code can break the demo. Run on any
   # change except docs, rather than only on the geoserver/geotools modules.
   pull_request:
     branches: [main]

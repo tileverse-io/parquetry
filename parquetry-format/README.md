@@ -36,7 +36,7 @@ The one intentional `format -> schema` reference: `LogicalType.Geometry.crs()` r
        +----------------------------------+
                        |
                        v immutable records
-                  parquetry-core / -geo-jts / -encryption / -variant
+                  parquetry-core / -encryption / -variant
 ```
 
 ## Public API

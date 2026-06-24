@@ -59,7 +59,7 @@ import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.format.LogicalType;
-import io.tileverse.parquetry.geo.jts.JtsGeometryFilter;
+import io.tileverse.parquetry.geo.JtsGeometryFilter;
 import io.tileverse.parquetry.geotools.GeoParquetSchemaMapper.AttributeMapping;
 import io.tileverse.parquetry.geotools.GeoParquetSchemaMapper.Mapping;
 import io.tileverse.parquetry.schema.ColumnPath;

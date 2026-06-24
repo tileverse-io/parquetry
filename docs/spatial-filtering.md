@@ -174,8 +174,9 @@ in the filter path. There are two ways to apply the exact test:
    through `Predicate.geometryFilter(...)`. The filter provides a sound bbox
    lowering for coarse pruning plus an exact `matches` test; the reader prunes with
    the lowering, then runs the exact test per surviving row, dropping non-matches
-   before their other columns materialize. `parquetry-geo-jts` ships
-   `JtsGeometryFilter` over the JTS topology predicates. The gate decodes each
+   before their other columns materialize. `parquetry-core` ships
+   `JtsGeometryFilter` (package `io.tileverse.parquetry.geo`) over the JTS topology
+   predicates. The gate decodes each
    surviving geometry once for the test; output materialization decodes the WKB
    again (reusing the gate's geometry as the output value is a possible future
    optimization).
@@ -193,11 +194,12 @@ in the filter path. There are two ways to apply the exact test:
 | Covering-column lowering | `filter/spatial/SpatialCoveringRewrite.java` |
 | Native row-group pruning | `filter/SpatialBoundsEvaluator.java`, `filter/Tier.java`, `filter/spatial/SpatialBoundsSource.java` |
 | Exact geometry gate (SPI) | `filter/GeometryFilter.java`, `Predicate.geometryFilter(...)` |
-| JTS-backed exact filter | `integrations/parquetry-geo-jts/.../JtsGeometryFilter.java` |
+| JTS-backed exact filter | `parquetry-core/.../geo/JtsGeometryFilter.java` |
 | Benchmarks | `internal/parquetry-benchmarks/.../SpatialPruningBenchmark.java`, `SpatialGateBenchmark.java`, `JtsSpatialFilterBenchmark.java` |
 
 ---
 
 *Scope: bbox-based spatial filtering over a GeoParquet geometry column. True
-geometry materialization (WKB to a JTS geometry) is in the `parquetry-geo-jts`
-integration; the general read path is in [read-path.md](read-path.md).*
+geometry materialization (WKB to a JTS geometry) is in `parquetry-core` (the
+`io.tileverse.parquetry.geo` package); the general read path is in
+[read-path.md](read-path.md).*

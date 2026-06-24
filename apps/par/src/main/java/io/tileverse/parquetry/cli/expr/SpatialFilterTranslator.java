@@ -26,7 +26,7 @@ import org.locationtech.jts.io.ParseException;
 import org.locationtech.jts.io.WKTReader;
 
 import io.tileverse.parquetry.filter.Predicate;
-import io.tileverse.parquetry.geo.jts.JtsGeometryFilter;
+import io.tileverse.parquetry.geo.JtsGeometryFilter;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 import net.sf.jsqlparser.expression.Expression;

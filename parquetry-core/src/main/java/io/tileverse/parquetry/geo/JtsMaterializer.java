@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.geo.jts;
+package io.tileverse.parquetry.geo;
 
 import java.util.HashMap;
 import java.util.LinkedHashMap;
