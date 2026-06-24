@@ -35,16 +35,16 @@ import org.apache.arrow.flatbuf.MessageHeader;
 import org.apache.arrow.flatbuf.MetadataVersion;
 import org.apache.arrow.flatbuf.Precision;
 import org.apache.arrow.flatbuf.Schema;
+import org.apache.arrow.flatbuf.Struct_;
 import org.apache.arrow.flatbuf.Time;
 import org.apache.arrow.flatbuf.Timestamp;
 import org.apache.arrow.flatbuf.Type;
 
 import com.google.flatbuffers.FlatBufferBuilder;
 
-import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.arrow.ipc.LogicalColumns.LogicalColumn;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.ParquetSchemaException;
-import io.tileverse.parquetry.schema.SchemaNode;
 
 /** Encodes a {@link ParquetSchema} as an Arrow IPC Schema message (a flatbuffer {@link Message}). */
 final class ArrowSchemaEncoder {
@@ -52,11 +52,14 @@ final class ArrowSchemaEncoder {
     private ArrowSchemaEncoder() {}
 
     static ByteBuffer encode(ParquetSchema schema, GeoArrowFields geometry) {
+        return encode(LogicalColumns.of(schema, geometry));
+    }
+
+    static ByteBuffer encode(List<LogicalColumn> columns) {
         FlatBufferBuilder builder = new FlatBufferBuilder();
-        List<ColumnPath> leaves = schema.leafColumns();
-        int[] fieldOffsets = new int[leaves.size()];
-        for (int i = 0; i < leaves.size(); i++) {
-            fieldOffsets[i] = encodeField(builder, schema, leaves.get(i), geometry);
+        int[] fieldOffsets = new int[columns.size()];
+        for (int i = 0; i < columns.size(); i++) {
+            fieldOffsets[i] = encodeField(builder, columns.get(i).field());
         }
         int fieldsVector = Schema.createFieldsVector(builder, fieldOffsets);
         Schema.startSchema(builder);
@@ -74,18 +77,23 @@ final class ArrowSchemaEncoder {
         return builder.dataBuffer();
     }
 
-    private static int encodeField(
-            FlatBufferBuilder builder, ParquetSchema schema, ColumnPath path, GeoArrowFields geometry) {
-        SchemaNode.Primitive leaf = primitive(schema, path);
-        ArrowFieldType type = ArrowFieldType.of(leaf);
-        int nameOffset = builder.createString(leaf.name());
-        TypeOffset typeOffset = encodeType(builder, type);
-        int childrenVector = Field.createChildrenVector(builder, new int[0]);
-        int customMetadata = customMetadata(builder, geometry.metadataFor(path));
+    /**
+     * Emits one flatbuffer {@code Field} for {@code field}, recursing into its children for nested kinds. Child fields
+     * are built before the parent table opens, as FlatBuffers requires nested objects to be finished first.
+     */
+    private static int encodeField(FlatBufferBuilder builder, ArrowField field) {
+        int nameOffset = builder.createString(field.name());
+        TypeOffset typeOffset = encodeType(builder, field);
+        int[] childOffsets = new int[field.children().size()];
+        for (int i = 0; i < field.children().size(); i++) {
+            childOffsets[i] = encodeField(builder, field.children().get(i));
+        }
+        int childrenVector = Field.createChildrenVector(builder, childOffsets);
+        int customMetadata = customMetadata(builder, field.extensionMetadata());
 
         Field.startField(builder);
         Field.addName(builder, nameOffset);
-        Field.addNullable(builder, true);
+        Field.addNullable(builder, field.nullable());
         Field.addTypeType(builder, typeOffset.typeId());
         Field.addType(builder, typeOffset.offset());
         Field.addChildren(builder, childrenVector);
@@ -95,16 +103,47 @@ final class ArrowSchemaEncoder {
         return Field.endField(builder);
     }
 
-    private static TypeOffset encodeType(FlatBufferBuilder builder, ArrowFieldType type) {
+    /**
+     * Maps an {@link ArrowField} to its flatbuffer type table. A list is Arrow {@code List}, a struct and a Parquet
+     * Variant are both {@code Struct_} (the Variant adds an extension tag on the field), and a map is {@code Map}. A
+     * primitive delegates to the leaf type path.
+     */
+    private static TypeOffset encodeType(FlatBufferBuilder builder, ArrowField field) {
+        return switch (field.kind()) {
+            case PRIMITIVE -> encodeLeafType(builder, field.leaf());
+            case LIST -> new TypeOffset(Type.List, listType(builder));
+            case STRUCT, VARIANT -> new TypeOffset(Type.Struct_, structType(builder));
+            case MAP -> new TypeOffset(Type.Map, mapType(builder));
+        };
+    }
+
+    private static int listType(FlatBufferBuilder builder) {
+        org.apache.arrow.flatbuf.List.startList(builder);
+        return org.apache.arrow.flatbuf.List.endList(builder);
+    }
+
+    private static int structType(FlatBufferBuilder builder) {
+        Struct_.startStruct_(builder);
+        return Struct_.endStruct_(builder);
+    }
+
+    private static int mapType(FlatBufferBuilder builder) {
+        org.apache.arrow.flatbuf.Map.startMap(builder);
+        org.apache.arrow.flatbuf.Map.addKeysSorted(builder, false);
+        return org.apache.arrow.flatbuf.Map.endMap(builder);
+    }
+
+    private static TypeOffset encodeLeafType(FlatBufferBuilder builder, ArrowFieldType type) {
         return switch (type.kind()) {
             case BOOL -> new TypeOffset(Type.Bool, boolType(builder));
-            case INT -> new TypeOffset(Type.Int, intType(builder, type.bitWidth(), true));
+            case INT -> new TypeOffset(Type.Int, intType(builder, type.bitWidth(), type.signed()));
             case FLOATING_POINT -> new TypeOffset(Type.FloatingPoint, floatType(builder, type.bitWidth()));
             case UTF8 -> new TypeOffset(Type.Utf8, utf8Type(builder));
             case BINARY -> new TypeOffset(Type.Binary, binaryType(builder));
             case FIXED_SIZE_BINARY ->
                 new TypeOffset(Type.FixedSizeBinary, fixedSizeBinaryType(builder, type.byteWidth()));
-            case DECIMAL -> new TypeOffset(Type.Decimal, decimalType(builder, type.precision(), type.scale()));
+            case DECIMAL ->
+                new TypeOffset(Type.Decimal, decimalType(builder, type.precision(), type.scale(), type.bitWidth()));
             case DATE32 -> new TypeOffset(Type.Date, dateType(builder));
             case TIME -> new TypeOffset(Type.Time, timeType(builder, type));
             case TIMESTAMP -> new TypeOffset(Type.Timestamp, timestampType(builder, type));
@@ -125,8 +164,17 @@ final class ArrowSchemaEncoder {
 
     private static int floatType(FlatBufferBuilder builder, int bitWidth) {
         FloatingPoint.startFloatingPoint(builder);
-        FloatingPoint.addPrecision(builder, bitWidth == 32 ? Precision.SINGLE : Precision.DOUBLE);
+        FloatingPoint.addPrecision(builder, precision(bitWidth));
         return FloatingPoint.endFloatingPoint(builder);
+    }
+
+    private static short precision(int bitWidth) {
+        return switch (bitWidth) {
+            case 16 -> Precision.HALF;
+            case 32 -> Precision.SINGLE;
+            case 64 -> Precision.DOUBLE;
+            default -> throw new ParquetSchemaException("unsupported floating point bit width " + bitWidth);
+        };
     }
 
     private static int utf8Type(FlatBufferBuilder builder) {
@@ -145,11 +193,11 @@ final class ArrowSchemaEncoder {
         return FixedSizeBinary.endFixedSizeBinary(builder);
     }
 
-    private static int decimalType(FlatBufferBuilder builder, int precision, int scale) {
+    private static int decimalType(FlatBufferBuilder builder, int precision, int scale, int bitWidth) {
         Decimal.startDecimal(builder);
         Decimal.addPrecision(builder, precision);
         Decimal.addScale(builder, scale);
-        Decimal.addBitWidth(builder, 128);
+        Decimal.addBitWidth(builder, bitWidth);
         return Decimal.endDecimal(builder);
     }
 
@@ -191,15 +239,6 @@ final class ArrowSchemaEncoder {
             entries[i++] = KeyValue.createKeyValue(builder, key, value);
         }
         return Field.createCustomMetadataVector(builder, entries);
-    }
-
-    private static SchemaNode.Primitive primitive(ParquetSchema schema, ColumnPath path) {
-        SchemaNode node = schema.find(path)
-                .orElseThrow(() -> new ParquetSchemaException("no schema node for column " + path.dot()));
-        if (node instanceof SchemaNode.Primitive primitive) {
-            return primitive;
-        }
-        throw new ParquetSchemaException("column " + path.dot() + " is not a primitive leaf");
     }
 
     private record TypeOffset(byte typeId, int offset) {}

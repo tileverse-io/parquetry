@@ -187,12 +187,38 @@ public final class ShreddedVariantVector implements ColumnVector {
             return null;
         }
         VariantMetadata metadata = new VariantMetadata(metadataColumn.get(row));
+        return Variant.of(cachedValue(metadata, row), metadata);
+    }
+
+    private MemorySegment cachedValue(VariantMetadata metadata, int row) {
         MemorySegment value = cache[row];
         if (value == null) {
             value = reconstruct(metadata, row);
             cache[row] = value;
         }
-        return Variant.of(value, metadata);
+        return value;
+    }
+
+    /**
+     * Materializes this shredded column into its unshredded {@link VariantVector} form: the same metadata column,
+     * paired with each row's canonical reconstructed value packed into one consolidated binary backing. The Arrow
+     * export path needs the unshredded form because Arrow models a Variant as {@code struct<metadata, value>}; the
+     * shredded representation has no Arrow buffer layout of its own.
+     *
+     * <p>Reconstruction reuses the per-row {@link #get(int)} path (and its cache), and the values are concatenated with
+     * {@link MemorySegment#copy} rather than per-row heap arrays. A null row contributes a zero-length value run and
+     * keeps its cleared validity bit.
+     */
+    public VariantVector toUnshredded() {
+        MemorySegment[] values = new MemorySegment[size];
+        for (int row = 0; row < size; row++) {
+            if (!validity.isNull(row)) {
+                VariantMetadata metadata = new VariantMetadata(metadataColumn.get(row));
+                values[row] = cachedValue(metadata, row);
+            }
+        }
+        BinaryVector valueColumn = BinaryVector.materialized(values, validity);
+        return new VariantVector(metadataColumn, valueColumn, validity, size);
     }
 
     private MemorySegment reconstruct(VariantMetadata metadata, int row) {

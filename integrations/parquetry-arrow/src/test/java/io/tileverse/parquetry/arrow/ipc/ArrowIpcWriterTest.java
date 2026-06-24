@@ -40,6 +40,7 @@ import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.batch.Validity;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.UnsupportedFeatureException;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -84,15 +85,20 @@ class ArrowIpcWriterTest {
 
     @Test
     void rejectsUnsupportedColumnBeforeWritingAnyBytes() {
-        SchemaNode.Primitive int96 = new SchemaNode.Primitive(
-                "ts", Repetition.OPTIONAL, PrimitiveKind.INT96, OptionalInt.empty(), Optional.empty(), 0);
-        ParquetSchema schema = schema(int96);
+        SchemaNode.Primitive decimal = new SchemaNode.Primitive(
+                "amount",
+                Repetition.OPTIONAL,
+                PrimitiveKind.FIXED_LEN_BYTE_ARRAY,
+                OptionalInt.of(17),
+                Optional.of(new LogicalType.Decimal(2, 40)),
+                0);
+        ParquetSchema schema = schema(decimal);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
 
         Stream<ParquetRecordBatch> empty = Stream.empty();
         assertThatThrownBy(() -> ArrowIpcWriter.write(schema, Optional.empty(), empty, out))
                 .isInstanceOf(UnsupportedFeatureException.class)
-                .hasMessageContaining("INT96");
+                .hasMessageContaining("DECIMAL");
         assertThat(out.size()).isZero();
     }
 }

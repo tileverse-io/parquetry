@@ -25,12 +25,9 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
 
+import io.tileverse.parquetry.arrow.ipc.LogicalColumns.LogicalColumn;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
-import io.tileverse.parquetry.format.UnsupportedFeatureException;
-import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
-import io.tileverse.parquetry.schema.ParquetSchemaException;
-import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 /**
@@ -65,37 +62,28 @@ public final class ArrowIpcWriter {
             Stream<ParquetRecordBatch> batches,
             WritableByteChannel channel) {
         GeoArrowFields geometry = GeoArrowFields.resolve(projectedSchema, geo);
-        validate(projectedSchema);
+        // Resolve once, before any byte is written: resolution rejects an unsupported leaf type and an unexportable
+        // shape (a Parquet Variant nested under a list or map), and the resolved columns are reused for every batch.
+        List<LogicalColumn> columns = LogicalColumns.of(projectedSchema, geometry);
         try {
-            ByteBuffer schemaMessage = ArrowSchemaEncoder.encode(projectedSchema, geometry);
+            ByteBuffer schemaMessage = ArrowSchemaEncoder.encode(columns);
             IpcFraming.writeMessage(channel, schemaMessage, List.of());
-            writeBatches(batches, channel);
+            writeBatches(batches, columns, channel);
             IpcFraming.writeEndOfStream(channel);
         } catch (IOException e) {
             throw new UncheckedIOException("failed writing Arrow IPC stream", e);
         }
     }
 
-    private static void writeBatches(Stream<ParquetRecordBatch> batches, WritableByteChannel channel) {
+    private static void writeBatches(
+            Stream<ParquetRecordBatch> batches, List<LogicalColumn> columns, WritableByteChannel channel) {
         batches.forEach(batch -> {
             try (batch) {
-                ArrowBatchEncoder.Encoded encoded = ArrowBatchEncoder.encode(batch);
+                ArrowBatchEncoder.Encoded encoded = ArrowBatchEncoder.encode(batch, columns);
                 IpcFraming.writeMessage(channel, encoded.metadata(), encoded.body());
             } catch (IOException e) {
                 throw new UncheckedIOException("failed writing Arrow record batch", e);
             }
         });
-    }
-
-    private static void validate(ParquetSchema schema) {
-        for (ColumnPath path : schema.leafColumns()) {
-            SchemaNode node = schema.find(path)
-                    .orElseThrow(() -> new ParquetSchemaException("no schema node for column " + path.dot()));
-            if (node instanceof SchemaNode.Primitive primitive) {
-                ArrowFieldType.of(primitive);
-            } else {
-                throw new UnsupportedFeatureException("Arrow output does not support nested column " + path.dot());
-            }
-        }
     }
 }

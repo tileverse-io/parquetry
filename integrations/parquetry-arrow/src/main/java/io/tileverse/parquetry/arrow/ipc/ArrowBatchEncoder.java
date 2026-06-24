@@ -19,6 +19,8 @@ import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 import org.apache.arrow.flatbuf.Buffer;
 import org.apache.arrow.flatbuf.FieldNode;
@@ -32,9 +34,11 @@ import com.google.flatbuffers.FlatBufferBuilder;
 import io.tileverse.parquetry.arrow.columnar.ArrowBufferCodec;
 import io.tileverse.parquetry.arrow.columnar.EncodedBuffer;
 import io.tileverse.parquetry.arrow.columnar.EncodedNode;
+import io.tileverse.parquetry.arrow.ipc.LogicalColumns.LogicalColumn;
 import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.ParquetSchema;
 
 /** Encodes one {@link ParquetRecordBatch} as an Arrow RecordBatch message plus its body buffer segments. */
 final class ArrowBatchEncoder {
@@ -44,30 +48,63 @@ final class ArrowBatchEncoder {
     // Internal carrier only - never compared or used as a map key.
     record Encoded(ByteBuffer metadata, List<MemorySegment> body) {}
 
+    /**
+     * Encodes {@code batch}, resolving the logical columns from its schema. A caller that writes a stream of batches
+     * should resolve the columns once and use {@link #encode(ParquetRecordBatch, List)} instead; the columns depend
+     * only on the (constant) projected schema.
+     */
     static Encoded encode(ParquetRecordBatch batch) {
-        List<ColumnPath> leaves = batch.projectedSchema().leafColumns();
-        List<FieldNodeData> nodes = new ArrayList<>();
-        List<BufferRange> ranges = new ArrayList<>();
-        List<MemorySegment> body = new ArrayList<>();
-        long offset = 0;
+        ParquetSchema schema = batch.projectedSchema();
+        // The body is geometry-agnostic; extension metadata lives only in the schema message, never in the buffers.
+        return encode(batch, LogicalColumns.of(schema, GeoArrowFields.resolve(schema, Optional.empty())));
+    }
 
-        for (ColumnPath path : leaves) {
-            ColumnVector vector = batch.columns().get(path).toConsolidated();
-            EncodedNode node = ArrowBufferCodec.encode(vector);
+    /** Encodes {@code batch} against {@code columns} already resolved from the projected schema. */
+    static Encoded encode(ParquetRecordBatch batch, List<LogicalColumn> columns) {
+        Map<ColumnPath, ColumnVector> vectors = batch.columns();
+        BodyWriter writer = new BodyWriter();
+        for (LogicalColumn column : columns) {
+            ColumnVector vector = requireColumn(vectors, column.path());
+            ColumnVector prepared = ArrowExportPrep.prepareForExport(vector, column.field());
+            writer.append(ArrowBufferCodec.encode(prepared));
+        }
+        ByteBuffer metadata = buildMessage(batch.rowCount(), writer.nodes, writer.ranges, writer.offset);
+        return new Encoded(metadata, writer.body);
+    }
+
+    private static ColumnVector requireColumn(Map<ColumnPath, ColumnVector> vectors, ColumnPath path) {
+        ColumnVector vector = vectors.get(path);
+        if (vector == null) {
+            throw new IllegalStateException("Batch has no column vector for top-level column " + path.dot());
+        }
+        return vector;
+    }
+
+    /**
+     * Flattens an {@link EncodedNode} tree into the Arrow RecordBatch field-node and buffer order: a depth-first
+     * pre-order walk that emits each node's FieldNode and its buffers before descending into the node's children. Every
+     * buffer is already 8-byte padded, keeping the running body offset aligned.
+     */
+    private static final class BodyWriter {
+
+        private final List<FieldNodeData> nodes = new ArrayList<>();
+        private final List<BufferRange> ranges = new ArrayList<>();
+        private final List<MemorySegment> body = new ArrayList<>();
+        private long offset = 0;
+
+        private void append(EncodedNode node) {
             nodes.add(new FieldNodeData(node.length(), node.nullCount()));
-            // Only primitive leaves reach this loop: the IPC writer validates the projected schema up front and
-            // rejects nested columns, and the projected leaf columns are all primitive. Each node therefore has no
-            // child nodes, and its flat buffer list is the whole node.
             for (EncodedBuffer buffer : node.buffers()) {
                 MemorySegment bytes = buffer.bytes();
                 long length = bytes.byteSize();
                 ranges.add(new BufferRange(offset, length));
                 body.add(bytes);
-                offset += length; // every buffer is already 8-byte padded, keeping offsets aligned
+                offset += length;
+            }
+            for (EncodedNode child : node.children()) {
+                append(child);
             }
         }
-        ByteBuffer metadata = buildMessage(batch.rowCount(), nodes, ranges, offset);
-        return new Encoded(metadata, body);
     }
 
     private static ByteBuffer buildMessage(
