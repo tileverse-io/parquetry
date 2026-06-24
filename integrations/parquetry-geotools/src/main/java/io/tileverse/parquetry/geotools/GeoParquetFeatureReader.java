@@ -36,7 +36,7 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.Dataset;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
-import io.tileverse.parquetry.geo.jts.MemorySegmentWkbReader;
+import io.tileverse.parquetry.geo.MemorySegmentWkbReader;
 import io.tileverse.parquetry.geotools.GeoParquetSchemaMapper.AttributeMapping;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;

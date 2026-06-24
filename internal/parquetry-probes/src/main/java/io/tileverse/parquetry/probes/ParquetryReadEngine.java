@@ -37,7 +37,7 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Value;
-import io.tileverse.parquetry.geo.jts.JtsGeometryFilter;
+import io.tileverse.parquetry.geo.JtsGeometryFilter;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;

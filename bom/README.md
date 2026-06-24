@@ -22,7 +22,7 @@ Single `<dependencyManagement>` section listing each foundational published parq
 
 ## What it is not
 
-This BOM only constrains **parquetry's own** module versions. The integration adapters (`parquetry-geo-jts`, `parquetry-tileverse-storage`) are published independently and are not listed here; depend on them directly with an explicit version. Third-party dependency versions live in [`parquetry-dependencies`](../parquetry-dependencies/). Downstream consumers typically import both.
+This BOM only constrains **parquetry's own** module versions. The integration adapters (`parquetry-tileverse-storage`, `parquetry-geotools`) are published independently and are not listed here; depend on them directly with an explicit version. Third-party dependency versions live in [`parquetry-dependencies`](../parquetry-dependencies/). Downstream consumers typically import both.
 
 ## Packaging
 

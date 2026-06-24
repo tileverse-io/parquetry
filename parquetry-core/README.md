@@ -68,7 +68,7 @@ Direction rule: **cross-cutting capabilities stay at the top level; direction-sp
                                    ParquetRecord>    Materializer<T>
                                                           |
                                                           v
-                                                  parquetry-geo-jts
+                                                  io.tileverse.parquetry.geo
                                                   (JtsMaterializer)
 ```
 
