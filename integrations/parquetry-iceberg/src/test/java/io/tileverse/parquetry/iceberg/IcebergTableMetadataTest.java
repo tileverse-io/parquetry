@@ -54,7 +54,8 @@ class IcebergTableMetadataTest {
         IcebergTableMetadata metadata = IcebergTableMetadata.read(Files.readString(json));
 
         assertThat(metadata.fields())
-                .containsExactly(new IcebergField(1, "id", "string"), new IcebergField(2, "geom", "geometry"));
+                .containsExactly(
+                        new IcebergField(1, "id", "string", false), new IcebergField(2, "geom", "geometry", false));
         assertThat(metadata.fields().get(1).isGeometry()).isTrue();
         assertThat(metadata.fields().get(1).isGeography()).isFalse();
     }
@@ -78,7 +79,7 @@ class IcebergTableMetadataTest {
                 }
                 """;
         IcebergTableMetadata metadata = IcebergTableMetadata.read(json);
-        assertThat(metadata.fields()).containsExactly(new IcebergField(7, "lon", "double"));
+        assertThat(metadata.fields()).containsExactly(new IcebergField(7, "lon", "double", false));
     }
 
     @Test
@@ -104,7 +105,38 @@ class IcebergTableMetadataTest {
                 }
                 """;
         IcebergTableMetadata metadata = IcebergTableMetadata.read(json);
-        assertThat(metadata.fields()).containsExactly(new IcebergField(1, "id", "long"));
+        assertThat(metadata.fields()).containsExactly(new IcebergField(1, "id", "long", false));
+    }
+
+    @Test
+    void readsRequiredNullability() {
+        String json = """
+                {
+                  "format-version": 2,
+                  "location": "file:///t",
+                  "current-snapshot-id": 1,
+                  "current-schema-id": 0,
+                  "snapshots": [
+                    {"snapshot-id": 1, "timestamp-ms": 10, "manifest-list": "file:///t/m.avro"}
+                  ],
+                  "schemas": [
+                    {
+                      "schema-id": 0,
+                      "fields": [
+                        {"id": 1, "name": "id", "type": "long", "required": true},
+                        {"id": 2, "name": "name", "type": "string", "required": false},
+                        {"id": 3, "name": "extra", "type": "double"}
+                      ]
+                    }
+                  ]
+                }
+                """;
+        IcebergTableMetadata metadata = IcebergTableMetadata.read(json);
+        assertThat(metadata.fields())
+                .containsExactly(
+                        new IcebergField(1, "id", "long", true),
+                        new IcebergField(2, "name", "string", false),
+                        new IcebergField(3, "extra", "double", false));
     }
 
     @Test

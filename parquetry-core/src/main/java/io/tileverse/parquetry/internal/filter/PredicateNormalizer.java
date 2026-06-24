@@ -248,8 +248,11 @@ public final class PredicateNormalizer {
         PrimitiveKind kind = prim.kind();
         return switch (v) {
             case Value.BoolVal _ -> kind == PrimitiveKind.BOOLEAN;
-            case Value.IntVal _ -> kind == PrimitiveKind.INT32;
-            case Value.LongVal _ -> kind == PrimitiveKind.INT64;
+            // Int and long widen to each other. Iceberg's int-to-long type promotion types a field as long while the
+            // data file still stores it as INT32; a long-valued predicate must therefore reach an INT32 column (and
+            // vice versa). An int always fits in a long, hence the widening is exact and lossless.
+            case Value.IntVal _ -> kind == PrimitiveKind.INT32 || kind == PrimitiveKind.INT64;
+            case Value.LongVal _ -> kind == PrimitiveKind.INT64 || kind == PrimitiveKind.INT32;
             // Float and double widen to each other. A double-valued query against a FLOAT column is how the spatial
             // covering rewrite reaches a GeoParquet file whose bbox columns are float32 (GDAL's default); the promotion
             // is exact and the comparison stays conservative.

@@ -32,7 +32,6 @@ import io.tileverse.parquetry.dataset.Dataset;
 import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.filter.prune.FileStats;
 import io.tileverse.parquetry.io.ByteRangeSource;
-import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
  * Reads one Iceberg table at a pinned snapshot as a {@link Dataset}. The filesystem entry point reads
@@ -105,10 +104,11 @@ public final class IcebergCatalog implements DatasetCatalog {
             for (IcebergManifests.DataFileRef ref : dataFiles) {
                 opened.add(io.open(ref.location()));
             }
-            ParquetSchema schema = readSchema(opened);
+            IcebergSchema icebergSchema = IcebergSchema.of(fields);
             CatalogSnapshot snapshot =
                     new CatalogSnapshot(metadata.currentSnapshotId(), metadata.currentSnapshotTimestampMs());
-            IcebergDataset dataset = new IcebergDataset(tableName, snapshot, schema, dataFiles, fileStats, opened);
+            IcebergDataset dataset =
+                    new IcebergDataset(tableName, snapshot, icebergSchema, dataFiles, fileStats, opened);
             return new IcebergCatalog(tableName, dataset, opened, io);
         } catch (RuntimeException failure) {
             RuntimeException cleanup = closeAll(opened, io);
@@ -156,11 +156,6 @@ public final class IcebergCatalog implements DatasetCatalog {
             stats.add(IcebergFileStats.from(ref, fields));
         }
         return stats;
-    }
-
-    private static ParquetSchema readSchema(List<ByteRangeSource> sources) {
-        ParquetDataset probe = ParquetDataset.open(sources.get(0));
-        return probe.schema();
     }
 
     private static String readJson(IcebergFileIO io, String location) {

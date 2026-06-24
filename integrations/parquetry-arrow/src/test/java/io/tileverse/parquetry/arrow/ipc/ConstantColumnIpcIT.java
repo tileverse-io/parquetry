@@ -35,7 +35,7 @@ import org.junit.jupiter.api.io.TempDir;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.ParquetDataset;
-import io.tileverse.parquetry.filter.ConstantColumn;
+import io.tileverse.parquetry.filter.OutputColumn;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Query;
@@ -70,7 +70,9 @@ class ConstantColumnIpcIT {
         Query query = new Query(
                 Predicate.ALWAYS_TRUE,
                 Projection.of(Set.of(ID)),
-                List.of(new ConstantColumn(YEAR, new Value.LongVal(YEAR_CONSTANT))));
+                List.of(
+                        new OutputColumn.Physical(ID, ID),
+                        new OutputColumn.Constant(YEAR, new Value.LongVal(YEAR_CONSTANT))));
         try (ByteRangeSource source = ByteRangeSource.ofFile(parquetFile)) {
             ParquetDataset dataset = ParquetDataset.open(source);
             try (Stream<ParquetRecordBatch> batches = dataset.readBatches(query, ReadOptions.DEFAULTS)) {

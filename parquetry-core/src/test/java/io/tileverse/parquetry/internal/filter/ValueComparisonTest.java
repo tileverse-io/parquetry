@@ -118,6 +118,54 @@ class ValueComparisonTest {
     }
 
     @Test
+    void compareBoxedWidensIntValAgainstLongActual() {
+        assertThat(ValueComparison.compareBoxed(5L, new Value.IntVal(3))).isPositive();
+        assertThat(ValueComparison.compareBoxed(3L, new Value.IntVal(3))).isZero();
+        assertThat(ValueComparison.compareBoxed(2L, new Value.IntVal(3))).isNegative();
+    }
+
+    @Test
+    void compareBoxedWidensLongValAgainstIntActual() {
+        assertThat(ValueComparison.compareBoxed(5, new Value.LongVal(3L))).isPositive();
+        assertThat(ValueComparison.compareBoxed(3, new Value.LongVal(3L))).isZero();
+        assertThat(ValueComparison.compareBoxed(2, new Value.LongVal(3L))).isNegative();
+    }
+
+    @Test
+    void compareValuesWidensIntQueryAgainstLongBound() {
+        assertThat(ValueComparison.compareValues(new Value.IntVal(5), new Value.LongVal(3L)))
+                .isPositive();
+        assertThat(ValueComparison.compareValues(new Value.IntVal(3), new Value.LongVal(3L)))
+                .isZero();
+        assertThat(ValueComparison.compareValues(new Value.IntVal(2), new Value.LongVal(3L)))
+                .isNegative();
+    }
+
+    @Test
+    void compareValuesWidensLongQueryAgainstIntBound() {
+        assertThat(ValueComparison.compareValues(new Value.LongVal(5L), new Value.IntVal(3)))
+                .isPositive();
+        assertThat(ValueComparison.compareValues(new Value.LongVal(3L), new Value.IntVal(3)))
+                .isZero();
+        assertThat(ValueComparison.compareValues(new Value.LongVal(2L), new Value.IntVal(3)))
+                .isNegative();
+    }
+
+    @Test
+    void compareIntWidensAgainstLongBound() {
+        assertThat(ValueComparison.compareInt(5, new Value.LongVal(3L))).isPositive();
+        assertThat(ValueComparison.compareInt(3, new Value.LongVal(3L))).isZero();
+        assertThat(ValueComparison.compareInt(2, new Value.LongVal(3L))).isNegative();
+    }
+
+    @Test
+    void compareLongWidensAgainstIntBound() {
+        assertThat(ValueComparison.compareLong(5L, new Value.IntVal(3))).isPositive();
+        assertThat(ValueComparison.compareLong(3L, new Value.IntVal(3))).isZero();
+        assertThat(ValueComparison.compareLong(2L, new Value.IntVal(3))).isNegative();
+    }
+
+    @Test
     void compareFloatWidensAgainstDoubleBound() {
         assertThat(ValueComparison.compareFloat(2.0f, new Value.DoubleVal(1.5))).isPositive();
     }

@@ -23,6 +23,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.IntFunction;
 import java.util.stream.Stream;
 
@@ -36,6 +37,7 @@ import io.tileverse.parquetry.dataset.explain.Outcome;
 import io.tileverse.parquetry.dataset.explain.Totals;
 import io.tileverse.parquetry.filter.ConstantColumn;
 import io.tileverse.parquetry.filter.ConstantFolding;
+import io.tileverse.parquetry.filter.OutputColumn;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Query;
@@ -72,6 +74,7 @@ public final class FilesetDataset implements GeoParquetDataset {
     private final DatasetCapabilities capabilities;
     private final Optional<GeoParquetMetadata> geoMetadata;
     private final Optional<BoundingBox> aggregatedBounds;
+    private final Map<Integer, ParquetDataset> perFileDatasets = new ConcurrentHashMap<>();
 
     public FilesetDataset(
             String name,
@@ -200,8 +203,7 @@ public final class FilesetDataset implements GeoParquetDataset {
             if (residual.equals(Predicate.ALWAYS_FALSE)) {
                 continue;
             }
-            ParquetDataset oneFile = ParquetDataset.open(new SurvivorFileset(sources, List.of(index)));
-            total += oneFile.count(residual, options);
+            total += perFile(index).count(residual, options);
         }
         return total;
     }
@@ -249,8 +251,7 @@ public final class FilesetDataset implements GeoParquetDataset {
         if (query == null) {
             return Stream.empty();
         }
-        ParquetDataset oneFile = ParquetDataset.open(new SurvivorFileset(sources, List.of(index)));
-        return oneFile.read(query, options);
+        return perFile(index).read(query, options);
     }
 
     @MustBeClosed
@@ -260,14 +261,17 @@ public final class FilesetDataset implements GeoParquetDataset {
         if (query == null) {
             return Stream.empty();
         }
-        ParquetDataset oneFile = ParquetDataset.open(new SurvivorFileset(sources, List.of(index)));
-        return oneFile.readBatches(query, options);
+        return perFile(index).readBatches(query, options);
     }
 
     /**
      * The one-file {@link Query} for the file at {@code index}: the predicate folded against this file's synthetic
-     * constants, the projection split to its physical columns, and the projected synthetic columns appended as
-     * constants. Returns null when the folded predicate is always false (the file is skipped).
+     * constants, the projection split to its physical columns, and the projected synthetic columns presented as the
+     * output shape's constant columns. Returns null when the folded predicate is always false (the file is skipped).
+     *
+     * <p>With no projected synthetic columns this is the identity shape (the all-files fast path). Otherwise the output
+     * is the file's physical columns in decode order followed by the projected constants, the same order the appended
+     * physical-then-constant batch presented.
      */
     private Query oneFileQuery(int index, Predicate predicate, Projection projection) {
         Predicate residual = residualFor(index, predicate);
@@ -277,7 +281,41 @@ public final class FilesetDataset implements GeoParquetDataset {
         Map<String, String> filePartitions = perFilePartitions.get(index);
         Projection physical = physicalProjection(projection);
         List<ConstantColumn> constants = projectedConstants(projection, filePartitions);
-        return new Query(residual, physical, constants);
+        if (constants.isEmpty()) {
+            return Query.of(residual, physical);
+        }
+        return new Query(residual, physical, outputShape(physical, constants));
+    }
+
+    /**
+     * The ordered output shape for a file with projected synthetic columns: a {@link OutputColumn.Physical} passthrough
+     * for each physical column the read decodes, in decode order, followed by a {@link OutputColumn.Constant} for each
+     * projected partition column.
+     */
+    private List<OutputColumn> outputShape(Projection physical, List<ConstantColumn> constants) {
+        List<OutputColumn> output = new ArrayList<>();
+        for (ColumnPath column : presentedPhysicalColumns(physical)) {
+            output.add(new OutputColumn.Physical(column, column));
+        }
+        for (ConstantColumn constant : constants) {
+            output.add(new OutputColumn.Constant(constant.path(), constant.value()));
+        }
+        return output;
+    }
+
+    /** The physical leaf columns the decoded batch presents for {@code physical}, in the file's depth-first order. */
+    private List<ColumnPath> presentedPhysicalColumns(Projection physical) {
+        List<ColumnPath> fileLeaves = allFiles.schema().leafColumns();
+        if (physical instanceof Projection.Columns(Set<ColumnPath> kept)) {
+            List<ColumnPath> presented = new ArrayList<>();
+            for (ColumnPath leaf : fileLeaves) {
+                if (kept.contains(leaf)) {
+                    presented.add(leaf);
+                }
+            }
+            return presented;
+        }
+        return fileLeaves;
     }
 
     private Predicate residualFor(int index, Predicate predicate) {
@@ -393,7 +431,7 @@ public final class FilesetDataset implements GeoParquetDataset {
             return new FileExplain(location, Outcome.SKIP, "partition value excluded", recordCount, Optional.empty());
         }
         Projection physical = physicalProjection(projection);
-        ParquetDataset survivor = ParquetDataset.open(new SurvivorFileset(sources, List.of(index)));
+        ParquetDataset survivor = perFile(index);
         ExplainPlan plan = analyze
                 ? survivor.explainAnalyze(residual, physical, options)
                 : survivor.explain(residual, physical, options);
@@ -414,6 +452,21 @@ public final class FilesetDataset implements GeoParquetDataset {
             return allFiles;
         }
         return ParquetDataset.open(new SurvivorFileset(sources, survivors));
+    }
+
+    /**
+     * The single-file {@link ParquetDataset} over the source at {@code index}, parsed once and reused across queries
+     * and threads. {@code computeIfAbsent} gives one footer parse per index even under concurrent reads; the dataset
+     * borrows the catalog's shared source, which the catalog owns and closes.
+     */
+    private ParquetDataset perFile(int index) {
+        return perFileDatasets.computeIfAbsent(
+                index, i -> ParquetDataset.open(new SurvivorFileset(sources, List.of(i))));
+    }
+
+    /** Test hook: the memoized single-file dataset for {@code index}, proving footer reuse across queries. */
+    ParquetDataset perFileDatasetForTest(int index) {
+        return perFile(index);
     }
 
     private List<Integer> pruneSurvivors(Predicate predicate) {

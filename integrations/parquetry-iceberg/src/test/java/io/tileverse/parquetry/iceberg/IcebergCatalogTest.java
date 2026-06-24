@@ -17,8 +17,10 @@ package io.tileverse.parquetry.iceberg;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.stream.Stream;
 
@@ -32,8 +34,10 @@ import io.tileverse.parquetry.dataset.Dataset;
 import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
 class IcebergCatalogTest {
@@ -65,6 +69,46 @@ class IcebergCatalogTest {
                 decoded = rows.count();
             }
             assertThat(decoded).isEqualTo(10_000L);
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(
+            strings = {
+                "v2_flat_columns",
+                "v2_bbox_struct",
+                "v2_geo_convention",
+                "v3_geometry",
+                "v3_geometry_lineage",
+                "v3_minimal"
+            })
+    void presentsSchemaFromTableMetadataNotTheDataFileFooter(String table) {
+        Path root = TestCorpus.extractDirectory("iceberg-geo-testbed", tempDir.resolve(table));
+        Path tableDir = root.resolve(table);
+
+        IcebergTableMetadata metadata = readMetadata(tableDir);
+        ParquetSchema presented = IcebergSchema.of(metadata.fields()).parquetSchema();
+
+        try (IcebergCatalog catalog = IcebergCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
+            Dataset dataset = catalog.dataset(table);
+            assertThat(dataset.schema()).isEqualTo(presented);
+        }
+    }
+
+    private static IcebergTableMetadata readMetadata(Path tableDir) {
+        try (IcebergFileIO io = new LocalIcebergFileIO(tableDir.toUri().toString(), tableDir)) {
+            String metadataLocation =
+                    IcebergMetadataResolver.resolve(io, tableDir.toUri().toString(), IcebergOptions.defaults());
+            return IcebergTableMetadata.read(readUtf8(io, metadataLocation), IcebergOptions.defaults());
+        }
+    }
+
+    private static String readUtf8(IcebergFileIO io, String location) {
+        try (ByteRangeSource source = io.open(location)) {
+            long size = source.size();
+            byte[] bytes = new byte[Math.toIntExact(size)];
+            source.readFully(0, MemorySegment.ofArray(bytes));
+            return new String(bytes, StandardCharsets.UTF_8);
         }
     }
 

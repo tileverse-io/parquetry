@@ -17,8 +17,11 @@ package io.tileverse.parquetry.iceberg;
 
 import java.util.Objects;
 
-/** One field of an Iceberg table schema relevant to pruning: its field id, column name, and primitive type string. */
-record IcebergField(int fieldId, String name, String type) {
+/**
+ * One field of an Iceberg table schema: its field id, column name, primitive type string, and whether the field is
+ * required (non-nullable).
+ */
+record IcebergField(int fieldId, String name, String type, boolean required) {
 
     public IcebergField {
         Objects.requireNonNull(name, "name");

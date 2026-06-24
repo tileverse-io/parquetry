@@ -23,10 +23,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.Set;
 
+import io.tileverse.parquetry.batch.ConstantLeaves;
 import io.tileverse.parquetry.filter.ConstantColumn;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.prune.ColumnStatistics;
@@ -177,31 +177,21 @@ public final class HivePartitioning {
     }
 
     private static SchemaNode.Primitive syntheticLeaf(String key, PartitionKind partitionKind) {
-        PrimitiveKind kind = primitiveKindFor(partitionKind);
-        Optional<LogicalType> logicalType = logicalTypeFor(partitionKind);
-        return new SchemaNode.Primitive(
-                key, Repetition.OPTIONAL, kind, OptionalInt.empty(), logicalType, syntheticFieldId());
+        return ConstantLeaves.primitiveFor(key, representativeValue(partitionKind), syntheticFieldId());
     }
 
     /**
-     * Maps a synthetic column's inferred {@link PartitionKind} to its physical {@link PrimitiveKind}. This must match
-     * {@link ConstantColumnBatches} for the coerced constant value (LONG->INT64, DOUBLE->DOUBLE, DATE->INT32,
-     * STRING->BYTE_ARRAY) so that {@link FilesetDataset#schema()} and the read batches agree on each leaf's kind.
+     * A constant {@link Value} of the same shape a synthetic column of this {@link PartitionKind} coerces its path
+     * values to. Routing through it reaches the one {@link ConstantLeaves} mapping, which keeps a synthetic column's
+     * advertised {@link FilesetDataset#schema()} leaf and the read-batch leaf agreeing on physical kind and logical
+     * type. The value content is irrelevant here; only its shape selects the leaf type.
      */
-    private static PrimitiveKind primitiveKindFor(PartitionKind partitionKind) {
+    private static Value representativeValue(PartitionKind partitionKind) {
         return switch (partitionKind) {
-            case LONG -> PrimitiveKind.INT64;
-            case DOUBLE -> PrimitiveKind.DOUBLE;
-            case DATE -> PrimitiveKind.INT32;
-            case STRING -> PrimitiveKind.BYTE_ARRAY;
-        };
-    }
-
-    private static Optional<LogicalType> logicalTypeFor(PartitionKind partitionKind) {
-        return switch (partitionKind) {
-            case DATE -> Optional.of(new LogicalType.DateType());
-            case STRING -> Optional.of(new LogicalType.StringType());
-            case LONG, DOUBLE -> Optional.empty();
+            case LONG -> new Value.LongVal(0L);
+            case DOUBLE -> new Value.DoubleVal(0.0);
+            case DATE -> new Value.DateVal(LocalDate.EPOCH);
+            case STRING -> new Value.StringVal("");
         };
     }
 
