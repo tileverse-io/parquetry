@@ -21,6 +21,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -36,8 +39,12 @@ import io.tileverse.parquetry.batch.FixedLenBinaryVector;
 import io.tileverse.parquetry.batch.FloatVector;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.LongVector;
+import io.tileverse.parquetry.batch.VariantVector;
 import io.tileverse.parquetry.data.ParquetWriteException;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.PrimitiveKind;
+import io.tileverse.parquetry.schema.Repetition;
+import io.tileverse.parquetry.schema.SchemaNode;
 
 class ColumnAccumulatorTest {
 
@@ -257,6 +264,64 @@ class ColumnAccumulatorTest {
                 .isEqualTo("bbbbbbbb".getBytes(StandardCharsets.UTF_8));
         assertThat(vectorA.get(2).toArray(ValueLayout.JAVA_BYTE))
                 .isEqualTo("cccccccc".getBytes(StandardCharsets.UTF_8));
+    }
+
+    @Test
+    void variantAccumulatorFreezesMetadataValueAndValidity() {
+        ColumnAccumulator.VariantAccumulator acc =
+                (ColumnAccumulator.VariantAccumulator) ColumnAccumulator.forNode(optionalVariantNode());
+
+        // Row 0: present Variant.
+        acc.setVariant(utf8("meta0"), utf8("val0"));
+        acc.endRow();
+        // Row 1: null Variant.
+        acc.setNull();
+        acc.endRow();
+
+        VariantVector vector = (VariantVector) acc.freeze();
+        assertThat(vector.size()).isEqualTo(2);
+        assertThat(vector.validity().isValid(0)).isTrue();
+        assertThat(vector.validity().isNull(1)).isTrue();
+        assertThat(asString(vector.metadataColumn().get(0))).isEqualTo("meta0");
+        assertThat(asString(vector.valueColumn().get(0))).isEqualTo("val0");
+    }
+
+    @Test
+    void requiredVariantAccumulatorIsAllValid() {
+        ColumnAccumulator.VariantAccumulator acc =
+                (ColumnAccumulator.VariantAccumulator) ColumnAccumulator.forNode(requiredVariantNode());
+
+        acc.setVariant(utf8("m"), utf8("v"));
+        acc.endRow();
+
+        VariantVector vector = (VariantVector) acc.freeze();
+        assertThat(vector.size()).isEqualTo(1);
+        assertThat(vector.validity().isValid(0)).isTrue();
+    }
+
+    private static SchemaNode.Group optionalVariantNode() {
+        return variantNode(Repetition.OPTIONAL);
+    }
+
+    private static SchemaNode.Group requiredVariantNode() {
+        return variantNode(Repetition.REQUIRED);
+    }
+
+    private static SchemaNode.Group variantNode(Repetition repetition) {
+        SchemaNode.Primitive metadata = new SchemaNode.Primitive(
+                "metadata", Repetition.REQUIRED, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1);
+        SchemaNode.Primitive value = new SchemaNode.Primitive(
+                "value", Repetition.OPTIONAL, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1);
+        return new SchemaNode.Group(
+                "v", repetition, List.of(metadata, value), Optional.of(new LogicalType.Variant()), -1);
+    }
+
+    private static MemorySegment utf8(String text) {
+        return MemorySegment.ofArray(text.getBytes(StandardCharsets.UTF_8)).asReadOnly();
+    }
+
+    private static String asString(MemorySegment segment) {
+        return new String(segment.toArray(ValueLayout.JAVA_BYTE), StandardCharsets.UTF_8);
     }
 
     @Test

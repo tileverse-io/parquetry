@@ -15,6 +15,27 @@
  */
 package io.tileverse.parquetry.data.variant;
 
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_BINARY;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_BOOLEAN_FALSE;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_BOOLEAN_TRUE;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_DATE;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_DECIMAL16;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_DECIMAL4;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_DECIMAL8;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_DOUBLE;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_FLOAT;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_INT16;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_INT32;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_INT64;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_INT8;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_STRING;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_TIME;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_TIMESTAMP_NTZ_MICROS;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_TIMESTAMP_NTZ_NANOS;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_TIMESTAMP_TZ_MICROS;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_TIMESTAMP_TZ_NANOS;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_UUID;
+
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.math.BigInteger;
@@ -36,27 +57,6 @@ final class VariantScalarValues {
 
     private static final int BASIC_TYPE_PRIMITIVE = 0;
     private static final int BASIC_TYPE_SHORT_STRING = 1;
-
-    private static final int TYPE_BOOLEAN_TRUE = 1;
-    private static final int TYPE_BOOLEAN_FALSE = 2;
-    private static final int TYPE_INT8 = 3;
-    private static final int TYPE_INT16 = 4;
-    private static final int TYPE_INT32 = 5;
-    private static final int TYPE_INT64 = 6;
-    private static final int TYPE_DOUBLE = 7;
-    private static final int TYPE_DECIMAL4 = 8;
-    private static final int TYPE_DECIMAL8 = 9;
-    private static final int TYPE_DECIMAL16 = 10;
-    private static final int TYPE_DATE = 11;
-    private static final int TYPE_TIMESTAMP_TZ_MICROS = 12;
-    private static final int TYPE_TIMESTAMP_NTZ_MICROS = 13;
-    private static final int TYPE_FLOAT = 14;
-    private static final int TYPE_BINARY = 15;
-    private static final int TYPE_STRING = 16;
-    private static final int TYPE_TIME = 17;
-    private static final int TYPE_TIMESTAMP_TZ_NANOS = 18;
-    private static final int TYPE_TIMESTAMP_NTZ_NANOS = 19;
-    private static final int TYPE_UUID = 20;
 
     private static final int SHORT_STRING_MAX_LENGTH = 63;
     private static final int DECIMAL16_BYTES = 16;

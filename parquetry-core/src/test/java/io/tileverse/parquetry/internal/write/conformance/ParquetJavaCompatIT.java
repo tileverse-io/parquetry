@@ -34,14 +34,11 @@ import java.util.stream.Stream;
 import org.apache.avro.generic.GenericData;
 import org.apache.avro.generic.GenericRecord;
 import org.apache.avro.util.Utf8;
-import org.apache.parquet.avro.AvroParquetReader;
 import org.apache.parquet.hadoop.ParquetFileReader;
-import org.apache.parquet.hadoop.ParquetReader;
 import org.apache.parquet.hadoop.metadata.BlockMetaData;
 import org.apache.parquet.hadoop.metadata.ColumnChunkMetaData;
 import org.apache.parquet.hadoop.metadata.CompressionCodecName;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
-import org.apache.parquet.io.LocalInputFile;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -59,9 +56,9 @@ import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
- * Validates that parquetry's V2 output reads cleanly through the parquet-java 1.14 reader. The avro flavour of the
- * reader is used for value-level deep-equal; the lower-level {@link ParquetFileReader} drives footer-level structural
- * assertions (row group count, codec per chunk).
+ * Validates that parquetry's V2 output reads cleanly through the parquet-java reader. The avro flavour of the reader is
+ * used for value-level deep-equal; the lower-level {@link ParquetFileReader} drives footer-level structural assertions
+ * (row group count, codec per chunk).
  */
 @Tag("conformance")
 class ParquetJavaCompatIT {
@@ -76,7 +73,7 @@ class ParquetJavaCompatIT {
         Path file = tempDir.resolve("flat-primitive.parquet");
         writeRows(file, schema, WriteOptions.builder().tempDir(tempDir).build(), rows);
 
-        List<GenericRecord> read = readWithAvro(file);
+        List<GenericRecord> read = WriteConformanceSupport.readWithAvro(file);
         assertThat(read).hasSize(rows.size());
         for (int i = 0; i < rows.size(); i++) {
             assertRowMatches(rows.get(i), read.get(i));
@@ -94,10 +91,10 @@ class ParquetJavaCompatIT {
                 .build();
         writeRows(file, schema, options, rows);
 
-        ParquetMetadata metadata = readFooterViaParquetJava(file);
+        ParquetMetadata metadata = WriteConformanceSupport.readFooterViaParquetJava(file);
         assertThat(metadata.getBlocks()).hasSize(5);
 
-        List<GenericRecord> read = readWithAvro(file);
+        List<GenericRecord> read = WriteConformanceSupport.readWithAvro(file);
         assertThat(read).hasSize(rows.size());
     }
 
@@ -113,7 +110,7 @@ class ParquetJavaCompatIT {
                     .build();
             writeRows(file, schema, options, rows);
 
-            List<GenericRecord> read = readWithAvro(file);
+            List<GenericRecord> read = WriteConformanceSupport.readWithAvro(file);
             assertThat(read).hasSize(rows.size());
             for (int i = 0; i < rows.size(); i++) {
                 assertRowMatches(rows.get(i), read.get(i));
@@ -133,7 +130,7 @@ class ParquetJavaCompatIT {
                 .build();
         writeRows(file, schema, options, rows);
 
-        ParquetMetadata metadata = readFooterViaParquetJava(file);
+        ParquetMetadata metadata = WriteConformanceSupport.readFooterViaParquetJava(file);
         for (BlockMetaData block : metadata.getBlocks()) {
             for (ColumnChunkMetaData chunk : block.getColumns()) {
                 CompressionCodecName expected = "name".equals(chunk.getPath().toDotString())
@@ -168,7 +165,7 @@ class ParquetJavaCompatIT {
                 .build();
         writeRows(file, schema, options, rows);
 
-        List<GenericRecord> read = readWithAvro(file);
+        List<GenericRecord> read = WriteConformanceSupport.readWithAvro(file);
         assertThat(read).hasSize(rowCount);
         for (int i = 0; i < rowCount; i++) {
             String expected = i < 60 ? "dup-" + (i % 4) : "uniq-" + i;
@@ -191,7 +188,7 @@ class ParquetJavaCompatIT {
         Path file = tempDir.resolve("all-null.parquet");
         writeRows(file, schema, WriteOptions.builder().tempDir(tempDir).build(), rows);
 
-        ParquetMetadata metadata = readFooterViaParquetJava(file);
+        ParquetMetadata metadata = WriteConformanceSupport.readFooterViaParquetJava(file);
         for (BlockMetaData block : metadata.getBlocks()) {
             for (ColumnChunkMetaData chunk : block.getColumns()) {
                 String column = chunk.getPath().toDotString();
@@ -204,7 +201,7 @@ class ParquetJavaCompatIT {
             }
         }
 
-        List<GenericRecord> read = readWithAvro(file);
+        List<GenericRecord> read = WriteConformanceSupport.readWithAvro(file);
         assertThat(read).hasSize(rowCount);
         for (GenericRecord row : read) {
             assertThat(row.get("level")).isNull();
@@ -233,7 +230,7 @@ class ParquetJavaCompatIT {
                 WriteOptions.builder().tempDir(tempDir).pageValueLimit(20).build();
         writeRows(file, schema, options, rows);
 
-        List<GenericRecord> read = readWithAvro(file);
+        List<GenericRecord> read = WriteConformanceSupport.readWithAvro(file);
         assertThat(read).hasSize(rowCount);
         int nonNull = 0;
         for (int i = 0; i < rowCount; i++) {
@@ -310,27 +307,6 @@ class ParquetJavaCompatIT {
             for (Map<ColumnPath, Object> row : rows) {
                 WriteFixtures.appendRow(appender, schema, row);
             }
-        }
-    }
-
-    // --- parquet-java drivers ---
-
-    private static List<GenericRecord> readWithAvro(Path file) throws IOException {
-        List<GenericRecord> out = new ArrayList<>();
-        try (ParquetReader<GenericData.Record> reader = AvroParquetReader.<GenericData.Record>builder(
-                        new LocalInputFile(file))
-                .build()) {
-            GenericData.Record avroRecord;
-            while ((avroRecord = reader.read()) != null) {
-                out.add(avroRecord);
-            }
-        }
-        return out;
-    }
-
-    private static ParquetMetadata readFooterViaParquetJava(Path file) throws IOException {
-        try (ParquetFileReader reader = ParquetFileReader.open(new LocalInputFile(file))) {
-            return reader.getFooter();
         }
     }
 

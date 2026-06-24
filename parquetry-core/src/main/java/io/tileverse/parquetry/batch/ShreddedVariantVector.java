@@ -26,6 +26,7 @@ import io.tileverse.parquetry.data.variant.ShreddedVariantReconstructor;
 import io.tileverse.parquetry.data.variant.ShreddedVariantReconstructor.NodeReader;
 import io.tileverse.parquetry.data.variant.Variant;
 import io.tileverse.parquetry.data.variant.VariantMetadata;
+import io.tileverse.parquetry.schema.ColumnPath;
 
 import lombok.NonNull;
 
@@ -45,6 +46,7 @@ public final class ShreddedVariantVector implements ColumnVector {
     private final Validity validity;
     private final int size;
     private final MemorySegment[] cache;
+    private StructVector structView;
 
     public ShreddedVariantVector(
             @NonNull BinaryVector metadataColumn,
@@ -58,6 +60,90 @@ public final class ShreddedVariantVector implements ColumnVector {
         this.validity = validity;
         this.size = size;
         this.cache = new MemorySegment[size];
+    }
+
+    /** The {@code metadata} leaf column, one Variant metadata dictionary per row. */
+    public BinaryVector metadataColumn() {
+        return metadataColumn;
+    }
+
+    /** The shredded shape this column's typed subtree was classified into. */
+    public ShreddedVariant model() {
+        return model;
+    }
+
+    /** The root node's assembled inputs: the residual {@code value} leaf and the typed representation. */
+    public VariantInput root() {
+        return root;
+    }
+
+    /**
+     * A read-only nested view of this shredded Variant column as the struct-of-leaves the Parquet Variant group schema
+     * declares: a {@link StructVector} {@code v} whose children are the {@code metadata} leaf, the optional residual
+     * {@code value} leaf, and the typed representation under {@code typed_value} (a scalar leaf, an object struct, or
+     * an array list). The view wraps the existing leaf vectors without copying, letting the write-side striper navigate
+     * a shredded Variant column with the same struct and list machinery it uses for ordinary nested columns. Children
+     * absent from the model (a missing {@code value} or {@code typed_value}) are omitted to match the schema's leaves.
+     */
+    public StructVector asStructView() {
+        // Built once over immutable leaf vectors; single-threaded during striping, no synchronization needed.
+        if (structView == null) {
+            structView = buildStructView();
+        }
+        return structView;
+    }
+
+    private StructVector buildStructView() {
+        Map<ColumnPath, ColumnVector> children = new LinkedHashMap<>();
+        children.put(ColumnPath.of("metadata"), metadataColumn);
+        putNodeChildren(children, root);
+        return new StructVector(children, validity, size);
+    }
+
+    private void putNodeChildren(Map<ColumnPath, ColumnVector> children, VariantInput input) {
+        if (input.value() != null) {
+            children.put(ColumnPath.of("value"), input.value());
+        }
+        if (input.typed() != null) {
+            children.put(ColumnPath.of("typed_value"), typedView(input.typed()));
+        }
+    }
+
+    private ColumnVector typedView(TypedInput typed) {
+        return switch (typed) {
+            case ScalarInput(ColumnVector vector) -> vector;
+            case ObjectInput object -> objectView(object);
+            case ArrayInput array -> arrayView(array);
+        };
+    }
+
+    private StructVector objectView(ObjectInput object) {
+        Map<ColumnPath, ColumnVector> fields = new LinkedHashMap<>();
+        for (Map.Entry<String, VariantInput> field : object.fields().entrySet()) {
+            fields.put(ColumnPath.of(field.getKey()), fieldGroupView(field.getValue()));
+        }
+        return new StructVector(fields, object.presence(), size);
+    }
+
+    private ListVector arrayView(ArrayInput array) {
+        int elementCount = array.offsets()[size];
+        StructVector elementView = fieldGroupView(array.element(), elementCount);
+        return new ListVector(array.offsets(), elementView, array.presence(), size);
+    }
+
+    /**
+     * The struct view of one REQUIRED field or element group: its optional {@code value} and {@code typed_value}
+     * children, both keyed by name. The group is REQUIRED in the schema and its rows are therefore all valid; per-row
+     * absence rides on the OPTIONAL {@code value} / {@code typed_value} leaf validity, not the group validity.
+     */
+    private StructVector fieldGroupView(VariantInput field) {
+        return fieldGroupView(field, size);
+    }
+
+    private StructVector fieldGroupView(VariantInput field, int rows) {
+        Map<ColumnPath, ColumnVector> children = new LinkedHashMap<>();
+        putNodeChildren(children, field);
+        return new StructVector(children, Validity.allValid(rows), rows);
     }
 
     /** One shredded node's assembled inputs: an optional unshredded value leaf and an optional typed representation. */

@@ -34,6 +34,9 @@ import io.tileverse.parquetry.schema.ParquetSchemaException;
  * column holds a detached value (a boxed primitive, an owned read-only {@link MemorySegment} for binary, a nested
  * detached record/list/map, or {@code null}). It stays valid after the producing batch closes and is safe to retain and
  * share across threads.
+ *
+ * <p>Multi-part column paths (e.g. {@code ColumnPath.of("s", "f")}) are resolved by walking into nested struct
+ * sub-records segment by segment, mirroring the navigation that {@link DefaultParquetRecord} performs on live batches.
  */
 public final class DetachedParquetRecord implements ParquetRecord {
 
@@ -154,79 +157,90 @@ public final class DetachedParquetRecord implements ParquetRecord {
         return values[col];
     }
 
+    // --- ColumnPath-based accessors: all delegate to locateNested for path navigation ---
+
     @Override
     public boolean isNull(ColumnPath col) {
-        int index = indexOf(col);
-        return index < 0 || isNull(index);
+        Located located = locateNested(col);
+        return located == null || located.nested().isNull(located.index());
     }
 
     @Override
     public boolean getBoolean(ColumnPath col) {
-        return getBoolean(requireIndex(col, "getBoolean"));
+        Located located = requireLocated(col, "getBoolean");
+        return located.nested().getBoolean(located.index());
     }
 
     @Override
     public int getInt(ColumnPath col) {
-        return getInt(requireIndex(col, "getInt"));
+        Located located = requireLocated(col, "getInt");
+        return located.nested().getInt(located.index());
     }
 
     @Override
     public long getLong(ColumnPath col) {
-        return getLong(requireIndex(col, "getLong"));
+        Located located = requireLocated(col, "getLong");
+        return located.nested().getLong(located.index());
     }
 
     @Override
     public float getFloat(ColumnPath col) {
-        return getFloat(requireIndex(col, "getFloat"));
+        Located located = requireLocated(col, "getFloat");
+        return located.nested().getFloat(located.index());
     }
 
     @Override
     public double getDouble(ColumnPath col) {
-        return getDouble(requireIndex(col, "getDouble"));
+        Located located = requireLocated(col, "getDouble");
+        return located.nested().getDouble(located.index());
     }
 
     @Override
     public String getString(ColumnPath col) {
-        return getString(requireIndex(col, "getString"));
+        Located located = requireLocated(col, "getString");
+        return located.nested().getString(located.index());
     }
 
     @Override
     public byte[] getBinary(ColumnPath col) {
-        return getBinary(requireIndex(col, "getBinary"));
+        Located located = requireLocated(col, "getBinary");
+        return located.nested().getBinary(located.index());
     }
 
     @Override
     public UUID getUuid(ColumnPath col) {
-        return getUuid(requireIndex(col, "getUuid"));
+        Located located = requireLocated(col, "getUuid");
+        return located.nested().getUuid(located.index());
     }
 
     @Override
     public <R> R readBinary(ColumnPath col, BinaryView<R> view) {
-        return readBinary(requireIndex(col, "readBinary"), view);
+        Located located = requireLocated(col, "readBinary");
+        return located.nested().readBinary(located.index(), view);
     }
 
     @Override
     public ParquetRecord readStruct(ColumnPath col) {
-        int index = indexOf(col);
-        return index < 0 ? null : readStruct(index);
+        Located located = locateNested(col);
+        return located == null ? null : located.nested().readStruct(located.index());
     }
 
     @Override
     public List<ParquetRecord> readList(ColumnPath col) {
-        int index = indexOf(col);
-        return index < 0 ? null : readList(index);
+        Located located = locateNested(col);
+        return located == null ? null : located.nested().readList(located.index());
     }
 
     @Override
     public Map<?, ?> readMap(ColumnPath col) {
-        int index = indexOf(col);
-        return index < 0 ? null : readMap(index);
+        Located located = locateNested(col);
+        return located == null ? null : located.nested().readMap(located.index());
     }
 
     @Override
     public Object get(ColumnPath col) {
-        int index = indexOf(col);
-        return index < 0 ? null : get(index);
+        Located located = locateNested(col);
+        return located == null ? null : located.nested().get(located.index());
     }
 
     @Override
@@ -244,17 +258,52 @@ public final class DetachedParquetRecord implements ParquetRecord {
         return this;
     }
 
-    private int indexOf(ColumnPath col) {
-        Integer index = indexByPath.get(col);
-        return index == null ? -1 : index;
+    /**
+     * Locates a possibly-nested path by walking struct sub-records one segment at a time.
+     *
+     * <p>Returns the (record, colIndex) pair where the leaf resides. Returns {@code null} when the path is absent at
+     * any level or when an intermediate struct cell is null.
+     */
+    private Located locateNested(ColumnPath col) {
+        Integer directIndex = indexByPath.get(col);
+        if (directIndex != null) {
+            return new Located(this, directIndex);
+        }
+        if (col.numParts() <= 1) {
+            return null;
+        }
+        String dotted = col.dot();
+        DetachedParquetRecord level = this;
+        int segmentStart = 0;
+        while (true) {
+            int separator = dotted.indexOf('.', segmentStart);
+            int segmentEnd = separator < 0 ? dotted.length() : separator;
+            ColumnPath segment = ColumnPath.of(dotted.substring(segmentStart, segmentEnd));
+            Integer segmentIndex = level.indexByPath.get(segment);
+            if (segmentIndex == null) {
+                return null;
+            }
+            if (separator < 0) {
+                return new Located(level, segmentIndex);
+            }
+            Object child = level.values[segmentIndex];
+            if (!(child instanceof DetachedParquetRecord nestedRecord)) {
+                return null;
+            }
+            level = nestedRecord;
+            segmentStart = segmentEnd + 1;
+        }
     }
 
-    private int requireIndex(ColumnPath col, String accessor) {
-        int index = indexOf(col);
-        if (index < 0) {
-            throw new ParquetSchemaException(
-                    "Column " + col.dot() + " is not present in the projected schema (accessor " + accessor + ")");
+    private Located requireLocated(ColumnPath col, String accessor) {
+        Located located = locateNested(col);
+        if (located == null) {
+            throw new ParquetSchemaException("Column " + col.dot()
+                    + " is not present in the projected schema or is unreachable through a null struct ancestor (accessor "
+                    + accessor + ")");
         }
-        return index;
+        return located;
     }
+
+    private record Located(DetachedParquetRecord nested, int index) {}
 }

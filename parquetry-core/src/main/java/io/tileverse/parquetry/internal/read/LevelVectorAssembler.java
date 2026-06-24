@@ -29,8 +29,8 @@ import io.tileverse.parquetry.batch.LevelListVector;
 import io.tileverse.parquetry.batch.LevelMapVector;
 import io.tileverse.parquetry.batch.StructVector;
 import io.tileverse.parquetry.batch.Validity;
-import io.tileverse.parquetry.internal.read.DremelAssembler.GroupKind;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.GroupKind;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaNode;
 
@@ -106,7 +106,7 @@ public final class LevelVectorAssembler {
             return;
         }
         List<String> groupPath = concat(nodePath, group.name());
-        GroupKind kind = DremelAssembler.classify(group);
+        GroupKind kind = GroupKind.of(group);
         if (kind == GroupKind.LIST || kind == GroupKind.MAP) {
             addDescendantLeaves(group, groupPath, leafVectors, repeated);
             return;
@@ -226,7 +226,7 @@ public final class LevelVectorAssembler {
                 return;
             }
             result.put(ColumnPath.of(groupPath), vector);
-            switch (DremelAssembler.classify(group)) {
+            switch (GroupKind.of(group)) {
                 case LIST, MAP ->
                     NestedVectorAssembler.markDescendantLeavesHidden(group, groupPath, leafVectors, hiddenLeaves);
                 case STRUCT, VARIANT ->
@@ -238,7 +238,7 @@ public final class LevelVectorAssembler {
          * The level-form vector for {@code group} over {@code numSlots} row-aligned slots, or null when it is empty.
          */
         private ColumnVector assembleGroup(SchemaNode.Group group, List<String> groupPath, int numSlots) {
-            return switch (DremelAssembler.classify(group)) {
+            return switch (GroupKind.of(group)) {
                 case LIST -> levelList(group, groupPath, numSlots);
                 case MAP -> levelMap(group, groupPath, numSlots);
                 case STRUCT -> levelStruct(group, groupPath, numSlots);
@@ -294,7 +294,7 @@ public final class LevelVectorAssembler {
                 return leafVectors.get(ColumnPath.of(childPath));
             }
             SchemaNode.Group childGroup = (SchemaNode.Group) child;
-            return switch (DremelAssembler.classify(childGroup)) {
+            return switch (GroupKind.of(childGroup)) {
                 case LIST -> levelList(childGroup, childPath, numSlots);
                 case MAP -> levelMap(childGroup, childPath, numSlots);
                 case STRUCT -> levelStruct(childGroup, childPath, numSlots);

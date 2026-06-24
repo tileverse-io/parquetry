@@ -24,6 +24,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +35,10 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
+import io.tileverse.parquetry.batch.IntVector;
+import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.data.ParquetWriteException;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.EncodingPolicy;
@@ -268,6 +273,35 @@ class RowGroupWriterTest {
                 .isEmpty();
     }
 
+    /**
+     * FIX 2: a batch that omits a declared leaf column (not even via a top-level nested vector) must throw a clear
+     * {@link ParquetWriteException} naming the missing column, not an NPE.
+     */
+    @Test
+    void missingBatchColumnThrowsClearException() {
+        SchemaNode.Primitive idLeaf = requiredInt32("id");
+        SchemaNode.Primitive nameLeaf = requiredBinary("name");
+        ParquetSchema schema = flatSchema(idLeaf, nameLeaf);
+        WriteOptions options = options().build();
+
+        // Construct a batch manually that includes only the "id" vector, leaving "name" absent.
+        // DefaultParquetRecordBatch.ofHeap accepts any column map, making it possible to craft a
+        // batch that is missing a leaf the schema declares.
+        ParquetSchema idOnlySchema = flatSchema(idLeaf);
+        io.tileverse.parquetry.batch.ParquetRecordBatch idOnlyBatch =
+                WriteFixtures.batch(idOnlySchema, List.of(Map.of(ColumnPath.of("id"), 1)));
+        Map<ColumnPath, io.tileverse.parquetry.batch.ColumnVector> columns =
+                new java.util.LinkedHashMap<>(idOnlyBatch.columns());
+        io.tileverse.parquetry.batch.ParquetRecordBatch truncatedBatch =
+                io.tileverse.parquetry.batch.DefaultParquetRecordBatch.ofHeap(schema, columns, 1);
+
+        try (RowGroupWriter rgw = new RowGroupWriter(options, schema, tempDir)) {
+            assertThatThrownBy(() -> rgw.appendBatch(truncatedBatch))
+                    .isInstanceOf(ParquetWriteException.class)
+                    .hasMessageContaining("name");
+        }
+    }
+
     @Test
     void optionalColumnRecordsNullsForAbsentValues() throws Exception {
         SchemaNode.Primitive optional = new SchemaNode.Primitive(
@@ -296,6 +330,61 @@ class RowGroupWriterTest {
         ColumnMetaData meta = flushed.rowGroup().columns().get(0).metaData().orElseThrow();
         assertThat(meta.numValues()).isEqualTo(10L);
         assertThat(meta.statistics().orElseThrow().nullCount().orElseThrow()).isEqualTo(5L);
+    }
+
+    @Test
+    void directlySuppliedNestedLeafWithOptionalAncestorIsRejected() {
+        SchemaNode.Primitive fLeaf = new SchemaNode.Primitive(
+                "f", Repetition.OPTIONAL, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
+        SchemaNode.Group sGroup = new SchemaNode.Group("s", Repetition.OPTIONAL, List.of(fLeaf), Optional.empty(), -1);
+        ParquetSchema schema = new ParquetSchema(
+                new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(sGroup), Optional.empty(), -1));
+        WriteOptions options = options().build();
+
+        ParquetRecordBatch batch = DefaultParquetRecordBatch.ofHeap(
+                schema,
+                Map.of(ColumnPath.of("s", "f"), IntVector.materialized(new int[] {1, 2}, Validity.allValid(2))),
+                2);
+
+        try (RowGroupWriter rgw = new RowGroupWriter(options, schema, tempDir)) {
+            assertThatThrownBy(() -> rgw.appendBatch(batch))
+                    .isInstanceOf(ParquetWriteException.class)
+                    .hasMessageContaining("optional or repeated ancestors");
+        }
+    }
+
+    @Test
+    void directlySuppliedNestedLeafUnderRequiredStructStillWrites() {
+        SchemaNode.Primitive fLeaf = new SchemaNode.Primitive(
+                "f", Repetition.OPTIONAL, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
+        SchemaNode.Group sGroup = new SchemaNode.Group("s", Repetition.REQUIRED, List.of(fLeaf), Optional.empty(), -1);
+        ParquetSchema schema = new ParquetSchema(
+                new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(sGroup), Optional.empty(), -1));
+        WriteOptions options = options()
+                .pageValueLimit(16)
+                .encodingPolicy("f", EncodingPolicy.FORCE_PLAIN)
+                .build();
+
+        BitSet present = new BitSet(4);
+        present.set(0);
+        present.set(2);
+        ParquetRecordBatch batch = DefaultParquetRecordBatch.ofHeap(
+                schema,
+                Map.of(
+                        ColumnPath.of("s", "f"),
+                        IntVector.materialized(new int[] {10, 0, 30, 0}, Validity.of(present, 4))),
+                4);
+
+        ByteArrayByteSink sink = new ByteArrayByteSink();
+        RowGroupFlushResult flushed;
+        try (RowGroupWriter rgw = new RowGroupWriter(options, schema, tempDir)) {
+            rgw.appendBatch(batch);
+            flushed = rgw.flushTo(sink);
+        }
+
+        ColumnMetaData meta = flushed.rowGroup().columns().get(0).metaData().orElseThrow();
+        assertThat(meta.numValues()).isEqualTo(4L);
+        assertThat(meta.statistics().orElseThrow().nullCount().orElseThrow()).isEqualTo(2L);
     }
 
     // --- helpers ---

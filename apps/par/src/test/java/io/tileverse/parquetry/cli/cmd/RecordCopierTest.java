@@ -26,6 +26,7 @@ import java.util.OptionalInt;
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.cli.UnsupportedSchemaException;
 import io.tileverse.parquetry.cli.support.Fixtures;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.format.LogicalType;
@@ -45,12 +46,27 @@ class RecordCopierTest {
     }
 
     @Test
-    void nestedGroupIsRejected() {
-        SchemaNode.Group inner = new SchemaNode.Group("addr", Repetition.OPTIONAL, List.of(), Optional.empty(), -1);
+    void structGroupIsSupported() {
+        SchemaNode.Primitive child = new SchemaNode.Primitive(
+                "x", Repetition.REQUIRED, PrimitiveKind.FLOAT, OptionalInt.empty(), Optional.empty(), -1);
+        SchemaNode.Group inner =
+                new SchemaNode.Group("addr", Repetition.OPTIONAL, List.of(child), Optional.empty(), -1);
+        SchemaNode.Group root =
+                new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(inner), Optional.empty(), -1);
+        assertThatCode(() -> RecordCopier.requireWritable(new ParquetSchema(root)))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void repeatedGroupIsRejected() {
+        SchemaNode.Primitive child = new SchemaNode.Primitive(
+                "x", Repetition.REQUIRED, PrimitiveKind.FLOAT, OptionalInt.empty(), Optional.empty(), -1);
+        SchemaNode.Group inner =
+                new SchemaNode.Group("items", Repetition.REPEATED, List.of(child), Optional.empty(), -1);
         SchemaNode.Group root =
                 new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(inner), Optional.empty(), -1);
         assertThatThrownBy(() -> RecordCopier.requireWritable(new ParquetSchema(root)))
-                .hasMessageContaining("flat");
+                .isInstanceOf(UnsupportedSchemaException.class);
     }
 
     @Test
@@ -89,6 +105,22 @@ class RecordCopierTest {
         SchemaNode.Group root =
                 new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(payload), Optional.empty(), -1);
         assertThatThrownBy(() -> RecordCopier.requireWritable(new ParquetSchema(root)))
+                .hasMessageContaining("Variant");
+    }
+
+    @Test
+    void variantGroupIsRejected() {
+        SchemaNode.Primitive metadata = new SchemaNode.Primitive(
+                "metadata", Repetition.REQUIRED, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1);
+        SchemaNode.Primitive value = new SchemaNode.Primitive(
+                "value", Repetition.OPTIONAL, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1);
+        SchemaNode.Group payload = new SchemaNode.Group(
+                "payload", Repetition.OPTIONAL, List.of(metadata, value), Optional.of(new LogicalType.Variant()), -1);
+        SchemaNode.Group root =
+                new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(payload), Optional.empty(), -1);
+        ParquetSchema schema = new ParquetSchema(root);
+        assertThatThrownBy(() -> RecordCopier.requireWritable(schema))
+                .isInstanceOf(UnsupportedSchemaException.class)
                 .hasMessageContaining("Variant");
     }
 

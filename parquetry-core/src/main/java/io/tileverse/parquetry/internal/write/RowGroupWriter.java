@@ -28,6 +28,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
 
+import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.data.Compression;
 import io.tileverse.parquetry.data.ParquetWriteException;
@@ -40,6 +41,7 @@ import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.io.ByteSink;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.LevelMaxima;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
@@ -51,9 +53,8 @@ import lombok.NonNull;
  * Per-row-group accumulator that fans incoming records out to one {@link ColumnChunkWriter} per leaf column, then
  * consolidates every column's temp file into the caller's output stream at flush time.
  *
- * <p>Flat schemas only in this phase: every column is at the root group and repetition is {@link Repetition#REQUIRED}
- * or {@link Repetition#OPTIONAL}. Nested groups and repeated columns fail fast at construction. A dataset-level writer
- * layer wires this writer to record sources.
+ * <p>Flat and struct-nested schemas are both supported. Repeated columns (list / map elements) are rejected at
+ * construction. A dataset-level writer layer wires this writer to record sources.
  *
  * <p>Consolidation runs sequentially in schema order. {@code ColumnChunkWriter.finishChunk()} is bookkeeping plus a
  * final partial-page flush; parallelising it via {@link java.util.concurrent.StructuredTaskScope} buys nothing until
@@ -111,21 +112,51 @@ public final class RowGroupWriter implements AutoCloseable {
     }
 
     /**
-     * Appends one whole batch of rows by walking each column vector cell by cell and dispatching to the matching typed
-     * {@link ColumnChunkWriter} method. Nulls go through {@link ColumnChunkWriter#appendNull}; non-nulls go through the
-     * primitive-kind-specialised {@code appendXxx}, keeping the dictionary attempt, statistics, and bloom filter in
-     * sync.
+     * Appends one whole batch of rows. Flat leaves (top-level primitives) feed directly to their
+     * {@link ColumnChunkWriter} via the per-vector fast path, keeping the flat path byte-identical to the pre-struct
+     * writer. Struct leaves (top-level struct vectors) are shredded once per batch by {@link DremelStriper} and then
+     * fed cell-by-cell through the level-aware {@code appendXxx} / {@code appendNull} API.
      */
     public void appendBatch(@NonNull ParquetRecordBatch batch) {
         if (flushed) {
             throw new ParquetWriteException("Cannot appendBatch after flushTo on RowGroupWriter");
         }
         int batchRows = batch.rowCount();
-        java.util.Map<ColumnPath, io.tileverse.parquetry.batch.ColumnVector> columns = batch.columns();
+        Map<ColumnPath, ColumnVector> columns = batch.columns();
+        checkAllLeavesPresent(columns);
+        appendDirectLeaves(columns, batchRows);
+        appendStripedLeaves(batch, columns);
+        rowCount += batchRows;
+    }
+
+    /**
+     * Verifies that every leaf declared by the schema is supplied by the batch, either directly (its full path is a
+     * primitive vector key) or indirectly (its root path-component is present as a top-level nested vector in the
+     * batch). Throws {@link ParquetWriteException} for any leaf whose root is absent from the batch.
+     */
+    private void checkAllLeavesPresent(Map<ColumnPath, ColumnVector> columns) {
         for (LeafBinding binding : leaves) {
-            io.tileverse.parquetry.batch.ColumnVector vector = columns.get(binding.path);
-            if (vector == null) {
+            if (columns.containsKey(binding.path)) {
+                continue;
+            }
+            ColumnPath rootPath = ColumnPath.of(binding.path.part(0));
+            if (!columns.containsKey(rootPath)) {
                 throw new ParquetWriteException("Batch is missing column " + binding.path.dot());
+            }
+        }
+    }
+
+    /**
+     * Writes every leaf the batch supplies directly as its own primitive vector, keyed by the full leaf path. This
+     * covers flat columns and pre-flattened nested leaves (a producer that emits {@code bbox.xmin} as a standalone
+     * column), and stays byte-identical to the pre-struct writer. Leaves the batch supplies only through a top-level
+     * nested vector are written by {@link #appendStripedLeaves}.
+     */
+    private void appendDirectLeaves(Map<ColumnPath, ColumnVector> columns, int batchRows) {
+        for (LeafBinding binding : leaves) {
+            ColumnVector vector = columns.get(binding.path);
+            if (vector == null) {
+                continue;
             }
             if (vector.size() != batchRows) {
                 throw new ParquetWriteException("Batch column " + binding.path.dot() + " size " + vector.size()
@@ -133,7 +164,78 @@ public final class RowGroupWriter implements AutoCloseable {
             }
             binding.writer.appendVector(binding.leaf, vector);
         }
-        rowCount += batchRows;
+    }
+
+    /**
+     * Shreds the leaves the batch supplies only through a top-level nested vector (a struct column) and feeds each
+     * leaf's level stream cell by cell. The striper runs only when at least one leaf is supplied indirectly, which
+     * keeps a flat batch from constructing it.
+     */
+    private void appendStripedLeaves(ParquetRecordBatch batch, Map<ColumnPath, ColumnVector> columns) {
+        if (allLeavesSuppliedDirectly(columns)) {
+            return;
+        }
+        List<StripedLeaf> striped = new DremelStriper(schema).stripe(batch);
+        for (StripedLeaf sl : striped) {
+            if (columns.containsKey(sl.leaf())) {
+                // Already written by the direct-leaf path; skip to avoid double-writing.
+                continue;
+            }
+            LeafBinding binding = leafByPath.get(sl.leaf());
+            if (binding != null) {
+                appendStripedLeaf(binding.writer, sl);
+            }
+        }
+    }
+
+    private boolean allLeavesSuppliedDirectly(Map<ColumnPath, ColumnVector> columns) {
+        for (LeafBinding binding : leaves) {
+            if (!columns.containsKey(binding.path)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Feeds one shredded leaf to its column chunk writer, cell by cell. Rows whose definition level is below maxDef are
+     * nulls; rows at maxDef contribute a value drawn sequentially from the stripped value vector.
+     */
+    private void appendStripedLeaf(ColumnChunkWriter writer, StripedLeaf sl) {
+        int maxDef = sl.maxDefLevel();
+        int[] defLevels = sl.defLevels();
+        int[] repLevels = sl.repLevels();
+        int valueIndex = 0;
+        int levelCount = defLevels.length;
+        for (int row = 0; row < levelCount; row++) {
+            int def = defLevels[row];
+            int rep = repLevels[row];
+            if (def == maxDef) {
+                appendValueAt(writer, sl.values(), valueIndex, rep, def);
+                valueIndex++;
+            } else {
+                writer.appendNull(rep, def);
+            }
+        }
+    }
+
+    /** Dispatches one value from {@code values} at {@code valueIndex} to the appropriate typed append on the writer. */
+    private void appendValueAt(ColumnChunkWriter writer, ColumnVector values, int valueIndex, int rep, int def) {
+        switch (values) {
+            case io.tileverse.parquetry.batch.IntVector iv -> writer.appendInt(iv.asArray()[valueIndex], rep, def);
+            case io.tileverse.parquetry.batch.LongVector lv -> writer.appendLong(lv.asArray()[valueIndex], rep, def);
+            case io.tileverse.parquetry.batch.FloatVector fv -> writer.appendFloat(fv.asArray()[valueIndex], rep, def);
+            case io.tileverse.parquetry.batch.DoubleVector dv ->
+                writer.appendDouble(dv.asArray()[valueIndex], rep, def);
+            case io.tileverse.parquetry.batch.BooleanVector bv ->
+                writer.appendBoolean(bv.asArray()[valueIndex], rep, def);
+            case io.tileverse.parquetry.batch.BinaryVector binv -> writer.appendBinary(binv.get(valueIndex), rep, def);
+            case io.tileverse.parquetry.batch.FixedLenBinaryVector flbv ->
+                writer.appendFixedLenBinary(flbv.get(valueIndex), rep, def);
+            default ->
+                throw new ParquetWriteException("Unsupported value vector type for nested leaf: "
+                        + values.getClass().getSimpleName());
+        }
     }
 
     /**
@@ -322,31 +424,58 @@ public final class RowGroupWriter implements AutoCloseable {
                     .orElseThrow(() -> new ParquetWriteException(
                             "Schema is missing leaf column declared by leafColumns(): " + path.dot()));
             if (!(field instanceof SchemaNode.Primitive leaf)) {
-                throw new ParquetWriteException("Schema field " + path.dot() + " is a group, not a primitive leaf");
+                throw new ParquetWriteException("Leaf path " + path.dot() + " resolved to a group node");
             }
-            rejectRepeatedLeaf(path, leaf);
-            bindings.add(openLeafBinding(options, tempDir, path, leaf));
+            boolean nested = needsSchemaDerivedLevels(path, leaf);
+            bindings.add(openLeafBinding(options, schema, tempDir, path, leaf, nested));
         }
         return bindings;
     }
 
     private static LeafBinding openLeafBinding(
-            WriteOptions options, Path tempDir, ColumnPath path, SchemaNode.Primitive leaf) {
+            WriteOptions options,
+            ParquetSchema schema,
+            Path tempDir,
+            ColumnPath path,
+            SchemaNode.Primitive leaf,
+            boolean nested) {
         try {
             Path tempFile = Files.createTempFile(tempDir, "rgw-" + safeFileName(path) + "-", ".tmp");
-            ColumnChunkWriter writer = new ColumnChunkWriter(options, leaf, tempFile);
+            ColumnChunkWriter writer = openLeafWriter(options, schema, leaf, path, tempFile, nested);
             Compression compression = resolveCompression(options, leaf.name());
-            return new LeafBinding(path, leaf, writer, tempFile, compression);
+            return new LeafBinding(path, leaf, writer, tempFile, compression, nested);
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to open column writer for " + path.dot(), e);
         }
     }
 
-    private static void rejectRepeatedLeaf(ColumnPath path, SchemaNode.Primitive leaf) {
-        if (leaf.repetition() == Repetition.REPEATED) {
-            throw new ParquetWriteException(
-                    "Repeated leaf columns are not supported by RowGroupWriter yet: " + path.dot());
+    @SuppressWarnings(
+            "java:S125") // explanatory comment describing why the full path is required; not commented-out code
+    private static ColumnChunkWriter openLeafWriter(
+            WriteOptions options,
+            ParquetSchema schema,
+            SchemaNode.Primitive leaf,
+            ColumnPath path,
+            Path tempFile,
+            boolean nested)
+            throws IOException {
+        if (!nested) {
+            return new ColumnChunkWriter(options, leaf, tempFile);
         }
+        // For nested leaves the definition level is the count of optional ancestors plus the leaf's own optionality;
+        // this cannot be derived from the leaf node alone and must be computed from the full path.
+        LevelMaxima levelMaxima = schema.maxLevels(path);
+        return new ColumnChunkWriter(options, leaf, tempFile, levelMaxima);
+    }
+
+    /**
+     * Whether the leaf's repetition and definition level maxima must come from the full schema path rather than the
+     * leaf's own repetition field. A flat REQUIRED / OPTIONAL leaf (single path part, never repeated) derives both from
+     * the leaf node alone. Any leaf nested under a group, or any repeated leaf, accumulates levels across enclosing
+     * OPTIONAL and REPEATED ancestors and is fed through the Dremel striper.
+     */
+    private static boolean needsSchemaDerivedLevels(ColumnPath path, SchemaNode.Primitive leaf) {
+        return path.numParts() > 1 || leaf.repetition() == Repetition.REPEATED;
     }
 
     private static Map<ColumnPath, LeafBinding> indexByPath(List<LeafBinding> bindings) {
@@ -420,12 +549,14 @@ public final class RowGroupWriter implements AutoCloseable {
 
     /**
      * Pairs a leaf column path with its open writer and the temp file the writer accumulates into. Captured up front so
-     * flush-time iteration and close-time cleanup share the same state.
+     * flush-time iteration and close-time cleanup share the same state. {@code nested} is true when the leaf is inside
+     * a struct group (path depth > 1); nested leaves are fed via the Dremel striper, not the bulk vector path.
      */
     private record LeafBinding(
             ColumnPath path,
             SchemaNode.Primitive leaf,
             ColumnChunkWriter writer,
             Path tempFile,
-            Compression compression) {}
+            Compression compression,
+            boolean nested) {}
 }

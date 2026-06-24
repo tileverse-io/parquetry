@@ -21,7 +21,6 @@ import java.util.BitSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.function.IntFunction;
 
 import io.tileverse.parquetry.batch.BinaryVector;
@@ -50,6 +49,7 @@ import io.tileverse.parquetry.data.variant.ShreddedVariant;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.GroupKind;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
@@ -126,7 +126,7 @@ final class DremelAssembler {
      */
     private ColumnVector assembleGroup(
             SchemaNode.Group group, List<String> groupPath, int parentRepLevel, int numSlots) {
-        return switch (classify(group)) {
+        return switch (GroupKind.of(group)) {
             case LIST -> lists.assemble(group, groupPath, parentRepLevel, numSlots);
             case MAP -> maps.assemble(group, groupPath, parentRepLevel, numSlots);
             case STRUCT -> structs.assemble(group, groupPath, parentRepLevel, numSlots);
@@ -626,35 +626,6 @@ final class DremelAssembler {
         result.addAll(prefix);
         result.add(segment);
         return result;
-    }
-
-    // --- classification ---
-
-    static GroupKind classify(SchemaNode.Group group) {
-        Optional<LogicalType> annotation = group.logicalType();
-        if (annotation.isPresent()) {
-            LogicalType lt = annotation.get();
-            if (lt instanceof LogicalType.Variant) {
-                return GroupKind.VARIANT;
-            }
-            if (lt instanceof LogicalType.ListType) {
-                return GroupKind.LIST;
-            }
-            if (lt instanceof LogicalType.MapType) {
-                return GroupKind.MAP;
-            }
-        }
-        if (group.repetition() == Repetition.REPEATED) {
-            return GroupKind.LIST;
-        }
-        return GroupKind.STRUCT;
-    }
-
-    enum GroupKind {
-        LIST,
-        MAP,
-        STRUCT,
-        VARIANT
     }
 
     /**

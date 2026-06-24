@@ -81,6 +81,74 @@ class StatisticsAccumulatorTest {
     }
 
     @Test
+    void legacyMinMaxMirrorTheModernValuesForCompatibility() {
+        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
+        acc.update(5, false);
+        acc.update(-3, false);
+        acc.update(42, false);
+
+        Statistics stats = acc.finishChunk();
+        assertThat(decodeInt32(stats.min())).as("legacy min").isEqualTo(-3);
+        assertThat(decodeInt32(stats.max())).as("legacy max").isEqualTo(42);
+        assertThat(stats.min().toArray(java.lang.foreign.ValueLayout.JAVA_BYTE))
+                .as("legacy min mirrors min_value")
+                .isEqualTo(stats.minValue().toArray(java.lang.foreign.ValueLayout.JAVA_BYTE));
+        assertThat(stats.max().toArray(java.lang.foreign.ValueLayout.JAVA_BYTE))
+                .as("legacy max mirrors max_value")
+                .isEqualTo(stats.maxValue().toArray(java.lang.foreign.ValueLayout.JAVA_BYTE));
+    }
+
+    @Test
+    void binaryOmitsLegacyMinMax() {
+        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.BYTE_ARRAY, null);
+        acc.update(asSegment(new byte[] {0x7E}), false);
+        acc.update(asSegment(new byte[] {(byte) 0x80}), false);
+
+        Statistics stats = acc.finishChunk();
+        assertThat(stats.minValue()).as("modern minValue present").isNotEqualTo(MemorySegment.NULL);
+        assertThat(stats.maxValue()).as("modern maxValue present").isNotEqualTo(MemorySegment.NULL);
+        assertThat(stats.min()).as("legacy min omitted").isEqualTo(MemorySegment.NULL);
+        assertThat(stats.max()).as("legacy max omitted").isEqualTo(MemorySegment.NULL);
+    }
+
+    @Test
+    void fixedLenBinaryOmitsLegacyMinMax() {
+        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.FIXED_LEN_BYTE_ARRAY, null);
+        acc.update(asSegment(new byte[] {0x7E}), false);
+        acc.update(asSegment(new byte[] {(byte) 0x80}), false);
+
+        Statistics stats = acc.finishChunk();
+        assertThat(stats.minValue()).as("modern minValue present").isNotEqualTo(MemorySegment.NULL);
+        assertThat(stats.maxValue()).as("modern maxValue present").isNotEqualTo(MemorySegment.NULL);
+        assertThat(stats.min()).as("legacy min omitted").isEqualTo(MemorySegment.NULL);
+        assertThat(stats.max()).as("legacy max omitted").isEqualTo(MemorySegment.NULL);
+    }
+
+    @Test
+    void unsignedIntOmitsLegacyMinMax() {
+        StatisticsAccumulator acc =
+                StatisticsAccumulator.forKind(PrimitiveKind.INT32, new LogicalType.IntType((byte) 32, false));
+        acc.update(5, false);
+        acc.update(-3, false);
+        acc.update(42, false);
+
+        Statistics stats = acc.finishChunk();
+        assertThat(stats.minValue()).as("modern minValue present").isNotEqualTo(MemorySegment.NULL);
+        assertThat(stats.maxValue()).as("modern maxValue present").isNotEqualTo(MemorySegment.NULL);
+        assertThat(stats.min()).as("legacy min omitted").isEqualTo(MemorySegment.NULL);
+        assertThat(stats.max()).as("legacy max omitted").isEqualTo(MemorySegment.NULL);
+    }
+
+    @Test
+    void emptyChunkOmitsLegacyMinMax() {
+        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
+
+        Statistics stats = acc.finishChunk();
+        assertThat(stats.min()).as("legacy min absent").isEqualTo(MemorySegment.NULL);
+        assertThat(stats.max()).as("legacy max absent").isEqualTo(MemorySegment.NULL);
+    }
+
+    @Test
     void int64MinMaxAndNullCountAccumulate() {
         StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.INT64, null);
 

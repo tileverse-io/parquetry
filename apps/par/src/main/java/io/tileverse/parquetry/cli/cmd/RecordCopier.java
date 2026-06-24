@@ -16,9 +16,8 @@
 package io.tileverse.parquetry.cli.cmd;
 
 import java.lang.foreign.MemorySegment;
-import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 import io.tileverse.parquetry.cli.UnsupportedSchemaException;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
@@ -31,137 +30,180 @@ import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
- * Copies flat {@link ParquetRecord}s into a writer's {@link ParquetRecordBatchBuilder appender}.
+ * Copies {@link ParquetRecord}s into a writer's {@link ParquetRecordBatchBuilder appender}, including records that
+ * contain struct (group) columns.
  *
- * <p>This is the canonical record-to-appender copy path. The per-leaf metadata a copy needs (the primitive kind to
- * dispatch on, and where each appender column reads from in the record) is loop-invariant across the rows of one copy.
- * {@link #forSchema(ParquetSchema)} precomputes it once into an indexable plan; {@link #copyInto} then walks that plan
- * with integer-addressed setters and getters, allocating nothing per row and hashing no {@link ColumnPath} per cell.
+ * <p>The per-leaf metadata a copy needs (the primitive kind and the full leaf path) is loop-invariant across rows of
+ * one copy. {@link #forSchema(ParquetSchema)} precomputes it once into a tree of {@link CopyNode}s; {@link #copyInto}
+ * walks the tree per row.
  *
- * <p>The up-front {@link #requireWritable(ParquetSchema)} guard stays static: it runs once, before any copy, and gives
- * the user a clean error for an unsupported schema instead of a deep write failure mid-copy.
+ * <p>Null structs are handled faithfully: an OPTIONAL struct whose value is null for a given row is written as a null
+ * struct (via {@link ParquetRecordBatchBuilder#setNull(ColumnPath)}) and its children are not touched, matching the
+ * source exactly.
+ *
+ * <p>The up-front {@link #requireWritable(ParquetSchema)} guard runs once before any copy and gives the user a clean
+ * error for unsupported schema elements instead of a deep write failure mid-copy.
  */
 public final class RecordCopier {
 
-    private final PrimitiveKind[] kinds;
-    private final ColumnPath[] leaves;
-    private int[] recordColumn;
+    /**
+     * A precomputed node in the copy plan. The plan tree mirrors the schema tree: a leaf node holds the typed copy
+     * action; a group node holds the struct path and the child nodes to copy when the struct is present.
+     */
+    private sealed interface CopyNode permits CopyNode.Leaf, CopyNode.Struct {
 
-    private RecordCopier(PrimitiveKind[] kinds, ColumnPath[] leaves) {
-        this.kinds = kinds;
-        this.leaves = leaves;
+        /**
+         * A primitive leaf: copy from the record at {@code path} to the appender at leaf index {@code appenderIndex},
+         * dispatching on {@code kind}.
+         */
+        record Leaf(ColumnPath path, int appenderIndex, PrimitiveKind kind) implements CopyNode {}
+
+        /**
+         * A struct group: if the struct at {@code path} is null (and it is OPTIONAL), write a null struct and skip
+         * children; otherwise copy each child node.
+         */
+        record Struct(ColumnPath path, Repetition repetition, List<CopyNode> children) implements CopyNode {}
+    }
+
+    private final List<CopyNode> plan;
+
+    private RecordCopier(List<CopyNode> plan) {
+        this.plan = plan;
     }
 
     /**
-     * Verifies the writer can reproduce {@code schema}: top-level fields must be non-repeated primitives, and no leaf
-     * may be INT96 or a Variant logical type. Throws {@link UnsupportedSchemaException} otherwise.
+     * Verifies the writer can reproduce {@code schema}. Plain primitive and struct group columns are allowed; a column
+     * is rejected when it is REPEATED, a LIST, a MAP, INT96, or a Parquet Variant type. Throws
+     * {@link UnsupportedSchemaException} on the first violation.
      */
     public static void requireWritable(ParquetSchema schema) {
         for (SchemaNode child : schema.root().children()) {
-            if (!(child instanceof SchemaNode.Primitive prim)) {
-                throw new UnsupportedSchemaException(
-                        "cp supports flat primitive schemas only; column '" + child.name() + "' is a group");
-            }
-            if (prim.repetition() == Repetition.REPEATED) {
-                throw new UnsupportedSchemaException(
-                        "cp supports flat primitive schemas only; column '" + prim.name() + "' is repeated");
-            }
-            if (prim.kind() == PrimitiveKind.INT96) {
-                throw new UnsupportedSchemaException("cp cannot write INT96 column '" + prim.name() + "'");
-            }
-            if (prim.logicalType()
-                    .filter(lt -> lt instanceof LogicalType.Variant)
-                    .isPresent()) {
-                throw new UnsupportedSchemaException("cp cannot write Variant column '" + prim.name() + "'");
-            }
+            requireWritableNode(child, ColumnPath.of(child.name()));
+        }
+    }
+
+    private static void requireWritableNode(SchemaNode node, ColumnPath path) {
+        if (node instanceof SchemaNode.Primitive prim) {
+            requireWritablePrimitive(prim, path);
+        } else if (node instanceof SchemaNode.Group group) {
+            requireWritableGroup(group, path);
+        }
+    }
+
+    private static void requireWritablePrimitive(SchemaNode.Primitive prim, ColumnPath path) {
+        if (prim.repetition() == Repetition.REPEATED) {
+            throw new UnsupportedSchemaException("cp does not support repeated column '" + path.dot() + "'");
+        }
+        if (prim.kind() == PrimitiveKind.INT96) {
+            throw new UnsupportedSchemaException("cp cannot write INT96 column '" + path.dot() + "'");
+        }
+        if (prim.logicalType().filter(lt -> lt instanceof LogicalType.Variant).isPresent()) {
+            throw new UnsupportedSchemaException("cp cannot write Variant column '" + path.dot() + "'");
+        }
+    }
+
+    private static void requireWritableGroup(SchemaNode.Group group, ColumnPath path) {
+        if (group.repetition() == Repetition.REPEATED) {
+            throw new UnsupportedSchemaException("cp does not support repeated column '" + path.dot() + "'");
+        }
+        boolean isList = group.logicalType()
+                .filter(lt -> lt instanceof LogicalType.ListType)
+                .isPresent();
+        boolean isMap = group.logicalType()
+                .filter(lt -> lt instanceof LogicalType.MapType)
+                .isPresent();
+        boolean isVariant = group.logicalType()
+                .filter(lt -> lt instanceof LogicalType.Variant)
+                .isPresent();
+        if (isList) {
+            throw new UnsupportedSchemaException("cp does not support list column '" + path.dot() + "'");
+        }
+        if (isMap) {
+            throw new UnsupportedSchemaException("cp does not support map column '" + path.dot() + "'");
+        }
+        if (isVariant) {
+            throw new UnsupportedSchemaException("cp cannot write Variant column '" + path.dot() + "'");
+        }
+        for (SchemaNode child : group.children()) {
+            ColumnPath childPath = ColumnPath.parse(path.dot() + "." + child.name());
+            requireWritableNode(child, childPath);
         }
     }
 
     /**
-     * Precomputes the copy plan for {@code writeSchema}: appender column {@code i} corresponds to the {@code i}-th
-     * leaf, and its primitive kind selects the integer-indexed setter to use. The record-column lookup is resolved
-     * lazily on the first record (see {@link #copyInto}), where the record's own column layout is known.
+     * Precomputes the copy plan for {@code writeSchema}. The plan is a list of top-level {@link CopyNode}s whose
+     * structure mirrors the schema tree. Leaf indices follow {@link ParquetSchema#leafColumns()} order, which is the
+     * same order the bound appender uses.
      */
     public static RecordCopier forSchema(ParquetSchema writeSchema) {
         List<ColumnPath> leafColumns = writeSchema.leafColumns();
-        int leafCount = leafColumns.size();
-        PrimitiveKind[] kinds = new PrimitiveKind[leafCount];
-        ColumnPath[] leaves = new ColumnPath[leafCount];
-        for (int i = 0; i < leafCount; i++) {
-            ColumnPath leaf = leafColumns.get(i);
-            SchemaNode.Primitive primitive =
-                    (SchemaNode.Primitive) writeSchema.find(leaf).orElseThrow();
-            kinds[i] = primitive.kind();
-            leaves[i] = leaf;
+        int[] leafIndex = {0};
+        List<CopyNode> plan = new ArrayList<>();
+        for (SchemaNode child : writeSchema.root().children()) {
+            plan.add(buildNode(child, ColumnPath.of(child.name()), leafColumns, leafIndex));
         }
-        return new RecordCopier(kinds, leaves);
+        return new RecordCopier(plan);
+    }
+
+    private static CopyNode buildNode(SchemaNode node, ColumnPath path, List<ColumnPath> leafColumns, int[] leafIndex) {
+        if (node instanceof SchemaNode.Primitive prim) {
+            int idx = leafIndex[0]++;
+            return new CopyNode.Leaf(leafColumns.get(idx), idx, prim.kind());
+        }
+        SchemaNode.Group group = (SchemaNode.Group) node;
+        List<CopyNode> children = new ArrayList<>();
+        for (SchemaNode child : group.children()) {
+            ColumnPath childPath = ColumnPath.parse(path.dot() + "." + child.name());
+            children.add(buildNode(child, childPath, leafColumns, leafIndex));
+        }
+        return new CopyNode.Struct(path, group.repetition(), children);
     }
 
     /**
-     * Copies one record's leaf values into {@code appender} and closes the appended row. Callers must pre-validate the
+     * Copies one record's values into {@code appender} and closes the appended row. Callers must pre-validate the
      * schema with {@link #requireWritable(ParquetSchema)}.
      */
     public void copyInto(ParquetRecordBatchBuilder appender, ParquetRecord record) {
-        int[] columns = recordColumns(record);
-        for (int i = 0; i < kinds.length; i++) {
-            int recordCol = columns[i];
-            copyCell(appender, record, i, recordCol);
+        for (CopyNode node : plan) {
+            copyNode(appender, record, node);
         }
         appender.endRow();
     }
 
-    private void copyCell(ParquetRecordBatchBuilder appender, ParquetRecord record, int appenderCol, int recordCol) {
-        if (record.isNull(recordCol)) {
-            appender.setNull(appenderCol);
+    private void copyNode(ParquetRecordBatchBuilder appender, ParquetRecord record, CopyNode node) {
+        switch (node) {
+            case CopyNode.Leaf leaf -> copyLeaf(appender, record, leaf);
+            case CopyNode.Struct struct -> copyStruct(appender, record, struct);
+        }
+    }
+
+    private void copyLeaf(ParquetRecordBatchBuilder appender, ParquetRecord record, CopyNode.Leaf leaf) {
+        if (record.isNull(leaf.path())) {
+            appender.setNull(leaf.appenderIndex());
             return;
         }
-        switch (kinds[appenderCol]) {
-            case BOOLEAN -> appender.setBoolean(appenderCol, record.getBoolean(recordCol));
-            case INT32 -> appender.setInt(appenderCol, record.getInt(recordCol));
-            case INT64 -> appender.setLong(appenderCol, record.getLong(recordCol));
-            case FLOAT -> appender.setFloat(appenderCol, record.getFloat(recordCol));
-            case DOUBLE -> appender.setDouble(appenderCol, record.getDouble(recordCol));
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY ->
-                appender.setBinary(appenderCol, (MemorySegment) record.get(recordCol));
-            case INT96 ->
-                throw new UnsupportedSchemaException(
-                        "cp cannot write INT96 column '" + leaves[appenderCol].dot() + "'");
+        int col = leaf.appenderIndex();
+        ColumnPath path = leaf.path();
+        switch (leaf.kind()) {
+            case BOOLEAN -> appender.setBoolean(col, record.getBoolean(path));
+            case INT32 -> appender.setInt(col, record.getInt(path));
+            case INT64 -> appender.setLong(col, record.getLong(path));
+            case FLOAT -> appender.setFloat(col, record.getFloat(path));
+            case DOUBLE -> appender.setDouble(col, record.getDouble(path));
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> appender.setBinary(col, (MemorySegment) record.get(path));
+            case INT96 -> throw new UnsupportedSchemaException("cp cannot write INT96 column '" + path.dot() + "'");
         }
     }
 
-    /**
-     * Resolves, once, the record column each appender column reads from. The record materialized from the same
-     * projected schema the writer is built over lays its leaves out in the same order, but resolving the mapping by
-     * path keeps the copy correct even when it does not. The result is cached and reused for every subsequent record of
-     * the copy.
-     */
-    private int[] recordColumns(ParquetRecord record) {
-        if (recordColumn == null) {
-            recordColumn = resolveRecordColumns(record);
+    private void copyStruct(ParquetRecordBatchBuilder appender, ParquetRecord record, CopyNode.Struct struct) {
+        ColumnPath path = struct.path();
+        if (struct.repetition() == Repetition.OPTIONAL && record.isNull(path)) {
+            // Write a null struct: children are implicitly null.
+            appender.setNull(path);
+            return;
         }
-        return recordColumn;
-    }
-
-    private int[] resolveRecordColumns(ParquetRecord record) {
-        Map<ColumnPath, Integer> columnByPath = indexRecordColumns(record);
-        int[] columns = new int[leaves.length];
-        for (int i = 0; i < leaves.length; i++) {
-            Integer recordCol = columnByPath.get(leaves[i]);
-            if (recordCol == null) {
-                throw new UnsupportedSchemaException(
-                        "cp cannot find source column '" + leaves[i].dot() + "' in the record");
-            }
-            columns[i] = recordCol;
+        for (CopyNode child : struct.children()) {
+            copyNode(appender, record, child);
         }
-        return columns;
-    }
-
-    private Map<ColumnPath, Integer> indexRecordColumns(ParquetRecord record) {
-        int columnCount = record.columnCount();
-        Map<ColumnPath, Integer> columnByPath = new HashMap<>(columnCount);
-        for (int col = 0; col < columnCount; col++) {
-            columnByPath.put(record.columnPath(col), col);
-        }
-        return columnByPath;
     }
 }

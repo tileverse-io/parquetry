@@ -61,6 +61,11 @@ public final class VariantMetadata {
         return segment.toArray(ValueLayout.JAVA_BYTE);
     }
 
+    /** The read-only metadata buffer, the bytes a writer emits to the {@code metadata} leaf. */
+    public MemorySegment rawSegment() {
+        return segment.asReadOnly();
+    }
+
     /**
      * Returns a copy of this dictionary backed by a fresh read-only heap segment, decoupled from the batch's page
      * buffer.

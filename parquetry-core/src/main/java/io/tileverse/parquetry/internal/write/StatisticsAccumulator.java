@@ -60,6 +60,7 @@ public final class StatisticsAccumulator {
 
     private final PrimitiveKind kind;
     private final boolean tracksMinMax;
+    private final boolean legacyOrderMatchesModern;
 
     private long nullCount;
     private long nonNullCount;
@@ -78,9 +79,10 @@ public final class StatisticsAccumulator {
     private byte[] binaryMin;
     private byte[] binaryMax;
 
-    private StatisticsAccumulator(PrimitiveKind kind, boolean tracksMinMax) {
+    private StatisticsAccumulator(PrimitiveKind kind, boolean tracksMinMax, boolean legacyOrderMatchesModern) {
         this.kind = kind;
         this.tracksMinMax = tracksMinMax;
+        this.legacyOrderMatchesModern = legacyOrderMatchesModern;
     }
 
     /**
@@ -91,7 +93,8 @@ public final class StatisticsAccumulator {
      */
     public static StatisticsAccumulator forKind(@NonNull PrimitiveKind kind, LogicalType logicalType) {
         boolean tracksMinMax = supportsMinMax(kind) && !isGeometryLike(logicalType);
-        return new StatisticsAccumulator(kind, tracksMinMax);
+        boolean legacyOrderMatchesModern = legacyOrderMatchesModern(kind, logicalType);
+        return new StatisticsAccumulator(kind, tracksMinMax, legacyOrderMatchesModern);
     }
 
     private static boolean supportsMinMax(PrimitiveKind kind) {
@@ -100,6 +103,25 @@ public final class StatisticsAccumulator {
 
     private static boolean isGeometryLike(LogicalType logicalType) {
         return logicalType instanceof LogicalType.Geometry || logicalType instanceof LogicalType.Geography;
+    }
+
+    /**
+     * Decides whether the deprecated {@code min}/{@code max} fields may mirror the modern {@code min_value}/
+     * {@code max_value} bytes for this column. The legacy fields are spec-defined under SIGNED order for the binary
+     * kinds and for unsigned-integer logical types, while parquetry computes those bounds under unsigned lexicographic
+     * order. Mirroring is only sound when parquetry's computed order is signed and already matches the legacy contract:
+     * the signed numeric kinds, and INT32/INT64 only when no unsigned-integer logical type retypes them.
+     */
+    private static boolean legacyOrderMatchesModern(PrimitiveKind kind, LogicalType logicalType) {
+        return switch (kind) {
+            case BOOLEAN, FLOAT, DOUBLE -> true;
+            case INT32, INT64 -> !isUnsignedInteger(logicalType);
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> false;
+        };
+    }
+
+    private static boolean isUnsignedInteger(LogicalType logicalType) {
+        return logicalType instanceof LogicalType.IntType intType && !intType.isSigned();
     }
 
     /**
@@ -385,7 +407,30 @@ public final class StatisticsAccumulator {
                 .maxValue(maxSegment)
                 .isMinValueExact(minSegment != MemorySegment.NULL)
                 .isMaxValueExact(maxSegment != MemorySegment.NULL)
+                .min(legacyMinSegment(minSegment))
+                .max(legacyMaxSegment(maxSegment))
                 .build();
+    }
+
+    /**
+     * Mirrors the modern {@code min_value} bytes into the deprecated {@code min} field only when parquetry's computed
+     * order matches the legacy SIGNED contract for this column. A legacy reader that ignores {@code column_orders}
+     * reads the deprecated fields under signed order; for the binary kinds and unsigned-integer logical types parquetry
+     * computes the bound under unsigned order, which a legacy reader would invert and mis-prune. Omitting the legacy
+     * field for those columns keeps the modern {@code min_value} as the only published bound.
+     */
+    private MemorySegment legacyMinSegment(MemorySegment modernMin) {
+        if (legacyOrderMatchesModern) {
+            return modernMin;
+        }
+        return MemorySegment.NULL;
+    }
+
+    private MemorySegment legacyMaxSegment(MemorySegment modernMax) {
+        if (legacyOrderMatchesModern) {
+            return modernMax;
+        }
+        return MemorySegment.NULL;
     }
 
     /**

@@ -35,11 +35,7 @@ import java.util.stream.Stream;
 import org.apache.avro.generic.GenericData;
 import org.apache.avro.generic.GenericRecord;
 import org.apache.avro.util.Utf8;
-import org.apache.parquet.avro.AvroParquetReader;
-import org.apache.parquet.hadoop.ParquetFileReader;
-import org.apache.parquet.hadoop.ParquetReader;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
-import org.apache.parquet.io.LocalInputFile;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -56,8 +52,8 @@ import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
  * Counterpart to {@link ParquetJavaCompatIT} for the V1.1 page-format bridge: validates that the legacy DATA_PAGE
- * output reads through the parquet-java 1.14 reader, that dictionary encoding survives the bridge, and that the
- * GeoParquet 1.1 KV blob is forced on by the writer when V1.1 is selected.
+ * output reads through the parquet-java reader, that dictionary encoding survives the bridge, and that the GeoParquet
+ * 1.1 KV blob is forced on by the writer when V1.1 is selected.
  */
 @Tag("conformance")
 class V1WriteBridgeIT {
@@ -76,7 +72,7 @@ class V1WriteBridgeIT {
                 .build();
         writeRows(file, schema, options, rows);
 
-        List<GenericRecord> read = readWithAvro(file);
+        List<GenericRecord> read = WriteConformanceSupport.readWithAvro(file);
         assertThat(read).hasSize(rows.size());
         for (int i = 0; i < rows.size(); i++) {
             assertRowMatches(rows.get(i), read.get(i));
@@ -94,7 +90,7 @@ class V1WriteBridgeIT {
                 .build();
         writeRows(file, schema, options, rows);
 
-        List<GenericRecord> read = readWithAvro(file);
+        List<GenericRecord> read = WriteConformanceSupport.readWithAvro(file);
         assertThat(read).hasSize(rows.size());
         for (int i = 0; i < rows.size(); i++) {
             MemorySegment expected = (MemorySegment) rows.get(i).get(ColumnPath.of("category"));
@@ -117,7 +113,7 @@ class V1WriteBridgeIT {
                     schema, List.of(Map.of(ColumnPath.of("geometry"), MemorySegment.ofArray(wkbPoint(1.0, 2.0))))));
         }
 
-        ParquetMetadata metadata = readFooterViaParquetJava(file);
+        ParquetMetadata metadata = WriteConformanceSupport.readFooterViaParquetJava(file);
         Map<String, String> kv = metadata.getFileMetaData().getKeyValueMetaData();
         assertThat(kv).as("V1.1 must emit the GeoParquet 1.1 'geo' KV blob").containsKey("geo");
         assertThat(kv.get("geo")).contains("\"version\":\"1.1.0\"");
@@ -194,27 +190,6 @@ class V1WriteBridgeIT {
             throws IOException {
         try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
             writer.writeBatch(WriteFixtures.batch(schema, rows));
-        }
-    }
-
-    // --- parquet-java drivers ---
-
-    private static List<GenericRecord> readWithAvro(Path file) throws IOException {
-        List<GenericRecord> out = new ArrayList<>();
-        try (ParquetReader<GenericData.Record> reader = AvroParquetReader.<GenericData.Record>builder(
-                        new LocalInputFile(file))
-                .build()) {
-            GenericData.Record avroRecord;
-            while ((avroRecord = reader.read()) != null) {
-                out.add(avroRecord);
-            }
-        }
-        return out;
-    }
-
-    private static ParquetMetadata readFooterViaParquetJava(Path file) throws IOException {
-        try (ParquetFileReader reader = ParquetFileReader.open(new LocalInputFile(file))) {
-            return reader.getFooter();
         }
     }
 
