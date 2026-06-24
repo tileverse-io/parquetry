@@ -35,7 +35,7 @@ import io.tileverse.parquetry.schema.SchemaNode;
  * Bridges the parquetry record model to the dependency-free canonical tree the conformance corpus compares against the
  * parquet-java oracle. Dispatch is on the materialized runtime value; the schema node supplies struct field names and
  * the list-element / map-key-value node when a nested element is itself a record. The list/map node resolution mirrors
- * {@code DremelAssembler.classify} and {@code DremelAssembler.elementNode}.
+ * {@code GroupKind.of} and {@code DremelAssembler.elementNode}.
  */
 final class CanonicalRow {
 

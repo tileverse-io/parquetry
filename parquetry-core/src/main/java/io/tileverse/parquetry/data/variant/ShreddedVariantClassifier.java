@@ -15,6 +15,26 @@
  */
 package io.tileverse.parquetry.data.variant;
 
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_BINARY;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_BOOLEAN_TRUE;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_DATE;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_DECIMAL16;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_DECIMAL4;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_DECIMAL8;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_DOUBLE;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_FLOAT;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_INT16;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_INT32;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_INT64;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_INT8;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_STRING;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_TIME;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_TIMESTAMP_NTZ_MICROS;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_TIMESTAMP_NTZ_NANOS;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_TIMESTAMP_TZ_MICROS;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_TIMESTAMP_TZ_NANOS;
+import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_UUID;
+
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -37,26 +57,6 @@ final class ShreddedVariantClassifier {
 
     private static final String TYPED_VALUE = "typed_value";
     private static final String VALUE = "value";
-
-    private static final int TYPE_BOOLEAN = 1;
-    private static final int TYPE_INT8 = 3;
-    private static final int TYPE_INT16 = 4;
-    private static final int TYPE_INT32 = 5;
-    private static final int TYPE_INT64 = 6;
-    private static final int TYPE_DOUBLE = 7;
-    private static final int TYPE_DECIMAL4 = 8;
-    private static final int TYPE_DECIMAL8 = 9;
-    private static final int TYPE_DECIMAL16 = 10;
-    private static final int TYPE_DATE = 11;
-    private static final int TYPE_TIMESTAMP_TZ_MICROS = 12;
-    private static final int TYPE_TIMESTAMP_NTZ_MICROS = 13;
-    private static final int TYPE_FLOAT = 14;
-    private static final int TYPE_BINARY = 15;
-    private static final int TYPE_STRING = 16;
-    private static final int TYPE_TIME_NTZ_MICROS = 17;
-    private static final int TYPE_TIMESTAMP_TZ_NANOS = 18;
-    private static final int TYPE_TIMESTAMP_NTZ_NANOS = 19;
-    private static final int TYPE_UUID = 20;
 
     static ShreddedVariant classify(SchemaNode.Group variantGroup) {
         SchemaNode typedValue = childNamed(variantGroup, TYPED_VALUE)
@@ -169,7 +169,7 @@ final class ShreddedVariantClassifier {
     private static int variantTypeIdFor(SchemaNode.Primitive primitive) {
         Optional<LogicalType> logicalType = primitive.logicalType();
         return switch (primitive.kind()) {
-            case BOOLEAN -> TYPE_BOOLEAN;
+            case BOOLEAN -> TYPE_BOOLEAN_TRUE;
             case INT32 -> int32TypeId(primitive, logicalType);
             case INT64 -> int64TypeId(primitive, logicalType);
             case FLOAT -> TYPE_FLOAT;
@@ -216,7 +216,7 @@ final class ShreddedVariantClassifier {
 
     private static int timeTypeId(SchemaNode.Primitive primitive, LogicalType.Time time) {
         if (time.unit() == TimeUnit.MICROS) {
-            return TYPE_TIME_NTZ_MICROS;
+            return TYPE_TIME;
         }
         throw unsupported(primitive);
     }

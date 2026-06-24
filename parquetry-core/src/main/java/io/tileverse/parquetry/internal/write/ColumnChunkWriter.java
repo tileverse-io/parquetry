@@ -61,6 +61,7 @@ import io.tileverse.parquetry.internal.write.page.PlainInt32Encoder;
 import io.tileverse.parquetry.internal.write.page.PlainInt64Encoder;
 import io.tileverse.parquetry.internal.write.page.PlainInt96Encoder;
 import io.tileverse.parquetry.internal.write.page.PreEncodedPageJob;
+import io.tileverse.parquetry.schema.LevelMaxima;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
@@ -141,6 +142,20 @@ public final class ColumnChunkWriter implements AutoCloseable {
 
     public ColumnChunkWriter(@NonNull WriteOptions options, @NonNull SchemaNode.Primitive leaf, @NonNull Path tempFile)
             throws IOException {
+        this(options, leaf, tempFile, new LevelMaxima(maxRepetitionLevelFor(leaf), maxDefinitionLevelFor(leaf)));
+    }
+
+    /**
+     * Constructs a writer for a nested leaf whose repetition and definition level maxima are schema-derived rather than
+     * local to the leaf's own repetition field. A nested optional leaf's maxDef accumulates across all enclosing
+     * optional ancestors; this constructor receives those computed maxima directly.
+     */
+    ColumnChunkWriter(
+            @NonNull WriteOptions options,
+            @NonNull SchemaNode.Primitive leaf,
+            @NonNull Path tempFile,
+            @NonNull LevelMaxima levelMaxima)
+            throws IOException {
         this.options = options;
         this.leaf = leaf;
         this.tempFile = tempFile;
@@ -151,7 +166,11 @@ public final class ColumnChunkWriter implements AutoCloseable {
 
         Compression compression = resolveCompression(options, leaf.name());
         this.column = new ColumnContext(
-                maxRepetitionLevelFor(leaf), maxDefinitionLevelFor(leaf), kind, options.parquetVersion(), compression);
+                levelMaxima.maxRepetitionLevel(),
+                levelMaxima.maxDefinitionLevel(),
+                kind,
+                options.parquetVersion(),
+                compression);
         this.pageWriter = new PageWriter(column);
 
         LogicalType logicalType = leaf.logicalType().orElse(null);
@@ -310,8 +329,20 @@ public final class ColumnChunkWriter implements AutoCloseable {
      * to the matching typed {@code appendXxx} for non-null cells. Nulls go through {@link #appendNull}; the caller is
      * responsible for matching the vector's kind to this column's primitive kind, which {@code ensureKind} re-checks on
      * every non-null cell.
+     *
+     * <p>A flat vector expresses presence only at the leaf's own repetition: a present cell maps to a single definition
+     * level. This is well-defined only when the chunk's actual maximum definition level equals that flat expectation.
+     * An optional or repeated ancestor raises the maximum definition level above it, and a flat vector cannot express
+     * the ancestor's per-row presence; rejecting that input here prevents writing present cells at too low a definition
+     * level, which the reader would reconstruct as nulls.
      */
     public void appendVector(@NonNull SchemaNode.Primitive leaf, @NonNull ColumnVector vector) {
+        int flatMaxDef = maxDefinitionLevelFor(leaf);
+        if (column.maxDefinitionLevel() > flatMaxDef) {
+            throw new ParquetWriteException("column " + leaf.name()
+                    + " has optional or repeated ancestors and cannot be supplied as a flat column; "
+                    + "author it through its enclosing struct or list");
+        }
         int defLevelForValue = leaf.repetition() == Repetition.REQUIRED ? 0 : 1;
         Validity validity = vector.validity();
         int size = vector.size();

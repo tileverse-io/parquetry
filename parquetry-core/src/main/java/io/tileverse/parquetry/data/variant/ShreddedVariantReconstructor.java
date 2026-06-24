@@ -179,7 +179,7 @@ public final class ShreddedVariantReconstructor {
         for (int i = 0; i < names.size(); i++) {
             String name = names.get(i);
             rejectResidualFieldOnShreddedName(object, name);
-            MemorySegment fieldValue = unshredded.getFieldAtIndex(i).value();
+            MemorySegment fieldValue = unshredded.boundedFieldValueAtIndex(i);
             merged.put(name, fieldValue);
         }
         for (Map.Entry<String, MemorySegment> shredded : shreddedFields.entrySet()) {

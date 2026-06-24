@@ -29,6 +29,7 @@ import io.tileverse.parquetry.batch.MapVector;
 import io.tileverse.parquetry.batch.StructVector;
 import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.GroupKind;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
@@ -204,7 +205,7 @@ public final class NestedVectorAssembler {
             return;
         }
         result.put(ColumnPath.of(groupPath), vector);
-        switch (classify(group)) {
+        switch (GroupKind.of(group)) {
             case LIST, MAP -> markDescendantLeavesHidden(group, groupPath, leafVectors, hiddenLeaves);
             case STRUCT, VARIANT -> hideRepeatedDescendantLeaves(group, groupPath, leafVectors, hiddenLeaves);
         }
@@ -283,12 +284,8 @@ public final class NestedVectorAssembler {
     // --- schema predicates ---
 
     private static boolean isListOrMap(SchemaNode.Group group) {
-        DremelAssembler.GroupKind kind = classify(group);
-        return kind == DremelAssembler.GroupKind.LIST || kind == DremelAssembler.GroupKind.MAP;
-    }
-
-    private static DremelAssembler.GroupKind classify(SchemaNode.Group group) {
-        return DremelAssembler.classify(group);
+        GroupKind kind = GroupKind.of(group);
+        return kind == GroupKind.LIST || kind == GroupKind.MAP;
     }
 
     private static List<String> concatPath(List<String> prefix, String segment) {

@@ -328,10 +328,28 @@ public final class Variant {
         return -1;
     }
 
+    /**
+     * The value bytes of the field at {@code index}, bounded to that field's exact length using the object's offset
+     * table. Unlike {@link #value()} on a child view (which slices open-ended from the field's start), this returns
+     * only the field's own bytes; a writer splicing a non-last field must not copy the trailing sibling fields.
+     */
+    public MemorySegment boundedFieldValueAtIndex(int index) {
+        requireBasicType(BASIC_TYPE_OBJECT, "boundedFieldValueAtIndex");
+        ObjectHeader header = objectHeader();
+        if (index < 0 || index >= header.numFields()) {
+            throw new IndexOutOfBoundsException("field index " + index + " out of [0," + header.numFields() + ")");
+        }
+        long start = header.valuesStart() + fieldValueOffset(header, index);
+        long end = header.valuesStart() + fieldValueOffset(header, index + 1);
+        return value.asSlice(start, end - start).asReadOnly();
+    }
+
+    private long fieldValueOffset(ObjectHeader header, int position) {
+        return readUnsigned(header.offsetTableStart() + (long) position * header.offsetSize(), header.offsetSize());
+    }
+
     private Variant fieldAt(ObjectHeader header, int position) {
-        long valueOffset =
-                readUnsigned(header.offsetTableStart() + (long) position * header.offsetSize(), header.offsetSize());
-        return child(header.valuesStart() + valueOffset);
+        return child(header.valuesStart() + fieldValueOffset(header, position));
     }
 
     private int fieldIdAt(ObjectHeader header, int position) {
@@ -385,11 +403,13 @@ public final class Variant {
         }
     }
 
-    MemorySegment value() {
-        return value;
+    /** The read-only value buffer slice for this node, the bytes a writer emits to the {@code value} leaf. */
+    public MemorySegment value() {
+        return value.asReadOnly();
     }
 
-    VariantMetadata metadata() {
+    /** The shared metadata dictionary, the source of the bytes a writer emits to the {@code metadata} leaf. */
+    public VariantMetadata metadata() {
         return metadata;
     }
 

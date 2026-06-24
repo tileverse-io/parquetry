@@ -18,6 +18,11 @@ package io.tileverse.parquetry.internal.write;
 import java.lang.foreign.MemorySegment;
 import java.util.Arrays;
 import java.util.BitSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import io.tileverse.parquetry.batch.BinaryVector;
 import io.tileverse.parquetry.batch.BooleanVector;
@@ -27,10 +32,33 @@ import io.tileverse.parquetry.batch.FixedLenBinaryVector;
 import io.tileverse.parquetry.batch.FloatVector;
 import io.tileverse.parquetry.batch.IntSequence;
 import io.tileverse.parquetry.batch.IntVector;
+import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.LongVector;
+import io.tileverse.parquetry.batch.MapVector;
+import io.tileverse.parquetry.batch.ShreddedVariantVector;
+import io.tileverse.parquetry.batch.ShreddedVariantVector.ArrayInput;
+import io.tileverse.parquetry.batch.ShreddedVariantVector.ObjectInput;
+import io.tileverse.parquetry.batch.ShreddedVariantVector.ScalarInput;
+import io.tileverse.parquetry.batch.ShreddedVariantVector.TypedInput;
+import io.tileverse.parquetry.batch.ShreddedVariantVector.VariantInput;
+import io.tileverse.parquetry.batch.StructVector;
 import io.tileverse.parquetry.batch.Validity;
+import io.tileverse.parquetry.batch.VariantVector;
 import io.tileverse.parquetry.data.ParquetWriteException;
+import io.tileverse.parquetry.data.variant.ShreddedVariant;
+import io.tileverse.parquetry.data.variant.ShreddedVariantShredder;
+import io.tileverse.parquetry.data.variant.ShreddedVariantShredder.ArrayShred;
+import io.tileverse.parquetry.data.variant.ShreddedVariantShredder.FieldShred;
+import io.tileverse.parquetry.data.variant.ShreddedVariantShredder.ObjectShred;
+import io.tileverse.parquetry.data.variant.ShreddedVariantShredder.ScalarShred;
+import io.tileverse.parquetry.data.variant.ShreddedVariantShredder.VariantShred;
+import io.tileverse.parquetry.data.variant.Variant;
+import io.tileverse.parquetry.format.LogicalType;
+import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.GroupKind;
 import io.tileverse.parquetry.schema.PrimitiveKind;
+import io.tileverse.parquetry.schema.Repetition;
+import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
  * Growable, single-column write buffer. The batch builder stages one cell per row through the typed {@code set*}
@@ -48,7 +76,12 @@ public sealed interface ColumnAccumulator
                 ColumnAccumulator.FloatAccumulator,
                 ColumnAccumulator.DoubleAccumulator,
                 ColumnAccumulator.BinaryAccumulator,
-                ColumnAccumulator.FixedLenBinaryAccumulator {
+                ColumnAccumulator.FixedLenBinaryAccumulator,
+                ColumnAccumulator.StructAccumulator,
+                ColumnAccumulator.ListAccumulator,
+                ColumnAccumulator.MapAccumulator,
+                ColumnAccumulator.VariantAccumulator,
+                ColumnAccumulator.ShreddedVariantAccumulator {
 
     /**
      * Creates an accumulator for the given primitive kind. {@code byteWidth} applies only to
@@ -65,6 +98,170 @@ public sealed interface ColumnAccumulator
             case FIXED_LEN_BYTE_ARRAY -> new FixedLenBinaryAccumulator(byteWidth);
             case INT96 -> throw new ParquetWriteException("INT96 columns are not supported by the writer");
         };
+    }
+
+    /**
+     * Creates an accumulator for a struct group field, recursively creating child accumulators for each field in the
+     * group.
+     */
+    static StructAccumulator forGroup(SchemaNode.Group group) {
+        List<SchemaNode> children = group.children();
+        Map<String, ColumnAccumulator> childAccumulators = LinkedHashMap.newLinkedHashMap(children.size());
+        Set<String> requiredContainerChildren = LinkedHashSet.newLinkedHashSet(children.size());
+        for (SchemaNode child : children) {
+            ColumnAccumulator childAccumulator = forNode(child);
+            childAccumulators.put(child.name(), childAccumulator);
+            if (isRequiredContainer(child, childAccumulator)) {
+                requiredContainerChildren.add(child.name());
+            }
+        }
+        boolean optional = group.repetition() == Repetition.OPTIONAL;
+        return new StructAccumulator(childAccumulators, requiredContainerChildren, optional);
+    }
+
+    /**
+     * Whether a schema node is a REQUIRED list, map, or Variant container. Such a column is authored through a scope
+     * verb (beginList / beginMap / setVariant) rather than an index setter; the builder's leaf-indexed required check
+     * never reaches it, and the row close validates these separately.
+     */
+    static boolean isRequiredContainer(SchemaNode child, ColumnAccumulator acc) {
+        boolean container = acc instanceof ColumnAccumulator.ListAccumulator
+                || acc instanceof ColumnAccumulator.MapAccumulator
+                || acc instanceof ColumnAccumulator.VariantAccumulator
+                || acc instanceof ColumnAccumulator.ShreddedVariantAccumulator;
+        return container && child.repetition() == Repetition.REQUIRED;
+    }
+
+    /**
+     * Creates an accumulator for any schema node: a primitive leaf, a list group, a map group, or a plain struct group.
+     * List and map groups are recognized structurally (a {@link LogicalType.ListType}/{@link LogicalType.MapType}
+     * annotation, or a bare repeated group / repeated primitive forming a legacy two-level list), matching the read
+     * path's classification.
+     */
+    static ColumnAccumulator forNode(SchemaNode node) {
+        return switch (node) {
+            case SchemaNode.Primitive primitive -> {
+                if (primitive.repetition() == Repetition.REPEATED) {
+                    throw new ParquetWriteException(
+                            "Repeated leaf columns are not supported by the writer: " + primitive.name());
+                }
+                yield forKind(primitive.kind(), primitive.typeLength().orElse(0));
+            }
+            case SchemaNode.Group group -> forGroupNode(group);
+        };
+    }
+
+    private static ColumnAccumulator forGroupNode(SchemaNode.Group group) {
+        return switch (GroupKind.of(group)) {
+            case VARIANT -> forVariant(group);
+            case LIST -> forList(group);
+            case MAP -> forMap(group);
+            case STRUCT -> forGroup(group);
+        };
+    }
+
+    /**
+     * Creates the accumulator for a Variant group. A group with a {@code typed_value} child is a shredded Variant whose
+     * typed subtree the read path classifies into a {@link ShreddedVariant}; it accumulates through a
+     * {@link ShreddedVariantAccumulator}. A group without one is an unshredded Variant accumulating through a
+     * {@link VariantAccumulator}. The detection mirrors the read path's {@code DremelAssembler}.
+     */
+    private static ColumnAccumulator forVariant(SchemaNode.Group group) {
+        if (hasChildNamed(group, "typed_value")) {
+            return forShreddedVariant(group);
+        }
+        return forUnshreddedVariant(group);
+    }
+
+    /**
+     * Creates an accumulator for an unshredded Variant group: the {@code metadata} and {@code value} binary leaves
+     * staged together per row. The two children are not recursed into as struct fields; the Variant column is authored
+     * through the builder's Variant verb.
+     */
+    private static VariantAccumulator forUnshreddedVariant(SchemaNode.Group group) {
+        boolean optional = group.repetition() == Repetition.OPTIONAL;
+        return new VariantAccumulator(new BinaryAccumulator(), new BinaryAccumulator(), optional);
+    }
+
+    /**
+     * Creates an accumulator for a shredded Variant group: a {@code metadata} leaf, a residual {@code value} leaf, and
+     * the typed subtree classified into a {@link ShreddedVariant} model. Each per-row Variant shreds against the model
+     * into typed leaves plus the residual; the Variant column is authored through the builder's Variant verb.
+     */
+    private static ShreddedVariantAccumulator forShreddedVariant(SchemaNode.Group group) {
+        ShreddedVariant model = ShreddedVariant.classify(group);
+        boolean optional = group.repetition() == Repetition.OPTIONAL;
+        return new ShreddedVariantAccumulator(model, optional);
+    }
+
+    private static boolean hasChildNamed(SchemaNode.Group group, String name) {
+        for (SchemaNode child : group.children()) {
+            if (child.name().equals(name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static ListAccumulator forList(SchemaNode.Group listGroup) {
+        SchemaNode element = listElementNode(listGroup);
+        ColumnAccumulator elementAccumulator = forElementNode(element);
+        rejectShreddedVariantElement(elementAccumulator, listGroup.name());
+        boolean optional = listGroup.repetition() == Repetition.OPTIONAL;
+        return new ListAccumulator(elementAccumulator, optional);
+    }
+
+    /**
+     * Rejects a shredded Variant as a list or map element, matching the read path, which cannot reconstruct a shredded
+     * Variant nested under a list or map. An unshredded Variant element is allowed.
+     */
+    private static void rejectShreddedVariantElement(ColumnAccumulator element, String containerColumn) {
+        if (element instanceof ShreddedVariantAccumulator) {
+            throw new ParquetWriteException(
+                    "a shredded Variant nested under a list or map is not supported: " + containerColumn);
+        }
+    }
+
+    /**
+     * Builds the accumulator for a list or map element. A REPEATED primitive element is the legacy two-level encoding
+     * whose repetition belongs to the enclosing list, not the value; it accumulates as a scalar of its kind. Any other
+     * element follows the general {@link #forNode} classification.
+     */
+    private static ColumnAccumulator forElementNode(SchemaNode element) {
+        if (element instanceof SchemaNode.Primitive primitive && primitive.repetition() == Repetition.REPEATED) {
+            return forKind(primitive.kind(), primitive.typeLength().orElse(0));
+        }
+        return forNode(element);
+    }
+
+    /**
+     * The element type of a list. A bare repeated group or repeated primitive directly under the list group is the
+     * legacy two-level encoding, whose repeated node is the element. The standard three-level encoding wraps the
+     * element in a repeated group ({@code repeated group list { <element> }}); the element is that group's single
+     * child.
+     */
+    private static SchemaNode listElementNode(SchemaNode.Group listGroup) {
+        SchemaNode repeated = listGroup.children().get(0);
+        if (repeated instanceof SchemaNode.Primitive) {
+            return repeated;
+        }
+        SchemaNode.Group repeatedGroup = (SchemaNode.Group) repeated;
+        if (repeatedGroup.repetition() != Repetition.REPEATED) {
+            return repeated;
+        }
+        return repeatedGroup.children().get(0);
+    }
+
+    private static MapAccumulator forMap(SchemaNode.Group mapGroup) {
+        SchemaNode.Group keyValue = (SchemaNode.Group) mapGroup.children().get(0);
+        SchemaNode keyNode = keyValue.children().get(0);
+        SchemaNode valueNode = keyValue.children().get(1);
+        ColumnAccumulator keyAccumulator = forNode(keyNode);
+        ColumnAccumulator valueAccumulator = forNode(valueNode);
+        rejectShreddedVariantElement(keyAccumulator, mapGroup.name());
+        rejectShreddedVariantElement(valueAccumulator, mapGroup.name());
+        boolean optional = mapGroup.repetition() == Repetition.OPTIONAL;
+        return new MapAccumulator(keyAccumulator, valueAccumulator, optional);
     }
 
     default void setBoolean(boolean value) {
@@ -93,6 +290,15 @@ public sealed interface ColumnAccumulator
 
     /** Stages the current row as null. */
     void setNull();
+
+    /**
+     * Whether a container column (struct, list, map, or Variant) has been authored present for the current row. Always
+     * true for a flat column, whose presence is set by the index setters and whose required-leaf check the builder runs
+     * separately. The builder uses this to reject an unset REQUIRED container column.
+     */
+    default boolean isPendingPresent() {
+        return true;
+    }
 
     /** Closes the current row, committing the staged cell or a null into the column buffer. */
     void endRow();
@@ -486,6 +692,824 @@ public sealed interface ColumnAccumulator
             if (neededLength > backing.length) {
                 int grown = backing.length * 2;
                 backing = Arrays.copyOf(backing, Math.max(grown, neededLength));
+            }
+        }
+    }
+
+    /**
+     * Buffers a struct group column: one child accumulator per field, plus a presence mask tracking which rows have a
+     * non-null struct. When the struct is REQUIRED, all rows are always present and no mask is kept.
+     *
+     * <p>{@link #freeze()} produces a {@link StructVector} whose children are keyed by their single-name relative
+     * {@link ColumnPath} and whose validity reflects the per-row presence mask.
+     */
+    final class StructAccumulator implements ColumnAccumulator {
+        private final Map<String, ColumnAccumulator> childAccumulators;
+        private final Set<String> requiredContainerChildren;
+        private final boolean optional;
+        private final BitSet present = new BitSet();
+        private int rows;
+        // Null structs need to advance all child accumulators with setNull/endRow.
+        private boolean pendingPresent;
+
+        StructAccumulator(
+                Map<String, ColumnAccumulator> childAccumulators,
+                Set<String> requiredContainerChildren,
+                boolean optional) {
+            this.childAccumulators = childAccumulators;
+            this.requiredContainerChildren = requiredContainerChildren;
+            this.optional = optional;
+        }
+
+        /** Returns the child accumulator for the named field, for use by the builder's struct scope. */
+        public ColumnAccumulator child(String fieldName) {
+            ColumnAccumulator child = childAccumulators.get(fieldName);
+            if (child == null) {
+                throw new ParquetWriteException("No such struct field: " + fieldName);
+            }
+            return child;
+        }
+
+        /** Returns an unmodifiable view of the child accumulators map, keyed by field name. */
+        public Map<String, ColumnAccumulator> children() {
+            return childAccumulators;
+        }
+
+        /** Marks the current row as a present (non-null) struct. Called by the builder's endStruct. */
+        public void markPresent() {
+            this.pendingPresent = true;
+        }
+
+        /**
+         * Returns whether the struct has been marked present for the current row. Used by the batch builder to decide
+         * whether a required leaf inside this struct is reachable (and therefore mandatory) for the row being closed.
+         */
+        @Override
+        public boolean isPendingPresent() {
+            return pendingPresent;
+        }
+
+        @Override
+        public void setNull() {
+            this.pendingPresent = false;
+        }
+
+        @Override
+        public void endRow() {
+            if (pendingPresent) {
+                rejectUnsetRequiredContainerChildren();
+                present.set(rows);
+            }
+            // Always advance children: a null struct row needs null entries in every child.
+            for (ColumnAccumulator child : childAccumulators.values()) {
+                if (!pendingPresent) {
+                    child.setNull();
+                }
+                child.endRow();
+            }
+            rows++;
+            pendingPresent = false;
+        }
+
+        /**
+         * Rejects a present struct that left a REQUIRED list, map, or Variant child unset. An unset REQUIRED container
+         * is a programming error, matching an unset required flat leaf; a present-empty container authored with
+         * beginList/endList (or beginMap/endMap) is valid. When the struct is absent the children are nulled by this
+         * accumulator and the check is skipped; a nested present struct validates its own required containers in turn.
+         */
+        private void rejectUnsetRequiredContainerChildren() {
+            for (String childName : requiredContainerChildren) {
+                if (!childAccumulators.get(childName).isPendingPresent()) {
+                    throw new ParquetWriteException("Required column '" + childName + "' was not set");
+                }
+            }
+        }
+
+        @Override
+        public ColumnVector freeze() {
+            Map<ColumnPath, ColumnVector> childVectors = LinkedHashMap.newLinkedHashMap(childAccumulators.size());
+            for (Map.Entry<String, ColumnAccumulator> entry : childAccumulators.entrySet()) {
+                childVectors.put(ColumnPath.of(entry.getKey()), entry.getValue().freeze());
+            }
+            Validity validity = optional ? Validity.of((BitSet) present.clone(), rows) : Validity.allValid(rows);
+            return new StructVector(childVectors, validity, rows);
+        }
+
+        @Override
+        public void clear() {
+            for (ColumnAccumulator child : childAccumulators.values()) {
+                child.clear();
+            }
+            present.clear();
+            rows = 0;
+            pendingPresent = false;
+        }
+    }
+
+    /**
+     * Buffers a list column. The single element accumulator buffers list elements (not rows): each
+     * {@link #endElement()} advances the element accumulator by one element and grows the element count. A row's
+     * {@link #endRow()} writes the running element count as that row's end offset and sets the presence bit when the
+     * list is present.
+     *
+     * <p>The three list states differ only in the element count and presence bit they leave for the row: a populated
+     * list advances the element count and is present; an empty list keeps the count unchanged and is present; a null
+     * list keeps the count unchanged and is absent. When the list is REQUIRED, every row is present and no mask is
+     * kept.
+     *
+     * <p>{@link #freeze()} produces a {@link ListVector} whose {@code offsets} array has one entry per row plus a final
+     * total, whose child is the frozen element vector, and whose validity reflects the per-row presence mask.
+     */
+    final class ListAccumulator implements ColumnAccumulator {
+        private final ColumnAccumulator elementAccumulator;
+        private final boolean optional;
+        private int[] offsets = new int[17];
+        private final BitSet present = new BitSet();
+        private int rows;
+        private int elementCount;
+        private boolean pendingPresent;
+
+        ListAccumulator(ColumnAccumulator elementAccumulator, boolean optional) {
+            this.elementAccumulator = elementAccumulator;
+            this.optional = optional;
+        }
+
+        /** Returns the element accumulator, for the builder's list scope to route element setters into. */
+        public ColumnAccumulator element() {
+            return elementAccumulator;
+        }
+
+        /** Marks the current row as a present (non-null) list. Called by the builder's beginList. */
+        public void markPresent() {
+            this.pendingPresent = true;
+        }
+
+        @Override
+        public boolean isPendingPresent() {
+            return pendingPresent;
+        }
+
+        /** Commits one buffered element into the element accumulator and advances the running element count. */
+        public void endElement() {
+            elementAccumulator.endRow();
+            elementCount++;
+        }
+
+        @Override
+        public void setNull() {
+            this.pendingPresent = false;
+        }
+
+        @Override
+        public void endRow() {
+            ensureOffsetsCapacity(rows + 1);
+            if (pendingPresent || !optional) {
+                present.set(rows);
+            }
+            offsets[rows + 1] = elementCount;
+            rows++;
+            pendingPresent = false;
+        }
+
+        @Override
+        public ColumnVector freeze() {
+            ColumnVector child = elementAccumulator.freeze();
+            Validity validity = optional ? Validity.of((BitSet) present.clone(), rows) : Validity.allValid(rows);
+            return new ListVector(Arrays.copyOf(offsets, rows + 1), child, validity, rows);
+        }
+
+        @Override
+        public void clear() {
+            elementAccumulator.clear();
+            offsets[0] = 0;
+            present.clear();
+            rows = 0;
+            elementCount = 0;
+            pendingPresent = false;
+        }
+
+        private void ensureOffsetsCapacity(int neededLength) {
+            if (neededLength >= offsets.length) {
+                offsets = Arrays.copyOf(offsets, Math.max(offsets.length * 2, neededLength + 1));
+            }
+        }
+    }
+
+    /**
+     * Buffers a map column. The key and value accumulators buffer map entries (not rows) sharing one offsets array and
+     * presence mask: each {@link #endEntry()} advances both accumulators by one entry and grows the entry count. A
+     * row's {@link #endRow()} writes the running entry count as that row's end offset and sets the presence bit when
+     * the map is present.
+     *
+     * <p>The empty, populated, and null states behave exactly as in {@link ListAccumulator}; the only difference is the
+     * two parallel child accumulators advanced together per entry.
+     *
+     * <p>{@link #freeze()} produces a {@link MapVector} whose keys and values share the per-row offsets and whose
+     * validity reflects the per-row presence mask.
+     */
+    final class MapAccumulator implements ColumnAccumulator {
+        private final ColumnAccumulator keyAccumulator;
+        private final ColumnAccumulator valueAccumulator;
+        private final boolean optional;
+        private int[] offsets = new int[17];
+        private final BitSet present = new BitSet();
+        private int rows;
+        private int entryCount;
+        private boolean pendingPresent;
+
+        MapAccumulator(ColumnAccumulator keyAccumulator, ColumnAccumulator valueAccumulator, boolean optional) {
+            this.keyAccumulator = keyAccumulator;
+            this.valueAccumulator = valueAccumulator;
+            this.optional = optional;
+        }
+
+        /** Returns the key accumulator, for the builder's map scope to route key setters into. */
+        public ColumnAccumulator key() {
+            return keyAccumulator;
+        }
+
+        /** Returns the value accumulator, for the builder's map scope to route value setters into. */
+        public ColumnAccumulator value() {
+            return valueAccumulator;
+        }
+
+        /** Marks the current row as a present (non-null) map. Called by the builder's beginMap. */
+        public void markPresent() {
+            this.pendingPresent = true;
+        }
+
+        @Override
+        public boolean isPendingPresent() {
+            return pendingPresent;
+        }
+
+        /** Commits one buffered entry into the key and value accumulators and advances the running entry count. */
+        public void endEntry() {
+            keyAccumulator.endRow();
+            valueAccumulator.endRow();
+            entryCount++;
+        }
+
+        @Override
+        public void setNull() {
+            this.pendingPresent = false;
+        }
+
+        @Override
+        public void endRow() {
+            ensureOffsetsCapacity(rows + 1);
+            if (pendingPresent || !optional) {
+                present.set(rows);
+            }
+            offsets[rows + 1] = entryCount;
+            rows++;
+            pendingPresent = false;
+        }
+
+        @Override
+        public ColumnVector freeze() {
+            ColumnVector keys = keyAccumulator.freeze();
+            ColumnVector values = valueAccumulator.freeze();
+            Validity validity = optional ? Validity.of((BitSet) present.clone(), rows) : Validity.allValid(rows);
+            return new MapVector(Arrays.copyOf(offsets, rows + 1), keys, values, validity, rows);
+        }
+
+        @Override
+        public void clear() {
+            keyAccumulator.clear();
+            valueAccumulator.clear();
+            offsets[0] = 0;
+            present.clear();
+            rows = 0;
+            entryCount = 0;
+            pendingPresent = false;
+        }
+
+        private void ensureOffsetsCapacity(int neededLength) {
+            if (neededLength >= offsets.length) {
+                offsets = Arrays.copyOf(offsets, Math.max(offsets.length * 2, neededLength + 1));
+            }
+        }
+    }
+
+    /**
+     * Buffers an unshredded Variant column: the per-row {@code metadata} and {@code value} binary leaves plus a
+     * presence mask tracking which rows hold a non-null Variant. When the Variant group is REQUIRED, all rows are
+     * present and no mask is kept.
+     *
+     * <p>A present row stages its metadata and value bytes into the two child accumulators through
+     * {@link #setVariant(MemorySegment, MemorySegment)}; a null row leaves the presence bit clear and pushes a null
+     * into both children. {@link #endRow()} advances both children every row, mirroring {@link StructAccumulator}.
+     *
+     * <p>{@link #freeze()} produces a {@link VariantVector} whose metadata and value columns are the two frozen
+     * {@link BinaryVector}s and whose validity reflects the per-row presence mask.
+     */
+    final class VariantAccumulator implements ColumnAccumulator {
+        private final BinaryAccumulator metadataAccumulator;
+        private final BinaryAccumulator valueAccumulator;
+        private final boolean optional;
+        private final BitSet present = new BitSet();
+        private int rows;
+        private boolean pendingPresent;
+
+        VariantAccumulator(
+                BinaryAccumulator metadataAccumulator, BinaryAccumulator valueAccumulator, boolean optional) {
+            this.metadataAccumulator = metadataAccumulator;
+            this.valueAccumulator = valueAccumulator;
+            this.optional = optional;
+        }
+
+        /** Stages the current row's Variant: its metadata and value bytes into the two children, marking it present. */
+        public void setVariant(MemorySegment metadata, MemorySegment value) {
+            metadataAccumulator.setBinary(metadata);
+            valueAccumulator.setBinary(value);
+            this.pendingPresent = true;
+        }
+
+        @Override
+        public boolean isPendingPresent() {
+            return pendingPresent;
+        }
+
+        @Override
+        public void setNull() {
+            this.pendingPresent = false;
+        }
+
+        @Override
+        public void endRow() {
+            if (pendingPresent) {
+                present.set(rows);
+            } else {
+                metadataAccumulator.setNull();
+                valueAccumulator.setNull();
+            }
+            metadataAccumulator.endRow();
+            valueAccumulator.endRow();
+            rows++;
+            pendingPresent = false;
+        }
+
+        @Override
+        public ColumnVector freeze() {
+            BinaryVector metadataVector = (BinaryVector) metadataAccumulator.freeze();
+            BinaryVector valueVector = (BinaryVector) valueAccumulator.freeze();
+            Validity validity = optional ? Validity.of((BitSet) present.clone(), rows) : Validity.allValid(rows);
+            return new VariantVector(metadataVector, valueVector, validity, rows);
+        }
+
+        @Override
+        public void clear() {
+            metadataAccumulator.clear();
+            valueAccumulator.clear();
+            present.clear();
+            rows = 0;
+            pendingPresent = false;
+        }
+    }
+
+    /**
+     * Buffers a shredded Variant column: a {@code metadata} leaf, a {@code value} residual leaf, and the typed subtree
+     * classified from the schema into a {@link ShreddedVariant} model. Each present row's {@link Variant} shreds
+     * against the model into typed leaves plus a residual through a {@link ShreddedVariantShredder}; a null row leaves
+     * the presence bit clear and pushes a null into every leaf. The child accumulators advance once per row, mirroring
+     * {@link VariantAccumulator} and {@link StructAccumulator} so no leaf desyncs from the row count.
+     *
+     * <p>{@link #freeze()} assembles the read-side {@link ShreddedVariantVector} tree from the frozen leaves: the
+     * residual leaf and the typed subtree form the root {@link VariantInput}, and the typed accumulator freezes to the
+     * matching {@link TypedInput}. The assembly is the write inverse of the read path's {@code DremelAssembler}.
+     */
+    final class ShreddedVariantAccumulator implements ColumnAccumulator {
+        private final ShreddedVariant model;
+        private final boolean optional;
+        private final BinaryAccumulator metadataAccumulator = new BinaryAccumulator();
+        private final NodeAccumulator root;
+        private final ShreddedVariantShredder shredder = new ShreddedVariantShredder();
+        private final BitSet present = new BitSet();
+        private int rows;
+        private boolean pendingPresent;
+
+        ShreddedVariantAccumulator(ShreddedVariant model, boolean optional) {
+            this.model = model;
+            this.optional = optional;
+            this.root = NodeAccumulator.forModel(model);
+        }
+
+        /**
+         * Stages the current row's Variant: its metadata bytes into the metadata leaf, and its shredded representation
+         * into the residual leaf and the typed leaves, marking the row present.
+         */
+        public void setVariant(Variant variant) {
+            metadataAccumulator.setBinary(variant.metadata().rawSegment());
+            VariantShred shred = shredder.shred(model, variant, variant.metadata());
+            root.stage(shred);
+            this.pendingPresent = true;
+        }
+
+        @Override
+        public boolean isPendingPresent() {
+            return pendingPresent;
+        }
+
+        @Override
+        public void setNull() {
+            this.pendingPresent = false;
+        }
+
+        @Override
+        public void endRow() {
+            if (pendingPresent) {
+                present.set(rows);
+            } else {
+                metadataAccumulator.setNull();
+                root.stageNull();
+            }
+            metadataAccumulator.endRow();
+            root.endRow();
+            rows++;
+            pendingPresent = false;
+        }
+
+        @Override
+        public ColumnVector freeze() {
+            BinaryVector metadataVector = (BinaryVector) metadataAccumulator.freeze();
+            VariantInput rootInput = root.freeze();
+            Validity validity = optional ? Validity.of((BitSet) present.clone(), rows) : Validity.allValid(rows);
+            return new ShreddedVariantVector(metadataVector, model, rootInput, validity, rows);
+        }
+
+        @Override
+        public void clear() {
+            metadataAccumulator.clear();
+            root.clear();
+            present.clear();
+            rows = 0;
+            pendingPresent = false;
+        }
+    }
+
+    /**
+     * Buffers one shredded node's inputs: an optional residual {@code value} leaf plus an optional typed
+     * representation, the write counterpart of the read-side {@link VariantInput}. The root node and each object field
+     * or array element is a node. A node with a typed scalar that did not match keeps the whole encoded value in its
+     * residual leaf, mirroring how the shredder lifts a non-matching scalar to the sibling {@code value} leaf.
+     */
+    final class NodeAccumulator {
+        private final BinaryAccumulator valueAccumulator;
+        private final TypedAccumulator typed;
+
+        private NodeAccumulator(BinaryAccumulator valueAccumulator, TypedAccumulator typed) {
+            this.valueAccumulator = valueAccumulator;
+            this.typed = typed;
+        }
+
+        /** A root node from a model: a residual leaf plus the typed accumulator the model classifies into. */
+        static NodeAccumulator forModel(ShreddedVariant model) {
+            return new NodeAccumulator(new BinaryAccumulator(), TypedAccumulator.forModel(model));
+        }
+
+        /**
+         * A field or element node from a {@link ShreddedVariant.Field} model: a residual leaf present when the model
+         * has a {@code value} leaf, and a typed accumulator present when the model nests a {@code typed_value}.
+         */
+        static NodeAccumulator forField(ShreddedVariant.Field fieldModel) {
+            BinaryAccumulator value = fieldModel.value() == null ? null : new BinaryAccumulator();
+            TypedAccumulator typed =
+                    fieldModel.typedValue() == null ? null : TypedAccumulator.forModel(fieldModel.typedValue());
+            return new NodeAccumulator(value, typed);
+        }
+
+        /**
+         * Stages a whole shred at this node: its residual into the value leaf, its typed portion into the typed slot.
+         */
+        void stage(VariantShred shred) {
+            stage(residualOf(shred), typedOf(shred));
+        }
+
+        /**
+         * Stages a field's shred: the field's residual into the value leaf and its nested typed shred into the typed
+         * slot.
+         */
+        void stageField(FieldShred field) {
+            stage(field.value(), field.typedValue());
+        }
+
+        private void stage(MemorySegment residual, VariantShred typedShred) {
+            if (valueAccumulator != null) {
+                stageResidual(residual);
+            } else {
+                rejectUnstorableResidual(residual);
+            }
+            if (typed != null) {
+                stageTyped(typedShred);
+            }
+        }
+
+        /**
+         * A node without a residual {@code value} leaf can only store a conforming value: one fully captured by the
+         * typed slot, leaving a null residual. A non-null residual here is a non-conforming value the schema gives no
+         * place to keep. Storing it would silently drop the value; fail loudly instead.
+         */
+        private void rejectUnstorableResidual(MemorySegment residual) {
+            if (residual != null) {
+                throw new ParquetWriteException(
+                        "a non-conforming shredded Variant field value cannot be stored because "
+                                + "the shredded field has no value residual leaf for a non-conforming value");
+            }
+        }
+
+        private void stageResidual(MemorySegment residual) {
+            if (residual == null) {
+                valueAccumulator.setNull();
+            } else {
+                valueAccumulator.setBinary(residual);
+            }
+        }
+
+        private void stageTyped(VariantShred typedShred) {
+            if (typedShred == null) {
+                typed.stageNull();
+            } else {
+                typed.stage(typedShred);
+            }
+        }
+
+        void stageNull() {
+            if (valueAccumulator != null) {
+                valueAccumulator.setNull();
+            }
+            if (typed != null) {
+                typed.stageNull();
+            }
+        }
+
+        void endRow() {
+            if (valueAccumulator != null) {
+                valueAccumulator.endRow();
+            }
+            if (typed != null) {
+                typed.endRow();
+            }
+        }
+
+        VariantInput freeze() {
+            BinaryVector value = valueAccumulator == null ? null : (BinaryVector) valueAccumulator.freeze();
+            TypedInput typedInput = typed == null ? null : typed.freeze();
+            return new VariantInput(value, typedInput);
+        }
+
+        void clear() {
+            if (valueAccumulator != null) {
+                valueAccumulator.clear();
+            }
+            if (typed != null) {
+                typed.clear();
+            }
+        }
+
+        /**
+         * The residual a node's value leaf stores, the same slot the read path reads each node's residual from: a
+         * non-matching scalar's encoded value, a present object's non-shredded fields encoded as an object, or an
+         * absent object's or array's whole encoded value. A matching scalar and a fully shredded present object or
+         * array have a null residual.
+         */
+        private static MemorySegment residualOf(VariantShred shred) {
+            return switch (shred) {
+                case ScalarShred scalar -> scalar.residualValue();
+                case ObjectShred object -> object.residualValue();
+                case ArrayShred array -> array.residualValue();
+            };
+        }
+
+        /** The typed portion of a shred, or null when the shred has no typed contribution this row. */
+        private static VariantShred typedOf(VariantShred shred) {
+            return switch (shred) {
+                case ScalarShred scalar -> scalar.hasTyped() ? scalar : null;
+                case ObjectShred object -> object.present() ? object : null;
+                case ArrayShred array -> array.present() ? array : null;
+            };
+        }
+    }
+
+    /**
+     * Buffers a shredded node's {@code typed_value} representation: a scalar leaf, an object group, or an array. The
+     * write counterpart of the read-side {@link TypedInput}, built once from the {@link ShreddedVariant} model.
+     */
+    sealed interface TypedAccumulator permits ScalarTypedAccumulator, ObjectTypedAccumulator, ArrayTypedAccumulator {
+
+        static TypedAccumulator forModel(ShreddedVariant model) {
+            return switch (model) {
+                case ShreddedVariant.Scalar scalar -> new ScalarTypedAccumulator(scalar);
+                case ShreddedVariant.ShreddedObject object -> new ObjectTypedAccumulator(object);
+                case ShreddedVariant.ShreddedArray(ShreddedVariant.Field element) -> new ArrayTypedAccumulator(element);
+            };
+        }
+
+        /** Stages this row's typed contribution from the shred. Never called with a shred whose type is absent. */
+        void stage(VariantShred shred);
+
+        /** Stages this row as absent: no typed value here. */
+        void stageNull();
+
+        void endRow();
+
+        TypedInput freeze();
+
+        void clear();
+    }
+
+    /**
+     * A scalar typed_value: one primitive leaf whose physical box the shredder produced. A present scalar shred stages
+     * its physical box into the leaf through the setter matching its boxed type; an absent or non-matching scalar
+     * leaves the leaf null this row.
+     */
+    final class ScalarTypedAccumulator implements TypedAccumulator {
+        private final ColumnAccumulator leaf;
+
+        ScalarTypedAccumulator(ShreddedVariant.Scalar model) {
+            SchemaNode.Primitive primitive = model.typedValue();
+            this.leaf = forKind(primitive.kind(), primitive.typeLength().orElse(0));
+        }
+
+        @Override
+        public void stage(VariantShred shred) {
+            ScalarShred scalar = (ScalarShred) shred;
+            if (scalar.hasTyped()) {
+                stagePhysical(scalar.typed());
+            } else {
+                leaf.setNull();
+            }
+        }
+
+        /** Routes a physical box into the leaf through the setter matching its boxed type. */
+        private void stagePhysical(Object physical) {
+            switch (physical) {
+                case Boolean value -> leaf.setBoolean(value);
+                case Integer value -> leaf.setInt(value);
+                case Long value -> leaf.setLong(value);
+                case Float value -> leaf.setFloat(value);
+                case Double value -> leaf.setDouble(value);
+                case MemorySegment value -> leaf.setBinary(value);
+                default ->
+                    throw new ParquetWriteException("unexpected shredded scalar box: "
+                            + physical.getClass().getName());
+            }
+        }
+
+        @Override
+        public void stageNull() {
+            leaf.setNull();
+        }
+
+        @Override
+        public void endRow() {
+            leaf.endRow();
+        }
+
+        @Override
+        public TypedInput freeze() {
+            return new ScalarInput(leaf.freeze());
+        }
+
+        @Override
+        public void clear() {
+            leaf.clear();
+        }
+    }
+
+    /**
+     * An object typed_value group: a per-row presence mask plus one node accumulator per shredded field. A present
+     * object shred sets the presence bit and stages each field's shred; an absent object leaves the bit clear and nulls
+     * every field, mirroring the read-side {@link ObjectInput} the assembler builds.
+     */
+    final class ObjectTypedAccumulator implements TypedAccumulator {
+        private final Map<String, NodeAccumulator> fields;
+        private final BitSet present = new BitSet();
+        private int rows;
+        private boolean pendingPresent;
+
+        ObjectTypedAccumulator(ShreddedVariant.ShreddedObject model) {
+            this.fields = LinkedHashMap.newLinkedHashMap(model.fields().size());
+            for (Map.Entry<String, ShreddedVariant.Field> entry : model.fields().entrySet()) {
+                fields.put(entry.getKey(), NodeAccumulator.forField(entry.getValue()));
+            }
+        }
+
+        @Override
+        public void stage(VariantShred shred) {
+            ObjectShred object = (ObjectShred) shred;
+            this.pendingPresent = true;
+            for (Map.Entry<String, NodeAccumulator> entry : fields.entrySet()) {
+                FieldShred field = object.fields().get(entry.getKey());
+                entry.getValue().stageField(field == null ? new FieldShred(null, null) : field);
+            }
+        }
+
+        @Override
+        public void stageNull() {
+            this.pendingPresent = false;
+            for (NodeAccumulator field : fields.values()) {
+                field.stageNull();
+            }
+        }
+
+        @Override
+        public void endRow() {
+            if (pendingPresent) {
+                present.set(rows);
+            }
+            for (NodeAccumulator field : fields.values()) {
+                field.endRow();
+            }
+            rows++;
+            pendingPresent = false;
+        }
+
+        @Override
+        public TypedInput freeze() {
+            Map<String, VariantInput> fieldInputs = LinkedHashMap.newLinkedHashMap(fields.size());
+            for (Map.Entry<String, NodeAccumulator> entry : fields.entrySet()) {
+                fieldInputs.put(entry.getKey(), entry.getValue().freeze());
+            }
+            Validity presence = Validity.of((BitSet) present.clone(), rows);
+            return new ObjectInput(presence, fieldInputs);
+        }
+
+        @Override
+        public void clear() {
+            for (NodeAccumulator field : fields.values()) {
+                field.clear();
+            }
+            present.clear();
+            rows = 0;
+            pendingPresent = false;
+        }
+    }
+
+    /**
+     * An array typed_value: per-row offsets into the element node, plus a per-row presence mask. A present array shred
+     * sets the presence bit and stages each element through the element node, advancing the running element count; an
+     * absent array leaves the bit clear and advances no elements, mirroring the read-side {@link ArrayInput}.
+     */
+    final class ArrayTypedAccumulator implements TypedAccumulator {
+        private final NodeAccumulator element;
+        private int[] offsets = new int[17];
+        private final BitSet present = new BitSet();
+        private int rows;
+        private int elementCount;
+        private boolean pendingPresent;
+
+        ArrayTypedAccumulator(ShreddedVariant.Field elementModel) {
+            this.element = NodeAccumulator.forField(elementModel);
+        }
+
+        @Override
+        public void stage(VariantShred shred) {
+            ArrayShred array = (ArrayShred) shred;
+            this.pendingPresent = true;
+            for (VariantShred elementShred : array.elements()) {
+                element.stage(elementShred);
+                element.endRow();
+                elementCount++;
+            }
+        }
+
+        @Override
+        public void stageNull() {
+            this.pendingPresent = false;
+        }
+
+        @Override
+        public void endRow() {
+            ensureOffsetsCapacity(rows + 1);
+            if (pendingPresent) {
+                present.set(rows);
+            }
+            offsets[rows + 1] = elementCount;
+            rows++;
+            pendingPresent = false;
+        }
+
+        @Override
+        public TypedInput freeze() {
+            VariantInput elementInput = element.freeze();
+            Validity presence = Validity.of((BitSet) present.clone(), rows);
+            return new ArrayInput(Arrays.copyOf(offsets, rows + 1), presence, elementInput);
+        }
+
+        @Override
+        public void clear() {
+            element.clear();
+            offsets[0] = 0;
+            present.clear();
+            rows = 0;
+            elementCount = 0;
+            pendingPresent = false;
+        }
+
+        private void ensureOffsetsCapacity(int neededLength) {
+            if (neededLength >= offsets.length) {
+                offsets = Arrays.copyOf(offsets, Math.max(offsets.length * 2, neededLength + 1));
             }
         }
     }
