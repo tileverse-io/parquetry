@@ -45,32 +45,41 @@ final class IcebergManifests {
     private IcebergManifests() {}
 
     /**
-     * A surviving data file: its absolute location, the row count the manifest records, and the raw per-column
-     * statistics a later pruning step consumes.
+     * A surviving data file: its location, the row count the manifest records, the raw per-column statistics a later
+     * pruning step consumes, and the partition tuple.
      *
-     * <p>The bound maps and the null-count map mirror the manifest's on-disk shape, each an Iceberg
-     * {@code map<field-id, value>}: the keys are field ids and a missing key means the manifest recorded no such
-     * statistic for that column. The keys are field ids rather than column names because a field id is all the manifest
-     * records; resolving a column's name and type needs the table schema, which this reader does not hold.
-     * {@link IcebergFileStats#from} performs that join.
+     * <p>The bound maps, the null-count map, and the partition tuple mirror the manifest's on-disk shape, each an
+     * Iceberg {@code map<field-id, value>}: a missing key means the manifest recorded no such value for that column.
+     * The keys are field ids rather than column names because a field id is all the manifest records; resolving a
+     * column's name and type needs the table schema, which this reader does not hold ({@link IcebergFileStats#from}
+     * performs that join).
      *
-     * <p>A lower/upper bound value is the raw bound bytes as a {@link MemorySegment}, a zero-copy view of the Avro
-     * record. Decoding a bound needs its column's Iceberg type, which lives in the schema and not here. The bytes
-     * therefore stay undecoded until the schema-aware layer reads them best-effort, skipping any bound it cannot decode
-     * rather than failing the read. A null-value count is the number of nulls in that column.
+     * <p>A lower/upper bound value stays the raw bound bytes as a {@link MemorySegment} (a zero-copy view of the Avro
+     * record) until the schema-aware layer decodes it best-effort by the column's Iceberg type, skipping any bound it
+     * cannot decode rather than failing the read.
+     *
+     * @param location the absolute data-file location
+     * @param recordCount the number of rows the manifest records for this file
+     * @param lowerBounds per-column lower bounds keyed by field id; a missing key means no recorded bound
+     * @param upperBounds per-column upper bounds keyed by field id; a missing key means no recorded bound
+     * @param nullValueCounts per-column null counts keyed by field id
+     * @param partitionValues the partition tuple keyed by Iceberg partition-field-id; each value is the raw Avro value
+     *     (for an identity partition, the source column's value) and a null tuple slot is omitted
      */
     public record DataFileRef(
             String location,
             long recordCount,
             Map<Integer, MemorySegment> lowerBounds,
             Map<Integer, MemorySegment> upperBounds,
-            Map<Integer, Long> nullValueCounts) {
+            Map<Integer, Long> nullValueCounts,
+            Map<Integer, Object> partitionValues) {
 
         public DataFileRef {
             Objects.requireNonNull(location, "location");
             lowerBounds = Map.copyOf(lowerBounds);
             upperBounds = Map.copyOf(upperBounds);
             nullValueCounts = Map.copyOf(nullValueCounts);
+            partitionValues = Map.copyOf(partitionValues);
         }
     }
 
@@ -134,7 +143,12 @@ final class IcebergManifests {
                         readIntKeyedMap(safeGet(dataFile, "upper_bounds"), MemorySegment.class::cast);
                 Map<Integer, Long> nullValueCounts =
                         readIntKeyedMap(safeGet(dataFile, "null_value_counts"), value -> ((Number) value).longValue());
-                dataFiles.add(new DataFileRef(location, recordCount, lowerBounds, upperBounds, nullValueCounts));
+                Object partition = safeGet(dataFile, "partition");
+                Map<Integer, Object> partitionValues = partition instanceof AvroRecord partitionRecord
+                        ? readPartitionTuple(partitionRecord)
+                        : Map.of();
+                dataFiles.add(new DataFileRef(
+                        location, recordCount, lowerBounds, upperBounds, nullValueCounts, partitionValues));
             });
         }
         return dataFiles;
@@ -162,6 +176,27 @@ final class IcebergManifests {
             }
         }
         return map;
+    }
+
+    /**
+     * Reads a data file's partition tuple from the manifest's {@code partition} struct record, keyed by Iceberg
+     * partition-field-id. Each tuple slot is an Avro field whose {@code field-id} attribute is the partition-field-id;
+     * when that attribute is absent, fall back to the field's position offset by Iceberg's partition-field-id base
+     * (1000) following spec order. A null slot is omitted.
+     */
+    private static Map<Integer, Object> readPartitionTuple(AvroRecord partitionRecord) {
+        Map<Integer, Object> tuple = new LinkedHashMap<>();
+        List<Field> fields = partitionRecord.schema().fields();
+        for (int i = 0; i < fields.size(); i++) {
+            Field field = fields.get(i);
+            Object value = partitionRecord.get(i);
+            if (value == null) {
+                continue;
+            }
+            int key = field.fieldId().orElse(1000 + i);
+            tuple.put(key, value);
+        }
+        return tuple;
     }
 
     private static Object safeGet(AvroRecord avroRecord, String fieldName) {

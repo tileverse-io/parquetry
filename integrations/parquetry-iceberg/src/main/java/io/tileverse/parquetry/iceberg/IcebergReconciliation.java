@@ -18,6 +18,7 @@ package io.tileverse.parquetry.iceberg;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import io.tileverse.parquetry.filter.OutputColumn;
@@ -60,12 +61,17 @@ final class IcebergReconciliation {
         }
     }
 
-    /** Reconciles {@code file} against {@code table}, returning the fast path when possible. */
-    static Reconciliation reconcile(IcebergSchema table, IcebergFileSchema file) {
+    /**
+     * Reconciles {@code file} against {@code table}, returning the fast path when possible. A table field absent from
+     * the file whose id appears in {@code partitionConstants} is an omitted identity-partition column: it reconstructs
+     * to a {@link OutputColumn.Constant} of its partition value rather than a null column.
+     */
+    static Reconciliation reconcile(
+            IcebergSchema table, IcebergFileSchema file, Map<Integer, Value> partitionConstants) {
         if (canPassThrough(table, file)) {
             return Reconciliation.ofPassThrough();
         }
-        return Reconciliation.ofReconciled(presentTableFields(table, file));
+        return Reconciliation.ofReconciled(presentTableFields(table, file, partitionConstants));
     }
 
     private static boolean canPassThrough(IcebergSchema table, IcebergFileSchema file) {
@@ -91,20 +97,30 @@ final class IcebergReconciliation {
         return sameName && sameKind;
     }
 
-    private static List<OutputColumn> presentTableFields(IcebergSchema table, IcebergFileSchema file) {
+    private static List<OutputColumn> presentTableFields(
+            IcebergSchema table, IcebergFileSchema file, Map<Integer, Value> partitionConstants) {
         List<OutputColumn> output = new ArrayList<>(table.fields().size());
         for (IcebergField field : table.fields()) {
-            output.add(presentField(field, file));
+            output.add(presentField(field, file, partitionConstants));
         }
         return output;
     }
 
-    private static OutputColumn presentField(IcebergField field, IcebergFileSchema file) {
+    private static OutputColumn presentField(
+            IcebergField field, IcebergFileSchema file, Map<Integer, Value> partitionConstants) {
         Optional<FileColumn> column = file.byFieldId(field.fieldId());
         if (column.isEmpty()) {
-            return injectNullColumn(field);
+            return presentAbsentColumn(field, partitionConstants);
         }
         return presentExistingColumn(field, column.get());
+    }
+
+    private static OutputColumn presentAbsentColumn(IcebergField field, Map<Integer, Value> partitionConstants) {
+        Value partitionValue = partitionConstants.get(field.fieldId());
+        if (partitionValue != null) {
+            return new OutputColumn.Constant(ColumnPath.of(field.name()), partitionValue);
+        }
+        return injectNullColumn(field);
     }
 
     private static OutputColumn presentExistingColumn(IcebergField field, FileColumn fileColumn) {

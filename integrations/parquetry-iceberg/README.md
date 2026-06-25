@@ -51,6 +51,7 @@ clear message rather than returning wrong rows. The `Spec` column notes the Iceb
 | Record-level predicate filtering | v1+ | Full | |
 | Bounding-box spatial predicates | v3 | Full | evaluated record-by-record through the engine's spatial contract |
 | Manifest-bound file pruning (L3) | v1+ | Full | scalar bounds (`int`/`long`/`float`/`double`/`boolean`/`date`/`string`/`uuid`) + geometry bounds (`packed_xy`, `wkb_point`) |
+| Partition-value file pruning | v1+ | Full | an equality or range on an identity-partition column skips whole files before opening them |
 | Manifest bounds for `timestamp`/`time`/`decimal`/`fixed`/`binary` | v1+ | Planned | a predicate on these does not prune; the file is kept and filtered |
 | Row-group pruning inside a file (L4) | v1+ | Planned | file-level pruning skips whole files only |
 | Dataset-level explain / analyze | - | Full | reports the file dimension: files kept/skipped, each skip reason, each kept file's row-group plan |
@@ -64,7 +65,7 @@ clear message rather than returning wrong rows. The `Spec` column notes the Iceb
 | Copy-on-write tables | v1+ | Full | |
 | Merge-on-read: positional + equality deletes | v2 | Planned | a snapshot referencing delete manifests fails fast |
 | Merge-on-read: deletion vectors | v3 | Planned | |
-| Partitioned tables | v1+ | Planned | a non-empty partition spec fails fast; identity reconstruction and transforms not wired |
+| Partitioned tables | v1+ | Full | identity-partition value reconstruction, transform partitions read as-is, partition-value file pruning; `decimal`/`timestamp` partition source types fail fast |
 
 ## Spatial grading (CARTO iceberg-geo-testbed)
 

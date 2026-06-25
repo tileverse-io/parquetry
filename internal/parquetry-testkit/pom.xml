@@ -57,6 +57,8 @@
           <include>parquetry/**</include>
           <include>avro-reference/**</include>
           <include>iceberg-geo-testbed/**</include>
+          <include>iceberg-partitioned/by_category/**</include>
+          <include>iceberg-partitioned/by_category_omitted/**</include>
         </includes>
         <excludes>
           <exclude>**/.git</exclude>

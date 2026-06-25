@@ -140,6 +140,79 @@ class IcebergTableMetadataTest {
     }
 
     @Test
+    void parsesIdentityPartitionSpec() {
+        String json = """
+                {
+                  "format-version": 2,
+                  "location": "file:///t",
+                  "current-snapshot-id": 1,
+                  "current-schema-id": 0,
+                  "snapshots": [
+                    {"snapshot-id": 1, "timestamp-ms": 10, "manifest-list": "file:///t/m.avro"}
+                  ],
+                  "schemas": [
+                    {
+                      "schema-id": 0,
+                      "fields": [
+                        {"id": 1, "name": "id", "type": "long", "required": true},
+                        {"id": 2, "name": "category", "type": "string", "required": true}
+                      ]
+                    }
+                  ],
+                  "partition-specs": [
+                    {
+                      "spec-id": 0,
+                      "fields": [
+                        {"source-id": 2, "field-id": 1000, "name": "category", "transform": "identity"}
+                      ]
+                    }
+                  ]
+                }
+                """;
+        IcebergTableMetadata metadata = IcebergTableMetadata.read(json);
+
+        assertThat(metadata.isPartitioned()).isTrue();
+        assertThat(metadata.partitionSpec().byPartitionFieldId(1000))
+                .contains(new IcebergPartitionSpec.PartitionField(1000, 2, "category", "identity"));
+        assertThat(metadata.partitionSpec().identitySourceFields())
+                .containsEntry(2, new IcebergField(2, "category", "string", true));
+    }
+
+    @Test
+    void parsesV1SingularPartitionSpecWithoutFieldId() {
+        String json = """
+                {
+                  "format-version": 1,
+                  "location": "file:///t",
+                  "current-snapshot-id": 1,
+                  "current-schema-id": 0,
+                  "snapshots": [
+                    {"snapshot-id": 1, "timestamp-ms": 10, "manifest-list": "file:///t/m.avro"}
+                  ],
+                  "schemas": [
+                    {
+                      "schema-id": 0,
+                      "fields": [
+                        {"id": 1, "name": "id", "type": "long", "required": true},
+                        {"id": 2, "name": "category", "type": "string", "required": true}
+                      ]
+                    }
+                  ],
+                  "partition-spec": [
+                    {"source-id": 2, "name": "category", "transform": "identity"}
+                  ]
+                }
+                """;
+        IcebergTableMetadata metadata = IcebergTableMetadata.read(json);
+
+        assertThat(metadata.isPartitioned()).isTrue();
+        assertThat(metadata.partitionSpec().byPartitionFieldId(1000))
+                .contains(new IcebergPartitionSpec.PartitionField(1000, 2, "category", "identity"));
+        assertThat(metadata.partitionSpec().identitySourceFields())
+                .containsEntry(2, new IcebergField(2, "category", "string", true));
+    }
+
+    @Test
     void malformedJsonRejected() {
         assertThatThrownBy(() -> IcebergTableMetadata.read("{ not json")).isInstanceOf(IcebergFormatException.class);
     }
