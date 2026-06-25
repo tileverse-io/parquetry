@@ -48,7 +48,7 @@ class QueryFetchAccountingIT {
     void analyzeTalliesIndexBloomAndPageBytes() {
         Predicate present = Pred.col("String").eq("Hello");
         try (ByteRangeSource source = ByteRangeSource.ofFile(FILE)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             ExplainPlan plan = reader.explainAnalyze(present, Projection.ALL, ReadOptions.DEFAULTS);
             FetchStats stats = plan.execution().orElseThrow().totalFetch();
 

@@ -31,8 +31,8 @@ import io.tileverse.storage.StorageEntry;
 import io.tileverse.parquetry.catalog.CatalogOptions;
 import io.tileverse.parquetry.catalog.DatasetCatalog;
 import io.tileverse.parquetry.catalog.FilesetCatalog;
-import io.tileverse.parquetry.dataset.Dataset;
 import io.tileverse.parquetry.dataset.GeoParquetDataset;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.iceberg.IcebergCatalog;
 import io.tileverse.parquetry.iceberg.IcebergOptions;
 import io.tileverse.parquetry.io.LocalFileSource;
@@ -41,10 +41,10 @@ import io.tileverse.parquetry.tileverse.ParquetFileSources;
 import io.tileverse.parquetry.tileverse.ParquetStorage;
 
 /**
- * Resolves a CLI path or URI into an open {@link Dataset}, auto-detecting the input kind: a single Parquet file or a
- * directory/glob of same-schema files become one merged {@link FilesetCatalog} dataset; a directory or remote prefix
- * whose {@code metadata/} holds an Iceberg table metadata file becomes an {@link IcebergCatalog} dataset. The returned
- * {@link OpenDataset} owns the catalog and releases it on {@link OpenDataset#close()}.
+ * Resolves a CLI path or URI into an open {@link ParquetDataset}, auto-detecting the input kind: a single Parquet file
+ * or a directory/glob of same-schema files become one merged {@link FilesetCatalog} dataset; a directory or remote
+ * prefix whose {@code metadata/} holds an Iceberg table metadata file becomes an {@link IcebergCatalog} dataset. The
+ * returned {@link OpenDataset} owns the catalog and releases it on {@link OpenDataset#close()}.
  *
  * <p>Detection probes the filesystem for local paths and uses the trailing-slash convention for remote prefixes. A
  * remote prefix is probed for an Iceberg metadata marker over its {@link Storage} and opened as an Iceberg table when
@@ -61,7 +61,7 @@ public final class DatasetResolver {
     public static final class OpenDataset implements AutoCloseable {
 
         private final DatasetCatalog catalog;
-        private final Dataset dataset;
+        private final ParquetDataset dataset;
 
         private OpenDataset(DatasetCatalog catalog) {
             this.catalog = catalog;
@@ -69,7 +69,7 @@ public final class DatasetResolver {
             this.dataset = catalog.dataset(names.get(0));
         }
 
-        public Dataset dataset() {
+        public ParquetDataset dataset() {
             return dataset;
         }
 
@@ -92,7 +92,7 @@ public final class DatasetResolver {
     }
 
     /** The GeoParquet metadata of a dataset, or empty when the dataset has none. */
-    public static Optional<GeoParquetMetadata> geoMetadataOf(Dataset dataset) {
+    public static Optional<GeoParquetMetadata> geoMetadataOf(ParquetDataset dataset) {
         if (dataset instanceof GeoParquetDataset geo) {
             return geo.geoMetadata();
         }

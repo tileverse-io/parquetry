@@ -23,7 +23,7 @@ import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.RowGroupSummary;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -38,12 +38,12 @@ class MultiReaderDatasetTest {
         try (ByteRangeSource a = ByteRangeSource.ofFile(FILE);
                 ByteRangeSource b = ByteRangeSource.ofFile(FILE)) {
 
-            ParquetReader ra = ParquetReader.open(a);
-            ParquetReader rb = ParquetReader.open(b);
+            ParquetFileReader ra = ParquetFileReader.open(a);
+            ParquetFileReader rb = ParquetFileReader.open(b);
             long single =
                     ra.rowGroups().stream().mapToLong(RowGroupSummary::rowCount).sum();
 
-            DefaultParquetDataset ds = new DefaultParquetDataset(List.of(ra, rb));
+            DefaultParquetSource ds = new DefaultParquetSource(List.of(ra, rb));
 
             // same file twice means identical schemas; construction succeeds
             assertThat(ds.schema()).isEqualTo(ra.schema());

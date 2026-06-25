@@ -41,8 +41,8 @@ import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.batch.Validity;
-import io.tileverse.parquetry.data.ParquetReader;
-import io.tileverse.parquetry.data.ParquetWriter;
+import io.tileverse.parquetry.data.ParquetFileReader;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
@@ -81,7 +81,7 @@ class ParquetWriterBatchTest {
                     .asReadOnly();
         }
 
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema, options);
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(parquetFile), schema, options);
                 ParquetRecordBatch batch = buildBatch(
                         schema,
                         rows,
@@ -109,7 +109,7 @@ class ParquetWriterBatchTest {
         Path parquetFile = tempDir.resolve("multi-batch.parquet");
         int batches = 100;
         int rowsPerBatch = 50;
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
             for (int b = 0; b < batches; b++) {
                 int[] values = new int[rowsPerBatch];
                 BitSet validBits = new BitSet(rowsPerBatch);
@@ -151,14 +151,14 @@ class ParquetWriterBatchTest {
         }
         Validity valid = Validity.of(validBits, rows);
 
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema, options);
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(parquetFile), schema, options);
                 ParquetRecordBatch batch =
                         buildBatch(schema, rows, Map.of(ColumnPath.of("id"), IntVector.materialized(ids, valid)))) {
             writer.writeBatch(batch);
         }
 
         try (ByteRangeSource source = ByteRangeSource.ofFile(parquetFile)) {
-            ParquetReader dataset = ParquetReader.open(source);
+            ParquetFileReader dataset = ParquetFileReader.open(source);
             try (Stream<ParquetRecord> stream =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 List<ParquetRecord> all = stream.toList();
@@ -181,7 +181,7 @@ class ParquetWriterBatchTest {
         WriteOptions options = options().build();
         Path parquetFile = tempDir.resolve("mixed.parquet");
 
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
             writer.writeBatch(WriteFixtures.batch(schema, List.of(Map.of(ColumnPath.of("id"), 100))));
             int[] batchValues = {200, 201, 202};
             BitSet validBits = new BitSet(3);
@@ -239,7 +239,7 @@ class ParquetWriterBatchTest {
     private static List<Map<String, Object>> readAll(Path parquetFile, ParquetSchema schema) {
         List<Map<String, Object>> out = new ArrayList<>();
         try (ByteRangeSource source = ByteRangeSource.ofFile(parquetFile)) {
-            ParquetReader dataset = ParquetReader.open(source);
+            ParquetFileReader dataset = ParquetFileReader.open(source);
             try (Stream<ParquetRecord> stream =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 stream.forEach(parquetRecord -> out.add(extractAll(parquetRecord, schema)));

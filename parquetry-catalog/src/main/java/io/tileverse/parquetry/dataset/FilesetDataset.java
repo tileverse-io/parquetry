@@ -59,12 +59,12 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
  * A {@link GeoParquetDataset} composed from one or many same-schema Parquet files. Before each query it prunes files
  * whose Hive partition value cannot match the predicate (the same {@link FilePruner} path the Iceberg backend uses, fed
  * from path values as exact statistics) and reads only the survivors. When nothing prunes it reuses one pre-opened
- * {@link ParquetDataset} over every file, which keeps the common unpartitioned case reading each footer once.
+ * {@link ParquetSource} over every file, which keeps the common unpartitioned case reading each footer once.
  */
 public final class FilesetDataset implements GeoParquetDataset {
 
     private final String name;
-    private final ParquetDataset allFiles;
+    private final ParquetSource allFiles;
     private final ParquetSchema augmentedSchema;
     private final HivePartitioning partitioning;
     private final List<Map<String, String>> perFilePartitions;
@@ -74,11 +74,11 @@ public final class FilesetDataset implements GeoParquetDataset {
     private final DatasetCapabilities capabilities;
     private final Optional<GeoParquetMetadata> geoMetadata;
     private final Optional<BoundingBox> aggregatedBounds;
-    private final Map<Integer, ParquetDataset> perFileDatasets = new ConcurrentHashMap<>();
+    private final Map<Integer, ParquetSource> perFileDatasets = new ConcurrentHashMap<>();
 
     public FilesetDataset(
             String name,
-            ParquetDataset allFiles,
+            ParquetSource allFiles,
             PartitionContext partitions,
             List<ByteRangeSource> sources,
             List<String> locations,
@@ -186,7 +186,7 @@ public final class FilesetDataset implements GeoParquetDataset {
             throw new UnsupportedOperationException(
                     "the materializer read path does not yet support synthesized partition columns; use read(predicate, projection, options)");
         }
-        ParquetDataset query = surviving(predicate);
+        ParquetSource query = surviving(predicate);
         if (query == null) {
             return Stream.empty();
         }
@@ -211,7 +211,7 @@ public final class FilesetDataset implements GeoParquetDataset {
 
     @MustBeClosed
     private Stream<ParquetRecord> readAllFiles(Predicate predicate, Projection projection, ReadOptions options) {
-        ParquetDataset query = surviving(predicate);
+        ParquetSource query = surviving(predicate);
         if (query == null) {
             return Stream.empty();
         }
@@ -221,7 +221,7 @@ public final class FilesetDataset implements GeoParquetDataset {
     @MustBeClosed
     private Stream<ParquetRecordBatch> readAllFileBatches(
             Predicate predicate, Projection projection, ReadOptions options) {
-        ParquetDataset query = surviving(predicate);
+        ParquetSource query = surviving(predicate);
         if (query == null) {
             return Stream.empty();
         }
@@ -229,7 +229,7 @@ public final class FilesetDataset implements GeoParquetDataset {
     }
 
     private long countAllFiles(Predicate predicate, ReadOptions options) {
-        ParquetDataset query = surviving(predicate);
+        ParquetSource query = surviving(predicate);
         if (query == null) {
             return 0L;
         }
@@ -432,7 +432,7 @@ public final class FilesetDataset implements GeoParquetDataset {
             return new FileExplain(location, Outcome.SKIP, "partition value excluded", recordCount, Optional.empty());
         }
         Projection physical = physicalProjection(projection);
-        ParquetDataset survivor = perFile(index);
+        ParquetSource survivor = perFile(index);
         ExplainPlan plan = analyze
                 ? survivor.explainAnalyze(residual, physical, options)
                 : survivor.explain(residual, physical, options);
@@ -443,7 +443,7 @@ public final class FilesetDataset implements GeoParquetDataset {
      * The dataset over the files surviving {@code predicate}: {@code allFiles} when nothing prunes, null when all
      * prune.
      */
-    private ParquetDataset surviving(Predicate predicate) {
+    private ParquetSource surviving(Predicate predicate) {
         List<Integer> survivors = pruneSurvivors(predicate);
         if (survivors.isEmpty()) {
             return null;
@@ -452,21 +452,21 @@ public final class FilesetDataset implements GeoParquetDataset {
             // Nothing pruned: pruneSurvivors emits [0..n) ascending, identical to allFiles.
             return allFiles;
         }
-        return ParquetDataset.open(new SurvivorFileset(sources, survivors));
+        return ParquetSource.open(new SurvivorFileset(sources, survivors));
     }
 
     /**
-     * The single-file {@link ParquetDataset} over the source at {@code index}, parsed once and reused across queries
-     * and threads. {@code computeIfAbsent} gives one footer parse per index even under concurrent reads; the dataset
+     * The single-file {@link ParquetSource} over the source at {@code index}, parsed once and reused across queries and
+     * threads. {@code computeIfAbsent} gives one footer parse per index even under concurrent reads; the dataset
      * borrows the catalog's shared source, which the catalog owns and closes.
      */
-    private ParquetDataset perFile(int index) {
+    private ParquetSource perFile(int index) {
         return perFileDatasets.computeIfAbsent(
-                index, i -> ParquetDataset.open(new SurvivorFileset(sources, List.of(i))));
+                index, i -> ParquetSource.open(new SurvivorFileset(sources, List.of(i))));
     }
 
     /** Test hook: the memoized single-file dataset for {@code index}, proving footer reuse across queries. */
-    ParquetDataset perFileDatasetForTest(int index) {
+    ParquetSource perFileDatasetForTest(int index) {
         return perFile(index);
     }
 

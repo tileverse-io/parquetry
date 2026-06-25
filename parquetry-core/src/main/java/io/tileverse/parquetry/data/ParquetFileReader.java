@@ -110,7 +110,7 @@ import lombok.NonNull;
  * column page indexes are sourced (for example, to plug in a cached or remote lookup) without re-implementing the rest
  * of the read pipeline.
  */
-public class ParquetReader {
+public class ParquetFileReader {
 
     private static final String GEO_KEY = "geo";
 
@@ -133,7 +133,7 @@ public class ParquetReader {
     @SuppressWarnings("java:S1068")
     private final Optional<DecryptionKeyRetriever> decryptionKeyRetriever;
 
-    protected ParquetReader(
+    protected ParquetFileReader(
             ByteRangeSource source,
             FileMetaData footer,
             ParquetSchema fileSchema,
@@ -155,7 +155,7 @@ public class ParquetReader {
      * Opens a reader against the default runtime, performing exactly one footer read against {@code source}. Equivalent
      * to {@code open(source, ParquetRuntime.defaultRuntime(), Optional.empty())}.
      */
-    public static ParquetReader open(@NonNull ByteRangeSource source) {
+    public static ParquetFileReader open(@NonNull ByteRangeSource source) {
         return open(source, ParquetRuntime.defaultRuntime(), Optional.empty());
     }
 
@@ -163,7 +163,7 @@ public class ParquetReader {
      * Opens a reader bound to {@code runtime} for read resources, performing exactly one footer read against
      * {@code source}. The {@code decryptionKeyRetriever} is held for an encrypted file.
      */
-    public static ParquetReader open(
+    public static ParquetFileReader open(
             @NonNull ByteRangeSource source,
             @NonNull ParquetRuntime runtime,
             @NonNull Optional<DecryptionKeyRetriever> decryptionKeyRetriever) {
@@ -171,7 +171,7 @@ public class ParquetReader {
         Map<String, String> kvMetadata = collapseKeyValueMetadata(footer.keyValueMetadata());
         ParquetSchema fileSchema = buildFileSchema(footer, kvMetadata);
         List<RowGroupSummary> rgView = toRowGroupView(footer);
-        return new ParquetReader(source, footer, fileSchema, kvMetadata, rgView, runtime, decryptionKeyRetriever);
+        return new ParquetFileReader(source, footer, fileSchema, kvMetadata, rgView, runtime, decryptionKeyRetriever);
     }
 
     /** Returns the file schema, with GeoParquet 1.x logical-type annotations folded in. */
@@ -263,7 +263,10 @@ public class ParquetReader {
 
     private boolean isGeometryLeaf(ColumnPath leaf) {
         return fileSchema.find(leaf).orElse(null) instanceof SchemaNode.Primitive primitive
-                && primitive.logicalType().map(ParquetReader::isGeometryLike).orElse(false);
+                && primitive
+                        .logicalType()
+                        .map(ParquetFileReader::isGeometryLike)
+                        .orElse(false);
     }
 
     private static boolean isGeometryLike(LogicalType logicalType) {

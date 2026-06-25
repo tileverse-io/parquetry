@@ -32,8 +32,8 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.data.Compression;
-import io.tileverse.parquetry.data.ParquetReader;
-import io.tileverse.parquetry.data.ParquetWriter;
+import io.tileverse.parquetry.data.ParquetFileReader;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.ParquetVersion;
@@ -52,7 +52,7 @@ import io.tileverse.parquetry.schema.SchemaNode;
  * Write-side performance probe. Gated by the {@code PARQUETRY_WRITE_PROBE} environment variable so the test is a no-op
  * under normal {@code mvn verify}.
  *
- * <p>Each scenario writes a synthetic record stream through {@link ParquetWriter} and prints throughput plus the
+ * <p>Each scenario writes a synthetic record stream through {@link ParquetFileWriter} and prints throughput plus the
  * resulting file size. When {@code PARQUETRY_WRITE_PROBE_INPUT} points at an existing Parquet file the probe also
  * round-trips that file (read + re-write at the configured options) to compare against the synthetic numbers.
  */
@@ -138,7 +138,7 @@ class WritePerformanceProbeTest {
         for (int i = 0; i < SYNTHETIC_ROW_COUNT; i++) {
             rows.add(syntheticRow(i));
         }
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
         long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;
@@ -153,9 +153,9 @@ class WritePerformanceProbeTest {
         long startNanos = System.nanoTime();
         long rowCount = 0L;
         try (ByteRangeSource source = ByteRangeSource.ofFile(input)) {
-            ParquetReader dataset = ParquetReader.open(source);
+            ParquetFileReader dataset = ParquetFileReader.open(source);
             ParquetSchema schema = dataset.schema();
-            try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options);
+            try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options);
                     Stream<ParquetRecord> records =
                             dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 long[] counter = {0L};

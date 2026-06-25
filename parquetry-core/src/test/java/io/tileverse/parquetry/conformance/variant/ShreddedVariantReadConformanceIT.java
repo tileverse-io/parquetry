@@ -37,7 +37,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.variant.Variant;
 import io.tileverse.parquetry.filter.Predicate;
@@ -53,10 +53,10 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Reader-level conformance against the bundled {@code parquet-testing/shredded_variant} corpus, exercising both read
- * paths for scalar, object, and array shreddings: the eager {@link ParquetReader#readBatches} columnar assembly path
- * and the lazy {@link ParquetReader#read} streaming row path. Every valid, non-error case reads the single {@code var}
- * column through each path and asserts each row's reconstructed {@link Variant} serializes byte-for-byte to the corpus'
- * expected {@code .variant.bin} bytes.
+ * paths for scalar, object, and array shreddings: the eager {@link ParquetFileReader#readBatches} columnar assembly
+ * path and the lazy {@link ParquetFileReader#read} streaming row path. Every valid, non-error case reads the single
+ * {@code var} column through each path and asserts each row's reconstructed {@link Variant} serializes byte-for-byte to
+ * the corpus' expected {@code .variant.bin} bytes.
  *
  * <p>The streaming path is exercised under a filter, the form a server-side scan with a predicate takes. A trivially
  * all-matching {@link Predicate.IsNotNull} on the required {@code id} column keeps every row (the corpus schema
@@ -174,7 +174,7 @@ class ShreddedVariantReadConformanceIT {
     private void readBatchesAndAssertRows(String parquetFile, List<String> expectedRowFiles) throws IOException {
         Path file = corpusDir.resolve(parquetFile);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             int globalRow = 0;
             try (Stream<ParquetRecordBatch> batches =
                     reader.readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
@@ -191,7 +191,7 @@ class ShreddedVariantReadConformanceIT {
     private void readEveryRowThroughBatches(String parquetFile) throws IOException {
         Path file = corpusDir.resolve(parquetFile);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             try (Stream<ParquetRecordBatch> batches =
                     reader.readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 for (ParquetRecordBatch batch : (Iterable<ParquetRecordBatch>) batches::iterator) {
@@ -214,7 +214,7 @@ class ShreddedVariantReadConformanceIT {
     private void streamRowsAndAssert(String parquetFile, List<String> expectedRowFiles) throws IOException {
         Path file = corpusDir.resolve(parquetFile);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             int globalRow = 0;
             try (Stream<ParquetRecord> records =
                     reader.read(ALL_ROWS, Projection.ALL, Materializer.defaultRecord(), ReadOptions.DEFAULTS)) {
@@ -245,7 +245,7 @@ class ShreddedVariantReadConformanceIT {
     private void streamEveryRow(String parquetFile) throws IOException {
         Path file = corpusDir.resolve(parquetFile);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             try (Stream<ParquetRecord> records =
                     reader.read(ALL_ROWS, Projection.ALL, Materializer.defaultRecord(), ReadOptions.DEFAULTS)) {
                 for (ParquetRecord record : (Iterable<ParquetRecord>) records::iterator) {

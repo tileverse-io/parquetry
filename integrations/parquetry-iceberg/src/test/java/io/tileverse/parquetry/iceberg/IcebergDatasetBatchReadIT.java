@@ -25,7 +25,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.dataset.Dataset;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -33,8 +33,8 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
 /**
- * Proves the {@code v3_geometry} Iceberg table reads columnar batches through the {@link Dataset} SPI (not the concrete
- * {@code IcebergDataset}), establishing that {@code readBatches} is reachable on the SPI. Batch reads are
+ * Proves the {@code v3_geometry} Iceberg table reads columnar batches through the {@link ParquetDataset} SPI (not the
+ * concrete {@code IcebergDataset}), establishing that {@code readBatches} is reachable on the SPI. Batch reads are
  * pushdown-only: a California bbox prunes data files to a positive subset, but surviving pages still hold non-matching
  * rows, hence the pruned total is asserted to be strictly less than the unfiltered total, never an exact match count.
  */
@@ -52,7 +52,7 @@ class IcebergDatasetBatchReadIT {
         Path tableDir = root.resolve(TABLE);
 
         try (IcebergCatalog catalog = IcebergCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
-            Dataset dataset = catalog.dataset(TABLE);
+            ParquetDataset dataset = catalog.dataset(TABLE);
 
             long unfilteredTotal = sumBatchRows(dataset, Predicate.ALWAYS_TRUE);
             assertThat(unfilteredTotal).isEqualTo(dataset.count(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS));
@@ -63,7 +63,7 @@ class IcebergDatasetBatchReadIT {
         }
     }
 
-    private static long sumBatchRows(Dataset dataset, Predicate predicate) {
+    private static long sumBatchRows(ParquetDataset dataset, Predicate predicate) {
         try (Stream<ParquetRecordBatch> batches =
                 dataset.readBatches(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
             return batches.mapToLong(batch -> {

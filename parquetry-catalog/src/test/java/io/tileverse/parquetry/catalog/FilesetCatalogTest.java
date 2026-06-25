@@ -38,10 +38,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.dataset.Dataset;
 import io.tileverse.parquetry.dataset.DatasetCapabilities;
 import io.tileverse.parquetry.dataset.GeoParquetDataset;
 import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.io.ByteRangeSource;
@@ -57,7 +57,7 @@ class FilesetCatalogTest {
 
     private long singleFileRowCount() {
         try (ByteRangeSource src = ByteRangeSource.ofFile(FILE)) {
-            return ParquetDataset.open(src).count();
+            return ParquetSource.open(src).count();
         }
     }
 
@@ -68,7 +68,7 @@ class FilesetCatalogTest {
 
         try (FilesetCatalog catalog = FilesetCatalog.open(LocalFileSource.file(only), CatalogOptions.defaults())) {
             assertThat(catalog.datasets()).containsExactly("alltypes_plain");
-            Dataset ds = catalog.dataset("alltypes_plain");
+            ParquetDataset ds = catalog.dataset("alltypes_plain");
             assertThat(ds.count(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS)).isEqualTo(singleFileRowCount());
         }
     }
@@ -83,7 +83,7 @@ class FilesetCatalogTest {
                 CatalogOptions.builder().datasetName("places").build())) {
 
             assertThat(catalog.datasets()).containsExactly("places");
-            Dataset ds = catalog.dataset("places");
+            ParquetDataset ds = catalog.dataset("places");
             assertThat(ds.count(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS)).isEqualTo(2 * singleFileRowCount());
         }
     }
@@ -155,7 +155,7 @@ class FilesetCatalogTest {
         try (FilesetCatalog catalog =
                 FilesetCatalog.open(LocalFileSource.directory(datasetDir, "*.parquet"), CatalogOptions.defaults())) {
             assertThat(catalog.datasets()).containsExactly("places");
-            Dataset ds = catalog.dataset("places");
+            ParquetDataset ds = catalog.dataset("places");
             assertThat(ds.count(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS)).isEqualTo(2 * singleFileRowCount());
         }
     }
@@ -181,7 +181,7 @@ class FilesetCatalogTest {
 
         try (FilesetCatalog catalog =
                 FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
-            Dataset ds = catalog.dataset(catalog.datasets().get(0));
+            ParquetDataset ds = catalog.dataset(catalog.datasets().get(0));
             assertThat(ds.capabilities().partitionModel()).isEqualTo(DatasetCapabilities.PartitionModel.HIVE_PATH);
 
             Predicate year2024 = Pred.col("year").eq(2024);
@@ -197,7 +197,7 @@ class FilesetCatalogTest {
         writeNoYearFile(part2024.resolve("b.parquet"), 3);
         try (FilesetCatalog catalog =
                 FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
-            Dataset ds = catalog.dataset(catalog.datasets().get(0));
+            ParquetDataset ds = catalog.dataset(catalog.datasets().get(0));
             assertThat(ds.schema().leafColumns()).contains(ColumnPath.of("year"));
             assertThat(ds.capabilities().partitionModel()).isEqualTo(DatasetCapabilities.PartitionModel.HIVE_PATH);
             assertThat(ds.count(Pred.col("year").eq(2024L), ReadOptions.DEFAULTS))
@@ -217,7 +217,7 @@ class FilesetCatalogTest {
         try (FilesetCatalog catalog = FilesetCatalog.open(
                 LocalFileSource.directory(dir, "*.parquet"),
                 CatalogOptions.builder().datasetName("places").build())) {
-            Dataset ds = catalog.dataset("places");
+            ParquetDataset ds = catalog.dataset("places");
             assertThat(ds).isInstanceOf(GeoParquetDataset.class);
             assertThat(((GeoParquetDataset) ds).geoMetadata()).isEqualTo(Optional.empty());
         }

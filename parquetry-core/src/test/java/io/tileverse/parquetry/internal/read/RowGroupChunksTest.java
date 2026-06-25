@@ -30,7 +30,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.ParquetWriter;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnIndex;
@@ -361,7 +361,7 @@ class RowGroupChunksTest {
         for (long i = 0; i < 8; i++) {
             rows.add(Map.of(V, i));
         }
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
         return file;

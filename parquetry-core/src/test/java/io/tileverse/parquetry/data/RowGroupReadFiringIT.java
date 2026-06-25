@@ -65,7 +65,7 @@ class RowGroupReadFiringIT {
     void readFiresOnePerNonEliminatedRowGroup(@TempDir Path tmp) throws Exception {
         Path file = writeThreeRowGroups(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             RecordingObserver observer = new RecordingObserver();
             ReadOptions options = optionsWith(observer);
 
@@ -81,7 +81,7 @@ class RowGroupReadFiringIT {
     void countFiresOnePerNonEliminatedRowGroup(@TempDir Path tmp) throws Exception {
         Path file = writeThreeRowGroups(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             RecordingObserver observer = new RecordingObserver();
             ReadOptions options = optionsWith(observer);
 
@@ -96,7 +96,7 @@ class RowGroupReadFiringIT {
     void readBatchesReportsEveryDecodedRowAsMatched(@TempDir Path tmp) throws Exception {
         Path file = writeThreeRowGroups(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             RecordingObserver observer = new RecordingObserver();
             ReadOptions options = optionsWith(observer);
 
@@ -131,7 +131,7 @@ class RowGroupReadFiringIT {
     void lateMaterializationCountsPhaseOnePredicatePages(@TempDir Path tmp) throws Exception {
         Path file = writeLateMaterializationFixture(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             RecordingObserver observer = new RecordingObserver();
             ReadOptions options = optionsWith(observer);
             Predicate keyIs61 = col("key").eq(61L);
@@ -166,7 +166,7 @@ class RowGroupReadFiringIT {
     void earlyCloseFiresEventsOnlyForDeliveredRowGroups(@TempDir Path tmp) throws Exception {
         Path file = writeThreeRowGroups(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             RecordingObserver observer = new RecordingObserver();
             ReadOptions options = optionsWith(observer);
 
@@ -195,7 +195,7 @@ class RowGroupReadFiringIT {
     void readDeliversAggregatedQueryStats(@TempDir Path tmp) throws Exception {
         Path file = writeThreeRowGroups(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             RecordingObserver observer = new RecordingObserver();
             ReadOptions options = optionsWith(observer);
 
@@ -211,7 +211,7 @@ class RowGroupReadFiringIT {
     void countDeliversAggregatedQueryStats(@TempDir Path tmp) throws Exception {
         Path file = writeThreeRowGroups(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             RecordingObserver observer = new RecordingObserver();
             ReadOptions options = optionsWith(observer);
 
@@ -225,7 +225,7 @@ class RowGroupReadFiringIT {
     void readBatchesDeliversAggregatedQueryStats(@TempDir Path tmp) throws Exception {
         Path file = writeThreeRowGroups(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             RecordingObserver observer = new RecordingObserver();
             ReadOptions options = optionsWith(observer);
 
@@ -301,7 +301,7 @@ class RowGroupReadFiringIT {
                 .build();
         Path file = tmp.resolve("three-row-groups.parquet");
         try (OutputStream out = Files.newOutputStream(file);
-                ParquetWriter writer = ParquetWriter.create(out, schema, options)) {
+                ParquetFileWriter writer = ParquetFileWriter.create(out, schema, options)) {
             ParquetRecordBatchBuilder appender = writer.appender(1);
             for (int i = 0; i < 9; i++) {
                 WriteFixtures.appendRow(appender, schema, Map.of(ColumnPath.of("id"), i));
@@ -319,7 +319,7 @@ class RowGroupReadFiringIT {
                 .build();
         Path file = tmp.resolve("late-mat.parquet");
         try (OutputStream out = Files.newOutputStream(file);
-                ParquetWriter writer = ParquetWriter.create(out, schema, options)) {
+                ParquetFileWriter writer = ParquetFileWriter.create(out, schema, options)) {
             ParquetRecordBatchBuilder appender = writer.appender(1);
             for (int i = 0; i < 90; i++) {
                 WriteFixtures.appendRow(

@@ -34,7 +34,6 @@ import java.util.stream.Stream;
 import org.apache.avro.generic.GenericData;
 import org.apache.avro.generic.GenericRecord;
 import org.apache.avro.util.Utf8;
-import org.apache.parquet.hadoop.ParquetFileReader;
 import org.apache.parquet.hadoop.metadata.BlockMetaData;
 import org.apache.parquet.hadoop.metadata.ColumnChunkMetaData;
 import org.apache.parquet.hadoop.metadata.CompressionCodecName;
@@ -44,8 +43,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.data.Compression;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
-import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
@@ -57,8 +56,8 @@ import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
  * Validates that parquetry's V2 output reads cleanly through the parquet-java reader. The avro flavour of the reader is
- * used for value-level deep-equal; the lower-level {@link ParquetFileReader} drives footer-level structural assertions
- * (row group count, codec per chunk).
+ * used for value-level deep-equal; the lower-level {@link org.apache.parquet.hadoop.ParquetFileReader} drives
+ * footer-level structural assertions (row group count, codec per chunk).
  */
 @Tag("conformance")
 class ParquetJavaCompatIT {
@@ -302,7 +301,7 @@ class ParquetJavaCompatIT {
             throws IOException {
         // One row per appender batch lets the writer's own row-group sizing policy place boundaries exactly, which the
         // multi-row-group compatibility case depends on.
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             ParquetRecordBatchBuilder appender = writer.appender(1);
             for (Map<ColumnPath, Object> row : rows) {
                 WriteFixtures.appendRow(appender, schema, row);

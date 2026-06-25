@@ -23,7 +23,7 @@ import io.tileverse.parquetry.io.ByteRangeSource;
 
 /**
  * Factories that bridge tileverse-storage readers into parquetry's read SPI. The single-call entry point for tileverse
- * users: {@code ParquetDataset.open(ByteRangeSources.from(rangeReader))}.
+ * users: {@code ParquetSource.open(ByteRangeSources.from(rangeReader))}.
  */
 public final class ByteRangeSources {
 

@@ -58,7 +58,7 @@ class RecordLevelFilterTest {
     void readAppliesTheRecordLevelPredicate() throws Exception {
         Path file = writeFixture();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader dataset = ParquetReader.open(source);
+            ParquetFileReader dataset = ParquetFileReader.open(source);
             try (Stream<ParquetRecord> rows =
                     dataset.read(col("pop").gt(1_000_000), Projection.ALL, ReadOptions.DEFAULTS)) {
                 List<Integer> ids = rows.map(r -> r.getInt(ID)).sorted().toList();
@@ -71,7 +71,7 @@ class RecordLevelFilterTest {
     void recordLevelPredicateUsesColumnsOutsideTheProjection() throws Exception {
         Path file = writeFixture();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader dataset = ParquetReader.open(source);
+            ParquetFileReader dataset = ParquetFileReader.open(source);
             Projection idOnly = Projection.of(Set.of(ID));
             try (Stream<ParquetRecord> rows = dataset.read(col("pop").gt(1_000_000), idOnly, ReadOptions.DEFAULTS)) {
                 List<Integer> ids = rows.map(r -> r.getInt(ID)).sorted().toList();
@@ -86,7 +86,7 @@ class RecordLevelFilterTest {
         ReadOptions pushdownOnly =
                 ReadOptions.builder().useRecordLevelFilter(false).build();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader dataset = ParquetReader.open(source);
+            ParquetFileReader dataset = ParquetFileReader.open(source);
             try (Stream<ParquetRecord> rows = dataset.read(col("pop").gt(1_000_000), Projection.ALL, pushdownOnly)) {
                 assertThat(rows.count()).isEqualTo(4L);
             }
@@ -99,7 +99,7 @@ class RecordLevelFilterTest {
         WriteOptions options = WriteOptions.builder().tempDir(tempDir).build();
         List<Map<ColumnPath, Object>> rows =
                 List.of(row(500_000, 1), row(1_500_000, 2), row(800_000, 3), row(2_000_000, 4));
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
         return file;

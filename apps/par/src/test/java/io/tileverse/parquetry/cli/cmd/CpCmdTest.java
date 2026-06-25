@@ -38,11 +38,11 @@ import io.tileverse.storage.StorageFactory;
 import io.tileverse.parquetry.cli.CliExitCode;
 import io.tileverse.parquetry.cli.Par;
 import io.tileverse.parquetry.cli.support.Fixtures;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
-import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -85,7 +85,7 @@ class CpCmdTest {
 
         try (Storage storage = StorageFactory.open(dir.toUri());
                 RangeReader reader = storage.openRangeReader("big.parquet")) {
-            ParquetDataset out = ParquetDataset.open(ByteRangeSources.from(reader));
+            ParquetSource out = ParquetSource.open(ByteRangeSources.from(reader));
             assertThat(out.schema().leafColumns()).extracting(p -> p.dot()).containsExactly("name", "pop");
             try (Stream<ParquetRecord> rows = out.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 assertThat(rows.count()).isEqualTo(3L);
@@ -237,7 +237,7 @@ class CpCmdTest {
         ColumnPath xmax = ColumnPath.of("bbox", "xmax");
         try (Storage storage = StorageFactory.open(dst.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(dst.getFileName().toString())) {
-            ParquetDataset out = ParquetDataset.open(ByteRangeSources.from(reader));
+            ParquetSource out = ParquetSource.open(ByteRangeSources.from(reader));
             try (Stream<ParquetRecord> rows = out.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 List<ParquetRecord> records = rows.map(ParquetRecord::detach).toList();
                 assertThat(records).hasSize(2);
@@ -267,7 +267,7 @@ class CpCmdTest {
         ColumnPath xmax = ColumnPath.of("bbox", "xmax");
         try (Storage storage = StorageFactory.open(dst.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(dst.getFileName().toString())) {
-            ParquetDataset out = ParquetDataset.open(ByteRangeSources.from(reader));
+            ParquetSource out = ParquetSource.open(ByteRangeSources.from(reader));
             try (Stream<ParquetRecord> rows = out.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 List<ParquetRecord> records = rows.map(ParquetRecord::detach).toList();
                 assertThat(records).hasSize(2);
@@ -296,7 +296,7 @@ class CpCmdTest {
         ParquetSchema schema = new ParquetSchema(root);
         WriteOptions options = WriteOptions.builder().tempDir(file.getParent()).build();
         try (OutputStream out = Files.newOutputStream(file);
-                ParquetWriter writer = ParquetWriter.create(out, schema, options)) {
+                ParquetFileWriter writer = ParquetFileWriter.create(out, schema, options)) {
             ParquetRecordBatchBuilder appender = writer.appender();
             appender.setFloat(ColumnPath.of("bbox", "xmin"), 1.0f);
             appender.setFloat(ColumnPath.of("bbox", "xmax"), 2.0f);
@@ -321,7 +321,7 @@ class CpCmdTest {
         ParquetSchema schema = new ParquetSchema(root);
         WriteOptions options = WriteOptions.builder().tempDir(file.getParent()).build();
         try (OutputStream out = Files.newOutputStream(file);
-                ParquetWriter writer = ParquetWriter.create(out, schema, options)) {
+                ParquetFileWriter writer = ParquetFileWriter.create(out, schema, options)) {
             ParquetRecordBatchBuilder appender = writer.appender();
             appender.setFloat(ColumnPath.of("bbox", "xmin"), 1.0f);
             appender.setFloat(ColumnPath.of("bbox", "xmax"), 2.0f);
@@ -335,9 +335,9 @@ class CpCmdTest {
     private static long rowCount(Path file) throws Exception {
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(ByteRangeSources.from(reader));
+            ParquetSource source = ParquetSource.open(ByteRangeSources.from(reader));
             try (Stream<ParquetRecord> rows =
-                    dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
+                    source.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 return rows.count();
             }
         }
@@ -346,8 +346,8 @@ class CpCmdTest {
     private static int rowGroupCount(Path file) throws Exception {
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(ByteRangeSources.from(reader));
-            return dataset.rowGroups().size();
+            ParquetSource source = ParquetSource.open(ByteRangeSources.from(reader));
+            return source.rowGroups().size();
         }
     }
 }

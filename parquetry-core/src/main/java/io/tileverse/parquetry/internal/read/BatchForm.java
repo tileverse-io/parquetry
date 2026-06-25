@@ -31,16 +31,17 @@ public enum BatchForm {
     /**
      * A row-aligned LIST or MAP group becomes a level vector that keeps the dense leaf vectors plus batch-owned level
      * windows and defers the Dremel assembly to a lazy row view. A filtered streaming row read
-     * ({@code ParquetReader.read} with a record-level filter) and {@code count} use this form: lazy navigation lets the
-     * read skip assembling the cells of rows the filter discards, and {@code count} never materializes a row at all.
+     * ({@code ParquetFileReader.read} with a record-level filter) and {@code count} use this form: lazy navigation lets
+     * the read skip assembling the cells of rows the filter discards, and {@code count} never materializes a row at
+     * all.
      */
     LEVELS,
 
     /**
      * A row-aligned LIST or MAP group becomes the eager offset-and-child Arrow-shape vector. The public
-     * {@code ParquetReader.readBatches} contract returns this form, the shape batch consumers expect, and an unfiltered
-     * streaming row read uses it too: prepaying the assembly on idle decode workers reads back faster than lazy
-     * navigation on the consumer's critical path when no rows are discarded.
+     * {@code ParquetFileReader.readBatches} contract returns this form, the shape batch consumers expect, and an
+     * unfiltered streaming row read uses it too: prepaying the assembly on idle decode workers reads back faster than
+     * lazy navigation on the consumer's critical path when no rows are discarded.
      */
     ASSEMBLED
 }

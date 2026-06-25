@@ -60,7 +60,7 @@ class EstimatedBytesIT {
     void fullScanEstimateIsPositiveAndBoundedByFileSize(@TempDir Path tmp) throws Exception {
         Path file = writeThreeRowGroups(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
 
             ExplainPlan plan = reader.explain(MATCH_ALL, Projection.ALL, ReadOptions.DEFAULTS);
 
@@ -77,7 +77,7 @@ class EstimatedBytesIT {
     void singleColumnProjectionEstimatesFewerBytesThanFullProjection(@TempDir Path tmp) throws Exception {
         Path file = writeThreeRowGroups(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             Projection idOnly = Projection.of(Set.of(ColumnPath.of("id")));
 
             long allColumns = reader.explain(MATCH_ALL, Projection.ALL, ReadOptions.DEFAULTS)
@@ -95,7 +95,7 @@ class EstimatedBytesIT {
     void eliminatingPredicateEstimatesFewerBytesThanFullScan(@TempDir Path tmp) throws Exception {
         Path file = writeThreeRowGroups(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
 
             long noElimination = reader.explain(MATCH_ALL, Projection.ALL, ReadOptions.DEFAULTS)
                     .estimatedBytesRead();
@@ -116,7 +116,7 @@ class EstimatedBytesIT {
                 .build();
         Path file = tmp.resolve("estimated-bytes.parquet");
         try (OutputStream out = Files.newOutputStream(file);
-                ParquetWriter writer = ParquetWriter.create(out, schema, options)) {
+                ParquetFileWriter writer = ParquetFileWriter.create(out, schema, options)) {
             ParquetRecordBatchBuilder appender = writer.appender(1);
             for (int i = 0; i < 9; i++) {
                 WriteFixtures.appendRow(

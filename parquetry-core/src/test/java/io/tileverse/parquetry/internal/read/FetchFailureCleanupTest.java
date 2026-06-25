@@ -29,7 +29,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
@@ -96,7 +96,7 @@ class FetchFailureCleanupTest {
                     .fetchBudget(budget)
                     .prefetchDepth(2)
                     .build();
-            ParquetReader dataset = ParquetReader.open(failing, runtime, Optional.empty());
+            ParquetFileReader dataset = ParquetFileReader.open(failing, runtime, Optional.empty());
             try (Stream<ParquetRecord> stream =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 failing.arm();

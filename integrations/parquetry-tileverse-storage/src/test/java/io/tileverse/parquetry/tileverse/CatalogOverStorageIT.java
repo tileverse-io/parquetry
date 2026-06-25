@@ -29,8 +29,8 @@ import io.tileverse.storage.StorageFactory;
 import io.tileverse.parquetry.catalog.CatalogOptions;
 import io.tileverse.parquetry.catalog.FilesetCatalog;
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.dataset.Dataset;
 import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.testkit.TestCorpus;
@@ -47,13 +47,13 @@ class CatalogOverStorageIT {
 
         long single;
         try (ByteRangeSource src = ByteRangeSource.ofFile(original)) {
-            single = ParquetDataset.open(src).count();
+            single = ParquetSource.open(src).count();
         }
 
         Storage storage = StorageFactory.open(datasetDir.toUri());
         try (FilesetCatalog catalog =
                 FilesetCatalog.open(StorageFileSource.over(storage, "*.parquet"), CatalogOptions.defaults())) {
-            Dataset dataset = catalog.dataset(catalog.datasets().get(0));
+            ParquetDataset dataset = catalog.dataset(catalog.datasets().get(0));
             assertThat(dataset.count(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS))
                     .isEqualTo(2 * single);
         } finally {

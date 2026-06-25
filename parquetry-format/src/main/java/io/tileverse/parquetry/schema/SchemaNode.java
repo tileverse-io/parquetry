@@ -55,7 +55,7 @@ import io.tileverse.parquetry.format.LogicalType;
  *
  * <p>Read-side consumers: {@code SchemaBuilder} constructs the tree; {@code PageDecoder} / {@code BatchColumnReader} /
  * {@code Materializer} traverse it to drive decoding. Write-side consumers: {@code ColumnChunkWriter} /
- * {@code RowGroupWriter} / {@code ParquetWriter} traverse the caller-supplied tree and emit one column chunk per
+ * {@code RowGroupWriter} / {@code ParquetFileWriter} traverse the caller-supplied tree and emit one column chunk per
  * {@link Primitive} leaf.
  */
 public sealed interface SchemaNode permits SchemaNode.Primitive, SchemaNode.Group {

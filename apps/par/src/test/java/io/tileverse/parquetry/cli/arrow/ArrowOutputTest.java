@@ -39,7 +39,7 @@ import io.tileverse.parquetry.cli.expr.FilterParser;
 import io.tileverse.parquetry.cli.expr.GeometryColumns;
 import io.tileverse.parquetry.cli.render.Projections;
 import io.tileverse.parquetry.cli.support.Fixtures;
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -55,11 +55,11 @@ class ArrowOutputTest {
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try (FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
-            ParquetDataset dataset = ParquetDataset.open(channel);
-            ParquetSchema schema = dataset.schema();
+            ParquetSource source = ParquetSource.open(channel);
+            ParquetSchema schema = source.schema();
             ArrowOutputRequest request =
                     new ArrowOutputRequest(Predicate.ALWAYS_TRUE, Projection.ALL, false, Long.MAX_VALUE);
-            ArrowOutput.write(dataset, schema, Optional.empty(), request, out);
+            ArrowOutput.write(source, schema, Optional.empty(), request, out);
         }
 
         try (RootAllocator allocator = new RootAllocator();
@@ -93,12 +93,12 @@ class ArrowOutputTest {
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try (FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
-            ParquetDataset dataset = ParquetDataset.open(channel);
-            ParquetSchema schema = dataset.schema();
-            Set<ColumnPath> geometryColumns = GeometryColumns.resolve(schema, dataset.keyValueMetadata());
+            ParquetSource source = ParquetSource.open(channel);
+            ParquetSchema schema = source.schema();
+            Set<ColumnPath> geometryColumns = GeometryColumns.resolve(schema, source.keyValueMetadata());
             Predicate predicate = FilterParser.parse("pop > 1300000", schema, geometryColumns);
             ArrowOutputRequest request = new ArrowOutputRequest(predicate, Projection.ALL, true, Long.MAX_VALUE);
-            ArrowOutput.write(dataset, schema, Optional.empty(), request, out);
+            ArrowOutput.write(source, schema, Optional.empty(), request, out);
         }
 
         assertThat(rowCount(out.toByteArray())).isEqualTo(2);
@@ -111,10 +111,10 @@ class ArrowOutputTest {
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try (FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
-            ParquetDataset dataset = ParquetDataset.open(channel);
-            ParquetSchema schema = dataset.schema();
+            ParquetSource source = ParquetSource.open(channel);
+            ParquetSchema schema = source.schema();
             ArrowOutputRequest request = new ArrowOutputRequest(Predicate.ALWAYS_TRUE, Projection.ALL, false, 2);
-            ArrowOutput.write(dataset, schema, Optional.empty(), request, out);
+            ArrowOutput.write(source, schema, Optional.empty(), request, out);
         }
 
         assertThat(rowCount(out.toByteArray())).isEqualTo(2);
@@ -127,13 +127,13 @@ class ArrowOutputTest {
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try (FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
-            ParquetDataset dataset = ParquetDataset.open(channel);
-            ParquetSchema schema = dataset.schema();
+            ParquetSource source = ParquetSource.open(channel);
+            ParquetSchema schema = source.schema();
             Projections.Resolved resolved = Projections.resolve(List.of("id", "name"), schema);
             ParquetSchema projectedSchema = schema.project(Set.copyOf(resolved.keptLeaves()));
             ArrowOutputRequest request =
                     new ArrowOutputRequest(Predicate.ALWAYS_TRUE, resolved.projection(), false, Long.MAX_VALUE);
-            ArrowOutput.write(dataset, projectedSchema, Optional.empty(), request, out);
+            ArrowOutput.write(source, projectedSchema, Optional.empty(), request, out);
         }
 
         try (RootAllocator allocator = new RootAllocator();
@@ -154,12 +154,12 @@ class ArrowOutputTest {
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try (FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
-            ParquetDataset dataset = ParquetDataset.open(channel);
-            ParquetSchema schema = dataset.schema();
-            Optional<GeoParquetMetadata> geo = geoMetadata(dataset);
+            ParquetSource source = ParquetSource.open(channel);
+            ParquetSchema schema = source.schema();
+            Optional<GeoParquetMetadata> geo = geoMetadata(source);
             ArrowOutputRequest request =
                     new ArrowOutputRequest(Predicate.ALWAYS_TRUE, Projection.ALL, false, Long.MAX_VALUE);
-            ArrowOutput.write(dataset, schema, geo, request, out);
+            ArrowOutput.write(source, schema, geo, request, out);
         }
 
         try (RootAllocator allocator = new RootAllocator();
@@ -172,8 +172,8 @@ class ArrowOutputTest {
         }
     }
 
-    private static Optional<GeoParquetMetadata> geoMetadata(ParquetDataset dataset) {
-        String geoJson = dataset.keyValueMetadata().get("geo");
+    private static Optional<GeoParquetMetadata> geoMetadata(ParquetSource source) {
+        String geoJson = source.keyValueMetadata().get("geo");
         if (geoJson == null || geoJson.isEmpty()) {
             return Optional.empty();
         }

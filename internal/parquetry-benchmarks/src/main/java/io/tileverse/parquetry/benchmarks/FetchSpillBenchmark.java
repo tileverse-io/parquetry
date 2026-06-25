@@ -44,7 +44,7 @@ import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
@@ -183,7 +183,7 @@ public class FetchSpillBenchmark {
 
     private long consumeFixture() {
         ByteRangeSource source = ByteRangeSource.ofFile(fixture);
-        ParquetReader reader = ParquetReader.open(source, tinyFetchRuntime, Optional.empty());
+        ParquetFileReader reader = ParquetFileReader.open(source, tinyFetchRuntime, Optional.empty());
         try (Stream<ParquetRecord> records = reader.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
             return records.count();
         } finally {

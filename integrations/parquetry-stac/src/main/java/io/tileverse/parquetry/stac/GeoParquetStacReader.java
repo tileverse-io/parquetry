@@ -30,7 +30,7 @@ import io.tileverse.storage.RangeReader;
 import io.tileverse.storage.Storage;
 
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -77,9 +77,9 @@ public final class GeoParquetStacReader implements StacCatalogReader {
     private Map<String, List<StacItem>> readItems(Storage storage, String key) {
         Map<String, List<StacItem>> byCollection = new LinkedHashMap<>();
         try (RangeReader reader = storage.openRangeReader(key)) {
-            ParquetDataset dataset = ParquetDataset.open(ByteRangeSources.from(reader));
+            ParquetSource source = ParquetSource.open(ByteRangeSources.from(reader));
             try (Stream<ParquetRecord> rows =
-                    dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
+                    source.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 rows.forEach(row -> addItem(byCollection, row));
             }
         } catch (IOException failure) {

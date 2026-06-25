@@ -54,7 +54,7 @@ class PagePruningReadTest {
     void readMatchesABruteForceFilterAcrossPages() throws Exception {
         Path file = writeOneHundredRows();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader dataset = ParquetReader.open(source);
+            ParquetFileReader dataset = ParquetFileReader.open(source);
             try (Stream<ParquetRecord> rows = dataset.read(col("v").gtEq(80), Projection.ALL, ReadOptions.DEFAULTS)) {
                 List<Integer> got = rows.map(r -> r.getInt(V)).sorted().toList();
                 List<Integer> expected =
@@ -68,7 +68,7 @@ class PagePruningReadTest {
     void predicateOnAColumnOutsideTheProjectionStillPrunesPages() throws Exception {
         Path file = writeOneHundredRows();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader dataset = ParquetReader.open(source);
+            ParquetFileReader dataset = ParquetFileReader.open(source);
             Projection tagOnly = Projection.of(Set.of(TAG));
             try (Stream<ParquetRecord> rows = dataset.read(col("v").gtEq(95), tagOnly, ReadOptions.DEFAULTS)) {
                 List<Integer> tags = rows.map(r -> r.getInt(TAG)).sorted().toList();
@@ -83,7 +83,7 @@ class PagePruningReadTest {
         ReadOptions noColumnIndex =
                 ReadOptions.builder().useColumnIndexFilter(false).build();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader dataset = ParquetReader.open(source);
+            ParquetFileReader dataset = ParquetFileReader.open(source);
             try (Stream<ParquetRecord> rows = dataset.read(col("v").gtEq(80), Projection.ALL, noColumnIndex)) {
                 List<Integer> got = rows.map(r -> r.getInt(V)).sorted().toList();
                 assertThat(got)
@@ -96,7 +96,7 @@ class PagePruningReadTest {
     void readWithoutNarrowingReturnsEveryMatchingRow() throws Exception {
         Path file = writeOneHundredRows();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader dataset = ParquetReader.open(source);
+            ParquetFileReader dataset = ParquetFileReader.open(source);
             // A predicate every page can satisfy: the tier passes all pages, no mask, full decode.
             try (Stream<ParquetRecord> rows = dataset.read(col("v").gtEq(0), Projection.ALL, ReadOptions.DEFAULTS)) {
                 assertThat(rows.count()).isEqualTo(100L);
@@ -113,7 +113,7 @@ class PagePruningReadTest {
         for (int v = 0; v < 100; v++) {
             rows.add(row(v, v * 10));
         }
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
         return file;

@@ -42,7 +42,7 @@ column is decoded for the filter even when it is outside the projection.
 Bbox manhattan = Bbox.of2d(-74.05, 40.68, -73.90, 40.88);
 
 try (ByteRangeSource source = ByteRangeSource.ofFile(path)) {
-    ParquetDataset dataset = ParquetDataset.open(source);
+    ParquetSource dataset = ParquetSource.open(source);
     try (Stream<ParquetRecord> rows = dataset.read(
             Pred.col("geometry").bboxIntersects(manhattan),
             Projection.ALL,

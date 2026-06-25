@@ -58,7 +58,7 @@ class MixedPartitionTreeTest {
         writeMixedTree(root);
         try (FilesetCatalog catalog =
                 FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
-            Dataset ds = catalog.dataset(catalog.datasets().get(0));
+            ParquetDataset ds = catalog.dataset(catalog.datasets().get(0));
 
             assertThat(ds.schema().leafColumns()).contains(YEAR, REGION);
             assertThat(ds.capabilities().partitionModel()).isEqualTo(DatasetCapabilities.PartitionModel.HIVE_PATH);
@@ -70,7 +70,7 @@ class MixedPartitionTreeTest {
         writeMixedTree(root);
         try (FilesetCatalog catalog =
                 FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
-            Dataset ds = catalog.dataset(catalog.datasets().get(0));
+            ParquetDataset ds = catalog.dataset(catalog.datasets().get(0));
             Predicate year2024West =
                     Pred.and(Pred.col("year").eq(2024L), Pred.col("region").eq("west"));
 
@@ -83,7 +83,7 @@ class MixedPartitionTreeTest {
         writeMixedTree(root);
         try (FilesetCatalog catalog =
                 FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
-            Dataset ds = catalog.dataset(catalog.datasets().get(0));
+            ParquetDataset ds = catalog.dataset(catalog.datasets().get(0));
             Predicate year2024West =
                     Pred.and(Pred.col("year").eq(2024L), Pred.col("region").eq("west"));
 
@@ -97,7 +97,7 @@ class MixedPartitionTreeTest {
         }
     }
 
-    private static List<ParquetRecord> readAll(Dataset ds, Predicate predicate) {
+    private static List<ParquetRecord> readAll(ParquetDataset ds, Predicate predicate) {
         try (Stream<ParquetRecord> records = ds.read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
             return records.toList();
         }

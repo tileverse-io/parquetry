@@ -27,8 +27,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
-import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -105,7 +105,7 @@ public final class Fixtures {
         }
         WriteOptions options = builder.build();
         try (OutputStream out = Files.newOutputStream(file);
-                ParquetWriter writer = ParquetWriter.create(out, schema, options)) {
+                ParquetFileWriter writer = ParquetFileWriter.create(out, schema, options)) {
             ParquetRecordBatchBuilder appender = writer.appender();
             city(appender, 1, "Rosario", 1_300_000L, false);
             city(appender, 2, "Cordoba", 1_400_000L, false);
@@ -140,7 +140,7 @@ public final class Fixtures {
                 .crsEpsg("geometry", 4326)
                 .build();
         try (OutputStream out = Files.newOutputStream(file);
-                ParquetWriter writer = ParquetWriter.create(out, schema, options)) {
+                ParquetFileWriter writer = ParquetFileWriter.create(out, schema, options)) {
             ParquetRecordBatchBuilder appender = writer.appender();
             geoCity(appender, 1, -60.65, -32.94);
             geoCity(appender, 2, -64.18, -31.42);

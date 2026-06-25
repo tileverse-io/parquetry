@@ -98,7 +98,7 @@ import lombok.NonNull;
  * {@link #maybeFlushRowGroup}) and the write-observer hooks ({@link #maybeFireProgress}, {@link #fireRowGroupFlushed},
  * {@link #fireOnClose}) are likewise {@code protected} for subclasses to participate in.
  */
-public class ParquetWriter implements AutoCloseable {
+public class ParquetFileWriter implements AutoCloseable {
 
     private static final byte[] MAGIC = {'P', 'A', 'R', '1'};
     private static final String GEO_KEY = "geo";
@@ -129,12 +129,12 @@ public class ParquetWriter implements AutoCloseable {
     /**
      * Opens a writer with {@link WriteOptions#defaults()}. The writer never closes {@code sink}; the caller owns it.
      */
-    public static ParquetWriter create(ByteSink sink, ParquetSchema schema) {
+    public static ParquetFileWriter create(ByteSink sink, ParquetSchema schema) {
         return create(sink, schema, WriteOptions.defaults());
     }
 
     /** Opens a writer with the supplied options. The writer never closes {@code sink}; the caller owns it. */
-    public static ParquetWriter create(
+    public static ParquetFileWriter create(
             @NonNull ByteSink sink, @NonNull ParquetSchema rawSchema, @NonNull WriteOptions options) {
         return assembleWriter(sink, rawSchema, options, WriteOptions.MAX_ROW_GROUP_BYTES_LIMIT);
     }
@@ -144,7 +144,7 @@ public class ParquetWriter implements AutoCloseable {
      * tiny limit lets a test trip the row-group byte safety valve without accumulating the production limit's worth of
      * bytes.
      */
-    static ParquetWriter assembleWriter(
+    static ParquetFileWriter assembleWriter(
             @NonNull ByteSink sink,
             @NonNull ParquetSchema rawSchema,
             @NonNull WriteOptions options,
@@ -154,7 +154,7 @@ public class ParquetWriter implements AutoCloseable {
         Path tempDir = createTempDir(options);
         writeLeadingMagic(sink, tempDir);
         RowGroupWriter first = openRowGroupWriter(options, schema, tempDir, sink.position());
-        return new ParquetWriter(sink, options, schema, tempDir, geoWriter, first, maxRowGroupBytesLimit);
+        return new ParquetFileWriter(sink, options, schema, tempDir, geoWriter, first, maxRowGroupBytesLimit);
     }
 
     /**
@@ -162,7 +162,7 @@ public class ParquetWriter implements AutoCloseable {
      * never closes the sink, and therefore never closes {@code out}; the caller keeps ownership and closes {@code out}
      * to commit after a successful {@link #close()}.
      */
-    public static ParquetWriter create(OutputStream out, ParquetSchema schema) {
+    public static ParquetFileWriter create(OutputStream out, ParquetSchema schema) {
         return create(out, schema, WriteOptions.defaults());
     }
 
@@ -171,11 +171,11 @@ public class ParquetWriter implements AutoCloseable {
      * never closes the sink, and therefore never closes {@code out}; the caller keeps ownership and closes {@code out}
      * to commit after a successful {@link #close()}.
      */
-    public static ParquetWriter create(OutputStream out, ParquetSchema schema, WriteOptions options) {
+    public static ParquetFileWriter create(OutputStream out, ParquetSchema schema, WriteOptions options) {
         return create(ByteSink.ofOutputStream(out), schema, options);
     }
 
-    protected ParquetWriter(
+    protected ParquetFileWriter(
             ByteSink out,
             WriteOptions options,
             ParquetSchema schema,

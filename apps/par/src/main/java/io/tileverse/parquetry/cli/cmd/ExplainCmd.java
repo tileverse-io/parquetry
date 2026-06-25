@@ -25,7 +25,7 @@ import io.tileverse.parquetry.cli.expr.FilterParser;
 import io.tileverse.parquetry.cli.expr.GeometryColumns;
 import io.tileverse.parquetry.cli.render.Projections;
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.dataset.Dataset;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.dataset.explain.DatasetExplainPlan;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -75,7 +75,7 @@ public final class ExplainCmd implements Callable<Integer> {
     @Override
     public Integer call() throws Exception {
         try (DatasetResolver.OpenDataset open = DatasetResolver.open(uri, storage.toProperties())) {
-            Dataset dataset = open.dataset();
+            ParquetDataset dataset = open.dataset();
             ParquetSchema schema = dataset.schema();
             Set<ColumnPath> geometryColumns = GeometryColumns.resolve(schema, DatasetResolver.geoMetadataOf(dataset));
             Predicate predicate = buildPredicate(schema, geometryColumns);
@@ -87,7 +87,7 @@ public final class ExplainCmd implements Callable<Integer> {
         }
     }
 
-    private DatasetExplainPlan plan(Dataset dataset, Predicate predicate, Projection projection) {
+    private DatasetExplainPlan plan(ParquetDataset dataset, Predicate predicate, Projection projection) {
         if (!analyze) {
             return dataset.explain(predicate, projection, ReadOptions.DEFAULTS);
         }

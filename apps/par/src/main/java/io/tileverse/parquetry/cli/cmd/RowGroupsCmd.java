@@ -24,7 +24,7 @@ import io.tileverse.parquetry.cli.StorageOptions;
 import io.tileverse.parquetry.cli.UriResolver;
 import io.tileverse.parquetry.cli.render.RowGroupsRenderer;
 import io.tileverse.parquetry.data.RowGroupSummary;
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.dataset.ParquetSource;
 
 import picocli.CommandLine.ArgGroup;
 import picocli.CommandLine.Command;
@@ -52,8 +52,8 @@ public final class RowGroupsCmd implements Callable<Integer> {
     @Override
     public Integer call() throws Exception {
         try (UriResolver.OpenFile open = UriResolver.open(uri, storage.toProperties())) {
-            ParquetDataset dataset = ParquetDataset.open(open.source());
-            List<RowGroupSummary> rowGroups = dataset.rowGroups();
+            ParquetSource source = ParquetSource.open(open.source());
+            List<RowGroupSummary> rowGroups = source.rowGroups();
             renderRowGroups(spec.commandLine().getOut(), rowGroups);
             return 0;
         }

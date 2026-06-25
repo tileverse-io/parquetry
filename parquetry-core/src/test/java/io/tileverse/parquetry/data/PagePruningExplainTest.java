@@ -54,7 +54,7 @@ class PagePruningExplainTest {
     void columnIndexTierNarrowsToTheSurvivingPages() throws Exception {
         Path file = writeEightRowsAcrossFourPages();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader dataset = ParquetReader.open(source);
+            ParquetFileReader dataset = ParquetFileReader.open(source);
             ExplainPlan plan = dataset.explain(col("v").gtEq(5), Projection.ALL, ReadOptions.DEFAULTS);
 
             RowGroupPlan rg = plan.rowGroups().get(0);
@@ -76,7 +76,7 @@ class PagePruningExplainTest {
         for (int v = 0; v < 8; v++) {
             rows.add(Map.of(V, v));
         }
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
         return file;

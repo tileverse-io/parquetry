@@ -49,11 +49,11 @@ import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
- * End-to-end coverage for the {@code ParquetDataset} facade: footer caching, filter / projection wiring, the
+ * End-to-end coverage for the {@code ParquetSource} facade: footer caching, filter / projection wiring, the
  * cross-thread reuse contract, and the single-permit sealing arrangement. Fixtures are written via {@code parquet-avro}
  * (same family as {@code EndToEndV2ReadTest}); the read path exercises the production page-cursor stack end-to-end.
  */
-class DatasetTest {
+class ParquetSourceTest {
 
     private static final ColumnPath YEAR = ColumnPath.of("year");
     private static final ColumnPath COUNTRY = ColumnPath.of("country");
@@ -66,11 +66,11 @@ class DatasetTest {
         writeParquetFile(file, expected, CompressionCodecName.SNAPPY, 16L * 1024 * 1024);
 
         SegmentPool pool = SegmentPool.create();
-        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = openWithPool(source, pool);
+        try (ByteRangeSource bytes = ByteRangeSource.ofFile(file)) {
+            ParquetSource source = openWithPool(bytes, pool);
             ReadOptions options = ReadOptions.DEFAULTS;
 
-            List<RowDto> actual = readAll(dataset, Predicate.ALWAYS_TRUE, Projection.ALL, options);
+            List<RowDto> actual = readAll(source, Predicate.ALWAYS_TRUE, Projection.ALL, options);
 
             assertThat(actual).hasSize(expected.size());
             assertRowsMatch(actual, expected);
@@ -87,12 +87,12 @@ class DatasetTest {
         writeParquetFile(file, expected, CompressionCodecName.UNCOMPRESSED, 16L * 1024 * 1024);
 
         SegmentPool pool = SegmentPool.create();
-        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = openWithPool(source, pool);
+        try (ByteRangeSource bytes = ByteRangeSource.ofFile(file)) {
+            ParquetSource source = openWithPool(bytes, pool);
             ReadOptions options = ReadOptions.DEFAULTS;
 
-            try (Stream<ParquetRecord> records = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
-                List<RowDto> actual = records.map(DatasetTest::asRowDto).toList();
+            try (Stream<ParquetRecord> records = source.read(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
+                List<RowDto> actual = records.map(ParquetSourceTest::asRowDto).toList();
                 assertThat(actual).hasSize(expected.size());
                 assertRowsMatch(actual, expected);
             }
@@ -107,17 +107,17 @@ class DatasetTest {
         writeParquetFile(file, expected, CompressionCodecName.SNAPPY, 16L * 1024 * 1024);
 
         SegmentPool pool = SegmentPool.create();
-        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = openWithPool(source, pool);
+        try (ByteRangeSource bytes = ByteRangeSource.ofFile(file)) {
+            ParquetSource source = openWithPool(bytes, pool);
 
             // Schema, row-group view, and key/value metadata are stable across calls.
-            assertThat(dataset.schema()).isSameAs(dataset.schema());
-            assertThat(dataset.rowGroups()).isSameAs(dataset.rowGroups());
-            assertThat(dataset.keyValueMetadata()).isNotNull();
+            assertThat(source.schema()).isSameAs(source.schema());
+            assertThat(source.rowGroups()).isSameAs(source.rowGroups());
+            assertThat(source.keyValueMetadata()).isNotNull();
 
             ReadOptions options = ReadOptions.DEFAULTS;
             for (int i = 0; i < 2; i++) {
-                List<RowDto> actual = readAll(dataset, Predicate.ALWAYS_TRUE, Projection.ALL, options);
+                List<RowDto> actual = readAll(source, Predicate.ALWAYS_TRUE, Projection.ALL, options);
                 assertThat(actual).hasSize(expected.size());
             }
         }
@@ -131,10 +131,10 @@ class DatasetTest {
         // Tiny row-group target so parquet-avro emits multiple row groups.
         writeParquetFile(file, expected, CompressionCodecName.SNAPPY, 8_192L);
 
-        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+        try (ByteRangeSource bytes = ByteRangeSource.ofFile(file)) {
+            ParquetSource source = ParquetSource.open(bytes);
 
-            List<RowGroupSummary> view = dataset.rowGroups();
+            List<RowGroupSummary> view = source.rowGroups();
             assertThat(view).hasSizeGreaterThan(1);
             long totalRows = view.stream().mapToLong(RowGroupSummary::rowCount).sum();
             assertThat(totalRows).isEqualTo(expected.size());
@@ -153,15 +153,15 @@ class DatasetTest {
         writeParquetFile(file, rows, CompressionCodecName.SNAPPY, 8_192L);
 
         SegmentPool pool = SegmentPool.create();
-        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = openWithPool(source, pool);
+        try (ByteRangeSource bytes = ByteRangeSource.ofFile(file)) {
+            ParquetSource source = openWithPool(bytes, pool);
             ReadOptions options = ReadOptions.DEFAULTS;
             Predicate impossibleYear = Pred.col("year").eq(9999);
 
-            List<RowDto> matched = readAll(dataset, impossibleYear, Projection.ALL, options);
+            List<RowDto> matched = readAll(source, impossibleYear, Projection.ALL, options);
             assertThat(matched).isEmpty();
 
-            ExplainPlan plan = dataset.explain(impossibleYear, Projection.ALL, options);
+            ExplainPlan plan = source.explain(impossibleYear, Projection.ALL, options);
             assertThat(plan.rowGroups()).isNotEmpty();
             assertThat(plan.rowGroups()).allMatch(rg -> rg.outcome() == RowGroupOutcome.ELIMINATED);
         }
@@ -179,19 +179,19 @@ class DatasetTest {
         writeParquetFile(file, rows, CompressionCodecName.SNAPPY, 8_192L);
 
         SegmentPool pool = SegmentPool.create();
-        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = openWithPool(source, pool);
+        try (ByteRangeSource bytes = ByteRangeSource.ofFile(file)) {
+            ParquetSource source = openWithPool(bytes, pool);
             ReadOptions options = ReadOptions.DEFAULTS;
             Predicate keepYear2022 = Pred.col("year").eq(2022);
 
-            List<RowDto> matched = readAll(dataset, keepYear2022, Projection.ALL, options);
+            List<RowDto> matched = readAll(source, keepYear2022, Projection.ALL, options);
             List<RowDto> expectedYearRows =
                     rows.stream().filter(r -> r.year() == 2022).toList();
             assertThat(matched)
                     .as("record-level filtering returns exactly the matching rows")
                     .containsExactlyInAnyOrderElementsOf(expectedYearRows);
 
-            ExplainPlan plan = dataset.explain(keepYear2022, Projection.ALL, options);
+            ExplainPlan plan = source.explain(keepYear2022, Projection.ALL, options);
             assertThat(plan.rowGroups()).anyMatch(rg -> rg.outcome() == RowGroupOutcome.ELIMINATED);
             assertThat(plan.rowGroups()).anyMatch(rg -> rg.outcome() != RowGroupOutcome.ELIMINATED);
         }
@@ -205,12 +205,12 @@ class DatasetTest {
         writeParquetFile(file, rows, CompressionCodecName.SNAPPY, 16L * 1024 * 1024);
 
         SegmentPool pool = SegmentPool.create();
-        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = openWithPool(source, pool);
+        try (ByteRangeSource bytes = ByteRangeSource.ofFile(file)) {
+            ParquetSource source = openWithPool(bytes, pool);
             ReadOptions options = ReadOptions.DEFAULTS;
             Projection yearOnly = Projection.of(Set.of(YEAR));
 
-            try (Stream<ParquetRecord> records = dataset.read(Predicate.ALWAYS_TRUE, yearOnly, options)) {
+            try (Stream<ParquetRecord> records = source.read(Predicate.ALWAYS_TRUE, yearOnly, options)) {
                 List<ParquetRecord> collected = records.toList();
                 assertThat(collected).hasSize(rows.size());
                 for (int i = 0; i < rows.size(); i++) {
@@ -229,8 +229,8 @@ class DatasetTest {
         writeParquetFile(file, expected, CompressionCodecName.SNAPPY, 8_192L);
 
         SegmentPool pool = SegmentPool.create();
-        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = openWithPool(source, pool);
+        try (ByteRangeSource bytes = ByteRangeSource.ofFile(file)) {
+            ParquetSource source = openWithPool(bytes, pool);
             ReadOptions options = ReadOptions.DEFAULTS;
 
             int workers = 4;
@@ -248,7 +248,7 @@ class DatasetTest {
                     try {
                         ready.countDown();
                         go.await();
-                        slot.set(readAll(dataset, Predicate.ALWAYS_TRUE, Projection.ALL, options));
+                        slot.set(readAll(source, Predicate.ALWAYS_TRUE, Projection.ALL, options));
                     } catch (Throwable t) {
                         err.set(t);
                     }
@@ -272,23 +272,24 @@ class DatasetTest {
     }
 
     @Test
-    void parquetDatasetSealsToDefaultParquetDataset() {
-        // The ParquetDataset facade is sealed and permits exactly DefaultParquetDataset, the 1..N-files-same-schema
-        // implementation. ParquetReader is the single-file read entry and is no longer a ParquetDataset implementation.
-        Class<?>[] permitted = ParquetDataset.class.getPermittedSubclasses();
+    void parquetSourceSealsToDefaultParquetSource() {
+        // The ParquetSource facade is sealed and permits exactly DefaultParquetSource, the 1..N-files-same-schema
+        // implementation. ParquetFileReader is the single-file read entry and is no longer a ParquetSource
+        // implementation.
+        Class<?>[] permitted = ParquetSource.class.getPermittedSubclasses();
         assertThat(permitted)
-                .as("ParquetDataset must seal to DefaultParquetDataset")
-                .containsExactly(DefaultParquetDataset.class);
+                .as("ParquetSource must seal to DefaultParquetSource")
+                .containsExactly(DefaultParquetSource.class);
     }
 
     // --- read helpers ---
 
     /** Opens a dataset whose reads borrow buffers from {@code pool}; the test then asserts the pool drains. */
-    private static ParquetDataset openWithPool(ByteRangeSource source, SegmentPool pool) {
+    private static ParquetSource openWithPool(ByteRangeSource source, SegmentPool pool) {
         OpenOptions openOptions = OpenOptions.builder()
                 .runtime(ParquetRuntime.builder().segmentPool(pool).build())
                 .build();
-        return ParquetDataset.open(source, openOptions);
+        return ParquetSource.open(source, openOptions);
     }
 
     // --- fixture helpers ---
@@ -342,9 +343,9 @@ class DatasetTest {
     }
 
     private static List<RowDto> readAll(
-            ParquetDataset dataset, Predicate predicate, Projection projection, ReadOptions opts) {
-        try (Stream<ParquetRecord> records = dataset.read(predicate, projection, opts)) {
-            return records.map(DatasetTest::asRowDto).toList();
+            ParquetSource source, Predicate predicate, Projection projection, ReadOptions opts) {
+        try (Stream<ParquetRecord> records = source.read(predicate, projection, opts)) {
+            return records.map(ParquetSourceTest::asRowDto).toList();
         }
     }
 

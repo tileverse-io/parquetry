@@ -32,7 +32,7 @@ import io.tileverse.parquetry.cli.expr.GeometryColumns;
 import io.tileverse.parquetry.cli.render.Projections;
 import io.tileverse.parquetry.cli.render.RecordRenderer;
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.dataset.Dataset;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -68,7 +68,7 @@ public class CatCmd implements Callable<Integer> {
     @Override
     public Integer call() throws Exception {
         try (DatasetResolver.OpenDataset open = DatasetResolver.open(uri, storage.toProperties())) {
-            Dataset dataset = open.dataset();
+            ParquetDataset dataset = open.dataset();
             ParquetSchema schema = dataset.schema();
             Projections.Resolved projection = Projections.resolve(options.columns, schema);
             Set<ColumnPath> geometryColumns = GeometryColumns.resolve(schema, DatasetResolver.geoMetadataOf(dataset));
@@ -92,7 +92,11 @@ public class CatCmd implements Callable<Integer> {
     // S106: binary Arrow output is written to the real process stdout, bypassing the text writer.
     @SuppressWarnings("java:S106")
     private void writeArrow(
-            Dataset dataset, ParquetSchema schema, Projections.Resolved projection, Predicate predicate, long limit) {
+            ParquetDataset dataset,
+            ParquetSchema schema,
+            Projections.Resolved projection,
+            Predicate predicate,
+            long limit) {
         ParquetSchema projectedSchema = projectedSchema(schema, projection);
         Optional<GeoParquetMetadata> geo = DatasetResolver.geoMetadataOf(dataset);
         ArrowOutputRequest request =
@@ -115,7 +119,7 @@ public class CatCmd implements Callable<Integer> {
     }
 
     private void emitRows(
-            Dataset dataset,
+            ParquetDataset dataset,
             Predicate predicate,
             Projections.Resolved projection,
             long limit,

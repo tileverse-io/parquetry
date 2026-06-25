@@ -20,7 +20,7 @@ package io.tileverse.parquetry.data;
  *
  * <p>This is deliberately a thin record rather than the raw thrift {@link io.tileverse.parquetry.format.RowGroup} -
  * keeping the public API narrow avoids leaking the format module's internal types (column-chunk metadata, encryption,
- * etc.) through {@code ParquetDataset}. Callers needing the full thrift view can call
+ * etc.) through {@code ParquetSource}. Callers needing the full thrift view can call
  * {@link io.tileverse.parquetry.format.ParquetFormat#readFooter ParquetFormat.readFooter} directly.
  *
  * @param index the row group's index in file order, starting at 0

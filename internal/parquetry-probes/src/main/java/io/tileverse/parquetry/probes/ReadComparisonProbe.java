@@ -25,7 +25,7 @@ import java.util.Optional;
 
 import org.locationtech.jts.geom.Geometry;
 
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.format.LogicalType;
@@ -188,7 +188,7 @@ public final class ReadComparisonProbe {
      * {@code attribute.column}/{@code .value}), and whether GeoParquet 1.1 bbox covering columns exist for the
      * parquet-java pushdown. Scenarios whose inputs do not resolve are skipped.
      */
-    private void resolveCapabilities(ParquetReader reader) {
+    private void resolveCapabilities(ParquetFileReader reader) {
         Optional<GeoParquetMetadata> geo = parseGeoMetadata(reader.keyValueMetadata());
         this.geometryColumnName = resolveGeometryColumn(reader, geo);
         this.geometryColumn = geometryColumnName == null ? null : ColumnPath.of(geometryColumnName.split("\\."));
@@ -199,7 +199,7 @@ public final class ReadComparisonProbe {
         this.bboxCoveringAvailable = hasBboxCovering(reader);
     }
 
-    private String resolveGeometryColumn(ParquetReader reader, Optional<GeoParquetMetadata> geo) {
+    private String resolveGeometryColumn(ParquetFileReader reader, Optional<GeoParquetMetadata> geo) {
         if (geometryColumnOverride != null && !geometryColumnOverride.isBlank()) {
             return geometryColumnOverride;
         }
@@ -256,7 +256,7 @@ public final class ReadComparisonProbe {
                 centerX - halfDiagonal, centerY - halfDiagonal, centerX + halfDiagonal, centerY + halfDiagonal);
     }
 
-    private boolean hasBboxCovering(ParquetReader reader) {
+    private boolean hasBboxCovering(ParquetFileReader reader) {
         for (String corner : new String[] {"xmin", "xmax", "ymin", "ymax"}) {
             if (reader.schema().find(ColumnPath.of(bboxColumn, corner)).isEmpty()) {
                 return false;
@@ -341,7 +341,7 @@ public final class ReadComparisonProbe {
 
     private void run() throws Exception {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            resolveCapabilities(ParquetReader.open(source));
+            resolveCapabilities(ParquetFileReader.open(source));
         }
         note("Read-path comparison over %s (%.1f MiB)".formatted(file, Files.size(file) / (1024.0 * 1024.0)));
         note("JVM availableProcessors=%d, maxHeap=%d MiB, concurrency=%d"

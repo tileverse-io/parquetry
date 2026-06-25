@@ -56,7 +56,7 @@ class FilesetDatasetSynthesisTest {
         writeYearTree(root, 2023, 4, 2024, 3);
         try (FilesetCatalog catalog =
                 FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
-            Dataset ds = catalog.dataset(catalog.datasets().get(0));
+            ParquetDataset ds = catalog.dataset(catalog.datasets().get(0));
             try (Stream<ParquetRecord> records = ds.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 long count2023 = records.map(row -> row.getLong(ColumnPath.of("year")))
                         .filter(year -> year == 2023L)
@@ -77,7 +77,7 @@ class FilesetDatasetSynthesisTest {
         writeYearTree(root, 2023, 4, 2024, 3);
         try (FilesetCatalog catalog =
                 FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
-            Dataset ds = catalog.dataset(catalog.datasets().get(0));
+            ParquetDataset ds = catalog.dataset(catalog.datasets().get(0));
             Projection onlyYear = Projection.of(Set.of(ColumnPath.of("year")));
             try (Stream<ParquetRecord> records = ds.read(Predicate.ALWAYS_TRUE, onlyYear, ReadOptions.DEFAULTS)) {
                 List<Long> years =
@@ -94,7 +94,7 @@ class FilesetDatasetSynthesisTest {
         writeYearTree(root, 2023, 5, 2024, 3);
         try (FilesetCatalog catalog =
                 FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
-            Dataset ds = catalog.dataset(catalog.datasets().get(0));
+            ParquetDataset ds = catalog.dataset(catalog.datasets().get(0));
             Predicate year2024 = Pred.col("year").eq(2024L);
             try (Stream<ParquetRecord> records = ds.read(year2024, Projection.ALL, ReadOptions.DEFAULTS)) {
                 assertThat(records.count()).isEqualTo(3L);
@@ -107,7 +107,7 @@ class FilesetDatasetSynthesisTest {
         writeYearTree(root, 2023, 4, 2024, 10);
         try (FilesetCatalog catalog =
                 FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
-            Dataset ds = catalog.dataset(catalog.datasets().get(0));
+            ParquetDataset ds = catalog.dataset(catalog.datasets().get(0));
             Predicate year2024AndValueOver5 =
                     Pred.and(Pred.col("year").eq(2024L), Pred.col("value").gt(5.0));
 
@@ -128,7 +128,7 @@ class FilesetDatasetSynthesisTest {
         writeYearTree(root, 2023, 5, 2024, 3);
         try (FilesetCatalog catalog =
                 FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
-            Dataset ds = catalog.dataset(catalog.datasets().get(0));
+            ParquetDataset ds = catalog.dataset(catalog.datasets().get(0));
             Predicate year2024 = Pred.col("year").eq(2024L);
 
             DatasetExplainPlan plan = ds.explain(year2024, Projection.ALL, ReadOptions.DEFAULTS);
@@ -145,12 +145,12 @@ class FilesetDatasetSynthesisTest {
         writeYearTree(root, 2023, 5, 2024, 4);
         try (FilesetCatalog catalog =
                 FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
-            Dataset ds = catalog.dataset(catalog.datasets().get(0));
+            ParquetDataset ds = catalog.dataset(catalog.datasets().get(0));
             assertThatCode(() -> consumeOneThenClose(ds)).doesNotThrowAnyException();
         }
     }
 
-    private static void consumeOneThenClose(Dataset ds) {
+    private static void consumeOneThenClose(ParquetDataset ds) {
         try (Stream<ParquetRecord> records = ds.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
             Iterator<ParquetRecord> it = records.iterator();
             assertThat(it.hasNext()).isTrue();

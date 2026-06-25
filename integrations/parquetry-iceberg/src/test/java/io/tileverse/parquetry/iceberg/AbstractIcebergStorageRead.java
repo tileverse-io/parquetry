@@ -27,7 +27,7 @@ import org.junit.jupiter.api.Test;
 import io.tileverse.storage.Storage;
 
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.dataset.Dataset;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.dataset.explain.DatasetExplainPlan;
 import io.tileverse.parquetry.dataset.explain.Totals;
 import io.tileverse.parquetry.filter.Bbox;
@@ -116,24 +116,24 @@ abstract class AbstractIcebergStorageRead {
         });
     }
 
-    private long countRows(Dataset dataset, Predicate predicate) {
+    private long countRows(ParquetDataset dataset, Predicate predicate) {
         try (Stream<ParquetRecord> rows = dataset.read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
             return rows.count();
         }
     }
 
-    private Totals explainTotals(Dataset dataset, Predicate predicate) {
+    private Totals explainTotals(ParquetDataset dataset, Predicate predicate) {
         DatasetExplainPlan plan = dataset.explain(predicate, Projection.ALL, ReadOptions.DEFAULTS);
         return plan.totals();
     }
 
-    private void withDataset(Consumer<Dataset> assertions) throws Exception {
+    private void withDataset(Consumer<ParquetDataset> assertions) throws Exception {
         try (Backend backend = openBackend();
                 IcebergCatalog catalog = IcebergCatalog.open(
                         backend.tableLocation(),
                         StorageIcebergFileIO.over(backend.storage(), backend.tableLocation()),
                         catalogOptions())) {
-            Dataset dataset = catalog.dataset(catalog.datasets().get(0));
+            ParquetDataset dataset = catalog.dataset(catalog.datasets().get(0));
             assertions.accept(dataset);
         }
     }

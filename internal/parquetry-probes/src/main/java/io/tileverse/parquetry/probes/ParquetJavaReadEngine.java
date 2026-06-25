@@ -26,7 +26,6 @@ import org.apache.parquet.example.data.Group;
 import org.apache.parquet.filter2.compat.FilterCompat;
 import org.apache.parquet.filter2.predicate.FilterApi;
 import org.apache.parquet.filter2.predicate.FilterPredicate;
-import org.apache.parquet.hadoop.ParquetFileReader;
 import org.apache.parquet.hadoop.ParquetReader;
 import org.apache.parquet.hadoop.api.ReadSupport;
 import org.apache.parquet.hadoop.example.GroupReadSupport;
@@ -180,7 +179,8 @@ final class ParquetJavaReadEngine implements ReadEngine {
 
     private MessageType fileSchema() {
         if (fileSchema == null) {
-            try (ParquetFileReader reader = ParquetFileReader.open(new LocalInputFile(context.file()))) {
+            try (org.apache.parquet.hadoop.ParquetFileReader reader =
+                    org.apache.parquet.hadoop.ParquetFileReader.open(new LocalInputFile(context.file()))) {
                 fileSchema = reader.getFileMetaData().getSchema();
             } catch (IOException e) {
                 throw new UncheckedIOException(e);

@@ -32,11 +32,11 @@ import com.google.errorprone.annotations.MustBeClosed;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.CatalogSnapshot;
-import io.tileverse.parquetry.dataset.Dataset;
 import io.tileverse.parquetry.dataset.DatasetCapabilities;
 import io.tileverse.parquetry.dataset.DatasetCapabilities.FileStatsSource;
 import io.tileverse.parquetry.dataset.FilesetReader;
 import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.dataset.explain.DatasetExplainPlan;
 import io.tileverse.parquetry.dataset.explain.FileExplain;
 import io.tileverse.parquetry.dataset.explain.Outcome;
@@ -60,16 +60,17 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 
 /**
- * A {@link Dataset} over one Iceberg table at a pinned snapshot. Before each query the dataset prunes the snapshot's
- * data files by their manifest bounds: a file whose statistics prove no row can match the predicate is skipped, and the
- * query opens a {@link ParquetDataset} over only the survivors. Pruning is pure work-avoidance; survivors are still
- * filtered at row-group and record level during the read. The result is identical to scanning every file.
+ * A {@link ParquetDataset} over one Iceberg table at a pinned snapshot. Before each query the dataset prunes the
+ * snapshot's data files by their manifest bounds: a file whose statistics prove no row can match the predicate is
+ * skipped, and the query opens a {@link ParquetSource} over only the survivors. Pruning is pure work-avoidance;
+ * survivors are still filtered at row-group and record level during the read. The result is identical to scanning every
+ * file.
  *
- * <p>The byte sources are pre-opened and owned by the {@link IcebergCatalog}; the per-query {@link ParquetDataset}
+ * <p>The byte sources are pre-opened and owned by the {@link IcebergCatalog}; the per-query {@link ParquetSource}
  * borrows the survivor subset and never closes them. The dataset presents the table's current schema and reconciles
  * each data file's columns to it by Iceberg field id; a file whose schema already matches the table reads untouched.
  */
-final class IcebergDataset implements Dataset {
+final class IcebergDataset implements ParquetDataset {
 
     private final String name;
     private final CatalogSnapshot snapshot;
@@ -78,7 +79,7 @@ final class IcebergDataset implements Dataset {
     private final List<IcebergManifests.DataFileRef> dataFiles;
     private final List<FileStats> fileStats;
     private final List<ByteRangeSource> sources;
-    private final Map<Integer, ParquetDataset> perFileDatasets = new ConcurrentHashMap<>();
+    private final Map<Integer, ParquetSource> perFileDatasets = new ConcurrentHashMap<>();
 
     IcebergDataset(
             String name,
@@ -268,7 +269,7 @@ final class IcebergDataset implements Dataset {
             return new FileExplain(
                     ref.location(), Outcome.SKIP, "added-column null fold", recordCount, Optional.empty());
         }
-        ParquetDataset survivor = perFile(index);
+        ParquetSource survivor = perFile(index);
         ExplainPlan plan = analyze ? survivor.explainAnalyze(query, options) : survivor.explain(query, options);
         return new FileExplain(ref.location(), Outcome.KEEP, "kept", recordCount, Optional.of(plan));
     }
@@ -381,13 +382,13 @@ final class IcebergDataset implements Dataset {
     }
 
     /**
-     * The single-file {@link ParquetDataset} over the data file at {@code index}, parsed once and reused across queries
+     * The single-file {@link ParquetSource} over the data file at {@code index}, parsed once and reused across queries
      * and threads. {@code computeIfAbsent} gives one footer parse per index even under concurrent reads; the dataset
      * borrows the catalog's shared source, which the catalog owns and closes.
      */
-    private ParquetDataset perFile(int index) {
+    private ParquetSource perFile(int index) {
         return perFileDatasets.computeIfAbsent(
-                index, i -> ParquetDataset.open(new SurvivorFileset(sources, List.of(i))));
+                index, i -> ParquetSource.open(new SurvivorFileset(sources, List.of(i))));
     }
 
     /**

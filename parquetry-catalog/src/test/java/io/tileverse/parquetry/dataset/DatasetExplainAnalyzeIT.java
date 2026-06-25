@@ -31,7 +31,7 @@ import org.apache.parquet.io.LocalOutputFile;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
@@ -41,7 +41,7 @@ import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.observe.QueryStats;
 
 /**
- * Verifies that {@link ParquetDataset#explainAnalyze} delegates to the single underlying reader and annotates the plan
+ * Verifies that {@link ParquetSource#explainAnalyze} delegates to the single underlying reader and annotates the plan
  * with real execution stats, and that the multi-file dataset rejects the call with an analyze-specific message. The
  * fixture is a written file and the drain reads actual page bytes, which is why this lives in the integration tier.
  */
@@ -53,12 +53,12 @@ class DatasetExplainAnalyzeIT {
     void explainAnalyzeAnnotatesThePlanWithRealExecutionStats(@TempDir Path tmp) throws Exception {
         Path file = writeFile(tmp.resolve("dataset-explain-analyze.parquet"), 1_000);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+            ParquetSource parquetSource = ParquetSource.open(source);
             ReadOptions options = ReadOptions.DEFAULTS;
 
-            long expectedRows = dataset.count(KEEP_HIGH_IDS, options);
+            long expectedRows = parquetSource.count(KEEP_HIGH_IDS, options);
             assertThat(expectedRows).as("ids 500..999 satisfy id >= 500").isEqualTo(500L);
-            ExplainPlan plan = dataset.explainAnalyze(KEEP_HIGH_IDS, Projection.ALL, options);
+            ExplainPlan plan = parquetSource.explainAnalyze(KEEP_HIGH_IDS, Projection.ALL, options);
 
             assertThat(plan.execution()).isPresent();
             QueryStats stats = plan.execution().orElseThrow();
@@ -72,9 +72,9 @@ class DatasetExplainAnalyzeIT {
         try (ByteRangeSource a = ByteRangeSource.ofFile(file);
                 ByteRangeSource b = ByteRangeSource.ofFile(file)) {
 
-            ParquetReader ra = ParquetReader.open(a);
-            ParquetReader rb = ParquetReader.open(b);
-            DefaultParquetDataset dataset = new DefaultParquetDataset(List.of(ra, rb));
+            ParquetFileReader ra = ParquetFileReader.open(a);
+            ParquetFileReader rb = ParquetFileReader.open(b);
+            DefaultParquetSource dataset = new DefaultParquetSource(List.of(ra, rb));
 
             assertThatThrownBy(() -> dataset.explainAnalyze(KEEP_HIGH_IDS, Projection.ALL, ReadOptions.DEFAULTS))
                     .isInstanceOf(UnsupportedOperationException.class)

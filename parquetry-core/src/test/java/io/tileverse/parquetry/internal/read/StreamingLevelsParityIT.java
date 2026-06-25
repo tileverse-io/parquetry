@@ -30,7 +30,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
@@ -44,11 +44,11 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.testsupport.CorpusFixtures;
 
 /**
- * Oracle that the streaming row path ({@link ParquetReader#read}) returns, for every nested corpus fixture, the same
- * rows the eager batch path ({@link ParquetReader#readBatches}) materializes. An unfiltered read assembles LIST and MAP
- * groups in the eager Arrow form; a filtered read assembles them in the levels form. Both must reconstruct identical
- * values, which keeps both batch forms covered: the unfiltered case pins the assembled rows path, the filtered case the
- * levels rows path.
+ * Oracle that the streaming row path ({@link ParquetFileReader#read}) returns, for every nested corpus fixture, the
+ * same rows the eager batch path ({@link ParquetFileReader#readBatches}) materializes. An unfiltered read assembles
+ * LIST and MAP groups in the eager Arrow form; a filtered read assembles them in the levels form. Both must reconstruct
+ * identical values, which keeps both batch forms covered: the unfiltered case pins the assembled rows path, the
+ * filtered case the levels rows path.
  *
  * <p>The filtered parity check reads with a predicate through {@code read} (the levels path) and compares against the
  * eager batches filtered row-by-row through the same {@link RecordLevelEvaluator} the row pipeline uses, which keeps
@@ -71,7 +71,8 @@ class StreamingLevelsParityIT {
     void streamingRowsMatchEagerBatchRows(String fixture) {
         Path file = CorpusFixtures.parquetTestingData().resolve(fixture);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source, ParquetRuntime.defaultRuntime(), Optional.empty());
+            ParquetFileReader reader =
+                    ParquetFileReader.open(source, ParquetRuntime.defaultRuntime(), Optional.empty());
 
             List<ParquetRecord> streamed = detachAll(reader);
             List<ParquetRecord> eager = materializeAllBatches(reader);
@@ -88,7 +89,8 @@ class StreamingLevelsParityIT {
     void filteredStreamingRowsMatchEagerBatchRowsFiltered(String fixture, Predicate predicate) {
         Path file = CorpusFixtures.parquetTestingData().resolve(fixture);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source, ParquetRuntime.defaultRuntime(), Optional.empty());
+            ParquetFileReader reader =
+                    ParquetFileReader.open(source, ParquetRuntime.defaultRuntime(), Optional.empty());
 
             List<ParquetRecord> streamed = detachFiltered(reader, predicate);
             List<ParquetRecord> eager = materializeBatchesFiltered(reader, predicate);
@@ -117,7 +119,8 @@ class StreamingLevelsParityIT {
         Path file = CorpusFixtures.parquetTestingData().resolve(fixture);
         Predicate predicate = new Predicate.Gt(flatColumn, new Value.IntVal(threshold));
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source, ParquetRuntime.defaultRuntime(), Optional.empty());
+            ParquetFileReader reader =
+                    ParquetFileReader.open(source, ParquetRuntime.defaultRuntime(), Optional.empty());
 
             long counted = reader.count(predicate, ReadOptions.DEFAULTS);
 
@@ -138,19 +141,19 @@ class StreamingLevelsParityIT {
                 Arguments.of("repeated_no_annotation.parquet", ColumnPath.of("id"), 2));
     }
 
-    private static List<ParquetRecord> detachAll(ParquetReader reader) {
+    private static List<ParquetRecord> detachAll(ParquetFileReader reader) {
         try (Stream<ParquetRecord> rows = reader.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
             return rows.map(ParquetRecord::detach).toList();
         }
     }
 
-    private static List<ParquetRecord> detachFiltered(ParquetReader reader, Predicate predicate) {
+    private static List<ParquetRecord> detachFiltered(ParquetFileReader reader, Predicate predicate) {
         try (Stream<ParquetRecord> rows = reader.read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
             return rows.map(ParquetRecord::detach).toList();
         }
     }
 
-    private static List<ParquetRecord> materializeBatchesFiltered(ParquetReader reader, Predicate predicate) {
+    private static List<ParquetRecord> materializeBatchesFiltered(ParquetFileReader reader, Predicate predicate) {
         List<ParquetRecord> rows = new ArrayList<>();
         try (Stream<ParquetRecordBatch> batches =
                 reader.readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
@@ -168,7 +171,7 @@ class StreamingLevelsParityIT {
         return rows;
     }
 
-    private static List<ParquetRecord> materializeAllBatches(ParquetReader reader) {
+    private static List<ParquetRecord> materializeAllBatches(ParquetFileReader reader) {
         List<ParquetRecord> rows = new ArrayList<>();
         try (Stream<ParquetRecordBatch> batches =
                 reader.readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {

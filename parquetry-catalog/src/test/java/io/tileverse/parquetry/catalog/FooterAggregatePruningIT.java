@@ -25,7 +25,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.dataset.Dataset;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.dataset.explain.DatasetExplainPlan;
 import io.tileverse.parquetry.dataset.explain.FileExplain;
 import io.tileverse.parquetry.dataset.explain.Outcome;
@@ -61,7 +61,7 @@ class FooterAggregatePruningIT {
 
         try (FilesetCatalog catalog =
                 FilesetCatalog.open(LocalFileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
-            Dataset dataset = catalog.dataset(catalog.datasets().get(0));
+            ParquetDataset dataset = catalog.dataset(catalog.datasets().get(0));
             Predicate onlyHigh = new Predicate.GtEq(ColumnPath.of("pop"), new Value.LongVal(100));
 
             DatasetExplainPlan plan = dataset.explain(onlyHigh, Projection.ALL, ReadOptions.DEFAULTS);
@@ -81,7 +81,7 @@ class FooterAggregatePruningIT {
 
         try (FilesetCatalog catalog =
                 FilesetCatalog.open(LocalFileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
-            Dataset dataset = catalog.dataset(catalog.datasets().get(0));
+            ParquetDataset dataset = catalog.dataset(catalog.datasets().get(0));
             Predicate eastOnly = new Predicate.Spatial.BboxIntersects(ColumnPath.of("geometry"), EAST_QUERY);
 
             DatasetExplainPlan plan = dataset.explain(eastOnly, Projection.ALL, ReadOptions.DEFAULTS);
@@ -109,7 +109,7 @@ class FooterAggregatePruningIT {
 
         try (FilesetCatalog catalog =
                 FilesetCatalog.open(LocalFileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
-            Dataset dataset = catalog.dataset(catalog.datasets().get(0));
+            ParquetDataset dataset = catalog.dataset(catalog.datasets().get(0));
             Predicate eastOnly = new Predicate.Spatial.BboxIntersects(ColumnPath.of("geometry"), EAST_QUERY);
 
             DatasetExplainPlan plan = dataset.explain(eastOnly, Projection.ALL, ReadOptions.DEFAULTS);
@@ -125,7 +125,7 @@ class FooterAggregatePruningIT {
 
         try (FilesetCatalog catalog =
                 FilesetCatalog.open(LocalFileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
-            Dataset dataset = catalog.dataset(catalog.datasets().get(0));
+            ParquetDataset dataset = catalog.dataset(catalog.datasets().get(0));
             Predicate present = new Predicate.IsNotNull(ColumnPath.of("c"));
 
             DatasetExplainPlan plan = dataset.explain(present, Projection.ALL, ReadOptions.DEFAULTS);
@@ -141,7 +141,7 @@ class FooterAggregatePruningIT {
 
         try (FilesetCatalog catalog =
                 FilesetCatalog.open(LocalFileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
-            Dataset dataset = catalog.dataset(catalog.datasets().get(0));
+            ParquetDataset dataset = catalog.dataset(catalog.datasets().get(0));
             Predicate absent = new Predicate.IsNull(ColumnPath.of("c"));
 
             DatasetExplainPlan plan = dataset.explain(absent, Projection.ALL, ReadOptions.DEFAULTS);

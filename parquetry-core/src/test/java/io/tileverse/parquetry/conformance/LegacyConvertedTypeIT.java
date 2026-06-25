@@ -24,7 +24,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -47,7 +47,7 @@ class LegacyConvertedTypeIT {
     void backfillsLogicalTypeFromRealFileFooter(String fixture, String column, LogicalType expected) throws Exception {
         Path file = CorpusFixtures.parquetTestingData().resolve(fixture);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             SchemaNode leaf = reader.schema().find(ColumnPath.of(column)).orElseThrow();
             assertThat(((SchemaNode.Primitive) leaf).logicalType()).contains(expected);
         }

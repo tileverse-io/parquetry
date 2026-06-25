@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.dataset.Dataset;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.dataset.explain.DatasetExplainPlan;
 import io.tileverse.parquetry.dataset.explain.Outcome;
 import io.tileverse.parquetry.filter.Bbox;
@@ -33,9 +33,9 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
 /**
- * Proves {@code Dataset.explain}/{@code explainAnalyze} over an Iceberg table report the file dimension: a regional
- * bbox query keeps only the files whose manifest bounds meet it and marks the rest skipped with a reason, a query that
- * eliminates every file reports all files skipped, and analyze fills in the survivor's execution stats.
+ * Proves {@code ParquetDataset.explain}/{@code explainAnalyze} over an Iceberg table report the file dimension: a
+ * regional bbox query keeps only the files whose manifest bounds meet it and marks the rest skipped with a reason, a
+ * query that eliminates every file reports all files skipped, and analyze fills in the survivor's execution stats.
  */
 class IcebergExplainTest {
 
@@ -52,7 +52,7 @@ class IcebergExplainTest {
     void explainReportsKeptAndSkippedFiles() {
         Path tableDir = extractTable();
         try (IcebergCatalog catalog = IcebergCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
-            Dataset dataset = catalog.dataset(TABLE);
+            ParquetDataset dataset = catalog.dataset(TABLE);
 
             DatasetExplainPlan plan = dataset.explain(CALIFORNIA, Projection.ALL, ReadOptions.DEFAULTS);
 
@@ -76,7 +76,7 @@ class IcebergExplainTest {
         Predicate farOffshore =
                 new Predicate.Spatial.BboxIntersects(ColumnPath.of(GEOM_COLUMN), Bbox.of2d(160.0, -80.0, 170.0, -70.0));
         try (IcebergCatalog catalog = IcebergCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
-            Dataset dataset = catalog.dataset(TABLE);
+            ParquetDataset dataset = catalog.dataset(TABLE);
 
             DatasetExplainPlan plan = dataset.explain(farOffshore, Projection.ALL, ReadOptions.DEFAULTS);
 
@@ -91,7 +91,7 @@ class IcebergExplainTest {
     void explainAnalyzeFillsExecutionForTheSurvivor() {
         Path tableDir = extractTable();
         try (IcebergCatalog catalog = IcebergCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
-            Dataset dataset = catalog.dataset(TABLE);
+            ParquetDataset dataset = catalog.dataset(TABLE);
 
             DatasetExplainPlan plan = dataset.explainAnalyze(CALIFORNIA, Projection.ALL, ReadOptions.DEFAULTS);
 

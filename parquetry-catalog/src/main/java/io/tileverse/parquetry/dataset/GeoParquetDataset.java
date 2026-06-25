@@ -20,10 +20,11 @@ import java.util.Optional;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 /**
- * A {@link Dataset} backed by GeoParquet files, adding access to the dataset's aggregated GeoParquet {@code "geo"}
- * metadata. Backends whose geo is not GeoParquet (Iceberg native geometry) implement plain {@link Dataset} instead.
+ * A {@link ParquetDataset} backed by GeoParquet files, adding access to the dataset's aggregated GeoParquet
+ * {@code "geo"} metadata. Backends whose geo is not GeoParquet (Iceberg native geometry) implement plain
+ * {@link ParquetDataset} instead.
  */
-public interface GeoParquetDataset extends Dataset {
+public interface GeoParquetDataset extends ParquetDataset {
 
     /** The aggregated GeoParquet metadata across the dataset's files, or empty for a non-geo dataset. */
     Optional<GeoParquetMetadata> geoMetadata();

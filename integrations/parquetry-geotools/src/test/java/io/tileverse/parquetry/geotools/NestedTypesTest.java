@@ -30,7 +30,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.catalog.FilesetCatalog;
-import io.tileverse.parquetry.dataset.Dataset;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
@@ -46,7 +46,7 @@ class NestedTypesTest {
         NestedFixtures.writeSample(file);
 
         try (FilesetCatalog catalog = NestedFixtures.openCatalog(file)) {
-            Dataset dataset = catalog.dataset("nested");
+            ParquetDataset dataset = catalog.dataset("nested");
             List<SchemaNode> top = dataset.schema().root().children();
 
             assertScalarLeavesAreFlat(top);

@@ -19,8 +19,8 @@
  *
  * <p>The public API is small: {@link io.tileverse.parquetry.iceberg.IcebergCatalog} opens a table (with
  * {@link io.tileverse.parquetry.iceberg.IcebergOptions}) and exposes its snapshot as one
- * {@link io.tileverse.parquetry.catalog.DatasetCatalog} / {@link io.tileverse.parquetry.dataset.Dataset}. Data-file
- * bytes come through an {@link io.tileverse.parquetry.iceberg.IcebergFileIO};
+ * {@link io.tileverse.parquetry.catalog.DatasetCatalog} / {@link io.tileverse.parquetry.dataset.ParquetDataset}.
+ * Data-file bytes come through an {@link io.tileverse.parquetry.iceberg.IcebergFileIO};
  * {@link io.tileverse.parquetry.iceberg.LocalIcebergFileIO} serves a local table directory, and a storage backend
  * implements the same interface for cloud storage. Unsupported inputs fail fast with an
  * {@link io.tileverse.parquetry.iceberg.IcebergFormatException}. Everything else in this package is package-private

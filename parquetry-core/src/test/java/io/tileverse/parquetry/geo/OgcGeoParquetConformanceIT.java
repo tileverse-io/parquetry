@@ -32,7 +32,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.io.WKTReader;
 
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -101,7 +101,7 @@ class OgcGeoParquetConformanceIT {
     private static List<Geometry> readGeometries(Path file) {
         ColumnPath geometry = ColumnPath.of("geometry");
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             assertGeoMetadataParses(reader, geometry);
             JtsMaterializer materializer = new JtsMaterializer(reader.schema());
             assertThat(materializer.geometryColumns())
@@ -118,7 +118,7 @@ class OgcGeoParquetConformanceIT {
      * Verifies the OGC fixtures land in the typed GeoParquet metadata model and that the schema crossing the format ->
      * core boundary already carries the synthesized native logical-type annotation.
      */
-    private static void assertGeoMetadataParses(ParquetReader reader, ColumnPath geometry) {
+    private static void assertGeoMetadataParses(ParquetFileReader reader, ColumnPath geometry) {
         String geoJson = reader.keyValueMetadata().get("geo");
         assertThat(geoJson)
                 .as("OGC fixtures must carry a 'geo' key-value metadata entry")

@@ -34,7 +34,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.filter.OutputColumn;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -48,7 +48,7 @@ import io.tileverse.parquetry.testkit.TestCorpus;
 /**
  * A constant output column appended to a read must export through Arrow IPC as a real materialized vector: the written
  * stream gains a {@code year} field and every row holds the constant. This is the path-only Hive value flowing from the
- * dataset engine ({@link ParquetDataset#readBatches(Query, ReadOptions)}) through {@link ArrowIpcWriter} to a canonical
+ * dataset engine ({@link ParquetSource#readBatches(Query, ReadOptions)}) through {@link ArrowIpcWriter} to a canonical
  * Arrow reader.
  */
 class ConstantColumnIpcIT {
@@ -74,8 +74,8 @@ class ConstantColumnIpcIT {
                         new OutputColumn.Physical(ID, ID),
                         new OutputColumn.Constant(YEAR, new Value.LongVal(YEAR_CONSTANT))));
         try (ByteRangeSource source = ByteRangeSource.ofFile(parquetFile)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
-            try (Stream<ParquetRecordBatch> batches = dataset.readBatches(query, ReadOptions.DEFAULTS)) {
+            ParquetSource parquetSource = ParquetSource.open(source);
+            try (Stream<ParquetRecordBatch> batches = parquetSource.readBatches(query, ReadOptions.DEFAULTS)) {
                 List<ParquetRecordBatch> materialized = batches.toList();
                 ParquetSchema schemaWithConstant = materialized.get(0).projectedSchema();
                 ByteArrayOutputStream out = new ByteArrayOutputStream();

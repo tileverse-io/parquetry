@@ -19,11 +19,11 @@ import io.tileverse.parquetry.io.ByteRangeSource;
 
 /**
  * Adapter contract for resolving the per-file {@link ByteRangeSource byte sources} that a multi-file
- * {@link ParquetDataset} will stitch together at read time.
+ * {@link ParquetSource} will stitch together at read time.
  *
  * <p>This is the public seam that future work (partitioned datasets, Iceberg / Delta manifest handlers) will satisfy
- * without forcing {@code ParquetDataset.open} to grow new overloads. The single-file path goes through
- * {@link ParquetDataset#open(ByteRangeSource)} unchanged.
+ * without forcing {@code ParquetSource.open} to grow new overloads. The single-file path goes through
+ * {@link ParquetSource#open(ByteRangeSource)} unchanged.
  */
 public interface FilesetReader {
 

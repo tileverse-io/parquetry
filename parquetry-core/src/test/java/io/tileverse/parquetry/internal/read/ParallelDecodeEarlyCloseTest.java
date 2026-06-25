@@ -25,7 +25,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
@@ -51,7 +51,7 @@ class ParallelDecodeEarlyCloseTest {
                     .decodeExecutor(decodePool)
                     .maxDecodeAhead(4)
                     .build();
-            ParquetReader dataset = ParquetReader.open(source, runtime, Optional.empty());
+            ParquetFileReader dataset = ParquetFileReader.open(source, runtime, Optional.empty());
             try (Stream<ParquetRecord> stream =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 Iterator<ParquetRecord> it = stream.iterator();

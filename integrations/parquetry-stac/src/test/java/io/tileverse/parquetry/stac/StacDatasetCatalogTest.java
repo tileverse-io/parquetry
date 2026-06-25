@@ -31,7 +31,7 @@ import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
 
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.dataset.Dataset;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.dataset.explain.DatasetExplainPlan;
 import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.Predicate;
@@ -110,7 +110,7 @@ class StacDatasetCatalogTest {
             assertThat(catalog.datasets()).containsExactly("building");
             assertThat(catalog.capabilities().enumeratesDatasets()).isTrue();
 
-            Dataset building = catalog.dataset("building");
+            ParquetDataset building = catalog.dataset("building");
             Predicate eastOnly =
                     new Predicate.Spatial.BboxIntersects(ColumnPath.of("geometry"), Bbox.of2d(95, -5, 115, 15));
 

@@ -24,7 +24,7 @@ import java.util.OptionalInt;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
@@ -56,7 +56,7 @@ class GeoParquetCrsConformanceIT {
     void parsesGeometryColumnCrsIdentity(String fixture, int expectedEpsg) throws Exception {
         Path file = GeoParquetCorpus.crs().resolve(fixture);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             String geoJson = reader.keyValueMetadata().get("geo");
             assertThat(geoJson).as("%s: 'geo' metadata present", fixture).isNotNull();
 
@@ -88,7 +88,7 @@ class GeoParquetCrsConformanceIT {
     void parsesNonEpsgAuthorityIdentity(String fixture, String authority, String code) throws Exception {
         Path file = GeoParquetCorpus.crs().resolve(fixture);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             GeoParquetMetadata geo =
                     GeoParquetMetadata.parse(reader.keyValueMetadata().get("geo"));
             Optional<Identifier> id =

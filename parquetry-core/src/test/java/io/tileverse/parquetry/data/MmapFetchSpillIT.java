@@ -90,7 +90,7 @@ class MmapFetchSpillIT {
      */
     private static List<Map<ColumnPath, Object>> readAllRows(ParquetRuntime runtime, DiskBudget spillBudget) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(FILE)) {
-            ParquetReader dataset = ParquetReader.open(source, runtime, Optional.empty());
+            ParquetFileReader dataset = ParquetFileReader.open(source, runtime, Optional.empty());
             List<ColumnPath> leaves = dataset.schema().leafColumns();
             try (Stream<ParquetRecord> rows =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {

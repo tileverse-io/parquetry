@@ -15,6 +15,7 @@
  */
 package io.tileverse.parquetry.cli.cmd;
 
+import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Path;
 import java.util.Iterator;
@@ -34,11 +35,11 @@ import io.tileverse.parquetry.cli.UriResolver;
 import io.tileverse.parquetry.cli.expr.FilterParser;
 import io.tileverse.parquetry.cli.expr.GeometryColumns;
 import io.tileverse.parquetry.cli.render.Projections;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
-import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -92,14 +93,14 @@ public final class CpCmd implements Callable<Integer> {
         String sourceFileName = sourceFileName();
         refuseWritingOntoSource(sourceFileName);
         try (UriResolver.OpenFile open = UriResolver.open(src, storage.toProperties())) {
-            ParquetDataset dataset = ParquetDataset.open(open.source());
-            ParquetSchema sourceSchema = dataset.schema();
+            ParquetSource source = ParquetSource.open(open.source());
+            ParquetSchema sourceSchema = source.schema();
             Projections.Resolved projection = Projections.resolve(options.columns, sourceSchema);
             ParquetSchema writeSchema = buildWriteSchema(sourceSchema, projection);
             RecordCopier.requireWritable(writeSchema);
-            Set<ColumnPath> geometryColumns = GeometryColumns.resolve(sourceSchema, dataset.keyValueMetadata());
+            Set<ColumnPath> geometryColumns = GeometryColumns.resolve(sourceSchema, source.keyValueMetadata());
             Predicate predicate = buildPredicate(sourceSchema, geometryColumns);
-            writeAll(dataset, writeSchema, projection, predicate, sourceFileName, dataset.keyValueMetadata());
+            writeAll(source, writeSchema, projection, predicate, sourceFileName, source.keyValueMetadata());
         }
         return 0;
     }
@@ -139,20 +140,20 @@ public final class CpCmd implements Callable<Integer> {
     }
 
     private void writeAll(
-            ParquetDataset dataset,
+            ParquetSource source,
             ParquetSchema writeSchema,
             Projections.Resolved projection,
             Predicate predicate,
             String sourceFileName,
             Map<String, String> sourceKeyValue)
-            throws Exception {
+            throws IOException {
         WriteOptions.RowGroupSize rowGroupSize = resolveRowGroupSize();
         WriteOptions writeOptions =
                 buildWriteOptions(writeSchema, writerTempDir(sourceFileName), sourceKeyValue, rowGroupSize);
         long limit = options.limit == null ? Long.MAX_VALUE : options.limit;
         try (UriResolver.OpenSink sink =
                 UriResolver.openForWrite(dst, sourceFileName, overwrite, dstStorage.toProperties())) {
-            writeAndFinalize(dataset, writeSchema, projection, predicate, writeOptions, rowGroupSize, limit, sink);
+            writeAndFinalize(source, writeSchema, projection, predicate, writeOptions, rowGroupSize, limit, sink);
             sink.commit();
         }
     }
@@ -163,7 +164,7 @@ public final class CpCmd implements Callable<Integer> {
      * and the try-with-resources aborts it; a failed copy never leaves a visible footerless destination.
      */
     private void writeAndFinalize(
-            ParquetDataset dataset,
+            ParquetSource source,
             ParquetSchema writeSchema,
             Projections.Resolved projection,
             Predicate predicate,
@@ -171,8 +172,8 @@ public final class CpCmd implements Callable<Integer> {
             WriteOptions.RowGroupSize rowGroupSize,
             long limit,
             UriResolver.OpenSink sink) {
-        try (ParquetWriter writer = ParquetWriter.create(sink.out(), writeSchema, writeOptions);
-                Stream<ParquetRecord> rows = dataset.read(predicate, projection.projection(), ReadOptions.DEFAULTS)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(sink.out(), writeSchema, writeOptions);
+                Stream<ParquetRecord> rows = source.read(predicate, projection.projection(), ReadOptions.DEFAULTS)) {
             ParquetRecordBatchBuilder appender = openAppender(writer, rowGroupSize);
             RecordCopier copier = RecordCopier.forSchema(writeSchema);
             long written = 0;
@@ -237,7 +238,7 @@ public final class CpCmd implements Callable<Integer> {
      * from buffering an unbounded number of rows. Byte targets and the adaptive default use the standard batch size.
      */
     private static ParquetRecordBatchBuilder openAppender(
-            ParquetWriter writer, WriteOptions.RowGroupSize rowGroupSize) {
+            ParquetFileWriter writer, WriteOptions.RowGroupSize rowGroupSize) {
         if (rowGroupSize instanceof WriteOptions.RowGroupSize.Rows(long rows)) {
             int batchRows = (int) Math.min(rows, MAX_COPY_BATCH_ROWS);
             return writer.appender(batchRows);

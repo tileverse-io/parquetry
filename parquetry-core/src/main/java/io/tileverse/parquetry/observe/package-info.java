@@ -16,8 +16,8 @@
 /**
  * Neutral, dependency-free observability vocabulary for parquetry reads and writes.
  *
- * <p>One collection mechanism feeds two views. The pull report ({@code ParquetReader.explainAnalyze}) drains a read and
- * annotates the explain plan with measured execution; the push stream delivers the same events live to a
+ * <p>One collection mechanism feeds two views. The pull report ({@code ParquetFileReader.explainAnalyze}) drains a read
+ * and annotates the explain plan with measured execution; the push stream delivers the same events live to a
  * {@link io.tileverse.parquetry.observe.QueryObserver} (read) or {@link io.tileverse.parquetry.observe.WriteObserver}
  * (write) attached through the read or write options.
  *

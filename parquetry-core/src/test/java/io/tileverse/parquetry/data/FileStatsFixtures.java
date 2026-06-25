@@ -53,7 +53,7 @@ final class FileStatsFixtures {
     static Path writeIntColumn(Path dir, String column, Long[] values) throws Exception {
         ParquetSchema schema = flatSchema(optionalInt64(column));
         Path file = dir.resolve(column + ".parquet");
-        try (ParquetWriter writer = ParquetWriter.create(
+        try (ParquetFileWriter writer = ParquetFileWriter.create(
                         Files.newOutputStream(file),
                         schema,
                         WriteOptions.builder().tempDir(dir).build());
@@ -91,7 +91,7 @@ final class FileStatsFixtures {
                 .crsEpsg(column, 4326)
                 .build();
         Path file = dir.resolve(column + ".parquet");
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options);
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options);
                 ParquetRecordBatch batch = pointBatch(schema, column, points)) {
             writer.writeBatch(batch);
         }

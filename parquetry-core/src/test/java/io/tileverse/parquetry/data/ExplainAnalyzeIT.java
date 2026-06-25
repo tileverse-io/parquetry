@@ -47,9 +47,9 @@ import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
- * Verifies that {@link ParquetReader#explainAnalyze} annotates the explain plan with the real execution stats of one
- * count-style drain: the matched-row count and the fetched-byte total measured during the drain, plus the per-row-group
- * read records.
+ * Verifies that {@link ParquetFileReader#explainAnalyze} annotates the explain plan with the real execution stats of
+ * one count-style drain: the matched-row count and the fetched-byte total measured during the drain, plus the
+ * per-row-group read records.
  *
  * <p>The fixture writes ids {@code 0..8} four rows per row group, hence three row groups holding {@code [0,1,2,3]},
  * {@code [4,5,6,7]}, and {@code [8]}. The predicate {@code id >= 5} eliminates the first row group from statistics,
@@ -64,7 +64,7 @@ class ExplainAnalyzeIT {
     void analyzeAnnotatesPlanWithRealExecutionStats(@TempDir Path tmp) throws Exception {
         Path file = writeThreeRowGroups(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
 
             long actual = reader.count(MATCHES_SUBSET, ReadOptions.DEFAULTS);
             ExplainPlan plan = reader.explainAnalyze(MATCHES_SUBSET, Projection.ALL, ReadOptions.DEFAULTS);
@@ -103,7 +103,7 @@ class ExplainAnalyzeIT {
         Path file = writeThreeRowGroups(tmp);
         long totalRows = 9L;
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             StartFinishCountingObserver observer = new StartFinishCountingObserver();
             ReadOptions options = ReadOptions.builder().queryObserver(observer).build();
 
@@ -157,7 +157,7 @@ class ExplainAnalyzeIT {
                 .build();
         Path file = tmp.resolve("explain-analyze.parquet");
         try (OutputStream out = Files.newOutputStream(file);
-                ParquetWriter writer = ParquetWriter.create(out, schema, options)) {
+                ParquetFileWriter writer = ParquetFileWriter.create(out, schema, options)) {
             ParquetRecordBatchBuilder appender = writer.appender(1);
             for (int i = 0; i < 9; i++) {
                 WriteFixtures.appendRow(

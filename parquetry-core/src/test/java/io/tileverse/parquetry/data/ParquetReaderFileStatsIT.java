@@ -36,7 +36,7 @@ class ParquetReaderFileStatsIT {
         Path file = FileStatsFixtures.writeIntColumn(dir, "pop", new Long[] {10L, 30L, null, 20L});
 
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             FileStats stats = reader.fileStats();
 
             assertThat(stats.recordCount()).isEqualTo(4);
@@ -54,7 +54,7 @@ class ParquetReaderFileStatsIT {
         Path file = FileStatsFixtures.writePoints(dir, "geometry", new double[][] {{0, 0}, {10, 20}});
 
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             FileStats stats = reader.fileStats();
 
             assertThat(stats.geometryBounds()).containsKey(ColumnPath.of("geometry"));

@@ -34,8 +34,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.data.Compression;
-import io.tileverse.parquetry.data.ParquetReader;
-import io.tileverse.parquetry.data.ParquetWriter;
+import io.tileverse.parquetry.data.ParquetFileReader;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.EncodingPolicy;
@@ -101,7 +101,7 @@ class WriterCompressionTest {
         for (int i = 0; i < 200; i++) {
             rows.add(Map.of(ColumnPath.of("id"), i));
         }
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             assertThatThrownBy(() -> {
                         writer.writeBatch(WriteFixtures.batch(schema, rows));
                         writer.flushRowGroup();
@@ -128,7 +128,7 @@ class WriterCompressionTest {
                     ColumnPath.of("b"), i + 1,
                     ColumnPath.of("c"), i + 2));
         }
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
 
@@ -166,7 +166,7 @@ class WriterCompressionTest {
         for (int i = 0; i < rows; i++) {
             rowMaps.add(Map.of(ColumnPath.of("id"), i));
         }
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             writer.writeBatch(WriteFixtures.batch(schema, rowMaps));
         }
 
@@ -194,7 +194,7 @@ class WriterCompressionTest {
         for (int i = 0; i < 10_000; i++) {
             rows.add(Map.of(ColumnPath.of("v"), 42));
         }
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
     }
@@ -217,7 +217,7 @@ class WriterCompressionTest {
     private static List<Integer> readInts(Path file, String columnName) {
         List<Integer> out = new ArrayList<>();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader dataset = ParquetReader.open(source);
+            ParquetFileReader dataset = ParquetFileReader.open(source);
             try (Stream<ParquetRecord> stream =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 stream.forEach(r -> out.add(r.getInt(ColumnPath.of(columnName))));

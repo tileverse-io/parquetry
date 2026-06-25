@@ -33,8 +33,8 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.ParquetReader;
-import io.tileverse.parquetry.data.ParquetWriter;
+import io.tileverse.parquetry.data.ParquetFileReader;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.filter.Predicate;
@@ -107,7 +107,7 @@ class DictionaryOverflowReadbackTest {
         for (int i = 0; i < ROWS; i++) {
             rows.add(singleColumnRow(col, valueAt.apply(i)));
         }
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
         assertThat(dictionaryPageWritten(file, col))
@@ -119,7 +119,7 @@ class DictionaryOverflowReadbackTest {
     private static <T> List<T> readColumn(Path file, java.util.function.Function<ParquetRecord, T> get) {
         List<T> values = new ArrayList<>();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader dataset = ParquetReader.open(source);
+            ParquetFileReader dataset = ParquetFileReader.open(source);
             try (Stream<ParquetRecord> rows =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 rows.forEach(rec -> values.add(get.apply(rec)));

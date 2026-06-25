@@ -36,7 +36,7 @@ class ScanFlatnessTest {
         ParquetSchema schema = new ParquetSchema(
                 new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(v), Optional.empty(), -1));
 
-        assertThat(ParquetReader.allFlat(schema, schema.leafColumns())).isTrue();
+        assertThat(ParquetFileReader.allFlat(schema, schema.leafColumns())).isTrue();
     }
 
     @Test
@@ -48,7 +48,7 @@ class ScanFlatnessTest {
         ParquetSchema schema = new ParquetSchema(
                 new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(v, tags), Optional.empty(), -1));
 
-        assertThat(ParquetReader.allFlat(schema, schema.leafColumns())).isFalse();
+        assertThat(ParquetFileReader.allFlat(schema, schema.leafColumns())).isFalse();
     }
 
     private static SchemaNode.Primitive required(String name) {

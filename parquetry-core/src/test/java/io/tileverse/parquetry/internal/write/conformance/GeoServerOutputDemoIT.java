@@ -34,8 +34,8 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
-import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
 import io.tileverse.parquetry.format.BoundingBox;
@@ -84,7 +84,7 @@ class GeoServerOutputDemoIT {
         Path file = tempDir.resolve("features.parquet");
 
         List<Feature> features = generateFeatures(FEATURE_COUNT);
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             ParquetRecordBatchBuilder appender = writer.appender((int) ROWS_PER_RG);
             for (Feature feature : features) {
                 WriteFixtures.appendRow(appender, schema, toRow(feature));
@@ -130,7 +130,7 @@ class GeoServerOutputDemoIT {
         runtime.gc();
         long baseline = runtime.totalMemory() - runtime.freeMemory();
 
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             ParquetRecordBatchBuilder appender = writer.appender((int) ROWS_PER_RG);
             for (int i = 0; i < FEATURE_COUNT; i++) {
                 WriteFixtures.appendRow(appender, schema, toRow(buildFeature(i)));

@@ -35,7 +35,7 @@ import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.annotations.Warmup;
 
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.filter.Pred;
@@ -45,7 +45,7 @@ import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 
 /**
- * Compares the optimized {@link ParquetReader#count(Predicate, ReadOptions)} path against the
+ * Compares the optimized {@link ParquetFileReader#count(Predicate, ReadOptions)} path against the
  * {@code read(predicate).count()} baseline across the count paths a row count can take.
  *
  * <p>The fixture is a sorted {@code id INT64 + value DOUBLE} table written across several row groups. The {@code path}
@@ -62,9 +62,9 @@ import io.tileverse.parquetry.record.ParquetRecord;
  *       decode.
  * </ul>
  *
- * <p>The optimized benchmark calls {@link ParquetReader#count(Predicate, ReadOptions)} directly; the baseline opens the
- * same predicate as a record stream and counts its elements. There are no assertions: this is a regression guard and a
- * quantifier for the optimized path's advantage, not a correctness test.
+ * <p>The optimized benchmark calls {@link ParquetFileReader#count(Predicate, ReadOptions)} directly; the baseline opens
+ * the same predicate as a record stream and counts its elements. There are no assertions: this is a regression guard
+ * and a quantifier for the optimized path's advantage, not a correctness test.
  *
  * <pre>{@code
  * ./mvnw -Pbenchmarks -pl :parquetry-benchmarks -am package
@@ -101,7 +101,7 @@ public class CountBenchmark {
 
     private Path workDir;
     private ByteRangeSource source;
-    private ParquetReader reader;
+    private ParquetFileReader reader;
     private Predicate predicate;
     private ReadOptions options;
 
@@ -115,7 +115,7 @@ public class CountBenchmark {
         SyntheticParquet.writeIdValueFile(file, writeOptions(rowsPerGroup), SyntheticParquet.sortedIds(rows));
 
         source = ByteRangeSource.ofFile(file);
-        reader = ParquetReader.open(source);
+        reader = ParquetFileReader.open(source);
         predicate = predicateFor(path, rows);
         options = ReadOptions.builder().build();
     }

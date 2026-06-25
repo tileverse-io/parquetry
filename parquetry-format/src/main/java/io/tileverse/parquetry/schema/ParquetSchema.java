@@ -302,7 +302,7 @@ public record ParquetSchema(SchemaNode.Group root) {
     /**
      * Returns a copy of this schema with the logical-type annotation overridden on each leaf listed in
      * {@code overrides}. Leaves not in {@code overrides} are returned unchanged. Used by the GeoParquet 1.x metadata
-     * bridge at {@code ParquetDataset.open()} time to synthesize {@code Geometry} / {@code Geography} logical types on
+     * bridge at {@code ParquetSource.open()} time to synthesize {@code Geometry} / {@code Geography} logical types on
      * columns that the file's {@code "geo"} key-value metadata identifies as geometry / geography but whose Thrift
      * {@code SchemaElement} carries no native logical-type annotation.
      */

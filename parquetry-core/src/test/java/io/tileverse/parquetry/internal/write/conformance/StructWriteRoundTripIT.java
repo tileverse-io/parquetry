@@ -27,9 +27,9 @@ import java.util.OptionalInt;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
-import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -40,8 +40,8 @@ import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
  * Round-trip tests for struct-column write support: write rows via {@link ParquetRecordBatchBuilder#beginStruct} /
- * {@link ParquetRecordBatchBuilder#endStruct}, flush through {@link ParquetWriter}, read back via {@link ParquetReader}
- * and assert row-level equality.
+ * {@link ParquetRecordBatchBuilder#endStruct}, flush through {@link ParquetFileWriter}, read back via
+ * {@link ParquetFileReader} and assert row-level equality.
  *
  * <p>These tests verify the engine path for nested columns: the Dremel striper fires, definition levels are baked into
  * data pages, and the assembler reconstructs the same null pattern on read.
@@ -62,7 +62,7 @@ class StructWriteRoundTripIT {
         Path out = tempDir.resolve("struct_optional.parquet");
 
         WriteOptions opts = WriteOptions.builder().tempDir(tempDir).build();
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(out), schema, opts)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(out), schema, opts)) {
             ParquetRecordBatchBuilder appender = writer.appender();
             appender.beginStruct("s")
                     .setInt(ColumnPath.of("s", "f"), 7)
@@ -93,7 +93,7 @@ class StructWriteRoundTripIT {
         Path out = tempDir.resolve("struct_required.parquet");
 
         WriteOptions opts = WriteOptions.builder().tempDir(tempDir).build();
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(out), schema, opts)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(out), schema, opts)) {
             ParquetRecordBatchBuilder appender = writer.appender();
             appender.beginStruct("s")
                     .setInt(ColumnPath.of("s", "f"), 42)
@@ -130,7 +130,7 @@ class StructWriteRoundTripIT {
         Path out = tempDir.resolve("flat_and_struct.parquet");
 
         WriteOptions opts = WriteOptions.builder().tempDir(tempDir).build();
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(out), schema, opts)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(out), schema, opts)) {
             ParquetRecordBatchBuilder appender = writer.appender();
             appender.setInt(ColumnPath.of("id"), 1)
                     .beginStruct("s")
@@ -169,7 +169,7 @@ class StructWriteRoundTripIT {
         Path out = tempDir.resolve("double_nested.parquet");
 
         WriteOptions opts = WriteOptions.builder().tempDir(tempDir).build();
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(out), schema, opts)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(out), schema, opts)) {
             ParquetRecordBatchBuilder appender = writer.appender();
             // Row 0: outer present, inner present, x=99.
             appender.beginStruct("outer")
@@ -217,7 +217,7 @@ class StructWriteRoundTripIT {
         Path out = tempDir.resolve("required_child_absent_struct.parquet");
 
         WriteOptions opts = WriteOptions.builder().tempDir(tempDir).build();
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(out), schema, opts)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(out), schema, opts)) {
             ParquetRecordBatchBuilder appender = writer.appender();
             // Row 0: person present, name set.
             appender.beginStruct("person")

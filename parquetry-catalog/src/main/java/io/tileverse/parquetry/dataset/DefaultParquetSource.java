@@ -32,7 +32,7 @@ import java.util.stream.StreamSupport;
 
 import io.tileverse.parquetry.batch.BatchMaterializer;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.RowGroupSummary;
 import io.tileverse.parquetry.filter.Predicate;
@@ -44,24 +44,24 @@ import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
- * Default {@link ParquetDataset} implementation: a collection of 1..N {@link ParquetReader} instances over files that
- * share the same schema. The read overloads concatenate per-reader streams lazily, opening one reader's stream at a
- * time and closing it before the next one opens, which keeps the working set bounded by a single file's pipeline rather
- * than letting a buffering stream stage hold every file's decoded batches at once. {@code rowGroups()} aggregates all
- * row groups and re-assigns sequential indices across readers. {@code count} over more than one file fans the per-file
- * counts out across virtual threads, bounded by the shared fetch and decode budgets in {@link ReadOptions}.
- * {@code explain} and {@code explainAnalyze} remain single-reader only and throw {@link UnsupportedOperationException}
- * when more than one reader is present.
+ * Default {@link ParquetSource} implementation: a collection of 1..N {@link ParquetFileReader} instances over files
+ * that share the same schema. The read overloads concatenate per-reader streams lazily, opening one reader's stream at
+ * a time and closing it before the next one opens, which keeps the working set bounded by a single file's pipeline
+ * rather than letting a buffering stream stage hold every file's decoded batches at once. {@code rowGroups()}
+ * aggregates all row groups and re-assigns sequential indices across readers. {@code count} over more than one file
+ * fans the per-file counts out across virtual threads, bounded by the shared fetch and decode budgets in
+ * {@link ReadOptions}. {@code explain} and {@code explainAnalyze} remain single-reader only and throw
+ * {@link UnsupportedOperationException} when more than one reader is present.
  *
  * <p>Schema check happens in the constructor: every reader must agree on {@link ParquetSchema} by equality.
  */
-final class DefaultParquetDataset implements ParquetDataset {
+final class DefaultParquetSource implements ParquetSource {
 
-    private final List<ParquetReader> readers;
+    private final List<ParquetFileReader> readers;
     private final ParquetSchema schema;
     private final List<RowGroupSummary> rowGroups;
 
-    DefaultParquetDataset(List<ParquetReader> readers) {
+    DefaultParquetSource(List<ParquetFileReader> readers) {
         if (readers == null || readers.isEmpty()) {
             throw new IllegalArgumentException("readers must contain at least one ParquetReader");
         }
@@ -77,10 +77,10 @@ final class DefaultParquetDataset implements ParquetDataset {
         this.rowGroups = buildRowGroups(this.readers);
     }
 
-    private static List<RowGroupSummary> buildRowGroups(List<ParquetReader> readers) {
+    private static List<RowGroupSummary> buildRowGroups(List<ParquetFileReader> readers) {
         List<RowGroupSummary> aggregated = new ArrayList<>();
         int index = 0;
-        for (ParquetReader reader : readers) {
+        for (ParquetFileReader reader : readers) {
             for (RowGroupSummary group : reader.rowGroups()) {
                 aggregated.add(new RowGroupSummary(
                         index++, group.rowCount(), group.totalByteSize(), group.totalCompressedSize()));
@@ -138,7 +138,7 @@ final class DefaultParquetDataset implements ParquetDataset {
      * {@code Stream.flatMap} behaviour that, when pulled lazily through {@code iterator()}, buffers the inner stream's
      * emitted elements (and the decoded batches each one pins) into a {@code SpinedBuffer}.
      */
-    private <R> Stream<R> concatLazily(Function<ParquetReader, Stream<R>> open) {
+    private <R> Stream<R> concatLazily(Function<ParquetFileReader, Stream<R>> open) {
         ReaderStreamIterator<R> iterator = new ReaderStreamIterator<>(readers, open);
         Spliterator<R> spliterator =
                 Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED | Spliterator.NONNULL);
@@ -173,7 +173,7 @@ final class DefaultParquetDataset implements ParquetDataset {
     private long countConcurrently(Predicate predicate, ReadOptions options) {
         try (StructuredTaskScope<Long, Void> scope = StructuredTaskScope.open()) {
             List<Subtask<Long>> counts = new ArrayList<>(readers.size());
-            for (ParquetReader reader : readers) {
+            for (ParquetFileReader reader : readers) {
                 counts.add(scope.fork(() -> reader.count(predicate, options)));
             }
             scope.join();
@@ -198,7 +198,7 @@ final class DefaultParquetDataset implements ParquetDataset {
 
     /**
      * Rethrows a per-file count failure with the type the sequential path would have thrown.
-     * {@link ParquetReader#count} declares no checked exceptions. The cause is therefore always a
+     * {@link ParquetFileReader#count} declares no checked exceptions. The cause is therefore always a
      * {@link RuntimeException} or an {@link Error}.
      */
     private static RuntimeException asUnchecked(Throwable cause) {
@@ -224,15 +224,15 @@ final class DefaultParquetDataset implements ParquetDataset {
      */
     private static final class ReaderStreamIterator<R> implements Iterator<R>, AutoCloseable {
 
-        private final Iterator<ParquetReader> readers;
-        private final Function<ParquetReader, Stream<R>> open;
+        private final Iterator<ParquetFileReader> readers;
+        private final Function<ParquetFileReader, Stream<R>> open;
 
         @SuppressWarnings("java:S2095") // the stream is closed when drained, by close(), or when its iterator advances
         private Stream<R> currentStream;
 
         private Iterator<R> currentRows;
 
-        ReaderStreamIterator(List<ParquetReader> readers, Function<ParquetReader, Stream<R>> open) {
+        ReaderStreamIterator(List<ParquetFileReader> readers, Function<ParquetFileReader, Stream<R>> open) {
             this.readers = readers.iterator();
             this.open = open;
         }

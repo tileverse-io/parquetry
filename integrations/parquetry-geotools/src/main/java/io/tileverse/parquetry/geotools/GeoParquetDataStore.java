@@ -26,8 +26,8 @@ import org.geotools.data.store.ContentFeatureSource;
 import org.geotools.feature.NameImpl;
 
 import io.tileverse.parquetry.catalog.DatasetCatalog;
-import io.tileverse.parquetry.dataset.Dataset;
 import io.tileverse.parquetry.dataset.GeoParquetDataset;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 
 /**
  * Read-only GeoTools DataStore over a parquetry {@link DatasetCatalog}.
@@ -58,7 +58,7 @@ public final class GeoParquetDataStore extends ContentDataStore implements AutoC
 
     private static void requireGeoParquetDatasets(DatasetCatalog catalog) {
         for (String name : catalog.datasets()) {
-            Dataset dataset = catalog.dataset(name);
+            ParquetDataset dataset = catalog.dataset(name);
             if (!(dataset instanceof GeoParquetDataset)) {
                 throw new IllegalArgumentException(
                         "dataset '" + name + "' is not a GeoParquet dataset; this store requires GeoParquet datasets");

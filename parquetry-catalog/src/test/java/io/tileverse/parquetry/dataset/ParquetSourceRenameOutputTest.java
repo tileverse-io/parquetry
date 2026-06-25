@@ -42,7 +42,7 @@ import io.tileverse.parquetry.testsupport.CorpusFixtures;
  * the dataset must lower it to the physical column name before file-level pushdown, otherwise the pushdown rejects the
  * unknown presented name. These tests pin that lowering for {@code read(Query)} and {@code readBatches(Query)}.
  */
-class ParquetDatasetRenameOutputTest {
+class ParquetSourceRenameOutputTest {
 
     private static final Path FILE = CorpusFixtures.parquetTestingData().resolve("alltypes_plain.parquet");
 
@@ -51,25 +51,25 @@ class ParquetDatasetRenameOutputTest {
 
     @Test
     void readWithRenameOutputLowersPredicateToPhysicalName() throws Exception {
-        try (ByteRangeSource source = ByteRangeSource.ofFile(FILE)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+        try (ByteRangeSource bytes = ByteRangeSource.ofFile(FILE)) {
+            ParquetSource source = ParquetSource.open(bytes);
             Query renamed = renameIdToRecordIdQuery(presentedIdGreaterThan(4));
 
-            List<Integer> presented = readPresentedIds(dataset, renamed);
+            List<Integer> presented = readPresentedIds(source, renamed);
 
             assertThat(presented).isNotEmpty().allMatch(value -> value > 4);
-            assertThat(presented).containsExactlyElementsOf(physicalIdsGreaterThan(dataset, 4));
+            assertThat(presented).containsExactlyElementsOf(physicalIdsGreaterThan(source, 4));
         }
     }
 
     @Test
     void readBatchesWithRenameOutputDoesNotThrow() throws Exception {
-        try (ByteRangeSource source = ByteRangeSource.ofFile(FILE)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+        try (ByteRangeSource bytes = ByteRangeSource.ofFile(FILE)) {
+            ParquetSource source = ParquetSource.open(bytes);
             Query renamed = renameIdToRecordIdQuery(presentedIdGreaterThan(4));
 
             assertThatCode(() -> {
-                        try (Stream<?> batches = dataset.readBatches(renamed, ReadOptions.DEFAULTS)) {
+                        try (Stream<?> batches = source.readBatches(renamed, ReadOptions.DEFAULTS)) {
                             batches.forEach(batch -> {});
                         }
                     })
@@ -79,25 +79,24 @@ class ParquetDatasetRenameOutputTest {
 
     @Test
     void countWithRenameOutputLowersPredicateToPhysicalName() throws Exception {
-        try (ByteRangeSource source = ByteRangeSource.ofFile(FILE)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+        try (ByteRangeSource bytes = ByteRangeSource.ofFile(FILE)) {
+            ParquetSource source = ParquetSource.open(bytes);
             Query renamed = renameIdToRecordIdQuery(presentedIdGreaterThan(4));
 
-            long baseline = dataset.count(physicalIdGreaterThan(4), ReadOptions.DEFAULTS);
+            long baseline = source.count(physicalIdGreaterThan(4), ReadOptions.DEFAULTS);
 
-            assertThat(dataset.count(renamed, ReadOptions.DEFAULTS)).isEqualTo(baseline);
+            assertThat(source.count(renamed, ReadOptions.DEFAULTS)).isEqualTo(baseline);
         }
     }
 
     @Test
     void explainWithRenameOutputLowersPredicateToPhysicalName() throws Exception {
-        try (ByteRangeSource source = ByteRangeSource.ofFile(FILE)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+        try (ByteRangeSource bytes = ByteRangeSource.ofFile(FILE)) {
+            ParquetSource source = ParquetSource.open(bytes);
             Query renamed = renameIdToRecordIdQuery(presentedIdGreaterThan(4));
 
-            ExplainPlan baseline =
-                    dataset.explain(physicalIdGreaterThan(4), renamed.projection(), ReadOptions.DEFAULTS);
-            ExplainPlan plan = dataset.explain(renamed, ReadOptions.DEFAULTS);
+            ExplainPlan baseline = source.explain(physicalIdGreaterThan(4), renamed.projection(), ReadOptions.DEFAULTS);
+            ExplainPlan plan = source.explain(renamed, ReadOptions.DEFAULTS);
 
             assertThat(plan.rowGroups()).hasSameSizeAs(baseline.rowGroups());
             assertThat(plan.estimatedRowsScanned()).isEqualTo(baseline.estimatedRowsScanned());
@@ -106,24 +105,24 @@ class ParquetDatasetRenameOutputTest {
 
     @Test
     void explainAnalyzeWithRenameOutputDoesNotThrow() throws Exception {
-        try (ByteRangeSource source = ByteRangeSource.ofFile(FILE)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+        try (ByteRangeSource bytes = ByteRangeSource.ofFile(FILE)) {
+            ParquetSource source = ParquetSource.open(bytes);
             Query renamed = renameIdToRecordIdQuery(presentedIdGreaterThan(4));
 
-            assertThatCode(() -> dataset.explainAnalyze(renamed, ReadOptions.DEFAULTS))
+            assertThatCode(() -> source.explainAnalyze(renamed, ReadOptions.DEFAULTS))
                     .doesNotThrowAnyException();
         }
     }
 
     @Test
     void emptyOutputIdentityCaseIsUnchanged() throws Exception {
-        try (ByteRangeSource source = ByteRangeSource.ofFile(FILE)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+        try (ByteRangeSource bytes = ByteRangeSource.ofFile(FILE)) {
+            ParquetSource source = ParquetSource.open(bytes);
             Query identity = Query.of(physicalIdGreaterThan(4), Projection.ALL);
 
-            List<Integer> identityIds = readPhysicalIds(dataset, identity);
+            List<Integer> identityIds = readPhysicalIds(source, identity);
 
-            assertThat(identityIds).containsExactlyElementsOf(physicalIdsGreaterThan(dataset, 4));
+            assertThat(identityIds).containsExactlyElementsOf(physicalIdsGreaterThan(source, 4));
         }
     }
 
@@ -140,21 +139,21 @@ class ParquetDatasetRenameOutputTest {
         return new Query(predicate, Projection.of(Set.of(ID)), output);
     }
 
-    private static List<Integer> readPresentedIds(ParquetDataset dataset, Query query) {
-        try (Stream<ParquetRecord> rows = dataset.read(query, ReadOptions.DEFAULTS)) {
+    private static List<Integer> readPresentedIds(ParquetSource source, Query query) {
+        try (Stream<ParquetRecord> rows = source.read(query, ReadOptions.DEFAULTS)) {
             return rows.map(row -> row.getInt(RECORD_ID)).toList();
         }
     }
 
-    private static List<Integer> readPhysicalIds(ParquetDataset dataset, Query query) {
-        try (Stream<ParquetRecord> rows = dataset.read(query, ReadOptions.DEFAULTS)) {
+    private static List<Integer> readPhysicalIds(ParquetSource source, Query query) {
+        try (Stream<ParquetRecord> rows = source.read(query, ReadOptions.DEFAULTS)) {
             return rows.map(row -> row.getInt(ID)).toList();
         }
     }
 
-    private static List<Integer> physicalIdsGreaterThan(ParquetDataset dataset, int threshold) {
+    private static List<Integer> physicalIdsGreaterThan(ParquetSource source, int threshold) {
         try (Stream<ParquetRecord> rows =
-                dataset.read(physicalIdGreaterThan(threshold), Projection.of(Set.of(ID)), ReadOptions.DEFAULTS)) {
+                source.read(physicalIdGreaterThan(threshold), Projection.of(Set.of(ID)), ReadOptions.DEFAULTS)) {
             return rows.map(row -> row.getInt(ID)).toList();
         }
     }

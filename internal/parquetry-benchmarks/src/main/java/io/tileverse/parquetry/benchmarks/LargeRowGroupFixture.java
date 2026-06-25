@@ -23,8 +23,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
 
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
-import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -63,7 +63,7 @@ final class LargeRowGroupFixture {
                 .rowGroupSize(WriteOptions.RowGroupSize.bytes(rowGroupBytes))
                 .encodingPolicy("id", WriteOptions.EncodingPolicy.FORCE_PLAIN)
                 .build();
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             ParquetRecordBatchBuilder appender = writer.appender();
             for (long index = 0; index < rows; index++) {
                 appender.setLong(0, index);

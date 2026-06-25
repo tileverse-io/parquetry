@@ -33,7 +33,7 @@ import org.apache.parquet.io.LocalOutputFile;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
@@ -49,7 +49,7 @@ import io.tileverse.parquetry.schema.ColumnPath;
  * parquetry pipeline (DataPageV2Reader + BatchColumnReader + BatchRowGroupReader behind the row-API adapter) and assert
  * the records round-trip exactly.
  *
- * <p>Reads go through {@link ParquetReader#open(ByteRangeSource)}, exercising the same code path that production
+ * <p>Reads go through {@link ParquetFileReader#open(ByteRangeSource)}, exercising the same code path that production
  * callers use.
  */
 class EndToEndV2ReadTest {
@@ -210,7 +210,7 @@ class EndToEndV2ReadTest {
     private static List<ParquetRecord> readAllRecords(Path file, SegmentPool pool) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetRuntime runtime = ParquetRuntime.builder().segmentPool(pool).build();
-            ParquetReader dataset = ParquetReader.open(source, runtime, Optional.empty());
+            ParquetFileReader dataset = ParquetFileReader.open(source, runtime, Optional.empty());
             List<ParquetRecord> collected = new ArrayList<>();
             try (Stream<ParquetRecord> stream =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {

@@ -30,9 +30,9 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
-import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.filter.Pred;
@@ -72,7 +72,7 @@ class UuidColumnRoundTripIT {
                 .rowGroupSize(WriteOptions.RowGroupSize.rows(100))
                 .build();
         ParquetSchema schema = flatSchema(uuidColumn("id"));
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             ParquetRecordBatchBuilder appender = writer.appender(100);
             for (UUID u : all) {
                 WriteFixtures.appendRow(appender, schema, Map.of(ID, u));
@@ -93,7 +93,7 @@ class UuidColumnRoundTripIT {
 
     private List<UUID> readIds(Path file, Predicate predicate) throws Exception {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             try (Stream<ParquetRecord> rows = reader.read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
                 return rows.map(r -> r.getUuid(ID)).toList();
             }

@@ -35,9 +35,9 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.ParquetWriteException;
-import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.variant.Variant;
 import io.tileverse.parquetry.data.variant.VariantEncoder;
@@ -166,7 +166,7 @@ class UnshreddedVariantWriteConformanceIT {
     private void writeVariantRows(Path file, List<Encoded> authored) throws IOException {
         ParquetSchema schema = variantSchema();
         WriteOptions opts = WriteOptions.builder().tempDir(tempDir).build();
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, opts)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, opts)) {
             ParquetRecordBatchBuilder appender = writer.appender();
             int id = 0;
             for (Encoded encoded : authored) {

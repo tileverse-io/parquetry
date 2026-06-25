@@ -31,8 +31,8 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
-import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -100,7 +100,7 @@ class StructWriteConformanceIT {
 
     private void writePersonRows(Path file, ParquetSchema schema) throws IOException {
         WriteOptions opts = WriteOptions.builder().tempDir(tempDir).build();
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, opts)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, opts)) {
             ParquetRecordBatchBuilder appender = writer.appender();
 
             // Row 0: fully-present person.
@@ -162,7 +162,7 @@ class StructWriteConformanceIT {
 
         Path file = tempDir.resolve("required-child-absent-struct.parquet");
         WriteOptions opts = WriteOptions.builder().tempDir(tempDir).build();
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, opts)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, opts)) {
             ParquetRecordBatchBuilder appender = writer.appender();
             appender.beginStruct("person")
                     .setString(ColumnPath.of("person", "name"), "Alice")

@@ -25,7 +25,6 @@ import org.apache.parquet.column.ColumnReader;
 import org.apache.parquet.column.impl.ColumnReadStoreImpl;
 import org.apache.parquet.column.page.PageReadStore;
 import org.apache.parquet.example.DummyRecordConverter;
-import org.apache.parquet.hadoop.ParquetFileReader;
 import org.apache.parquet.io.LocalInputFile;
 import org.apache.parquet.io.api.GroupConverter;
 import org.apache.parquet.schema.MessageType;
@@ -53,7 +52,8 @@ final class ParquetJavaColumnarEngine implements ColumnarEngine {
 
     @Override
     public long scan() throws IOException {
-        try (ParquetFileReader reader = ParquetFileReader.open(new LocalInputFile(file))) {
+        try (org.apache.parquet.hadoop.ParquetFileReader reader =
+                org.apache.parquet.hadoop.ParquetFileReader.open(new LocalInputFile(file))) {
             MessageType schema = reader.getFooter().getFileMetaData().getSchema();
             String createdBy = reader.getFooter().getFileMetaData().getCreatedBy();
             GroupConverter recordConverter = new DummyRecordConverter(schema).getRootConverter();
