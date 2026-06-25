@@ -34,7 +34,8 @@ public record DatasetCapabilities(
     public enum FileStatsSource {
         NONE,
         MANIFEST,
-        FOOTER_AGGREGATE
+        FOOTER_AGGREGATE,
+        STAC_ITEM
     }
 
     /** How a file's spatial bounds are obtained. */

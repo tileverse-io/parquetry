@@ -1,0 +1,12 @@
+{
+  "type": "Feature",
+  "stac_version": "1.0.0",
+  "id": "item-west",
+  "bbox": [0, 0, 10, 10],
+  "properties": { "datetime": "2024-01-01T00:00:00Z" },
+  "geometry": null,
+  "links": [],
+  "assets": {
+    "data": { "href": "../parts/west.parquet", "type": "application/vnd.apache.parquet", "title": "West part", "roles": ["data"] }
+  }
+}
