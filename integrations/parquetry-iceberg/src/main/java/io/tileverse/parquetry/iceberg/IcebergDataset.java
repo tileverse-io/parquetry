@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.iceberg;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -44,6 +45,7 @@ import io.tileverse.parquetry.filter.OutputColumn;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Query;
+import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.filter.prune.FilePruner;
@@ -71,6 +73,7 @@ final class IcebergDataset implements Dataset {
     private final String name;
     private final CatalogSnapshot snapshot;
     private final IcebergSchema icebergSchema;
+    private final IcebergPartitionSpec partitionSpec;
     private final List<IcebergManifests.DataFileRef> dataFiles;
     private final List<FileStats> fileStats;
     private final List<ByteRangeSource> sources;
@@ -80,12 +83,14 @@ final class IcebergDataset implements Dataset {
             String name,
             CatalogSnapshot snapshot,
             IcebergSchema icebergSchema,
+            IcebergPartitionSpec partitionSpec,
             List<IcebergManifests.DataFileRef> dataFiles,
             List<FileStats> fileStats,
             List<ByteRangeSource> sources) {
         this.name = Objects.requireNonNull(name, "name");
         this.snapshot = Objects.requireNonNull(snapshot, "snapshot");
         this.icebergSchema = Objects.requireNonNull(icebergSchema, "icebergSchema");
+        this.partitionSpec = Objects.requireNonNull(partitionSpec, "partitionSpec");
         this.dataFiles = List.copyOf(dataFiles);
         this.fileStats = List.copyOf(fileStats);
         this.sources = List.copyOf(sources);
@@ -275,24 +280,41 @@ final class IcebergDataset implements Dataset {
      * fast path free of any output shaping.
      *
      * <p>An evolved file is read through a reconciled output shape. The predicate is folded against the columns the
-     * table adds (which are null in this file): a leaf over an added column collapses, and a predicate that folds to
-     * always-false skips the file (this method returns null). The pushdown projection is the physical sources the
-     * output actually reads; when the output is only injected nulls or constants, one cheap physical leaf still drives
-     * row enumeration. Evolved files present every table field; restricting the presented set to the caller projection
-     * is a later optimization.
+     * table adds (which are null in this file) and against the identity-partition columns this file omits (each a
+     * constant taken from the file's manifest partition tuple): a leaf over an added column collapses, a leaf over an
+     * omitted partition column evaluates against its constant, and a predicate that folds to always-false skips the
+     * file (this method returns null). The pushdown projection is the physical sources the output actually reads; when
+     * the output is only injected nulls or constants, one cheap physical leaf still drives row enumeration. Evolved
+     * files present every table field; restricting the presented set to the caller projection is a later optimization.
      */
     private Query oneFileQuery(int index, Predicate predicate, Projection projection) {
+        IcebergManifests.DataFileRef ref = dataFiles.get(index);
+        Map<Integer, Value> partitionConstants =
+                IcebergPartitionValues.constantsFor(partitionSpec, ref.partitionValues());
         IcebergFileSchema file = IcebergFileSchema.of(perFile(index).schema());
-        Reconciliation recon = IcebergReconciliation.reconcile(icebergSchema, file);
+        Reconciliation recon = IcebergReconciliation.reconcile(icebergSchema, file, partitionConstants);
         if (recon.passThrough()) {
             return Query.of(predicate, projection);
         }
-        Predicate folded = ConstantFolding.fold(predicate, Map.of(), addedNullColumns(recon));
+        Map<ColumnPath, Value> constantsByName = partitionConstantsByName(partitionConstants);
+        Predicate folded = ConstantFolding.fold(predicate, constantsByName, addedNullColumns(recon));
         if (folded.equals(Predicate.ALWAYS_FALSE)) {
             return null;
         }
         Projection pushdown = pushdownProjection(recon, perFile(index).schema());
         return new Query(folded, pushdown, recon.output());
+    }
+
+    /** Lowers identity-partition constants keyed by source-field-id to constants keyed by their table column path. */
+    private Map<ColumnPath, Value> partitionConstantsByName(Map<Integer, Value> partitionConstants) {
+        Map<ColumnPath, Value> byName = new HashMap<>();
+        for (Map.Entry<Integer, Value> entry : partitionConstants.entrySet()) {
+            IcebergField field = partitionSpec.identitySourceFields().get(entry.getKey());
+            if (field != null) {
+                byName.put(ColumnPath.of(field.name()), entry.getValue());
+            }
+        }
+        return byName;
     }
 
     /** The names of the table columns this file does not hold, which reconciliation presents as typed nulls. */

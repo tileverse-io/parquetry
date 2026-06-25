@@ -25,18 +25,20 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * The parsed subset of an Iceberg {@code metadata.json} this reader needs: format version, table location, the pinned
- * snapshot id, its manifest-list location, whether the table is partitioned, and the primitive fields of the current
- * schema (used to map a manifest bound's field id to a column name and type). Complex types (struct/list/map) are not
- * pruned in this cut and are omitted from {@link #fields()}.
+ * snapshot id, its manifest-list location, the table's partition model, and the primitive fields of the current schema
+ * (used to map a manifest bound's field id to a column name and type). Complex types (struct/list/map) are not pruned
+ * in this cut and are omitted from {@link #fields()}.
  */
 final class IcebergTableMetadata {
+
+    private static final int PARTITION_FIELD_ID_BASE = 1000;
 
     private final int formatVersion;
     private final String tableLocation;
     private final long currentSnapshotId;
     private final long currentSnapshotTimestampMs;
     private final String manifestListLocation;
-    private final boolean partitioned;
+    private final IcebergPartitionSpec partitionSpec;
     private final List<IcebergField> fields;
 
     private IcebergTableMetadata(
@@ -45,14 +47,14 @@ final class IcebergTableMetadata {
             long currentSnapshotId,
             long currentSnapshotTimestampMs,
             String manifestListLocation,
-            boolean partitioned,
+            IcebergPartitionSpec partitionSpec,
             List<IcebergField> fields) {
         this.formatVersion = formatVersion;
         this.tableLocation = tableLocation;
         this.currentSnapshotId = currentSnapshotId;
         this.currentSnapshotTimestampMs = currentSnapshotTimestampMs;
         this.manifestListLocation = manifestListLocation;
-        this.partitioned = partitioned;
+        this.partitionSpec = partitionSpec;
         this.fields = List.copyOf(fields);
     }
 
@@ -77,7 +79,12 @@ final class IcebergTableMetadata {
     }
 
     public boolean isPartitioned() {
-        return partitioned;
+        return !partitionSpec.isEmpty();
+    }
+
+    /** The table's partition model, merged across every partition spec it has used. */
+    public IcebergPartitionSpec partitionSpec() {
+        return partitionSpec;
     }
 
     /** The primitive fields of the current schema, in declaration order; empty when the schema has none. */
@@ -104,10 +111,10 @@ final class IcebergTableMetadata {
         JsonNode snapshot = snapshotNode(root, snapshotId);
         long timestampMs = requiredLong(snapshot, "timestamp-ms");
         String manifestList = requiredString(snapshot, "manifest-list");
-        boolean partitioned = anyPartitionSpecHasFields(root);
         List<IcebergField> fields = currentSchemaFields(root);
+        IcebergPartitionSpec partitionSpec = IcebergPartitionSpec.of(partitionFields(root), fields);
         return new IcebergTableMetadata(
-                formatVersion, tableLocation, snapshotId, timestampMs, manifestList, partitioned, fields);
+                formatVersion, tableLocation, snapshotId, timestampMs, manifestList, partitionSpec, fields);
     }
 
     private static List<IcebergField> currentSchemaFields(JsonNode root) {
@@ -190,18 +197,42 @@ final class IcebergTableMetadata {
         throw new IcebergFormatException("no snapshot with id " + snapshotId);
     }
 
-    private static boolean anyPartitionSpecHasFields(JsonNode root) {
+    private static List<IcebergPartitionSpec.PartitionField> partitionFields(JsonNode root) {
+        List<IcebergPartitionSpec.PartitionField> fields = new ArrayList<>();
         JsonNode specs = root.get("partition-specs");
-        if (specs == null || !specs.isArray()) {
-            return false;
-        }
-        for (JsonNode spec : specs) {
-            JsonNode fields = spec.get("fields");
-            if (fields != null && fields.isArray() && !fields.isEmpty()) {
-                return true;
+        if (specs != null && specs.isArray()) {
+            for (JsonNode spec : specs) {
+                addPartitionFields(spec.get("fields"), fields);
             }
+            return fields;
         }
-        return false;
+        // A format-version-1 table may expose only the singular default spec under `partition-spec`.
+        addPartitionFields(root.get("partition-spec"), fields);
+        return fields;
+    }
+
+    private static void addPartitionFields(JsonNode specFields, List<IcebergPartitionSpec.PartitionField> into) {
+        if (specFields == null || !specFields.isArray()) {
+            return;
+        }
+        int position = 0;
+        for (JsonNode field : specFields) {
+            into.add(new IcebergPartitionSpec.PartitionField(
+                    partitionFieldId(field, position),
+                    requiredInt(field, "source-id"),
+                    requiredString(field, "name"),
+                    requiredString(field, "transform")));
+            position++;
+        }
+    }
+
+    /** The partition field id, defaulting to Iceberg's base (1000) plus position when a v1 spec omits it. */
+    private static int partitionFieldId(JsonNode field, int position) {
+        JsonNode id = field.get("field-id");
+        if (id != null && id.isIntegralNumber()) {
+            return id.intValue();
+        }
+        return PARTITION_FIELD_ID_BASE + position;
     }
 
     private static String requiredString(JsonNode node, String field) {

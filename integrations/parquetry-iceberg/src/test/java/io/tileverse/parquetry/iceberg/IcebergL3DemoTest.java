@@ -21,6 +21,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -101,7 +102,7 @@ class IcebergL3DemoTest {
             long rowsRead = 0L;
             long rowsSkipped = 0L;
             for (IcebergManifests.DataFileRef ref : refs) {
-                FileStats stats = IcebergFileStats.from(ref, fields);
+                FileStats stats = IcebergFileStats.from(ref, fields, Map.of());
                 BoundingBox box = stats.geometryBounds().get(ColumnPath.of(GEOM_COLUMN));
                 PruningDecision decision = FilePruner.evaluate(query, stats);
                 boolean skip = decision instanceof PruningDecision.Eliminated;

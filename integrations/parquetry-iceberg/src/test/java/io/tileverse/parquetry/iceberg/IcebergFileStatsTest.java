@@ -52,13 +52,14 @@ class IcebergFileStatsTest {
                 42L,
                 Map.of(VAL_FIELD_ID, leLong(VAL_LOWER), GEOM_FIELD_ID, packedXy(XMIN, YMIN)),
                 Map.of(VAL_FIELD_ID, leLong(VAL_UPPER), GEOM_FIELD_ID, packedXy(XMAX, YMAX)),
+                Map.of(),
                 Map.of());
 
         List<IcebergField> fields = List.of(
                 new IcebergField(GEOM_FIELD_ID, "geom", "geometry", false),
                 new IcebergField(VAL_FIELD_ID, "val", "long", false));
 
-        FileStats stats = IcebergFileStats.from(ref, fields);
+        FileStats stats = IcebergFileStats.from(ref, fields, Map.of());
 
         assertThat(stats.recordCount()).isEqualTo(42L);
         assertGeometryBounds(stats);
@@ -73,13 +74,14 @@ class IcebergFileStatsTest {
                 42L,
                 Map.of(VAL_FIELD_ID, leLong(VAL_LOWER), GEOM_FIELD_ID, malformedPoint),
                 Map.of(VAL_FIELD_ID, leLong(VAL_UPPER), GEOM_FIELD_ID, malformedPoint),
+                Map.of(),
                 Map.of());
 
         List<IcebergField> fields = List.of(
                 new IcebergField(GEOM_FIELD_ID, "geom", "geometry", false),
                 new IcebergField(VAL_FIELD_ID, "val", "long", false));
 
-        FileStats stats = IcebergFileStats.from(ref, fields);
+        FileStats stats = IcebergFileStats.from(ref, fields, Map.of());
 
         assertThat(stats.geometryBounds()).doesNotContainKey(ColumnPath.of("geom"));
         assertColumnBounds(stats);
@@ -92,13 +94,35 @@ class IcebergFileStatsTest {
                 42L,
                 Map.of(VAL_FIELD_ID, leLong(VAL_LOWER)),
                 Map.of(VAL_FIELD_ID, leLong(VAL_UPPER)),
+                Map.of(),
                 Map.of());
 
         List<IcebergField> fields = List.of(new IcebergField(VAL_FIELD_ID, "amount", "decimal", false));
 
-        FileStats stats = IcebergFileStats.from(ref, fields);
+        FileStats stats = IcebergFileStats.from(ref, fields, Map.of());
 
         assertThat(stats.columns()).doesNotContainKey(ColumnPath.of("amount"));
+    }
+
+    @Test
+    void synthesizesATightBoundForAnIdentityPartitionColumn() {
+        IcebergField id = new IcebergField(1, "id", "long", true);
+        IcebergField category = new IcebergField(2, "category", "string", true);
+        IcebergPartitionSpec spec = IcebergPartitionSpec.of(
+                List.of(new IcebergPartitionSpec.PartitionField(1000, 2, "category", "identity")),
+                List.of(id, category));
+        Map<Integer, Value> partitionConstants = IcebergPartitionValues.constantsFor(spec, Map.of(1000, "b"));
+
+        IcebergManifests.DataFileRef ref = new IcebergManifests.DataFileRef(
+                "data/category=b/f.parquet", 100L, Map.of(), Map.of(), Map.of(), Map.of(1000, "b"));
+
+        FileStats stats = IcebergFileStats.from(ref, List.of(id, category), partitionConstants);
+
+        ColumnStatistics categoryStats = stats.columns().get(ColumnPath.of("category"));
+        assertThat(categoryStats).isNotNull();
+        assertThat(categoryStats.min()).contains(new Value.StringVal("b"));
+        assertThat(categoryStats.max()).contains(new Value.StringVal("b"));
+        assertThat(categoryStats.nullCount()).hasValue(0L);
     }
 
     private void assertGeometryBounds(FileStats stats) {

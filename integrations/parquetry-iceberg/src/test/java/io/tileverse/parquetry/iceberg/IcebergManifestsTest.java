@@ -73,4 +73,27 @@ class IcebergManifestsTest {
         assertThat(ref.lowerBounds().get(geometryFieldId).byteSize()).isIn(16L, 21L);
         assertThat(ref.upperBounds().get(geometryFieldId).byteSize()).isIn(16L, 21L);
     }
+
+    @Test
+    void readsTheIdentityPartitionTuplePerDataFile() throws Exception {
+        Path root = TestCorpus.extractDirectory("iceberg-partitioned/by_category", tempDir);
+        IcebergTableMetadata metadata =
+                IcebergTableMetadata.read(Files.readString(root.resolve("metadata/v1.metadata.json")));
+        IcebergFileIO io = new LocalIcebergFileIO(metadata.tableLocation(), root);
+
+        List<IcebergManifests.DataFileRef> dataFiles =
+                IcebergManifests.readDataFiles(metadata.manifestListLocation(), io);
+
+        int categoryPartitionFieldId = 1000;
+        assertThat(dataFiles).hasSize(3);
+        assertThat(dataFiles)
+                .allSatisfy(ref -> assertThat(ref.partitionValues()).containsKey(categoryPartitionFieldId));
+        assertThat(dataFiles.stream()
+                        .map(ref -> ref.partitionValues()
+                                .get(categoryPartitionFieldId)
+                                .toString())
+                        .sorted()
+                        .toList())
+                .containsExactly("a", "b", "c");
+    }
 }

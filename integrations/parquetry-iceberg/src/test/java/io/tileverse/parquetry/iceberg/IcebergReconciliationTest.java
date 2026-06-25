@@ -19,6 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 
@@ -35,12 +36,14 @@ import io.tileverse.parquetry.schema.SchemaNode;
 
 class IcebergReconciliationTest {
 
+    private static final Map<Integer, Value> NO_PARTITIONS = Map.of();
+
     @Test
     void passesThroughWhenFileMatchesTableExactly() {
         IcebergSchema table = tableOf(field(1, "id", "long"), field(2, "name", "string"));
         ParquetSchema file = fileSchema(leaf("id", PrimitiveKind.INT64, 1), leaf("name", PrimitiveKind.BYTE_ARRAY, 2));
 
-        Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file));
+        Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file), Map.of());
 
         assertThat(result.passThrough()).isTrue();
         assertThat(result.output()).isEmpty();
@@ -51,7 +54,7 @@ class IcebergReconciliationTest {
         IcebergSchema table = tableOf(field(1, "id", "long"));
         ParquetSchema file = fileSchema(leaf("id", PrimitiveKind.INT64, -1));
 
-        Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file));
+        Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file), Map.of());
 
         assertThat(result.passThrough()).isTrue();
     }
@@ -61,7 +64,7 @@ class IcebergReconciliationTest {
         IcebergSchema table = tableOf(field(1, "id", "long"));
         ParquetSchema file = fileSchema(leaf("id", PrimitiveKind.INT64, 1), leaf("lineage", PrimitiveKind.INT64, 99));
 
-        Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file));
+        Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file), Map.of());
 
         assertThat(result.passThrough()).isTrue();
     }
@@ -71,7 +74,7 @@ class IcebergReconciliationTest {
         IcebergSchema table = tableOf(field(2, "count", "long"));
         ParquetSchema file = fileSchema(leaf("n", PrimitiveKind.INT64, 2));
 
-        Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file));
+        Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file), Map.of());
 
         assertThat(result.passThrough()).isFalse();
         assertThat(result.output())
@@ -83,7 +86,7 @@ class IcebergReconciliationTest {
         IcebergSchema table = tableOf(field(2, "n", "long"), field(3, "label", "string"));
         ParquetSchema file = fileSchema(leaf("n", PrimitiveKind.INT64, 2));
 
-        Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file));
+        Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file), Map.of());
 
         assertThat(result.passThrough()).isFalse();
         assertThat(result.output())
@@ -93,11 +96,39 @@ class IcebergReconciliationTest {
     }
 
     @Test
+    void reconstructsAnOmittedIdentityPartitionColumnAsAConstant() {
+        IcebergSchema table = tableOf(field(1, "id", "long"), field(2, "category", "string"));
+        ParquetSchema file = fileSchema(leaf("id", PrimitiveKind.INT64, 1));
+        Map<Integer, Value> partitionConstants = Map.of(2, new Value.StringVal("b"));
+
+        Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file), partitionConstants);
+
+        assertThat(result.passThrough()).isFalse();
+        assertThat(result.output())
+                .containsExactly(
+                        new OutputColumn.Physical(ColumnPath.of("id"), ColumnPath.of("id")),
+                        new OutputColumn.Constant(ColumnPath.of("category"), new Value.StringVal("b")));
+    }
+
+    @Test
+    void stillInjectsNullForAnAddedNonPartitionColumn() {
+        IcebergSchema table = tableOf(field(1, "id", "long"), field(3, "label", "string"));
+        ParquetSchema file = fileSchema(leaf("id", PrimitiveKind.INT64, 1));
+
+        Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file), Map.of());
+
+        assertThat(result.output())
+                .containsExactly(
+                        new OutputColumn.Physical(ColumnPath.of("id"), ColumnPath.of("id")),
+                        new OutputColumn.Null(ColumnPath.of("label"), new Value.StringVal("")));
+    }
+
+    @Test
     void reconcilesReorderAndRenameTogetherInTableOrder() {
         IcebergSchema table = tableOf(field(2, "count", "long"), field(1, "id", "long"));
         ParquetSchema file = fileSchema(leaf("id", PrimitiveKind.INT64, 1), leaf("n", PrimitiveKind.INT64, 2));
 
-        Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file));
+        Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file), Map.of());
 
         assertThat(result.passThrough()).isFalse();
         assertThat(result.output())
@@ -111,7 +142,7 @@ class IcebergReconciliationTest {
         IcebergSchema table = tableOf(field(2, "count", "long"));
         ParquetSchema file = fileSchema(leaf("n", PrimitiveKind.INT64, 2), leaf("dropped", PrimitiveKind.INT64, 7));
 
-        Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file));
+        Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file), Map.of());
 
         assertThat(result.passThrough()).isFalse();
         assertThat(result.output())
@@ -123,7 +154,7 @@ class IcebergReconciliationTest {
         IcebergSchema table = tableOf(field(2, "n", "long"));
         ParquetSchema file = fileSchema(leaf("n", PrimitiveKind.INT32, 2));
 
-        Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file));
+        Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file), Map.of());
 
         assertThat(result.passThrough()).isFalse();
         assertThat(result.output())
@@ -136,7 +167,7 @@ class IcebergReconciliationTest {
         IcebergSchema table = tableOf(field(2, "x", "double"));
         ParquetSchema file = fileSchema(leaf("x", PrimitiveKind.FLOAT, 2));
 
-        Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file));
+        Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file), Map.of());
 
         assertThat(result.passThrough()).isFalse();
         assertThat(result.output())
@@ -149,7 +180,7 @@ class IcebergReconciliationTest {
         IcebergSchema table = tableOf(field(2, "x", "float"));
         IcebergFileSchema file = IcebergFileSchema.of(fileSchema(leaf("x", PrimitiveKind.INT64, 2)));
 
-        assertThatThrownBy(() -> IcebergReconciliation.reconcile(table, file))
+        assertThatThrownBy(() -> IcebergReconciliation.reconcile(table, file, NO_PARTITIONS))
                 .isInstanceOf(IcebergFormatException.class)
                 .hasMessageContaining("x");
     }
@@ -159,7 +190,7 @@ class IcebergReconciliationTest {
         IcebergSchema table = tableOf(field(2, "n", "long"), field(3, "blob", "binary"));
         IcebergFileSchema file = IcebergFileSchema.of(fileSchema(leaf("n", PrimitiveKind.INT64, 2)));
 
-        assertThatThrownBy(() -> IcebergReconciliation.reconcile(table, file))
+        assertThatThrownBy(() -> IcebergReconciliation.reconcile(table, file, NO_PARTITIONS))
                 .isInstanceOf(IcebergFormatException.class)
                 .hasMessageContaining("blob");
     }

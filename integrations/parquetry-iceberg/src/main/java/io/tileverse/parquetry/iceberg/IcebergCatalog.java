@@ -22,6 +22,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 import io.tileverse.storage.Storage;
@@ -32,6 +33,7 @@ import io.tileverse.parquetry.catalog.DatasetCatalog;
 import io.tileverse.parquetry.dataset.CatalogSnapshot;
 import io.tileverse.parquetry.dataset.Dataset;
 import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.prune.FileStats;
 import io.tileverse.parquetry.io.ByteRangeSource;
 
@@ -40,7 +42,8 @@ import io.tileverse.parquetry.io.ByteRangeSource;
  * {@code <tableDir>/metadata/<vN>.metadata.json}; data and manifest bytes come through an {@link IcebergFileIO}. The
  * catalog pre-opens every data file's byte source once and owns them for its lifetime; each query opens a short-lived
  * {@link ParquetDataset} over only the survivor subset and never closes the shared sources. The catalog closes all
- * sources and the IO in {@link #close()}. Partitioned tables and delete manifests fail fast (follow-on work).
+ * sources and the IO in {@link #close()}. Identity-partitioned tables prune files by partition value and reconstruct
+ * omitted partition columns; delete manifests fail fast (follow-on work).
  */
 public final class IcebergCatalog implements DatasetCatalog {
 
@@ -126,16 +129,14 @@ public final class IcebergCatalog implements DatasetCatalog {
         Objects.requireNonNull(io, "io");
         List<ByteRangeSource> opened = new ArrayList<>();
         try {
-            if (metadata.isPartitioned()) {
-                throw new IcebergFormatException("partitioned tables are not yet supported");
-            }
             List<IcebergManifests.DataFileRef> dataFiles =
                     IcebergManifests.readDataFiles(metadata.manifestListLocation(), io);
             if (dataFiles.isEmpty()) {
                 throw new IcebergFormatException("snapshot " + metadata.currentSnapshotId() + " has no data files");
             }
             List<IcebergField> fields = metadata.fields();
-            List<FileStats> fileStats = fileStatsFor(dataFiles, fields);
+            IcebergPartitionSpec partitionSpec = metadata.partitionSpec();
+            List<FileStats> fileStats = fileStatsFor(dataFiles, fields, partitionSpec);
             for (IcebergManifests.DataFileRef ref : dataFiles) {
                 opened.add(io.open(ref.location()));
             }
@@ -143,7 +144,7 @@ public final class IcebergCatalog implements DatasetCatalog {
             CatalogSnapshot snapshot =
                     new CatalogSnapshot(metadata.currentSnapshotId(), metadata.currentSnapshotTimestampMs());
             IcebergDataset dataset =
-                    new IcebergDataset(tableName, snapshot, icebergSchema, dataFiles, fileStats, opened);
+                    new IcebergDataset(tableName, snapshot, icebergSchema, partitionSpec, dataFiles, fileStats, opened);
             return new IcebergCatalog(tableName, dataset, opened, io);
         } catch (RuntimeException failure) {
             RuntimeException cleanup = closeAll(opened, io);
@@ -185,10 +186,11 @@ public final class IcebergCatalog implements DatasetCatalog {
     }
 
     private static List<FileStats> fileStatsFor(
-            List<IcebergManifests.DataFileRef> dataFiles, List<IcebergField> fields) {
+            List<IcebergManifests.DataFileRef> dataFiles, List<IcebergField> fields, IcebergPartitionSpec spec) {
         List<FileStats> stats = new ArrayList<>(dataFiles.size());
         for (IcebergManifests.DataFileRef ref : dataFiles) {
-            stats.add(IcebergFileStats.from(ref, fields));
+            Map<Integer, Value> partitionConstants = IcebergPartitionValues.constantsFor(spec, ref.partitionValues());
+            stats.add(IcebergFileStats.from(ref, fields, partitionConstants));
         }
         return stats;
     }
