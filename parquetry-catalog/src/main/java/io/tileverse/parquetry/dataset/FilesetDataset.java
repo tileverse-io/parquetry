@@ -164,6 +164,7 @@ public final class FilesetDataset implements GeoParquetDataset {
      * constant columns per file. Mirrors {@link #read(Predicate, Projection, ReadOptions)} at the batch level for
      * batch-oriented consumers (such as the Arrow bridge).
      */
+    @Override
     @MustBeClosed
     public Stream<ParquetRecordBatch> readBatches(Predicate predicate, Projection projection, ReadOptions options) {
         if (!referencesSynthetic(predicate, projection)) {

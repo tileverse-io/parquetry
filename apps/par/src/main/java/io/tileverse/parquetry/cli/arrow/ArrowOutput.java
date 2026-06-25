@@ -22,8 +22,7 @@ import java.util.stream.Stream;
 import io.tileverse.parquetry.arrow.ipc.ArrowIpcWriter;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.dataset.FilesetDataset;
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.dataset.ParquetReader;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -46,26 +45,7 @@ public final class ArrowOutput {
     private ArrowOutput() {}
 
     public static void write(
-            ParquetDataset dataset,
-            ParquetSchema projectedSchema,
-            Optional<GeoParquetMetadata> geo,
-            ArrowOutputRequest request,
-            OutputStream out) {
-        if (canFastPath(request)) {
-            try (Stream<ParquetRecordBatch> batches =
-                    dataset.readBatches(Predicate.ALWAYS_TRUE, request.projection(), ReadOptions.DEFAULTS)) {
-                ArrowIpcWriter.write(projectedSchema, geo, batches, out);
-            }
-            return;
-        }
-        try (Stream<ParquetRecord> records =
-                dataset.read(request.predicate(), request.projection(), ReadOptions.DEFAULTS)) {
-            writeRecordPath(records, projectedSchema, geo, request, out);
-        }
-    }
-
-    public static void write(
-            FilesetDataset dataset,
+            ParquetReader dataset,
             ParquetSchema projectedSchema,
             Optional<GeoParquetMetadata> geo,
             ArrowOutputRequest request,

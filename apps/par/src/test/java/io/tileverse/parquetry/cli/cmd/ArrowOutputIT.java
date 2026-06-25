@@ -33,6 +33,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.cli.support.CliRunner;
 import io.tileverse.parquetry.cli.support.Fixtures;
+import io.tileverse.parquetry.testkit.TestCorpus;
 
 /**
  * End-to-end checks that {@code cat -o arrow} streams valid Apache Arrow IPC bytes to stdout. Each case runs the CLI,
@@ -66,6 +67,27 @@ class ArrowOutputIT {
         assertThat(result.exitCode()).isZero();
         ArrowRows rows = readArrow(result.stdout());
         assertThat(rows.rowCount()).isEqualTo(2);
+    }
+
+    @Test
+    void arrowOverIcebergTable(@TempDir Path tmp) throws Exception {
+        Path tableDir = TestCorpus.extractDirectory("iceberg-geo-testbed/v3_geometry", tmp);
+
+        CliRunner.BytesResult result = CliRunner.runCapturingBytes("cat", "-o", "arrow", tableDir.toString());
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(totalRows(result.stdout())).isEqualTo(10_000);
+    }
+
+    private static int totalRows(byte[] bytes) throws Exception {
+        try (RootAllocator allocator = new RootAllocator();
+                ArrowStreamReader reader = new ArrowStreamReader(new ByteArrayInputStream(bytes), allocator)) {
+            int rowCount = 0;
+            while (reader.loadNextBatch()) {
+                rowCount += reader.getVectorSchemaRoot().getRowCount();
+            }
+            return rowCount;
+        }
     }
 
     private record ArrowRows(int rowCount, List<Long> populations, List<String> names) {}

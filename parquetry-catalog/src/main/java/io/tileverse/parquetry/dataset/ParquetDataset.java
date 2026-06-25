@@ -74,7 +74,8 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
  * module's internal API. Callers needing the unfiltered thrift footer can call
  * {@link io.tileverse.parquetry.format.ParquetFormat#readFooter ParquetFormat.readFooter} directly.
  */
-public sealed interface ParquetDataset permits DefaultParquetDataset {
+public sealed interface ParquetDataset extends io.tileverse.parquetry.dataset.ParquetReader
+        permits DefaultParquetDataset {
 
     /** Returns the file's schema as decoded at {@link #open(ByteRangeSource) open} time. */
     ParquetSchema schema();

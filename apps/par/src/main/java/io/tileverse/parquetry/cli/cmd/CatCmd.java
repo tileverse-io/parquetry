@@ -33,7 +33,6 @@ import io.tileverse.parquetry.cli.render.Projections;
 import io.tileverse.parquetry.cli.render.RecordRenderer;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.Dataset;
-import io.tileverse.parquetry.dataset.FilesetDataset;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -94,17 +93,11 @@ public class CatCmd implements Callable<Integer> {
     @SuppressWarnings("java:S106")
     private void writeArrow(
             Dataset dataset, ParquetSchema schema, Projections.Resolved projection, Predicate predicate, long limit) {
-        if (!(dataset instanceof FilesetDataset fileset)) {
-            throw new ParameterException(
-                    spec.commandLine(),
-                    "arrow output is not yet supported over this dataset kind (e.g. an Iceberg table);"
-                            + " use a single file, directory, or glob");
-        }
         ParquetSchema projectedSchema = projectedSchema(schema, projection);
         Optional<GeoParquetMetadata> geo = DatasetResolver.geoMetadataOf(dataset);
         ArrowOutputRequest request =
                 new ArrowOutputRequest(predicate, projection.projection(), options.filter != null, limit);
-        ArrowOutput.write(fileset, projectedSchema, geo, request, System.out);
+        ArrowOutput.write(dataset, projectedSchema, geo, request, System.out);
     }
 
     private ParquetSchema projectedSchema(ParquetSchema schema, Projections.Resolved projection) {

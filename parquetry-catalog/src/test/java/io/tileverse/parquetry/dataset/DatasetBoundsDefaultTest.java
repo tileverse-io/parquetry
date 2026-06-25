@@ -22,6 +22,7 @@ import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.explain.DatasetExplainPlan;
 import io.tileverse.parquetry.filter.Predicate;
@@ -56,6 +57,10 @@ class DatasetBoundsDefaultTest {
             }
 
             public <T> Stream<T> read(Predicate p, Projection pr, Materializer<T> m, ReadOptions o) {
+                return Stream.empty();
+            }
+
+            public Stream<ParquetRecordBatch> readBatches(Predicate p, Projection pr, ReadOptions o) {
                 return Stream.empty();
             }
 

@@ -23,6 +23,7 @@ import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.catalog.CatalogCapabilities;
 import io.tileverse.parquetry.catalog.DatasetCatalog;
 import io.tileverse.parquetry.data.ReadOptions;
@@ -97,6 +98,11 @@ class GeoParquetDataStoreNonGeoCatalogTest {
         @Override
         public <T> Stream<T> read(
                 Predicate predicate, Projection projection, Materializer<T> materializer, ReadOptions options) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Stream<ParquetRecordBatch> readBatches(Predicate predicate, Projection projection, ReadOptions options) {
             throw new UnsupportedOperationException();
         }
 
