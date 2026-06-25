@@ -35,7 +35,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
  * named, schema-bearing, optionally-versioned collection of Parquet files read as one. The read/count/explain methods
  * mirror the single-file engine; the catalog adds the name, capabilities, snapshot, and (later) partition awareness.
  */
-public interface Dataset {
+public interface Dataset extends ParquetReader {
 
     String name();
 
