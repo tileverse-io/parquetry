@@ -17,6 +17,7 @@ package io.tileverse.parquetry.iceberg;
 
 import java.lang.foreign.MemorySegment;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.OptionalLong;
@@ -37,8 +38,14 @@ final class IcebergFileStats {
      * reference's bound maps and its Iceberg type decodes the bound bytes: a geometry column decodes to a
      * {@link BoundingBox}, every other column to a typed min/max. Decoding is best-effort; a bound that cannot be read
      * is skipped, which only makes pruning for that column less effective and never fails the read.
+     *
+     * <p>An identity-partition column that the writer omitted from the data file has no manifest bound, yet its value
+     * is known exactly from the partition tuple. {@code partitionConstants} (keyed by source field id) provides those
+     * values; each yields a tight {@code [v, v]} bound with a zero null count, letting the stats pruning tier skip a
+     * file whose partition value cannot match the predicate before the file is opened.
      */
-    public static FileStats from(IcebergManifests.DataFileRef ref, List<IcebergField> fields) {
+    public static FileStats from(
+            IcebergManifests.DataFileRef ref, List<IcebergField> fields, Map<Integer, Value> partitionConstants) {
         FileStats.Builder builder = FileStats.builder().recordCount(ref.recordCount());
         for (IcebergField field : fields) {
             if (field.isGeometry()) {
@@ -47,7 +54,21 @@ final class IcebergFileStats {
                 addColumn(builder, field, ref);
             }
         }
+        addPartitionBounds(builder, fields, partitionConstants);
         return builder.build();
+    }
+
+    private static void addPartitionBounds(
+            FileStats.Builder builder, List<IcebergField> fields, Map<Integer, Value> partitionConstants) {
+        for (IcebergField field : fields) {
+            Value constant = partitionConstants.get(field.fieldId());
+            if (constant == null) {
+                continue;
+            }
+            builder.column(
+                    ColumnPath.of(field.name()),
+                    new ColumnStatistics(Optional.of(constant), Optional.of(constant), OptionalLong.of(0L)));
+        }
     }
 
     private static void addGeometry(FileStats.Builder builder, IcebergField field, IcebergManifests.DataFileRef ref) {

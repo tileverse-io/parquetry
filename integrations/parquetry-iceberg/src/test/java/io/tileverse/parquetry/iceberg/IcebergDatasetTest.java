@@ -22,6 +22,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.AfterEach;
@@ -139,7 +140,7 @@ class IcebergDatasetTest {
         List<FileStats> fileStats = new ArrayList<>(dataFiles.size());
         List<ByteRangeSource> sources = new ArrayList<>(dataFiles.size());
         for (IcebergManifests.DataFileRef ref : dataFiles) {
-            fileStats.add(IcebergFileStats.from(ref, currentFields));
+            fileStats.add(IcebergFileStats.from(ref, currentFields, Map.of()));
             ByteRangeSource source = io.open(ref.location());
             openResources.add(source);
             sources.add(source);
@@ -147,7 +148,9 @@ class IcebergDatasetTest {
 
         CatalogSnapshot snapshot =
                 new CatalogSnapshot(metadata.currentSnapshotId(), metadata.currentSnapshotTimestampMs());
-        return new IcebergDataset(TABLE, snapshot, IcebergSchema.of(tableFields), dataFiles, fileStats, sources);
+        IcebergPartitionSpec partitionSpec = IcebergPartitionSpec.of(List.of(), List.of());
+        return new IcebergDataset(
+                TABLE, snapshot, IcebergSchema.of(tableFields), partitionSpec, dataFiles, fileStats, sources);
     }
 
     private static IcebergTableMetadata readMetadata(Path tableDir, IcebergFileIO io) {
