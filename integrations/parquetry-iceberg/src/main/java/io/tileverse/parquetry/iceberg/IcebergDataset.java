@@ -29,6 +29,7 @@ import java.util.stream.Stream;
 
 import com.google.errorprone.annotations.MustBeClosed;
 
+import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.CatalogSnapshot;
 import io.tileverse.parquetry.dataset.Dataset;
@@ -162,6 +163,26 @@ final class IcebergDataset implements Dataset {
             return Stream.empty();
         }
         return perFile(index).read(query, options);
+    }
+
+    @Override
+    @MustBeClosed
+    public Stream<ParquetRecordBatch> readBatches(Predicate predicate, Projection projection, ReadOptions options) {
+        List<Integer> survivors = prune(predicate).survivorIndices();
+        if (survivors.isEmpty()) {
+            return Stream.empty();
+        }
+        return survivors.stream().flatMap(index -> readOneFileBatches(index, predicate, projection, options));
+    }
+
+    @MustBeClosed
+    private Stream<ParquetRecordBatch> readOneFileBatches(
+            int index, Predicate predicate, Projection projection, ReadOptions options) {
+        Query query = oneFileQuery(index, predicate, projection);
+        if (query == null) {
+            return Stream.empty();
+        }
+        return perFile(index).readBatches(query, options);
     }
 
     @Override

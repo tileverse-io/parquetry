@@ -20,6 +20,7 @@ import java.util.stream.Stream;
 
 import com.google.errorprone.annotations.MustBeClosed;
 
+import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.explain.DatasetExplainPlan;
 import io.tileverse.parquetry.filter.Predicate;
@@ -51,6 +52,14 @@ public interface Dataset {
 
     @MustBeClosed
     <T> Stream<T> read(Predicate predicate, Projection projection, Materializer<T> materializer, ReadOptions options);
+
+    /**
+     * Reads matching rows as columnar batches. Pushdown-only: row-group / page elimination from the predicate; a
+     * surviving page still holds rows that do not match. A consumer needing exact per-row filtering over batches
+     * applies it on top.
+     */
+    @MustBeClosed
+    Stream<ParquetRecordBatch> readBatches(Predicate predicate, Projection projection, ReadOptions options);
 
     long count(Predicate predicate, ReadOptions options);
 
