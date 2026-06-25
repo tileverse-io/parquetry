@@ -148,15 +148,13 @@ class CatCmdTest {
     }
 
     @Test
-    void arrowOverIcebergFailsClearly(@TempDir Path tmp) {
+    void arrowOverIcebergWritesIpcStream(@TempDir Path tmp) {
         Path tableDir = TestCorpus.extractDirectory("iceberg-geo-testbed/v3_geometry", tmp);
-        StringWriter err = new StringWriter();
-        CommandLine cmd = Par.newCommandLine();
-        cmd.setErr(new PrintWriter(err));
-        int code = cmd.execute("cat", tableDir.toString(), "-o", "arrow");
-        // picocli maps ParameterException to exit code 2.
-        assertThat(code).isEqualTo(2);
-        assertThat(err.toString()).contains("arrow");
+        int[] code = new int[1];
+        byte[] bytes =
+                captureStdout(() -> code[0] = Par.newCommandLine().execute("cat", tableDir.toString(), "-o", "arrow"));
+        assertThat(code[0]).isZero();
+        assertThat(startsWithArrowContinuation(bytes)).isTrue();
     }
 
     @Test
