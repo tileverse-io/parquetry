@@ -25,6 +25,7 @@ import java.util.stream.Stream;
 
 import com.google.errorprone.annotations.MustBeClosed;
 
+import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.CatalogSnapshot;
 import io.tileverse.parquetry.dataset.DatasetCapabilities;
@@ -173,6 +174,16 @@ public final class StacDataset implements GeoParquetDataset {
             return Stream.empty();
         }
         return survivors.stream().flatMap(index -> perFile(index).read(predicate, projection, materializer, options));
+    }
+
+    @Override
+    @MustBeClosed
+    public Stream<ParquetRecordBatch> readBatches(Predicate predicate, Projection projection, ReadOptions options) {
+        List<Integer> survivors = prune(predicate);
+        if (survivors.isEmpty()) {
+            return Stream.empty();
+        }
+        return survivors.stream().flatMap(index -> perFile(index).readBatches(predicate, projection, options));
     }
 
     @Override
