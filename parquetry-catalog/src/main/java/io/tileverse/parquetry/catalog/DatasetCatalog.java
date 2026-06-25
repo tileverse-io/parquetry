@@ -17,7 +17,7 @@ package io.tileverse.parquetry.catalog;
 
 import java.util.List;
 
-import io.tileverse.parquetry.dataset.Dataset;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 
 /**
  * Entry point to a set of datasets behind one connection. A pure-parquet catalog resolves 1..N datasets from a file
@@ -36,7 +36,7 @@ public interface DatasetCatalog extends AutoCloseable {
      *
      * @throws IllegalArgumentException if no dataset with that name exists
      */
-    Dataset dataset(String name);
+    ParquetDataset dataset(String name);
 
     @Override
     void close();

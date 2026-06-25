@@ -29,15 +29,15 @@ import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.testsupport.FlatLongParquet;
 
-class ParquetDatasetFileStatsTest {
+class ParquetSourceFileStatsTest {
 
     @Test
     void singleFileDatasetExposesFooterStats(@TempDir Path dir) throws Exception {
         Path file = FlatLongParquet.writeIntFile(dir.resolve("a.parquet"), "pop", new long[] {10, 30, 20});
-        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+        try (ByteRangeSource bytes = ByteRangeSource.ofFile(file)) {
+            ParquetSource source = ParquetSource.open(bytes);
 
-            FileStats stats = dataset.fileStats();
+            FileStats stats = source.fileStats();
 
             assertThat(stats.recordCount()).isEqualTo(3);
             assertThat(stats.columns()).containsKey(ColumnPath.of("pop"));
@@ -51,9 +51,9 @@ class ParquetDatasetFileStatsTest {
         try (ByteRangeSource sa = ByteRangeSource.ofFile(a);
                 ByteRangeSource sb = ByteRangeSource.ofFile(b)) {
             FilesetReader fileset = TestFilesets.of(List.of(sa, sb));
-            ParquetDataset dataset = ParquetDataset.open(fileset);
+            ParquetSource source = ParquetSource.open(fileset);
 
-            assertThatThrownBy(dataset::fileStats).isInstanceOf(UnsupportedOperationException.class);
+            assertThatThrownBy(source::fileStats).isInstanceOf(UnsupportedOperationException.class);
         }
     }
 }

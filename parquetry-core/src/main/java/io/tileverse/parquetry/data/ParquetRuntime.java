@@ -29,10 +29,10 @@ import io.tileverse.parquetry.io.limits.ResourceLimits;
 import lombok.NonNull;
 
 /**
- * The process-wide read resources and I/O tuning a {@code ParquetDataset} reads against, bound once at
- * {@code ParquetDataset.open(...)} and shared across datasets on a pod. {@link #defaultRuntime()} is elastic: every
- * size derives from the container's measured limits (heap, cores, free disk), and one runtime fits a small or a large
- * pod while the read-path invariants hold at either size. Per-call query policy lives in {@link ReadOptions}, not here.
+ * The process-wide read resources and I/O tuning a {@code ParquetSource} reads against, bound once at
+ * {@code ParquetSource.open(...)} and shared across datasets on a pod. {@link #defaultRuntime()} is elastic: every size
+ * derives from the container's measured limits (heap, cores, free disk), and one runtime fits a small or a large pod
+ * while the read-path invariants hold at either size. Per-call query policy lives in {@link ReadOptions}, not here.
  *
  * <p>Immutable and composable: {@link #withPrefetchDepth(int)} and the other {@code withX} methods return a new runtime
  * that shares the same pool, executor, and budget instances and changes only the named scalar. The heavy resources are

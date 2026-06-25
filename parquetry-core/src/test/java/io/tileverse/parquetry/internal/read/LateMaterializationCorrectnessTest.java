@@ -37,8 +37,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
-import io.tileverse.parquetry.data.ParquetReader;
-import io.tileverse.parquetry.data.ParquetWriter;
+import io.tileverse.parquetry.data.ParquetFileReader;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.filter.Predicate;
@@ -121,7 +121,7 @@ class LateMaterializationCorrectnessTest {
                 .pageValueLimit(8)
                 .build();
         // One batch per row keeps the writer's per-row 30-row-group boundaries, which the pruning cases rely on.
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(fixtureFile), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(fixtureFile), schema, options)) {
             for (long id = 0; id < ROW_COUNT; id++) {
                 writer.writeBatch(WriteFixtures.batch(schema, List.of(buildRow(id))));
             }
@@ -280,7 +280,7 @@ class LateMaterializationCorrectnessTest {
 
     private List<Row> readRows(Predicate predicate, Projection projection, ReadOptions options) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixtureFile)) {
-            ParquetReader dataset = ParquetReader.open(source);
+            ParquetFileReader dataset = ParquetFileReader.open(source);
             try (Stream<ParquetRecord> rows = dataset.read(predicate, projection, options)) {
                 return rows.map(rec -> toRow(rec, projection)).toList();
             }
@@ -289,7 +289,7 @@ class LateMaterializationCorrectnessTest {
 
     private List<Row> flattenBatches(Predicate predicate, Projection projection, ReadOptions options) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixtureFile)) {
-            ParquetReader dataset = ParquetReader.open(source);
+            ParquetFileReader dataset = ParquetFileReader.open(source);
             List<Row> result = new ArrayList<>();
             try (Stream<ParquetRecordBatch> batches = dataset.readBatches(predicate, projection, options)) {
                 List<ParquetRecordBatch> collected = batches.toList();

@@ -36,9 +36,9 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.ParquetWriteException;
-import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
 import io.tileverse.parquetry.io.ByteSink;
@@ -52,7 +52,7 @@ import io.tileverse.parquetry.schema.SchemaNode;
  * The fault is injected through the output sink rather than the row data: an {@link ExplodingChannel} throws once
  * enough bytes have reached it, which forces a failure while a row group is being consolidated to the channel. The
  * writer must then mark itself terminally failed, reject further writes, write no footer, clean its temp directory, and
- * treat {@link ParquetWriter#close()} as idempotent.
+ * treat {@link ParquetFileWriter#close()} as idempotent.
  */
 class FailureSemanticsTest {
 
@@ -71,7 +71,7 @@ class FailureSemanticsTest {
         long tempCountBefore = countParquetryDirs();
 
         ExplodingChannel sink = ExplodingChannel.failingAfterBytes(8, FaultKind.RUNTIME);
-        try (ParquetWriter writer = ParquetWriter.create(sink, schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(sink, schema, options)) {
             assertThatThrownBy(() -> {
                         for (int i = 0; i < 10; i++) {
                             writeRow(writer, schema, Map.of(ColumnPath.of("id"), i, ColumnPath.of("count"), i));
@@ -103,7 +103,7 @@ class FailureSemanticsTest {
         // The realistic fault: the underlying stream throws IOException partway through a row-group flush. The
         // appender's auto-flush wraps that checked IOException into ParquetWriteException for the caller.
         ExplodingChannel sink = ExplodingChannel.failingAfterBytes(8, FaultKind.IO);
-        try (ParquetWriter writer = ParquetWriter.create(sink, schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(sink, schema, options)) {
             ParquetRecordBatchBuilder appender = writer.appender(1);
             assertThatThrownBy(() -> {
                         for (int i = 0; i < 10; i++) {
@@ -132,7 +132,7 @@ class FailureSemanticsTest {
 
         // Let the leading magic through, then fail on the first row-group flush.
         ExplodingChannel sink = ExplodingChannel.failingAfterBytes(4, FaultKind.RUNTIME);
-        ParquetWriter writer = ParquetWriter.create(sink, schema, options);
+        ParquetFileWriter writer = ParquetFileWriter.create(sink, schema, options);
         Map<ColumnPath, Object> firstRow = Map.of(ColumnPath.of("id"), 1);
         assertThatThrownBy(() -> writeRow(writer, schema, firstRow)).isInstanceOf(RuntimeException.class);
         writer.close();
@@ -158,7 +158,7 @@ class FailureSemanticsTest {
         // The threshold lets the first two row groups (six rows) flush in full before the sink blows up partway
         // through the third row group's flush, leaving a prefix with committed row groups but no footer.
         ExplodingChannel sink = ExplodingChannel.failingAfterBytes(300, FaultKind.RUNTIME);
-        ParquetWriter writer = ParquetWriter.create(sink, schema, options);
+        ParquetFileWriter writer = ParquetFileWriter.create(sink, schema, options);
 
         for (int i = 0; i < 6; i++) {
             writeRow(writer, schema, Map.of(ColumnPath.of("id"), i));
@@ -192,7 +192,7 @@ class FailureSemanticsTest {
         long tempCountBefore = countParquetryDirs();
 
         Thread worker = new Thread(() -> {
-            try (ParquetWriter writer = ParquetWriter.create(new ByteArrayOutputStream(), schema, options)) {
+            try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteArrayOutputStream(), schema, options)) {
                 writeRow(writer, schema, Map.of(ColumnPath.of("id"), 1));
                 Thread.currentThread().interrupt();
                 writeRow(writer, schema, Map.of(ColumnPath.of("id"), 2));
@@ -218,7 +218,7 @@ class FailureSemanticsTest {
         WriteOptions options = options().rowGroupSize(RowGroupSize.rows(1)).build();
 
         ExplodingChannel sink = ExplodingChannel.failingAfterBytes(4, FaultKind.RUNTIME);
-        ParquetWriter writer = ParquetWriter.create(sink, schema, options);
+        ParquetFileWriter writer = ParquetFileWriter.create(sink, schema, options);
         Map<ColumnPath, Object> firstRow = Map.of(ColumnPath.of("id"), 1);
         assertThatThrownBy(() -> writeRow(writer, schema, firstRow)).isInstanceOf(RuntimeException.class);
         writer.close();
@@ -233,7 +233,7 @@ class FailureSemanticsTest {
         return WriteOptions.builder().tempDir(tempDir);
     }
 
-    private static void writeRow(ParquetWriter writer, ParquetSchema schema, Map<ColumnPath, Object> values)
+    private static void writeRow(ParquetFileWriter writer, ParquetSchema schema, Map<ColumnPath, Object> values)
             throws IOException {
         writer.writeBatch(WriteFixtures.batch(schema, List.of(values)));
     }

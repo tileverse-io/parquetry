@@ -30,7 +30,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
@@ -95,7 +95,7 @@ class NestedSpillRoundTripIT {
     private static List<ParquetRecord> readRows(
             Path file, ParquetRuntime runtime, ReadOptions options, Predicate predicate) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source, runtime, Optional.empty());
+            ParquetFileReader reader = ParquetFileReader.open(source, runtime, Optional.empty());
             try (Stream<ParquetRecord> rows = reader.read(predicate, Projection.ALL, options)) {
                 return rows.map(ParquetRecord::detach).toList();
             }

@@ -33,12 +33,12 @@ class RowsFormTest {
 
     @Test
     void aNullRecordFilterTakesTheAssembledForm() {
-        assertThat(ParquetReader.rowsForm(null)).isEqualTo(BatchForm.ASSEMBLED);
+        assertThat(ParquetFileReader.rowsForm(null)).isEqualTo(BatchForm.ASSEMBLED);
     }
 
     @Test
     void aNonNullRecordFilterTakesTheLevelsForm() {
         Predicate filter = new Predicate.Eq(ColumnPath.of("id"), new Value.IntVal(1));
-        assertThat(ParquetReader.rowsForm(filter)).isEqualTo(BatchForm.LEVELS);
+        assertThat(ParquetFileReader.rowsForm(filter)).isEqualTo(BatchForm.LEVELS);
     }
 }

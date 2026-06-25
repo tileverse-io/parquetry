@@ -30,10 +30,10 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.ParquetWriteException;
-import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.filter.Predicate;
@@ -61,12 +61,12 @@ class UuidWriteRoundTripTest {
 
         WriteOptions options = WriteOptions.builder().tempDir(tempDir).build();
         List<Map<ColumnPath, Object>> rowMaps = List.of(Map.of(ColumnPath.of("id"), a), Map.of(ColumnPath.of("id"), b));
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             writer.writeBatch(WriteFixtures.batch(schema, rowMaps));
         }
 
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             try (Stream<ParquetRecord> rows =
                     reader.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 assertThat(rows.map(r -> r.getUuid(ColumnPath.of("id")))).containsExactlyInAnyOrder(a, b);

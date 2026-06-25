@@ -32,8 +32,8 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.ParquetReader;
-import io.tileverse.parquetry.data.ParquetWriter;
+import io.tileverse.parquetry.data.ParquetFileReader;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.filter.Predicate;
@@ -48,7 +48,7 @@ import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
- * End-to-end coverage of the late-materializing read path through the public {@link ParquetReader} API. Every case
+ * End-to-end coverage of the late-materializing read path through the public {@link ParquetFileReader} API. Every case
  * compares the read against a brute-force baseline that decodes all rows and filters them in Java with the same
  * predicate, asserting identical rows in identical order.
  */
@@ -193,7 +193,7 @@ class LateMaterializationReadTest {
 
     private List<Row> readRows(Path file, Predicate predicate, Projection projection, ReadOptions options) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader dataset = ParquetReader.open(source);
+            ParquetFileReader dataset = ParquetFileReader.open(source);
             try (Stream<ParquetRecord> rows = dataset.read(predicate, projection, options)) {
                 return rows.map(rec -> toRow(rec, projection)).toList();
             }
@@ -273,7 +273,7 @@ class LateMaterializationReadTest {
                 .build();
         // One batch per row keeps the writer's per-row row-group sizing decisions, which the multi-row-group
         // tests rely on to spread rows across several row groups.
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             for (long id = 0; id < ROW_COUNT; id++) {
                 writer.writeBatch(WriteFixtures.batch(schema, List.of(row(id))));
             }

@@ -31,14 +31,14 @@ import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.testsupport.CorpusFixtures;
 
-class ParquetDatasetCountTest {
+class ParquetSourceCountTest {
 
     private static final Path FILE = CorpusFixtures.parquetTestingData().resolve("alltypes_plain.parquet");
 
     @Test
     void unfilteredCountEqualsSumOfRowGroupRowCounts() {
         try (ByteRangeSource src = ByteRangeSource.ofFile(FILE)) {
-            ParquetDataset ds = ParquetDataset.open(src);
+            ParquetSource ds = ParquetSource.open(src);
             long expected =
                     ds.rowGroups().stream().mapToLong(RowGroupSummary::rowCount).sum();
             assertThat(ds.count()).isEqualTo(expected);
@@ -48,7 +48,7 @@ class ParquetDatasetCountTest {
     @Test
     void unfilteredCountEqualsStreamedRecordCount() {
         try (ByteRangeSource src = ByteRangeSource.ofFile(FILE)) {
-            ParquetDataset ds = ParquetDataset.open(src);
+            ParquetSource ds = ParquetSource.open(src);
             long streamed;
             try (Stream<ParquetRecord> rows = ds.read()) {
                 streamed = rows.count();
@@ -62,7 +62,7 @@ class ParquetDatasetCountTest {
     @Test
     void filteredCountEqualsStreamedRecordCount() {
         try (ByteRangeSource src = ByteRangeSource.ofFile(FILE)) {
-            ParquetDataset ds = ParquetDataset.open(src);
+            ParquetSource ds = ParquetSource.open(src);
             Predicate residual = Pred.col("id").gt(4);
             long streamed;
             try (Stream<ParquetRecord> rows = ds.read(residual, Projection.ALL, ReadOptions.DEFAULTS)) {
@@ -78,7 +78,7 @@ class ParquetDatasetCountTest {
     @Test
     void alwaysFalsePredicateCountsZero() {
         try (ByteRangeSource src = ByteRangeSource.ofFile(FILE)) {
-            ParquetDataset ds = ParquetDataset.open(src);
+            ParquetSource ds = ParquetSource.open(src);
             assertThat(ds.count(Predicate.ALWAYS_FALSE)).isZero();
         }
     }

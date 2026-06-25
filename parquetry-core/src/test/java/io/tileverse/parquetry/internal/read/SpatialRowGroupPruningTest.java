@@ -31,8 +31,8 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.ParquetReader;
-import io.tileverse.parquetry.data.ParquetWriter;
+import io.tileverse.parquetry.data.ParquetFileReader;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.GeoParquetMetadataMode;
@@ -171,7 +171,7 @@ class SpatialRowGroupPruningTest {
                 .rowGroupSize(RowGroupSize.rows(ROWS_PER_GROUP))
                 .build();
         Path file = tempDir.resolve("clustered.parquet");
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             writeCluster(writer, schema, 0, 0.0);
             writeCluster(writer, schema, 1, 100.0);
             writeCluster(writer, schema, 2, 200.0);
@@ -184,7 +184,7 @@ class SpatialRowGroupPruningTest {
      * Writes {@link #ROWS_PER_GROUP} unit rectangles spread across the cluster's [origin..origin+10] square as one
      * batch, which the {@link RowGroupSize#rows(int)} policy turns into a single dedicated row group.
      */
-    private static void writeCluster(ParquetWriter writer, ParquetSchema schema, int clusterIndex, double origin)
+    private static void writeCluster(ParquetFileWriter writer, ParquetSchema schema, int clusterIndex, double origin)
             throws IOException {
         List<Map<ColumnPath, Object>> rows = new ArrayList<>();
         for (int i = 0; i < ROWS_PER_GROUP; i++) {
@@ -200,7 +200,7 @@ class SpatialRowGroupPruningTest {
     private static List<Integer> readIds(Path file, Predicate predicate, ReadOptions options) {
         List<Integer> ids = new ArrayList<>();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader dataset = ParquetReader.open(source);
+            ParquetFileReader dataset = ParquetFileReader.open(source);
             try (Stream<ParquetRecord> rows = dataset.read(predicate, Projection.ALL, options)) {
                 rows.forEach(row -> ids.add(row.getInt(ColumnPath.of("id"))));
             }
@@ -210,7 +210,7 @@ class SpatialRowGroupPruningTest {
 
     private static List<PruningDecision> planDecisions(Path file, Predicate predicate, ReadOptions options) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader dataset = ParquetReader.open(source);
+            ParquetFileReader dataset = ParquetFileReader.open(source);
             ExplainPlan plan = dataset.explain(predicate, Projection.ALL, options);
             return plan.rowGroups().stream()
                     .flatMap(rowGroup -> rowGroup.tiers().stream())

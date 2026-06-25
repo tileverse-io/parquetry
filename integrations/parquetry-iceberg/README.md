@@ -4,7 +4,7 @@ A clean-room Apache Iceberg table reader on the parquetry dataset/catalog API. I
 follows the pinned snapshot through the manifest list and manifests, and reads the data files as one queryable dataset.
 No dependency on `iceberg-core`, `apache-avro`, or Hadoop: Iceberg's Avro metadata is read through the clean-room
 `parquetry-avro` reader and the data files through the core Parquet engine. It plugs into the same `DatasetCatalog` ->
-`Dataset` API the pure-parquet and GeoTools paths use, and an Iceberg table reads like any other dataset.
+`ParquetDataset` API the pure-parquet and GeoTools paths use, and an Iceberg table reads like any other dataset.
 
 It reads **v1, v2, and v3** data files for copy-on-write tables, where an update rewrites the affected data file and the
 data files alone represent the table at a snapshot. Merge-on-read deletes (v2 delete files, v3 deletion vectors) are not
@@ -79,7 +79,7 @@ brute-force scan. L4 is the remaining rung.
 
 ```java
 try (IcebergCatalog catalog = IcebergCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
-    Dataset table = catalog.dataset(catalog.datasets().get(0));
+    ParquetDataset table = catalog.dataset(catalog.datasets().get(0));
 
     long total = table.count(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
 

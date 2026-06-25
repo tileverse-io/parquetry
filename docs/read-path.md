@@ -18,7 +18,7 @@ the threads the consumer runs on.
 ```mermaid
 flowchart LR
     consumer["Consumer<br/>(GeoTools, an app)"]
-    core["parquetry-core<br/>ParquetDataset / ParquetReader"]
+    core["parquetry-core<br/>ParquetSource / ParquetFileReader"]
     source["ByteRangeSource / RangeReader<br/>(local file, S3, Azure, GCS, HTTP)"]
     file[("Parquet / GeoParquet file")]
 
@@ -66,7 +66,7 @@ flowchart LR
 
 | Stage | Does | Reads | Lead types |
 |------|------|-------|-----------|
-| Open | decode the footer once, build the schema | footer bytes | `ParquetReader`, `FileMetaData`, `ParquetSchema` |
+| Open | decode the footer once, build the schema | footer bytes | `ParquetFileReader`, `FileMetaData`, `ParquetSchema` |
 | Filter | drop row groups and pages that cannot match, using metadata only | footer + index sections | `FilterPipeline`, `ExplainPlan`, `RowGroupSurvivor`, `RowMask` |
 | Fetch | turn the surviving column chunks into a few coalesced range reads, prefetched | column-chunk bytes | `RowGroupFetcher`, `RowGroupPrefetcher`, `FetchedColumnChunk` |
 | Decode | decompress + decode pages into columnar batches, streamed in file order, decoding upcoming row groups ahead within a heap budget | (in memory) | `ParallelDecodeCoordinator`, `DecodeBudget`, `BatchRowGroupReader`, `BatchColumnReader` |
@@ -92,7 +92,7 @@ spine; later sections expand the boxes.
 sequenceDiagram
     autonumber
     participant C as Consumer
-    participant R as ParquetReader
+    participant R as ParquetFileReader
     participant FP as FilterPipeline
     participant DC as ParallelDecodeCoordinator
     participant PF as RowGroupPrefetcher
@@ -307,7 +307,7 @@ A map to place any class you land on. Arrows are "uses / produces".
 
 ```mermaid
 classDiagram
-    class ParquetReader {
+    class ParquetFileReader {
         +read(predicate, projection, options) Stream
         +readBatches(...) Stream
         +explain(...) ExplainPlan
@@ -332,13 +332,13 @@ classDiagram
     class BatchPipeline
     class Materializer
 
-    ParquetReader --> RowGroupChunks : builds per call
-    ParquetReader --> FilterPipeline : runs
+    ParquetFileReader --> RowGroupChunks : builds per call
+    ParquetFileReader --> FilterPipeline : runs
     FilterPipeline --> ExplainPlan : produces
-    ParquetReader --> RowGroupSurvivor : survivorsFor
+    ParquetFileReader --> RowGroupSurvivor : survivorsFor
     RowGroupSurvivor --> RowGroupChunks : holds
-    ParquetReader --> RowMask : page-skip mask
-    ParquetReader --> ParallelDecodeCoordinator : per read
+    ParquetFileReader --> RowMask : page-skip mask
+    ParquetFileReader --> ParallelDecodeCoordinator : per read
     ParallelDecodeCoordinator --> RowGroupPrefetcher : pulls fetched bytes
     RowGroupPrefetcher --> RowGroupFetcher : coalesced reads
     ParallelDecodeCoordinator --> BatchRowGroupReader : full-decode path
@@ -346,7 +346,7 @@ classDiagram
     BatchRowGroupReader --> BatchColumnReader : one per leaf
     LateMaterializingRowGroupReader --> BatchRowGroupReader : two phases
     LateMaterializingRowGroupReader --> Selection : phase 1 result
-    ParquetReader --> BatchPipeline : rows / batches
+    ParquetFileReader --> BatchPipeline : rows / batches
     BatchPipeline --> Materializer : record shape
 ```
 
@@ -356,7 +356,7 @@ classDiagram
 
 | Stage | Start in |
 |------|----------|
-| Entry, orchestration | `data/ParquetReader.java`, `data/ReadOptions.java` |
+| Entry, orchestration | `data/ParquetFileReader.java`, `data/ReadOptions.java` |
 | Footer + schema | `format/ParquetFormat.java`, `schema/SchemaBuilder.java` |
 | Filter pipeline + tiers | `filter/FilterPipeline.java`, `filter/*Evaluator.java`, `filter/ExplainPlan.java` |
 | Per-call chunk view | `data/read/RowGroupChunks.java` |
@@ -366,7 +366,7 @@ classDiagram
 | Column / page decode | `data/read/BatchColumnReader.java`, `data/read/page/PageCursor.java`, `data/read/page/PageDecoder.java` |
 | Late materialization | `data/read/LateMaterializingRowGroupReader.java`, `data/read/Selection.java` |
 | Materialize | `data/read/BatchPipeline.java`, `materializer/Materializer.java` |
-| Counting (no materialization) | `data/ParquetReader.java` (`count`), `data/read/BatchPipeline.java` (`countMatching`), `batch/VectorizedPredicateEvaluator.java` |
+| Counting (no materialization) | `data/ParquetFileReader.java` (`count`), `data/read/BatchPipeline.java` (`countMatching`), `batch/VectorizedPredicateEvaluator.java` |
 
 ---
 

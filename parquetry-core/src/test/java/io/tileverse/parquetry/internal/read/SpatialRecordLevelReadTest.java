@@ -31,8 +31,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.ParquetReader;
-import io.tileverse.parquetry.data.ParquetWriter;
+import io.tileverse.parquetry.data.ParquetFileReader;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.filter.Bbox;
@@ -85,7 +85,7 @@ class SpatialRecordLevelReadTest {
                 row(2, 0, 0, 10, 10),
                 row(3, 4, 4, 9, 9),
                 row(4, 12, 12, 14, 14));
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(fixtureFile), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(fixtureFile), schema, options)) {
             writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
     }
@@ -124,7 +124,7 @@ class SpatialRecordLevelReadTest {
     private List<Integer> readIds(Predicate predicate) {
         List<Integer> ids = new ArrayList<>();
         try (ByteRangeSource src = ByteRangeSource.ofFile(fixtureFile)) {
-            ParquetReader ds = ParquetReader.open(src);
+            ParquetFileReader ds = ParquetFileReader.open(src);
             try (Stream<ParquetRecord> rows = ds.read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
                 rows.forEach(r -> ids.add(r.getInt(ColumnPath.of("id"))));
             }

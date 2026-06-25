@@ -22,7 +22,7 @@ package io.tileverse.parquetry.data;
  * encoder rejection, schema mismatch caught at write time, structured-task-scope timeout, temp-file lifecycle problems.
  *
  * <p>Unchecked by design, matching the read side's domain exceptions ({@code ParquetFormatException},
- * {@code ParquetSchemaException}). Failures from a {@code ParquetWriter} typically emerge mid-iteration through a
+ * {@code ParquetSchemaException}). Failures from a {@code ParquetFileWriter} typically emerge mid-iteration through a
  * caller's record stream; checked exceptions cannot flow through {@code Stream} APIs without lossy wrapping.
  */
 public class ParquetWriteException extends RuntimeException {

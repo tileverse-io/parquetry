@@ -25,7 +25,7 @@ import io.tileverse.parquetry.filter.explain.ExplainPlan;
 
 /**
  * A dataset-level explain plan: the file dimension a query prunes (the kept and skipped files), then each kept file's
- * core single-file plan. Returned by {@code Dataset.explain}/{@code explainAnalyze}.
+ * core single-file plan. Returned by {@code ParquetDataset.explain}/{@code explainAnalyze}.
  */
 public record DatasetExplainPlan(Predicate predicate, List<FileExplain> files, Totals totals) {
 

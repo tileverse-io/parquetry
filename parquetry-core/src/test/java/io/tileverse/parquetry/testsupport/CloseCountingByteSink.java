@@ -23,7 +23,7 @@ import io.tileverse.parquetry.io.ByteSink;
 
 /**
  * In-memory {@link ByteSink} that records how many times {@link #close()} was called. Pins the ownership contract that
- * a {@code ParquetWriter} never closes the sink it was given.
+ * a {@code ParquetFileWriter} never closes the sink it was given.
  */
 public final class CloseCountingByteSink implements ByteSink {
 

@@ -36,12 +36,12 @@ import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
 
 import io.tileverse.parquetry.cli.support.Fixtures;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
-import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.UuidConverter;
 import io.tileverse.parquetry.data.WriteOptions;
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.format.LogicalType;
@@ -118,7 +118,7 @@ class RecordRendererTest {
                 .tempDir(file.toAbsolutePath().getParent())
                 .build();
         try (OutputStream sink = Files.newOutputStream(file);
-                ParquetWriter writer = ParquetWriter.create(sink, schema, options)) {
+                ParquetFileWriter writer = ParquetFileWriter.create(sink, schema, options)) {
             ParquetRecordBatchBuilder appender = writer.appender();
             appender.setBinary(ColumnPath.of("id"), UuidConverter.toReadOnlySegment(value));
             appender.endRow();
@@ -129,12 +129,12 @@ class RecordRendererTest {
     private static String renderAll(Path file, Path dir, RecordRenderer.Mode mode) throws Exception {
         try (Storage storage = StorageFactory.open(dir.toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(ByteRangeSources.from(reader));
-            ParquetSchema schema = dataset.schema();
+            ParquetSource source = ParquetSource.open(ByteRangeSources.from(reader));
+            ParquetSchema schema = source.schema();
             StringWriter sw = new StringWriter();
             RecordRenderer renderer = new RecordRenderer(mode, schema, new PrintWriter(sw));
             try (Stream<ParquetRecord> rows =
-                    dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
+                    source.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 renderer.begin();
                 rows.forEach(renderer::row);
                 renderer.end();

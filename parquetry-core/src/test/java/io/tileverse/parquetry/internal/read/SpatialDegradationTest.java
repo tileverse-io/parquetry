@@ -30,8 +30,8 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.ParquetReader;
-import io.tileverse.parquetry.data.ParquetWriter;
+import io.tileverse.parquetry.data.ParquetFileReader;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.filter.Bbox;
@@ -103,7 +103,7 @@ class SpatialDegradationTest {
                 geoRow(5, 3, 3, 7, 7), // overlaps query
                 geoRow(6, 11, 11, 13, 13), // completely disjoint
                 geoRow(7, 0, 0, 10, 10)); // covers query entirely
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
 
@@ -146,7 +146,7 @@ class SpatialDegradationTest {
                 geoRow(2, 4, 4, 8, 8), // escapes (maxX=8 > 5)
                 geoRow(3, 6, 6, 9, 9), // entirely outside q
                 geoRow(4, -1, 2, 3, 4)); // escapes (minX=-1 < 0)
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
 
@@ -173,7 +173,7 @@ class SpatialDegradationTest {
         for (int i = 0; i < 10; i++) {
             rows.add(Map.of(ColumnPath.of("id"), i, ColumnPath.of("value"), i));
         }
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
 
@@ -188,7 +188,7 @@ class SpatialDegradationTest {
     private List<Integer> readIds(Path file, Predicate predicate) {
         List<Integer> ids = new ArrayList<>();
         try (ByteRangeSource src = ByteRangeSource.ofFile(file)) {
-            ParquetReader ds = ParquetReader.open(src);
+            ParquetFileReader ds = ParquetFileReader.open(src);
             try (Stream<ParquetRecord> rows = ds.read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
                 rows.forEach(r -> ids.add(r.getInt(ColumnPath.of("id"))));
             }

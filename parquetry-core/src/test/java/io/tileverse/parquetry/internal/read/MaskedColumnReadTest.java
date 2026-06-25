@@ -31,7 +31,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.IntVector;
-import io.tileverse.parquetry.data.ParquetWriter;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.filter.RowRanges.Range;
@@ -138,7 +138,7 @@ class MaskedColumnReadTest {
         for (int v = 0; v < 8; v++) {
             rows.add(Map.of(V, v));
         }
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
         return file;

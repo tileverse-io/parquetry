@@ -25,7 +25,6 @@ import java.util.stream.Stream;
 import org.apache.avro.generic.GenericData;
 import org.apache.avro.generic.GenericRecord;
 import org.apache.parquet.avro.AvroParquetReader;
-import org.apache.parquet.hadoop.ParquetFileReader;
 import org.apache.parquet.hadoop.ParquetReader;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
 import org.apache.parquet.io.LocalInputFile;
@@ -65,7 +64,8 @@ final class WriteConformanceSupport {
 
     /** Opens {@code file} with parquet-java and returns its parsed footer metadata. */
     static ParquetMetadata readFooterViaParquetJava(Path file) throws IOException {
-        try (ParquetFileReader reader = ParquetFileReader.open(new LocalInputFile(file))) {
+        try (org.apache.parquet.hadoop.ParquetFileReader reader =
+                org.apache.parquet.hadoop.ParquetFileReader.open(new LocalInputFile(file))) {
             return reader.getFooter();
         }
     }
@@ -83,7 +83,7 @@ final class WriteConformanceSupport {
     static List<ParquetRecord> readAll(Path file) {
         List<ParquetRecord> records = new ArrayList<>();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file);
-                Stream<ParquetRecord> stream = io.tileverse.parquetry.data.ParquetReader.open(source)
+                Stream<ParquetRecord> stream = io.tileverse.parquetry.data.ParquetFileReader.open(source)
                         .read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
             stream.map(ParquetRecord::detach).forEach(records::add);
         }

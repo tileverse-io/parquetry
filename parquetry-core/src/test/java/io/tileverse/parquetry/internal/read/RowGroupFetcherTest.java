@@ -31,7 +31,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
@@ -80,7 +80,7 @@ class RowGroupFetcherTest {
     /** Reads every row into a list of column-to-value maps. */
     private static List<Map<ColumnPath, Object>> readAllRows(ParquetRuntime runtime) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(FILE)) {
-            ParquetReader dataset = ParquetReader.open(source, runtime, Optional.empty());
+            ParquetFileReader dataset = ParquetFileReader.open(source, runtime, Optional.empty());
             List<ColumnPath> leaves = dataset.schema().leafColumns();
             try (Stream<ParquetRecord> rows =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {

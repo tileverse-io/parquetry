@@ -32,7 +32,7 @@ import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.batch.DoubleVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.batch.Validity;
-import io.tileverse.parquetry.data.ParquetWriter;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -54,7 +54,7 @@ final class StacItemTableParquet {
     static Path write(Path file, List<Row> rows) throws Exception {
         ParquetSchema schema = itemTableSchema();
         WriteOptions options = WriteOptions.builder().tempDir(file.getParent()).build();
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options);
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options);
                 ParquetRecordBatch batch = batch(schema, rows)) {
             writer.writeBatch(batch);
         }

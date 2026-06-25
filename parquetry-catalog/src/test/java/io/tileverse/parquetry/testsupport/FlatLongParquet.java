@@ -29,7 +29,7 @@ import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.batch.Validity;
-import io.tileverse.parquetry.data.ParquetWriter;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -70,7 +70,7 @@ public final class FlatLongParquet {
     public static Path writeNullableIntFile(Path file, String column, Long[] values) throws Exception {
         ParquetSchema schema = flatInt64Schema(column);
         WriteOptions options = WriteOptions.builder().tempDir(file.getParent()).build();
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options);
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options);
                 ParquetRecordBatch batch = nullableLongBatch(schema, column, values)) {
             writer.writeBatch(batch);
         }

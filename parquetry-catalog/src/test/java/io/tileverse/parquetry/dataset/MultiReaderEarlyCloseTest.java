@@ -42,7 +42,7 @@ import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
  * Proves that early-terminating a read over a multi-file dataset drains the segment pool across every reader. A
- * multi-file {@link ParquetDataset} stitches the per-file reads with {@code flatMap}; consuming rows from a later file
+ * multi-file {@link ParquetSource} stitches the per-file reads with {@code flatMap}; consuming rows from a later file
  * and then closing the outer stream must close both the exhausted earlier inner streams and the in-flight current one,
  * leaving no borrowed buffers outstanding and the fetch budget fully restored.
  */
@@ -66,10 +66,10 @@ class MultiReaderEarlyCloseTest {
                             .prefetchDepth(4)
                             .build())
                     .build();
-            ParquetDataset dataset = ParquetDataset.open(twoFileFileset(first, second), openOptions);
+            ParquetSource source = ParquetSource.open(twoFileFileset(first, second), openOptions);
 
             try (Stream<ParquetRecord> stream =
-                    dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
+                    source.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 Iterator<ParquetRecord> it = stream.iterator();
                 // Exhaust the first reader and step one row into the second, then close without draining the rest.
                 for (int consumed = 0; consumed <= rowsPerFile; consumed++) {
@@ -91,7 +91,7 @@ class MultiReaderEarlyCloseTest {
      * The synthetic-column read path flattens each file's augmented batches into rows with
      * {@code readBatches(query).flatMap(ConstantColumnBatches::rows)}, where each rows substream attaches
      * {@code onClose(batch::close)}. A consumer that takes a few rows and then closes the stream early - while a later
-     * batch is still in flight - must still close that in-flight batch. Driving {@link ParquetDataset#read(Query,
+     * batch is still in flight - must still close that in-flight batch. Driving {@link ParquetSource#read(Query,
      * ReadOptions)} with a constant column exercises that {@code flatMap} layer; the pool and budget returning to their
      * pre-read baselines prove the early close cascades to the open batch.
      */
@@ -113,16 +113,16 @@ class MultiReaderEarlyCloseTest {
                             .prefetchDepth(4)
                             .build())
                     .build();
-            ParquetDataset dataset = ParquetDataset.open(twoFileFileset(first, second), openOptions);
+            ParquetSource source = ParquetSource.open(twoFileFileset(first, second), openOptions);
 
             List<OutputColumn> output = new ArrayList<>();
-            for (ColumnPath leaf : dataset.schema().leafColumns()) {
+            for (ColumnPath leaf : source.schema().leafColumns()) {
                 output.add(new OutputColumn.Physical(leaf, leaf));
             }
             output.add(new OutputColumn.Constant(ColumnPath.of("region"), new Value.StringVal("emea")));
             Query query = new Query(Predicate.ALWAYS_TRUE, Projection.ALL, output);
 
-            try (Stream<ParquetRecord> stream = dataset.read(query, ReadOptions.DEFAULTS)) {
+            try (Stream<ParquetRecord> stream = source.read(query, ReadOptions.DEFAULTS)) {
                 Iterator<ParquetRecord> it = stream.iterator();
                 // Drain the first reader and step one row into the second, then close without draining the rest.
                 for (int consumed = 0; consumed <= rowsPerFile; consumed++) {

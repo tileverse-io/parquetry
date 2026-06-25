@@ -26,7 +26,7 @@ import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
 
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.dataset.Dataset;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
@@ -45,7 +45,7 @@ class OpenStorageReconciliationTest {
         Storage storage = StorageFactory.open(tableDir.toUri());
         try (IcebergCatalog catalog =
                 IcebergCatalog.openStorage(tableDir.toUri().toString(), storage, IcebergOptions.defaults())) {
-            Dataset dataset = catalog.dataset(catalog.datasets().get(0));
+            ParquetDataset dataset = catalog.dataset(catalog.datasets().get(0));
             assertThat(dataset.snapshot()).isPresent();
             assertThat(dataset.count(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS))
                     .isPositive();

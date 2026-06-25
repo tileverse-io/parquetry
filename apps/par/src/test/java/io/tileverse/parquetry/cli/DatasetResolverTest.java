@@ -27,7 +27,7 @@ import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
 
 import io.tileverse.parquetry.cli.support.Fixtures;
-import io.tileverse.parquetry.dataset.Dataset;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
 class DatasetResolverTest {
@@ -37,7 +37,7 @@ class DatasetResolverTest {
         Path file = dir.resolve("cities.parquet");
         Fixtures.writeCities(file);
         try (DatasetResolver.OpenDataset open = DatasetResolver.open(file.toString(), new Properties())) {
-            Dataset dataset = open.dataset();
+            ParquetDataset dataset = open.dataset();
             assertThat(dataset.schema().leafColumns()).isNotEmpty();
         }
     }

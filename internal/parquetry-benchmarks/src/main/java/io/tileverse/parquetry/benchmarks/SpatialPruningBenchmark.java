@@ -45,8 +45,8 @@ import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
-import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.GeoParquetMetadataMode;
@@ -208,7 +208,7 @@ public class SpatialPruningBenchmark {
             Collections.shuffle(rows, random);
         }
 
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             ParquetRecordBatchBuilder appender = writer.appender();
             for (GeometryRow row : rows) {
                 appender.setBinary(0, row.geom());

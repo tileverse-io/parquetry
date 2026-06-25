@@ -56,7 +56,7 @@ import io.tileverse.parquetry.schema.SchemaNode;
  *
  * <p>Two terminal modes exist. A standalone builder ({@link #forSchema}) accumulates every authored row and produces
  * one heap-backed batch through {@link #build()}; the caller decides when to stop. A builder bound to a
- * {@link ParquetWriter} ({@link ParquetWriter#appender()}) auto-flushes a batch to its writer once it reaches
+ * {@link ParquetFileWriter} ({@link ParquetFileWriter#appender()}) auto-flushes a batch to its writer once it reaches
  * {@code flushThresholdRows} rows or its accumulated cells reach {@code flushThresholdBytes}, and on an explicit
  * {@link #flush()}, keeping heap bounded for unbounded row-at-a-time producers. The byte threshold bounds the transient
  * authoring heap and the per-batch row-group overshoot independently of the per-cell size. The two terminals are
@@ -121,7 +121,7 @@ public final class ParquetRecordBatchBuilder implements AutoCloseable {
      */
     private final Deque<ContainerScope> containerScopeStack = new ArrayDeque<>();
 
-    private final ParquetWriter boundWriter;
+    private final ParquetFileWriter boundWriter;
     private final int flushThresholdRows;
     private final long flushThresholdBytes;
     private int rows;
@@ -135,12 +135,12 @@ public final class ParquetRecordBatchBuilder implements AutoCloseable {
     }
 
     static ParquetRecordBatchBuilder boundTo(
-            ParquetWriter writer, ParquetSchema schema, int flushThresholdRows, long flushThresholdBytes) {
+            ParquetFileWriter writer, ParquetSchema schema, int flushThresholdRows, long flushThresholdBytes) {
         return new ParquetRecordBatchBuilder(schema, writer, flushThresholdRows, flushThresholdBytes);
     }
 
     private ParquetRecordBatchBuilder(
-            ParquetSchema schema, ParquetWriter boundWriter, int flushThresholdRows, long flushThresholdBytes) {
+            ParquetSchema schema, ParquetFileWriter boundWriter, int flushThresholdRows, long flushThresholdBytes) {
         this.schema = schema;
         this.boundWriter = boundWriter;
         this.flushThresholdRows = flushThresholdRows;

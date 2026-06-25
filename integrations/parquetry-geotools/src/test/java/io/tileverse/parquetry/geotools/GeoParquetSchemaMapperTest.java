@@ -40,7 +40,7 @@ import org.locationtech.jts.geom.Point;
 
 import io.tileverse.parquetry.catalog.FilesetCatalog;
 import io.tileverse.parquetry.dataset.GeoParquetDataset;
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.geotools.GeoParquetSchemaMapper.AttributeMapping;
 import io.tileverse.parquetry.io.ByteRangeSource;
@@ -146,7 +146,7 @@ class GeoParquetSchemaMapperTest {
     void mapsExampleGeoParquetToSimpleFeatureType(@TempDir Path dir) throws Exception {
         Path file = TestCorpus.extractFile("geoparquet/examples/example.parquet", dir);
         try (ByteRangeSource src = ByteRangeSource.ofFile(file)) {
-            ParquetDataset ds = ParquetDataset.open(src);
+            ParquetSource ds = ParquetSource.open(src);
             Optional<GeoParquetMetadata> geo =
                     Optional.of(GeoParquetMetadata.parse(ds.keyValueMetadata().get("geo")));
             GeoParquetSchemaMapper.Mapping mapping =

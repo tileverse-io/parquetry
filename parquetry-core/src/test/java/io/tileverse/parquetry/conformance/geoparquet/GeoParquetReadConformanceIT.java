@@ -30,7 +30,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.io.WKBReader;
 
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -66,7 +66,7 @@ class GeoParquetReadConformanceIT {
     @MethodSource("conformanceFiles")
     void readsMetadataAndDecodesEveryGeometry(String label, Path file) throws Exception {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
 
             assertThat(reader.keyValueMetadata().get("geo"))
                     .as("%s: 'geo' metadata present", label)
@@ -83,7 +83,7 @@ class GeoParquetReadConformanceIT {
         }
     }
 
-    private static long decodeEveryGeometry(ParquetReader reader, Set<ColumnPath> geometryColumns, String label) {
+    private static long decodeEveryGeometry(ParquetFileReader reader, Set<ColumnPath> geometryColumns, String label) {
         try (Stream<ParquetRecord> rows = reader.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
             return rows.peek(row -> decodeGeometries(row, geometryColumns, label))
                     .count();

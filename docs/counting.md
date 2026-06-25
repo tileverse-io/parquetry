@@ -14,13 +14,13 @@ none of that.
 
 ## 1. What count is
 
-`ParquetReader.count(predicate, options)` returns how many rows satisfy
+`ParquetFileReader.count(predicate, options)` returns how many rows satisfy
 `predicate`. It is the answer to a GeoTools `getCount(Query)`, a `SELECT count(*)
 WHERE ...`, or any "how many" that does not need the rows themselves.
 
 ```java
 try (ByteRangeSource source = ByteRangeSource.ofFile(path)) {
-    ParquetReader reader = ParquetReader.open(source);
+    ParquetFileReader reader = ParquetFileReader.open(source);
     long matches = reader.count(Pred.col("year").gtEq(2020), ReadOptions.DEFAULTS);
 }
 ```
@@ -176,7 +176,7 @@ Three regimes show up:
 
 | Concern | Start in |
 |---------|----------|
-| Count entry + routing | `data/ParquetReader.java` (`count`) |
+| Count entry + routing | `data/ParquetFileReader.java` (`count`) |
 | Columnar popcount sink | `data/read/BatchPipeline.java` (`countMatching`) |
 | Predicate -> matching `BitSet` | `batch/VectorizedPredicateEvaluator.java` |
 | Shared comparison core | `filter/ValueComparison.java` |

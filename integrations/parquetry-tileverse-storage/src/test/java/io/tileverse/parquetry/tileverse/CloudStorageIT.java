@@ -44,7 +44,7 @@ import io.tileverse.storage.StorageFactory;
 import io.tileverse.storage.s3.S3StorageProvider;
 
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
@@ -160,10 +160,10 @@ class CloudStorageIT {
     private static List<byte[]> readFooColumn(Storage storage, String key) throws IOException {
         try (storage;
                 RangeReader reader = storage.openRangeReader(key);
-                ByteRangeSource source = ByteRangeSources.from(reader)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+                ByteRangeSource bytes = ByteRangeSources.from(reader)) {
+            ParquetSource source = ParquetSource.open(bytes);
             try (Stream<ParquetRecord> stream =
-                    dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
+                    source.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 return stream.map(CloudStorageIT::fooOf).toList();
             }
         }

@@ -18,9 +18,9 @@ package io.tileverse.parquetry.dataset;
 import java.util.List;
 
 /**
- * The ordered, pruned set of files a {@link Dataset} read will visit, each a {@link PlannedFile}; exposed for
+ * The ordered, pruned set of files a {@link ParquetDataset} read will visit, each a {@link PlannedFile}; exposed for
  * diagnostics (which files survived pruning). This is distinct from {@link FilesetReader}, the low-level index-based
- * byte-source adapter consumed by {@link ParquetDataset#open(FilesetReader)}.
+ * byte-source adapter consumed by {@link ParquetSource#open(FilesetReader)}.
  */
 public interface FilePlan {
 

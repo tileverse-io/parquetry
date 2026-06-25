@@ -13,27 +13,27 @@ module's SPI.
 
 - **`io.tileverse.parquetry.catalog`** - the connection. `DatasetCatalog` is the SPI; `CatalogCapabilities` describes
   what the connection can do; `FilesetCatalog` is the pure-parquet implementation.
-- **`io.tileverse.parquetry.dataset`** - the queryable view. `Dataset` is the per-dataset facade;
-  `GeoParquetDataset extends Dataset` adds `geoMetadata()` for GeoParquet-backed datasets; `DatasetCapabilities`
-  describes one dataset; `ParquetDataset` reads 1..N same-schema files as one stream above the core `ParquetReader`.
+- **`io.tileverse.parquetry.dataset`** - the queryable view. `ParquetDataset` is the per-dataset facade;
+  `GeoParquetDataset extends ParquetDataset` adds `geoMetadata()` for GeoParquet-backed datasets; `DatasetCapabilities`
+  describes one dataset; `ParquetSource` reads 1..N same-schema files as one stream above the core `ParquetFileReader`.
 
 ## The SPI
 
 ```
 DatasetCatalog  ──datasets()──▶  names
        │
-       └──dataset(name)──▶  Dataset ──read/count/bounds/explain──▶  records
+       └──dataset(name)──▶  ParquetDataset ──read/count/bounds/explain──▶  records
 ```
 
 ```java
 public interface DatasetCatalog extends AutoCloseable {
     CatalogCapabilities capabilities();
     List<String> datasets();
-    Dataset dataset(String name);
+    ParquetDataset dataset(String name);
     void close();
 }
 
-public interface Dataset {
+public interface ParquetDataset {
     String name();
     ParquetSchema schema();
     Optional<CatalogSnapshot> snapshot();          // present only for versioned backends (Iceberg)
@@ -45,7 +45,7 @@ public interface Dataset {
     ExplainPlan explain(Predicate predicate, Projection projection, ReadOptions options);
 }
 
-public interface GeoParquetDataset extends Dataset {
+public interface GeoParquetDataset extends ParquetDataset {
     Optional<GeoParquetMetadata> geoMetadata();    // aggregated "geo" metadata across the files
 }
 ```
@@ -55,7 +55,7 @@ snapshot, and (later) partition awareness. `bounds(predicate, options)` returns 
 unfiltered case (the predicate reduces to always-true) and empty for a filtered query for now, leaving the caller to
 compute it; it also returns empty for a dataset without a spatial extent. A GeoParquet-backed dataset implements
 `GeoParquetDataset`, exposing the aggregated `"geo"` metadata via `geoMetadata()`; backends whose geometry is not
-GeoParquet (Iceberg native geometry) implement plain `Dataset`. Every `read(...)` returns a closeable `Stream` - use
+GeoParquet (Iceberg native geometry) implement plain `ParquetDataset`. Every `read(...)` returns a closeable `Stream` - use
 try-with-resources, or the in-flight row-group buffers leak.
 
 ## Capabilities: ask, do not probe
@@ -102,7 +102,7 @@ try (FileSource source = LocalFileSource.directory(dir, "*.parquet");
         FilesetCatalog catalog = FilesetCatalog.open(source, CatalogOptions.defaults())) {
 
     String name = catalog.datasets().get(0);
-    Dataset dataset = catalog.dataset(name);
+    ParquetDataset dataset = catalog.dataset(name);
     Predicate where = new Predicate.Gt(ColumnPath.of("population"), new Value.LongVal(10_000));
     try (Stream<ParquetRecord> rows = dataset.read(where, Projection.ALL, ReadOptions.DEFAULTS)) {
         rows.forEach(this::handle);
@@ -112,9 +112,9 @@ try (FileSource source = LocalFileSource.directory(dir, "*.parquet");
 
 ## Relationship to the core engine
 
-`ParquetDataset` sits directly above the single-file `io.tileverse.parquetry.data.ParquetReader`. A one-file dataset
-opens through `ParquetDataset.open(ByteRangeSource)`; a multi-file dataset opens through
-`ParquetDataset.open(FilesetReader)`, where `FilesetReader` is the seam an implementation satisfies to supply per-file
+`ParquetSource` sits directly above the single-file `io.tileverse.parquetry.data.ParquetFileReader`. A one-file dataset
+opens through `ParquetSource.open(ByteRangeSource)`; a multi-file dataset opens through
+`ParquetSource.open(FilesetReader)`, where `FilesetReader` is the seam an implementation satisfies to supply per-file
 byte sources by index (the Iceberg backend builds one over a snapshot's surviving data files). Runtime wiring (the
 shared `ParquetRuntime`, an optional decryption key) is bound once through `OpenOptions`; per-query policy stays in
 `ReadOptions`.

@@ -33,7 +33,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.locationtech.jts.io.WKBReader;
 
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -116,7 +116,7 @@ class GeoParquetBadDataConformanceIT {
 
     private static String geoMetadata(Path file) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            return ParquetReader.open(source).keyValueMetadata().get("geo");
+            return ParquetFileReader.open(source).keyValueMetadata().get("geo");
         }
     }
 
@@ -134,7 +134,7 @@ class GeoParquetBadDataConformanceIT {
 
     private static void drainRecords(Path file) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             try (Stream<ParquetRecord> rows =
                     reader.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 rows.forEach(GeoParquetBadDataConformanceIT::touchEveryColumn);
@@ -150,7 +150,7 @@ class GeoParquetBadDataConformanceIT {
 
     private static byte[] firstGeometryWkb(Path file) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             Set<ColumnPath> geometryColumns = GeoParquetCorpus.geometryColumns(reader.schema());
             ColumnPath geometry = geometryColumns.iterator().next();
             try (Stream<ParquetRecord> rows =

@@ -33,7 +33,7 @@ import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.batch.Validity;
-import io.tileverse.parquetry.data.ParquetWriter;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.GeoParquetMetadataMode;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -87,7 +87,7 @@ final class StacFixtures {
                 .geoParquetMetadata(GeoParquetMetadataMode.DUAL_V1_1_AND_V2_0)
                 .crsEpsg(GEOMETRY_COLUMN, 4326)
                 .build();
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             writer.writeBatch(pointBatch(schema, GEOMETRY_COLUMN, points));
         }
     }

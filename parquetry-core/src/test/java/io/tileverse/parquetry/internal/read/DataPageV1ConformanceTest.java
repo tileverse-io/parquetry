@@ -161,8 +161,8 @@ class DataPageV1ConformanceTest {
     private static List<ParquetRecord> readAllViaParquetry(Path fixture, SegmentPool pool) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixture)) {
             ParquetRuntime runtime = ParquetRuntime.builder().segmentPool(pool).build();
-            io.tileverse.parquetry.data.ParquetReader dataset =
-                    io.tileverse.parquetry.data.ParquetReader.open(source, runtime, Optional.empty());
+            io.tileverse.parquetry.data.ParquetFileReader dataset =
+                    io.tileverse.parquetry.data.ParquetFileReader.open(source, runtime, Optional.empty());
             try (Stream<ParquetRecord> records =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 return records.toList();

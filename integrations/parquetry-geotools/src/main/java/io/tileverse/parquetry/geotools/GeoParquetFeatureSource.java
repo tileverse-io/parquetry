@@ -39,8 +39,8 @@ import org.geotools.geometry.jts.ReferencedEnvelope;
 
 import io.tileverse.parquetry.catalog.DatasetCatalog;
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.dataset.Dataset;
 import io.tileverse.parquetry.dataset.GeoParquetDataset;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.format.BoundingBox;
 
@@ -73,7 +73,7 @@ final class GeoParquetFeatureSource extends ContentFeatureSource {
     }
 
     private GeoParquetDataset dataset() {
-        Dataset ds = catalog.dataset(getEntry().getTypeName());
+        ParquetDataset ds = catalog.dataset(getEntry().getTypeName());
         if (ds instanceof GeoParquetDataset geo) {
             return geo;
         }

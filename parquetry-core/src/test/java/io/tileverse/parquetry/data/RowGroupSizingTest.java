@@ -113,7 +113,7 @@ class RowGroupSizingTest {
                 .rowGroupSize(RowGroupSize.rows(4L))
                 .build();
         ByteArrayOutputStream sink = new ByteArrayOutputStream();
-        try (ParquetWriter writer = ParquetWriter.create(sink, schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(sink, schema, options)) {
             ParquetRecordBatchBuilder appender = writer.appender(1);
             for (int i = 0; i < 9; i++) {
                 WriteFixtures.appendRow(appender, schema, Map.of(ColumnPath.of("id"), i));
@@ -138,8 +138,8 @@ class RowGroupSizingTest {
             throws Exception {
         ParquetSchema schema = flatSchema(requiredInt32("id"));
         ByteArrayOutputStream sink = new ByteArrayOutputStream();
-        try (ParquetWriter writer =
-                ParquetWriter.assembleWriter(ByteSink.ofOutputStream(sink), schema, options, tinyLimit)) {
+        try (ParquetFileWriter writer =
+                ParquetFileWriter.assembleWriter(ByteSink.ofOutputStream(sink), schema, options, tinyLimit)) {
             ParquetRecordBatchBuilder appender = writer.appender(1);
             for (int i = 0; i < rows; i++) {
                 WriteFixtures.appendRow(appender, schema, Map.of(ColumnPath.of("id"), i));

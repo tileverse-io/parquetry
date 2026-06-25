@@ -25,7 +25,7 @@ import io.tileverse.parquetry.cli.StorageOptions;
 import io.tileverse.parquetry.cli.UriResolver;
 import io.tileverse.parquetry.cli.render.MetaRenderer;
 import io.tileverse.parquetry.data.RowGroupSummary;
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -56,10 +56,10 @@ public final class MetaCmd implements Callable<Integer> {
     public Integer call() throws Exception {
         try (UriResolver.OpenFile open = UriResolver.open(uri, storage.toProperties())) {
             FileMetaData footer = ParquetFormat.readFooter(open.source());
-            ParquetDataset dataset = ParquetDataset.open(open.source());
-            List<RowGroupSummary> rowGroups = dataset.rowGroups();
-            List<ColumnPath> leafColumns = dataset.schema().leafColumns();
-            Map<String, String> keyValue = dataset.keyValueMetadata();
+            ParquetSource source = ParquetSource.open(open.source());
+            List<RowGroupSummary> rowGroups = source.rowGroups();
+            List<ColumnPath> leafColumns = source.schema().leafColumns();
+            Map<String, String> keyValue = source.keyValueMetadata();
             PrintWriter out = spec.commandLine().getOut();
             if (options.format == GlobalOptions.Format.JSON) {
                 MetaRenderer.writeJson(out, footer, rowGroups, leafColumns.size(), keyValue);

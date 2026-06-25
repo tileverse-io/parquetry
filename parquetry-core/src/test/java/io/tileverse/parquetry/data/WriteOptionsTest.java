@@ -617,7 +617,7 @@ class WriteOptionsTest {
                         ColumnPath.of("geometry"),
                         MemorySegment.ofArray(wkbPoint(i * 0.1, i * 0.2)).asReadOnly()));
             }
-            try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+            try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
                 writer.writeBatch(WriteFixtures.batch(schema, rows));
             }
 
@@ -657,7 +657,7 @@ class WriteOptionsTest {
             for (int i = 0; i < rows; i++) {
                 rowMaps.add(Map.of(ColumnPath.of(column), valueAt.applyAsInt(i)));
             }
-            try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+            try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
                 writer.writeBatch(WriteFixtures.batch(schema, rowMaps));
             }
             return file;

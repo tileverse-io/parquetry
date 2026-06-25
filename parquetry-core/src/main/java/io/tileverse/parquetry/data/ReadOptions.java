@@ -22,9 +22,9 @@ import io.tileverse.parquetry.observe.QueryObserver;
 import lombok.NonNull;
 
 /**
- * Per-call query and output policy for a single {@code ParquetDataset.read()} call. Read resources and I/O tuning (the
+ * Per-call query and output policy for a single {@code ParquetSource.read()} call. Read resources and I/O tuning (the
  * segment pool, fetch/decode/disk budgets, decode executor, spill settings, and prefetch tuning) live on
- * {@link ParquetRuntime}, bound once at {@code ParquetDataset.open(...)}, not here.
+ * {@link ParquetRuntime}, bound once at {@code ParquetSource.open(...)}, not here.
  *
  * <p>Filter toggles default to ON; turn them off to bypass a tier (useful for measuring effectiveness or working around
  * a known-bad statistic). The {@code queryObserver} receives query and row-group boundary callbacks as the read runs;

@@ -35,7 +35,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
@@ -167,7 +167,7 @@ class ParquetTestingCorpusIT {
     private static List<Map<String, Object>> readCanonicalViaParquetry(Path fixture, SegmentPool pool) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixture)) {
             ParquetRuntime runtime = ParquetRuntime.builder().segmentPool(pool).build();
-            ParquetReader dataset = ParquetReader.open(source, runtime, Optional.empty());
+            ParquetFileReader dataset = ParquetFileReader.open(source, runtime, Optional.empty());
             ParquetSchema schema = dataset.schema();
             try (Stream<ParquetRecord> records =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
@@ -181,7 +181,7 @@ class ParquetTestingCorpusIT {
         long[] total = {0L};
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixture)) {
             ParquetRuntime runtime = ParquetRuntime.builder().segmentPool(pool).build();
-            ParquetReader dataset = ParquetReader.open(source, runtime, Optional.empty());
+            ParquetFileReader dataset = ParquetFileReader.open(source, runtime, Optional.empty());
             try (Stream<ParquetRecordBatch> batches =
                     dataset.readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 batches.forEach(batch -> {

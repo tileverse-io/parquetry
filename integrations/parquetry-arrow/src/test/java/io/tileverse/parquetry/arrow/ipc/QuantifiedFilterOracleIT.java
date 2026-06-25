@@ -32,7 +32,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.MatchAction;
 import io.tileverse.parquetry.filter.Predicate;
@@ -153,7 +153,7 @@ class QuantifiedFilterOracleIT {
 
     private Set<Long> matchedScoreIds(Path scoresFile) throws Exception {
         try (ByteRangeSource source = ByteRangeSource.ofFile(scoresFile)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             ColumnPath physicalLeaf = onlyLeafUnder(reader.schema(), LOGICAL_SCORES);
             Predicate quantified = new Predicate.Quantified(
                     MatchAction.ANY, new Predicate.Eq(physicalLeaf, new Value.LongVal(SHARED_SCORE)));
@@ -203,7 +203,7 @@ class QuantifiedFilterOracleIT {
 
     private Set<Long> matchedIds(Path nestedFile, MatchAction match) throws Exception {
         try (ByteRangeSource source = ByteRangeSource.ofFile(nestedFile)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             ColumnPath physicalLeaf = resolveRepeatedLeaf(reader.schema(), LOGICAL_LOCALITY);
             Predicate quantified = new Predicate.Quantified(match, new Predicate.Eq(physicalLeaf, BERLIN));
             return collectIds(reader, quantified);
@@ -218,7 +218,7 @@ class QuantifiedFilterOracleIT {
         return resolved.physical();
     }
 
-    private Set<Long> collectIds(ParquetReader reader, Predicate predicate) {
+    private Set<Long> collectIds(ParquetFileReader reader, Predicate predicate) {
         Set<Long> ids = new TreeSet<>();
         try (Stream<ParquetRecord> rows = reader.read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
             rows.forEach(rec -> ids.add(rec.getLong(ID)));

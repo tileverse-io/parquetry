@@ -31,7 +31,7 @@ import io.tileverse.storage.RangeReader;
 import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
 
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
@@ -58,7 +58,7 @@ final class ParquetryReadEngine implements ReadEngine {
     private ByteRangeSource source;
     private Storage remoteStorage;
     private RangeReader remoteReader;
-    private ParquetReader reader;
+    private ParquetFileReader reader;
     private long sink;
 
     ParquetryReadEngine(ReadContext context) {
@@ -116,10 +116,10 @@ final class ParquetryReadEngine implements ReadEngine {
     }
 
     /** Opened once and reused across reads; synchronized so concurrent reads share a single open reader. */
-    private synchronized ParquetReader reader() {
+    private synchronized ParquetFileReader reader() {
         if (reader == null) {
             source = openSource();
-            reader = ParquetReader.open(source, runtime(), Optional.empty());
+            reader = ParquetFileReader.open(source, runtime(), Optional.empty());
         }
         return reader;
     }

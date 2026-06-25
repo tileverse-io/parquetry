@@ -30,7 +30,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.locationtech.jts.geom.Geometry;
 
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -76,7 +76,7 @@ class JtsMaterializerCorpusIT {
     @MethodSource("conformanceFiles")
     void readsAndDecodesEveryGeometry(String label, Path file) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
 
             String geoJson = reader.keyValueMetadata().get("geo");
             assertThat(geoJson).as("%s: 'geo' metadata present", label).isNotNull();
@@ -95,7 +95,7 @@ class JtsMaterializerCorpusIT {
     }
 
     private static long decodeAllRows(
-            ParquetReader reader, JtsMaterializer materializer, Set<ColumnPath> geometryColumns, String label) {
+            ParquetFileReader reader, JtsMaterializer materializer, Set<ColumnPath> geometryColumns, String label) {
         try (Stream<Map<ColumnPath, Object>> rows =
                 reader.read(Predicate.ALWAYS_TRUE, Projection.ALL, materializer, ReadOptions.DEFAULTS)) {
             return rows.peek(row -> assertGeometriesDecode(row, geometryColumns, label))

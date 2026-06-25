@@ -28,7 +28,7 @@ import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.GeometryFactory;
 
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -64,7 +64,7 @@ class BboxCoveringSpatialReadTest {
         Predicate predicate = Predicate.geometryFilter(filter);
 
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
 
             long expected = bruteForceMatches(reader, filter);
             long pushedDown = matchingRowCount(reader, predicate);
@@ -92,7 +92,7 @@ class BboxCoveringSpatialReadTest {
                 io.tileverse.parquetry.filter.Pred.col("bbox", "ymax").gtEq(-100.0);
 
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
 
             assertThat(matchingRowCount(reader, everyRow))
                     .as("read() on a struct-nested column must agree with count() and see every row")
@@ -101,13 +101,13 @@ class BboxCoveringSpatialReadTest {
         }
     }
 
-    private static long matchingRowCount(ParquetReader reader, Predicate predicate) {
+    private static long matchingRowCount(ParquetFileReader reader, Predicate predicate) {
         try (Stream<ParquetRecord> rows = reader.read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
             return rows.count();
         }
     }
 
-    private static long bruteForceMatches(ParquetReader reader, JtsGeometryFilter filter) {
+    private static long bruteForceMatches(ParquetFileReader reader, JtsGeometryFilter filter) {
         try (Stream<ParquetRecord> rows = reader.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
             return rows.filter(row -> intersects(filter, row)).count();
         }

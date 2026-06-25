@@ -53,7 +53,7 @@ class ParquetWriterAppenderTest {
         Path parquetFile = tempDir.resolve("appended.parquet");
         int rowCount = 20_000; // > the 8192 default batch granularity, exercises auto-flush at least twice
 
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(parquetFile), schema)) {
             ParquetRecordBatchBuilder appender = writer.appender();
             for (int i = 0; i < rowCount; i++) {
                 appender.setInt(0, i).endRow();
@@ -74,7 +74,7 @@ class ParquetWriterAppenderTest {
         long byteThreshold = 16L * 1024; // crosses every 16 rows, far before the high row threshold trips
         String cell = "x".repeat(cellBytes);
 
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(parquetFile), schema)) {
             ParquetRecordBatchBuilder appender = writer.appender(1_000_000, byteThreshold);
             for (int i = 0; i < rowCount; i++) {
                 appender.setString(0, cell).endRow();
@@ -97,7 +97,7 @@ class ParquetWriterAppenderTest {
         Path parquetFile = tempDir.resolve("partial.parquet");
         int rowCount = 10; // appender(4) auto-flushes twice (rows 4 and 8), leaving a 2-row partial for flush()
 
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(parquetFile), schema)) {
             ParquetRecordBatchBuilder appender = writer.appender(4);
             for (int i = 0; i < rowCount; i++) {
                 appender.setInt(0, i).endRow();
@@ -115,7 +115,7 @@ class ParquetWriterAppenderTest {
         Path parquetFile = tempDir.resolve("forgotten-flush.parquet");
         int rowCount = 20; // appender(8) auto-flushes at rows 8 and 16, leaving a 4-row partial batch pending
 
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(parquetFile), schema)) {
             ParquetRecordBatchBuilder appender = writer.appender(8);
             for (int i = 0; i < rowCount; i++) {
                 appender.setInt(0, i).endRow();
@@ -133,7 +133,7 @@ class ParquetWriterAppenderTest {
         Path parquetFile = tempDir.resolve("try-with-resources.parquet");
         int rowCount = 20;
 
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema);
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(parquetFile), schema);
                 ParquetRecordBatchBuilder appender = writer.appender(8)) {
             for (int i = 0; i < rowCount; i++) {
                 appender.setInt(0, i).endRow();
@@ -160,7 +160,7 @@ class ParquetWriterAppenderTest {
         ParquetSchema schema = optionalIntSchema();
         Path parquetFile = tempDir.resolve("rejected.parquet");
 
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(parquetFile), schema)) {
             ParquetRecordBatchBuilder appender = writer.appender();
             appender.setInt(0, 1).endRow();
             assertThatThrownBy(appender::build).isInstanceOf(ParquetWriteException.class);
@@ -180,7 +180,7 @@ class ParquetWriterAppenderTest {
         ParquetSchema schema = optionalIntSchema();
         Path parquetFile = tempDir.resolve("invalid-granularity.parquet");
 
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(parquetFile), schema)) {
             assertThatThrownBy(() -> writer.appender(0)).isInstanceOf(IllegalArgumentException.class);
             assertThatThrownBy(() -> writer.appender(-1)).isInstanceOf(IllegalArgumentException.class);
         }
@@ -191,7 +191,7 @@ class ParquetWriterAppenderTest {
         ParquetSchema schema = optionalIntSchema();
         Path parquetFile = tempDir.resolve("closed-writer.parquet");
 
-        ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema);
+        ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(parquetFile), schema);
         writer.close();
         assertThatThrownBy(writer::appender).isInstanceOf(ParquetWriteException.class);
     }
@@ -201,7 +201,7 @@ class ParquetWriterAppenderTest {
         ParquetSchema schema = optionalIntSchema();
         Path parquetFile = tempDir.resolve("interrupted.parquet");
 
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(parquetFile), schema)) {
             ParquetRecordBatchBuilder appender = writer.appender(1_000_000);
             try {
                 Thread.currentThread().interrupt();
@@ -242,7 +242,7 @@ class ParquetWriterAppenderTest {
     private static List<Integer> readBackInts(Path parquetFile) {
         List<Integer> ids = new ArrayList<>();
         try (ByteRangeSource source = ByteRangeSource.ofFile(parquetFile)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             try (Stream<ParquetRecord> stream =
                     reader.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 stream.forEach(parquetRecord -> ids.add(parquetRecord.getInt(0)));
@@ -254,7 +254,7 @@ class ParquetWriterAppenderTest {
     private static List<String> readBackStrings(Path parquetFile) {
         List<String> values = new ArrayList<>();
         try (ByteRangeSource source = ByteRangeSource.ofFile(parquetFile)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             try (Stream<ParquetRecord> stream =
                     reader.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 stream.forEach(parquetRecord -> values.add(parquetRecord.getString(0)));
@@ -265,7 +265,7 @@ class ParquetWriterAppenderTest {
 
     private static int rowGroupCountOf(Path parquetFile) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(parquetFile)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             return reader.rowGroups().size();
         }
     }

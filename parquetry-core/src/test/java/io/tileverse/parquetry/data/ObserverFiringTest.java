@@ -48,7 +48,7 @@ class ObserverFiringTest {
     void explainFiresQueryStartedAndPlannedDecisions(@TempDir Path tmp) throws Exception {
         Path file = corpusFile(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             RecordingObserver observer = new RecordingObserver();
             ReadOptions options = optionsWith(observer);
 
@@ -62,7 +62,7 @@ class ObserverFiringTest {
     void countFiresQueryStartedAndPlannedDecisions(@TempDir Path tmp) throws Exception {
         Path file = corpusFile(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             RecordingObserver observer = new RecordingObserver();
             ReadOptions options = optionsWith(observer);
 
@@ -76,7 +76,7 @@ class ObserverFiringTest {
     void readFiresQueryStartedAndPlannedDecisions(@TempDir Path tmp) throws Exception {
         Path file = corpusFile(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             RecordingObserver observer = new RecordingObserver();
             ReadOptions options = optionsWith(observer);
 
@@ -92,7 +92,7 @@ class ObserverFiringTest {
     void readBatchesFiresQueryStartedAndPlannedDecisions(@TempDir Path tmp) throws Exception {
         Path file = corpusFile(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             RecordingObserver observer = new RecordingObserver();
             ReadOptions options = optionsWith(observer);
 
@@ -108,7 +108,7 @@ class ObserverFiringTest {
     void countFiresQueryFinishedOnce(@TempDir Path tmp) throws Exception {
         Path file = corpusFile(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             RecordingObserver observer = new RecordingObserver();
             ReadOptions options = optionsWith(observer);
 
@@ -125,7 +125,7 @@ class ObserverFiringTest {
     void readFiresQueryFinishedOnStreamClose(@TempDir Path tmp) throws Exception {
         Path file = corpusFile(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             RecordingObserver observer = new RecordingObserver();
             ReadOptions options = optionsWith(observer);
 
@@ -148,7 +148,7 @@ class ObserverFiringTest {
     void readBatchesFiresQueryFinishedOnStreamClose(@TempDir Path tmp) throws Exception {
         Path file = corpusFile(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             RecordingObserver observer = new RecordingObserver();
             ReadOptions options = optionsWith(observer);
 
@@ -171,7 +171,7 @@ class ObserverFiringTest {
     void noObserverFiresNothing(@TempDir Path tmp) throws Exception {
         Path file = corpusFile(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
 
             long count = reader.count(PREDICATE, ReadOptions.DEFAULTS);
             long[] streamed = {0L};

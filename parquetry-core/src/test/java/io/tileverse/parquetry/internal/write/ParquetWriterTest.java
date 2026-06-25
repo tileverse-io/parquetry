@@ -36,8 +36,8 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.ParquetReader;
-import io.tileverse.parquetry.data.ParquetWriter;
+import io.tileverse.parquetry.data.ParquetFileReader;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
@@ -63,7 +63,7 @@ class ParquetWriterTest {
         ParquetSchema schema = flatSchema(requiredInt32("id"));
         WriteOptions options = options().build();
         Path parquetFile = tempDir.resolve("one-record.parquet");
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
             writeRow(writer, schema, Map.of(ColumnPath.of("id"), 7));
         }
 
@@ -84,7 +84,7 @@ class ParquetWriterTest {
         ParquetSchema schema = flatSchema(requiredInt32("id"));
         WriteOptions options = options().rowGroupSize(RowGroupSize.rows(5)).build();
         Path parquetFile = tempDir.resolve("multi-rg.parquet");
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
             for (int i = 0; i < 12; i++) {
                 writeRow(writer, schema, Map.of(ColumnPath.of("id"), i));
             }
@@ -116,7 +116,7 @@ class ParquetWriterTest {
         ParquetSchema schema = flatSchema(requiredInt32("id"));
         WriteOptions options = options().build();
         Path parquetFile = tempDir.resolve("explicit-flush.parquet");
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
             for (int i = 0; i < 3; i++) {
                 writeRow(writer, schema, Map.of(ColumnPath.of("id"), i));
             }
@@ -141,7 +141,7 @@ class ParquetWriterTest {
         ParquetSchema schema = flatSchema(requiredInt32("id"));
         WriteOptions options = options().build();
         Path parquetFile = tempDir.resolve("empty.parquet");
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
             assertThat(writer.totalRows()).isZero();
             assertThat(writer.rowGroupsWritten()).isZero();
         }
@@ -160,7 +160,7 @@ class ParquetWriterTest {
         WriteOptions options = options().crsEpsg("geometry", 4326).build();
         Path parquetFile = tempDir.resolve("geo.parquet");
         byte[] wkbPoint = wkbPoint(1.0, 2.0);
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
             writeRow(
                     writer,
                     schema,
@@ -194,7 +194,7 @@ class ParquetWriterTest {
         ParquetSchema schema = flatSchema(requiredInt32("id"), requiredInt32("code"));
         WriteOptions options = options().build();
         Path parquetFile = tempDir.resolve("column-orders.parquet");
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
             writeRow(writer, schema, Map.of(ColumnPath.of("id"), 1, ColumnPath.of("code"), 2));
         }
 
@@ -213,7 +213,7 @@ class ParquetWriterTest {
         ParquetSchema schema = flatSchema(requiredInt32("id"));
         WriteOptions options = options().build();
         Path parquetFile = tempDir.resolve("created-by.parquet");
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
             writeRow(writer, schema, Map.of(ColumnPath.of("id"), 1));
         }
 
@@ -237,7 +237,7 @@ class ParquetWriterTest {
                 .build();
         Path parquetFile = tempDir.resolve("geo-with-kv.parquet");
         byte[] wkbPoint = wkbPoint(1.0, 2.0);
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
             writeRow(
                     writer,
                     schema,
@@ -245,7 +245,7 @@ class ParquetWriterTest {
         }
 
         try (ByteRangeSource source = ByteRangeSource.ofFile(parquetFile)) {
-            ParquetReader dataset = ParquetReader.open(source);
+            ParquetFileReader dataset = ParquetFileReader.open(source);
             Map<String, String> kv = dataset.keyValueMetadata();
             assertThat(kv).containsKey("geo").containsEntry("pandas", "{\"version\":\"1.0\"}");
         }
@@ -256,7 +256,7 @@ class ParquetWriterTest {
         ParquetSchema schema = flatSchema(requiredInt32("id"));
         WriteOptions options = options().build();
         Path parquetFile = tempDir.resolve("idempotent.parquet");
-        ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(parquetFile), schema, options);
+        ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(parquetFile), schema, options);
         writeRow(writer, schema, Map.of(ColumnPath.of("id"), 1));
         writer.close();
         long firstSize = Files.size(parquetFile);
@@ -268,7 +268,8 @@ class ParquetWriterTest {
     void schemaIsRequired() {
         ByteArrayOutputStream sink = new ByteArrayOutputStream();
         WriteOptions defaults = WriteOptions.defaults();
-        assertThatThrownBy(() -> ParquetWriter.create(sink, null, defaults)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> ParquetFileWriter.create(sink, null, defaults))
+                .isInstanceOf(NullPointerException.class);
     }
 
     @Test
@@ -276,7 +277,7 @@ class ParquetWriterTest {
         ParquetSchema schema = flatSchema(requiredInt32("id"));
         WriteOptions options = options().build();
         CloseCountingByteSink sink = new CloseCountingByteSink();
-        try (ParquetWriter writer = ParquetWriter.create(sink, schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(sink, schema, options)) {
             writeRow(writer, schema, Map.of(ColumnPath.of("id"), 1));
         }
 
@@ -309,7 +310,7 @@ class ParquetWriterTest {
                 name, Repetition.REQUIRED, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1);
     }
 
-    private static void writeRow(ParquetWriter writer, ParquetSchema schema, Map<ColumnPath, Object> values)
+    private static void writeRow(ParquetFileWriter writer, ParquetSchema schema, Map<ColumnPath, Object> values)
             throws IOException {
         writer.writeBatch(WriteFixtures.batch(schema, List.of(values)));
     }
@@ -317,7 +318,7 @@ class ParquetWriterTest {
     private static List<Integer> readIds(Path file) {
         List<Integer> ids = new ArrayList<>();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader dataset = ParquetReader.open(source);
+            ParquetFileReader dataset = ParquetFileReader.open(source);
             try (Stream<ParquetRecord> stream =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 stream.forEach(r -> ids.add(r.getInt(ColumnPath.of("id"))));

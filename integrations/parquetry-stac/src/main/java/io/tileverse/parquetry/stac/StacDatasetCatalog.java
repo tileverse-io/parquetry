@@ -29,7 +29,7 @@ import io.tileverse.storage.Storage;
 import io.tileverse.parquetry.catalog.CatalogCapabilities;
 import io.tileverse.parquetry.catalog.CatalogCapabilities.SchemaSource;
 import io.tileverse.parquetry.catalog.DatasetCatalog;
-import io.tileverse.parquetry.dataset.Dataset;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.tileverse.ByteRangeSources;
 
@@ -183,7 +183,7 @@ public final class StacDatasetCatalog implements DatasetCatalog {
     }
 
     @Override
-    public Dataset dataset(String name) {
+    public ParquetDataset dataset(String name) {
         StacDataset dataset = datasets.get(name);
         if (dataset == null) {
             throw new IllegalArgumentException("no dataset named '" + name + "' (have " + datasets.keySet() + ")");

@@ -15,6 +15,6 @@
  */
 /**
  * The Parquet binding for STAC: it reads a STAC catalog through {@code StacCatalogReader} and exposes each collection
- * as a prunable {@link io.tileverse.parquetry.dataset.Dataset} over the collection's GeoParquet parts.
+ * as a prunable {@link io.tileverse.parquetry.dataset.ParquetDataset} over the collection's GeoParquet parts.
  */
 package io.tileverse.parquetry.stac;

@@ -24,7 +24,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
@@ -69,7 +69,7 @@ class SpillToDiskIT {
 
     private static long countRows(ParquetRuntime runtime, ReadOptions readOptions) {
         try (ByteRangeSource src = ByteRangeSource.ofFile(FILE)) {
-            ParquetReader ds = ParquetReader.open(src, runtime, Optional.empty());
+            ParquetFileReader ds = ParquetFileReader.open(src, runtime, Optional.empty());
             try (Stream<ParquetRecord> rows = ds.read(Predicate.ALWAYS_TRUE, Projection.ALL, readOptions)) {
                 return rows.count();
             }

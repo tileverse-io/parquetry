@@ -56,7 +56,8 @@ import io.tileverse.parquetry.testsupport.CorpusFixtures;
  * the {@link BatchPipeline#rows} batch observer, the same batch the row iterator reads.
  *
  * <p>The decision the row read makes between the two forms is unit-tested separately against the
- * {@code ParquetReader.rowsForm} helper; here we confirm the forms the helper selects actually differ in vector shape.
+ * {@code ParquetFileReader.rowsForm} helper; here we confirm the forms the helper selects actually differ in vector
+ * shape.
  */
 class BatchFormObservabilityIT {
 

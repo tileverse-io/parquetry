@@ -38,7 +38,7 @@ import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.batch.ShreddedVariantVector;
 import io.tileverse.parquetry.batch.StructVector;
 import io.tileverse.parquetry.batch.VariantVector;
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -55,7 +55,7 @@ final class ParquetryColumnarEngine implements ColumnarEngine {
 
     private final Path file;
     private ByteRangeSource source;
-    private ParquetReader reader;
+    private ParquetFileReader reader;
     private long sink;
 
     ParquetryColumnarEngine(Path file) {
@@ -106,10 +106,10 @@ final class ParquetryColumnarEngine implements ColumnarEngine {
     }
 
     /** Opened once and reused across scans; synchronized so concurrent scans share a single open reader. */
-    private synchronized ParquetReader reader() {
+    private synchronized ParquetFileReader reader() {
         if (reader == null) {
             source = ByteRangeSource.ofFile(file);
-            reader = ParquetReader.open(source);
+            reader = ParquetFileReader.open(source);
         }
         return reader;
     }

@@ -1,6 +1,6 @@
 # parquetry-core
 
-Page decoders + encoders, codecs, filter pushdown, the Dremel walker, the `ParquetReader` / `ParquetDataset` read entries, and the `ParquetWriter` write entry. This is the module most consumers actually depend on. The schema model and Thrift wire records live in `parquetry-format` (one JAR upstream).
+Page decoders + encoders, codecs, filter pushdown, the Dremel walker, the `ParquetFileReader` read entry, and the `ParquetFileWriter` write entry. This is the module most consumers actually depend on. The schema model and Thrift wire records live in `parquetry-format` (one JAR upstream).
 
 ## Public API
 
@@ -9,8 +9,8 @@ The entry points all live in `io.tileverse.parquetry.data`:
 ```java
 // Read one local file (pure JDK, no third-party dependency):
 try (ByteRangeSource source = ByteRangeSource.ofFile(path)) {
-    ParquetDataset dataset = ParquetDataset.open(source);
-    try (Stream<ParquetRecord> stream = dataset.read(
+    ParquetFileReader reader = ParquetFileReader.open(source);
+    try (Stream<ParquetRecord> stream = reader.read(
             col("year").gtEq(2020).and(col("country").eq("AR")),
             Projection.of(Set.of(ColumnPath.of("year"), ColumnPath.of("country"))),
             ReadOptions.DEFAULTS)) {
@@ -20,12 +20,12 @@ try (ByteRangeSource source = ByteRangeSource.ofFile(path)) {
 
 // Write one file (channel-primary):
 try (FileChannel sink = FileChannel.open(out, CREATE, WRITE, TRUNCATE_EXISTING);
-     ParquetWriter writer = ParquetWriter.create(sink, schema, WriteOptions.defaults())) {
+     ParquetFileWriter writer = ParquetFileWriter.create(sink, schema, WriteOptions.defaults())) {
     rows.forEach(writer::write);
 }
 ```
 
-The read source is a `ByteRangeSource` (the [`parquetry-io`](../parquetry-io/) SPI). `ofFile(Path)` / `ofChannel(FileChannel)` cover local files on the JDK alone -- parquetry-core carries no `io.tileverse.*` runtime dependency. Reading from S3 / Azure / GCS / HTTP goes through the optional [`parquetry-tileverse-storage`](../integrations/parquetry-tileverse-storage/) adapter: `ParquetDataset.open(ByteRangeSources.from(rangeReader))`.
+The read source is a `ByteRangeSource` (the [`parquetry-io`](../parquetry-io/) SPI). `ofFile(Path)` / `ofChannel(FileChannel)` cover local files on the JDK alone -- parquetry-core has no `io.tileverse.*` runtime dependency. Reading from S3 / Azure / GCS / HTTP goes through the optional [`parquetry-tileverse-storage`](../integrations/parquetry-tileverse-storage/) adapter: `ParquetFileReader.open(ByteRangeSources.from(rangeReader))`.
 
 The write sink is a `WritableByteChannel`. It does not have to be seekable: any genuinely streaming output target (an HTTP request body, a blob-storage upload, anything that exposes `WritableByteChannel`) works -- rows are encoded into per-column temp files first and only consolidated onto the sink at row-group flush. An `OutputStream` overload is provided as a convenience and shims through `Channels.newChannel(...)`.
 
@@ -35,7 +35,7 @@ Direction rule: **cross-cutting capabilities stay at the top level; direction-sp
 
 | Package | Role |
 |---|---|
-| `data` | Public entry points (`ParquetReader`, `ParquetDataset`, `FilesetReader`, `ParquetWriter`) and their option types (`ReadOptions`, `WriteOptions` with nested `ParquetVersion`, `RowGroupSize`, `EncodingPolicy`, `BloomFilterConfig`, `GeoParquetMetadataMode`; `WriteRow`). The neutral read/write observability vocabulary (`QueryObserver`, `WriteObserver`, and the stats records) lives in `observe`. |
+| `data` | Public entry points (`ParquetFileReader`, `ParquetFileWriter`) and their option types (`ReadOptions`, `WriteOptions` with nested `ParquetVersion`, `RowGroupSize`, `EncodingPolicy`, `BloomFilterConfig`, `GeoParquetMetadataMode`; `WriteRow`). The neutral read/write observability vocabulary (`QueryObserver`, `WriteObserver`, and the stats records) lives in `observe`. |
 | `data.read` | Read internals: per-column readers, batch pipeline, level resolver, nested vector assembler. |
 | `data.read.page` | Page-level read mechanics: `PageDecoder`, the per-encoding decoders, `Dictionary`, `RleDictionaryPageDecoder`, `LevelDecoder`. |
 | `data.write` | Write internals: `ColumnChunkWriter`, `RowGroupWriter`, `StatisticsAccumulator`, column / offset / bloom builders, `GeoMetadataWriter`. |
@@ -56,8 +56,7 @@ Direction rule: **cross-cutting capabilities stay at the top level; direction-sp
                               |   batch  record  filter                  |
                               |   materializer                           |
                               |   data/                                  |
-                              |     ParquetDataset      ParquetWriter    |
-                              |     ParquetReader                        |
+                              |     ParquetFileReader  ParquetFileWriter |
                               |     read/{page/}        write/{page/}    |
                               +------------------------------------------+
                                                 |

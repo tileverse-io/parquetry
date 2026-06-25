@@ -31,9 +31,9 @@ import java.util.OptionalInt;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
-import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -45,9 +45,9 @@ import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
  * Round-trip tests for LIST and MAP column write support: author rows via {@link ParquetRecordBatchBuilder#beginList} /
- * {@link ParquetRecordBatchBuilder#beginMap}, flush through {@link ParquetWriter}, read back via {@link ParquetReader},
- * and assert the reconstructed list sizes, element values, map entries, and nested struct fields match what was
- * authored.
+ * {@link ParquetRecordBatchBuilder#beginMap}, flush through {@link ParquetFileWriter}, read back via
+ * {@link ParquetFileReader}, and assert the reconstructed list sizes, element values, map entries, and nested struct
+ * fields match what was authored.
  *
  * <p>These tests close the striper to engine to reader loop: the Dremel striper synthesizes the repetition and
  * definition levels for each repeated leaf, the column chunk writer bakes them into data pages, and the read-side
@@ -74,7 +74,7 @@ class ListMapWriteRoundTripIT {
         Path out = tempDir.resolve("list_int32.parquet");
 
         WriteOptions opts = WriteOptions.builder().tempDir(tempDir).build();
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(out), schema, opts)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(out), schema, opts)) {
             ParquetRecordBatchBuilder appender = writer.appender();
             appender.beginList("nums")
                     .addInt(10)
@@ -116,7 +116,7 @@ class ListMapWriteRoundTripIT {
         ColumnPath valuePath = ColumnPath.of("key_value", "value");
 
         WriteOptions opts = WriteOptions.builder().tempDir(tempDir).build();
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(out), schema, opts)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(out), schema, opts)) {
             ParquetRecordBatchBuilder appender = writer.appender();
             appender.beginMap("tags")
                     .putEntry()
@@ -159,7 +159,7 @@ class ListMapWriteRoundTripIT {
         Path out = tempDir.resolve("two_level_list_int32.parquet");
 
         WriteOptions opts = WriteOptions.builder().tempDir(tempDir).build();
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(out), schema, opts)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(out), schema, opts)) {
             ParquetRecordBatchBuilder appender = writer.appender();
             appender.beginList("nums").addInt(1).addInt(2).endList().endRow();
             appender.beginList("nums").endList().endRow();
@@ -193,7 +193,7 @@ class ListMapWriteRoundTripIT {
         ColumnPath postcode = ColumnPath.of("element", "postcode");
 
         WriteOptions opts = WriteOptions.builder().tempDir(tempDir).build();
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(out), schema, opts)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(out), schema, opts)) {
             ParquetRecordBatchBuilder appender = writer.appender();
             appender.beginList("addresses")
                     .addElement()

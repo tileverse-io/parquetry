@@ -2,7 +2,7 @@
 
 A SpatioTemporal Asset Catalog (STAC) reader on the parquetry dataset/catalog API. It walks a STAC catalog, exposes each
 collection as one queryable dataset over the collection's GeoParquet parts, and prunes whole files by item bounding box
-before any footer opens. It plugs into the same `DatasetCatalog` -> `Dataset` API the pure-parquet, Iceberg, and GeoTools
+before any footer opens. It plugs into the same `DatasetCatalog` -> `ParquetDataset` API the pure-parquet, Iceberg, and GeoTools
 paths use, and a STAC collection reads like any other dataset. No dependency on a GeoTools or GeoServer API; the GeoTools
 `StacDataStoreFactory` that turns a catalog into a multi-feature-type store lives in `parquetry-geotools`.
 
@@ -52,7 +52,7 @@ try (Storage storage = StorageFactory.open(catalog.resolve("."));
         StacDatasetCatalog stac =
                 StacDatasetCatalog.open(catalog, storage, new JsonStacReader(), StacCatalogOptions.defaults())) {
 
-    Dataset buildings = stac.dataset("building");
+    ParquetDataset buildings = stac.dataset("building");
 
     Bbox window = Bbox.of2d(-125.0, 32.0, -115.0, 42.0);
     Predicate inWindow = new Predicate.Spatial.BboxIntersects(ColumnPath.of("geometry"), window);

@@ -29,9 +29,9 @@ import java.util.Set;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
-import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
@@ -74,7 +74,8 @@ final class SyntheticParquet {
 
     /** Writes one file of {@code (id, value=id*0.25)} rows in the given id order, under the supplied write options. */
     static void writeIdValueFile(Path file, WriteOptions options, long[] ids) throws IOException {
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), idValueSchema(), options)) {
+        try (ParquetFileWriter writer =
+                ParquetFileWriter.create(Files.newOutputStream(file), idValueSchema(), options)) {
             ParquetRecordBatchBuilder appender = writer.appender();
             for (long id : ids) {
                 appender.setLong(0, id).setDouble(1, id * 0.25);
@@ -87,7 +88,7 @@ final class SyntheticParquet {
     /** Opens a reader over {@code file}; the returned handle owns the byte source it closes. */
     static OpenDataset open(Path file) {
         ByteRangeSource source = ByteRangeSource.ofFile(file);
-        return new OpenDataset(source, ParquetReader.open(source));
+        return new OpenDataset(source, ParquetFileReader.open(source));
     }
 
     static void deleteRecursively(Path dir) throws IOException {
@@ -133,7 +134,7 @@ final class SyntheticParquet {
      */
     static void writeWideFile(Path file, WriteOptions options, long[] ids, int valueColumns) throws IOException {
         ParquetSchema schema = wideSchema(valueColumns);
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             ParquetRecordBatchBuilder appender = writer.appender();
             for (long id : ids) {
                 appender.setLong(0, id);
@@ -170,14 +171,14 @@ final class SyntheticParquet {
     static final class OpenDataset implements AutoCloseable {
 
         private final ByteRangeSource source;
-        private final ParquetReader reader;
+        private final ParquetFileReader reader;
 
-        private OpenDataset(ByteRangeSource source, ParquetReader reader) {
+        private OpenDataset(ByteRangeSource source, ParquetFileReader reader) {
             this.source = source;
             this.reader = reader;
         }
 
-        ParquetReader reader() {
+        ParquetFileReader reader() {
             return reader;
         }
 

@@ -31,7 +31,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.ParquetWriter;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.BloomFilterConfig;
 import io.tileverse.parquetry.format.ColumnChunk;
@@ -72,7 +72,7 @@ class BloomFilterWriteTest {
         for (long value : inserted) {
             rows.add(Map.of(ColumnPath.of("id"), value));
         }
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
 
@@ -115,7 +115,7 @@ class BloomFilterWriteTest {
                     ColumnPath.of("name"),
                     java.lang.foreign.MemorySegment.ofArray(payloads[i]).asReadOnly()));
         }
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             writer.writeBatch(WriteFixtures.batch(schema, rowMaps));
         }
 
@@ -137,7 +137,7 @@ class BloomFilterWriteTest {
         for (int i = 0; i < 10; i++) {
             rows.add(Map.of(ColumnPath.of("id"), i));
         }
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
 
@@ -160,7 +160,7 @@ class BloomFilterWriteTest {
                     ColumnPath.of("b"), i + 1,
                     ColumnPath.of("c"), i + 2));
         }
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
 
@@ -184,7 +184,7 @@ class BloomFilterWriteTest {
                 rows.add(Map.of(ColumnPath.of("category"), cat));
             }
         }
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
 
@@ -213,7 +213,7 @@ class BloomFilterWriteTest {
         for (int i = 0; i < 1_000; i++) {
             rows.add(Map.of(ColumnPath.of("value"), i));
         }
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
 

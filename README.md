@@ -47,7 +47,7 @@ Geometry decoding to JTS objects ships in `parquetry-core` (package `io.tilevers
 ```java
 import static io.tileverse.parquetry.filter.Pred.col;
 
-import io.tileverse.parquetry.data.ParquetDataset;
+import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -63,7 +63,7 @@ Path file = Path.of("buildings.parquet");
 try (Storage storage = StorageFactory.open(file.getParent().toUri());
         RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
 
-    ParquetDataset dataset = ParquetDataset.open(reader);
+    ParquetSource dataset = ParquetSource.open(reader);
     try (Stream<ParquetRecord> records = dataset.read(
             col("year").gtEq(2020).and(col("country").eq("AR")),
             Projection.of(Set.of(ColumnPath.of("year"), ColumnPath.of("country"))),
@@ -94,16 +94,16 @@ Each batch owns its own `Arena` and must be closed once consumed.
 ### Writing
 
 ```java
-import io.tileverse.parquetry.data.ParquetWriter;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.util.Iterator;
 
 // Re-encode a file with the default profile (Parquet 2.0, ZSTD).
-try (ParquetDataset source = ParquetDataset.open(reader);
+try (ParquetSource source = ParquetSource.open(reader);
         OutputStream out = Files.newOutputStream(Path.of("copy.parquet"));
-        ParquetWriter writer = ParquetWriter.create(out, source.schema(), WriteOptions.defaults());
+        ParquetFileWriter writer = ParquetFileWriter.create(out, source.schema(), WriteOptions.defaults());
         Stream<ParquetRecordBatch> batches = source.readBatches()) {
 
     Iterator<ParquetRecordBatch> it = batches.iterator();

@@ -21,7 +21,7 @@ package io.tileverse.parquetry.schema;
  * {@code row.getLong(stringCol)}).
  *
  * <p>Raised at the moment the caller-supplied column identity is checked against the schema: eagerly at
- * {@code ParquetDataset.read()} setup time for {@code Predicate} and {@code Projection}, lazily per-cell for row and
+ * {@code ParquetSource.read()} setup time for {@code Predicate} and {@code Projection}, lazily per-cell for row and
  * batch accessors that the caller drives after a record is materialized. Either way the condition describes a
  * programming error in the caller (a malformed predicate, projection, or accessor built against the wrong schema), not
  * a recoverable I/O state.

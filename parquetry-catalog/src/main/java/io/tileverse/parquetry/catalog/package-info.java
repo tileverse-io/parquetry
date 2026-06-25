@@ -17,6 +17,6 @@
  * Catalog abstraction: the {@link io.tileverse.parquetry.catalog.DatasetCatalog} SPI and
  * {@link io.tileverse.parquetry.catalog.CatalogCapabilities}, with
  * {@link io.tileverse.parquetry.catalog.FilesetCatalog} resolving the files of a
- * {@link io.tileverse.parquetry.io.FileSource} into one merged {@link io.tileverse.parquetry.dataset.Dataset}.
+ * {@link io.tileverse.parquetry.io.FileSource} into one merged {@link io.tileverse.parquetry.dataset.ParquetDataset}.
  */
 package io.tileverse.parquetry.catalog;

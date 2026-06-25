@@ -44,7 +44,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -107,7 +107,7 @@ class DuckDbInt96IT {
     }
 
     private List<Long> exportThroughArrow(FileChannel channel, DuckDBConnection conn) throws Exception {
-        ParquetReader reader = ParquetReader.open(ByteRangeSource.ofChannel(channel));
+        ParquetFileReader reader = ParquetFileReader.open(ByteRangeSource.ofChannel(channel));
         ParquetSchema schema = reader.schema();
         ParquetRecordBatch firstBatch = reader.readBatches(
                         Predicate.ALWAYS_TRUE, new Projection.All(), ReadOptions.DEFAULTS)

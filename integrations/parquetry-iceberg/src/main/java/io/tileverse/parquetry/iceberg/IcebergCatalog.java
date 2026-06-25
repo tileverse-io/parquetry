@@ -31,17 +31,17 @@ import io.tileverse.parquetry.catalog.CatalogCapabilities;
 import io.tileverse.parquetry.catalog.CatalogCapabilities.SchemaSource;
 import io.tileverse.parquetry.catalog.DatasetCatalog;
 import io.tileverse.parquetry.dataset.CatalogSnapshot;
-import io.tileverse.parquetry.dataset.Dataset;
 import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.prune.FileStats;
 import io.tileverse.parquetry.io.ByteRangeSource;
 
 /**
- * Reads one Iceberg table at a pinned snapshot as a {@link Dataset}. The filesystem entry point reads
+ * Reads one Iceberg table at a pinned snapshot as a {@link ParquetDataset}. The filesystem entry point reads
  * {@code <tableDir>/metadata/<vN>.metadata.json}; data and manifest bytes come through an {@link IcebergFileIO}. The
  * catalog pre-opens every data file's byte source once and owns them for its lifetime; each query opens a short-lived
- * {@link ParquetDataset} over only the survivor subset and never closes the shared sources. The catalog closes all
+ * {@link ParquetSource} over only the survivor subset and never closes the shared sources. The catalog closes all
  * sources and the IO in {@link #close()}. Identity-partitioned tables prune files by partition value and reconstruct
  * omitted partition columns; delete manifests fail fast (follow-on work).
  */
@@ -170,7 +170,7 @@ public final class IcebergCatalog implements DatasetCatalog {
     }
 
     @Override
-    public Dataset dataset(String name) {
+    public ParquetDataset dataset(String name) {
         if (!tableName.equals(name)) {
             throw new IllegalArgumentException("no dataset named '" + name + "' (have '" + tableName + "')");
         }

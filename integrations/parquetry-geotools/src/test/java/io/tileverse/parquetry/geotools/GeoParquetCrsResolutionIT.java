@@ -26,7 +26,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 import io.tileverse.parquetry.testkit.TestCorpus;
@@ -59,7 +59,7 @@ class GeoParquetCrsResolutionIT {
     void resolvesGeometryCrs(String fixture, int expectedEpsg, @TempDir Path dir) throws Exception {
         Path file = TestCorpus.extractFile("geoparquet-testing/data/crs/" + fixture, dir);
         try (ByteRangeSource src = ByteRangeSource.ofFile(file)) {
-            ParquetDataset ds = ParquetDataset.open(src);
+            ParquetSource ds = ParquetSource.open(src);
             Optional<GeoParquetMetadata> geo =
                     Optional.of(GeoParquetMetadata.parse(ds.keyValueMetadata().get("geo")));
             GeoParquetSchemaMapper.Mapping mapping = GeoParquetSchemaMapper.map(fixture, null, ds.schema(), geo, null);

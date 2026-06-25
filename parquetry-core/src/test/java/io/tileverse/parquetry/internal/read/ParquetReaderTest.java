@@ -27,7 +27,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Pred;
@@ -46,7 +46,7 @@ class ParquetReaderTest {
     void provenMatchedPredicateReturnsEveryRowAndEqualsUnfilteredRead(@TempDir Path tmp) throws Exception {
         Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(tmp, 4_000);
         try (ByteRangeSource src = TestParquetFiles.openRangeReader(file)) {
-            ParquetReader reader = ParquetReader.open(src);
+            ParquetFileReader reader = ParquetFileReader.open(src);
 
             long all;
             try (Stream<ParquetRecord> s = reader.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
@@ -69,12 +69,12 @@ class ParquetReaderTest {
         }
     }
 
-    private static boolean everyRowGroupMatched(ParquetReader reader, Predicate predicate) {
+    private static boolean everyRowGroupMatched(ParquetFileReader reader, Predicate predicate) {
         return everyRowGroupHasOutcome(reader, predicate, RowGroupOutcome.MATCHED);
     }
 
     private static boolean everyRowGroupHasOutcome(
-            ParquetReader reader, Predicate predicate, RowGroupOutcome expected) {
+            ParquetFileReader reader, Predicate predicate, RowGroupOutcome expected) {
         ExplainPlan plan = reader.explain(predicate, Projection.ALL, ReadOptions.DEFAULTS);
         for (RowGroupPlan rowGroup : plan.rowGroups()) {
             if (rowGroup.outcome() != expected) {
@@ -91,7 +91,7 @@ class ParquetReaderTest {
     void countEqualsFilteredReadCount(Predicate p, @TempDir Path tmp) throws Exception {
         Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(tmp, 4_000);
         try (ByteRangeSource src = TestParquetFiles.openRangeReader(file)) {
-            ParquetReader reader = ParquetReader.open(src);
+            ParquetFileReader reader = ParquetFileReader.open(src);
             long viaCount = reader.count(p, ReadOptions.DEFAULTS);
             long viaRead;
             try (Stream<ParquetRecord> rows = reader.read(p, Projection.ALL, ReadOptions.DEFAULTS)) {
@@ -120,7 +120,7 @@ class ParquetReaderTest {
         Path file = TestParquetFiles.writeFixedLenColumnFileMultiRowGroup(tmp, 4_000);
         Predicate p = Pred.col("uid").eq(TestParquetFiles.fixedUid(1_234));
         try (ByteRangeSource src = TestParquetFiles.openRangeReader(file)) {
-            ParquetReader reader = ParquetReader.open(src);
+            ParquetFileReader reader = ParquetFileReader.open(src);
 
             assertThat(everyRowGroupHasOutcome(reader, p, RowGroupOutcome.ELIMINATED))
                     .as("a residual row group must remain, otherwise the vectorized binary arm is never reached")
@@ -139,7 +139,7 @@ class ParquetReaderTest {
     void matchedAndEliminatedPredicatesLandWhereIntended(@TempDir Path tmp) throws Exception {
         Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(tmp, 4_000);
         try (ByteRangeSource src = TestParquetFiles.openRangeReader(file)) {
-            ParquetReader reader = ParquetReader.open(src);
+            ParquetFileReader reader = ParquetFileReader.open(src);
 
             assertThat(everyRowGroupHasOutcome(reader, Pred.col("year").gtEq(2020), RowGroupOutcome.MATCHED))
                     .as("year >= 2020 must prove MATCHED for every row group")
@@ -156,7 +156,7 @@ class ParquetReaderTest {
         SegmentPool pool = SegmentPool.create();
         ParquetRuntime runtime = ParquetRuntime.builder().segmentPool(pool).build();
         try (ByteRangeSource src = TestParquetFiles.openRangeReader(file)) {
-            long n = ParquetReader.open(src, runtime, Optional.empty())
+            long n = ParquetFileReader.open(src, runtime, Optional.empty())
                     .count(Pred.col("year").gtEq(2020), ReadOptions.DEFAULTS);
             assertThat(n).isPositive();
             assertThat(pool.stats().totalBorrows())

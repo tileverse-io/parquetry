@@ -35,22 +35,22 @@ import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.testsupport.CorpusFixtures;
 
-class ParquetDatasetConstantColumnsTest {
+class ParquetSourceConstantColumnsTest {
 
     private static final Path FILE = CorpusFixtures.parquetTestingData().resolve("alltypes_plain.parquet");
 
     @Test
     void appendsConstantColumnToEveryRow() throws Exception {
-        try (ByteRangeSource source = ByteRangeSource.ofFile(FILE)) {
-            ParquetDataset dataset = ParquetDataset.open(source);
+        try (ByteRangeSource byteSource = ByteRangeSource.ofFile(FILE)) {
+            ParquetSource source = ParquetSource.open(byteSource);
             ColumnPath yearPart = ColumnPath.of("year_part");
             List<OutputColumn> output = new ArrayList<>();
-            for (ColumnPath leaf : dataset.schema().leafColumns()) {
+            for (ColumnPath leaf : source.schema().leafColumns()) {
                 output.add(new OutputColumn.Physical(leaf, leaf));
             }
             output.add(new OutputColumn.Constant(yearPart, new Value.IntVal(2024)));
             Query query = new Query(Predicate.ALWAYS_TRUE, Projection.ALL, output);
-            try (Stream<ParquetRecord> rows = dataset.read(query, ReadOptions.DEFAULTS)) {
+            try (Stream<ParquetRecord> rows = source.read(query, ReadOptions.DEFAULTS)) {
                 List<ParquetRecord> materialized =
                         rows.map(ParquetRecord::detach).toList();
                 assertThat(materialized).isNotEmpty();

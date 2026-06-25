@@ -35,8 +35,8 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
-import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -74,7 +74,7 @@ class StructNestedListWriteConformanceIT {
         Path file = tempDir.resolve("person-phones.parquet");
 
         WriteOptions opts = WriteOptions.builder().tempDir(tempDir).build();
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, opts)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, opts)) {
             ParquetRecordBatchBuilder appender = writer.appender();
 
             appender.beginStruct(PERSON)
@@ -134,7 +134,7 @@ class StructNestedListWriteConformanceIT {
         ColumnPath valuePath = ColumnPath.of("key_value", "value");
 
         WriteOptions opts = WriteOptions.builder().tempDir(tempDir).build();
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, opts)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, opts)) {
             ParquetRecordBatchBuilder appender = writer.appender();
 
             appender.beginStruct(PERSON)

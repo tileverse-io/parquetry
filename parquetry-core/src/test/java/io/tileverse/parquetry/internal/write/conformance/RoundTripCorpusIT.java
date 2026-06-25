@@ -37,9 +37,9 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
-import io.tileverse.parquetry.data.ParquetWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.EncodingPolicy;
@@ -76,7 +76,7 @@ class RoundTripCorpusIT {
         ParquetSchema schema;
         List<RowSnapshot> originalRows;
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixture)) {
-            ParquetReader dataset = ParquetReader.open(source);
+            ParquetFileReader dataset = ParquetFileReader.open(source);
             schema = dataset.schema();
             assumeTrue(isFlatPrimitiveSchema(schema), "fixture has nested or repeated columns");
             assumeTrue(
@@ -174,7 +174,7 @@ class RoundTripCorpusIT {
 
     // --- snapshot + rewrite ---
 
-    private static List<RowSnapshot> snapshotRows(ParquetReader dataset, ParquetSchema schema) {
+    private static List<RowSnapshot> snapshotRows(ParquetFileReader dataset, ParquetSchema schema) {
         List<ColumnPath> leaves = schema.leafColumns();
         List<RowSnapshot> snapshots = new ArrayList<>();
         try (Stream<ParquetRecord> records =
@@ -220,7 +220,7 @@ class RoundTripCorpusIT {
         }
         WriteOptions options = builder.build();
         List<ColumnPath> leaves = schema.leafColumns();
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(destination), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(destination), schema, options)) {
             ParquetRecordBatchBuilder appender = writer.appender();
             for (RowSnapshot row : rows) {
                 appendSnapshotRow(appender, schema, leaves, row);
@@ -261,13 +261,13 @@ class RoundTripCorpusIT {
 
     private static List<RowSnapshot> readRowsFromFile(Path file) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             List<ColumnPath> leaves = reader.schema().leafColumns();
             return snapshotRowsFromReader(reader, leaves);
         }
     }
 
-    private static List<RowSnapshot> snapshotRowsFromReader(ParquetReader reader, List<ColumnPath> leaves) {
+    private static List<RowSnapshot> snapshotRowsFromReader(ParquetFileReader reader, List<ColumnPath> leaves) {
         List<RowSnapshot> snapshots = new ArrayList<>();
         try (Stream<ParquetRecord> records = reader.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
             records.forEach(parquetRecord -> snapshots.add(snapshotRow(parquetRecord, leaves)));

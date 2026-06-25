@@ -24,7 +24,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Stream;
 
-import io.tileverse.parquetry.dataset.Dataset;
 import io.tileverse.parquetry.dataset.DatasetCapabilities;
 import io.tileverse.parquetry.dataset.FilesetDataset;
 import io.tileverse.parquetry.dataset.FilesetReader;
@@ -32,6 +31,7 @@ import io.tileverse.parquetry.dataset.GeoMetadataAggregator;
 import io.tileverse.parquetry.dataset.HivePartitionResolver;
 import io.tileverse.parquetry.dataset.HivePartitioning;
 import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.filter.prune.FileStats;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.FileEntry;
@@ -62,10 +62,10 @@ public final class FilesetCatalog implements DatasetCatalog {
 
     private final FileSource source;
     private final List<ByteRangeSource> openSources;
-    private final Dataset dataset;
+    private final ParquetDataset dataset;
     private final CatalogCapabilities capabilities;
 
-    private FilesetCatalog(FileSource source, List<ByteRangeSource> openSources, Dataset dataset) {
+    private FilesetCatalog(FileSource source, List<ByteRangeSource> openSources, ParquetDataset dataset) {
         this.source = source;
         this.openSources = openSources;
         this.dataset = dataset;
@@ -104,7 +104,7 @@ public final class FilesetCatalog implements DatasetCatalog {
             for (FileEntry file : files) {
                 opened.add(file.open());
             }
-            Dataset built = buildDataset(files, opened, options, source.root());
+            ParquetDataset built = buildDataset(files, opened, options, source.root());
             return new FilesetCatalog(source, opened, built);
         } catch (RuntimeException failure) {
             RuntimeException cleanup = closeAll(opened, source);
@@ -116,14 +116,14 @@ public final class FilesetCatalog implements DatasetCatalog {
     }
 
     @SuppressWarnings("java:S2259") // open() guarantees at least one file; the loop always assigns unifiedSchema
-    private static Dataset buildDataset(
+    private static ParquetDataset buildDataset(
             List<FileEntry> files, List<ByteRangeSource> opened, CatalogOptions options, URI root) {
         List<GeoParquetMetadata> perFileGeo = new ArrayList<>();
         List<Map<String, String>> perFilePartitions = new ArrayList<>(files.size());
         List<FileStats> perFileFooterStats = new ArrayList<>(files.size());
         ParquetSchema unifiedSchema = null;
         for (int index = 0; index < files.size(); index++) {
-            ParquetDataset fileDataset = ParquetDataset.open(opened.get(index));
+            ParquetSource fileDataset = ParquetSource.open(opened.get(index));
             ParquetSchema schema = fileDataset.schema();
             if (unifiedSchema == null) {
                 unifiedSchema = schema;
@@ -147,7 +147,7 @@ public final class FilesetCatalog implements DatasetCatalog {
         }
 
         Optional<GeoParquetMetadata> aggregatedGeo = GeoMetadataAggregator.aggregate(perFileGeo);
-        ParquetDataset allFiles = ParquetDataset.open(new PreOpenedFileset(opened));
+        ParquetSource allFiles = ParquetSource.open(new PreOpenedFileset(opened));
         DatasetCapabilities caps = capabilities(partitioning, aggregatedGeo);
         String name = options.datasetName().orElseGet(() -> deriveName(files, root));
         List<String> locations = files.stream().map(FileEntry::relativePath).toList();
@@ -161,7 +161,7 @@ public final class FilesetCatalog implements DatasetCatalog {
      * whose value cannot be parsed contributes no geo metadata: an unparseable or forward-incompatible {@code geo}
      * block is logged and skipped rather than aborting the whole catalog open.
      */
-    private static Optional<GeoParquetMetadata> parseGeoMetadata(ParquetDataset fileDataset, FileEntry file) {
+    private static Optional<GeoParquetMetadata> parseGeoMetadata(ParquetSource fileDataset, FileEntry file) {
         String geoJson = fileDataset.keyValueMetadata().get("geo");
         if (geoJson == null || geoJson.isBlank()) {
             return Optional.empty();
@@ -205,7 +205,7 @@ public final class FilesetCatalog implements DatasetCatalog {
     }
 
     @Override
-    public Dataset dataset(String name) {
+    public ParquetDataset dataset(String name) {
         if (!dataset.name().equals(name)) {
             throw new IllegalArgumentException("no dataset named '" + name + "' (have '" + dataset.name() + "')");
         }

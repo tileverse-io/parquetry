@@ -40,7 +40,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.ParquetWriter;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.ParquetVersion;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
@@ -108,7 +108,7 @@ class V1WriteBridgeIT {
                 .parquetVersion(ParquetVersion.V1_1)
                 .crsEpsg("geometry", 4326)
                 .build();
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             writer.writeBatch(WriteFixtures.batch(
                     schema, List.of(Map.of(ColumnPath.of("geometry"), MemorySegment.ofArray(wkbPoint(1.0, 2.0))))));
         }
@@ -188,7 +188,7 @@ class V1WriteBridgeIT {
     private static void writeRows(
             Path file, ParquetSchema schema, WriteOptions options, List<Map<ColumnPath, Object>> rows)
             throws IOException {
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
     }

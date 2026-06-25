@@ -11,7 +11,7 @@ Adapts [tileverse-storage](https://tileverse.io/storage/) to parquetry's read SP
 
 ### Ownership
 
-`ByteRangeSources.from(reader)` **borrows** the reader: the returned source's `close()` is a no-op, and the caller still closes the `RangeReader` after the last read. This mirrors `ByteRangeSource.ofChannel(...)` and matches tileverse's model, where a `RangeReader` is typically shared and cached across reads. A `ParquetDataset` never owns its source either.
+`ByteRangeSources.from(reader)` **borrows** the reader: the returned source's `close()` is a no-op, and the caller still closes the `RangeReader` after the last read. This mirrors `ByteRangeSource.ofChannel(...)` and matches tileverse's model, where a `RangeReader` is typically shared and cached across reads. A `ParquetSource` never owns its source either.
 
 ### One pool for two readers
 
@@ -27,7 +27,7 @@ On a single GeoServer instance the PMTiles `DataStore` (tileverse-storage, Java 
        ByteRangeSource                  (parquetry-io SPI)
             |
             v
-   ParquetDataset.open(source) -> read(predicate, projection, options)
+   ParquetSource.open(source) -> read(predicate, projection, options)
                                          (pure-JDK parquetry-core)
 
   tileverse ByteBufferPool
@@ -42,7 +42,7 @@ On a single GeoServer instance the PMTiles `DataStore` (tileverse-storage, Java 
 import io.tileverse.parquetry.tileverse.ByteRangeSources;
 import io.tileverse.parquetry.tileverse.SegmentPools;
 import io.tileverse.parquetry.io.ByteRangeSource;
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.io.ByteBufferPool;
 import io.tileverse.storage.RangeReader;
@@ -54,7 +54,7 @@ try (Storage storage = StorageFactory.open(URI.create("s3://bucket/"));
         RangeReader reader = storage.openRangeReader("data.parquet");
         ByteRangeSource source = ByteRangeSources.from(reader)) {
 
-    ParquetDataset dataset = ParquetDataset.open(source);
+    ParquetSource dataset = ParquetSource.open(source);
     try (Stream<ParquetRecord> rows = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
         rows.forEach(...);
     }
@@ -82,7 +82,7 @@ ReadOptions options = ReadOptions.builder()
 
 - `parquetry-io` (compile) - the `ByteRangeSource` / `SegmentPool` SPIs this module implements.
 - `tileverse-storage-all` (compile) - `RangeReader` and `ByteBufferPool` plus every storage provider, pulling in `tileverse-storage-core` (local + HTTP) and the `tileverse-storage-s3` / `-azure` / `-gcs` provider modules. A consumer adding this module gets cloud reads without choosing a provider artifact themselves; for a leaner footprint, depend on `parquetry-io` and a single provider directly. Versions come from the imported `io.tileverse:tileverse-bom`.
-- Test scope: `parquetry-core` (the `ParquetDataset` entry point), `parquetry-testkit` (bundled corpora), and TestContainers/LocalStack for the `CloudStorageIT` end-to-end check (the S3 provider arrives via `tileverse-storage-all`).
+- Test scope: `parquetry-core` (the `ParquetSource` entry point), `parquetry-testkit` (bundled corpora), and TestContainers/LocalStack for the `CloudStorageIT` end-to-end check (the S3 provider arrives via `tileverse-storage-all`).
 
 ## Maven
 

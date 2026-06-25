@@ -31,7 +31,7 @@ import io.tileverse.storage.StorageFactory;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.cli.support.Fixtures;
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -46,9 +46,9 @@ class RecordBatchPackerTest {
         Fixtures.writeCities(file);
         try (Storage storage = StorageFactory.open(dir.toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(ByteRangeSources.from(reader));
-            ParquetSchema schema = dataset.schema();
-            List<ParquetRecordBatch> batches = packAll(dataset, schema, 1024);
+            ParquetSource source = ParquetSource.open(ByteRangeSources.from(reader));
+            ParquetSchema schema = source.schema();
+            List<ParquetRecordBatch> batches = packAll(source, schema, 1024);
             try {
                 assertThat(batches).hasSize(1);
                 ParquetRecordBatch batch = batches.get(0);
@@ -69,9 +69,9 @@ class RecordBatchPackerTest {
         Fixtures.writeCities(file);
         try (Storage storage = StorageFactory.open(dir.toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ParquetDataset dataset = ParquetDataset.open(ByteRangeSources.from(reader));
-            ParquetSchema schema = dataset.schema();
-            List<ParquetRecordBatch> batches = packAll(dataset, schema, 2);
+            ParquetSource source = ParquetSource.open(ByteRangeSources.from(reader));
+            ParquetSchema schema = source.schema();
+            List<ParquetRecordBatch> batches = packAll(source, schema, 2);
             try {
                 assertThat(batches).hasSize(2);
                 assertThat(batches.get(0).rowCount()).isEqualTo(2);
@@ -82,8 +82,8 @@ class RecordBatchPackerTest {
         }
     }
 
-    private static List<ParquetRecordBatch> packAll(ParquetDataset dataset, ParquetSchema schema, int targetRows) {
-        try (Stream<ParquetRecord> rows = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
+    private static List<ParquetRecordBatch> packAll(ParquetSource source, ParquetSchema schema, int targetRows) {
+        try (Stream<ParquetRecord> rows = source.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
             return RecordBatchPacker.pack(rows, schema, targetRows).toList();
         }
     }

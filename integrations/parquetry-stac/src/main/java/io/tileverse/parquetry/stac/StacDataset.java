@@ -33,7 +33,7 @@ import io.tileverse.parquetry.dataset.DatasetCapabilities.FileSpatialBounds;
 import io.tileverse.parquetry.dataset.DatasetCapabilities.FileStatsSource;
 import io.tileverse.parquetry.dataset.FilesetReader;
 import io.tileverse.parquetry.dataset.GeoParquetDataset;
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.dataset.explain.DatasetExplainPlan;
 import io.tileverse.parquetry.dataset.explain.FileExplain;
 import io.tileverse.parquetry.dataset.explain.Outcome;
@@ -58,12 +58,12 @@ import io.tileverse.stac.StacItem;
 /**
  * A {@link GeoParquetDataset} over one STAC collection: each data part is a GeoParquet file named by a collection
  * item's data asset, with the item's bbox standing in for the file's spatial bounds. Before each query the dataset
- * prunes the parts whose item bbox cannot match the predicate and opens a {@link ParquetDataset} over only the
+ * prunes the parts whose item bbox cannot match the predicate and opens a {@link ParquetSource} over only the
  * survivors. Pruning is pure work-avoidance; the result is identical to scanning every part. Schema and geo metadata
  * are read once from a representative part.
  *
  * <p>The byte sources are pre-opened and owned by the catalog that builds the dataset; the per-part
- * {@link ParquetDataset} borrows the survivor subset and never closes them.
+ * {@link ParquetSource} borrows the survivor subset and never closes them.
  */
 public final class StacDataset implements GeoParquetDataset {
 
@@ -71,7 +71,7 @@ public final class StacDataset implements GeoParquetDataset {
     private final List<StacItemRef> items;
     private final List<FileStats> fileStats;
     private final List<ByteRangeSource> sources;
-    private final ConcurrentHashMap<Integer, ParquetDataset> perFileDatasets = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Integer, ParquetSource> perFileDatasets = new ConcurrentHashMap<>();
 
     private volatile ParquetSchema schema;
     private volatile Optional<GeoParquetMetadata> geoMetadata;
@@ -227,7 +227,7 @@ public final class StacDataset implements GeoParquetDataset {
         if (decision instanceof PruningDecision.Eliminated ruledOut) {
             return new FileExplain(location, Outcome.SKIP, ruledOut.reason(), unknownCount, Optional.empty());
         }
-        ParquetDataset survivor = perFile(index);
+        ParquetSource survivor = perFile(index);
         Query query = Query.of(predicate, projection);
         ExplainPlan plan = analyze ? survivor.explainAnalyze(query, options) : survivor.explain(query, options);
         return new FileExplain(location, Outcome.KEEP, "kept", unknownCount, Optional.of(plan));
@@ -246,16 +246,16 @@ public final class StacDataset implements GeoParquetDataset {
     }
 
     /**
-     * The single-part {@link ParquetDataset} over the source at {@code index}, parsed once and reused across queries
-     * and threads. {@code computeIfAbsent} gives one footer parse per index even under concurrent reads; the dataset
+     * The single-part {@link ParquetSource} over the source at {@code index}, parsed once and reused across queries and
+     * threads. {@code computeIfAbsent} gives one footer parse per index even under concurrent reads; the dataset
      * borrows the catalog's shared source, which the catalog owns and closes.
      */
-    private ParquetDataset perFile(int index) {
+    private ParquetSource perFile(int index) {
         return perFileDatasets.computeIfAbsent(
-                index, i -> ParquetDataset.open(new SurvivorFileset(sources, List.of(i))));
+                index, i -> ParquetSource.open(new SurvivorFileset(sources, List.of(i))));
     }
 
-    private Optional<GeoParquetMetadata> parseGeo(ParquetDataset representative) {
+    private Optional<GeoParquetMetadata> parseGeo(ParquetSource representative) {
         String geoJson = representative.keyValueMetadata().get("geo");
         if (geoJson == null || geoJson.isBlank()) {
             return Optional.empty();

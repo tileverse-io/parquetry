@@ -40,8 +40,8 @@ import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
- * Coverage for {@link ParquetReader#readBatches()} and the {@link ReadOptions#batchSize()} cap. Fixtures are written
- * via {@code parquet-avro} with small row groups so multiple batches are emitted per file.
+ * Coverage for {@link ParquetFileReader#readBatches()} and the {@link ReadOptions#batchSize()} cap. Fixtures are
+ * written via {@code parquet-avro} with small row groups so multiple batches are emitted per file.
  */
 class ReadBatchesTest {
 
@@ -52,7 +52,7 @@ class ReadBatchesTest {
         writeFixture(file, generateRows(rowCount));
 
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader dataset = ParquetReader.open(source);
+            ParquetFileReader dataset = ParquetFileReader.open(source);
 
             long totalRows = 0L;
             int batchCount = 0;
@@ -82,7 +82,7 @@ class ReadBatchesTest {
         ReadOptions options = ReadOptions.builder().batchSize(100).build();
 
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader dataset = ParquetReader.open(source);
+            ParquetFileReader dataset = ParquetFileReader.open(source);
 
             long totalRows = 0L;
             int maxObservedBatchSize = 0;
@@ -115,7 +115,7 @@ class ReadBatchesTest {
         ColumnPath yearPath = ColumnPath.of("year");
 
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader dataset = ParquetReader.open(source);
+            ParquetFileReader dataset = ParquetFileReader.open(source);
 
             List<Integer> seenYears = new ArrayList<>(rowCount);
             try (Stream<ParquetRecordBatch> batches =

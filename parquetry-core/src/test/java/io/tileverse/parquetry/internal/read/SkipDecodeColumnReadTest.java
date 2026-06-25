@@ -33,7 +33,7 @@ import org.junit.jupiter.api.io.TempDir;
 import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.LongVector;
 import io.tileverse.parquetry.batch.Validity;
-import io.tileverse.parquetry.data.ParquetWriter;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.filter.RowRanges.Range;
@@ -192,7 +192,7 @@ class SkipDecodeColumnReadTest {
         for (int v = 0; v < ROW_COUNT; v++) {
             rows.add(requiredRow(v));
         }
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, pageEvery())) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, pageEvery())) {
             writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
         return file;
@@ -205,7 +205,7 @@ class SkipDecodeColumnReadTest {
         for (int v = 0; v < ROW_COUNT; v++) {
             rows.add(nullableRow(v));
         }
-        try (ParquetWriter writer = ParquetWriter.create(Files.newOutputStream(file), schema, pageEvery())) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, pageEvery())) {
             writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
         return file;

@@ -28,7 +28,7 @@ import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
 
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -43,9 +43,9 @@ class FixturesTest {
         Fixtures.writeCities(file);
         try (Storage storage = StorageFactory.open(dir.toUri());
                 RangeReader reader = storage.openRangeReader("cities.parquet")) {
-            ParquetDataset dataset = ParquetDataset.open(ByteRangeSources.from(reader));
+            ParquetSource source = ParquetSource.open(ByteRangeSources.from(reader));
             try (Stream<ParquetRecord> rows =
-                    dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
+                    source.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 assertThat(rows.count()).isEqualTo(4L);
             }
         }
@@ -57,14 +57,14 @@ class FixturesTest {
         Fixtures.writeGeoCities(file);
         try (Storage storage = StorageFactory.open(dir.toUri());
                 RangeReader reader = storage.openRangeReader("geo-cities.parquet")) {
-            ParquetDataset dataset = ParquetDataset.open(ByteRangeSources.from(reader));
-            boolean hasGeometry = dataset.schema().root().children().stream()
+            ParquetSource source = ParquetSource.open(ByteRangeSources.from(reader));
+            boolean hasGeometry = source.schema().root().children().stream()
                     .filter(node -> node instanceof SchemaNode.Primitive)
                     .map(node -> (SchemaNode.Primitive) node)
                     .anyMatch(p -> "geometry".equals(p.name()));
             assertThat(hasGeometry).isTrue();
             try (Stream<ParquetRecord> rows =
-                    dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
+                    source.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 assertThat(rows.count()).isEqualTo(2L);
             }
         }

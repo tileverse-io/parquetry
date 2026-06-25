@@ -24,7 +24,7 @@ import io.tileverse.parquetry.cli.StorageOptions;
 import io.tileverse.parquetry.cli.expr.FilterParser;
 import io.tileverse.parquetry.cli.expr.GeometryColumns;
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.dataset.Dataset;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -54,7 +54,7 @@ public final class RowCountCmd implements Callable<Integer> {
     @Override
     public Integer call() throws Exception {
         try (DatasetResolver.OpenDataset open = DatasetResolver.open(uri, storage.toProperties())) {
-            Dataset dataset = open.dataset();
+            ParquetDataset dataset = open.dataset();
             Predicate predicate = buildPredicate(dataset);
             long count = dataset.count(predicate, ReadOptions.DEFAULTS);
             spec.commandLine().getOut().println(count);
@@ -62,7 +62,7 @@ public final class RowCountCmd implements Callable<Integer> {
         }
     }
 
-    private Predicate buildPredicate(Dataset dataset) {
+    private Predicate buildPredicate(ParquetDataset dataset) {
         if (options.filter == null) {
             return Predicate.ALWAYS_TRUE;
         }

@@ -28,8 +28,8 @@ import io.tileverse.parquetry.catalog.CatalogCapabilities;
 import io.tileverse.parquetry.catalog.DatasetCatalog;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.CatalogSnapshot;
-import io.tileverse.parquetry.dataset.Dataset;
 import io.tileverse.parquetry.dataset.DatasetCapabilities;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.dataset.explain.DatasetExplainPlan;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -62,7 +62,7 @@ class GeoParquetDataStoreNonGeoCatalogTest {
         }
 
         @Override
-        public Dataset dataset(String requested) {
+        public ParquetDataset dataset(String requested) {
             return new PlainDataset(requested);
         }
 
@@ -72,8 +72,8 @@ class GeoParquetDataStoreNonGeoCatalogTest {
         }
     }
 
-    /** A plain {@link Dataset} that is not a {@code GeoParquetDataset}; query methods are never called. */
-    private record PlainDataset(String name) implements Dataset {
+    /** A plain {@link ParquetDataset} that is not a {@code GeoParquetDataset}; query methods are never called. */
+    private record PlainDataset(String name) implements ParquetDataset {
 
         @Override
         public ParquetSchema schema() {

@@ -59,7 +59,7 @@ class WriteObserverIT {
                 .writeObserver(recorder)
                 .build();
 
-        try (ParquetWriter writer = ParquetWriter.create(new ByteArrayOutputStream(), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteArrayOutputStream(), schema, options)) {
             ParquetRecordBatchBuilder appender = writer.appender(ROWS_PER_GROUP);
             for (int i = 0; i < TOTAL_ROWS; i++) {
                 WriteFixtures.appendRow(appender, schema, Map.of(ColumnPath.of("id"), i));
@@ -85,7 +85,7 @@ class WriteObserverIT {
                 .writeObserver(recorder)
                 .build();
 
-        try (ParquetWriter writer = ParquetWriter.create(new ByteArrayOutputStream(), schema, options)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteArrayOutputStream(), schema, options)) {
             ParquetRecordBatchBuilder appender = writer.appender(rowCount + 1);
             for (int i = 0; i < rowCount; i++) {
                 WriteFixtures.appendRow(appender, schema, Map.of(ColumnPath.of("id"), i));

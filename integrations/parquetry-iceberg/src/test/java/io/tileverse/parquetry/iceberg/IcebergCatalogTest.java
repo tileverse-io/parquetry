@@ -30,7 +30,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.dataset.Dataset;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -59,7 +59,7 @@ class IcebergCatalogTest {
         Path root = TestCorpus.extractDirectory("iceberg-geo-testbed", tempDir.resolve(table));
         try (IcebergCatalog catalog = IcebergCatalog.openLocal(root.resolve(table), IcebergOptions.defaults())) {
             assertThat(catalog.datasets()).containsExactly(table);
-            Dataset dataset = catalog.dataset(table);
+            ParquetDataset dataset = catalog.dataset(table);
             long count = dataset.count(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
             assertThat(count).isEqualTo(10_000L);
 
@@ -90,7 +90,7 @@ class IcebergCatalogTest {
         ParquetSchema presented = IcebergSchema.of(metadata.fields()).parquetSchema();
 
         try (IcebergCatalog catalog = IcebergCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
-            Dataset dataset = catalog.dataset(table);
+            ParquetDataset dataset = catalog.dataset(table);
             assertThat(dataset.schema()).isEqualTo(presented);
         }
     }
@@ -117,7 +117,7 @@ class IcebergCatalogTest {
         Path root = TestCorpus.extractDirectory("iceberg-geo-testbed", tempDir.resolve("v3_geometry"));
         try (IcebergCatalog catalog =
                 IcebergCatalog.openLocal(root.resolve("v3_geometry"), IcebergOptions.defaults())) {
-            Dataset dataset = catalog.dataset("v3_geometry");
+            ParquetDataset dataset = catalog.dataset("v3_geometry");
             Bbox california = Bbox.of2d(-125.0, 32.0, -115.0, 42.0);
             Predicate predicate = new Predicate.Spatial.BboxIntersects(ColumnPath.of("geom"), california);
 
@@ -132,7 +132,7 @@ class IcebergCatalogTest {
         }
     }
 
-    private static long bruteForceInWindow(Dataset dataset, Bbox window) {
+    private static long bruteForceInWindow(ParquetDataset dataset, Bbox window) {
         long inside = 0L;
         try (Stream<ParquetRecord> rows = dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
             for (ParquetRecord row : (Iterable<ParquetRecord>) rows::iterator) {

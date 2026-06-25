@@ -44,7 +44,7 @@ import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
  * Proves that a {@link FilesetDataset} parses each survivor file's footer once and reuses it across queries: the
- * memoized single-file {@link ParquetDataset} is the same instance on a second query, and two sequential queries over
+ * memoized single-file {@link ParquetSource} is the same instance on a second query, and two sequential queries over
  * the same dataset return identical results.
  */
 class FilesetDatasetFooterReuseTest {
@@ -59,10 +59,10 @@ class FilesetDatasetFooterReuseTest {
             Predicate onSyntheticColumn = Pred.col("year").eq(2024L);
 
             countMatching(dataset, onSyntheticColumn);
-            ParquetDataset afterFirstQuery = dataset.perFileDatasetForTest(1);
+            ParquetSource afterFirstQuery = dataset.perFileDatasetForTest(1);
 
             countMatching(dataset, onSyntheticColumn);
-            ParquetDataset afterSecondQuery = dataset.perFileDatasetForTest(1);
+            ParquetSource afterSecondQuery = dataset.perFileDatasetForTest(1);
 
             assertThat(afterSecondQuery).isSameAs(afterFirstQuery);
         }

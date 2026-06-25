@@ -22,7 +22,7 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.RowGroupSummary;
 import io.tileverse.parquetry.filter.Pred;
@@ -38,12 +38,12 @@ class MultiReaderCountTest {
     void countSumsAcrossReaders() {
         try (ByteRangeSource a = ByteRangeSource.ofFile(FILE);
                 ByteRangeSource b = ByteRangeSource.ofFile(FILE)) {
-            ParquetReader ra = ParquetReader.open(a);
-            ParquetReader rb = ParquetReader.open(b);
+            ParquetFileReader ra = ParquetFileReader.open(a);
+            ParquetFileReader rb = ParquetFileReader.open(b);
             long single =
                     ra.rowGroups().stream().mapToLong(RowGroupSummary::rowCount).sum();
 
-            DefaultParquetDataset ds = new DefaultParquetDataset(List.of(ra, rb));
+            DefaultParquetSource ds = new DefaultParquetSource(List.of(ra, rb));
             assertThat(ds.count()).isEqualTo(2 * single);
         }
     }
@@ -56,10 +56,11 @@ class MultiReaderCountTest {
         try (ByteRangeSource single = ByteRangeSource.ofFile(FILE);
                 ByteRangeSource a = ByteRangeSource.ofFile(FILE);
                 ByteRangeSource b = ByteRangeSource.ofFile(FILE)) {
-            long perFile = ParquetReader.open(single).count(residual, ReadOptions.DEFAULTS);
+            long perFile = ParquetFileReader.open(single).count(residual, ReadOptions.DEFAULTS);
             assertThat(perFile).isPositive();
 
-            DefaultParquetDataset ds = new DefaultParquetDataset(List.of(ParquetReader.open(a), ParquetReader.open(b)));
+            DefaultParquetSource ds =
+                    new DefaultParquetSource(List.of(ParquetFileReader.open(a), ParquetFileReader.open(b)));
             assertThat(ds.count(residual)).isEqualTo(2 * perFile);
         }
     }

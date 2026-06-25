@@ -55,7 +55,7 @@ import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.batch.Validity;
-import io.tileverse.parquetry.data.ParquetReader;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
@@ -109,7 +109,7 @@ class DuckDbCorpusRoundTripIT {
     }
 
     private List<Row> readThroughArrowIntoDuckDb(FileChannel channel, DuckDBConnection conn) throws Exception {
-        ParquetReader reader = ParquetReader.open(ByteRangeSource.ofChannel(channel));
+        ParquetFileReader reader = ParquetFileReader.open(ByteRangeSource.ofChannel(channel));
         Predicate predicate = Pred.col(ID).gtEq(FILTER_THRESHOLD);
         Projection projection = Projection.of(PROJECTED);
 
@@ -140,7 +140,7 @@ class DuckDbCorpusRoundTripIT {
      * batch path on its own only prunes whole row groups.
      */
     private ParquetRecordBatch filteredBatch(
-            ParquetReader reader, Predicate predicate, Projection projection, ParquetSchema projectedSchema) {
+            ParquetFileReader reader, Predicate predicate, Projection projection, ParquetSchema projectedSchema) {
         List<Row> rows = new ArrayList<>();
         try (Stream<ParquetRecord> records = reader.read(predicate, projection, ReadOptions.DEFAULTS)) {
             records.forEach(record ->

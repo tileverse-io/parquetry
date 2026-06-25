@@ -63,7 +63,7 @@ class QueryTimingsIT {
     void timingObserverReceivesPerPhaseTimings(@TempDir Path tmp) throws Exception {
         Path file = writeThreeRowGroups(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             TimingObserver observer = new TimingObserver();
             ReadOptions options = ReadOptions.builder().queryObserver(observer).build();
 
@@ -105,7 +105,7 @@ class QueryTimingsIT {
     void countObserverReceivesQueryLevelTimings(@TempDir Path tmp) throws Exception {
         Path file = writeThreeRowGroups(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             TimingObserver observer = new TimingObserver();
             ReadOptions options = ReadOptions.builder().queryObserver(observer).build();
 
@@ -128,7 +128,7 @@ class QueryTimingsIT {
     void defaultObserverReceivesNoTimings(@TempDir Path tmp) throws Exception {
         Path file = writeThreeRowGroups(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetReader reader = ParquetReader.open(source);
+            ParquetFileReader reader = ParquetFileReader.open(source);
             TimingObserver observer = new TimingObserver(false);
             ReadOptions options = ReadOptions.builder().queryObserver(observer).build();
 
@@ -151,7 +151,7 @@ class QueryTimingsIT {
                 .build();
         Path file = tmp.resolve("query-timings.parquet");
         try (OutputStream out = Files.newOutputStream(file);
-                ParquetWriter writer = ParquetWriter.create(out, schema, options)) {
+                ParquetFileWriter writer = ParquetFileWriter.create(out, schema, options)) {
             ParquetRecordBatchBuilder appender = writer.appender(1);
             for (int i = 0; i < 9; i++) {
                 WriteFixtures.appendRow(appender, schema, Map.of(ColumnPath.of("id"), i));

@@ -24,7 +24,7 @@ import io.tileverse.parquetry.internal.read.DecryptionKeyRetriever;
 import lombok.NonNull;
 
 /**
- * Per-dataset inputs bound at {@code ParquetDataset.open(...)}: the shared {@link ParquetRuntime} this dataset reads
+ * Per-dataset inputs bound at {@code ParquetSource.open(...)}: the shared {@link ParquetRuntime} this dataset reads
  * against, and the optional {@link DecryptionKeyRetriever} for an encrypted file. Distinct from {@link ReadOptions},
  * which is per-call query policy.
  */
