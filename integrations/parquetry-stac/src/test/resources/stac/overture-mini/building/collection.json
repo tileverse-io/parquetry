@@ -1,0 +1,18 @@
+{
+  "type": "Collection",
+  "stac_version": "1.0.0",
+  "id": "building",
+  "title": "Buildings",
+  "description": "Building footprints",
+  "license": "ODbL-1.0",
+  "extent": {
+    "spatial": { "bbox": [[0, 0, 120, 20]] },
+    "temporal": { "interval": [["2024-01-01T00:00:00Z", null]] }
+  },
+  "links": [
+    { "rel": "self", "href": "collection.json" },
+    { "rel": "item", "href": "items/item-west.json" },
+    { "rel": "item", "href": "items/item-east.json" },
+    { "rel": "pmtiles", "href": "buildings.pmtiles", "type": "application/vnd.pmtiles", "title": "Buildings tiles" }
+  ]
+}
