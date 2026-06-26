@@ -19,6 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
@@ -99,6 +100,24 @@ class IcebergFieldIdEvolutionIT {
             Predicate labelEqualsX = new Predicate.Eq(ColumnPath.of("label"), new Value.StringVal("x"));
             assertThat(dataset.count(labelEqualsX, ReadOptions.DEFAULTS)).isZero();
             assertThat(countMatching(dataset, labelEqualsX)).isZero();
+        });
+    }
+
+    @Test
+    void addedColumnWithInitialDefaultReadsTheDefault() {
+        IcebergField added = new IcebergField(99, "label", "string", false, Optional.of(new Value.StringVal("n/a")));
+        Path tableDir = evolve(List.of(ID, N, added));
+
+        withDataset(tableDir, dataset -> {
+            assertThat(leafNames(dataset.schema())).containsExactly("id", "n", "label");
+            assertThat(firstRow(dataset).getString(ColumnPath.of("label"))).isEqualTo("n/a");
+
+            Predicate labelIsDefault = new Predicate.Eq(ColumnPath.of("label"), new Value.StringVal("n/a"));
+            assertThat(dataset.count(labelIsDefault, ReadOptions.DEFAULTS)).isEqualTo(EXPECTED_TOTAL_ROWS);
+            assertThat(countMatching(dataset, labelIsDefault)).isEqualTo(EXPECTED_TOTAL_ROWS);
+
+            Predicate labelIsNull = new Predicate.IsNull(ColumnPath.of("label"));
+            assertThat(dataset.count(labelIsNull, ReadOptions.DEFAULTS)).isZero();
         });
     }
 

@@ -15,9 +15,13 @@
  */
 package io.tileverse.parquetry.iceberg;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+
+import io.tileverse.parquetry.filter.Value;
 
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
@@ -173,7 +177,46 @@ final class IcebergTableMetadata {
         int id = requiredInt(fieldNode, "id");
         String name = requiredString(fieldNode, "name");
         boolean required = optionalBoolean(fieldNode, "required");
-        return Optional.of(new IcebergField(id, name, type.stringValue(), required));
+        String typeName = type.stringValue();
+        Optional<Value> initialDefault = initialDefault(fieldNode, typeName, name);
+        return Optional.of(new IcebergField(id, name, typeName, required, initialDefault));
+    }
+
+    /**
+     * Reads a field's {@code initial-default} from Iceberg's JSON single-value serialization. A {@code date} default is
+     * an ISO {@code YYYY-MM-DD} string (not epoch days); numeric and boolean defaults are JSON scalars. An unsupported
+     * type fails fast rather than dropping the default and reading the column as null.
+     */
+    private static Optional<Value> initialDefault(JsonNode fieldNode, String type, String name) {
+        JsonNode defaultNode = fieldNode.get("initial-default");
+        if (defaultNode == null || defaultNode.isNull()) {
+            return Optional.empty();
+        }
+        return Optional.of(decodeInitialDefault(type, defaultNode, name));
+    }
+
+    private static Value decodeInitialDefault(String type, JsonNode node, String name) {
+        return switch (type) {
+            case "int" -> new Value.IntVal(node.intValue());
+            case "long" -> new Value.LongVal(node.longValue());
+            case "float" -> new Value.FloatVal((float) node.doubleValue());
+            case "double" -> new Value.DoubleVal(node.doubleValue());
+            case "boolean" -> new Value.BoolVal(node.booleanValue());
+            case "date" -> new Value.DateVal(parseDate(node.stringValue(), name));
+            case "string" -> new Value.StringVal(node.stringValue());
+            default ->
+                throw new IcebergFormatException(
+                        "cannot read initial-default for field %s of unsupported type %s".formatted(name, type));
+        };
+    }
+
+    private static LocalDate parseDate(String text, String name) {
+        try {
+            return LocalDate.parse(text);
+        } catch (DateTimeParseException e) {
+            throw new IcebergFormatException(
+                    "initial-default for date field %s is not an ISO date: %s".formatted(name, text), e);
+        }
     }
 
     private static boolean optionalBoolean(JsonNode node, String field) {

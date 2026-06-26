@@ -22,6 +22,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
+import io.tileverse.parquetry.filter.Value;
+
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ArrayNode;
@@ -82,7 +84,22 @@ final class IcebergSchemaEvolution {
         node.put("name", field.name());
         node.put("required", field.required());
         node.put("type", field.type());
+        field.initialDefault().ifPresent(value -> putInitialDefault(node, value));
         return node;
+    }
+
+    /** Serializes a default value back to Iceberg's JSON single-value form (a date renders as an ISO string). */
+    private static void putInitialDefault(ObjectNode node, Value value) {
+        switch (value) {
+            case Value.IntVal v -> node.put("initial-default", v.value());
+            case Value.LongVal v -> node.put("initial-default", v.value());
+            case Value.FloatVal v -> node.put("initial-default", v.value());
+            case Value.DoubleVal v -> node.put("initial-default", v.value());
+            case Value.BoolVal v -> node.put("initial-default", v.value());
+            case Value.DateVal v -> node.put("initial-default", v.value().toString());
+            case Value.StringVal v -> node.put("initial-default", v.value());
+            default -> throw new IllegalArgumentException("unsupported default value: " + value);
+        }
     }
 
     private static ObjectNode readMetadata(Path metadataJson) {

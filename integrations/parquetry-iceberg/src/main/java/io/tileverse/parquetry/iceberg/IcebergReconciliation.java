@@ -120,6 +120,10 @@ final class IcebergReconciliation {
         if (partitionValue != null) {
             return new OutputColumn.Constant(ColumnPath.of(field.name()), partitionValue);
         }
+        Optional<Value> initialDefault = field.initialDefault();
+        if (initialDefault.isPresent()) {
+            return new OutputColumn.Constant(ColumnPath.of(field.name()), initialDefault.get());
+        }
         return injectNullColumn(field);
     }
 

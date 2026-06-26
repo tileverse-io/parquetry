@@ -23,6 +23,7 @@ clear message rather than returning wrong rows. The `Spec` column notes the Iceb
 | --- | --- | --- | --- |
 | Metadata resolution | v1+ | Full | explicit `metadataLocation`, else `version-hint.text`, else highest `vN.metadata.json` |
 | Snapshot selection | v1+ | Full | current snapshot, or a pinned `snapshotId` |
+| Branches, tags, and as-of-time travel | v2+ | Planned | named refs and timestamp-based selection are not yet wired |
 | Manifest list + manifests | v1+ | Full | clean-room Avro reader |
 | Data-file read, all format versions | v1-v3 | Full | data files only (copy-on-write); merge-on-read deletes not applied |
 | Local + object-storage I/O | - | Full | `LocalIcebergFileIO`; `StorageIcebergFileIO` over tileverse-storage (S3, Azure, GCS, HTTP) |
@@ -39,8 +40,9 @@ clear message rather than returning wrong rows. The `Spec` column notes the Iceb
 | Nested struct / list / map | v1+ | Partial | read by name; field-id reconciliation within nesting is Planned (the main conformance gap) |
 | Field-id reconciliation, top-level | v1+ | Full | rename, add (reads as null), drop, reorder |
 | Type promotion `int`->`long`, `float`->`double` | v1+ | Full | filters correctly on a promoted column |
-| Type promotion `decimal` widen, `date`->`timestamp` | v1+/v3 | Planned | |
+| Type promotion `decimal` precision widening | v1+ | Planned | `int`->`long` and `float`->`double` work; decimal widening does not yet |
 | Added column of `binary` / `geometry` / `geography` | v1+/v3 | Planned | added scalar columns read as null; these fail fast |
+| Column default values | v3 | Full | an added column's `initial-default` reads back for files written before the column existed (primitive types: `int`/`long`/`float`/`double`/`boolean`/`date`/`string`); a non-primitive default fails fast |
 | Name mapping for id-less files | v1+ | Partial | best-effort name fallback, not the spec's `name-mapping` document |
 
 ### Reads and pruning
@@ -52,6 +54,7 @@ clear message rather than returning wrong rows. The `Spec` column notes the Iceb
 | Bounding-box spatial predicates | v3 | Full | evaluated record-by-record through the engine's spatial contract |
 | Manifest-bound file pruning (L3) | v1+ | Full | scalar bounds (`int`/`long`/`float`/`double`/`boolean`/`date`/`string`/`uuid`) + geometry bounds (`packed_xy`, `wkb_point`) |
 | Partition-value file pruning | v1+ | Full | an equality or range on an identity-partition column skips whole files before opening them |
+| Transform-partition pruning (`days`/`bucket`/`truncate`/...) | v1+ | Planned | a predicate on a transform's source column does not yet prune by partition; only identity-partition values prune |
 | Manifest bounds for `timestamp`/`time`/`decimal`/`fixed`/`binary` | v1+ | Planned | a predicate on these does not prune; the file is kept and filtered |
 | Row-group pruning inside a file (L4) | v1+ | Planned | file-level pruning skips whole files only |
 | Dataset-level explain / analyze | - | Full | reports the file dimension: files kept/skipped, each skip reason, each kept file's row-group plan |

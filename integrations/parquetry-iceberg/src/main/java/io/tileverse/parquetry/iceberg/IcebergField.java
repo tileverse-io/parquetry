@@ -16,16 +16,27 @@
 package io.tileverse.parquetry.iceberg;
 
 import java.util.Objects;
+import java.util.Optional;
+
+import io.tileverse.parquetry.filter.Value;
 
 /**
- * One field of an Iceberg table schema: its field id, column name, primitive type string, and whether the field is
- * required (non-nullable).
+ * One field of an Iceberg table schema: its field id, column name, primitive type string, whether the field is required
+ * (non-nullable), and its {@code initial-default} value when the schema declares one (v3 column defaults).
+ *
+ * <p>The {@code initialDefault} reads back for an added column that a data file written before the column existed does
+ * not contain; an empty optional means the absent column reads as null.
  */
-record IcebergField(int fieldId, String name, String type, boolean required) {
+record IcebergField(int fieldId, String name, String type, boolean required, Optional<Value> initialDefault) {
 
     public IcebergField {
         Objects.requireNonNull(name, "name");
         Objects.requireNonNull(type, "type");
+        Objects.requireNonNull(initialDefault, "initialDefault");
+    }
+
+    IcebergField(int fieldId, String name, String type, boolean required) {
+        this(fieldId, name, type, required, Optional.empty());
     }
 
     public boolean isGeometry() {
