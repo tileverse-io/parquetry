@@ -40,6 +40,24 @@ public record StructVector(
         children = Collections.unmodifiableMap(new LinkedHashMap<>(children));
     }
 
+    /**
+     * A selected struct propagates the selection into its row-parallel children rather than holding it: struct children
+     * are one value per struct row; selecting struct rows selects the same rows in every child. The validity is
+     * projected and the size reduced to the selection length. (List and map differ: their children are
+     * offset-flattened, leaving those whole while the wrapper holds the selection.)
+     */
+    @Override
+    public ColumnVector select(Selection selection) {
+        if (selection == Selection.ALL) {
+            return this;
+        }
+        Map<ColumnPath, ColumnVector> selectedChildren = new LinkedHashMap<>();
+        for (Map.Entry<ColumnPath, ColumnVector> child : children.entrySet()) {
+            selectedChildren.put(child.getKey(), child.getValue().select(selection));
+        }
+        return new StructVector(selectedChildren, validity.select(selection), selection.length());
+    }
+
     @Override
     public long approximateHeapBytes() {
         long total = validity.heapBytes();

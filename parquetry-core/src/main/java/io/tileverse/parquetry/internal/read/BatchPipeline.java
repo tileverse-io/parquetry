@@ -17,6 +17,7 @@ package io.tileverse.parquetry.internal.read;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.BitSet;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.Spliterator;
@@ -27,11 +28,10 @@ import java.util.stream.StreamSupport;
 
 import com.google.errorprone.annotations.MustBeClosed;
 
+import io.tileverse.parquetry.batch.FilteredRecordBatch;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.batch.VectorizedPredicateEvaluator;
 import io.tileverse.parquetry.filter.Predicate;
-import io.tileverse.parquetry.internal.filter.RecordAccessors;
-import io.tileverse.parquetry.internal.filter.RecordLevelEvaluator;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -61,11 +61,30 @@ public final class BatchPipeline {
         return stream(new BatchIterator(coordinator));
     }
 
+    /**
+     * Returns a closeable stream of batches with {@code recordFilter} applied exactly: each surviving batch is narrowed
+     * to {@code outputSchema} and compacted to its predicate-matching rows. A row group that statistics already proved
+     * matches in full skips evaluation and only narrows. Fully filtered-out batches are dropped (never an empty batch).
+     * A {@code null} {@code recordFilter} narrows without evaluating (the pushdown-only shape).
+     */
     @MustBeClosed
-    private static Stream<ParquetRecordBatch> stream(BatchIterator iterator) {
+    public static Stream<ParquetRecordBatch> batches(
+            @NonNull ParallelDecodeCoordinator coordinator,
+            Predicate recordFilter,
+            @NonNull ParquetSchema outputSchema) {
+        return stream(new FilteredBatchIterator(coordinator, recordFilter, outputSchema));
+    }
+
+    @MustBeClosed
+    private static Stream<ParquetRecordBatch> stream(CloseableBatchIterator iterator) {
         Spliterator<ParquetRecordBatch> spliterator =
                 Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED | Spliterator.NONNULL);
         return StreamSupport.stream(spliterator, /*parallel*/ false).onClose(iterator::close);
+    }
+
+    /** A batch iterator whose {@code close()} throws no checked exception, fit for {@link Stream#onClose(Runnable)}. */
+    private interface CloseableBatchIterator extends Iterator<ParquetRecordBatch> {
+        void close();
     }
 
     /**
@@ -141,7 +160,7 @@ public final class BatchPipeline {
      * Pulls one {@link ParquetRecordBatch} at a time. Advances to the next decoded row group when the current one is
      * drained, closing the previous row group's undelivered batches before pulling the next one from the coordinator.
      */
-    private static final class BatchIterator implements Iterator<ParquetRecordBatch>, AutoCloseable {
+    private static final class BatchIterator implements CloseableBatchIterator {
 
         private final ParallelDecodeCoordinator coordinator;
         private DecodedRowGroup currentRowGroup;
@@ -200,6 +219,140 @@ public final class BatchPipeline {
     }
 
     /**
+     * Pulls one {@link ParquetRecordBatch} at a time with the record filter applied exactly. Each pulled batch is
+     * narrowed to the output leaves and compacted to its matching rows; a batch with no matches is closed and skipped,
+     * never emitted. The per-group filter is resolved once when a group is taken (the row group's statistics may
+     * already prove every row matches, which skips evaluation and only narrows). It uses a compute-next pattern because
+     * a pulled batch may be skipped.
+     */
+    private static final class FilteredBatchIterator implements CloseableBatchIterator {
+
+        private final ParallelDecodeCoordinator coordinator;
+        private final Predicate recordFilter;
+        private final ParquetSchema outputSchema;
+
+        private DecodedRowGroup currentRowGroup;
+        private Predicate currentFilter;
+        private boolean hasComputedNext;
+        private ParquetRecordBatch next;
+
+        FilteredBatchIterator(
+                ParallelDecodeCoordinator coordinator, Predicate recordFilter, ParquetSchema outputSchema) {
+            this.coordinator = coordinator;
+            this.recordFilter = recordFilter;
+            this.outputSchema = outputSchema;
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (!hasComputedNext) {
+                next = advance();
+                hasComputedNext = true;
+            }
+            return next != null;
+        }
+
+        @Override
+        public ParquetRecordBatch next() {
+            if (!hasNext()) {
+                throw new NoSuchElementException();
+            }
+            ParquetRecordBatch result = next;
+            next = null;
+            hasComputedNext = false;
+            return result;
+        }
+
+        private ParquetRecordBatch advance() {
+            while (true) {
+                ParquetRecordBatch source = pullNextSourceBatch();
+                if (source == null) {
+                    return null;
+                }
+                ParquetRecordBatch survivor = filter(source);
+                if (survivor != null) {
+                    return survivor;
+                }
+            }
+        }
+
+        // Once pullNextSourceBatch hands a batch here, the row group no longer owns it (the same semantics as
+        // BatchIterator, where a pulled batch becomes the caller's). This method either closes the source (no match),
+        // returns a survivor that owns the source (closed downstream), or returns the source itself when it is already
+        // output-shaped.
+        private ParquetRecordBatch filter(ParquetRecordBatch source) {
+            if (currentFilter == null) {
+                return FilteredRecordBatch.narrowed(source, outputSchema);
+            }
+            BitSet matches = VectorizedPredicateEvaluator.eval(currentFilter, source);
+            int matched = matches.cardinality();
+            if (matched == 0) {
+                source.close();
+                return null;
+            }
+            if (matched == source.rowCount()) {
+                return FilteredRecordBatch.narrowed(source, outputSchema);
+            }
+            return FilteredRecordBatch.filtered(source, matches, outputSchema);
+        }
+
+        private ParquetRecordBatch pullNextSourceBatch() {
+            while (true) {
+                if (currentRowGroup != null && currentRowGroup.hasNext()) {
+                    return currentRowGroup.next();
+                }
+                if (!takeNextRowGroup()) {
+                    return null;
+                }
+            }
+        }
+
+        private boolean takeNextRowGroup() {
+            closeCurrentRowGroup();
+            DecodedRowGroup nextRowGroup;
+            try {
+                nextRowGroup = coordinator.next();
+            } catch (IOException e) {
+                throw new UncheckedIOException("Row group decode failed", e);
+            }
+            if (nextRowGroup == null) {
+                return false;
+            }
+            currentRowGroup = nextRowGroup;
+            currentFilter = nextRowGroup.recordEvalRequired() ? recordFilter : null;
+            return true;
+        }
+
+        @Override
+        public void close() {
+            closeBestEffort(this::closeBufferedNext);
+            closeBestEffort(this::closeCurrentRowGroup);
+            closeBestEffort(coordinator::close);
+        }
+
+        // A survivor computed by hasNext() but not yet taken by next() owns the source's off-heap buffers; closing the
+        // row group only releases the queue's undelivered batches, never this one. Release it explicitly.
+        private void closeBufferedNext() {
+            ParquetRecordBatch buffered = next;
+            next = null;
+            hasComputedNext = false;
+            if (buffered != null) {
+                buffered.close();
+            }
+        }
+
+        // Closes only the group's undelivered batches; a batch already handed to filter() is owned elsewhere.
+        private void closeCurrentRowGroup() {
+            DecodedRowGroup rowGroup = currentRowGroup;
+            currentRowGroup = null;
+            currentFilter = null;
+            if (rowGroup != null) {
+                rowGroup.close();
+            }
+        }
+    }
+
+    /**
      * Pulls materialized rows one at a time, keeping exactly one decoded batch live. It scans the current batch row by
      * row; when that batch is drained it is closed before the next one is pulled, and when the current row group is
      * drained it is closed before the next is taken from the coordinator. This three-level walk (coordinator -> row
@@ -227,6 +380,8 @@ public final class BatchPipeline {
         private DecodedRowGroup currentRowGroup;
         private Predicate currentFilter;
         private ParquetRecordBatch currentBatch;
+        private BitSet currentMask;
+        private boolean maskReady;
         private int rowIndex;
         private int batchRowCount;
         private long matchedInCurrentRowGroup;
@@ -303,17 +458,27 @@ public final class BatchPipeline {
         }
 
         private T scanRows() {
-            while (rowIndex < batchRowCount) {
-                ParquetRecord row = currentBatch.materialize(rowIndex);
-                rowIndex++;
-                if (currentFilter == null || RecordLevelEvaluator.test(currentFilter, RecordAccessors.of(row))) {
-                    if (observe) {
-                        matchedInCurrentRowGroup++;
-                    }
-                    return materializer.materialize(outputSchema, row);
-                }
+            ensureMask();
+            int row = (currentMask == null) ? rowIndex : currentMask.nextSetBit(rowIndex);
+            if (row < 0 || row >= batchRowCount) {
+                rowIndex = batchRowCount;
+                return null;
             }
-            return null;
+            rowIndex = row + 1;
+            if (observe) {
+                matchedInCurrentRowGroup++;
+            }
+            ParquetRecord rec = currentBatch.materialize(row);
+            return materializer.materialize(outputSchema, rec);
+        }
+
+        /** Computes the surviving-rows mask once per batch; {@code null} when the group needs no per-row evaluation. */
+        private void ensureMask() {
+            if (maskReady) {
+                return;
+            }
+            currentMask = currentFilter == null ? null : VectorizedPredicateEvaluator.eval(currentFilter, currentBatch);
+            maskReady = true;
         }
 
         /** Closes the drained batch and makes the next non-empty batch current, or returns {@code false} at the end. */
@@ -326,6 +491,8 @@ public final class BatchPipeline {
                     rowIndex = 0;
                     batchRowCount = currentBatch.rowCount();
                     if (batchRowCount > 0) {
+                        currentMask = null;
+                        maskReady = false;
                         return true;
                     }
                     closeCurrentBatch();
@@ -389,13 +556,14 @@ public final class BatchPipeline {
                 rowGroup.close();
             }
         }
+    }
 
-        private static void closeBestEffort(Runnable close) {
-            try {
-                close.run();
-            } catch (RuntimeException _) {
-                // best-effort; one failed close must not skip the rest
-            }
+    /** Runs a close step, swallowing a {@link RuntimeException} so one failed close does not skip the rest. */
+    private static void closeBestEffort(Runnable close) {
+        try {
+            close.run();
+        } catch (RuntimeException _) {
+            // best-effort; one failed close must not skip the rest
         }
     }
 }

@@ -78,6 +78,21 @@ class ParquetSourceRenameOutputTest {
     }
 
     @Test
+    void shapedReadReturnsExactlyTheMatchingRows() throws Exception {
+        try (ByteRangeSource bytes = ByteRangeSource.ofFile(FILE)) {
+            ParquetSource source = ParquetSource.open(bytes);
+            Query renamed = renameIdToRecordIdQuery(presentedIdGreaterThan(4));
+
+            long total = source.count(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
+            long matching = source.count(renamed, ReadOptions.DEFAULTS);
+            long shapedRowCount = readPresentedIds(source, renamed).size();
+
+            assertThat(matching).isPositive().isLessThan(total);
+            assertThat(shapedRowCount).isEqualTo(matching);
+        }
+    }
+
+    @Test
     void countWithRenameOutputLowersPredicateToPhysicalName() throws Exception {
         try (ByteRangeSource bytes = ByteRangeSource.ofFile(FILE)) {
             ParquetSource source = ParquetSource.open(bytes);
@@ -136,7 +151,9 @@ class ParquetSourceRenameOutputTest {
 
     private static Query renameIdToRecordIdQuery(Predicate predicate) {
         List<OutputColumn> output = List.of(new OutputColumn.Physical(RECORD_ID, ID));
-        return new Query(predicate, Projection.of(Set.of(ID)), output);
+        return Query.builder(predicate, Projection.of(Set.of(ID)))
+                .output(output)
+                .build();
     }
 
     private static List<Integer> readPresentedIds(ParquetSource source, Query query) {

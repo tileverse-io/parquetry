@@ -49,7 +49,9 @@ class ParquetSourceConstantColumnsTest {
                 output.add(new OutputColumn.Physical(leaf, leaf));
             }
             output.add(new OutputColumn.Constant(yearPart, new Value.IntVal(2024)));
-            Query query = new Query(Predicate.ALWAYS_TRUE, Projection.ALL, output);
+            Query query = Query.builder(Predicate.ALWAYS_TRUE, Projection.ALL)
+                    .output(output)
+                    .build();
             try (Stream<ParquetRecord> rows = source.read(query, ReadOptions.DEFAULTS)) {
                 List<ParquetRecord> materialized =
                         rows.map(ParquetRecord::detach).toList();

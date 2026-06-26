@@ -40,6 +40,7 @@ import io.tileverse.parquetry.batch.DoubleVector;
 import io.tileverse.parquetry.batch.FloatVector;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.LongVector;
+import io.tileverse.parquetry.batch.Selection;
 import io.tileverse.parquetry.batch.Validity;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -153,6 +154,28 @@ class DefaultParquetRecordTest {
     @Test
     void getStringUtf8DecodesTheBinaryBytes() {
         assertThat(row.getString(BINARY_COL)).isEqualTo("hello");
+    }
+
+    @Test
+    void typedBinaryReadersReadASelectedLeafThroughThePerRowAccessor() {
+        // A partially matching predicate produces selected binary leaves whose bulk backing rejects a selection.
+        // The typed readers (getString/getBinary/readBinary) must read them through the per-row accessor instead.
+        BinaryVector binary = BinaryVector.materialized(
+                new MemorySegment[] {
+                    MemorySegment.ofArray("x".getBytes(StandardCharsets.UTF_8)).asReadOnly(),
+                    MemorySegment.ofArray(BINARY_PAYLOAD).asReadOnly(),
+                    MemorySegment.ofArray("y".getBytes(StandardCharsets.UTF_8)).asReadOnly()
+                },
+                Validity.allValid(3));
+        BitSet survivors = new BitSet();
+        survivors.set(1); // keep only physical row 1 ("hello") -> logical row 0
+        ColumnVector selected = binary.select(Selection.bits(survivors));
+
+        DefaultParquetRecord selectedRow =
+                new DefaultParquetRecord(RowColumns.of(schema, schema.root(), Map.of(BINARY_COL, selected)), 0);
+
+        assertThat(selectedRow.getString(BINARY_COL)).isEqualTo("hello");
+        assertThat(selectedRow.getBinary(BINARY_COL)).isEqualTo(BINARY_PAYLOAD);
     }
 
     @Test

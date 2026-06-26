@@ -27,7 +27,8 @@ import io.tileverse.parquetry.schema.ParquetSchema;
  * buffers this batch owns (registered via {@link #registerBuffer(AutoCloseable)}); those buffers are released by
  * {@link #close()} and their values must not be read afterward.
  */
-public sealed interface ParquetRecordBatch extends AutoCloseable permits DefaultParquetRecordBatch {
+public sealed interface ParquetRecordBatch extends AutoCloseable
+        permits DefaultParquetRecordBatch, FilteredRecordBatch {
 
     /** The projected schema this batch's columns correspond to. */
     ParquetSchema projectedSchema();
@@ -43,6 +44,13 @@ public sealed interface ParquetRecordBatch extends AutoCloseable permits Default
      * holds a reference to this batch and reads through to the vectors on each accessor call.
      */
     ParquetRecord materialize(int rowIndex);
+
+    /**
+     * A zero-copy view exposing the contiguous logical rows {@code [from, from + count)} of this batch. Used for the
+     * offset/limit windowing of a straddling batch (at most two per whole read); the returned view owns this batch's
+     * resources and closing it closes this batch.
+     */
+    ParquetRecordBatch slice(int from, int count);
 
     /** Approximate heap bytes this batch's vectors hold; a soft budget signal, not an exact figure. */
     long approximateHeapBytes();

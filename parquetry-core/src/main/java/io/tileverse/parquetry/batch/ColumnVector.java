@@ -40,10 +40,41 @@ public sealed interface ColumnVector
                 VariantVector,
                 ShreddedVariantVector {
 
-    /** Logical row count this vector holds. */
-    int size();
+    /**
+     * The rows of this vector's backing that are exposed by this view, and in what order. {@link Selection#ALL} (the
+     * default for a freshly decoded vector) exposes every backing row in order; a filtered or windowed view holds a
+     * non-ALL selection shared across all of the batch's columns, which is what makes a filtered batch a zero-copy
+     * view.
+     */
+    default Selection selection() {
+        return Selection.ALL;
+    }
 
-    /** The immutable per-row null mask. */
+    /** Row count of the underlying backing, before any selection. Equals {@link #size()} for an unselected vector. */
+    default int baseSize() {
+        return size();
+    }
+
+    /** Logical row count this view exposes: the backing size when unselected, the selection length otherwise. */
+    default int size() {
+        Selection selection = selection();
+        return selection == Selection.ALL ? baseSize() : selection.length();
+    }
+
+    /**
+     * A same-type view exposing only the rows of {@code selection}, sharing this vector's backing without copying the
+     * data. {@link Selection#ALL} returns this vector unchanged. The view's validity is this vector's validity
+     * projected through the selection, and for the nested vectors only the parent-row index is translated (the child
+     * stays whole).
+     */
+    default ColumnVector select(Selection selection) {
+        if (selection == Selection.ALL) {
+            return this;
+        }
+        throw new UnsupportedOperationException(getClass().getSimpleName() + " does not support selection");
+    }
+
+    /** The immutable per-row null mask, indexed by logical row (projected through the selection on a selected view). */
     Validity validity();
 
     /** Whether row {@code row} is null. */

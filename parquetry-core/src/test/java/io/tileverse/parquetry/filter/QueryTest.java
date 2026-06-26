@@ -38,7 +38,9 @@ class QueryTest {
     void keepsOutputColumnsInOrder() {
         OutputColumn a = new OutputColumn.Constant(ColumnPath.of("year"), new Value.IntVal(2024));
         OutputColumn b = new OutputColumn.Constant(ColumnPath.of("month"), new Value.IntVal(1));
-        Query query = new Query(Predicate.ALWAYS_TRUE, Projection.ALL, List.of(a, b));
+        Query query = Query.builder(Predicate.ALWAYS_TRUE, Projection.ALL)
+                .output(List.of(a, b))
+                .build();
         assertThat(query.output()).containsExactly(a, b);
     }
 
@@ -46,7 +48,9 @@ class QueryTest {
     void outputColumnsAreDefensivelyCopied() {
         List<OutputColumn> mutable = new ArrayList<>();
         mutable.add(new OutputColumn.Constant(ColumnPath.of("year"), new Value.IntVal(2024)));
-        Query query = new Query(Predicate.ALWAYS_TRUE, Projection.ALL, mutable);
+        Query query = Query.builder(Predicate.ALWAYS_TRUE, Projection.ALL)
+                .output(mutable)
+                .build();
         mutable.clear();
         assertThat(query.output()).hasSize(1);
     }

@@ -26,6 +26,7 @@ public final class MapVector implements ColumnVector {
     private final ColumnVector values;
     private final Validity validity;
     private final int size;
+    private final Selection selection;
 
     /**
      * Constructs a MapVector from offsets, keys, and values.
@@ -44,6 +45,16 @@ public final class MapVector implements ColumnVector {
             @NonNull ColumnVector values,
             @NonNull Validity validity,
             int size) {
+        this(offsets, keys, values, validity, size, Selection.ALL);
+    }
+
+    private MapVector(
+            @NonNull int[] offsets,
+            @NonNull ColumnVector keys,
+            @NonNull ColumnVector values,
+            @NonNull Validity validity,
+            int size,
+            @NonNull Selection selection) {
         if (offsets.length != size + 1) {
             throw new IllegalArgumentException(
                     "offsets length must be size + 1; got offsets.length=" + offsets.length + ", size=" + size);
@@ -53,10 +64,16 @@ public final class MapVector implements ColumnVector {
         this.values = values;
         this.validity = validity;
         this.size = size;
+        this.selection = selection;
     }
 
     @Override
-    public int size() {
+    public Selection selection() {
+        return selection;
+    }
+
+    @Override
+    public int baseSize() {
         return size;
     }
 
@@ -65,32 +82,49 @@ public final class MapVector implements ColumnVector {
         return validity;
     }
 
-    /** Returns the start offset (inclusive) of row {@code row}'s entries in the keys and values vectors. */
+    /** Returns the start offset (inclusive) of logical row {@code row}'s entries in the keys and values vectors. */
     public int rowOffsetStart(int row) {
-        return offsets[row];
+        int physical = selection == Selection.ALL ? row : selection.physical(row);
+        return offsets[physical];
     }
 
-    /** Returns the end offset (exclusive) of row {@code row}'s entries in the keys and values vectors. */
+    /** Returns the end offset (exclusive) of logical row {@code row}'s entries in the keys and values vectors. */
     public int rowOffsetEnd(int row) {
-        return offsets[row + 1];
+        int physical = selection == Selection.ALL ? row : selection.physical(row);
+        return offsets[physical + 1];
     }
 
-    /** The keys column. */
+    /** The keys column. Stays whole on a selected view; only the parent row index is selected. */
     public ColumnVector keys() {
         return keys;
     }
 
-    /** The values column. */
+    /** The values column. Stays whole on a selected view; only the parent row index is selected. */
     public ColumnVector values() {
         return values;
     }
 
     /**
-     * The {@code size + 1} row offsets into the keys and values vectors, returned directly without copying; the array
-     * is read-only by contract and callers must not mutate it.
+     * The {@code baseSize + 1} row offsets into the keys and values vectors, returned directly without copying; the
+     * array is read-only by contract and callers must not mutate it. Only valid on an unselected view: a selected map's
+     * contiguous offsets index into compacted children, rebuilt at the Arrow export boundary (see the Arrow session
+     * handoff), not here. Per-row consumers use {@link #rowOffsetStart(int)} / {@link #rowOffsetEnd(int)}.
      */
     public int[] offsets() {
+        if (selection != Selection.ALL) {
+            throw new UnsupportedOperationException(
+                    "contiguous offsets of a selected map are rebuilt at the Arrow export boundary; "
+                            + "use rowOffsetStart/rowOffsetEnd for per-row access");
+        }
         return offsets;
+    }
+
+    @Override
+    public ColumnVector select(Selection selection) {
+        if (selection == Selection.ALL) {
+            return this;
+        }
+        return new MapVector(offsets, keys, values, validity.select(selection), size, selection);
     }
 
     @Override

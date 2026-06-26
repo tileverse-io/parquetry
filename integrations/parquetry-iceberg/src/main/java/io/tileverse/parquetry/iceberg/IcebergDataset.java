@@ -323,7 +323,7 @@ final class IcebergDataset implements ParquetDataset {
             return null;
         }
         Projection pushdown = pushdownProjection(recon, perFile(index).schema());
-        return new Query(folded, pushdown, recon.output());
+        return Query.builder(folded, pushdown).output(recon.output()).build();
     }
 
     /**

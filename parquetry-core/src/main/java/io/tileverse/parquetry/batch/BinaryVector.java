@@ -42,22 +42,30 @@ public final class BinaryVector implements ColumnVector {
     private final MemorySegment[] dictEntries;
     private final IntSequence indices;
     private final Validity validity;
+    private final Selection selection;
 
-    private BinaryVector(@NonNull MemorySegment backing, @NonNull IntSequence offsets, @NonNull Validity validity) {
+    private BinaryVector(
+            MemorySegment backing,
+            IntSequence offsets,
+            MemorySegment[] dictEntries,
+            IntSequence indices,
+            @NonNull Validity validity,
+            @NonNull Selection selection) {
         this.backing = backing;
         this.offsets = offsets;
-        this.dictEntries = null;
-        this.indices = null;
+        this.dictEntries = dictEntries;
+        this.indices = indices;
         this.validity = validity;
+        this.selection = selection;
+    }
+
+    private BinaryVector(@NonNull MemorySegment backing, @NonNull IntSequence offsets, @NonNull Validity validity) {
+        this(backing, offsets, null, null, validity, Selection.ALL);
     }
 
     private BinaryVector(
             @NonNull MemorySegment[] dictEntries, @NonNull IntSequence indices, @NonNull Validity validity) {
-        this.backing = null;
-        this.offsets = null;
-        this.dictEntries = dictEntries;
-        this.indices = indices;
-        this.validity = validity;
+        this(null, null, dictEntries, indices, validity, Selection.ALL);
     }
 
     /** Builds a vector over a backing buffer and its row offsets ({@code offsets.size() == values + 1}). */
@@ -122,9 +130,11 @@ public final class BinaryVector implements ColumnVector {
 
     /**
      * The read-only backing buffer of a consolidated-mode vector. The returned view is read-only; do not mutate it.
-     * Valid only when {@link #isDictionary()} is {@code false}.
+     * Valid only when {@link #isDictionary()} is {@code false}. Reflects the whole physical backing; on a selected view
+     * it is rebuilt at the Arrow export boundary (see the Arrow session handoff); it rejects a selection here.
      */
     public MemorySegment consolidatedBacking() {
+        requireUnselected();
         return backing;
     }
 
@@ -134,6 +144,7 @@ public final class BinaryVector implements ColumnVector {
      * {@code false}.
      */
     public IntSequence consolidatedOffsets() {
+        requireUnselected();
         return offsets;
     }
 
@@ -143,6 +154,7 @@ public final class BinaryVector implements ColumnVector {
      * only in dictionary mode.
      */
     public MemorySegment[] dictionaryEntries() {
+        requireUnselected();
         return dictEntries;
     }
 
@@ -150,11 +162,17 @@ public final class BinaryVector implements ColumnVector {
      * The per-row indexes into {@link #dictionaryEntries()} of a dictionary-mode vector. Valid only in dictionary mode.
      */
     public IntSequence dictionaryIndices() {
+        requireUnselected();
         return indices;
     }
 
     @Override
-    public int size() {
+    public Selection selection() {
+        return selection;
+    }
+
+    @Override
+    public int baseSize() {
         return indices != null ? indices.size() : offsets.size() - 1;
     }
 
@@ -164,8 +182,9 @@ public final class BinaryVector implements ColumnVector {
     }
 
     /**
-     * Returns the value at {@code row}, or {@code null} when the row is null. A null row has no entry to read; an
-     * all-null dictionary page has an empty entry array, and indexing it would throw.
+     * Returns the value at logical row {@code row}, or {@code null} when the row is null. A null row has no entry to
+     * read; an all-null dictionary page has an empty entry array, and indexing it would throw. Sequential-access
+     * optimized on a selected view.
      */
     @Override
     @SuppressWarnings("unchecked")
@@ -173,11 +192,12 @@ public final class BinaryVector implements ColumnVector {
         if (validity.isNull(row)) {
             return null;
         }
+        int physical = selection == Selection.ALL ? row : selection.physical(row);
         if (indices != null) {
-            return dictEntries[indices.get(row)];
+            return dictEntries[indices.get(physical)];
         }
-        int start = offsets.get(row);
-        int length = offsets.get(row + 1) - start;
+        int start = offsets.get(physical);
+        int length = offsets.get(physical + 1) - start;
         return backing.asSlice(start, length);
     }
 
@@ -190,10 +210,11 @@ public final class BinaryVector implements ColumnVector {
         if (validity.isNull(row)) {
             return -1;
         }
+        int physical = selection == Selection.ALL ? row : selection.physical(row);
         if (indices != null) {
-            return Math.toIntExact(dictEntries[indices.get(row)].byteSize());
+            return Math.toIntExact(dictEntries[indices.get(physical)].byteSize());
         }
-        return offsets.get(row + 1) - offsets.get(row);
+        return offsets.get(physical + 1) - offsets.get(physical);
     }
 
     /**
@@ -206,20 +227,30 @@ public final class BinaryVector implements ColumnVector {
         if (validity.isNull(row)) {
             return -1;
         }
+        int physical = selection == Selection.ALL ? row : selection.physical(row);
         if (indices != null) {
-            MemorySegment entry = dictEntries[indices.get(row)];
+            MemorySegment entry = dictEntries[indices.get(physical)];
             int length = Math.toIntExact(entry.byteSize());
             MemorySegment.copy(entry, 0L, target, targetOffset, length);
             return length;
         }
-        int start = offsets.get(row);
-        int length = offsets.get(row + 1) - start;
+        int start = offsets.get(physical);
+        int length = offsets.get(physical + 1) - start;
         MemorySegment.copy(backing, start, target, targetOffset, length);
         return length;
     }
 
     @Override
+    public ColumnVector select(Selection selection) {
+        if (selection == Selection.ALL) {
+            return this;
+        }
+        return new BinaryVector(backing, offsets, dictEntries, indices, validity.select(selection), selection);
+    }
+
+    @Override
     public BinaryVector toConsolidated() {
+        requireUnselected();
         if (indices == null) {
             return this;
         }
@@ -256,6 +287,14 @@ public final class BinaryVector implements ColumnVector {
         // multiplied across the batches the page was split into.
         long windowBytes = backing.isNative() ? 0L : (offsets.get(offsets.size() - 1) - offsets.get(0));
         return windowBytes + offsets.heapBytes() + validity.heapBytes();
+    }
+
+    private void requireUnselected() {
+        if (selection != Selection.ALL) {
+            throw new UnsupportedOperationException(
+                    "bulk backing of a selected binary vector is rebuilt at the Arrow export boundary; "
+                            + "use get/valueLength/getInto for per-row access");
+        }
     }
 
     private long dictionaryEntryBytes() {

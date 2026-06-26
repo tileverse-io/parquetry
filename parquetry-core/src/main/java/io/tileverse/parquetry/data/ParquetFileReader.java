@@ -667,14 +667,20 @@ public class ParquetFileReader {
         return sum;
     }
 
-    /** Streams record batches matching {@code predicate} under {@code projection} via the default batch shape. */
+    /**
+     * Streams record batches matching {@code predicate} under {@code projection} via the default batch shape. The
+     * predicate is applied exactly (when record-level filtering is enabled, the default; with it disabled only metadata
+     * pruning applies): each emitted batch holds only matching rows, narrowed to {@code projection}.
+     */
     public Stream<ParquetRecordBatch> readBatches(Predicate predicate, Projection projection, ReadOptions options) {
         return readBatches(predicate, projection, BatchMaterializer.defaultBatch(), options);
     }
 
     /**
      * Streams record batches matching {@code predicate} under {@code projection}, materialized via
-     * {@code materializer}.
+     * {@code materializer}. The predicate is applied exactly (when record-level filtering is enabled, the default; with
+     * it disabled only metadata pruning applies): each emitted batch holds only matching rows, narrowed to
+     * {@code projection}.
      */
     public <T> Stream<T> readBatches(
             @NonNull Predicate rawPredicate,
@@ -692,26 +698,35 @@ public class ParquetFileReader {
 
         ReadOptions options = observation.effectiveOptions();
         Predicate predicate = lowerSpatialPredicates(rawPredicate);
+        boolean recordLevel = options.useRecordLevelFilter();
+        Projection scanProjection = recordLevel ? scanProjectionFor(projection, predicate) : projection;
         List<RowGroupChunks> rowGroupChunks = rowGroupChunks();
         boolean observe = observing(options);
         boolean wantsTimings = observe && options.queryObserver().wantsTimings();
         ExplainPlan plan = timedFilterPipeline(
-                predicate, projection, options, rowGroupChunks, wantsTimings, observation::addPipelineNanos);
+                predicate, scanProjection, options, rowGroupChunks, wantsTimings, observation::addPipelineNanos);
         List<RowGroupSurvivor> survivors = survivorsFor(plan, rowGroupChunks);
-        ParquetSchema projectedSchema = plan.projectedSchema();
-        List<Optional<RowMask>> decodeMasks = decodeMasksFor(survivors, projectedSchema, options);
+        ParquetSchema scanSchema = plan.projectedSchema();
+        ParquetSchema outputSchema = outputSchemaFor(projection);
+        List<Optional<RowMask>> decodeMasks = decodeMasksFor(survivors, scanSchema, options);
+        Predicate normalized = plan.normalizedPredicate();
+        Optional<LateMaterialization> lateMat =
+                lateMaterializationFor(survivors, scanSchema, outputSchema, normalized, options, recordLevel);
+        Predicate recordFilter = (recordLevel && lateMat.isEmpty()) ? recordFilterOf(normalized) : null;
         DecodeObservation decodeObservation = decodeObservationFor(plan, observe, options.queryObserver(), true);
         ParallelDecodeCoordinator coordinator = newDecodeCoordinator(
                 survivors,
-                projectedSchema,
+                scanSchema,
                 decodeMasks,
                 options,
-                Optional.empty(),
+                lateMat,
                 BatchForm.ASSEMBLED,
                 FetchAccumulator.NONE,
                 decodeObservation);
-        Stream<ParquetRecordBatch> batches = BatchPipeline.batches(coordinator);
-        return batches.map(batch -> materializer.materialize(projectedSchema, batch));
+        Stream<ParquetRecordBatch> batches = recordFilter == null
+                ? BatchPipeline.batches(coordinator)
+                : BatchPipeline.batches(coordinator, recordFilter, outputSchema);
+        return batches.map(batch -> materializer.materialize(outputSchema, batch));
     }
 
     /**

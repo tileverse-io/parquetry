@@ -59,6 +59,37 @@ class StructVectorTest {
         assertThat(vec.validity().isValid(1)).isFalse();
     }
 
+    @Test
+    void selectAllReturnsTheSameVector() {
+        IntVector a = IntVector.materialized(new int[] {1, 2, 3}, allValid(3));
+        StructVector vec = new StructVector(Map.of(ColumnPath.of("s", "a"), a), allValid(3), 3);
+        assertThat(vec.select(Selection.ALL)).isSameAs(vec);
+    }
+
+    @Test
+    void selectPropagatesIntoRowParallelChildren() {
+        ColumnPath aPath = ColumnPath.of("s", "a");
+        ColumnPath bPath = ColumnPath.of("s", "b");
+        IntVector a = IntVector.materialized(new int[] {1, 2, 3, 4}, allValid(4));
+        IntVector b = IntVector.materialized(new int[] {10, 20, 30, 40}, allValid(4));
+        BitSet groupValid = new BitSet(4);
+        groupValid.set(0, 4);
+        StructVector vec = new StructVector(Map.of(aPath, a, bPath, b), Validity.of(groupValid, 4), 4);
+
+        BitSet survivors = new BitSet();
+        survivors.set(1);
+        survivors.set(3);
+        StructVector selected = (StructVector) vec.select(Selection.bits(survivors));
+
+        assertThat(selected.size()).isEqualTo(2);
+        IntVector selectedA = (IntVector) selected.children().get(aPath);
+        IntVector selectedB = (IntVector) selected.children().get(bPath);
+        assertThat(selectedA.getInt(0)).isEqualTo(2);
+        assertThat(selectedA.getInt(1)).isEqualTo(4);
+        assertThat(selectedB.getInt(0)).isEqualTo(20);
+        assertThat(selectedB.getInt(1)).isEqualTo(40);
+    }
+
     private static Validity allValid(int n) {
         return Validity.allValid(n);
     }

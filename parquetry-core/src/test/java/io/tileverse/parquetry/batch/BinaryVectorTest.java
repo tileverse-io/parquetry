@@ -17,6 +17,7 @@ package io.tileverse.parquetry.batch;
 
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
@@ -34,6 +35,71 @@ class BinaryVectorTest {
 
     private static String text(MemorySegment s) {
         return new String(s.toArray(JAVA_BYTE));
+    }
+
+    private static BitSet survivors(int... rows) {
+        BitSet bits = new BitSet();
+        for (int row : rows) {
+            bits.set(row);
+        }
+        return bits;
+    }
+
+    @Nested
+    class Select {
+
+        @Test
+        void selectAllReturnsTheSameVector() {
+            BinaryVector vec =
+                    BinaryVector.materialized(new MemorySegment[] {seg("a"), seg("b")}, Validity.allValid(2));
+            assertThat(vec.select(Selection.ALL)).isSameAs(vec);
+        }
+
+        @Test
+        void selectedConsolidatedReadsSurvivorsPerRow() {
+            BinaryVector vec = BinaryVector.materialized(
+                    new MemorySegment[] {seg("alpha"), seg("beta"), seg("gamma"), seg("delta")}, Validity.allValid(4));
+            BinaryVector selected = (BinaryVector) vec.select(Selection.bits(survivors(1, 3)));
+
+            assertThat(selected.size()).isEqualTo(2);
+            assertThat(text(selected.get(0))).isEqualTo("beta");
+            assertThat(text(selected.get(1))).isEqualTo("delta");
+            assertThat(selected.valueLength(0)).isEqualTo("beta".length());
+        }
+
+        @Test
+        void selectedDictionaryReadsSurvivorsPerRow() {
+            MemorySegment[] dict = {seg("red"), seg("green"), seg("blue")};
+            int[] indices = {0, 1, 2, 1};
+            BinaryVector vec = BinaryVector.dictionary(dict, IntSequence.of(indices), Validity.allValid(4));
+            BinaryVector selected = (BinaryVector) vec.select(Selection.bits(survivors(0, 2, 3)));
+
+            assertThat(selected.size()).isEqualTo(3);
+            assertThat(text(selected.get(0))).isEqualTo("red");
+            assertThat(text(selected.get(1))).isEqualTo("blue");
+            assertThat(text(selected.get(2))).isEqualTo("green");
+        }
+
+        @Test
+        void selectedViewProjectsValidity() {
+            BitSet valid = survivors(0, 2); // physical row 1 is null
+            BinaryVector vec =
+                    BinaryVector.materialized(new MemorySegment[] {seg("a"), null, seg("c")}, Validity.of(valid, 3));
+            BinaryVector selected = (BinaryVector) vec.select(Selection.bits(survivors(0, 1, 2)));
+            assertThat(selected.get(0)).isNotNull();
+            assertThat(selected.get(1)).as("physical 1 was null").isNull();
+            assertThat(text(selected.get(2))).isEqualTo("c");
+        }
+
+        @Test
+        void bulkBackingOfASelectedVectorIsDeferredToTheArrowBoundary() {
+            BinaryVector vec =
+                    BinaryVector.materialized(new MemorySegment[] {seg("a"), seg("b"), seg("c")}, Validity.allValid(3));
+            BinaryVector selected = (BinaryVector) vec.select(Selection.bits(survivors(0, 2)));
+            assertThatThrownBy(selected::consolidatedOffsets)
+                    .isInstanceOf(UnsupportedOperationException.class)
+                    .hasMessageContaining("Arrow export boundary");
+        }
     }
 
     @Nested

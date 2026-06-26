@@ -285,7 +285,9 @@ public final class FilesetDataset implements GeoParquetDataset {
         if (constants.isEmpty()) {
             return Query.of(residual, physical);
         }
-        return new Query(residual, physical, outputShape(physical, constants));
+        return Query.builder(residual, physical)
+                .output(outputShape(physical, constants))
+                .build();
     }
 
     /**

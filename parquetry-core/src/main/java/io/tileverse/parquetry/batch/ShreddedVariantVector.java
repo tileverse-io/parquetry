@@ -46,6 +46,7 @@ public final class ShreddedVariantVector implements ColumnVector {
     private final Validity validity;
     private final int size;
     private final MemorySegment[] cache;
+    private final Selection selection;
     private StructVector structView;
 
     public ShreddedVariantVector(
@@ -54,12 +55,26 @@ public final class ShreddedVariantVector implements ColumnVector {
             @NonNull VariantInput root,
             @NonNull Validity validity,
             int size) {
+        this(metadataColumn, model, root, validity, size, new MemorySegment[size], Selection.ALL);
+    }
+
+    // S107: private; only the public constructor and select() call it
+    @SuppressWarnings("java:S107")
+    private ShreddedVariantVector(
+            @NonNull BinaryVector metadataColumn,
+            @NonNull ShreddedVariant model,
+            @NonNull VariantInput root,
+            @NonNull Validity validity,
+            int size,
+            MemorySegment[] cache,
+            @NonNull Selection selection) {
         this.metadataColumn = metadataColumn;
         this.model = model;
         this.root = root;
         this.validity = validity;
         this.size = size;
-        this.cache = new MemorySegment[size];
+        this.cache = cache;
+        this.selection = selection;
     }
 
     /** The {@code metadata} leaf column, one Variant metadata dictionary per row. */
@@ -86,6 +101,7 @@ public final class ShreddedVariantVector implements ColumnVector {
      * absent from the model (a missing {@code value} or {@code typed_value}) are omitted to match the schema's leaves.
      */
     public StructVector asStructView() {
+        requireUnselected();
         // Built once over immutable leaf vectors; single-threaded during striping, no synchronization needed.
         if (structView == null) {
             structView = buildStructView();
@@ -171,7 +187,12 @@ public final class ShreddedVariantVector implements ColumnVector {
     public record ArrayInput(int[] offsets, Validity presence, VariantInput element) implements TypedInput {}
 
     @Override
-    public int size() {
+    public Selection selection() {
+        return selection;
+    }
+
+    @Override
+    public int baseSize() {
         return size;
     }
 
@@ -180,14 +201,36 @@ public final class ShreddedVariantVector implements ColumnVector {
         return validity;
     }
 
+    /**
+     * Reconstructs the Variant at logical row {@code row}, or {@code null} when the row is null. Sequential-access
+     * optimized on a selected view: the logical row is translated to its physical row, and reconstruction reuses the
+     * physical-indexed metadata column, typed subtree, and per-row cache unchanged.
+     */
     @Override
     @SuppressWarnings("unchecked")
     public Variant get(int row) {
         if (validity.isNull(row)) {
             return null;
         }
-        VariantMetadata metadata = new VariantMetadata(metadataColumn.get(row));
-        return Variant.of(cachedValue(metadata, row), metadata);
+        int physical = selection == Selection.ALL ? row : selection.physical(row);
+        VariantMetadata metadata = new VariantMetadata(metadataColumn.get(physical));
+        return Variant.of(cachedValue(metadata, physical), metadata);
+    }
+
+    /**
+     * A selected shredded Variant keeps its whole physical-indexed reconstruction machinery (metadata column, typed
+     * subtree, per-row cache) and only translates logical rows to physical in {@link #get(int)}; the validity is
+     * projected and the size reduced to the selection length. The bulk {@link #asStructView()} /
+     * {@link #toUnshredded()} forms reflect the whole physical domain and are rebuilt at the export/write boundary, so
+     * they reject a selection.
+     */
+    @Override
+    public ColumnVector select(Selection selection) {
+        if (selection == Selection.ALL) {
+            return this;
+        }
+        return new ShreddedVariantVector(
+                metadataColumn, model, root, validity.select(selection), size, cache, selection);
     }
 
     private MemorySegment cachedValue(VariantMetadata metadata, int row) {
@@ -210,6 +253,7 @@ public final class ShreddedVariantVector implements ColumnVector {
      * keeps its cleared validity bit.
      */
     public VariantVector toUnshredded() {
+        requireUnselected();
         MemorySegment[] values = new MemorySegment[size];
         for (int row = 0; row < size; row++) {
             if (!validity.isNull(row)) {
@@ -229,6 +273,14 @@ public final class ShreddedVariantVector implements ColumnVector {
 
     private NodeReader readerAt(VariantInput input, int row) {
         return new InputNodeReader(input, row);
+    }
+
+    private void requireUnselected() {
+        if (selection != Selection.ALL) {
+            throw new UnsupportedOperationException(
+                    "the struct view and unshredded form of a selected shredded Variant are rebuilt at the "
+                            + "export/write boundary; use get(int) for per-row access");
+        }
     }
 
     @Override

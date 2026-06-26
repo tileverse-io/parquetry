@@ -30,7 +30,6 @@ import io.tileverse.parquetry.batch.DoubleVector;
 import io.tileverse.parquetry.batch.FixedLenBinaryVector;
 import io.tileverse.parquetry.batch.FloatVector;
 import io.tileverse.parquetry.batch.Int96Vector;
-import io.tileverse.parquetry.batch.IntSequence;
 import io.tileverse.parquetry.batch.IntVector;
 import io.tileverse.parquetry.batch.LevelListVector;
 import io.tileverse.parquetry.batch.LevelMapVector;
@@ -378,23 +377,11 @@ public final class DefaultParquetRecord implements ParquetRecord {
             return null;
         }
         return switch (vec) {
-            case BinaryVector bv -> readBinaryValue(bv, view);
+            case BinaryVector bv -> readSlice(bv.get(rowIndex), view);
             case FixedLenBinaryVector fb -> readSlice(fb.get(rowIndex), view);
             case Int96Vector iv -> readSlice(iv.get(rowIndex), view);
             default -> throw mismatch(cols, col, accessor);
         };
-    }
-
-    private <R> R readBinaryValue(BinaryVector bv, BinaryView<R> view) {
-        if (bv.isDictionary()) {
-            MemorySegment entry = bv.dictionaryEntries()[bv.dictionaryIndices().get(rowIndex)];
-            return view.read(entry, 0L, entry.byteSize());
-        }
-        MemorySegment backing = bv.consolidatedBacking();
-        IntSequence offsets = bv.consolidatedOffsets();
-        int start = offsets.get(rowIndex);
-        int length = offsets.get(rowIndex + 1) - start;
-        return view.read(backing, start, length);
     }
 
     private static <R> R readSlice(MemorySegment slice, BinaryView<R> view) {

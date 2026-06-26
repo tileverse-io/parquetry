@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.stream.Stream;
 
 import com.google.errorprone.annotations.MustBeClosed;
@@ -38,9 +39,6 @@ import io.tileverse.parquetry.filter.Query;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.prune.FileStats;
 import io.tileverse.parquetry.internal.filter.PredicateColumns;
-import io.tileverse.parquetry.internal.filter.PredicateNormalizer;
-import io.tileverse.parquetry.internal.filter.RecordAccessors;
-import io.tileverse.parquetry.internal.filter.RecordLevelEvaluator;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -140,13 +138,13 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
     }
 
     /**
-     * Reads batches from the row groups and pages that survive metadata pruning for {@code predicate}, projecting to
-     * {@code projection}, with caller-supplied {@code options}. Each batch is a raw {@link ParquetRecordBatch} (the
-     * default identity materializer).
+     * Reads the rows matching {@code predicate}, projected to {@code projection}, as columnar batches, with
+     * caller-supplied {@code options}. Each batch is a raw {@link ParquetRecordBatch} (the default identity
+     * materializer).
      *
-     * <p>Unlike {@link #read read}, the batch path applies pruning only: an emitted batch may still contain rows that
-     * do not satisfy {@code predicate}. Callers needing per-row filtering should evaluate it themselves or use
-     * {@code read}.
+     * <p>When record-level filtering is enabled (the default), the predicate is applied exactly: each emitted batch
+     * holds only the matching rows. With {@code ReadOptions.useRecordLevelFilter()} disabled, only metadata pruning
+     * applies and a surviving batch may still hold rows that do not match.
      */
     @MustBeClosed
     Stream<ParquetRecordBatch> readBatches(Predicate predicate, Projection projection, ReadOptions options);
@@ -174,12 +172,28 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
      */
     @MustBeClosed
     default Stream<ParquetRecordBatch> readBatches(Query query, ReadOptions options) {
-        if (query.output().isEmpty()) {
-            return readBatches(query.predicate(), query.projection(), options);
+        List<OutputColumn> output = query.output();
+        Predicate pushed = output.isEmpty() ? query.predicate() : lowerToPhysicalColumns(query.predicate(), output);
+        Stream<ParquetRecordBatch> raw = readBatches(pushed, query.projection(), options);
+        Stream<ParquetRecordBatch> windowed = applyWindow(raw, query.offset(), query.limit());
+        if (output.isEmpty()) {
+            return windowed;
         }
-        Predicate lowered = lowerToPhysicalColumns(query.predicate(), query.output());
-        Stream<ParquetRecordBatch> physical = readBatches(lowered, query.projection(), options);
-        return physical.map(batch -> OutputBatches.shape(batch, query.output()));
+        return windowed.map(batch -> OutputBatches.shape(batch, output));
+    }
+
+    /**
+     * Applies the offset/limit window to the exact batch stream before any output shaping, leaving the identity window
+     * (offset 0, no limit) untouched. Windowing before shaping keeps the slice over the raw filtered batches, never
+     * re-selecting an already-shaped batch's columns. Applied here in the default, virtual dispatch makes the window
+     * span each multi-file dataset's cross-file batch concatenation.
+     */
+    private static Stream<ParquetRecordBatch> applyWindow(
+            Stream<ParquetRecordBatch> batches, long offset, OptionalLong limit) {
+        if (offset == 0 && limit.isEmpty()) {
+            return batches;
+        }
+        return batches.gather(BatchWindow.of(offset, limit));
     }
 
     /**
@@ -205,23 +219,38 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
     /**
      * Reads records shaped by {@code query}, applying its ordered output shape when one is present.
      *
-     * <p>The identity case (empty output) delegates to {@link #read(Predicate, Projection, ReadOptions)}, which applies
-     * the record-level filter tier. The shaped case builds records from {@link #readBatches(Query, ReadOptions)}, which
-     * only prunes; a surviving batch may still hold rows that fail the predicate. This method therefore re-applies the
-     * predicate per record so both cases return exactly the rows that satisfy {@code query.predicate()}.
+     * <p>The identity case (empty output) delegates to {@link #read(Predicate, Projection, ReadOptions)}. The shaped
+     * case builds records from {@link #readBatches(Query, ReadOptions)}, which applies {@code query.predicate()}
+     * exactly: each batch it emits already holds only matching rows. Output shaping then renames, reorders, or injects
+     * columns over those rows without ever dropping one. Both cases therefore return exactly the rows that satisfy
+     * {@code query.predicate()}.
+     *
+     * <p>That exactness holds when record-level filtering is enabled (the default). With
+     * {@code ReadOptions.useRecordLevelFilter()} disabled the read is pushdown-only, consistent with
+     * {@link #read(Predicate, Projection, ReadOptions)}.
      */
     @MustBeClosed
     default Stream<ParquetRecord> read(Query query, ReadOptions options) {
         if (query.output().isEmpty()) {
-            return read(query.predicate(), query.projection(), options);
+            Stream<ParquetRecord> rows = read(query.predicate(), query.projection(), options);
+            return applyRowWindow(rows, query.offset(), query.limit());
         }
-        Predicate residual = PredicateNormalizer.normalize(query.predicate());
-        if (residual instanceof Predicate.Always(boolean value) && value) {
-            return readBatches(query, options).flatMap(ConstantColumnBatches::rows);
+        return readBatches(query, options).flatMap(ConstantColumnBatches::rows);
+    }
+
+    /**
+     * Applies the offset/limit window to a row stream, leaving the identity window untouched. The identity-output
+     * {@code read(Query)} path materializes rows directly rather than through {@link #readBatches(Query, ReadOptions)},
+     * so it windows at the row level here; the shaped path inherits the batch-level window from {@code readBatches}.
+     * {@link Stream#limit(long)} short-circuits the lazy per-file concatenation; files past the limit are never opened,
+     * the same outcome the batch window's early finish gives.
+     */
+    private static Stream<ParquetRecord> applyRowWindow(Stream<ParquetRecord> rows, long offset, OptionalLong limit) {
+        if (offset == 0 && limit.isEmpty()) {
+            return rows;
         }
-        return readBatches(query, options)
-                .flatMap(ConstantColumnBatches::rows)
-                .filter(record -> RecordLevelEvaluator.test(residual, RecordAccessors.of(record)));
+        Stream<ParquetRecord> windowed = offset == 0 ? rows : rows.skip(offset);
+        return limit.isPresent() ? windowed.limit(limit.getAsLong()) : windowed;
     }
 
     /**
@@ -230,7 +259,8 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
      *
      * <p>The output shape never changes a row count: it only renames, reorders, or injects columns over rows the
      * predicate already selects. Only the predicate namespace needs lowering, after which this delegates to
-     * {@link #count(Predicate, ReadOptions)}.
+     * {@link #count(Predicate, ReadOptions)}. The {@code offset}/{@code limit} window is ignored: counting is
+     * predicate-only, not read-shaping.
      */
     default long count(Query query, ReadOptions options) {
         Predicate lowered = lowerToPhysicalColumns(query.predicate(), query.output());
