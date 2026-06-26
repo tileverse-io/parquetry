@@ -318,8 +318,7 @@ final class IcebergDataset implements ParquetDataset {
         if (recon.passThrough()) {
             return Query.of(predicate, projection);
         }
-        Map<ColumnPath, Value> constantsByName = partitionConstantsByName(partitionConstants);
-        Predicate folded = ConstantFolding.fold(predicate, constantsByName, addedNullColumns(recon));
+        Predicate folded = ConstantFolding.fold(predicate, constantColumns(recon), addedNullColumns(recon));
         if (folded.equals(Predicate.ALWAYS_FALSE)) {
             return null;
         }
@@ -327,16 +326,19 @@ final class IcebergDataset implements ParquetDataset {
         return new Query(folded, pushdown, recon.output());
     }
 
-    /** Lowers identity-partition constants keyed by source-field-id to constants keyed by their table column path. */
-    private Map<ColumnPath, Value> partitionConstantsByName(Map<Integer, Value> partitionConstants) {
-        Map<ColumnPath, Value> byName = new HashMap<>();
-        for (Map.Entry<Integer, Value> entry : partitionConstants.entrySet()) {
-            IcebergField field = partitionSpec.identitySourceFields().get(entry.getKey());
-            if (field != null) {
-                byName.put(ColumnPath.of(field.name()), entry.getValue());
+    /**
+     * The table columns reconciliation presents as a constant for every row, keyed by their table column path. Both an
+     * omitted identity-partition column and an added column with an {@code initial-default} reconcile to a constant; a
+     * predicate over either folds against its value rather than reaching the file, which does not hold the column.
+     */
+    private static Map<ColumnPath, Value> constantColumns(Reconciliation recon) {
+        Map<ColumnPath, Value> constants = new HashMap<>();
+        for (OutputColumn column : recon.output()) {
+            if (column instanceof OutputColumn.Constant(ColumnPath name, Value value)) {
+                constants.put(name, value);
             }
         }
-        return byName;
+        return constants;
     }
 
     /** The names of the table columns this file does not hold, which reconciliation presents as typed nulls. */

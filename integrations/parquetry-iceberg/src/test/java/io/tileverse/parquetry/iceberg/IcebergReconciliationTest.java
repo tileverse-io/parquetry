@@ -124,6 +124,38 @@ class IcebergReconciliationTest {
     }
 
     @Test
+    void reconstructsAnAbsentColumnFromItsInitialDefault() {
+        IcebergField labelWithDefault =
+                new IcebergField(3, "label", "string", false, Optional.of(new Value.StringVal("n/a")));
+        IcebergSchema table = tableOf(field(1, "id", "long"), labelWithDefault);
+        ParquetSchema file = fileSchema(leaf("id", PrimitiveKind.INT64, 1));
+
+        Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file), NO_PARTITIONS);
+
+        assertThat(result.passThrough()).isFalse();
+        assertThat(result.output())
+                .containsExactly(
+                        new OutputColumn.Physical(ColumnPath.of("id"), ColumnPath.of("id")),
+                        new OutputColumn.Constant(ColumnPath.of("label"), new Value.StringVal("n/a")));
+    }
+
+    @Test
+    void partitionConstantOutranksAnInitialDefault() {
+        IcebergField categoryWithDefault =
+                new IcebergField(2, "category", "string", false, Optional.of(new Value.StringVal("default")));
+        IcebergSchema table = tableOf(field(1, "id", "long"), categoryWithDefault);
+        ParquetSchema file = fileSchema(leaf("id", PrimitiveKind.INT64, 1));
+        Map<Integer, Value> partitionConstants = Map.of(2, new Value.StringVal("b"));
+
+        Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file), partitionConstants);
+
+        assertThat(result.output())
+                .containsExactly(
+                        new OutputColumn.Physical(ColumnPath.of("id"), ColumnPath.of("id")),
+                        new OutputColumn.Constant(ColumnPath.of("category"), new Value.StringVal("b")));
+    }
+
+    @Test
     void reconcilesReorderAndRenameTogetherInTableOrder() {
         IcebergSchema table = tableOf(field(2, "count", "long"), field(1, "id", "long"));
         ParquetSchema file = fileSchema(leaf("id", PrimitiveKind.INT64, 1), leaf("n", PrimitiveKind.INT64, 2));
