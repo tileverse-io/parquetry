@@ -150,6 +150,33 @@ public final class Validity {
         return of(out, n);
     }
 
+    /**
+     * The mask projected through {@code selection}: logical row {@code j} reads this mask at
+     * {@code selection.physical(j)}, rebased to a logical domain of {@code selection.length()} rows and owning its own
+     * bitmap. The generalization of {@link #slice(int, int)} from a contiguous window to an arbitrary index map.
+     *
+     * <p>This materializes the projected mask (the sibling behavior of {@code slice}); it does not store the selection.
+     * The result is a plain logical-indexed mask, which is what keeps {@link Selection} the single index-translation
+     * layer: validity stays <i>data</i> and is read <i>through</i> the selection, never as a second selection.
+     * {@link Selection#ALL} returns this mask unchanged.
+     */
+    public Validity select(Selection selection) {
+        if (selection == Selection.ALL) {
+            return this;
+        }
+        int length = selection.length();
+        if (nullCount == 0) {
+            return allValid(length);
+        }
+        BitSet out = new BitSet(length);
+        for (int logical = 0; logical < length; logical++) {
+            if (isValid(selection.physical(logical))) {
+                out.set(logical);
+            }
+        }
+        return of(out, length);
+    }
+
     /** A fresh mutable copy of the valid-bit mask, independent of this instance. */
     public BitSet copy() {
         BitSet out = new BitSet(size);

@@ -67,12 +67,11 @@ class ConstantColumnIpcIT {
     }
 
     private static byte[] writeIpcWithConstantYear(Path parquetFile) {
-        Query query = new Query(
-                Predicate.ALWAYS_TRUE,
-                Projection.of(Set.of(ID)),
-                List.of(
+        Query query = Query.builder(Predicate.ALWAYS_TRUE, Projection.of(Set.of(ID)))
+                .output(List.of(
                         new OutputColumn.Physical(ID, ID),
-                        new OutputColumn.Constant(YEAR, new Value.LongVal(YEAR_CONSTANT))));
+                        new OutputColumn.Constant(YEAR, new Value.LongVal(YEAR_CONSTANT))))
+                .build();
         try (ByteRangeSource source = ByteRangeSource.ofFile(parquetFile)) {
             ParquetSource parquetSource = ParquetSource.open(source);
             try (Stream<ParquetRecordBatch> batches = parquetSource.readBatches(query, ReadOptions.DEFAULTS)) {

@@ -45,6 +45,68 @@ class ValidityTest {
     }
 
     @Test
+    void selectAllReturnsTheSameMask() {
+        BitSet bits = new BitSet(4);
+        bits.set(0, 4);
+        bits.clear(2);
+        Validity v = Validity.of(bits, 4);
+        assertThat(v.select(Selection.ALL)).isSameAs(v);
+    }
+
+    @Test
+    void selectProjectsNullnessThroughTheIndexMap() {
+        // physical rows: 0=valid 1=null 2=valid 3=null 4=valid
+        BitSet bits = new BitSet(5);
+        bits.set(0);
+        bits.set(2);
+        bits.set(4);
+        Validity base = Validity.of(bits, 5);
+
+        // select physical rows 1,3,4 -> logical 0,1,2
+        Validity selected = base.select(Selection.bits(survivors(1, 3, 4)));
+
+        assertThat(selected.size()).as("logical size").isEqualTo(3);
+        assertThat(selected.isNull(0)).as("physical 1 was null").isTrue();
+        assertThat(selected.isNull(1)).as("physical 3 was null").isTrue();
+        assertThat(selected.isValid(2)).as("physical 4 was valid").isTrue();
+        assertThat(selected.nullCount()).isEqualTo(2);
+    }
+
+    @Test
+    void selectOnAllValidStaysAllValidAndAllocatesNoBitmap() {
+        Validity base = Validity.allValid(10);
+        Validity selected = base.select(Selection.range(3, 4));
+        assertThat(selected.size()).isEqualTo(4);
+        assertThat(selected.hasNulls()).isFalse();
+        assertThat(selected.heapBytes()).as("all-valid holds no bitmap").isZero();
+    }
+
+    @Test
+    void selectAgreesWithReadingBaseValidityAtTranslatedIndices() {
+        BitSet bits = new BitSet(8);
+        bits.set(1);
+        bits.set(2);
+        bits.set(5);
+        bits.set(7);
+        Validity base = Validity.of(bits, 8);
+        Selection selection = Selection.bits(survivors(0, 2, 5, 6, 7));
+        Validity selected = base.select(selection);
+        for (int logical = 0; logical < selection.length(); logical++) {
+            assertThat(selected.isValid(logical))
+                    .as("logical %d -> physical %d", logical, selection.physical(logical))
+                    .isEqualTo(base.isValid(selection.physical(logical)));
+        }
+    }
+
+    private static BitSet survivors(int... physicalRows) {
+        BitSet bits = new BitSet();
+        for (int row : physicalRows) {
+            bits.set(row);
+        }
+        return bits;
+    }
+
+    @Test
     void ofMirrorsTheBitSetWhenSomeRowsAreNull() {
         BitSet bits = new BitSet(4);
         bits.set(1);

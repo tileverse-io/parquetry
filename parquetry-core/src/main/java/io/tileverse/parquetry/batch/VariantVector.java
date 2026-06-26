@@ -40,6 +40,23 @@ public record VariantVector(
         return Variant.of(valueColumn.get(row), metadata);
     }
 
+    /**
+     * A selected Variant propagates the selection into its row-parallel metadata and value columns rather than holding
+     * it: both columns are one binary value per Variant row; selecting Variant rows selects the same rows in each. The
+     * validity is projected and the size reduced to the selection length.
+     */
+    @Override
+    public ColumnVector select(Selection selection) {
+        if (selection == Selection.ALL) {
+            return this;
+        }
+        return new VariantVector(
+                (BinaryVector) metadataColumn.select(selection),
+                (BinaryVector) valueColumn.select(selection),
+                validity.select(selection),
+                selection.length());
+    }
+
     @Override
     public long approximateHeapBytes() {
         return validity.heapBytes() + metadataColumn.approximateHeapBytes() + valueColumn.approximateHeapBytes();

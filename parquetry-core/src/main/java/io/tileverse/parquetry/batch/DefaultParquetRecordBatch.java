@@ -90,6 +90,11 @@ public final class DefaultParquetRecordBatch implements ParquetRecordBatch {
     }
 
     @Override
+    public ParquetRecordBatch slice(int from, int count) {
+        return FilteredRecordBatch.of(this, Selection.range(from, count), projectedSchema);
+    }
+
+    @Override
     public long approximateHeapBytes() {
         long total = 0L;
         for (ColumnVector vector : columns.values()) {

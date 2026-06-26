@@ -21,12 +21,22 @@ import lombok.NonNull;
 @SuppressWarnings("java:S6206")
 public final class ListVector implements ColumnVector {
 
-    private final int[] offsets; // length = size + 1
+    private final int[] offsets; // length = baseSize + 1
     private final ColumnVector child;
     private final Validity validity;
     private final int size;
+    private final Selection selection;
 
     public ListVector(@NonNull int[] offsets, @NonNull ColumnVector child, @NonNull Validity validity, int size) {
+        this(offsets, child, validity, size, Selection.ALL);
+    }
+
+    private ListVector(
+            @NonNull int[] offsets,
+            @NonNull ColumnVector child,
+            @NonNull Validity validity,
+            int size,
+            @NonNull Selection selection) {
         if (offsets.length != size + 1) {
             throw new IllegalArgumentException(
                     "offsets length must be size + 1; got offsets.length=%d, size=%d".formatted(offsets.length, size));
@@ -35,10 +45,16 @@ public final class ListVector implements ColumnVector {
         this.child = child;
         this.validity = validity;
         this.size = size;
+        this.selection = selection;
     }
 
     @Override
-    public int size() {
+    public Selection selection() {
+        return selection;
+    }
+
+    @Override
+    public int baseSize() {
         return size;
     }
 
@@ -47,27 +63,47 @@ public final class ListVector implements ColumnVector {
         return validity;
     }
 
-    /** Returns the start offset (inclusive) of row {@code row}'s slice in the child vector. */
+    /** Returns the start offset (inclusive) of logical row {@code row}'s slice in the child vector. */
     public int rowOffsetStart(int row) {
-        return offsets[row];
+        int physical = selection == Selection.ALL ? row : selection.physical(row);
+        return offsets[physical];
     }
 
-    /** Returns the end offset (exclusive) of row {@code row}'s slice in the child vector. */
+    /** Returns the end offset (exclusive) of logical row {@code row}'s slice in the child vector. */
     public int rowOffsetEnd(int row) {
-        return offsets[row + 1];
+        int physical = selection == Selection.ALL ? row : selection.physical(row);
+        return offsets[physical + 1];
     }
 
-    /** The child vector this list points into. */
+    /**
+     * The child vector this list points into. Stays whole on a selected view; only the parent row index is selected.
+     */
     public ColumnVector child() {
         return child;
     }
 
     /**
-     * The {@code size + 1} row offsets into the child vector, returned directly without copying; the array is read-only
-     * by contract and callers must not mutate it.
+     * The {@code baseSize + 1} row offsets into the child vector, returned directly without copying; the array is
+     * read-only by contract and callers must not mutate it. Only valid on an unselected view: a selected list's
+     * contiguous offsets index into a compacted child, which is rebuilt at the Arrow export boundary (see the Arrow
+     * session handoff), not here. Per-row consumers use {@link #rowOffsetStart(int)} / {@link #rowOffsetEnd(int)},
+     * which honor the selection.
      */
     public int[] offsets() {
+        if (selection != Selection.ALL) {
+            throw new UnsupportedOperationException(
+                    "contiguous offsets of a selected list are rebuilt at the Arrow export boundary; "
+                            + "use rowOffsetStart/rowOffsetEnd for per-row access");
+        }
         return offsets;
+    }
+
+    @Override
+    public ColumnVector select(Selection selection) {
+        if (selection == Selection.ALL) {
+            return this;
+        }
+        return new ListVector(offsets, child, validity.select(selection), size, selection);
     }
 
     @Override

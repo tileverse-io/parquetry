@@ -26,26 +26,38 @@ public final class BooleanVector implements ColumnVector {
     private final MemorySegment segmentBitmap; // null when heap-backed; LSB-first, one bit per row
     private final int segmentSize; // row count for the segment mode
     private final Validity validity;
+    private final Selection selection;
 
-    private BooleanVector(boolean[] values, MemorySegment segmentBitmap, int segmentSize, @NonNull Validity validity) {
+    private BooleanVector(
+            boolean[] values,
+            MemorySegment segmentBitmap,
+            int segmentSize,
+            @NonNull Validity validity,
+            @NonNull Selection selection) {
         this.values = values;
         this.segmentBitmap = segmentBitmap;
         this.segmentSize = segmentSize;
         this.validity = validity;
+        this.selection = selection;
     }
 
     public static BooleanVector materialized(@NonNull boolean[] values, @NonNull Validity validity) {
-        return new BooleanVector(values, null, 0, validity);
+        return new BooleanVector(values, null, 0, validity, Selection.ALL);
     }
 
     /** Reads values from an off-heap LSB-first bit-packed segment; the segment's owner controls its lifetime. */
     public static BooleanVector segmentBacked(
             @NonNull MemorySegment segmentBitmap, int size, @NonNull Validity validity) {
-        return new BooleanVector(null, segmentBitmap, size, validity);
+        return new BooleanVector(null, segmentBitmap, size, validity, Selection.ALL);
     }
 
     @Override
-    public int size() {
+    public Selection selection() {
+        return selection;
+    }
+
+    @Override
+    public int baseSize() {
         return segmentBitmap != null ? segmentSize : values.length;
     }
 
@@ -55,14 +67,16 @@ public final class BooleanVector implements ColumnVector {
     }
 
     /**
-     * Returns the value at {@code row}; throws {@link IllegalStateException} when the row is null. Guard with
-     * {@link #isNull(int)} / {@link #hasNulls()}, or use {@link #get(int)} for a null-aware boxed read.
+     * Returns the value at logical row {@code row}; throws {@link IllegalStateException} when the row is null. Guard
+     * with {@link #isNull(int)} / {@link #hasNulls()}, or use {@link #get(int)} for a null-aware boxed read.
+     * Sequential-access optimized on a selected view.
      */
     public boolean getBoolean(int row) {
         if (validity.isNull(row)) {
             throw new IllegalStateException("row %d is null; guard with isNull(row) or hasNulls()".formatted(row));
         }
-        return segmentBitmap != null ? bitAt(row) : values[row];
+        int physical = selection == Selection.ALL ? row : selection.physical(row);
+        return bitValue(physical);
     }
 
     @Override
@@ -72,20 +86,23 @@ public final class BooleanVector implements ColumnVector {
     }
 
     public boolean[] asArray() {
-        if (segmentBitmap == null) {
+        if (selection == Selection.ALL && segmentBitmap == null) {
             return values;
         }
-        boolean[] out = new boolean[size()];
-        for (int row = 0; row < out.length; row++) {
-            out[row] = bitAt(row);
+        int n = size();
+        boolean[] out = new boolean[n];
+        for (int row = 0; row < n; row++) {
+            int physical = selection == Selection.ALL ? row : selection.physical(row);
+            out[row] = bitValue(physical);
         }
         return out;
     }
 
     /**
-     * Packs {@code count} values starting at row {@code from} into {@code target} as an LSB-first bitmap beginning at
-     * bit 0 of byte {@code targetOffset}. Lets a bulk consumer reuse one target instead of allocating via
-     * {@link #asArray()}. Values at null rows are packed as stored; the caller applies validity separately.
+     * Packs {@code count} values starting at logical row {@code from} into {@code target} as an LSB-first bitmap
+     * beginning at bit 0 of byte {@code targetOffset}. Lets a bulk consumer reuse one target instead of allocating via
+     * {@link #asArray()}. A selected view packs its survivors. Values at null rows are packed as stored; the caller
+     * applies validity separately.
      */
     public void copyInto(MemorySegment target, long targetOffset, int from, int count) {
         int byteCount = (count + 7) / 8;
@@ -93,7 +110,8 @@ public final class BooleanVector implements ColumnVector {
             target.set(ValueLayout.JAVA_BYTE, targetOffset + b, (byte) 0);
         }
         for (int i = 0; i < count; i++) {
-            if (bitValue(from + i)) {
+            int physical = selection == Selection.ALL ? from + i : selection.physical(from + i);
+            if (bitValue(physical)) {
                 long byteIndex = targetOffset + (i >>> 3);
                 int current = target.get(ValueLayout.JAVA_BYTE, byteIndex) & 0xFF;
                 target.set(ValueLayout.JAVA_BYTE, byteIndex, (byte) (current | (1 << (i & 7))));
@@ -102,17 +120,25 @@ public final class BooleanVector implements ColumnVector {
     }
 
     @Override
+    public ColumnVector select(Selection selection) {
+        if (selection == Selection.ALL) {
+            return this;
+        }
+        return new BooleanVector(values, segmentBitmap, segmentSize, validity.select(selection), selection);
+    }
+
+    @Override
     public long approximateHeapBytes() {
         return segmentBitmap != null ? validity.heapBytes() : values.length + validity.heapBytes();
     }
 
-    private boolean bitValue(int row) {
-        return segmentBitmap != null ? bitAt(row) : values[row];
+    private boolean bitValue(int physical) {
+        return segmentBitmap != null ? bitAt(physical) : values[physical];
     }
 
-    private boolean bitAt(int row) {
-        int byteIndex = row >>> 3;
-        int bitIndex = row & 7;
+    private boolean bitAt(int physical) {
+        int byteIndex = physical >>> 3;
+        int bitIndex = physical & 7;
         int bits = segmentBitmap.get(ValueLayout.JAVA_BYTE, byteIndex) & 0xFF;
         return ((bits >>> bitIndex) & 1) != 0;
     }

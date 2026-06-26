@@ -120,7 +120,9 @@ class MultiReaderEarlyCloseTest {
                 output.add(new OutputColumn.Physical(leaf, leaf));
             }
             output.add(new OutputColumn.Constant(ColumnPath.of("region"), new Value.StringVal("emea")));
-            Query query = new Query(Predicate.ALWAYS_TRUE, Projection.ALL, output);
+            Query query = Query.builder(Predicate.ALWAYS_TRUE, Projection.ALL)
+                    .output(output)
+                    .build();
 
             try (Stream<ParquetRecord> stream = source.read(query, ReadOptions.DEFAULTS)) {
                 Iterator<ParquetRecord> it = stream.iterator();

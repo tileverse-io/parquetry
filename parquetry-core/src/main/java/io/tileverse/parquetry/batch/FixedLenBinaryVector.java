@@ -41,13 +41,25 @@ public final class FixedLenBinaryVector implements ColumnVector {
     private final IntSequence indices;
     private final int byteWidth;
     private final Validity validity;
+    private final Selection selection;
 
-    private FixedLenBinaryVector(@NonNull MemorySegment backing, int byteWidth, @NonNull Validity validity) {
+    private FixedLenBinaryVector(
+            MemorySegment backing,
+            MemorySegment[] dictEntries,
+            IntSequence indices,
+            int byteWidth,
+            @NonNull Validity validity,
+            @NonNull Selection selection) {
         this.backing = backing;
-        this.dictEntries = null;
-        this.indices = null;
+        this.dictEntries = dictEntries;
+        this.indices = indices;
         this.byteWidth = byteWidth;
         this.validity = validity;
+        this.selection = selection;
+    }
+
+    private FixedLenBinaryVector(@NonNull MemorySegment backing, int byteWidth, @NonNull Validity validity) {
+        this(backing, null, null, byteWidth, validity, Selection.ALL);
     }
 
     private FixedLenBinaryVector(
@@ -55,11 +67,7 @@ public final class FixedLenBinaryVector implements ColumnVector {
             @NonNull IntSequence indices,
             int byteWidth,
             @NonNull Validity validity) {
-        this.backing = null;
-        this.dictEntries = dictEntries;
-        this.indices = indices;
-        this.byteWidth = byteWidth;
-        this.validity = validity;
+        this(null, dictEntries, indices, byteWidth, validity, Selection.ALL);
     }
 
     /** Builds a vector over a backing buffer whose length is an exact multiple of {@code byteWidth}. */
@@ -111,9 +119,11 @@ public final class FixedLenBinaryVector implements ColumnVector {
     /**
      * The read-only backing buffer of a consolidated-mode vector, holding {@code size() * byteWidth()} bytes with row
      * {@code i} at slot {@code i * byteWidth}. The returned view is read-only; do not mutate it. Valid only when
-     * {@link #isDictionary()} is {@code false}.
+     * {@link #isDictionary()} is {@code false}. Reflects the whole physical backing; on a selected view it is rebuilt
+     * at the Arrow export boundary (see the Arrow session handoff); it rejects a selection here.
      */
     public MemorySegment consolidatedBacking() {
+        requireUnselected();
         return backing;
     }
 
@@ -123,6 +133,7 @@ public final class FixedLenBinaryVector implements ColumnVector {
      * only in dictionary mode.
      */
     public MemorySegment[] dictionaryEntries() {
+        requireUnselected();
         return dictEntries;
     }
 
@@ -130,11 +141,17 @@ public final class FixedLenBinaryVector implements ColumnVector {
      * The per-row indexes into {@link #dictionaryEntries()} of a dictionary-mode vector. Valid only in dictionary mode.
      */
     public IntSequence dictionaryIndices() {
+        requireUnselected();
         return indices;
     }
 
     @Override
-    public int size() {
+    public Selection selection() {
+        return selection;
+    }
+
+    @Override
+    public int baseSize() {
         if (indices != null) {
             return indices.size();
         }
@@ -152,8 +169,9 @@ public final class FixedLenBinaryVector implements ColumnVector {
     }
 
     /**
-     * Returns the value at {@code row}, or {@code null} when the row is null. A null row has no entry to read; an
-     * all-null dictionary page has an empty entry array, and indexing it would throw.
+     * Returns the value at logical row {@code row}, or {@code null} when the row is null. A null row has no entry to
+     * read; an all-null dictionary page has an empty entry array, and indexing it would throw. Sequential-access
+     * optimized on a selected view.
      */
     @Override
     @SuppressWarnings("unchecked")
@@ -161,13 +179,14 @@ public final class FixedLenBinaryVector implements ColumnVector {
         if (validity.isNull(row)) {
             return null;
         }
+        int physical = selection == Selection.ALL ? row : selection.physical(row);
         if (indices != null) {
-            return dictEntries[indices.get(row)];
+            return dictEntries[indices.get(physical)];
         }
-        return backing.asSlice((long) row * byteWidth, byteWidth);
+        return backing.asSlice((long) physical * byteWidth, byteWidth);
     }
 
-    /** Byte length of the value at {@code row}: the fixed width for a present row, {@code -1} for a null row. */
+    /** Byte length of the value at logical row {@code row}: the fixed width for a present row, {@code -1} for null. */
     public int valueLength(int row) {
         if (validity.isNull(row)) {
             return -1;
@@ -176,25 +195,36 @@ public final class FixedLenBinaryVector implements ColumnVector {
     }
 
     /**
-     * Copies the value at {@code row} into {@code target} starting at {@code targetOffset}, returning the byte count
-     * written, or {@code -1} for a null row (nothing written). The caller reuses one target across rows by advancing
-     * {@code targetOffset} by the returned count.
+     * Copies the value at logical row {@code row} into {@code target} starting at {@code targetOffset}, returning the
+     * byte count written, or {@code -1} for a null row (nothing written). The caller reuses one target across rows by
+     * advancing {@code targetOffset} by the returned count.
      */
     public int getInto(int row, MemorySegment target, long targetOffset) {
         if (validity.isNull(row)) {
             return -1;
         }
+        int physical = selection == Selection.ALL ? row : selection.physical(row);
         if (indices != null) {
-            MemorySegment entry = dictEntries[indices.get(row)];
+            MemorySegment entry = dictEntries[indices.get(physical)];
             MemorySegment.copy(entry, 0L, target, targetOffset, byteWidth);
             return byteWidth;
         }
-        MemorySegment.copy(backing, (long) row * byteWidth, target, targetOffset, byteWidth);
+        MemorySegment.copy(backing, (long) physical * byteWidth, target, targetOffset, byteWidth);
         return byteWidth;
     }
 
     @Override
+    public ColumnVector select(Selection selection) {
+        if (selection == Selection.ALL) {
+            return this;
+        }
+        return new FixedLenBinaryVector(
+                backing, dictEntries, indices, byteWidth, validity.select(selection), selection);
+    }
+
+    @Override
     public FixedLenBinaryVector toConsolidated() {
+        requireUnselected();
         if (!isDictionary()) {
             return this;
         }
@@ -216,6 +246,14 @@ public final class FixedLenBinaryVector implements ColumnVector {
         }
         long backingBytes = backing.isNative() ? 0L : backing.byteSize();
         return backingBytes + validity.heapBytes();
+    }
+
+    private void requireUnselected() {
+        if (selection != Selection.ALL) {
+            throw new UnsupportedOperationException(
+                    "bulk backing of a selected fixed-length binary vector is rebuilt at the Arrow export boundary; "
+                            + "use get/valueLength/getInto for per-row access");
+        }
     }
 
     private long dictionaryEntryBytes() {

@@ -42,20 +42,28 @@ public final class Int96Vector implements ColumnVector {
     private final MemorySegment[] dictEntries;
     private final IntSequence indices;
     private final Validity validity;
+    private final Selection selection;
+
+    private Int96Vector(
+            MemorySegment backing,
+            MemorySegment[] dictEntries,
+            IntSequence indices,
+            @NonNull Validity validity,
+            @NonNull Selection selection) {
+        this.backing = backing;
+        this.dictEntries = dictEntries;
+        this.indices = indices;
+        this.validity = validity;
+        this.selection = selection;
+    }
 
     private Int96Vector(@NonNull MemorySegment backing, @NonNull Validity validity) {
-        this.backing = backing;
-        this.dictEntries = null;
-        this.indices = null;
-        this.validity = validity;
+        this(backing, null, null, validity, Selection.ALL);
     }
 
     private Int96Vector(
             @NonNull MemorySegment[] dictEntries, @NonNull IntSequence indices, @NonNull Validity validity) {
-        this.backing = null;
-        this.dictEntries = dictEntries;
-        this.indices = indices;
-        this.validity = validity;
+        this(null, dictEntries, indices, validity, Selection.ALL);
     }
 
     /** Builds a vector over a backing buffer whose length is an exact multiple of 12 bytes. */
@@ -87,9 +95,11 @@ public final class Int96Vector implements ColumnVector {
     /**
      * The read-only backing buffer of a consolidated-mode vector, holding {@code size() * 12} bytes with row {@code i}
      * at slot {@code i * 12}. The returned view is read-only; do not mutate it. Valid only when {@link #isDictionary()}
-     * is {@code false}.
+     * is {@code false}. Reflects the whole physical backing; on a selected view it is rebuilt at the Arrow export
+     * boundary (see the Arrow session handoff); it rejects a selection here.
      */
     public MemorySegment consolidatedBacking() {
+        requireUnselected();
         return backing;
     }
 
@@ -99,6 +109,7 @@ public final class Int96Vector implements ColumnVector {
      * only in dictionary mode.
      */
     public MemorySegment[] dictionaryEntries() {
+        requireUnselected();
         return dictEntries;
     }
 
@@ -106,11 +117,17 @@ public final class Int96Vector implements ColumnVector {
      * The per-row indexes into {@link #dictionaryEntries()} of a dictionary-mode vector. Valid only in dictionary mode.
      */
     public IntSequence dictionaryIndices() {
+        requireUnselected();
         return indices;
     }
 
     @Override
-    public int size() {
+    public Selection selection() {
+        return selection;
+    }
+
+    @Override
+    public int baseSize() {
         return indices != null ? indices.size() : Math.toIntExact(backing.byteSize() / WIDTH);
     }
 
@@ -120,8 +137,9 @@ public final class Int96Vector implements ColumnVector {
     }
 
     /**
-     * Returns the value at {@code row}, or {@code null} when the row is null. A null row has no entry to read; an
-     * all-null dictionary page has an empty entry array, and indexing it would throw.
+     * Returns the value at logical row {@code row}, or {@code null} when the row is null. A null row has no entry to
+     * read; an all-null dictionary page has an empty entry array, and indexing it would throw. Sequential-access
+     * optimized on a selected view.
      */
     @Override
     @SuppressWarnings("unchecked")
@@ -129,13 +147,14 @@ public final class Int96Vector implements ColumnVector {
         if (validity.isNull(row)) {
             return null;
         }
+        int physical = selection == Selection.ALL ? row : selection.physical(row);
         if (indices != null) {
-            return dictEntries[indices.get(row)];
+            return dictEntries[indices.get(physical)];
         }
-        return backing.asSlice((long) row * WIDTH, WIDTH);
+        return backing.asSlice((long) physical * WIDTH, WIDTH);
     }
 
-    /** Byte length of the value at {@code row}: {@code 12} for a present row, {@code -1} for a null row. */
+    /** Byte length of the value at logical row {@code row}: {@code 12} for a present row, {@code -1} for a null row. */
     public int valueLength(int row) {
         if (validity.isNull(row)) {
             return -1;
@@ -144,25 +163,35 @@ public final class Int96Vector implements ColumnVector {
     }
 
     /**
-     * Copies the value at {@code row} into {@code target} starting at {@code targetOffset}, returning the byte count
-     * written, or {@code -1} for a null row (nothing written). The caller reuses one target across rows by advancing
-     * {@code targetOffset} by the returned count.
+     * Copies the value at logical row {@code row} into {@code target} starting at {@code targetOffset}, returning the
+     * byte count written, or {@code -1} for a null row (nothing written). The caller reuses one target across rows by
+     * advancing {@code targetOffset} by the returned count.
      */
     public int getInto(int row, MemorySegment target, long targetOffset) {
         if (validity.isNull(row)) {
             return -1;
         }
+        int physical = selection == Selection.ALL ? row : selection.physical(row);
         if (indices != null) {
-            MemorySegment entry = dictEntries[indices.get(row)];
+            MemorySegment entry = dictEntries[indices.get(physical)];
             MemorySegment.copy(entry, 0L, target, targetOffset, WIDTH);
             return WIDTH;
         }
-        MemorySegment.copy(backing, (long) row * WIDTH, target, targetOffset, WIDTH);
+        MemorySegment.copy(backing, (long) physical * WIDTH, target, targetOffset, WIDTH);
         return WIDTH;
     }
 
     @Override
+    public ColumnVector select(Selection selection) {
+        if (selection == Selection.ALL) {
+            return this;
+        }
+        return new Int96Vector(backing, dictEntries, indices, validity.select(selection), selection);
+    }
+
+    @Override
     public Int96Vector toConsolidated() {
+        requireUnselected();
         if (!isDictionary()) {
             return this;
         }
@@ -184,6 +213,14 @@ public final class Int96Vector implements ColumnVector {
         }
         long backingBytes = backing.isNative() ? 0L : backing.byteSize();
         return backingBytes + validity.heapBytes();
+    }
+
+    private void requireUnselected() {
+        if (selection != Selection.ALL) {
+            throw new UnsupportedOperationException(
+                    "bulk backing of a selected int96 vector is rebuilt at the Arrow export boundary; "
+                            + "use get/valueLength/getInto for per-row access");
+        }
     }
 
     private long dictionaryEntryBytes() {

@@ -51,9 +51,9 @@ public interface ParquetReader {
     <T> Stream<T> read(Predicate predicate, Projection projection, Materializer<T> materializer, ReadOptions options);
 
     /**
-     * Reads the matching rows as columnar batches. Pushdown-only: row-group and page elimination from the predicate,
-     * where a surviving page still holds rows that do not match. A consumer needing exact per-row filtering over the
-     * batches applies it on top.
+     * Reads the matching rows as columnar batches. The predicate is applied exactly (when record-level filtering is
+     * enabled, the default; with it disabled only metadata pruning applies): each emitted batch holds only the rows
+     * that match, narrowed to {@code projection}.
      */
     @MustBeClosed
     Stream<ParquetRecordBatch> readBatches(Predicate predicate, Projection projection, ReadOptions options);
