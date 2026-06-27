@@ -27,13 +27,13 @@ import java.util.BitSet;
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.arrow.ipc.ArrowFieldType.ValueTransform;
-import io.tileverse.parquetry.batch.BinaryVector;
-import io.tileverse.parquetry.batch.ColumnVector;
-import io.tileverse.parquetry.batch.FixedLenBinaryVector;
-import io.tileverse.parquetry.batch.Int96Vector;
-import io.tileverse.parquetry.batch.IntVector;
-import io.tileverse.parquetry.batch.LongVector;
-import io.tileverse.parquetry.batch.Validity;
+import io.tileverse.parquetry.columnar.BinaryVector;
+import io.tileverse.parquetry.columnar.ColumnVector;
+import io.tileverse.parquetry.columnar.FixedLenBinaryVector;
+import io.tileverse.parquetry.columnar.Int96Vector;
+import io.tileverse.parquetry.columnar.IntVector;
+import io.tileverse.parquetry.columnar.LongVector;
+import io.tileverse.parquetry.columnar.Validity;
 
 class ArrowValueTransformTest {
 

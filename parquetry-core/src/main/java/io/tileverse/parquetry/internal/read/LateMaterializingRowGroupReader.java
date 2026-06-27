@@ -23,8 +23,8 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
 
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
-import io.tileverse.parquetry.batch.VectorizedPredicateEvaluator;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.VectorizedPredicateEvaluator;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.format.OffsetIndex;

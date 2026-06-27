@@ -18,7 +18,7 @@ package io.tileverse.parquetry.dataset;
 import java.util.OptionalLong;
 import java.util.stream.Gatherer;
 
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 
 /**
  * Applies an offset/limit window to an ordered stream of exact (already predicate-filtered) batches. Skips whole

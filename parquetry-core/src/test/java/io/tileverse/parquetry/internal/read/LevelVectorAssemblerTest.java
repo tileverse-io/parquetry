@@ -30,14 +30,14 @@ import java.util.OptionalInt;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.batch.BinaryVector;
-import io.tileverse.parquetry.batch.ColumnVector;
-import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
-import io.tileverse.parquetry.batch.DoubleVector;
-import io.tileverse.parquetry.batch.IntVector;
-import io.tileverse.parquetry.batch.LevelListVector;
-import io.tileverse.parquetry.batch.LevelMapVector;
-import io.tileverse.parquetry.batch.Validity;
+import io.tileverse.parquetry.columnar.BinaryVector;
+import io.tileverse.parquetry.columnar.ColumnVector;
+import io.tileverse.parquetry.columnar.DefaultParquetRecordBatch;
+import io.tileverse.parquetry.columnar.DoubleVector;
+import io.tileverse.parquetry.columnar.IntVector;
+import io.tileverse.parquetry.columnar.LevelListVector;
+import io.tileverse.parquetry.columnar.LevelMapVector;
+import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.data.variant.Variant;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.io.SegmentPool;
@@ -636,7 +636,7 @@ class LevelVectorAssemblerTest {
     private static Map<ColumnPath, LevelSlice> wholeSlices(Map<ColumnPath, int[]> levelsByLeaf) {
         Map<ColumnPath, LevelSlice> slices = new LinkedHashMap<>();
         for (Map.Entry<ColumnPath, int[]> entry : levelsByLeaf.entrySet()) {
-            slices.put(entry.getKey(), LevelSlice.ofWhole(io.tileverse.parquetry.batch.Levels.of(entry.getValue())));
+            slices.put(entry.getKey(), LevelSlice.ofWhole(io.tileverse.parquetry.columnar.Levels.of(entry.getValue())));
         }
         return slices;
     }

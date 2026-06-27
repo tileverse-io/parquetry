@@ -15,7 +15,7 @@
  */
 package io.tileverse.parquetry.internal.read;
 
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 
 import lombok.NonNull;
 

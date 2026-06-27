@@ -15,9 +15,9 @@
  */
 package io.tileverse.parquetry.materializer;
 
-import io.tileverse.parquetry.batch.IntSequence;
-import io.tileverse.parquetry.batch.LeafOrder;
-import io.tileverse.parquetry.batch.LevelSource;
+import io.tileverse.parquetry.columnar.IntSequence;
+import io.tileverse.parquetry.columnar.LeafOrder;
+import io.tileverse.parquetry.columnar.LevelSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**

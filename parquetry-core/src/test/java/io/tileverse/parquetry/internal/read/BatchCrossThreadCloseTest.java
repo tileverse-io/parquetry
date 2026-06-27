@@ -26,8 +26,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.DefaultParquetRecordBatch;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;

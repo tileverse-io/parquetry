@@ -38,12 +38,12 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.ipc.ArrowReader;
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.batch.BinaryVector;
-import io.tileverse.parquetry.batch.ColumnVector;
-import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
-import io.tileverse.parquetry.batch.LongVector;
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
-import io.tileverse.parquetry.batch.Validity;
+import io.tileverse.parquetry.columnar.BinaryVector;
+import io.tileverse.parquetry.columnar.ColumnVector;
+import io.tileverse.parquetry.columnar.DefaultParquetRecordBatch;
+import io.tileverse.parquetry.columnar.LongVector;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.schema.ColumnPath;

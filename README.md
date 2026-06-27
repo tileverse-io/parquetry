@@ -78,7 +78,7 @@ try (Storage storage = StorageFactory.open(file.getParent().toUri());
 ### Reading vectorized batches
 
 ```java
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 
 try (Stream<ParquetRecordBatch> batches = dataset.readBatches()) {
     batches.forEach(batch -> {

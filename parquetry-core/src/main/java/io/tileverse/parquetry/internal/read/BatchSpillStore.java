@@ -29,7 +29,7 @@ import java.util.concurrent.locks.ReentrantLock;
 
 import io.tileverse.parquetry.arrow.columnar.BatchArrowLayout;
 import io.tileverse.parquetry.arrow.columnar.EncodedBatch;
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 import lombok.NonNull;

@@ -33,7 +33,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.OffsetIndex;

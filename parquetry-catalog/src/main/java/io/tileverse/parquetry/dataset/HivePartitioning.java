@@ -26,7 +26,7 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
 
-import io.tileverse.parquetry.batch.ConstantLeaves;
+import io.tileverse.parquetry.columnar.ConstantLeaves;
 import io.tileverse.parquetry.filter.ConstantColumn;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.prune.ColumnStatistics;

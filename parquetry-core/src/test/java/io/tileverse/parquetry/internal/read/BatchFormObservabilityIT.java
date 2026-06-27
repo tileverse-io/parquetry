@@ -31,9 +31,9 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
-import io.tileverse.parquetry.batch.ColumnVector;
-import io.tileverse.parquetry.batch.LevelListVector;
-import io.tileverse.parquetry.batch.ListVector;
+import io.tileverse.parquetry.columnar.ColumnVector;
+import io.tileverse.parquetry.columnar.LevelListVector;
+import io.tileverse.parquetry.columnar.ListVector;
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.OffsetIndex;

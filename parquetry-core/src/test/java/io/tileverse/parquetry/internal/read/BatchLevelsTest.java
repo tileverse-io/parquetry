@@ -31,10 +31,10 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import io.tileverse.parquetry.batch.IntSequence;
-import io.tileverse.parquetry.batch.LeafLevels;
-import io.tileverse.parquetry.batch.Levels;
-import io.tileverse.parquetry.batch.Validity;
+import io.tileverse.parquetry.columnar.IntSequence;
+import io.tileverse.parquetry.columnar.LeafLevels;
+import io.tileverse.parquetry.columnar.Levels;
+import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.schema.ColumnPath;
 

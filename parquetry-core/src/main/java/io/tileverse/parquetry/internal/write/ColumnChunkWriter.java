@@ -30,8 +30,8 @@ import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
 
-import io.tileverse.parquetry.batch.ColumnVector;
-import io.tileverse.parquetry.batch.Validity;
+import io.tileverse.parquetry.columnar.ColumnVector;
+import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.data.Compression;
 import io.tileverse.parquetry.data.ParquetWriteException;
 import io.tileverse.parquetry.data.WriteOptions;
@@ -347,35 +347,35 @@ public final class ColumnChunkWriter implements AutoCloseable {
         Validity validity = vector.validity();
         int size = vector.size();
         switch (vector) {
-            case io.tileverse.parquetry.batch.IntVector iv ->
+            case io.tileverse.parquetry.columnar.IntVector iv ->
                 appendIntVectorCells(iv, validity, size, defLevelForValue);
-            case io.tileverse.parquetry.batch.LongVector lv ->
+            case io.tileverse.parquetry.columnar.LongVector lv ->
                 appendLongVectorCells(lv, validity, size, defLevelForValue);
-            case io.tileverse.parquetry.batch.FloatVector fv ->
+            case io.tileverse.parquetry.columnar.FloatVector fv ->
                 appendFloatVectorCells(fv, validity, size, defLevelForValue);
-            case io.tileverse.parquetry.batch.DoubleVector dv ->
+            case io.tileverse.parquetry.columnar.DoubleVector dv ->
                 appendDoubleVectorCells(dv, validity, size, defLevelForValue);
-            case io.tileverse.parquetry.batch.BooleanVector bv ->
+            case io.tileverse.parquetry.columnar.BooleanVector bv ->
                 appendBooleanVectorCells(bv, validity, size, defLevelForValue);
-            case io.tileverse.parquetry.batch.BinaryVector binv ->
+            case io.tileverse.parquetry.columnar.BinaryVector binv ->
                 appendBinaryVectorCells(binv, validity, size, defLevelForValue);
-            case io.tileverse.parquetry.batch.FixedLenBinaryVector flbv ->
+            case io.tileverse.parquetry.columnar.FixedLenBinaryVector flbv ->
                 appendFixedLenBinaryVectorCells(flbv, validity, size, defLevelForValue);
-            case io.tileverse.parquetry.batch.Int96Vector _,
-                    io.tileverse.parquetry.batch.ListVector _,
-                    io.tileverse.parquetry.batch.MapVector _,
-                    io.tileverse.parquetry.batch.LevelListVector _,
-                    io.tileverse.parquetry.batch.LevelMapVector _,
-                    io.tileverse.parquetry.batch.StructVector _,
-                    io.tileverse.parquetry.batch.VariantVector _,
-                    io.tileverse.parquetry.batch.ShreddedVariantVector _ ->
+            case io.tileverse.parquetry.columnar.Int96Vector _,
+                    io.tileverse.parquetry.columnar.ListVector _,
+                    io.tileverse.parquetry.columnar.MapVector _,
+                    io.tileverse.parquetry.columnar.LevelListVector _,
+                    io.tileverse.parquetry.columnar.LevelMapVector _,
+                    io.tileverse.parquetry.columnar.StructVector _,
+                    io.tileverse.parquetry.columnar.VariantVector _,
+                    io.tileverse.parquetry.columnar.ShreddedVariantVector _ ->
                 throw new ParquetWriteException(
                         "appendVector: column " + leaf.name() + " uses unsupported vector kind " + vector.getClass());
         }
     }
 
     private void appendIntVectorCells(
-            io.tileverse.parquetry.batch.IntVector vector, Validity validity, int size, int defLevelForValue) {
+            io.tileverse.parquetry.columnar.IntVector vector, Validity validity, int size, int defLevelForValue) {
         int[] values = vector.asArray();
         for (int i = 0; i < size; i++) {
             if (validity.isValid(i)) {
@@ -387,7 +387,7 @@ public final class ColumnChunkWriter implements AutoCloseable {
     }
 
     private void appendLongVectorCells(
-            io.tileverse.parquetry.batch.LongVector vector, Validity validity, int size, int defLevelForValue) {
+            io.tileverse.parquetry.columnar.LongVector vector, Validity validity, int size, int defLevelForValue) {
         long[] values = vector.asArray();
         for (int i = 0; i < size; i++) {
             if (validity.isValid(i)) {
@@ -399,7 +399,7 @@ public final class ColumnChunkWriter implements AutoCloseable {
     }
 
     private void appendFloatVectorCells(
-            io.tileverse.parquetry.batch.FloatVector vector, Validity validity, int size, int defLevelForValue) {
+            io.tileverse.parquetry.columnar.FloatVector vector, Validity validity, int size, int defLevelForValue) {
         float[] values = vector.asArray();
         for (int i = 0; i < size; i++) {
             if (validity.isValid(i)) {
@@ -411,7 +411,7 @@ public final class ColumnChunkWriter implements AutoCloseable {
     }
 
     private void appendDoubleVectorCells(
-            io.tileverse.parquetry.batch.DoubleVector vector, Validity validity, int size, int defLevelForValue) {
+            io.tileverse.parquetry.columnar.DoubleVector vector, Validity validity, int size, int defLevelForValue) {
         double[] values = vector.asArray();
         for (int i = 0; i < size; i++) {
             if (validity.isValid(i)) {
@@ -423,7 +423,7 @@ public final class ColumnChunkWriter implements AutoCloseable {
     }
 
     private void appendBooleanVectorCells(
-            io.tileverse.parquetry.batch.BooleanVector vector, Validity validity, int size, int defLevelForValue) {
+            io.tileverse.parquetry.columnar.BooleanVector vector, Validity validity, int size, int defLevelForValue) {
         boolean[] values = vector.asArray();
         for (int i = 0; i < size; i++) {
             if (validity.isValid(i)) {
@@ -435,7 +435,7 @@ public final class ColumnChunkWriter implements AutoCloseable {
     }
 
     private void appendBinaryVectorCells(
-            io.tileverse.parquetry.batch.BinaryVector vector, Validity validity, int size, int defLevelForValue) {
+            io.tileverse.parquetry.columnar.BinaryVector vector, Validity validity, int size, int defLevelForValue) {
         for (int i = 0; i < size; i++) {
             if (validity.isValid(i)) {
                 appendBinary(vector.get(i), 0, defLevelForValue);
@@ -446,7 +446,7 @@ public final class ColumnChunkWriter implements AutoCloseable {
     }
 
     private void appendFixedLenBinaryVectorCells(
-            io.tileverse.parquetry.batch.FixedLenBinaryVector vector,
+            io.tileverse.parquetry.columnar.FixedLenBinaryVector vector,
             Validity validity,
             int size,
             int defLevelForValue) {

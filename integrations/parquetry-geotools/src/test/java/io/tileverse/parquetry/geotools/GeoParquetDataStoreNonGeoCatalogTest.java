@@ -23,9 +23,9 @@ import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.catalog.CatalogCapabilities;
 import io.tileverse.parquetry.catalog.DatasetCatalog;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.CatalogSnapshot;
 import io.tileverse.parquetry.dataset.DatasetCapabilities;

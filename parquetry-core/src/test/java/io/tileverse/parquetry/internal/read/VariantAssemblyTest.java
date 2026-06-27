@@ -26,12 +26,12 @@ import java.util.OptionalInt;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.batch.BinaryVector;
-import io.tileverse.parquetry.batch.ColumnVector;
-import io.tileverse.parquetry.batch.LongVector;
-import io.tileverse.parquetry.batch.ShreddedVariantVector;
-import io.tileverse.parquetry.batch.Validity;
-import io.tileverse.parquetry.batch.VariantVector;
+import io.tileverse.parquetry.columnar.BinaryVector;
+import io.tileverse.parquetry.columnar.ColumnVector;
+import io.tileverse.parquetry.columnar.LongVector;
+import io.tileverse.parquetry.columnar.ShreddedVariantVector;
+import io.tileverse.parquetry.columnar.Validity;
+import io.tileverse.parquetry.columnar.VariantVector;
 import io.tileverse.parquetry.data.variant.Variant;
 import io.tileverse.parquetry.data.variant.VariantEncoder;
 import io.tileverse.parquetry.format.LogicalType;

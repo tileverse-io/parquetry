@@ -28,8 +28,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
 
-import io.tileverse.parquetry.batch.ColumnVector;
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.ColumnVector;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.data.Compression;
 import io.tileverse.parquetry.data.ParquetWriteException;
 import io.tileverse.parquetry.data.WriteOptions;
@@ -222,15 +222,17 @@ public final class RowGroupWriter implements AutoCloseable {
     /** Dispatches one value from {@code values} at {@code valueIndex} to the appropriate typed append on the writer. */
     private void appendValueAt(ColumnChunkWriter writer, ColumnVector values, int valueIndex, int rep, int def) {
         switch (values) {
-            case io.tileverse.parquetry.batch.IntVector iv -> writer.appendInt(iv.asArray()[valueIndex], rep, def);
-            case io.tileverse.parquetry.batch.LongVector lv -> writer.appendLong(lv.asArray()[valueIndex], rep, def);
-            case io.tileverse.parquetry.batch.FloatVector fv -> writer.appendFloat(fv.asArray()[valueIndex], rep, def);
-            case io.tileverse.parquetry.batch.DoubleVector dv ->
+            case io.tileverse.parquetry.columnar.IntVector iv -> writer.appendInt(iv.asArray()[valueIndex], rep, def);
+            case io.tileverse.parquetry.columnar.LongVector lv -> writer.appendLong(lv.asArray()[valueIndex], rep, def);
+            case io.tileverse.parquetry.columnar.FloatVector fv ->
+                writer.appendFloat(fv.asArray()[valueIndex], rep, def);
+            case io.tileverse.parquetry.columnar.DoubleVector dv ->
                 writer.appendDouble(dv.asArray()[valueIndex], rep, def);
-            case io.tileverse.parquetry.batch.BooleanVector bv ->
+            case io.tileverse.parquetry.columnar.BooleanVector bv ->
                 writer.appendBoolean(bv.asArray()[valueIndex], rep, def);
-            case io.tileverse.parquetry.batch.BinaryVector binv -> writer.appendBinary(binv.get(valueIndex), rep, def);
-            case io.tileverse.parquetry.batch.FixedLenBinaryVector flbv ->
+            case io.tileverse.parquetry.columnar.BinaryVector binv ->
+                writer.appendBinary(binv.get(valueIndex), rep, def);
+            case io.tileverse.parquetry.columnar.FixedLenBinaryVector flbv ->
                 writer.appendFixedLenBinary(flbv.get(valueIndex), rep, def);
             default ->
                 throw new ParquetWriteException("Unsupported value vector type for nested leaf: "

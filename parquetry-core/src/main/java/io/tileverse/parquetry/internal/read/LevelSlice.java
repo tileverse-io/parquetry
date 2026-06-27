@@ -17,7 +17,7 @@ package io.tileverse.parquetry.internal.read;
 
 import java.util.Objects;
 
-import io.tileverse.parquetry.batch.Levels;
+import io.tileverse.parquetry.columnar.Levels;
 
 /**
  * A {@code [from, from + length)} window over a page's rep- or def-level sequence, handed to the nested assembler

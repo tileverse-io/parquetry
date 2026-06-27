@@ -22,10 +22,10 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 
-import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
-import io.tileverse.parquetry.batch.IntVector;
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
-import io.tileverse.parquetry.batch.Validity;
+import io.tileverse.parquetry.columnar.DefaultParquetRecordBatch;
+import io.tileverse.parquetry.columnar.IntVector;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -64,7 +64,7 @@ final class TestBatches {
         BitSet validBits = new BitSet(count);
         validBits.set(0, count);
         IntVector vector = IntVector.materialized(values, Validity.of(validBits, count));
-        Map<ColumnPath, io.tileverse.parquetry.batch.ColumnVector> columns = Map.of(ColumnPath.of("value"), vector);
+        Map<ColumnPath, io.tileverse.parquetry.columnar.ColumnVector> columns = Map.of(ColumnPath.of("value"), vector);
         return new DefaultParquetRecordBatch(singleIntColumnSchema(), columns, count, arena);
     }
 

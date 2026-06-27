@@ -23,12 +23,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import io.tileverse.parquetry.batch.ColumnVector;
-import io.tileverse.parquetry.batch.LeafLevels;
-import io.tileverse.parquetry.batch.LevelListVector;
-import io.tileverse.parquetry.batch.LevelMapVector;
-import io.tileverse.parquetry.batch.StructVector;
-import io.tileverse.parquetry.batch.Validity;
+import io.tileverse.parquetry.columnar.ColumnVector;
+import io.tileverse.parquetry.columnar.LeafLevels;
+import io.tileverse.parquetry.columnar.LevelListVector;
+import io.tileverse.parquetry.columnar.LevelMapVector;
+import io.tileverse.parquetry.columnar.StructVector;
+import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.GroupKind;
 import io.tileverse.parquetry.schema.ParquetSchema;

@@ -30,9 +30,9 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.batch.ColumnVector;
-import io.tileverse.parquetry.batch.LongVector;
-import io.tileverse.parquetry.batch.Validity;
+import io.tileverse.parquetry.columnar.ColumnVector;
+import io.tileverse.parquetry.columnar.LongVector;
+import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.filter.RowRanges;

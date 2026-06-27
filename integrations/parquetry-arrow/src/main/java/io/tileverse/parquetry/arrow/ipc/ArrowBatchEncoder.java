@@ -35,8 +35,8 @@ import io.tileverse.parquetry.arrow.columnar.ArrowBufferCodec;
 import io.tileverse.parquetry.arrow.columnar.EncodedBuffer;
 import io.tileverse.parquetry.arrow.columnar.EncodedNode;
 import io.tileverse.parquetry.arrow.ipc.LogicalColumns.LogicalColumn;
-import io.tileverse.parquetry.batch.ColumnVector;
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.ColumnVector;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 

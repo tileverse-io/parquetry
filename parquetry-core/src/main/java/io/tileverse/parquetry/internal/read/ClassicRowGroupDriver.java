@@ -18,7 +18,7 @@ package io.tileverse.parquetry.internal.read;
 import java.util.Optional;
 import java.util.OptionalInt;
 
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 import lombok.NonNull;

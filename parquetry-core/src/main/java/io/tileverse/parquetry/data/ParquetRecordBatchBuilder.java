@@ -29,9 +29,9 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.function.Consumer;
 
-import io.tileverse.parquetry.batch.ColumnVector;
-import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.ColumnVector;
+import io.tileverse.parquetry.columnar.DefaultParquetRecordBatch;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.data.variant.Variant;
 import io.tileverse.parquetry.internal.write.ColumnAccumulator;
 import io.tileverse.parquetry.schema.ColumnPath;

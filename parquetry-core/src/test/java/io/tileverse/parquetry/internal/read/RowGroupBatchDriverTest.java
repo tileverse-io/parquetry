@@ -34,8 +34,8 @@ import org.apache.parquet.format.PageType;
 import org.apache.parquet.format.Util;
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.batch.IntVector;
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.IntVector;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.CompressionCodec;
 import io.tileverse.parquetry.format.Encoding;

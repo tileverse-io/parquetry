@@ -25,10 +25,10 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.batch.BinaryVector;
-import io.tileverse.parquetry.batch.IntVector;
-import io.tileverse.parquetry.batch.MapVector;
-import io.tileverse.parquetry.batch.Validity;
+import io.tileverse.parquetry.columnar.BinaryVector;
+import io.tileverse.parquetry.columnar.IntVector;
+import io.tileverse.parquetry.columnar.MapVector;
+import io.tileverse.parquetry.columnar.Validity;
 
 class MapMaterializerTest {
 

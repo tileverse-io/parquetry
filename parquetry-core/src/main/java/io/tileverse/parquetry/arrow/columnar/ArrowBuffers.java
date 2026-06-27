@@ -20,13 +20,13 @@ import java.lang.foreign.ValueLayout;
 import java.nio.ByteOrder;
 import java.util.BitSet;
 
-import io.tileverse.parquetry.batch.BooleanVector;
-import io.tileverse.parquetry.batch.DoubleVector;
-import io.tileverse.parquetry.batch.FloatVector;
-import io.tileverse.parquetry.batch.IntSequence;
-import io.tileverse.parquetry.batch.IntVector;
-import io.tileverse.parquetry.batch.LongVector;
-import io.tileverse.parquetry.batch.Validity;
+import io.tileverse.parquetry.columnar.BooleanVector;
+import io.tileverse.parquetry.columnar.DoubleVector;
+import io.tileverse.parquetry.columnar.FloatVector;
+import io.tileverse.parquetry.columnar.IntSequence;
+import io.tileverse.parquetry.columnar.IntVector;
+import io.tileverse.parquetry.columnar.LongVector;
+import io.tileverse.parquetry.columnar.Validity;
 
 /**
  * Builds and reads the fixed-layout byte buffers of an Arrow field node: the validity bitmap and the little-endian

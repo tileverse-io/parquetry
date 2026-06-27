@@ -25,11 +25,11 @@ import java.util.OptionalInt;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.batch.ColumnVector;
-import io.tileverse.parquetry.batch.FloatVector;
-import io.tileverse.parquetry.batch.IntVector;
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
-import io.tileverse.parquetry.batch.StructVector;
+import io.tileverse.parquetry.columnar.ColumnVector;
+import io.tileverse.parquetry.columnar.FloatVector;
+import io.tileverse.parquetry.columnar.IntVector;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.StructVector;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;

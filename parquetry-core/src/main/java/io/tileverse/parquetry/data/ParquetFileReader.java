@@ -29,8 +29,8 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongConsumer;
 import java.util.stream.Stream;
 
-import io.tileverse.parquetry.batch.BatchMaterializer;
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.BatchMaterializer;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.RowRanges;

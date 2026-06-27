@@ -17,7 +17,7 @@ package io.tileverse.parquetry.internal.read;
 
 import java.lang.foreign.MemorySegment;
 
-import io.tileverse.parquetry.batch.Levels;
+import io.tileverse.parquetry.columnar.Levels;
 import io.tileverse.parquetry.internal.read.page.LevelDecoder;
 import io.tileverse.parquetry.io.SegmentPool;
 
