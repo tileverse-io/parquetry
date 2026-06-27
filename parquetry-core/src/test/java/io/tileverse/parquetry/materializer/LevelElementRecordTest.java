@@ -38,7 +38,6 @@ import io.tileverse.parquetry.columnar.LevelListVector;
 import io.tileverse.parquetry.columnar.Levels;
 import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.columnar.VariantVector;
-import io.tileverse.parquetry.data.variant.Variant;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -47,6 +46,7 @@ import io.tileverse.parquetry.schema.ParquetSchemaException;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.variant.Variant;
 
 /**
  * Exercises {@link LevelElementRecord}: struct-typed and Variant-typed list elements materialized from the level form

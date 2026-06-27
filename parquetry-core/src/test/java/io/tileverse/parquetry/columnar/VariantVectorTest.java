@@ -28,15 +28,15 @@ import java.util.OptionalInt;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.data.variant.Variant;
-import io.tileverse.parquetry.data.variant.VariantEncoder;
 import io.tileverse.parquetry.format.LogicalType;
+import io.tileverse.parquetry.internal.variant.VariantEncoder;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.variant.Variant;
 
 class VariantVectorTest {
 

@@ -28,13 +28,13 @@ import org.junit.jupiter.api.Test;
 import io.tileverse.parquetry.columnar.ShreddedVariantVector.ObjectInput;
 import io.tileverse.parquetry.columnar.ShreddedVariantVector.ScalarInput;
 import io.tileverse.parquetry.columnar.ShreddedVariantVector.VariantInput;
-import io.tileverse.parquetry.data.variant.ShreddedVariant;
-import io.tileverse.parquetry.data.variant.Variant;
-import io.tileverse.parquetry.data.variant.VariantEncoder;
-import io.tileverse.parquetry.data.variant.VariantMetadata;
+import io.tileverse.parquetry.internal.variant.VariantEncoder;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.variant.ShreddedVariant;
+import io.tileverse.parquetry.variant.Variant;
+import io.tileverse.parquetry.variant.VariantMetadata;
 
 class ShreddedVariantVectorTest {
 

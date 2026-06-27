@@ -15,8 +15,8 @@
  */
 package io.tileverse.parquetry.columnar;
 
-import io.tileverse.parquetry.data.variant.Variant;
-import io.tileverse.parquetry.data.variant.VariantMetadata;
+import io.tileverse.parquetry.variant.Variant;
+import io.tileverse.parquetry.variant.VariantMetadata;
 
 import lombok.NonNull;
 

@@ -32,13 +32,14 @@ import java.util.function.Consumer;
 import io.tileverse.parquetry.columnar.ColumnVector;
 import io.tileverse.parquetry.columnar.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
-import io.tileverse.parquetry.data.variant.Variant;
 import io.tileverse.parquetry.internal.write.ColumnAccumulator;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.UuidConverter;
+import io.tileverse.parquetry.variant.Variant;
 
 /**
  * Accumulates authored rows into one columnar buffer per leaf column and freezes them into an immutable

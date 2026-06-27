@@ -24,8 +24,8 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
 
-import io.tileverse.parquetry.data.UuidConverter;
 import io.tileverse.parquetry.filter.Value;
+import io.tileverse.parquetry.schema.UuidConverter;
 
 /**
  * Shared comparison and ordering core for the filter evaluators. The record-level, statistics, and column-index

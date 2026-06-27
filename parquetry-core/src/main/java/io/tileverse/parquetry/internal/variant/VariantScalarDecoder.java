@@ -13,28 +13,28 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.data.variant;
+package io.tileverse.parquetry.internal.variant;
 
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_BINARY;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_BOOLEAN_FALSE;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_BOOLEAN_TRUE;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_DATE;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_DECIMAL16;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_DECIMAL4;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_DECIMAL8;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_DOUBLE;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_FLOAT;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_INT16;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_INT32;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_INT64;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_INT8;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_STRING;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_TIME;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_TIMESTAMP_NTZ_MICROS;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_TIMESTAMP_NTZ_NANOS;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_TIMESTAMP_TZ_MICROS;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_TIMESTAMP_TZ_NANOS;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_UUID;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_BINARY;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_BOOLEAN_FALSE;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_BOOLEAN_TRUE;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_DATE;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_DECIMAL16;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_DECIMAL4;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_DECIMAL8;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_DOUBLE;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_FLOAT;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_INT16;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_INT32;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_INT64;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_INT8;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_STRING;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_TIME;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_TIMESTAMP_NTZ_MICROS;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_TIMESTAMP_NTZ_NANOS;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_TIMESTAMP_TZ_MICROS;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_TIMESTAMP_TZ_NANOS;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_UUID;
 
 import java.lang.foreign.MemorySegment;
 import java.math.BigDecimal;
@@ -43,8 +43,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.function.Function;
 
 import io.tileverse.parquetry.data.ParquetWriteException;
-import io.tileverse.parquetry.data.UuidConverter;
 import io.tileverse.parquetry.format.LogicalType;
+import io.tileverse.parquetry.schema.UuidConverter;
+import io.tileverse.parquetry.variant.ShreddedVariant;
+import io.tileverse.parquetry.variant.Variant;
+import io.tileverse.parquetry.variant.VariantScalarValues;
 
 /**
  * Decodes a {@link Variant} scalar value into the physical box a shredded {@code typed_value} leaf stores, the inverse

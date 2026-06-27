@@ -13,24 +13,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.data.variant;
+package io.tileverse.parquetry.variant;
 
 import java.math.BigInteger;
 
 /** Wire-format byte helpers shared between the Variant encoder and the shredded scalar writer. */
-final class VariantBytes {
+public final class VariantBytes {
 
     private VariantBytes() {}
 
     /** Combines a basic type with its value header into a Variant header byte. */
-    static int header(int basicType, int valueHeader) {
+    public static int header(int basicType, int valueHeader) {
         return (basicType & 0x03) | (valueHeader << 2);
     }
 
     /**
      * Encodes {@code value} as a fixed-width little-endian two's-complement byte array, sign-extended to {@code width}.
      */
-    static byte[] twosComplementLittleEndian(BigInteger value, int width) {
+    public static byte[] twosComplementLittleEndian(BigInteger value, int width) {
         byte[] bigEndian = value.toByteArray();
         byte[] littleEndian = new byte[width];
         byte signExtension = (value.signum() < 0) ? (byte) 0xFF : (byte) 0x00;

@@ -18,7 +18,6 @@ package io.tileverse.parquetry.internal.filter;
 import java.util.ArrayList;
 import java.util.List;
 
-import io.tileverse.parquetry.data.UuidConverter;
 import io.tileverse.parquetry.filter.MatchAction;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Value;
@@ -27,6 +26,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.ParquetSchemaException;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.UuidConverter;
 
 /**
  * Rewrites a {@link Predicate} into a canonical form expected by the filter pipeline. Applies three structural passes -

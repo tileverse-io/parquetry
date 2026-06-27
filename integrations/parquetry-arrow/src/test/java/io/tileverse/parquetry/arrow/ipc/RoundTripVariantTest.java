@@ -45,14 +45,14 @@ import io.tileverse.parquetry.columnar.ShreddedVariantVector.ScalarInput;
 import io.tileverse.parquetry.columnar.ShreddedVariantVector.VariantInput;
 import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.columnar.VariantVector;
-import io.tileverse.parquetry.data.variant.ShreddedVariant;
-import io.tileverse.parquetry.data.variant.VariantEncoder;
 import io.tileverse.parquetry.format.LogicalType;
+import io.tileverse.parquetry.internal.variant.VariantEncoder;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.variant.ShreddedVariant;
 
 /**
  * Round-trips a Parquet Variant column through the Arrow IPC stream and reads it back with arrow-java, which proves

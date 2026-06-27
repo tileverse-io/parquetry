@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.data.variant;
+package io.tileverse.parquetry.internal.variant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -25,13 +25,16 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.data.variant.ShreddedVariantReconstructor.NodeReader;
-import io.tileverse.parquetry.data.variant.ShreddedVariantShredder.ArrayShred;
-import io.tileverse.parquetry.data.variant.ShreddedVariantShredder.FieldShred;
-import io.tileverse.parquetry.data.variant.ShreddedVariantShredder.ObjectShred;
-import io.tileverse.parquetry.data.variant.ShreddedVariantShredder.ScalarShred;
-import io.tileverse.parquetry.data.variant.ShreddedVariantShredder.VariantShred;
+import io.tileverse.parquetry.internal.variant.ShreddedVariantReconstructor.NodeReader;
+import io.tileverse.parquetry.internal.variant.ShreddedVariantShredder.ArrayShred;
+import io.tileverse.parquetry.internal.variant.ShreddedVariantShredder.FieldShred;
+import io.tileverse.parquetry.internal.variant.ShreddedVariantShredder.ObjectShred;
+import io.tileverse.parquetry.internal.variant.ShreddedVariantShredder.ScalarShred;
+import io.tileverse.parquetry.internal.variant.ShreddedVariantShredder.VariantShred;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.variant.ShreddedVariant;
+import io.tileverse.parquetry.variant.Variant;
+import io.tileverse.parquetry.variant.VariantMetadata;
 
 /**
  * Verifies the shredder is the exact inverse of the reconstructor: shred a {@link Variant} against a model, drive a

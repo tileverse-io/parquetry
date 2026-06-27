@@ -45,20 +45,20 @@ import io.tileverse.parquetry.columnar.StructVector;
 import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.columnar.VariantVector;
 import io.tileverse.parquetry.data.ParquetWriteException;
-import io.tileverse.parquetry.data.variant.ShreddedVariant;
-import io.tileverse.parquetry.data.variant.ShreddedVariantShredder;
-import io.tileverse.parquetry.data.variant.ShreddedVariantShredder.ArrayShred;
-import io.tileverse.parquetry.data.variant.ShreddedVariantShredder.FieldShred;
-import io.tileverse.parquetry.data.variant.ShreddedVariantShredder.ObjectShred;
-import io.tileverse.parquetry.data.variant.ShreddedVariantShredder.ScalarShred;
-import io.tileverse.parquetry.data.variant.ShreddedVariantShredder.VariantShred;
-import io.tileverse.parquetry.data.variant.Variant;
 import io.tileverse.parquetry.format.LogicalType;
+import io.tileverse.parquetry.internal.variant.ShreddedVariantShredder;
+import io.tileverse.parquetry.internal.variant.ShreddedVariantShredder.ArrayShred;
+import io.tileverse.parquetry.internal.variant.ShreddedVariantShredder.FieldShred;
+import io.tileverse.parquetry.internal.variant.ShreddedVariantShredder.ObjectShred;
+import io.tileverse.parquetry.internal.variant.ShreddedVariantShredder.ScalarShred;
+import io.tileverse.parquetry.internal.variant.ShreddedVariantShredder.VariantShred;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.GroupKind;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.variant.ShreddedVariant;
+import io.tileverse.parquetry.variant.Variant;
 
 /**
  * Growable, single-column write buffer. The batch builder stages one cell per row through the typed {@code set*}

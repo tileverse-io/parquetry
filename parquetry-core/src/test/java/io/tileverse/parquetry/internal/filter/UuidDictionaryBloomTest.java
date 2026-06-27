@@ -31,13 +31,13 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.data.UuidConverter;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.read.page.Dictionary;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.PrimitiveKind;
+import io.tileverse.parquetry.schema.UuidConverter;
 
 /**
  * Verifies that a {@code UuidVal} predicate prunes through the DICTIONARY and BLOOM_FILTER tiers, driving the same

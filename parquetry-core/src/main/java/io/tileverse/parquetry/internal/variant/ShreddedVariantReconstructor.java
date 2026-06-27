@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.data.variant;
+package io.tileverse.parquetry.internal.variant;
 
 import java.lang.foreign.MemorySegment;
 import java.util.LinkedHashMap;
@@ -22,6 +22,10 @@ import java.util.Map;
 import java.util.Optional;
 
 import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.variant.ShreddedVariant;
+import io.tileverse.parquetry.variant.Variant;
+import io.tileverse.parquetry.variant.VariantMetadata;
+import io.tileverse.parquetry.variant.VariantScalarValues;
 
 /**
  * Reconstructs the canonical unshredded Variant value bytes for one shredded column row. A {@link ShreddedVariant}

@@ -62,7 +62,7 @@ public sealed interface Value
 
     /**
      * A UUID predicate value. Compared in Parquet's unsigned byte order for FIXED_LEN_BYTE_ARRAY columns (via
-     * {@link io.tileverse.parquetry.data.UuidConverter#compareSegmentToUuid}), NOT {@link UUID#compareTo}, which is
+     * {@link io.tileverse.parquetry.schema.UuidConverter#compareSegmentToUuid}), NOT {@link UUID#compareTo}, which is
      * signed and would disagree with file statistics whenever a long's high bit differs.
      */
     record UuidVal(UUID value) implements Value {}

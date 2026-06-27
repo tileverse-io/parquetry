@@ -24,10 +24,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-import io.tileverse.parquetry.data.UuidConverter;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.ParquetSchemaException;
+import io.tileverse.parquetry.schema.UuidConverter;
 
 /**
  * The owned {@link ParquetRecord}: a self-contained snapshot produced by {@link DefaultParquetRecord#detach()}. Each

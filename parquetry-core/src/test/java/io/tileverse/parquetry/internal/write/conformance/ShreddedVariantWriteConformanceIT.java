@@ -34,17 +34,17 @@ import org.junit.jupiter.api.io.TempDir;
 import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.WriteOptions;
-import io.tileverse.parquetry.data.variant.Variant;
-import io.tileverse.parquetry.data.variant.VariantEncoder;
-import io.tileverse.parquetry.data.variant.VariantEncoder.Encoded;
-import io.tileverse.parquetry.data.variant.VariantMetadata;
 import io.tileverse.parquetry.format.LogicalType;
+import io.tileverse.parquetry.internal.variant.VariantEncoder;
+import io.tileverse.parquetry.internal.variant.VariantEncoder.Encoded;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.variant.Variant;
+import io.tileverse.parquetry.variant.VariantMetadata;
 
 /**
  * Conformance gate for shredded Variant write output. parquetry writes a file with one shredded Variant column

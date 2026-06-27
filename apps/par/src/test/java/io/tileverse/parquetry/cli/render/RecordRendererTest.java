@@ -39,7 +39,6 @@ import io.tileverse.parquetry.cli.support.Fixtures;
 import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.data.UuidConverter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.filter.Predicate;
@@ -51,6 +50,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.UuidConverter;
 import io.tileverse.parquetry.testkit.TestCorpus;
 import io.tileverse.parquetry.tileverse.ByteRangeSources;
 

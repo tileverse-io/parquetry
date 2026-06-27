@@ -21,12 +21,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-import io.tileverse.parquetry.data.variant.ShreddedVariant;
-import io.tileverse.parquetry.data.variant.ShreddedVariantReconstructor;
-import io.tileverse.parquetry.data.variant.ShreddedVariantReconstructor.NodeReader;
-import io.tileverse.parquetry.data.variant.Variant;
-import io.tileverse.parquetry.data.variant.VariantMetadata;
+import io.tileverse.parquetry.internal.variant.ShreddedVariantReconstructor;
+import io.tileverse.parquetry.internal.variant.ShreddedVariantReconstructor.NodeReader;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.variant.ShreddedVariant;
+import io.tileverse.parquetry.variant.Variant;
+import io.tileverse.parquetry.variant.VariantMetadata;
 
 import lombok.NonNull;
 

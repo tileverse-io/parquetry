@@ -22,8 +22,8 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.data.UuidConverter;
 import io.tileverse.parquetry.filter.Value;
+import io.tileverse.parquetry.schema.UuidConverter;
 
 class UuidValueComparisonTest {
 
