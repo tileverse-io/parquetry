@@ -18,7 +18,7 @@ package io.tileverse.parquetry.dataset;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.record.ParquetRecord;
 
 /** Flattens a read's batches into records, independent of the batch's schema. */

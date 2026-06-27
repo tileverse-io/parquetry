@@ -26,7 +26,7 @@ import java.util.Optional;
 import java.util.stream.Stream;
 
 import io.tileverse.parquetry.arrow.ipc.LogicalColumns.LogicalColumn;
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 

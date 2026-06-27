@@ -20,7 +20,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import java.util.OptionalInt;
 
-import io.tileverse.parquetry.batch.Validity;
+import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;

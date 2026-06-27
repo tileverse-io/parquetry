@@ -27,12 +27,12 @@ import java.util.BitSet;
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.arrow.columnar.EncodedBuffer.BufferRole;
-import io.tileverse.parquetry.batch.BinaryVector;
-import io.tileverse.parquetry.batch.ColumnVector;
-import io.tileverse.parquetry.batch.FixedLenBinaryVector;
-import io.tileverse.parquetry.batch.Int96Vector;
-import io.tileverse.parquetry.batch.IntSequence;
-import io.tileverse.parquetry.batch.Validity;
+import io.tileverse.parquetry.columnar.BinaryVector;
+import io.tileverse.parquetry.columnar.ColumnVector;
+import io.tileverse.parquetry.columnar.FixedLenBinaryVector;
+import io.tileverse.parquetry.columnar.Int96Vector;
+import io.tileverse.parquetry.columnar.IntSequence;
+import io.tileverse.parquetry.columnar.Validity;
 
 class ArrowBufferCodecDictionaryTest {
 

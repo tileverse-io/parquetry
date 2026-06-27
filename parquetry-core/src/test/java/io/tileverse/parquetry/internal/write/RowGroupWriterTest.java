@@ -35,10 +35,10 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
-import io.tileverse.parquetry.batch.IntVector;
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
-import io.tileverse.parquetry.batch.Validity;
+import io.tileverse.parquetry.columnar.DefaultParquetRecordBatch;
+import io.tileverse.parquetry.columnar.IntVector;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.data.ParquetWriteException;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.EncodingPolicy;
@@ -288,12 +288,12 @@ class RowGroupWriterTest {
         // DefaultParquetRecordBatch.ofHeap accepts any column map, making it possible to craft a
         // batch that is missing a leaf the schema declares.
         ParquetSchema idOnlySchema = flatSchema(idLeaf);
-        io.tileverse.parquetry.batch.ParquetRecordBatch idOnlyBatch =
+        io.tileverse.parquetry.columnar.ParquetRecordBatch idOnlyBatch =
                 WriteFixtures.batch(idOnlySchema, List.of(Map.of(ColumnPath.of("id"), 1)));
-        Map<ColumnPath, io.tileverse.parquetry.batch.ColumnVector> columns =
+        Map<ColumnPath, io.tileverse.parquetry.columnar.ColumnVector> columns =
                 new java.util.LinkedHashMap<>(idOnlyBatch.columns());
-        io.tileverse.parquetry.batch.ParquetRecordBatch truncatedBatch =
-                io.tileverse.parquetry.batch.DefaultParquetRecordBatch.ofHeap(schema, columns, 1);
+        io.tileverse.parquetry.columnar.ParquetRecordBatch truncatedBatch =
+                io.tileverse.parquetry.columnar.DefaultParquetRecordBatch.ofHeap(schema, columns, 1);
 
         try (RowGroupWriter rgw = new RowGroupWriter(options, schema, tempDir)) {
             assertThatThrownBy(() -> rgw.appendBatch(truncatedBatch))

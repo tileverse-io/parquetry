@@ -168,9 +168,9 @@ public sealed interface ParquetRecord permits DefaultParquetRecord, DetachedParq
      * Reads a binary value straight from its column's backing. The implementation passes the value's own backing
      * segment plus its {@code offset} and {@code length}; the view reads without slicing or copying.
      *
-     * <p>This is the record-API face of {@link io.tileverse.parquetry.batch.BinaryView}; the binary vectors accept that
-     * lower-level type, and a {@code BinaryView} flows to them unchanged.
+     * <p>This is the record-API face of {@link io.tileverse.parquetry.columnar.BinaryView}; the binary vectors accept
+     * that lower-level type, and a {@code BinaryView} flows to them unchanged.
      */
     @FunctionalInterface
-    interface BinaryView<R> extends io.tileverse.parquetry.batch.BinaryView<R> {}
+    interface BinaryView<R> extends io.tileverse.parquetry.columnar.BinaryView<R> {}
 }

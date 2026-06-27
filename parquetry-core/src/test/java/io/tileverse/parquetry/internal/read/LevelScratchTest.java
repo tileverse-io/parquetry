@@ -21,7 +21,7 @@ import java.lang.foreign.MemorySegment;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.batch.Levels;
+import io.tileverse.parquetry.columnar.Levels;
 import io.tileverse.parquetry.internal.read.page.LevelDecoder;
 import io.tileverse.parquetry.io.SegmentPool;
 

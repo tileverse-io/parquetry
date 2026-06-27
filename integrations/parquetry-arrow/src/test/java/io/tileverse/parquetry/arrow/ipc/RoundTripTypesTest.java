@@ -54,18 +54,18 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.ipc.ArrowStreamReader;
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.batch.BinaryVector;
-import io.tileverse.parquetry.batch.BooleanVector;
-import io.tileverse.parquetry.batch.ColumnVector;
-import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
-import io.tileverse.parquetry.batch.DoubleVector;
-import io.tileverse.parquetry.batch.FixedLenBinaryVector;
-import io.tileverse.parquetry.batch.FloatVector;
-import io.tileverse.parquetry.batch.Int96Vector;
-import io.tileverse.parquetry.batch.IntSequence;
-import io.tileverse.parquetry.batch.LongVector;
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
-import io.tileverse.parquetry.batch.Validity;
+import io.tileverse.parquetry.columnar.BinaryVector;
+import io.tileverse.parquetry.columnar.BooleanVector;
+import io.tileverse.parquetry.columnar.ColumnVector;
+import io.tileverse.parquetry.columnar.DefaultParquetRecordBatch;
+import io.tileverse.parquetry.columnar.DoubleVector;
+import io.tileverse.parquetry.columnar.FixedLenBinaryVector;
+import io.tileverse.parquetry.columnar.FloatVector;
+import io.tileverse.parquetry.columnar.Int96Vector;
+import io.tileverse.parquetry.columnar.IntSequence;
+import io.tileverse.parquetry.columnar.LongVector;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -330,7 +330,7 @@ class RoundTripTypesTest {
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         columns.put(
                 ColumnPath.of("day"),
-                io.tileverse.parquetry.batch.IntVector.materialized(new int[] {19000, 19500}, validity));
+                io.tileverse.parquetry.columnar.IntVector.materialized(new int[] {19000, 19500}, validity));
         columns.put(
                 ColumnPath.of("ts"),
                 LongVector.materialized(new long[] {1_700_000_000_000_000L, 1_700_000_001_000_000L}, validity));
@@ -374,7 +374,8 @@ class RoundTripTypesTest {
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         // 0xFFFFFFFF as a signed int is -1; an unsigned reader must see 4294967295.
         columns.put(
-                ColumnPath.of("u32"), io.tileverse.parquetry.batch.IntVector.materialized(new int[] {-1, 7}, validity));
+                ColumnPath.of("u32"),
+                io.tileverse.parquetry.columnar.IntVector.materialized(new int[] {-1, 7}, validity));
         // 0xFFFFFFFFFFFFFFFF as a signed long is -1; an unsigned reader must see 18446744073709551615.
         columns.put(ColumnPath.of("u64"), LongVector.materialized(new long[] {-1L, 7L}, validity));
         ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 2, Arena.ofShared());
@@ -406,7 +407,7 @@ class RoundTripTypesTest {
         Map<ColumnPath, ColumnVector> firstColumns = new LinkedHashMap<>();
         firstColumns.put(
                 ColumnPath.of("count"),
-                io.tileverse.parquetry.batch.IntVector.materialized(new int[] {10, 20}, firstValidity));
+                io.tileverse.parquetry.columnar.IntVector.materialized(new int[] {10, 20}, firstValidity));
         ParquetRecordBatch firstBatch = new DefaultParquetRecordBatch(schema, firstColumns, 2, Arena.ofShared());
 
         BitSet secondValidBits = new BitSet();
@@ -415,7 +416,7 @@ class RoundTripTypesTest {
         Map<ColumnPath, ColumnVector> secondColumns = new LinkedHashMap<>();
         secondColumns.put(
                 ColumnPath.of("count"),
-                io.tileverse.parquetry.batch.IntVector.materialized(new int[] {30, 40, 50}, secondValidity));
+                io.tileverse.parquetry.columnar.IntVector.materialized(new int[] {30, 40, 50}, secondValidity));
         ParquetRecordBatch secondBatch = new DefaultParquetRecordBatch(schema, secondColumns, 3, Arena.ofShared());
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -450,8 +451,8 @@ class RoundTripTypesTest {
         validBits.set(0);
         validBits.set(1);
         Validity validity = Validity.of(validBits, 4);
-        io.tileverse.parquetry.batch.IntVector column =
-                io.tileverse.parquetry.batch.IntVector.materialized(new int[] {100, 200, 0, 0}, validity);
+        io.tileverse.parquetry.columnar.IntVector column =
+                io.tileverse.parquetry.columnar.IntVector.materialized(new int[] {100, 200, 0, 0}, validity);
 
         byte[] ipc = writeSingleColumn(schema, "value", column, 4);
 
@@ -498,7 +499,7 @@ class RoundTripTypesTest {
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         columns.put(
                 ColumnPath.of("d32"),
-                io.tileverse.parquetry.batch.IntVector.materialized(new int[] {12345, -678}, validity));
+                io.tileverse.parquetry.columnar.IntVector.materialized(new int[] {12345, -678}, validity));
         columns.put(ColumnPath.of("d64"), LongVector.materialized(new long[] {123456789012L, -42L}, validity));
         columns.put(
                 ColumnPath.of("dFixed"),

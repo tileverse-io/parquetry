@@ -23,10 +23,10 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 
-import io.tileverse.parquetry.batch.IntSequence;
-import io.tileverse.parquetry.batch.LeafLevels;
-import io.tileverse.parquetry.batch.Levels;
-import io.tileverse.parquetry.batch.Validity;
+import io.tileverse.parquetry.columnar.IntSequence;
+import io.tileverse.parquetry.columnar.LeafLevels;
+import io.tileverse.parquetry.columnar.Levels;
+import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.format.ParquetLayouts;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.schema.ColumnPath;

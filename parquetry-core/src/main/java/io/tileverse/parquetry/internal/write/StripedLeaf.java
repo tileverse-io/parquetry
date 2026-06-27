@@ -17,7 +17,7 @@ package io.tileverse.parquetry.internal.write;
 
 import java.util.Arrays;
 
-import io.tileverse.parquetry.batch.ColumnVector;
+import io.tileverse.parquetry.columnar.ColumnVector;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**

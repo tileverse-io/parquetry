@@ -28,8 +28,8 @@ import io.tileverse.storage.RangeReader;
 import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
 
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.cli.support.Fixtures;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.filter.Predicate;

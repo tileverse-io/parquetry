@@ -20,12 +20,12 @@ import java.util.List;
 import java.util.Objects;
 import java.util.RandomAccess;
 
-import io.tileverse.parquetry.batch.ColumnVector;
-import io.tileverse.parquetry.batch.LevelListVector;
-import io.tileverse.parquetry.batch.LevelMapVector;
-import io.tileverse.parquetry.batch.ListVector;
-import io.tileverse.parquetry.batch.MapVector;
-import io.tileverse.parquetry.batch.StructVector;
+import io.tileverse.parquetry.columnar.ColumnVector;
+import io.tileverse.parquetry.columnar.LevelListVector;
+import io.tileverse.parquetry.columnar.LevelMapVector;
+import io.tileverse.parquetry.columnar.ListVector;
+import io.tileverse.parquetry.columnar.MapVector;
+import io.tileverse.parquetry.columnar.StructVector;
 import io.tileverse.parquetry.record.DefaultParquetRecord;
 import io.tileverse.parquetry.record.RowColumns;
 import io.tileverse.parquetry.schema.ParquetSchema;

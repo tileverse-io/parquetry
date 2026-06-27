@@ -15,8 +15,8 @@
  */
 package io.tileverse.parquetry.materializer;
 
-import io.tileverse.parquetry.batch.LeafOrder;
-import io.tileverse.parquetry.batch.Levels;
+import io.tileverse.parquetry.columnar.LeafOrder;
+import io.tileverse.parquetry.columnar.Levels;
 
 /**
  * A forward cursor over one list span's elements that tracks every descendant leaf's position at once. Sequential

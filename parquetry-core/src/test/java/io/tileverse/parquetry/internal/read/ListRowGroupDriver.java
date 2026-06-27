@@ -17,7 +17,7 @@ package io.tileverse.parquetry.internal.read;
 
 import java.util.List;
 
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 
 /** Test driver that replays a fixed list of pre-built batches. */
 final class ListRowGroupDriver implements RowGroupBatchDriver {

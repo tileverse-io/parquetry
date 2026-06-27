@@ -15,7 +15,7 @@
  */
 package io.tileverse.parquetry.internal.read;
 
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 
 /**
  * Yields one row group's batches in order to the consuming read thread. An inline source decodes synchronously on the

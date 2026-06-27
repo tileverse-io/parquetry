@@ -25,9 +25,9 @@ import java.util.OptionalInt;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.cli.UnsupportedSchemaException;
 import io.tileverse.parquetry.cli.support.Fixtures;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.record.ParquetRecord;

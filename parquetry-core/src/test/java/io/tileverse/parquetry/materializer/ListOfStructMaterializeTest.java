@@ -25,10 +25,10 @@ import java.util.OptionalInt;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.batch.IntVector;
-import io.tileverse.parquetry.batch.ListVector;
-import io.tileverse.parquetry.batch.StructVector;
-import io.tileverse.parquetry.batch.Validity;
+import io.tileverse.parquetry.columnar.IntVector;
+import io.tileverse.parquetry.columnar.ListVector;
+import io.tileverse.parquetry.columnar.StructVector;
+import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;

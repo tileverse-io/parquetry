@@ -15,7 +15,7 @@
  */
 package io.tileverse.parquetry.internal.read;
 
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 
 /**
  * One item in a {@link BatchHandoff}: a batch the producer kept in heap, or a handle to one it spilled to disk. The

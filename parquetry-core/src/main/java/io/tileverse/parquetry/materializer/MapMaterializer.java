@@ -18,8 +18,8 @@ package io.tileverse.parquetry.materializer;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-import io.tileverse.parquetry.batch.ColumnVector;
-import io.tileverse.parquetry.batch.MapVector;
+import io.tileverse.parquetry.columnar.ColumnVector;
+import io.tileverse.parquetry.columnar.MapVector;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**

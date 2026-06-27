@@ -25,10 +25,10 @@ import java.util.OptionalInt;
 
 import com.google.errorprone.annotations.MustBeClosed;
 
-import io.tileverse.parquetry.batch.ColumnVector;
-import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
-import io.tileverse.parquetry.batch.Levels;
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.ColumnVector;
+import io.tileverse.parquetry.columnar.DefaultParquetRecordBatch;
+import io.tileverse.parquetry.columnar.Levels;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -48,8 +48,8 @@ import lombok.NonNull;
  *       vector at that value count, capturing the matching slices of the rep-level and def-level streams.
  *   <li>Feeds the per-leaf vectors and rep-/def-level slices to
  *       {@link NestedVectorAssembler#assembleNested(ParquetSchema, Map, Map, Map, int)} which produces
- *       {@link io.tileverse.parquetry.batch.ListVector} / {@link io.tileverse.parquetry.batch.MapVector} /
- *       {@link io.tileverse.parquetry.batch.StructVector} wrappers at the LIST / MAP / STRUCT group paths.
+ *       {@link io.tileverse.parquetry.columnar.ListVector} / {@link io.tileverse.parquetry.columnar.MapVector} /
+ *       {@link io.tileverse.parquetry.columnar.StructVector} wrappers at the LIST / MAP / STRUCT group paths.
  * </ol>
  *
  * <p>Most vectors are heap-backed at construction (see {@link BatchColumnReader#readBatch}); DOUBLE columns are decoded
@@ -129,8 +129,8 @@ public final class BatchRowGroupReader implements AutoCloseable {
      * {@link BatchColumnReader#logicalRowsRemainingInCurrentPage()} across all columns (further capped by
      * {@code batchSizeCap} if present). Each column reader emits a vector at the corresponding leaf-value count; those
      * vectors and their rep-level slices feed {@link NestedVectorAssembler#assembleNested} which produces
-     * {@link io.tileverse.parquetry.batch.ListVector} / {@link io.tileverse.parquetry.batch.MapVector} /
-     * {@link io.tileverse.parquetry.batch.StructVector} wrappers at LIST / MAP / STRUCT group paths. Leaf vectors
+     * {@link io.tileverse.parquetry.columnar.ListVector} / {@link io.tileverse.parquetry.columnar.MapVector} /
+     * {@link io.tileverse.parquetry.columnar.StructVector} wrappers at LIST / MAP / STRUCT group paths. Leaf vectors
      * descended from a LIST or MAP group are removed from the top-level columns map because they are sized at element
      * granularity, not logical-row granularity.
      *

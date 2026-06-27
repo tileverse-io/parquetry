@@ -28,9 +28,9 @@ import java.util.stream.StreamSupport;
 
 import com.google.errorprone.annotations.MustBeClosed;
 
-import io.tileverse.parquetry.batch.FilteredRecordBatch;
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
-import io.tileverse.parquetry.batch.VectorizedPredicateEvaluator;
+import io.tileverse.parquetry.columnar.FilteredRecordBatch;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.VectorizedPredicateEvaluator;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;

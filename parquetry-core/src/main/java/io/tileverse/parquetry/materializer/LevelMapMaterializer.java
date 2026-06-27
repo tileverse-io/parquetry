@@ -18,10 +18,10 @@ package io.tileverse.parquetry.materializer;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-import io.tileverse.parquetry.batch.LeafLevels;
-import io.tileverse.parquetry.batch.LevelMapVector;
-import io.tileverse.parquetry.batch.LevelSource;
-import io.tileverse.parquetry.batch.MapMeta;
+import io.tileverse.parquetry.columnar.LeafLevels;
+import io.tileverse.parquetry.columnar.LevelMapVector;
+import io.tileverse.parquetry.columnar.LevelSource;
+import io.tileverse.parquetry.columnar.MapMeta;
 import io.tileverse.parquetry.record.LevelElementRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 

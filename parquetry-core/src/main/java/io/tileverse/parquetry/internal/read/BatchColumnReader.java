@@ -30,18 +30,18 @@ import java.util.BitSet;
 import java.util.List;
 import java.util.Optional;
 
-import io.tileverse.parquetry.batch.BinaryVector;
-import io.tileverse.parquetry.batch.BooleanVector;
-import io.tileverse.parquetry.batch.ColumnVector;
-import io.tileverse.parquetry.batch.DoubleVector;
-import io.tileverse.parquetry.batch.FixedLenBinaryVector;
-import io.tileverse.parquetry.batch.FloatVector;
-import io.tileverse.parquetry.batch.Int96Vector;
-import io.tileverse.parquetry.batch.IntSequence;
-import io.tileverse.parquetry.batch.IntVector;
-import io.tileverse.parquetry.batch.Levels;
-import io.tileverse.parquetry.batch.LongVector;
-import io.tileverse.parquetry.batch.Validity;
+import io.tileverse.parquetry.columnar.BinaryVector;
+import io.tileverse.parquetry.columnar.BooleanVector;
+import io.tileverse.parquetry.columnar.ColumnVector;
+import io.tileverse.parquetry.columnar.DoubleVector;
+import io.tileverse.parquetry.columnar.FixedLenBinaryVector;
+import io.tileverse.parquetry.columnar.FloatVector;
+import io.tileverse.parquetry.columnar.Int96Vector;
+import io.tileverse.parquetry.columnar.IntSequence;
+import io.tileverse.parquetry.columnar.IntVector;
+import io.tileverse.parquetry.columnar.Levels;
+import io.tileverse.parquetry.columnar.LongVector;
+import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.data.Compression;
 import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.format.Encoding;
@@ -1544,7 +1544,8 @@ final class BatchColumnReader {
     /**
      * Copies the page's double values for the slice into a buffer the decode valve hands out (a native segment while
      * the off-heap decode budget has room, an mmap of an on-disk file otherwise). The owning batch closes the buffer on
-     * {@link io.tileverse.parquetry.batch.ParquetRecordBatch#close()}; the resulting vector holds no heap value array.
+     * {@link io.tileverse.parquetry.columnar.ParquetRecordBatch#close()}; the resulting vector holds no heap value
+     * array.
      *
      * <p>When the page decoded off-heap, {@link #pageValues} - the live page segment (PLAIN all-valid) or the pooled
      * decode buffer - already has the little-endian DOUBLE layout of the target, making the copy a raw byte copy with
@@ -1567,7 +1568,8 @@ final class BatchColumnReader {
     /**
      * Copies the page's int values for the slice into a buffer the decode valve hands out (a native segment while the
      * off-heap decode budget has room, an mmap of an on-disk file otherwise). The owning batch closes the buffer on
-     * {@link io.tileverse.parquetry.batch.ParquetRecordBatch#close()}; the resulting vector holds no heap value array.
+     * {@link io.tileverse.parquetry.columnar.ParquetRecordBatch#close()}; the resulting vector holds no heap value
+     * array.
      *
      * <p>When the page decoded off-heap, {@link #pageValues} - the live page segment (PLAIN all-valid) or the pooled
      * decode buffer - already has the little-endian INT32 layout of the target, making the copy a raw byte copy with no
@@ -1628,8 +1630,8 @@ final class BatchColumnReader {
     /**
      * Packs the page's boolean values for the slice into an LSB-first bit-packed buffer the decode valve hands out (a
      * native segment while the off-heap decode budget has room, an mmap of an on-disk file otherwise). The owning batch
-     * closes the buffer on {@link io.tileverse.parquetry.batch.ParquetRecordBatch#close()}; the resulting vector holds
-     * no heap value array. The bit layout matches the Arrow validity bitmap convention.
+     * closes the buffer on {@link io.tileverse.parquetry.columnar.ParquetRecordBatch#close()}; the resulting vector
+     * holds no heap value array. The bit layout matches the Arrow validity bitmap convention.
      */
     private BooleanVector sliceBoolean(int start, int n, Validity sliceValidity, List<AutoCloseable> acquiredBuffers) {
         long byteSize = Math.max(1L, (n + 7) / 8);
@@ -1682,7 +1684,7 @@ final class BatchColumnReader {
      * the off-heap decode budget has room, an mmap of an on-disk file otherwise) and rebases the row offsets to that
      * window, in a second valve buffer. The bytes come straight from the live decompressed page for the direct path, or
      * in one contiguous run from the frozen page backing for DELTA_BYTE_ARRAY and surviving-rows pages. The owning
-     * batch closes both buffers on {@link io.tileverse.parquetry.batch.ParquetRecordBatch#close()}; the resulting
+     * batch closes both buffers on {@link io.tileverse.parquetry.columnar.ParquetRecordBatch#close()}; the resulting
      * vector holds no heap value bytes and no heap offsets, only the validity.
      */
     private BinaryVector sliceConsolidatedBinary(
@@ -1728,7 +1730,7 @@ final class BatchColumnReader {
     /**
      * Copies the page's fixed-width binary slots for the slice into a buffer the decode valve hands out (a native
      * segment while the off-heap decode budget has room, an mmap of an on-disk file otherwise). The owning batch closes
-     * the buffer on {@link io.tileverse.parquetry.batch.ParquetRecordBatch#close()}. The dictionary branch reuses
+     * the buffer on {@link io.tileverse.parquetry.columnar.ParquetRecordBatch#close()}. The dictionary branch reuses
      * shared heap entries and acquires nothing.
      */
     private FixedLenBinaryVector sliceFixedBinary(

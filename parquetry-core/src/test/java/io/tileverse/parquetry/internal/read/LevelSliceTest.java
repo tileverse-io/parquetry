@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.batch.Levels;
+import io.tileverse.parquetry.columnar.Levels;
 
 class LevelSliceTest {
 

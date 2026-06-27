@@ -27,15 +27,15 @@ import java.util.SequencedMap;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.batch.BinaryVector;
-import io.tileverse.parquetry.batch.ColumnVector;
-import io.tileverse.parquetry.batch.IntSequence;
-import io.tileverse.parquetry.batch.IntVector;
-import io.tileverse.parquetry.batch.ListVector;
-import io.tileverse.parquetry.batch.MapVector;
-import io.tileverse.parquetry.batch.StructVector;
-import io.tileverse.parquetry.batch.Validity;
-import io.tileverse.parquetry.batch.VariantVector;
+import io.tileverse.parquetry.columnar.BinaryVector;
+import io.tileverse.parquetry.columnar.ColumnVector;
+import io.tileverse.parquetry.columnar.IntSequence;
+import io.tileverse.parquetry.columnar.IntVector;
+import io.tileverse.parquetry.columnar.ListVector;
+import io.tileverse.parquetry.columnar.MapVector;
+import io.tileverse.parquetry.columnar.StructVector;
+import io.tileverse.parquetry.columnar.Validity;
+import io.tileverse.parquetry.columnar.VariantVector;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 class ArrowBufferCodecNestedTest {

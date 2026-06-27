@@ -28,8 +28,8 @@ import io.tileverse.parquetry.arrow.columnar.EncodedBatch;
 import io.tileverse.parquetry.arrow.columnar.EncodedBuffer;
 import io.tileverse.parquetry.arrow.columnar.EncodedNode;
 import io.tileverse.parquetry.arrow.columnar.NodeEncoding;
-import io.tileverse.parquetry.batch.IntVector;
-import io.tileverse.parquetry.batch.Validity;
+import io.tileverse.parquetry.columnar.IntVector;
+import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 class EncodedBatchSerializerTest {

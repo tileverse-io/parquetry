@@ -17,7 +17,7 @@ package io.tileverse.parquetry.internal.read;
 
 import java.util.Optional;
 
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.observe.FetchStats;
 import io.tileverse.parquetry.observe.PhaseTimings;
 import io.tileverse.parquetry.observe.QueryObserver;

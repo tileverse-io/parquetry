@@ -21,13 +21,13 @@ import java.util.BitSet;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.batch.BooleanVector;
-import io.tileverse.parquetry.batch.ColumnVector;
-import io.tileverse.parquetry.batch.DoubleVector;
-import io.tileverse.parquetry.batch.FloatVector;
-import io.tileverse.parquetry.batch.IntVector;
-import io.tileverse.parquetry.batch.LongVector;
-import io.tileverse.parquetry.batch.Validity;
+import io.tileverse.parquetry.columnar.BooleanVector;
+import io.tileverse.parquetry.columnar.ColumnVector;
+import io.tileverse.parquetry.columnar.DoubleVector;
+import io.tileverse.parquetry.columnar.FloatVector;
+import io.tileverse.parquetry.columnar.IntVector;
+import io.tileverse.parquetry.columnar.LongVector;
+import io.tileverse.parquetry.columnar.Validity;
 
 class ArrowBufferCodecPrimitivesTest {
 

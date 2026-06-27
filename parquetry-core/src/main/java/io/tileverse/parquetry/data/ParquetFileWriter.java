@@ -43,7 +43,7 @@ import java.util.OptionalLong;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.format.BloomFilterHeader;
 import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.format.ColumnChunk;

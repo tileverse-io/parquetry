@@ -25,9 +25,9 @@ import java.util.stream.Stream;
 
 import com.google.errorprone.annotations.MustBeClosed;
 
-import io.tileverse.parquetry.batch.BatchMaterializer;
-import io.tileverse.parquetry.batch.OutputBatches;
-import io.tileverse.parquetry.batch.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.BatchMaterializer;
+import io.tileverse.parquetry.columnar.OutputBatches;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
