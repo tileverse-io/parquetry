@@ -25,13 +25,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
-import io.tileverse.parquetry.data.UuidConverter;
-import io.tileverse.parquetry.data.variant.Variant;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.UuidConverter;
+import io.tileverse.parquetry.variant.Variant;
 
 import tools.jackson.core.JsonGenerator;
 import tools.jackson.core.ObjectWriteContext;

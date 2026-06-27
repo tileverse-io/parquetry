@@ -13,13 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.data.variant;
+package io.tileverse.parquetry.internal.variant;
 
 import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+
+import io.tileverse.parquetry.variant.ShreddedVariant;
+import io.tileverse.parquetry.variant.Variant;
+import io.tileverse.parquetry.variant.VariantMetadata;
 
 /**
  * Shreds one {@link Variant} value against a {@link ShreddedVariant} model into the per-row write representation a

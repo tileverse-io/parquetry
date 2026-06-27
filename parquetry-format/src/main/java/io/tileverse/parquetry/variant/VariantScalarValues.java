@@ -13,28 +13,28 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.data.variant;
+package io.tileverse.parquetry.variant;
 
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_BINARY;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_BOOLEAN_FALSE;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_BOOLEAN_TRUE;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_DATE;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_DECIMAL16;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_DECIMAL4;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_DECIMAL8;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_DOUBLE;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_FLOAT;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_INT16;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_INT32;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_INT64;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_INT8;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_STRING;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_TIME;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_TIMESTAMP_NTZ_MICROS;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_TIMESTAMP_NTZ_NANOS;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_TIMESTAMP_TZ_MICROS;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_TIMESTAMP_TZ_NANOS;
-import static io.tileverse.parquetry.data.variant.VariantScalarTypeIds.TYPE_UUID;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_BINARY;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_BOOLEAN_FALSE;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_BOOLEAN_TRUE;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_DATE;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_DECIMAL16;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_DECIMAL4;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_DECIMAL8;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_DOUBLE;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_FLOAT;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_INT16;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_INT32;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_INT64;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_INT8;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_STRING;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_TIME;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_TIMESTAMP_NTZ_MICROS;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_TIMESTAMP_NTZ_NANOS;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_TIMESTAMP_TZ_MICROS;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_TIMESTAMP_TZ_NANOS;
+import static io.tileverse.parquetry.variant.VariantScalarTypeIds.TYPE_UUID;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -53,7 +53,7 @@ import io.tileverse.parquetry.format.LogicalType;
  * {@link Float}, {@link Double}, and a read-only {@link MemorySegment} for binary, string, uuid, and decimal16-unscaled
  * leaves.
  */
-final class VariantScalarValues {
+public final class VariantScalarValues {
 
     private static final int BASIC_TYPE_PRIMITIVE = 0;
     private static final int BASIC_TYPE_SHORT_STRING = 1;
@@ -64,7 +64,7 @@ final class VariantScalarValues {
     private VariantScalarValues() {}
 
     /** Builds the canonical Variant scalar value bytes for a shredded scalar leaf. */
-    static MemorySegment encode(ShreddedVariant.Scalar scalar, Object physical) {
+    public static MemorySegment encode(ShreddedVariant.Scalar scalar, Object physical) {
         byte[] bytes = encodeBytes(scalar, physical);
         return MemorySegment.ofArray(bytes).asReadOnly();
     }
@@ -98,7 +98,7 @@ final class VariantScalarValues {
     }
 
     private static byte[] bool(Boolean value) {
-        int typeId = value ? TYPE_BOOLEAN_TRUE : TYPE_BOOLEAN_FALSE;
+        int typeId = value.booleanValue() ? TYPE_BOOLEAN_TRUE : TYPE_BOOLEAN_FALSE;
         return new byte[] {(byte) primitiveHeader(typeId)};
     }
 

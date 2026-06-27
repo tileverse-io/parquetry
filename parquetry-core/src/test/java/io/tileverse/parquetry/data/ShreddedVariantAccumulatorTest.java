@@ -32,15 +32,15 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.columnar.ShreddedVariantVector;
-import io.tileverse.parquetry.data.variant.Variant;
-import io.tileverse.parquetry.data.variant.VariantEncoder;
-import io.tileverse.parquetry.data.variant.VariantMetadata;
 import io.tileverse.parquetry.format.LogicalType;
+import io.tileverse.parquetry.internal.variant.VariantEncoder;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.variant.Variant;
+import io.tileverse.parquetry.variant.VariantMetadata;
 
 /**
  * Proves the shredded Variant write path without the writer: each authored Variant shreds into the column's typed

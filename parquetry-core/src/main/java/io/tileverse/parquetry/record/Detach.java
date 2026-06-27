@@ -22,8 +22,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-import io.tileverse.parquetry.data.variant.Variant;
 import io.tileverse.parquetry.io.Segments;
+import io.tileverse.parquetry.variant.Variant;
 
 /**
  * Turns a lazy batch-backed value into a self-contained copy that owns its data.

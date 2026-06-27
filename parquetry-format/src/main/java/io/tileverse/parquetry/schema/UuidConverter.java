@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.data;
+package io.tileverse.parquetry.schema;
 
 import static java.lang.foreign.ValueLayout.JAVA_LONG_UNALIGNED;
 import static java.nio.ByteOrder.BIG_ENDIAN;

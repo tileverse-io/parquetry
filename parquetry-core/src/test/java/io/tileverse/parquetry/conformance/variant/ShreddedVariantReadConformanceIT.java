@@ -39,7 +39,6 @@ import io.tileverse.parquetry.columnar.ColumnVector;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.data.variant.Variant;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.format.ParquetFormatException;
@@ -48,6 +47,7 @@ import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.testkit.TestCorpus;
+import io.tileverse.parquetry.variant.Variant;
 
 import tools.jackson.databind.json.JsonMapper;
 

@@ -22,13 +22,13 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Predicate;
 
-import io.tileverse.parquetry.data.UuidConverter;
 import io.tileverse.parquetry.filter.MatchAction;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.filter.explain.Tier;
 import io.tileverse.parquetry.internal.read.page.Dictionary;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.UuidConverter;
 
 /**
  * Tier-2 (DICTIONARY) evaluator. Inspects a row group's loaded dictionary pages: if no dictionary value can satisfy the

@@ -24,7 +24,6 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.UUID;
 
-import io.tileverse.parquetry.data.UuidConverter;
 import io.tileverse.parquetry.filter.MatchAction;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Value;
@@ -33,6 +32,7 @@ import io.tileverse.parquetry.filter.explain.Tier;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.PrimitiveKind;
+import io.tileverse.parquetry.schema.UuidConverter;
 
 /**
  * Tier-4 (BLOOM_FILTER) evaluator. Inspects a row group's loaded bloom filters: when an equality (or IN-list) predicate

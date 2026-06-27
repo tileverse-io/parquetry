@@ -38,9 +38,6 @@ import io.tileverse.parquetry.columnar.ListMeta.FieldMeta;
 import io.tileverse.parquetry.columnar.ListMeta.StructMeta;
 import io.tileverse.parquetry.columnar.LongVector;
 import io.tileverse.parquetry.columnar.MapMeta;
-import io.tileverse.parquetry.data.UuidConverter;
-import io.tileverse.parquetry.data.variant.Variant;
-import io.tileverse.parquetry.data.variant.VariantMetadata;
 import io.tileverse.parquetry.materializer.LeafWindows;
 import io.tileverse.parquetry.materializer.LevelListMaterializer;
 import io.tileverse.parquetry.materializer.LevelMapMaterializer;
@@ -48,6 +45,9 @@ import io.tileverse.parquetry.record.ParquetRecord.BinaryView;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.ParquetSchemaException;
+import io.tileverse.parquetry.schema.UuidConverter;
+import io.tileverse.parquetry.variant.Variant;
+import io.tileverse.parquetry.variant.VariantMetadata;
 
 /**
  * One struct element (or nested struct field) of a level-backed list, read directly from the descendant leaf vectors at

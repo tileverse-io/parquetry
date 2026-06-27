@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.data.variant;
+package io.tileverse.parquetry.variant;
 
 import static io.tileverse.parquetry.format.ParquetLayouts.DOUBLE;
 import static io.tileverse.parquetry.format.ParquetLayouts.FLOAT;
@@ -29,9 +29,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
-import io.tileverse.parquetry.data.UuidConverter;
 import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.io.Segments;
+import io.tileverse.parquetry.schema.UuidConverter;
 
 /**
  * A lazy, random-access view over one Parquet Variant value. Wraps the value buffer slice for this node plus the shared

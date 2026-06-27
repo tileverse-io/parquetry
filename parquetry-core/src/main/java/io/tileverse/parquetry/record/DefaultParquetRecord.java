@@ -39,7 +39,6 @@ import io.tileverse.parquetry.columnar.MapVector;
 import io.tileverse.parquetry.columnar.ShreddedVariantVector;
 import io.tileverse.parquetry.columnar.StructVector;
 import io.tileverse.parquetry.columnar.VariantVector;
-import io.tileverse.parquetry.data.UuidConverter;
 import io.tileverse.parquetry.materializer.LevelListMaterializer;
 import io.tileverse.parquetry.materializer.LevelMapMaterializer;
 import io.tileverse.parquetry.materializer.ListMaterializer;
@@ -47,6 +46,7 @@ import io.tileverse.parquetry.materializer.MapMaterializer;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.ParquetSchemaException;
+import io.tileverse.parquetry.schema.UuidConverter;
 
 /**
  * The live {@link ParquetRecord}: one row of a batch, addressed positionally over a shared {@link RowColumns}. The same

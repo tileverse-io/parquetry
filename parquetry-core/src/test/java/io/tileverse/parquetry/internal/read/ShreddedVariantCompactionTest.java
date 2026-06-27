@@ -30,13 +30,13 @@ import io.tileverse.parquetry.columnar.ShreddedVariantVector;
 import io.tileverse.parquetry.columnar.ShreddedVariantVector.ScalarInput;
 import io.tileverse.parquetry.columnar.ShreddedVariantVector.VariantInput;
 import io.tileverse.parquetry.columnar.Validity;
-import io.tileverse.parquetry.data.variant.ShreddedVariant;
-import io.tileverse.parquetry.data.variant.VariantEncoder;
 import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.internal.read.DremelAssembler.Compaction;
+import io.tileverse.parquetry.internal.variant.VariantEncoder;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.variant.ShreddedVariant;
 
 /**
  * Pins the eager-path rejection of a shredded Variant nested under a list or map. The lazy streaming path rejects the

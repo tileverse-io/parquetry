@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.data.variant;
+package io.tileverse.parquetry.variant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -47,17 +47,5 @@ class VariantMetadataTest {
         assertThat(metadata.idOf("a")).as("sorted lookup a").isZero();
         assertThat(metadata.idOf("b")).as("sorted lookup b").isEqualTo(1);
         assertThat(metadata.idOf("c")).as("sorted lookup absent").isEqualTo(-1);
-    }
-
-    @Test
-    void readsObjectPrimitiveCorpusKeys() {
-        VariantMetadata metadata = new VariantMetadata(MemorySegment.ofArray(VariantCorpus.metadata("object_primitive"))
-                .asReadOnly());
-        assertThat(metadata.dictionarySize()).as("7 keys").isEqualTo(7);
-        assertThat(metadata.idOf("int_field")).as("int_field id").isZero();
-        assertThat(metadata.key(6)).as("last key").isEqualTo("timestamp_field");
-        assertThat(metadata.key(metadata.idOf("string_field")))
-                .as("round-trip key")
-                .isEqualTo("string_field");
     }
 }

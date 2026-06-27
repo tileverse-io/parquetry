@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.data.variant;
+package io.tileverse.parquetry.internal.variant;
 
 import java.io.ByteArrayOutputStream;
 import java.lang.foreign.MemorySegment;
@@ -31,8 +31,11 @@ import java.util.Map;
 import java.util.TreeSet;
 import java.util.UUID;
 
-import io.tileverse.parquetry.data.UuidConverter;
 import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.schema.UuidConverter;
+import io.tileverse.parquetry.variant.Variant;
+import io.tileverse.parquetry.variant.VariantBytes;
+import io.tileverse.parquetry.variant.VariantMetadata;
 
 /**
  * Builds one Parquet Variant value in memory, then {@link #encode()} serializes it to a metadata dictionary and a value
