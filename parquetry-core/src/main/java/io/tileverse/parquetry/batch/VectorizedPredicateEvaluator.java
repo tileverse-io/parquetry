@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.batch;
 
 import java.lang.foreign.MemorySegment;
+import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.List;
 import java.util.function.IntPredicate;
@@ -80,12 +81,19 @@ public final class VectorizedPredicateEvaluator {
     // semantics only make sense over a row's element values. Materialize each row and reuse the record-level
     // evaluator. Quantified is the multi-valued case, not the scalar hot path, hence a per-row fallback is acceptable.
     private static BitSet quantifiedMask(Predicate.Quantified quantified, ParquetRecordBatch batch, int rowCount) {
+        return quantifiedMask(quantified, batch, rowCount, null);
+    }
+
+    private static BitSet quantifiedMask(
+            Predicate.Quantified quantified, ParquetRecordBatch batch, int rowCount, BitSet restriction) {
         BitSet matches = new BitSet(rowCount);
-        for (int row = 0; row < rowCount; row++) {
+        int row = (restriction == null) ? 0 : restriction.nextSetBit(0);
+        while (row >= 0 && row < rowCount) {
             ParquetRecord rec = batch.materialize(row);
             if (RecordLevelEvaluator.test(quantified, RecordAccessors.of(rec))) {
                 matches.set(row);
             }
+            row = (restriction == null) ? row + 1 : restriction.nextSetBit(row + 1);
         }
         return matches;
     }
@@ -96,12 +104,75 @@ public final class VectorizedPredicateEvaluator {
         return bits;
     }
 
+    // Evaluate the cheap, columnar children first to build the candidate set, then run the expensive per-row gates
+    // (geometry/spatial WKB, quantified) only over rows that survived. Without this an `attribute AND intersects(...)`
+    // would build a JTS geometry for every row in the batch rather than the few the attribute filter keeps. AND is
+    // commutative, hence the result is identical; only the wasted work on already-excluded rows is removed.
     private static BitSet and(List<Predicate> children, ParquetRecordBatch batch, int rowCount) {
         BitSet acc = all(rowCount);
+        List<Predicate> expensive = null;
         for (Predicate child : children) {
+            if (isExpensive(child)) {
+                if (expensive == null) {
+                    expensive = new ArrayList<>();
+                }
+                expensive.add(child);
+                continue;
+            }
             acc.and(eval(child, batch));
+            if (acc.isEmpty()) {
+                return acc;
+            }
+        }
+        if (expensive != null) {
+            for (Predicate child : expensive) {
+                acc.and(evalRestricted(child, batch, acc));
+                if (acc.isEmpty()) {
+                    return acc;
+                }
+            }
         }
         return acc;
+    }
+
+    // The per-row geometry/spatial gates and the quantified per-row fallback build or materialize per row; the columnar
+    // leaves only scan a typed array. Deferring the former behind the latter inside an AND is the whole point of the
+    // short-circuit above.
+    private static boolean isExpensive(Predicate predicate) {
+        return switch (predicate) {
+            case Predicate.Spatial _ -> true;
+            case Predicate.GeometryFilterPredicate _ -> true;
+            case Predicate.Quantified _ -> true;
+            case Predicate.Not(Predicate.Spatial _) -> true;
+            case Predicate.Not(Predicate.GeometryFilterPredicate _) -> true;
+            default -> false;
+        };
+    }
+
+    // Evaluates an expensive child only over the rows still set in {@code restriction}, mirroring the matching arms of
+    // {@link #eval}. Only the expensive leaves {@link #isExpensive} defers are restriction-aware.
+    private static BitSet evalRestricted(Predicate child, ParquetRecordBatch batch, BitSet restriction) {
+        int rowCount = batch.rowCount();
+        return switch (child) {
+            case Predicate.Spatial spatial -> spatialMask(batch, spatial, rowCount, false, restriction);
+            case Predicate.Not(Predicate.Spatial spatial) -> spatialMask(batch, spatial, rowCount, true, restriction);
+            case Predicate.GeometryFilterPredicate(GeometryFilter<?> filter) ->
+                geometryMask(batch, filter, rowCount, false, restriction);
+            case Predicate.Not(Predicate.GeometryFilterPredicate(GeometryFilter<?> filter)) ->
+                geometryMask(batch, filter, rowCount, true, restriction);
+            case Predicate.Quantified q -> quantifiedMask(q, batch, rowCount, restriction);
+            default -> eval(child, batch);
+        };
+    }
+
+    // Valid rows the AND short-circuit has not already excluded. A null restriction means no upstream filter (an
+    // expensive leaf evaluated standalone); then every valid row is a candidate.
+    private static BitSet candidateRows(Validity validity, BitSet restriction) {
+        BitSet rows = validity.copy();
+        if (restriction != null) {
+            rows.and(restriction);
+        }
+        return rows;
     }
 
     private static BitSet or(List<Predicate> children, ParquetRecordBatch batch) {
@@ -213,11 +284,16 @@ public final class VectorizedPredicateEvaluator {
 
     private static BitSet spatialMask(
             ParquetRecordBatch batch, Predicate.Spatial spatial, int rowCount, boolean negated) {
+        return spatialMask(batch, spatial, rowCount, negated, null);
+    }
+
+    private static BitSet spatialMask(
+            ParquetRecordBatch batch, Predicate.Spatial spatial, int rowCount, boolean negated, BitSet restriction) {
         ColumnVector vec = batch.columns().get(spatial.col());
-        Validity validity = vec.validity();
         BitSet out = new BitSet(rowCount);
         if (vec instanceof BinaryVector wkb) {
-            for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
+            BitSet candidates = candidateRows(vec.validity(), restriction);
+            for (int r = candidates.nextSetBit(0); r >= 0; r = candidates.nextSetBit(r + 1)) {
                 boolean hit = WkbEnvelope.matches(spatial, wkb.get(r));
                 if (hit != negated) {
                     out.set(r);
@@ -229,11 +305,16 @@ public final class VectorizedPredicateEvaluator {
 
     private static BitSet geometryMask(
             ParquetRecordBatch batch, GeometryFilter<?> filter, int rowCount, boolean negated) {
+        return geometryMask(batch, filter, rowCount, negated, null);
+    }
+
+    private static BitSet geometryMask(
+            ParquetRecordBatch batch, GeometryFilter<?> filter, int rowCount, boolean negated, BitSet restriction) {
         ColumnVector vec = batch.columns().get(filter.column());
-        Validity validity = vec.validity();
         BitSet out = new BitSet(rowCount);
         if (vec instanceof BinaryVector wkb) {
-            for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
+            BitSet candidates = candidateRows(vec.validity(), restriction);
+            for (int r = candidates.nextSetBit(0); r >= 0; r = candidates.nextSetBit(r + 1)) {
                 MemorySegment seg = wkb.get(r);
                 boolean hit = filter.gate(seg).isPresent();
                 if (hit != negated) {
