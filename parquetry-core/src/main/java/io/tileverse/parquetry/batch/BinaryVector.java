@@ -202,6 +202,26 @@ public final class BinaryVector implements ColumnVector {
     }
 
     /**
+     * Reads the value at {@code row} in place, handing the backing segment plus the value's offset and length to
+     * {@code view}, or returns {@code null} for a null row. Unlike {@link #get(int)} this allocates no per-value slice:
+     * the view reads straight from the backing. Selection-aware, hence safe on a filtered view (where the bulk
+     * {@link #consolidatedBacking()} accessor is not).
+     */
+    public <R> R read(int row, BinaryView<R> view) {
+        if (validity.isNull(row)) {
+            return null;
+        }
+        int physical = selection == Selection.ALL ? row : selection.physical(row);
+        if (indices != null) {
+            MemorySegment entry = dictEntries[indices.get(physical)];
+            return view.read(entry, 0L, entry.byteSize());
+        }
+        int start = offsets.get(physical);
+        int length = offsets.get(physical + 1) - start;
+        return view.read(backing, start, length);
+    }
+
+    /**
      * Byte length of the value at {@code row}, or {@code -1} for a null row (symmetric with {@link #getInto}); a
      * present empty value returns {@code 0}, which distinguishes it from null. For pre-sizing a target before getInto,
      * a caller sums only the non-negative lengths.

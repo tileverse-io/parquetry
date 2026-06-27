@@ -377,15 +377,11 @@ public final class DefaultParquetRecord implements ParquetRecord {
             return null;
         }
         return switch (vec) {
-            case BinaryVector bv -> readSlice(bv.get(rowIndex), view);
-            case FixedLenBinaryVector fb -> readSlice(fb.get(rowIndex), view);
-            case Int96Vector iv -> readSlice(iv.get(rowIndex), view);
+            case BinaryVector bv -> bv.read(rowIndex, view);
+            case FixedLenBinaryVector fb -> fb.read(rowIndex, view);
+            case Int96Vector iv -> iv.read(rowIndex, view);
             default -> throw mismatch(cols, col, accessor);
         };
-    }
-
-    private static <R> R readSlice(MemorySegment slice, BinaryView<R> view) {
-        return view.read(slice, 0L, slice.byteSize());
     }
 
     private ParquetRecord readStructAt(RowColumns cols, int col) {
