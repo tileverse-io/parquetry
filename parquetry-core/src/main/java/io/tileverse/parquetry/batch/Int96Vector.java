@@ -154,6 +154,23 @@ public final class Int96Vector implements ColumnVector {
         return backing.asSlice((long) physical * WIDTH, WIDTH);
     }
 
+    /**
+     * Reads the value at logical row {@code row} in place, handing the backing segment plus the value's offset and
+     * length to {@code view}, or returns {@code null} for a null row. Unlike {@link #get(int)} this allocates no
+     * per-value slice.
+     */
+    public <R> R read(int row, BinaryView<R> view) {
+        if (validity.isNull(row)) {
+            return null;
+        }
+        int physical = selection == Selection.ALL ? row : selection.physical(row);
+        if (indices != null) {
+            MemorySegment entry = dictEntries[indices.get(physical)];
+            return view.read(entry, 0L, entry.byteSize());
+        }
+        return view.read(backing, (long) physical * WIDTH, WIDTH);
+    }
+
     /** Byte length of the value at logical row {@code row}: {@code 12} for a present row, {@code -1} for a null row. */
     public int valueLength(int row) {
         if (validity.isNull(row)) {

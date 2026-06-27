@@ -61,6 +61,9 @@ final class ParquetryReadEngine implements ReadEngine {
     private ParquetFileReader reader;
     private long sink;
 
+    /** One reused binary view, modelling a consumer that reads every binary cell through a stable callback. */
+    private final ParquetRecord.BinaryView<Object> lengthView = this::addLength;
+
     ParquetryReadEngine(ReadContext context) {
         this.context = context;
     }
@@ -260,7 +263,7 @@ final class ParquetryReadEngine implements ReadEngine {
             case INT64 -> sink += rec.getLong(col);
             case FLOAT -> sink += (long) rec.getFloat(col);
             case DOUBLE -> sink += (long) rec.getDouble(col);
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> rec.readBinary(col, this::addLength);
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> rec.readBinary(col, lengthView);
         }
     }
 
