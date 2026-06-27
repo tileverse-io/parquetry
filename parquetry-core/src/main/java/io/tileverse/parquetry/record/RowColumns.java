@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 
 import io.tileverse.parquetry.batch.ColumnVector;
+import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.StructVector;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -48,6 +49,13 @@ public final class RowColumns {
      * allocation under a spatial filter, whose covering comparisons read the bbox struct on every surviving row.
      */
     private RowColumns[] structChildren;
+
+    /**
+     * Per-list-column struct-element layouts, built on first access and reused across the batch's rows. A list column's
+     * element {@link StructVector} is one object for the whole batch and its child layout is constant; rebuilding it
+     * per row (per list-cell materialization) is the dominant allocation when a query reads a list-of-struct column.
+     */
+    private RowColumns[] listElementChildren;
 
     private RowColumns(
             ParquetSchema schema,
@@ -155,6 +163,25 @@ public final class RowColumns {
         if (cached == null) {
             cached = ofStruct(schema, (StructVector) vectors[col]);
             structChildren[col] = cached;
+        }
+        return cached;
+    }
+
+    /**
+     * The struct-element layout of the list column at {@code col}, built once and cached for the batch. The list's
+     * element {@link StructVector} is shared across all of the batch's rows, and its layout with it; a per-row list
+     * view resolves struct elements through this instead of rebuilding the layout per cell. Only valid when the column
+     * at {@code col} is a {@link ListVector} whose child is a {@link StructVector}.
+     */
+    RowColumns listStructColumns(int col) {
+        if (listElementChildren == null) {
+            listElementChildren = new RowColumns[vectors.length];
+        }
+        RowColumns cached = listElementChildren[col];
+        if (cached == null) {
+            ListVector list = (ListVector) vectors[col];
+            cached = ofStruct(schema, (StructVector) list.child());
+            listElementChildren[col] = cached;
         }
         return cached;
     }

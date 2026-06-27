@@ -410,11 +410,21 @@ public final class DefaultParquetRecord implements ParquetRecord {
             return null;
         }
         return switch (vec) {
-            case ListVector list -> (List<ParquetRecord>) ListMaterializer.materializeAt(list, rowIndex, cols.schema());
+            case ListVector list -> (List<ParquetRecord>) materializeListAt(cols, col, list);
             case LevelListVector list -> (List<ParquetRecord>) LevelListMaterializer.materializeAt(list, rowIndex);
             default ->
                 throw new ParquetSchemaException("Column " + cols.path(col).dot() + " is not a list column");
         };
+    }
+
+    /**
+     * Materializes the list cell at {@code col}, sharing the batch-scoped struct-element layout when the list's
+     * elements are structs. The element {@link StructVector} is one object for the whole batch; its layout resolves
+     * once via {@link RowColumns#listStructColumns(int)} rather than per row.
+     */
+    private List<?> materializeListAt(RowColumns cols, int col, ListVector list) {
+        RowColumns elementColumns = list.child() instanceof StructVector ? cols.listStructColumns(col) : null;
+        return ListMaterializer.materializeAt(list, rowIndex, cols.schema(), elementColumns);
     }
 
     // S1168: null distinguishes a null map cell from a present empty map
@@ -446,7 +456,7 @@ public final class DefaultParquetRecord implements ParquetRecord {
             case BinaryVector bv -> bv.get(rowIndex);
             case FixedLenBinaryVector fb -> fb.get(rowIndex);
             case Int96Vector iv -> iv.get(rowIndex);
-            case ListVector list -> ListMaterializer.materializeAt(list, rowIndex, cols.schema());
+            case ListVector list -> materializeListAt(cols, col, list);
             case MapVector map -> MapMaterializer.materializeAt(map, rowIndex, cols.schema());
             case LevelListVector list -> LevelListMaterializer.materializeAt(list, rowIndex);
             case LevelMapVector map -> LevelMapMaterializer.materializeAt(map, rowIndex);

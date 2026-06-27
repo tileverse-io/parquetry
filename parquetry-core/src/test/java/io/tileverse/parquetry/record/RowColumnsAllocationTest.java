@@ -32,6 +32,8 @@ import com.sun.management.ThreadMXBean;
 import io.tileverse.parquetry.batch.ColumnVector;
 import io.tileverse.parquetry.batch.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.batch.DoubleVector;
+import io.tileverse.parquetry.batch.IntVector;
+import io.tileverse.parquetry.batch.ListVector;
 import io.tileverse.parquetry.batch.ParquetRecordBatch;
 import io.tileverse.parquetry.batch.StructVector;
 import io.tileverse.parquetry.batch.Validity;
@@ -42,16 +44,79 @@ import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
- * The record-level filter evaluator reads a struct-nested column once per surviving row (e.g. the four bbox covering
- * comparisons a spatial filter lowers to). Resolving that nested path must reuse the struct's column layout across the
- * batch's rows rather than rebuilding it per access; otherwise a hot filter churns a fresh map and arrays per row. This
- * pins the per-access allocation to a small bound the per-row rebuild would blow through.
+ * A row that reaches into a nested column resolves the nested layout once per batch, not per access. A struct column
+ * (e.g. the four bbox covering comparisons a spatial filter lowers to) reuses the layout across the batch's rows; a
+ * list-of-struct column reuses its element layout across all of the batch's list cells. Rebuilding either per row would
+ * churn a fresh map and arrays per row. These pin the per-access allocation to a bound the per-row rebuild would blow
+ * through.
  */
 class RowColumnsAllocationTest {
 
     private static final int ROWS = 200_000;
     private static final ColumnPath BBOX = ColumnPath.of("bbox");
     private static final ColumnPath NESTED_XMIN = ColumnPath.of("bbox", "xmin");
+    private static final ColumnPath ITEMS = ColumnPath.of("items");
+    private static final ColumnPath ITEM_A = ColumnPath.of("a");
+
+    @Test
+    void readingAListOfStructDoesNotChurnTheElementLayoutPerRow() {
+        try (ParquetRecordBatch batch = listOfStructBatch()) {
+            touchListElement(batch); // warm up the JIT and prime the batch-scoped element layout
+
+            long before = allocatedBytes();
+            long sink = touchListElement(batch);
+            long allocated = allocatedBytes() - before;
+
+            assertThat(sink).isEqualTo(ROWS); // guard against the work being optimised away
+            // The list's element struct layout is built once for the batch, not per cell. Reusing it holds this near
+            // the per-row view+record cost (~13 MB here); the per-row rebuild this guards against allocated a fresh map
+            // plus arrays per row (~60 MB), well above this bound.
+            assertThat(allocated)
+                    .as("list-of-struct reads over %d rows allocated %d bytes", ROWS, allocated)
+                    .isLessThan(30L * 1024 * 1024);
+        }
+    }
+
+    private static long touchListElement(ParquetRecordBatch batch) {
+        long present = 0;
+        for (int row = 0; row < ROWS; row++) {
+            List<?> items = (List<?>) batch.materialize(row).get(ITEMS);
+            ParquetRecord element = (ParquetRecord) items.get(0);
+            if (!element.isNull(ITEM_A)) {
+                present++;
+            }
+        }
+        return present;
+    }
+
+    /** A batch of {@link #ROWS} rows: an {@code items} list whose single element per row is a two-int struct. */
+    private static ParquetRecordBatch listOfStructBatch() {
+        Map<ColumnPath, ColumnVector> fields = new LinkedHashMap<>();
+        fields.put(ColumnPath.of("a"), IntVector.materialized(new int[ROWS], Validity.allValid(ROWS)));
+        fields.put(ColumnPath.of("b"), IntVector.materialized(new int[ROWS], Validity.allValid(ROWS)));
+        StructVector element = new StructVector(fields, Validity.allValid(ROWS), ROWS);
+        int[] offsets = new int[ROWS + 1];
+        for (int i = 0; i <= ROWS; i++) {
+            offsets[i] = i;
+        }
+        ListVector items = new ListVector(offsets, element, Validity.allValid(ROWS), ROWS);
+        return new DefaultParquetRecordBatch(listOfStructSchema(), Map.of(ITEMS, items), ROWS, Arena.ofConfined());
+    }
+
+    private static ParquetSchema listOfStructSchema() {
+        List<SchemaNode> fields = List.of(intLeaf("a"), intLeaf("b"));
+        SchemaNode.Group element = new SchemaNode.Group("element", Repetition.OPTIONAL, fields, Optional.empty(), -1);
+        SchemaNode.Group items =
+                new SchemaNode.Group("items", Repetition.REPEATED, List.of(element), Optional.empty(), -1);
+        SchemaNode.Group root =
+                new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(items), Optional.empty(), -1);
+        return new ParquetSchema(root);
+    }
+
+    private static SchemaNode.Primitive intLeaf(String name) {
+        return new SchemaNode.Primitive(
+                name, Repetition.OPTIONAL, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
+    }
 
     @Test
     void resolvingANestedColumnDoesNotChurnPerRow() {
