@@ -58,6 +58,18 @@ public final class ListMaterializer {
      */
     @SuppressWarnings({"java:S1452", "java:S1168"})
     public static List<?> materializeAt(ListVector vec, int rowIndex, ParquetSchema schema) {
+        return materializeAt(vec, rowIndex, schema, null);
+    }
+
+    /**
+     * Builds the list view sharing a batch-scoped {@code elementColumns} layout for struct elements. The caller
+     * resolves the list's struct-element layout once per batch (see {@link RowColumns#listStructColumns(int)}) and
+     * passes it in, which spares the per-cell layout rebuild the lazy fallback would pay. Pass {@code null} when no
+     * shared layout is available (e.g. a nested list reached recursively); the view then builds the layout lazily on
+     * first access.
+     */
+    @SuppressWarnings({"java:S1452", "java:S1168"})
+    public static List<?> materializeAt(ListVector vec, int rowIndex, ParquetSchema schema, RowColumns elementColumns) {
         if (vec.isNull(rowIndex)) {
             return null;
         }
@@ -67,7 +79,7 @@ public final class ListMaterializer {
             return List.of();
         }
         ColumnVector child = vec.child();
-        return new LazyListView(child, start, end, schema);
+        return new LazyListView(child, start, end, schema, elementColumns);
     }
 
     /**
@@ -103,9 +115,10 @@ public final class ListMaterializer {
      * the same lifetime the struct elements inside the previously copied lists already had. Callers needing a detached
      * copy use an explicit copy loop or {@code List.copyOf} (which rejects null elements).
      *
-     * <p>Struct elements share one {@link RowColumns} built lazily on first access, replacing the per-element rebuild
-     * the eager path paid. Each {@code get(int)} on a struct element returns a fresh record instance with identity
-     * equality; do not rely on element identity or {@code contains}/{@code indexOf} over struct lists.
+     * <p>Struct elements share one {@link RowColumns}: a batch-scoped layout passed in by the caller, or, when none is
+     * available, one built lazily on first access. Either way it replaces the per-element rebuild the eager path paid.
+     * Each {@code get(int)} on a struct element returns a fresh record instance with identity equality; do not rely on
+     * element identity or {@code contains}/{@code indexOf} over struct lists.
      */
     static final class LazyListView extends AbstractList<Object> implements RandomAccess {
 
@@ -115,11 +128,12 @@ public final class ListMaterializer {
         private final ParquetSchema schema;
         private RowColumns structElementColumns;
 
-        LazyListView(ColumnVector child, int start, int end, ParquetSchema schema) {
+        LazyListView(ColumnVector child, int start, int end, ParquetSchema schema, RowColumns elementColumns) {
             this.child = child;
             this.start = start;
             this.size = end - start;
             this.schema = schema;
+            this.structElementColumns = elementColumns;
         }
 
         @Override
