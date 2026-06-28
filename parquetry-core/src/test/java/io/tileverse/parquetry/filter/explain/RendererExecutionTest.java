@@ -30,6 +30,7 @@ import io.tileverse.parquetry.observe.FetchStats;
 import io.tileverse.parquetry.observe.PhaseTimings;
 import io.tileverse.parquetry.observe.QueryStats;
 import io.tileverse.parquetry.observe.RowGroupRead;
+import io.tileverse.parquetry.observe.SpillStats;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
@@ -68,7 +69,17 @@ class RendererExecutionTest {
         RowGroupRead noTimings =
                 new RowGroupRead(0, 100, 17, 3, 1, new FetchStats(4096, 0, 0, 0, 0, 1), Optional.empty());
         QueryStats noCpu = new QueryStats(
-                5_000_000L, 100, 42, Map.of(), 1, 1, 3, 1, new FetchStats(4096, 0, 0, 0, 0, 1), Optional.empty());
+                5_000_000L,
+                100,
+                42,
+                Map.of(),
+                1,
+                1,
+                3,
+                1,
+                new FetchStats(4096, 0, 0, 0, 0, 1),
+                SpillStats.EMPTY,
+                Optional.empty());
         ExplainPlan plan = planWithAllTiersActive().withExecution(noCpu, Map.of(0, noTimings));
 
         String table = plan.toAsciiTable();
@@ -133,6 +144,7 @@ class RendererExecutionTest {
                 3,
                 1,
                 new FetchStats(4096, 0, 0, 0, 0, 1),
+                SpillStats.EMPTY,
                 Optional.of(new PhaseTimings(5_000_000L, 1_000_000L, 3_000_000L, 500_000L)));
     }
 

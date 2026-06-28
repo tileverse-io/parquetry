@@ -20,6 +20,7 @@ import io.tileverse.parquetry.observe.FetchStats;
 import io.tileverse.parquetry.observe.PhaseTimings;
 import io.tileverse.parquetry.observe.QueryStats;
 import io.tileverse.parquetry.observe.RowGroupRead;
+import io.tileverse.parquetry.observe.SpillStats;
 
 /** Minimal hand-rolled JSON emitter for {@link ExplainPlan}. Avoids pulling Jackson into core's runtime classpath. */
 final class JsonRenderer {
@@ -117,7 +118,18 @@ final class JsonRenderer {
         sb.append(",\"pagesDecoded\":").append(stats.pagesDecoded());
         sb.append(",\"pagesPruned\":").append(stats.pagesPruned());
         appendFetchStats(sb, stats.totalFetch());
+        appendSpillStats(sb, stats.spillStats());
         stats.cpuTimings().ifPresent(timings -> appendTimings(sb, timings));
+        sb.append('}');
+    }
+
+    private static void appendSpillStats(StringBuilder sb, SpillStats spill) {
+        sb.append(",\"spill\":{");
+        sb.append("\"batchesSpilled\":").append(spill.batchesSpilled());
+        sb.append(",\"bytesSpilled\":").append(spill.bytesSpilled());
+        sb.append(",\"batchesRestored\":").append(spill.batchesRestored());
+        sb.append(",\"restoreNanos\":").append(spill.restoreNanos());
+        sb.append(",\"spillsRejectedDiskFull\":").append(spill.spillsRejectedDiskFull());
         sb.append('}');
     }
 

@@ -38,6 +38,7 @@ import io.tileverse.parquetry.columnar.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.columnar.IntVector;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.columnar.Validity;
+import io.tileverse.parquetry.observe.SpillAccumulator;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -52,7 +53,7 @@ class StreamingBatchSourceSpillTest {
         ParquetSchema schema = singleIntColumnSchema("n");
         DecodeBudget heapBudget = DecodeBudget.ofBytes(1); // nothing fits in heap; everything spills
         DiskBudget diskBudget = DiskBudget.ofBytes(1 << 20);
-        BatchSpillStore store = new BatchSpillStore(dir, diskBudget, schema);
+        BatchSpillStore store = new BatchSpillStore(dir, diskBudget, schema, SpillAccumulator.NONE);
         RowGroupBatchDriver driver =
                 fakeDriver(intBatch(schema, "n", new int[] {1, 2}), intBatch(schema, "n", new int[] {3, 4, 5}));
 
@@ -81,7 +82,7 @@ class StreamingBatchSourceSpillTest {
         ParquetSchema schema = singleIntColumnSchema("n");
         DecodeBudget heapBudget = DecodeBudget.ofBytes(1);
         DiskBudget diskBudget = DiskBudget.ofBytes(1 << 20);
-        BatchSpillStore store = new BatchSpillStore(dir, diskBudget, schema);
+        BatchSpillStore store = new BatchSpillStore(dir, diskBudget, schema, SpillAccumulator.NONE);
         ParquetRecordBatch[] batches = new ParquetRecordBatch[20];
         for (int i = 0; i < batches.length; i++) {
             batches[i] = intBatch(schema, "n", new int[] {i});
@@ -115,7 +116,7 @@ class StreamingBatchSourceSpillTest {
         DecodeBudget sharedBudget = DecodeBudget.ofBytes(100);
         assertThat(sharedBudget.tryReserve(100)).isTrue();
         DiskBudget diskBudget = DiskBudget.ofBytes(1 << 20);
-        BatchSpillStore store = new BatchSpillStore(dir, diskBudget, schema);
+        BatchSpillStore store = new BatchSpillStore(dir, diskBudget, schema, SpillAccumulator.NONE);
 
         // The producer enters admit() with this batch, then parks in budget.reserve: spill is disabled and headroom is
         // zero. Counting the latch down inside nextBatch() lets the test cancel only after the producer is past the

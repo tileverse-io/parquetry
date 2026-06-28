@@ -30,6 +30,7 @@ import java.util.concurrent.locks.ReentrantLock;
 import io.tileverse.parquetry.arrow.columnar.BatchArrowLayout;
 import io.tileverse.parquetry.arrow.columnar.EncodedBatch;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
+import io.tileverse.parquetry.observe.SpillAccumulator;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 import lombok.NonNull;
@@ -46,6 +47,7 @@ final class BatchSpillStore implements AutoCloseable {
     private final Path spillDir;
     private final DiskBudget diskBudget;
     private final ParquetSchema projectedSchema;
+    private final SpillAccumulator spillAccumulator;
     private final ReentrantLock lock = new ReentrantLock();
 
     private Path file;
@@ -53,10 +55,15 @@ final class BatchSpillStore implements AutoCloseable {
     private long appendOffset;
     private boolean closed;
 
-    BatchSpillStore(@NonNull Path spillDir, @NonNull DiskBudget diskBudget, @NonNull ParquetSchema projectedSchema) {
+    BatchSpillStore(
+            @NonNull Path spillDir,
+            @NonNull DiskBudget diskBudget,
+            @NonNull ParquetSchema projectedSchema,
+            @NonNull SpillAccumulator spillAccumulator) {
         this.spillDir = spillDir;
         this.diskBudget = diskBudget;
         this.projectedSchema = projectedSchema;
+        this.spillAccumulator = spillAccumulator;
     }
 
     /**
@@ -69,6 +76,7 @@ final class BatchSpillStore implements AutoCloseable {
         MemorySegment image = EncodedBatchSerializer.serialize(encoded);
         long length = image.byteSize();
         if (!diskBudget.tryReserve(length)) {
+            spillAccumulator.recordSpillRejectedDiskFull();
             return Optional.empty();
         }
         lock.lock();
@@ -77,6 +85,7 @@ final class BatchSpillStore implements AutoCloseable {
             long offset = appendOffset;
             writeFully(image, offset);
             appendOffset += length;
+            spillAccumulator.recordSpill(length);
             return Optional.of(new SpillHandle(offset, length));
         } catch (IOException e) {
             diskBudget.release(length);
@@ -88,6 +97,7 @@ final class BatchSpillStore implements AutoCloseable {
 
     /** Reads {@code handle}'s bytes back, releases its disk reservation, and rebuilds a heap batch. */
     ParquetRecordBatch restore(SpillHandle handle) {
+        long start = System.nanoTime();
         byte[] image = new byte[(int) handle.length()];
         lock.lock();
         try {
@@ -99,7 +109,9 @@ final class BatchSpillStore implements AutoCloseable {
         }
         diskBudget.release(handle.length());
         EncodedBatch encoded = EncodedBatchSerializer.deserialize(MemorySegment.ofArray(image));
-        return BatchArrowLayout.decode(encoded, projectedSchema);
+        ParquetRecordBatch restored = BatchArrowLayout.decode(encoded, projectedSchema);
+        spillAccumulator.recordRestore(System.nanoTime() - start);
+        return restored;
     }
 
     /** Releases an unconsumed spilled batch's disk reservation without reading it (the file is removed on close). */

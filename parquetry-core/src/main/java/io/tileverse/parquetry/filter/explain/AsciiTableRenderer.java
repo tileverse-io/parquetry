@@ -22,6 +22,7 @@ import java.util.Map;
 
 import io.tileverse.parquetry.observe.QueryStats;
 import io.tileverse.parquetry.observe.RowGroupRead;
+import io.tileverse.parquetry.observe.SpillStats;
 
 /** Renders an {@link ExplainPlan} as a compact fixed-width ASCII table. */
 final class AsciiTableRenderer {
@@ -133,12 +134,25 @@ final class AsciiTableRenderer {
     }
 
     private String totalsLine(QueryStats stats) {
-        return "Total: "
+        String totals = "Total: "
                 + stats.rowsMatched()
                 + " rows, "
                 + stats.totalFetch().totalBytes()
                 + " bytes, "
                 + formatDuration(stats.wallClockNanos());
+        return totals + spillSuffix(stats.spillStats());
+    }
+
+    private static String spillSuffix(SpillStats spill) {
+        if (!spill.hasActivity()) {
+            return "";
+        }
+        String suffix = "\nSpill: " + spill.batchesSpilled() + " batches, " + spill.bytesSpilled() + " bytes, restored "
+                + spill.batchesRestored() + " in " + formatDuration(spill.restoreNanos());
+        if (spill.spillsRejectedDiskFull() > 0) {
+            suffix += ", " + spill.spillsRejectedDiskFull() + " parked (disk full)";
+        }
+        return suffix;
     }
 
     private boolean hasAnyTimings() {

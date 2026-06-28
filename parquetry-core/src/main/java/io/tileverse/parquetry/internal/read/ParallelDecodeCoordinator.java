@@ -26,6 +26,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 
 import io.tileverse.parquetry.observe.QueryObserver;
+import io.tileverse.parquetry.observe.SpillAccumulator;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 import lombok.NonNull;
@@ -153,7 +154,8 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
         boolean wantsTimings = observation.wantsTimings();
         RowGroupBatchDriver driver = buildDriver(fetch, rowMasks.get(index), index);
         BatchHandoff handoff = new BatchHandoff(HANDOFF_CAPACITY);
-        BatchSpillStore spillStore = new BatchSpillStore(spillDir, diskBudget, projectedSchema);
+        BatchSpillStore spillStore =
+                new BatchSpillStore(spillDir, diskBudget, projectedSchema, observation.spillAccumulator());
         StreamingBatchSource source =
                 new StreamingBatchSource(handoff, driver, decodeBudget, spillStore, spillEnabled, wantsTimings);
         DecodedRowGroup rowGroup =
@@ -253,9 +255,14 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
      * paths. {@code wantsTimings} mirrors the observer's opt-in; when off, no decode-side clock is read.
      */
     public record DecodeObservation(
-            QueryObserver observer, List<Integer> rowGroupIndices, boolean matchedEqualsDecoded, boolean wantsTimings) {
+            QueryObserver observer,
+            List<Integer> rowGroupIndices,
+            boolean matchedEqualsDecoded,
+            boolean wantsTimings,
+            SpillAccumulator spillAccumulator) {
 
-        public static final DecodeObservation NONE = new DecodeObservation(QueryObserver.NONE, List.of(), false, false);
+        public static final DecodeObservation NONE =
+                new DecodeObservation(QueryObserver.NONE, List.of(), false, false, SpillAccumulator.NONE);
 
         public DecodeObservation {
             rowGroupIndices = List.copyOf(rowGroupIndices);

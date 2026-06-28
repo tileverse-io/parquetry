@@ -84,6 +84,7 @@ import io.tileverse.parquetry.observe.QueryStarted;
 import io.tileverse.parquetry.observe.QueryStats;
 import io.tileverse.parquetry.observe.QueryStatsCollector;
 import io.tileverse.parquetry.observe.RowGroupRead;
+import io.tileverse.parquetry.observe.SpillAccumulator;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -309,6 +310,7 @@ public class ParquetFileReader {
                 materializer,
                 observation.effectiveOptions(),
                 FetchAccumulator.NONE,
+                observation.spillAccumulator(),
                 observation::addPipelineNanos);
     }
 
@@ -324,6 +326,7 @@ public class ParquetFileReader {
             Materializer<T> materializer,
             ReadOptions options,
             FetchAccumulator accumulator,
+            SpillAccumulator spillAccumulator,
             LongConsumer pipelineNanosSink) {
 
         Predicate predicate = lowerSpatialPredicates(rawPredicate);
@@ -342,7 +345,8 @@ public class ParquetFileReader {
         Optional<LateMaterialization> lateMat =
                 lateMaterializationFor(survivors, scanSchema, outputSchema, normalized, options, recordLevel);
         Predicate recordFilter = (recordLevel && lateMat.isEmpty()) ? recordFilterOf(normalized) : null;
-        DecodeObservation decodeObservation = decodeObservationFor(plan, observe, options.queryObserver(), false);
+        DecodeObservation decodeObservation =
+                decodeObservationFor(plan, observe, options.queryObserver(), false, spillAccumulator);
         ParallelDecodeCoordinator coordinator = newDecodeCoordinator(
                 survivors,
                 scanSchema,
@@ -376,7 +380,7 @@ public class ParquetFileReader {
         QueryObserver effectiveObserver = QueryObserver.composite(internal, userObserver);
         ReadOptions effectiveOptions =
                 options.toBuilder().queryObserver(effectiveObserver).build();
-        return new Observation(effectiveOptions, internal, userObserver);
+        return new Observation(effectiveOptions, internal, userObserver, SpillAccumulator.active());
     }
 
     private static final class Observation {
@@ -384,23 +388,34 @@ public class ParquetFileReader {
         private final ReadOptions effectiveOptions;
         private final QueryStatsCollector internal;
         private final QueryObserver userObserver;
+        private final SpillAccumulator spillAccumulator;
 
         // The query-level filter-pipeline time, recorded once on the reading thread before the stream is consumed and
         // folded into the final stats on the same thread at the finish. Stays zero when timings are off.
         private long pipelineNanos;
 
-        private Observation(ReadOptions effectiveOptions, QueryStatsCollector internal, QueryObserver userObserver) {
+        private Observation(
+                ReadOptions effectiveOptions,
+                QueryStatsCollector internal,
+                QueryObserver userObserver,
+                SpillAccumulator spillAccumulator) {
             this.effectiveOptions = effectiveOptions;
             this.internal = internal;
             this.userObserver = userObserver;
+            this.spillAccumulator = spillAccumulator;
         }
 
         static Observation passThrough(ReadOptions options) {
-            return new Observation(options, null, null);
+            return new Observation(options, null, null, SpillAccumulator.NONE);
         }
 
         ReadOptions effectiveOptions() {
             return effectiveOptions;
+        }
+
+        /** The spill tally for this query, threaded to the decode coordinator and folded into the stats at finish. */
+        SpillAccumulator spillAccumulator() {
+            return spillAccumulator;
         }
 
         /** Records the measured filter-pipeline nanoseconds, folded into the final stats at the finish. */
@@ -426,7 +441,7 @@ public class ParquetFileReader {
         /** Stamps the internal collector's finish and delivers its snapshot to the user observer exactly once. */
         void fireFinished() {
             internal.onQueryFinished(null);
-            QueryStats stats = internal.snapshot();
+            QueryStats stats = internal.snapshot().withSpillStats(spillAccumulator.snapshot());
             if (pipelineNanos > 0L) {
                 stats = withPipelineNanos(stats, pipelineNanos);
             }
@@ -570,7 +585,11 @@ public class ParquetFileReader {
         Observation observation = observe(options);
         try {
             return countLowered(
-                    predicate, observation.effectiveOptions(), FetchAccumulator.NONE, observation::addPipelineNanos);
+                    predicate,
+                    observation.effectiveOptions(),
+                    FetchAccumulator.NONE,
+                    observation.spillAccumulator(),
+                    observation::addPipelineNanos);
         } finally {
             observation.fireFinishedIfObserving();
         }
@@ -583,7 +602,11 @@ public class ParquetFileReader {
      * filter-pipeline time when the observer opted into timings; it is never called otherwise.
      */
     private long countLowered(
-            Predicate predicate, ReadOptions options, FetchAccumulator accumulator, LongConsumer pipelineNanosSink) {
+            Predicate predicate,
+            ReadOptions options,
+            FetchAccumulator accumulator,
+            SpillAccumulator spillAccumulator,
+            LongConsumer pipelineNanosSink) {
         Projection predicateProjection = Projection.of(Predicate.columns(predicate));
         List<RowGroupChunks> rowGroupChunks = rowGroupChunks(accumulator);
         boolean observe = observing(options);
@@ -596,7 +619,7 @@ public class ParquetFileReader {
         if (residual.isEmpty()) {
             return matchedRows;
         }
-        return matchedRows + countResidual(residual, plan, options, accumulator, observe);
+        return matchedRows + countResidual(residual, plan, options, accumulator, spillAccumulator, observe);
     }
 
     /**
@@ -648,11 +671,13 @@ public class ParquetFileReader {
             ExplainPlan plan,
             ReadOptions options,
             FetchAccumulator accumulator,
+            SpillAccumulator spillAccumulator,
             boolean observe) {
         ParquetSchema scanSchema = plan.projectedSchema();
         Predicate normalized = plan.normalizedPredicate();
         List<Optional<RowMask>> masks = decodeMasksFor(residual, scanSchema, options);
-        DecodeObservation observation = residualObservationFor(plan, observe, options.queryObserver());
+        DecodeObservation observation =
+                residualObservationFor(plan, observe, options.queryObserver(), spillAccumulator);
         ParallelDecodeCoordinator coordinator = newDecodeCoordinator(
                 residual, scanSchema, masks, options, Optional.empty(), BatchForm.LEVELS, accumulator, observation);
         return BatchPipeline.countMatching(coordinator, normalized, observe);
@@ -713,7 +738,8 @@ public class ParquetFileReader {
         Optional<LateMaterialization> lateMat =
                 lateMaterializationFor(survivors, scanSchema, outputSchema, normalized, options, recordLevel);
         Predicate recordFilter = (recordLevel && lateMat.isEmpty()) ? recordFilterOf(normalized) : null;
-        DecodeObservation decodeObservation = decodeObservationFor(plan, observe, options.queryObserver(), true);
+        DecodeObservation decodeObservation =
+                decodeObservationFor(plan, observe, options.queryObserver(), true, observation.spillAccumulator());
         ParallelDecodeCoordinator coordinator = newDecodeCoordinator(
                 survivors,
                 scanSchema,
@@ -834,7 +860,11 @@ public class ParquetFileReader {
      * {@link DecodeObservation#NONE} when no observer is attached, which keeps the decode path byte-identical.
      */
     private static DecodeObservation decodeObservationFor(
-            ExplainPlan plan, boolean observe, QueryObserver observer, boolean matchedEqualsDecoded) {
+            ExplainPlan plan,
+            boolean observe,
+            QueryObserver observer,
+            boolean matchedEqualsDecoded,
+            SpillAccumulator spillAccumulator) {
         if (!observe) {
             return DecodeObservation.NONE;
         }
@@ -844,7 +874,8 @@ public class ParquetFileReader {
                 indices.add(rgPlan.index());
             }
         }
-        return new DecodeObservation(observer, indices, matchedEqualsDecoded, observer.wantsTimings());
+        return new DecodeObservation(
+                observer, indices, matchedEqualsDecoded, observer.wantsTimings(), spillAccumulator);
     }
 
     /**
@@ -853,7 +884,8 @@ public class ParquetFileReader {
      * by {@link #matchedRowCount}). The count path accumulates matches per group, hence {@code matchedEqualsDecoded} is
      * {@code false}.
      */
-    private static DecodeObservation residualObservationFor(ExplainPlan plan, boolean observe, QueryObserver observer) {
+    private static DecodeObservation residualObservationFor(
+            ExplainPlan plan, boolean observe, QueryObserver observer, SpillAccumulator spillAccumulator) {
         if (!observe) {
             return DecodeObservation.NONE;
         }
@@ -866,7 +898,7 @@ public class ParquetFileReader {
                 case PARTIAL, FULL -> indices.add(rgPlan.index());
             }
         }
-        return new DecodeObservation(observer, indices, false, observer.wantsTimings());
+        return new DecodeObservation(observer, indices, false, observer.wantsTimings(), spillAccumulator);
     }
 
     /** Runs the filter pipeline without reading data and returns the explain plan. */
@@ -901,11 +933,12 @@ public class ParquetFileReader {
 
         AtomicLong pipelineNanos = new AtomicLong();
         FetchAccumulator accumulator = FetchAccumulator.active();
-        drainForAnalyze(predicate, projection, drainOptions, accumulator, pipelineNanos::addAndGet);
+        SpillAccumulator spillAccumulator = SpillAccumulator.active();
+        drainForAnalyze(predicate, projection, drainOptions, accumulator, spillAccumulator, pipelineNanos::addAndGet);
         FetchStats fetch = accumulator.snapshot();
 
         collector.onQueryFinished(null);
-        QueryStats stats = collector.snapshot().withTotalFetch(fetch);
+        QueryStats stats = collector.snapshot().withTotalFetch(fetch).withSpillStats(spillAccumulator.snapshot());
         if (pipelineNanos.get() > 0L) {
             stats = withPipelineNanos(stats, pipelineNanos.get());
         }
@@ -924,9 +957,16 @@ public class ParquetFileReader {
             Projection projection,
             ReadOptions drainOptions,
             FetchAccumulator accumulator,
+            SpillAccumulator spillAccumulator,
             LongConsumer pipelineNanosSink) {
         try (Stream<Boolean> rows = buildRowStream(
-                predicate, projection, DISCARD_MATERIALIZER, drainOptions, accumulator, pipelineNanosSink)) {
+                predicate,
+                projection,
+                DISCARD_MATERIALIZER,
+                drainOptions,
+                accumulator,
+                spillAccumulator,
+                pipelineNanosSink)) {
             rows.forEach(_ -> {});
         }
     }
