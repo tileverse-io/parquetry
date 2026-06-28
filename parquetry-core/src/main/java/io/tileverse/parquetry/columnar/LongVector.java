@@ -21,81 +21,83 @@ import java.lang.foreign.MemorySegment;
 
 import lombok.NonNull;
 
-public final class LongVector implements ColumnVector {
+/**
+ * A column of {@code INT64} values, backed either by a heap {@code long[]} ({@link Heap}) or by an off-heap
+ * little-endian {@link MemorySegment} ({@link Segment}). The backing is chosen at construction and reached only through
+ * the two implementations, which keeps the read accessors free of a per-row backing check. Selection, validity, and the
+ * logical-to-physical translation are centralized in this interface; each implementation contributes only its backing
+ * read ({@link #valueAt(int)}) and its contiguous bulk copy.
+ */
+public sealed interface LongVector extends ColumnVector permits LongVector.Heap, LongVector.Segment {
 
-    private final long[] values;
-    private final MemorySegment segmentValues;
-    private final Validity validity;
-    private final Selection selection;
-
-    private LongVector(
-            long[] values, MemorySegment segmentValues, @NonNull Validity validity, @NonNull Selection selection) {
-        this.values = values;
-        this.segmentValues = segmentValues;
-        this.validity = validity;
-        this.selection = selection;
+    /** A vector over heap-resident values, as produced by the assembly compaction lane and the Arrow packer. */
+    static LongVector materialized(@NonNull long[] values, @NonNull Validity validity) {
+        return new Heap(values, validity, Selection.ALL);
     }
 
-    public static LongVector materialized(@NonNull long[] values, @NonNull Validity validity) {
-        return new LongVector(values, null, validity, Selection.ALL);
+    /** A vector that reads from an off-heap little-endian segment; the segment's owner controls its lifetime. */
+    static LongVector segmentBacked(@NonNull MemorySegment segmentValues, @NonNull Validity validity) {
+        return new Segment(segmentValues, validity, Selection.ALL);
     }
 
-    /** Reads values from an off-heap little-endian segment; the segment's owner controls its lifetime. */
-    public static LongVector segmentBacked(@NonNull MemorySegment segmentValues, @NonNull Validity validity) {
-        return new LongVector(null, segmentValues, validity, Selection.ALL);
-    }
+    /**
+     * The stored value at backing index {@code physicalRow} WITHOUT consulting validity: a null row reads back its
+     * parked placeholder (the decode contract fills null slots deterministically). The index is physical, not logical;
+     * a caller on a selected view translates first via {@link #getLong(int)} or {@link #copyInto}.
+     */
+    long valueAt(int physicalRow);
+
+    /** Copies {@code count} backing values from {@code fromPhysical} into {@code target} at {@code targetOffset}. */
+    void copyContiguous(MemorySegment target, long targetOffset, int fromPhysical, int count);
+
+    /** This vector's backing exposed through {@code selection}; {@link Selection#ALL} returns it unchanged. */
+    LongVector withSelection(Selection selection);
 
     @Override
-    public Selection selection() {
-        return selection;
+    default ColumnVector select(Selection selection) {
+        if (selection == Selection.ALL) {
+            return this;
+        }
+        return withSelection(selection);
     }
 
-    @Override
-    public int baseSize() {
-        return segmentValues != null ? (int) (segmentValues.byteSize() / Long.BYTES) : values.length;
-    }
-
-    @Override
-    public Validity validity() {
-        return validity;
+    private int physical(int row) {
+        Selection selection = selection();
+        return selection == Selection.ALL ? row : selection.physical(row);
     }
 
     /**
      * Returns the value at logical row {@code row}; throws {@link IllegalStateException} when the row is null. Guard
      * with {@link #isNull(int)} / {@link #hasNulls()}, or use {@link #get(int)} for a null-aware boxed read.
-     * Sequential-access optimized on a selected view.
      */
-    public long getLong(int row) {
-        if (validity.isNull(row)) {
+    default long getLong(int row) {
+        if (validity().isNull(row)) {
             throw new IllegalStateException("row %d is null; guard with isNull(row) or hasNulls()".formatted(row));
         }
-        int physical = selection == Selection.ALL ? row : selection.physical(row);
-        return segmentValues != null ? segmentValues.getAtIndex(INT64, physical) : values[physical];
+        return valueAt(physical(row));
     }
 
     @Override
     @SuppressWarnings("unchecked")
-    public <T> T get(int row) {
-        return validity.isNull(row) ? null : (T) Long.valueOf(getLong(row));
+    default <T> T get(int row) {
+        return validity().isNull(row) ? null : (T) Long.valueOf(getLong(row));
     }
 
-    public long[] asArray() {
+    default long[] asArray() {
+        Selection selection = selection();
         if (selection == Selection.ALL) {
-            if (segmentValues == null) {
-                return values;
-            }
-            long[] out = new long[baseSize()];
-            MemorySegment.copy(segmentValues, INT64, 0L, out, 0, out.length);
-            return out;
+            return contiguousArray();
         }
         int n = size();
         long[] out = new long[n];
         for (int row = 0; row < n; row++) {
-            int physical = selection.physical(row);
-            out[row] = segmentValues != null ? segmentValues.getAtIndex(INT64, physical) : values[physical];
+            out[row] = valueAt(selection.physical(row));
         }
         return out;
     }
+
+    /** The backing as a {@code long[]}, copying only when the backing is not already a heap array. */
+    long[] contiguousArray();
 
     /**
      * Copies {@code count} values starting at logical row {@code from} into {@code target} at byte
@@ -104,35 +106,126 @@ public final class LongVector implements ColumnVector {
      * the contiguous destination. Values at null rows are copied as stored; the caller applies validity separately, as
      * with {@code asArray}.
      */
-    public void copyInto(MemorySegment target, long targetOffset, int from, int count) {
+    default void copyInto(MemorySegment target, long targetOffset, int from, int count) {
+        Selection selection = selection();
         if (selection == Selection.ALL) {
-            if (segmentValues != null) {
-                MemorySegment.copy(segmentValues, INT64, (long) from * Long.BYTES, target, INT64, targetOffset, count);
-            } else {
-                MemorySegment.copy(values, from, target, INT64, targetOffset, count);
-            }
+            copyContiguous(target, targetOffset, from, count);
             return;
         }
         for (int i = 0; i < count; i++) {
-            int physical = selection.physical(from + i);
-            long value = segmentValues != null ? segmentValues.getAtIndex(INT64, physical) : values[physical];
+            long value = valueAt(selection.physical(from + i));
             target.set(INT64, targetOffset + (long) i * Long.BYTES, value);
         }
     }
 
-    @Override
-    public ColumnVector select(Selection selection) {
-        if (selection == Selection.ALL) {
-            return this;
+    /** Values held in a heap {@code long[]}. */
+    final class Heap implements LongVector {
+
+        private final long[] values;
+        private final Validity validity;
+        private final Selection selection;
+
+        private Heap(long[] values, @NonNull Validity validity, @NonNull Selection selection) {
+            this.values = values;
+            this.validity = validity;
+            this.selection = selection;
         }
-        return new LongVector(values, segmentValues, validity.select(selection), selection);
+
+        @Override
+        public Selection selection() {
+            return selection;
+        }
+
+        @Override
+        public int baseSize() {
+            return values.length;
+        }
+
+        @Override
+        public Validity validity() {
+            return validity;
+        }
+
+        @Override
+        public long valueAt(int physicalRow) {
+            return values[physicalRow];
+        }
+
+        @Override
+        public long[] contiguousArray() {
+            return values;
+        }
+
+        @Override
+        public void copyContiguous(MemorySegment target, long targetOffset, int fromPhysical, int count) {
+            MemorySegment.copy(values, fromPhysical, target, INT64, targetOffset, count);
+        }
+
+        @Override
+        public LongVector withSelection(Selection selection) {
+            return new Heap(values, validity.select(selection), selection);
+        }
+
+        @Override
+        public long approximateHeapBytes() {
+            return (long) values.length * Long.BYTES + validity.heapBytes();
+        }
     }
 
-    @Override
-    public long approximateHeapBytes() {
-        if (segmentValues != null) {
+    /** Values read from an off-heap little-endian segment. */
+    final class Segment implements LongVector {
+
+        private final MemorySegment segmentValues;
+        private final Validity validity;
+        private final Selection selection;
+
+        private Segment(MemorySegment segmentValues, @NonNull Validity validity, @NonNull Selection selection) {
+            this.segmentValues = segmentValues;
+            this.validity = validity;
+            this.selection = selection;
+        }
+
+        @Override
+        public Selection selection() {
+            return selection;
+        }
+
+        @Override
+        public int baseSize() {
+            return (int) (segmentValues.byteSize() / Long.BYTES);
+        }
+
+        @Override
+        public Validity validity() {
+            return validity;
+        }
+
+        @Override
+        public long valueAt(int physicalRow) {
+            return segmentValues.getAtIndex(INT64, physicalRow);
+        }
+
+        @Override
+        public long[] contiguousArray() {
+            long[] out = new long[baseSize()];
+            MemorySegment.copy(segmentValues, INT64, 0L, out, 0, out.length);
+            return out;
+        }
+
+        @Override
+        public void copyContiguous(MemorySegment target, long targetOffset, int fromPhysical, int count) {
+            MemorySegment.copy(
+                    segmentValues, INT64, (long) fromPhysical * Long.BYTES, target, INT64, targetOffset, count);
+        }
+
+        @Override
+        public LongVector withSelection(Selection selection) {
+            return new Segment(segmentValues, validity.select(selection), selection);
+        }
+
+        @Override
+        public long approximateHeapBytes() {
             return validity.heapBytes();
         }
-        return (long) values.length * Long.BYTES + validity.heapBytes();
     }
 }

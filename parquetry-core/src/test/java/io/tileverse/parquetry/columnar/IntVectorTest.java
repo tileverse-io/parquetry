@@ -54,6 +54,17 @@ class IntVectorTest {
     }
 
     @Test
+    void valueAtReadsTheBackingWithoutConsultingValidity() {
+        BitSet valid = new BitSet(2);
+        valid.set(0);
+        IntVector vec = IntVector.materialized(new int[] {10, 99}, Validity.of(valid, 2));
+        assertThat(vec.valueAt(0)).isEqualTo(10);
+        assertThat(vec.valueAt(1))
+                .as("a null row reads back its parked placeholder")
+                .isEqualTo(99);
+    }
+
+    @Test
     void getIntReturnsTheValueForAValidRow() {
         IntVector vec = IntVector.materialized(new int[] {10, 20}, Validity.allValid(2));
         assertThat(vec.getInt(1)).as("valid row returns its value").isEqualTo(20);
