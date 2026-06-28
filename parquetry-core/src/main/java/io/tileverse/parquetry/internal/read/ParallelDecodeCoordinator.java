@@ -67,6 +67,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     private final Optional<LateMaterialization> lateMat;
     private final BatchForm batchForm;
     private final DecodeObservation observation;
+    private final List<RowPositionSynthesis> rowPositions;
 
     private final Map<Integer, DecodedRowGroup> window = new HashMap<>();
     private final int size;
@@ -91,7 +92,8 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
             @NonNull List<Boolean> recordEvalRequired,
             @NonNull Optional<LateMaterialization> lateMat,
             @NonNull BatchForm batchForm,
-            @NonNull DecodeObservation observation) {
+            @NonNull DecodeObservation observation,
+            @NonNull List<RowPositionSynthesis> rowPositions) {
         this.prefetcher = prefetcher;
         this.decodeExecutor = decodeExecutor;
         this.decodeBudget = decodeBudget;
@@ -108,6 +110,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
         this.lateMat = lateMat;
         this.batchForm = batchForm;
         this.observation = observation;
+        this.rowPositions = List.copyOf(rowPositions);
         this.size = prefetcher.size();
     }
 
@@ -191,7 +194,22 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
             return buildLateMaterializedDriver(fetch, mask, index);
         }
         return new ClassicRowGroupDriver(
-                decodeBufferAllocator, fetch, projectedSchema, fileSchema, batchSizeCap, mask, batchForm);
+                decodeBufferAllocator,
+                fetch,
+                projectedSchema,
+                fileSchema,
+                batchSizeCap,
+                mask,
+                batchForm,
+                rowPositionFor(index));
+    }
+
+    /**
+     * The row group's row-position synthesis inputs when synthesis is on, empty otherwise. The list is parallel to the
+     * survivor list, hence indexed by the same survivor position the coordinator decodes in.
+     */
+    private Optional<RowPositionSynthesis> rowPositionFor(int index) {
+        return rowPositions.isEmpty() ? Optional.empty() : Optional.of(rowPositions.get(index));
     }
 
     private RowGroupBatchDriver buildLateMaterializedDriver(RowGroupFetch fetch, Optional<RowMask> mask, int index) {

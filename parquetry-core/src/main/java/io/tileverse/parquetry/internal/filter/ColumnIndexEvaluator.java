@@ -120,6 +120,9 @@ final class ColumnIndexEvaluator {
             case Predicate.IsNotNull(ColumnPath col) -> nullLeafRanges(col, columns, rowGroupRowCount, false);
             case Predicate.Spatial _ -> Optional.empty();
             case Predicate.GeometryFilterPredicate _ -> Optional.empty();
+            // Row-position deletes target the synthesized position column, which has no column index. The page-skip
+            // tier cannot narrow on it; the record-level evaluator drops the deleted positions instead.
+            case Predicate.RowIndexExcluded _ -> Optional.empty();
             // Page-range pruning of a repeated leaf is not verified sound: empty-list rows have no element on any page
             // and the element-to-page mapping does not line up with row ranges. A quantified leaf is therefore left for
             // the record-level tier to evaluate.

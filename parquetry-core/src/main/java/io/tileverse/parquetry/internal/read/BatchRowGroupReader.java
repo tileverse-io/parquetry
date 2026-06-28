@@ -17,6 +17,7 @@ package io.tileverse.parquetry.internal.read;
 
 import java.lang.foreign.Arena;
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,10 +29,14 @@ import com.google.errorprone.annotations.MustBeClosed;
 import io.tileverse.parquetry.columnar.ColumnVector;
 import io.tileverse.parquetry.columnar.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.columnar.Levels;
+import io.tileverse.parquetry.columnar.LongVector;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
+import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.PrimitiveKind;
+import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 import lombok.NonNull;
@@ -59,12 +64,14 @@ import lombok.NonNull;
 public final class BatchRowGroupReader implements AutoCloseable {
 
     private final ParquetSchema projectedSchema;
+    private final ParquetSchema batchSchema;
     private final OptionalInt batchSizeCap;
     private final List<ProjectedLeaf> projectedLeaves;
     private final Optional<RowMask> rowMask;
     private final boolean skipDecode;
     private final BatchForm batchForm;
     private final DecodeBufferAllocator decodeBufferAllocator;
+    private final Optional<RowPositionSynthesis> rowPosition;
 
     // Lazily built on first nextBatch() call; keyed by column path in declaration order.
     private Map<ColumnPath, BatchColumnReader> columnReaders;
@@ -79,7 +86,45 @@ public final class BatchRowGroupReader implements AutoCloseable {
             @NonNull OptionalInt batchSizeCap,
             @NonNull Optional<RowMask> rowMask,
             @NonNull BatchForm batchForm) {
-        this(decodeBufferAllocator, chunks, projectedSchema, fileSchema, batchSizeCap, rowMask, false, batchForm);
+        this(
+                decodeBufferAllocator,
+                chunks,
+                projectedSchema,
+                fileSchema,
+                batchSizeCap,
+                rowMask,
+                false,
+                batchForm,
+                Optional.empty());
+    }
+
+    /**
+     * Builds a reader that synthesizes the absolute row-position column when {@code rowPosition} is present, the row
+     * group's file row offset paired with the caller-chosen column name(s). Each emitted batch then includes a non-null
+     * {@code long} at each named path; the value reports the row's true position in the file even when the row mask
+     * dropped earlier rows.
+     */
+    @SuppressWarnings("java:S107") // the decode inputs plus the batch form and the row-position synthesis; a parameter
+    // object would only relocate the arity
+    public BatchRowGroupReader(
+            @NonNull DecodeBufferAllocator decodeBufferAllocator,
+            @NonNull List<FetchedColumnChunk> chunks,
+            @NonNull ParquetSchema projectedSchema,
+            @NonNull ParquetSchema fileSchema,
+            @NonNull OptionalInt batchSizeCap,
+            @NonNull Optional<RowMask> rowMask,
+            @NonNull BatchForm batchForm,
+            @NonNull Optional<RowPositionSynthesis> rowPosition) {
+        this(
+                decodeBufferAllocator,
+                chunks,
+                projectedSchema,
+                fileSchema,
+                batchSizeCap,
+                rowMask,
+                false,
+                batchForm,
+                rowPosition);
     }
 
     /**
@@ -99,6 +144,31 @@ public final class BatchRowGroupReader implements AutoCloseable {
             @NonNull Optional<RowMask> rowMask,
             boolean skipDecode,
             @NonNull BatchForm batchForm) {
+        this(
+                decodeBufferAllocator,
+                chunks,
+                projectedSchema,
+                fileSchema,
+                batchSizeCap,
+                rowMask,
+                skipDecode,
+                batchForm,
+                Optional.empty());
+    }
+
+    @SuppressWarnings(
+            "java:S107") // the decode inputs plus the skip-decode/form flags and the row-position synthesis; a
+    // parameter object would only relocate the arity
+    private BatchRowGroupReader(
+            DecodeBufferAllocator decodeBufferAllocator,
+            List<FetchedColumnChunk> chunks,
+            ParquetSchema projectedSchema,
+            ParquetSchema fileSchema,
+            OptionalInt batchSizeCap,
+            Optional<RowMask> rowMask,
+            boolean skipDecode,
+            BatchForm batchForm,
+            Optional<RowPositionSynthesis> rowPosition) {
         this.decodeBufferAllocator = decodeBufferAllocator;
         this.projectedSchema = projectedSchema;
         this.batchSizeCap = batchSizeCap;
@@ -106,6 +176,24 @@ public final class BatchRowGroupReader implements AutoCloseable {
         this.rowMask = rowMask;
         this.skipDecode = skipDecode;
         this.batchForm = batchForm;
+        this.rowPosition = rowPosition;
+        this.batchSchema = rowPosition
+                .map(synthesis -> projectedSchema.withAppendedLeaves(rowPositionLeaves(synthesis.columns())))
+                .orElse(projectedSchema);
+    }
+
+    private static List<SchemaNode.Primitive> rowPositionLeaves(List<ColumnPath> columns) {
+        List<SchemaNode.Primitive> leaves = new ArrayList<>(columns.size());
+        for (ColumnPath column : columns) {
+            leaves.add(new SchemaNode.Primitive(
+                    column.name(),
+                    Repetition.REQUIRED,
+                    PrimitiveKind.INT64,
+                    OptionalInt.empty(),
+                    Optional.empty(),
+                    -1));
+        }
+        return leaves;
     }
 
     /**
@@ -148,15 +236,17 @@ public final class BatchRowGroupReader implements AutoCloseable {
         try {
             ensureColumnReadersBuilt();
             int batchRows = computeBatchRows();
+            long firstRowDenseIndex = rowsProducedTotal;
             rowsProducedTotal += batchRows;
             Map<ColumnPath, LevelSlice> repLevelsByLeaf = new HashMap<>();
             Map<ColumnPath, LevelSlice> defLevelsByLeaf = new HashMap<>();
             Map<ColumnPath, ColumnVector> leafVectors =
                     readVectors(batchRows, repLevelsByLeaf, defLevelsByLeaf, acquiredBuffers);
-            Map<ColumnPath, ColumnVector> vectors =
+            Map<ColumnPath, ColumnVector> assembled =
                     assembleGroups(leafVectors, repLevelsByLeaf, defLevelsByLeaf, batchRows, acquiredBuffers);
+            Map<ColumnPath, ColumnVector> vectors = withRowPosition(assembled, firstRowDenseIndex, batchRows);
             DefaultParquetRecordBatch batch =
-                    new DefaultParquetRecordBatch(projectedSchema, vectors, batchRows, batchArena);
+                    new DefaultParquetRecordBatch(batchSchema, vectors, batchRows, batchArena);
             for (AutoCloseable buffer : acquiredBuffers) {
                 batch.registerBuffer(buffer);
             }
@@ -166,6 +256,70 @@ public final class BatchRowGroupReader implements AutoCloseable {
             batchArena.close();
             throw e;
         }
+    }
+
+    // --- synthesized row-position column ---
+
+    /**
+     * Adds the synthesized absolute row-position column when row-position synthesis is on, leaving {@code vectors}
+     * unchanged otherwise. The added vector reports each row's true file position even when the row mask dropped
+     * earlier rows: it maps the batch's {@code batchRows} logical rows, beginning at the row group's
+     * {@code firstRowDenseIndex}-th emitted row, to their row-group-relative positions and offsets each by the row
+     * group's file base.
+     */
+    private Map<ColumnPath, ColumnVector> withRowPosition(
+            Map<ColumnPath, ColumnVector> vectors, long firstRowDenseIndex, int batchRows) {
+        if (rowPosition.isEmpty()) {
+            return vectors;
+        }
+        RowPositionSynthesis synthesis = rowPosition.orElseThrow();
+        io.tileverse.parquetry.columnar.Selection positions = rowGroupRelativePositions(firstRowDenseIndex, batchRows);
+        LongVector positionVector = LongVector.rowPositions(synthesis.base(), positions, batchRows);
+        // The position is identical for every named column, hence one vector shared under each path. Each consumer
+        // reads it in row order, the sequential access its position map is optimized for.
+        Map<ColumnPath, ColumnVector> withPosition = new HashMap<>(vectors);
+        for (ColumnPath column : synthesis.columns()) {
+            withPosition.put(column, positionVector);
+        }
+        return withPosition;
+    }
+
+    /**
+     * The selection mapping each of the batch's {@code batchRows} logical rows to its row-group-relative physical
+     * position. With no row mask the emitted rows are contiguous from {@code firstRowDenseIndex}. With a row mask the
+     * emitted rows are the surviving rows in row-group order; the dense indexes {@code [firstRowDenseIndex,
+     * firstRowDenseIndex + batchRows)} map to the matching surviving positions.
+     */
+    private io.tileverse.parquetry.columnar.Selection rowGroupRelativePositions(
+            long firstRowDenseIndex, int batchRows) {
+        if (rowMask.isEmpty()) {
+            return io.tileverse.parquetry.columnar.Selection.range(Math.toIntExact(firstRowDenseIndex), batchRows);
+        }
+        return survivingPositionWindow(rowMask.orElseThrow().survivingRows(), firstRowDenseIndex, batchRows);
+    }
+
+    /**
+     * The surviving row-group positions for the dense window {@code [firstRowDenseIndex, firstRowDenseIndex +
+     * batchRows)}: it walks the surviving ranges, skips the first {@code firstRowDenseIndex} surviving rows, then sets
+     * a bit per row-group-relative position for the next {@code batchRows} surviving rows.
+     */
+    private static io.tileverse.parquetry.columnar.Selection survivingPositionWindow(
+            RowRanges survivingRows, long firstRowDenseIndex, int batchRows) {
+        BitSet positions = new BitSet();
+        long dense = 0L;
+        long windowEnd = firstRowDenseIndex + batchRows;
+        for (RowRanges.Range range : survivingRows.ranges()) {
+            for (long position = range.first(); position <= range.last(); position++) {
+                if (dense >= firstRowDenseIndex && dense < windowEnd) {
+                    positions.set(Math.toIntExact(position));
+                }
+                dense++;
+                if (dense >= windowEnd) {
+                    return io.tileverse.parquetry.columnar.Selection.bits(positions);
+                }
+            }
+        }
+        return io.tileverse.parquetry.columnar.Selection.bits(positions);
     }
 
     /**

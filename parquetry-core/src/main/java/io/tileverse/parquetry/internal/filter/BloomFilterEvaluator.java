@@ -76,6 +76,8 @@ final class BloomFilterEvaluator {
                 new PruningDecision.NotApplied(TIER, "spatial predicate not handled at BLOOM_FILTER tier");
             case Predicate.GeometryFilterPredicate _ ->
                 new PruningDecision.NotApplied(TIER, "GeometryFilter not handled at BLOOM_FILTER tier");
+            case Predicate.RowIndexExcluded _ ->
+                new PruningDecision.NotApplied(TIER, "row-position deletes not handled at BLOOM_FILTER tier");
             case Predicate.Quantified(MatchAction match, Predicate leaf) -> evaluateQuantified(match, leaf, blooms);
         };
     }

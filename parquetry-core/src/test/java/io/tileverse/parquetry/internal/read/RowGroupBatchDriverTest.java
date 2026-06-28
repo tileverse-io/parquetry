@@ -68,7 +68,8 @@ class RowGroupBatchDriverTest {
                 schema,
                 OptionalInt.empty(),
                 Optional.empty(),
-                BatchForm.ASSEMBLED)) {
+                BatchForm.ASSEMBLED,
+                Optional.empty())) {
             while (driver.hasMore()) {
                 try (ParquetRecordBatch batch = driver.nextBatch()) {
                     IntVector vec = (IntVector) batch.columns().get(PATH_A);
@@ -96,7 +97,8 @@ class RowGroupBatchDriverTest {
                 schema,
                 OptionalInt.empty(),
                 Optional.empty(),
-                BatchForm.ASSEMBLED);
+                BatchForm.ASSEMBLED,
+                Optional.empty());
         try (ParquetRecordBatch batch = driver.nextBatch()) {
             assertThat(batch.rowCount()).isEqualTo(3);
         }

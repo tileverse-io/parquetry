@@ -17,6 +17,7 @@ package io.tileverse.parquetry.data;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -46,6 +47,7 @@ import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.KeyValue;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.OffsetIndex;
+import io.tileverse.parquetry.format.PageLocation;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.internal.filter.FilterPipeline;
@@ -74,6 +76,7 @@ import io.tileverse.parquetry.internal.read.RowGroupFetcher;
 import io.tileverse.parquetry.internal.read.RowGroupPrefetcher;
 import io.tileverse.parquetry.internal.read.RowGroupSurvivor;
 import io.tileverse.parquetry.internal.read.RowMask;
+import io.tileverse.parquetry.internal.read.RowPositionSynthesis;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.observe.FetchAccumulator;
@@ -89,6 +92,7 @@ import io.tileverse.parquetry.observe.SpillAccumulator;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.ParquetSchemaException;
 import io.tileverse.parquetry.schema.SchemaBuilder;
 import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
@@ -357,7 +361,9 @@ public class ParquetFileReader {
             LongConsumer pipelineNanosSink) {
 
         Predicate predicate = lowerSpatialPredicates(rawPredicate);
-        boolean recordLevel = options.useRecordLevelFilter();
+        List<ColumnPath> rowPositionColumns = rowPositionColumnsValidated(predicate);
+        boolean synthesizeRowPosition = !rowPositionColumns.isEmpty();
+        boolean recordLevel = options.useRecordLevelFilter() || synthesizeRowPosition;
         ProjectionPlan projectionPlan =
                 ProjectionPlan.resolve(fileSchema, projection, recordLevel ? predicate : Predicate.ALWAYS_TRUE);
         Projection scanProjection = projectionPlan.scanProjection();
@@ -371,11 +377,14 @@ public class ParquetFileReader {
         ParquetSchema outputSchema = projectionPlan.physicalOutputSchema();
         List<Optional<RowMask>> decodeMasks = decodeMasksFor(survivors, scanSchema, options);
         Predicate normalized = plan.normalizedPredicate();
-        Optional<LateMaterialization> lateMat =
-                lateMaterializationFor(survivors, scanSchema, outputSchema, normalized, options, recordLevel);
+        Optional<LateMaterialization> lateMat = synthesizeRowPosition
+                ? Optional.empty()
+                : lateMaterializationFor(survivors, scanSchema, outputSchema, normalized, options, recordLevel);
         Predicate recordFilter = (recordLevel && lateMat.isEmpty()) ? recordFilterOf(normalized) : null;
         DecodeObservation decodeObservation =
                 decodeObservationFor(plan, observe, options.queryObserver(), false, spillAccumulator);
+        List<RowPositionSynthesis> rowPositions =
+                rowPositionSynthesesFor(survivors, rowGroupChunks, rowPositionColumns);
         ParallelDecodeCoordinator coordinator = newDecodeCoordinator(
                 survivors,
                 scanSchema,
@@ -384,7 +393,8 @@ public class ParquetFileReader {
                 lateMat,
                 rowsForm(recordFilter),
                 accumulator,
-                decodeObservation);
+                decodeObservation,
+                rowPositions);
         return BatchPipeline.rows(coordinator, materializer, outputSchema, recordFilter, observe, wantsTimings);
     }
 
@@ -559,6 +569,55 @@ public class ParquetFileReader {
     }
 
     /**
+     * The physical scan projection for {@code count}: the predicate's physical columns minus the synthesized
+     * row-position columns, or a cheap driving leaf when the predicate names only synthesized columns. count produces
+     * nothing, hence it needs only the columns the predicate evaluates plus a column to enumerate the file's rows.
+     */
+    private Projection predicateScanProjection(Predicate predicate) {
+        Set<ColumnPath> columns = physicalColumns(predicate);
+        if (columns.isEmpty()) {
+            columns = Set.of(fileSchema.leafColumns().get(0));
+        }
+        return Projection.ofPhysical(columns);
+    }
+
+    /** The predicate's physical leaf columns: every column it references minus the synthesized row-position columns. */
+    private static Set<ColumnPath> physicalColumns(Predicate predicate) {
+        Set<ColumnPath> columns = new LinkedHashSet<>(Predicate.columns(predicate));
+        Predicate.rowPositionColumns(predicate).forEach(columns::remove);
+        return columns;
+    }
+
+    /**
+     * The caller-named row-position columns the predicate references, after rejecting any the reader cannot synthesize.
+     * Empty when the predicate has no positional delete. Validating here, before the read fans out, lets {@link #read},
+     * {@link #readBatches}, and {@link #count} reject a bad name uniformly.
+     */
+    private List<ColumnPath> rowPositionColumnsValidated(Predicate predicate) {
+        List<ColumnPath> columns = Predicate.rowPositionColumns(predicate);
+        for (ColumnPath column : columns) {
+            validateRowPositionColumn(column);
+        }
+        return columns;
+    }
+
+    /**
+     * Rejects a caller-named row-position column the reader cannot produce: a nested path (the synthesized column is
+     * always a top-level leaf), or a name a physical column of the file already has (the produced column cannot coexist
+     * with a real column at that path). The caller must pick a free top-level name (Iceberg uses {@code _pos}).
+     */
+    private void validateRowPositionColumn(ColumnPath column) {
+        if (column.numParts() > 1) {
+            throw new ParquetSchemaException(
+                    "A row-position column must be a top-level name, not the nested path " + column.dot());
+        }
+        if (fileSchema.find(column).isPresent()) {
+            throw new ParquetSchemaException(
+                    "Cannot synthesize the row-position column: the file already has a " + column.dot() + " column");
+        }
+    }
+
+    /**
      * Rewrites GeoParquet bbox-relation leaves into equivalent comparisons on the geometry column's covering columns
      * when this file has covering metadata, letting the numeric stats and column-index tiers prune without decoding the
      * geometry. A file without covering keeps its spatial leaf for the record-level WKB path.
@@ -613,7 +672,8 @@ public class ParquetFileReader {
             FetchAccumulator accumulator,
             SpillAccumulator spillAccumulator,
             LongConsumer pipelineNanosSink) {
-        Projection predicateProjection = Projection.ofPhysical(Predicate.columns(predicate));
+        List<ColumnPath> rowPositionColumns = rowPositionColumnsValidated(predicate);
+        Projection predicateProjection = predicateScanProjection(predicate);
         List<RowGroupChunks> rowGroupChunks = rowGroupChunks(accumulator);
         boolean observe = observing(options);
         boolean wantsTimings = observe && options.queryObserver().wantsTimings();
@@ -625,7 +685,9 @@ public class ParquetFileReader {
         if (residual.isEmpty()) {
             return matchedRows;
         }
-        return matchedRows + countResidual(residual, plan, options, accumulator, spillAccumulator, observe);
+        List<RowPositionSynthesis> rowPositions = rowPositionSynthesesFor(residual, rowGroupChunks, rowPositionColumns);
+        return matchedRows
+                + countResidual(residual, plan, options, accumulator, spillAccumulator, observe, rowPositions);
     }
 
     /**
@@ -678,14 +740,23 @@ public class ParquetFileReader {
             ReadOptions options,
             FetchAccumulator accumulator,
             SpillAccumulator spillAccumulator,
-            boolean observe) {
+            boolean observe,
+            List<RowPositionSynthesis> rowPositions) {
         ParquetSchema scanSchema = plan.projectedSchema();
         Predicate normalized = plan.normalizedPredicate();
         List<Optional<RowMask>> masks = decodeMasksFor(residual, scanSchema, options);
         DecodeObservation observation =
                 residualObservationFor(plan, observe, options.queryObserver(), spillAccumulator);
         ParallelDecodeCoordinator coordinator = newDecodeCoordinator(
-                residual, scanSchema, masks, options, Optional.empty(), BatchForm.LEVELS, accumulator, observation);
+                residual,
+                scanSchema,
+                masks,
+                options,
+                Optional.empty(),
+                BatchForm.LEVELS,
+                accumulator,
+                observation,
+                rowPositions);
         return BatchPipeline.countMatching(coordinator, normalized, observe);
     }
 
@@ -729,7 +800,9 @@ public class ParquetFileReader {
 
         ReadOptions options = observation.effectiveOptions();
         Predicate predicate = lowerSpatialPredicates(rawPredicate);
-        boolean recordLevel = options.useRecordLevelFilter();
+        List<ColumnPath> rowPositionColumns = rowPositionColumnsValidated(predicate);
+        boolean synthesizeRowPosition = !rowPositionColumns.isEmpty();
+        boolean recordLevel = options.useRecordLevelFilter() || synthesizeRowPosition;
         ProjectionPlan projectionPlan =
                 ProjectionPlan.resolve(fileSchema, projection, recordLevel ? predicate : Predicate.ALWAYS_TRUE);
         Projection scanProjection = projectionPlan.scanProjection();
@@ -743,11 +816,14 @@ public class ParquetFileReader {
         ParquetSchema outputSchema = projectionPlan.physicalOutputSchema();
         List<Optional<RowMask>> decodeMasks = decodeMasksFor(survivors, scanSchema, options);
         Predicate normalized = plan.normalizedPredicate();
-        Optional<LateMaterialization> lateMat =
-                lateMaterializationFor(survivors, scanSchema, outputSchema, normalized, options, recordLevel);
+        Optional<LateMaterialization> lateMat = synthesizeRowPosition
+                ? Optional.empty()
+                : lateMaterializationFor(survivors, scanSchema, outputSchema, normalized, options, recordLevel);
         Predicate recordFilter = (recordLevel && lateMat.isEmpty()) ? recordFilterOf(normalized) : null;
         DecodeObservation decodeObservation =
                 decodeObservationFor(plan, observe, options.queryObserver(), true, observation.spillAccumulator());
+        List<RowPositionSynthesis> rowPositions =
+                rowPositionSynthesesFor(survivors, rowGroupChunks, rowPositionColumns);
         ParallelDecodeCoordinator coordinator = newDecodeCoordinator(
                 survivors,
                 scanSchema,
@@ -756,7 +832,8 @@ public class ParquetFileReader {
                 lateMat,
                 BatchForm.ASSEMBLED,
                 FetchAccumulator.NONE,
-                decodeObservation);
+                decodeObservation,
+                rowPositions);
         Stream<ParquetRecordBatch> batches = recordFilter == null
                 ? BatchPipeline.batches(coordinator)
                 : BatchPipeline.batches(coordinator, recordFilter, outputSchema);
@@ -819,7 +896,8 @@ public class ParquetFileReader {
             Optional<LateMaterialization> lateMat,
             BatchForm batchForm,
             FetchAccumulator accumulator,
-            DecodeObservation observation) {
+            DecodeObservation observation,
+            List<RowPositionSynthesis> rowPositions) {
         RowGroupPrefetcher prefetcher =
                 newPrefetcher(survivors, projectedSchema, accumulator, observation.wantsTimings());
         List<Boolean> recordEvalRequired = recordEvalFlagsFor(survivors);
@@ -840,7 +918,8 @@ public class ParquetFileReader {
                 recordEvalRequired,
                 lateMat,
                 batchForm,
-                observation);
+                observation,
+                rowPositions);
     }
 
     /**
@@ -1103,7 +1182,9 @@ public class ParquetFileReader {
     protected ExplainPlan runFilterPipeline(
             Predicate predicate, Projection projection, ReadOptions options, List<RowGroupChunks> rowGroupChunks) {
         List<ColumnPath> projectedLeaves = projectedLeafColumns(projection);
-        List<FilterPipeline.RowGroupInputs> inputs = filterInputsFor(rowGroupChunks, options, projectedLeaves);
+        boolean rowPositionDeletes = !Predicate.rowPositionColumns(predicate).isEmpty();
+        List<FilterPipeline.RowGroupInputs> inputs =
+                filterInputsFor(rowGroupChunks, options, projectedLeaves, rowPositionDeletes);
         FilterPipeline.FilterToggles toggles =
                 new FilterPipeline.FilterToggles(options.useStatsFilter(), options.useDictionaryFilter());
         ExplainPlan plan = FilterPipeline.evaluate(fileSchema, projection, predicate, inputs, toggles);
@@ -1136,10 +1217,16 @@ public class ParquetFileReader {
      * override to supply richer dictionary or page-stats lookups than the in-footer defaults.
      *
      * @param projectedLeaves the projected leaf column paths, used to size each row group's projected compressed bytes
+     * @param rowPositionDeletes whether the predicate has a positional delete; only then are each row group's file
+     *     offset and page boundaries (the row-position pruning inputs) computed, which keeps them off the common path
      */
     protected List<FilterPipeline.RowGroupInputs> filterInputsFor(
-            List<RowGroupChunks> rowGroupChunks, ReadOptions options, List<ColumnPath> projectedLeaves) {
+            List<RowGroupChunks> rowGroupChunks,
+            ReadOptions options,
+            List<ColumnPath> projectedLeaves,
+            boolean rowPositionDeletes) {
         SpatialBoundsSource spatialBounds = SpatialBoundsSource.of(footer, fileSchema, geoMetadata);
+        Map<RowGroupChunks, Long> fileOffsets = rowPositionDeletes ? rowGroupFileOffsets(rowGroupChunks) : Map.of();
         List<FilterPipeline.RowGroupInputs> inputs = new ArrayList<>(rowGroupChunks.size());
         for (RowGroupChunks chunks : rowGroupChunks) {
             inputs.add(new FilterPipeline.RowGroupInputs(
@@ -1149,9 +1236,40 @@ public class ParquetFileReader {
                     FilterPipeline.noDictionaryLookup(),
                     pageStatsLookupFor(chunks, options),
                     bloomLookupFor(chunks, options),
-                    projectedCompressedBytes(chunks, projectedLeaves)));
+                    projectedCompressedBytes(chunks, projectedLeaves),
+                    rowPositionDeletes ? fileOffsets.get(chunks) : 0L,
+                    rowPositionDeletes ? rowPositionPageFirstRows(chunks, options) : List.of()));
         }
         return inputs;
+    }
+
+    /**
+     * The row-group-relative first-row index of each page, taken from any one leaf column's offset index, used by the
+     * row-position delete tier to find fully-deleted pages. The synthesized {@code $pos} column has no offset index of
+     * its own; every column in a row group shares the same row boundaries, hence any real leaf's page first-row indexes
+     * partition the row group into spans the position math can reason about. Returns an empty list when the
+     * column-index filter is off or no leaf exposes an offset index, in which case the page tier stays inert.
+     */
+    private List<Long> rowPositionPageFirstRows(RowGroupChunks chunks, ReadOptions options) {
+        if (!options.useColumnIndexFilter()) {
+            return List.of();
+        }
+        for (ColumnPath leaf : fileSchema.leafColumns()) {
+            Optional<OffsetIndex> offsetIndex = chunks.offsetIndex(leaf);
+            if (offsetIndex.isPresent()) {
+                return pageFirstRowIndexes(offsetIndex.orElseThrow());
+            }
+        }
+        return List.of();
+    }
+
+    private static List<Long> pageFirstRowIndexes(OffsetIndex offsetIndex) {
+        List<PageLocation> pageLocations = offsetIndex.pageLocations();
+        List<Long> firstRows = new ArrayList<>(pageLocations.size());
+        for (PageLocation page : pageLocations) {
+            firstRows.add(page.firstRowIndex());
+        }
+        return firstRows;
     }
 
     /**
@@ -1217,6 +1335,48 @@ public class ParquetFileReader {
             return FilterPipeline.emptyBloomLookup();
         }
         return chunks::bloom;
+    }
+
+    /**
+     * The absolute file row offset of each row group, keyed by identity: the running sum of {@code num_rows} over the
+     * row groups that precede it in file order, pruned ones included (a pruned group still consumes position space).
+     * One definition shared by the row-position synthesis and the filter pipeline's row-position tier, which keeps the
+     * two offset walks from drifting.
+     */
+    private static Map<RowGroupChunks, Long> rowGroupFileOffsets(List<RowGroupChunks> rowGroupChunks) {
+        Map<RowGroupChunks, Long> offsets = new IdentityHashMap<>(rowGroupChunks.size());
+        long runningOffset = 0L;
+        for (RowGroupChunks chunks : rowGroupChunks) {
+            offsets.put(chunks, runningOffset);
+            runningOffset += chunks.numRows();
+        }
+        return offsets;
+    }
+
+    /**
+     * The per-survivor row-position synthesis inputs, parallel to {@code survivors}: each survivor's file row offset
+     * paired with the caller-named columns. Returns an empty list when the predicate has no positional delete, which
+     * keeps the decode path untouched. Keying the offsets by {@link RowGroupChunks} identity rather than by re-walking
+     * the plan lets a subclass that drops or reorders survivors in {@link #survivorsFor} still get each survivor's true
+     * file offset.
+     */
+    private static List<RowPositionSynthesis> rowPositionSynthesesFor(
+            List<RowGroupSurvivor> survivors,
+            List<RowGroupChunks> rowGroupChunks,
+            List<ColumnPath> rowPositionColumns) {
+        if (rowPositionColumns.isEmpty()) {
+            return List.of();
+        }
+        Map<RowGroupChunks, Long> baseByChunks = rowGroupFileOffsets(rowGroupChunks);
+        List<RowPositionSynthesis> syntheses = new ArrayList<>(survivors.size());
+        for (RowGroupSurvivor survivor : survivors) {
+            Long base = baseByChunks.get(survivor.chunks());
+            if (base == null) {
+                throw new IllegalStateException("Survivor row group is not part of the file's row groups");
+            }
+            syntheses.add(new RowPositionSynthesis(base, rowPositionColumns));
+        }
+        return syntheses;
     }
 
     /**

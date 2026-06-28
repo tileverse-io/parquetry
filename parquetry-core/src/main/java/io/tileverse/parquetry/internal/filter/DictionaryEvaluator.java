@@ -81,6 +81,8 @@ final class DictionaryEvaluator {
                 new PruningDecision.NotApplied(TIER, "spatial predicate not handled at DICTIONARY tier");
             case io.tileverse.parquetry.filter.Predicate.GeometryFilterPredicate _ ->
                 new PruningDecision.NotApplied(TIER, "GeometryFilter not handled at DICTIONARY tier");
+            case io.tileverse.parquetry.filter.Predicate.RowIndexExcluded _ ->
+                new PruningDecision.NotApplied(TIER, "row-position deletes not handled at DICTIONARY tier");
             case io.tileverse.parquetry.filter.Predicate.Quantified(
                     MatchAction match,
                     io.tileverse.parquetry.filter.Predicate leaf) -> evaluateQuantified(match, leaf, dictionaries);

@@ -73,20 +73,36 @@ public final class FilterPipeline {
             DictionaryLookup dictionaries,
             ColumnPageStatsLookup pageIndexes,
             BloomFilterLookup blooms,
-            long projectedCompressedBytes) {
+            long projectedCompressedBytes,
+            long rowPositionBase,
+            List<Long> rowPositionPageFirstRows) {
+
+        public RowGroupInputs {
+            rowPositionPageFirstRows = List.copyOf(rowPositionPageFirstRows);
+        }
 
         /**
          * Backwards-compatible four-arg constructor for callers that don't yet wire spatial bounds or a bloom-filter
          * lookup; defaults the spatial source to {@link EmptyBoundsSource#INSTANCE} (the SPATIAL tier degrades to
          * {@link PruningDecision.NotApplied}), the blooms to {@link FilterPipeline#emptyBloomLookup()}, and the
-         * projected compressed bytes to zero (callers that want a byte estimate use the full constructor).
+         * projected compressed bytes to zero (callers that want a byte estimate use the full constructor). The
+         * row-position pruning inputs default to inert (zero base offset, no page boundaries).
          */
         public RowGroupInputs(
                 long rowCount,
                 ColumnStatsLookup stats,
                 DictionaryLookup dictionaries,
                 ColumnPageStatsLookup pageIndexes) {
-            this(rowCount, stats, EmptyBoundsSource.INSTANCE, dictionaries, pageIndexes, emptyBloomLookup(), 0L);
+            this(
+                    rowCount,
+                    stats,
+                    EmptyBoundsSource.INSTANCE,
+                    dictionaries,
+                    pageIndexes,
+                    emptyBloomLookup(),
+                    0L,
+                    0L,
+                    List.of());
         }
     }
 
@@ -251,6 +267,9 @@ public final class FilterPipeline {
 
     private static RowGroupPlan evaluateRowGroup(
             int index, RowGroupInputs inputs, Predicate normalized, FilterToggles toggles) {
+        if (normalized instanceof Predicate.RowIndexExcluded) {
+            return evaluateRowPositionDeletes(index, inputs, normalized);
+        }
         List<PruningDecision> tierDecisions = new ArrayList<>(5);
         Optional<RowRanges> surviving = Optional.empty();
 
@@ -301,6 +320,48 @@ public final class FilterPipeline {
 
         RowGroupOutcome outcome = surviving.isPresent() ? RowGroupOutcome.PARTIAL : RowGroupOutcome.FULL;
         return new RowGroupPlan(index, inputs.rowCount(), tierDecisions, outcome, surviving, Optional.empty());
+    }
+
+    /**
+     * Evaluates a bare {@link Predicate.RowIndexExcluded} from its deleted-position range alone, with no column data
+     * read. The row-group tier eliminates a fully-deleted group or passes an untouched one as MATCHED (no per-row check
+     * needed); a partly-deleted group descends to the page tier, which drops fully-deleted pages and leaves the rest
+     * for record-level evaluation.
+     */
+    private static RowGroupPlan evaluateRowPositionDeletes(int index, RowGroupInputs inputs, Predicate normalized) {
+        List<PruningDecision> tierDecisions = new ArrayList<>(2);
+        long base = inputs.rowPositionBase();
+        long rowCount = inputs.rowCount();
+
+        PruningDecision rowGroupDecision = RowPositionEvaluator.evaluateRowGroup(normalized, base, rowCount);
+        tierDecisions.add(rowGroupDecision);
+        if (rowGroupDecision instanceof PruningDecision.Eliminated) {
+            return new RowGroupPlan(
+                    index, rowCount, tierDecisions, RowGroupOutcome.ELIMINATED, Optional.empty(), Optional.empty());
+        }
+        if (rowGroupDecision instanceof PruningDecision.PassedAll && rowCount > 0) {
+            return new RowGroupPlan(
+                    index, rowCount, tierDecisions, RowGroupOutcome.MATCHED, Optional.empty(), Optional.empty());
+        }
+
+        PruningDecision pageDecision =
+                RowPositionEvaluator.evaluatePages(normalized, base, rowCount, inputs.rowPositionPageFirstRows());
+        tierDecisions.add(pageDecision);
+        if (pageDecision instanceof PruningDecision.Eliminated) {
+            return new RowGroupPlan(
+                    index, rowCount, tierDecisions, RowGroupOutcome.ELIMINATED, Optional.empty(), Optional.empty());
+        }
+        if (pageDecision instanceof PruningDecision.NarrowedTo narrowed) {
+            return new RowGroupPlan(
+                    index,
+                    rowCount,
+                    tierDecisions,
+                    RowGroupOutcome.PARTIAL,
+                    Optional.of(narrowed.ranges()),
+                    Optional.empty());
+        }
+        return new RowGroupPlan(
+                index, rowCount, tierDecisions, RowGroupOutcome.FULL, Optional.empty(), Optional.empty());
     }
 
     /**

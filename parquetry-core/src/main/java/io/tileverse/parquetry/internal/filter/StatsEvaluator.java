@@ -108,6 +108,8 @@ public final class StatsEvaluator {
                 new PruningDecision.NotApplied(TIER, "spatial predicate handled by the bounds source");
             case Predicate.GeometryFilterPredicate _ ->
                 new PruningDecision.NotApplied(TIER, "GeometryFilter not handled at STATS tier");
+            case Predicate.RowIndexExcluded _ ->
+                new PruningDecision.NotApplied(TIER, "row-position deletes not handled at STATS tier");
             case Predicate.Quantified(MatchAction match, Predicate leaf) ->
                 evaluateQuantified(match, leaf, columns, rowCount);
         };

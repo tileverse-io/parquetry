@@ -250,7 +250,8 @@ class BatchPipelineRowsTest {
                     recordEvalRequired,
                     Optional.empty(),
                     BatchForm.LEVELS,
-                    ParallelDecodeCoordinator.DecodeObservation.NONE);
+                    ParallelDecodeCoordinator.DecodeObservation.NONE,
+                    List.of());
         }
 
         private List<RowGroupSurvivor> survivors(ByteRangeSource source, SurvivorMode mode) {
