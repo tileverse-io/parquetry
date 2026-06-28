@@ -617,46 +617,41 @@ public final class DremelStriper {
     }
 
     private int[] gatherInts(IntVector v, int[] kept) {
-        int[] all = v.asArray();
         int[] out = new int[kept.length];
         for (int i = 0; i < kept.length; i++) {
-            out[i] = all[kept[i]];
+            out[i] = v.valueAt(kept[i]);
         }
         return out;
     }
 
     private long[] gatherLongs(LongVector v, int[] kept) {
-        long[] all = v.asArray();
         long[] out = new long[kept.length];
         for (int i = 0; i < kept.length; i++) {
-            out[i] = all[kept[i]];
+            out[i] = v.valueAt(kept[i]);
         }
         return out;
     }
 
     private float[] gatherFloats(FloatVector v, int[] kept) {
-        float[] all = v.asArray();
         float[] out = new float[kept.length];
         for (int i = 0; i < kept.length; i++) {
-            out[i] = all[kept[i]];
+            out[i] = v.valueAt(kept[i]);
         }
         return out;
     }
 
     private double[] gatherDoubles(DoubleVector v, int[] kept) {
-        double[] all = v.asArray();
         double[] out = new double[kept.length];
         for (int i = 0; i < kept.length; i++) {
-            out[i] = all[kept[i]];
+            out[i] = v.valueAt(kept[i]);
         }
         return out;
     }
 
     private boolean[] gatherBooleans(BooleanVector v, int[] kept) {
-        boolean[] all = v.asArray();
         boolean[] out = new boolean[kept.length];
         for (int i = 0; i < kept.length; i++) {
-            out[i] = all[kept[i]];
+            out[i] = v.valueAt(kept[i]);
         }
         return out;
     }

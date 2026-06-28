@@ -79,20 +79,11 @@ public sealed interface BooleanVector extends ColumnVector permits BooleanVector
         return validity().isNull(row) ? null : (T) Boolean.valueOf(getBoolean(row));
     }
 
-    default boolean[] asArray() {
-        int n = size();
-        boolean[] out = new boolean[n];
-        for (int row = 0; row < n; row++) {
-            out[row] = valueAt(physical(row));
-        }
-        return out;
-    }
-
     /**
      * Packs {@code count} values starting at logical row {@code from} into {@code target} as an LSB-first bitmap
-     * beginning at bit 0 of byte {@code targetOffset}. Lets a bulk consumer reuse one target instead of allocating via
-     * {@link #asArray()}. A selected view packs its survivors. Values at null rows are packed as stored; the caller
-     * applies validity separately.
+     * beginning at bit 0 of byte {@code targetOffset}. Lets a bulk consumer reuse one target instead of allocating a
+     * fresh array. A selected view packs its survivors. Values at null rows are packed as stored; the caller applies
+     * validity separately.
      */
     default void copyInto(MemorySegment target, long targetOffset, int from, int count) {
         int byteCount = (count + 7) / 8;
@@ -139,14 +130,6 @@ public sealed interface BooleanVector extends ColumnVector permits BooleanVector
         @Override
         public boolean valueAt(int physicalRow) {
             return values[physicalRow];
-        }
-
-        @Override
-        public boolean[] asArray() {
-            if (selection() == Selection.ALL) {
-                return values;
-            }
-            return BooleanVector.super.asArray();
         }
 
         @Override

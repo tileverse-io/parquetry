@@ -59,6 +59,7 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.testsupport.VectorArrays;
 
 /**
  * Unit tests for {@link BatchColumnReader}. Fixtures are built in-memory: Thrift compact page headers are written with
@@ -92,7 +93,7 @@ class BatchColumnReaderTest {
         assertThat(validity.cardinality()).isEqualTo(4);
 
         IntVector intVec = (IntVector) vec;
-        assertThat(intVec.asArray()).containsExactly(10, 20, 30, 40);
+        assertThat(VectorArrays.toArray(intVec)).containsExactly(10, 20, 30, 40);
 
         assertThat(reader.hasMore()).isFalse();
     }
@@ -111,7 +112,7 @@ class BatchColumnReaderTest {
         // Ask for 7 rows - should only get 4 (page 1 has only 4)
         ColumnVector vec1 = reader.readBatch(7, new ArrayList<>());
         assertThat(vec1.size()).isEqualTo(4);
-        assertThat(((IntVector) vec1).asArray()).containsExactly(1, 2, 3, 4);
+        assertThat(VectorArrays.toArray(((IntVector) vec1))).containsExactly(1, 2, 3, 4);
 
         // Still has more (page 2 is pending)
         assertThat(reader.hasMore()).isTrue();
@@ -119,7 +120,7 @@ class BatchColumnReaderTest {
         // Ask for 7 again - gets all 6 from page 2
         ColumnVector vec2 = reader.readBatch(7, new ArrayList<>());
         assertThat(vec2.size()).isEqualTo(6);
-        assertThat(((IntVector) vec2).asArray()).containsExactly(5, 6, 7, 8, 9, 10);
+        assertThat(VectorArrays.toArray(((IntVector) vec2))).containsExactly(5, 6, 7, 8, 9, 10);
 
         assertThat(reader.hasMore()).isFalse();
     }
@@ -399,7 +400,7 @@ class BatchColumnReaderTest {
         ColumnVector vec = reader.readBatch(10, new ArrayList<>());
         assertThat(vec).isInstanceOf(IntVector.class);
         assertThat(vec.size()).isEqualTo(5);
-        assertThat(((IntVector) vec).asArray()).containsExactly(100, 200, 300, 200, 100);
+        assertThat(VectorArrays.toArray(((IntVector) vec))).containsExactly(100, 200, 300, 200, 100);
 
         assertThat(reader.hasMore()).isFalse();
     }
@@ -539,7 +540,7 @@ class BatchColumnReaderTest {
 
         IntVector vec = (IntVector) reader.readBatch(rows, new ArrayList<>());
 
-        int[] slots = vec.asArray();
+        int[] slots = VectorArrays.toArray(vec);
         assertThat(slots[100]).as("null slot reads the zero placeholder").isZero();
         assertThat(slots[4000]).as("null slot reads the zero placeholder").isZero();
         assertThat(slots[0]).isEqualTo(1);
@@ -560,7 +561,7 @@ class BatchColumnReaderTest {
 
         DoubleVector vec = (DoubleVector) reader.readBatch(10, new ArrayList<>());
 
-        double[] slots = vec.asArray();
+        double[] slots = VectorArrays.toArray(vec);
         assertThat(slots[0]).isEqualTo(1.5);
         assertThat(slots[1]).isZero();
         assertThat(slots[2]).isZero();
@@ -590,7 +591,7 @@ class BatchColumnReaderTest {
 
         IntVector vec = (IntVector) reader.readBatch(rows, new ArrayList<>());
 
-        assertThat(vec.asArray())
+        assertThat(VectorArrays.toArray(vec))
                 .as("every null slot reads the zero placeholder")
                 .containsOnly(0);
     }

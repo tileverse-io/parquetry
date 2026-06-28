@@ -24,6 +24,8 @@ import java.lang.foreign.MemorySegment;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.testsupport.VectorArrays;
+
 class LongVectorTest {
 
     @Test
@@ -48,7 +50,7 @@ class LongVectorTest {
     void materializedHeapModeStillWorks() {
         LongVector vector = LongVector.materialized(new long[] {4L, 5L}, Validity.allValid(2));
         assertThat(vector.getLong(1)).isEqualTo(5L);
-        assertThat(vector.asArray()).containsExactly(4L, 5L);
+        assertThat(VectorArrays.toArray(vector)).containsExactly(4L, 5L);
     }
 
     @Nested

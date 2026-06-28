@@ -155,32 +155,37 @@ final class ParquetryColumnarEngine implements ColumnarEngine {
     }
 
     private void touchInts(IntVector vector) {
-        for (int value : vector.asArray()) {
-            sink += value;
+        int size = vector.size();
+        for (int row = 0; row < size; row++) {
+            sink += vector.valueAt(row);
         }
     }
 
     private void touchLongs(LongVector vector) {
-        for (long value : vector.asArray()) {
-            sink += value;
+        int size = vector.size();
+        for (int row = 0; row < size; row++) {
+            sink += vector.valueAt(row);
         }
     }
 
     private void touchFloats(FloatVector vector) {
-        for (float value : vector.asArray()) {
-            sink += (long) value;
+        int size = vector.size();
+        for (int row = 0; row < size; row++) {
+            sink += (long) vector.valueAt(row);
         }
     }
 
     private void touchDoubles(DoubleVector vector) {
-        for (double value : vector.asArray()) {
-            sink += (long) value;
+        int size = vector.size();
+        for (int row = 0; row < size; row++) {
+            sink += (long) vector.valueAt(row);
         }
     }
 
     private void touchBooleans(BooleanVector vector) {
-        for (boolean value : vector.asArray()) {
-            sink += value ? 1L : 0L;
+        int size = vector.size();
+        for (int row = 0; row < size; row++) {
+            sink += vector.valueAt(row) ? 1L : 0L;
         }
     }
 

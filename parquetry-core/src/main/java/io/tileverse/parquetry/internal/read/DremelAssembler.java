@@ -776,49 +776,44 @@ final class DremelAssembler {
         record OffsetGather(int[] offsets, int[] childIndices) {}
 
         // Compaction keeps a value for every kept index, null rows included; the gathered validity preserves the
-        // null mask. Read the backing array directly to keep the parked value for kept null rows instead of failing
-        // fast.
+        // null mask. Read the backing directly via valueAt to keep the parked value for kept null rows instead of
+        // failing fast.
         private static int[] gatherInts(IntVector v, int[] keptIndices) {
-            int[] values = v.asArray();
             int[] out = new int[keptIndices.length];
             for (int i = 0; i < keptIndices.length; i++) {
-                out[i] = values[keptIndices[i]];
+                out[i] = v.valueAt(keptIndices[i]);
             }
             return out;
         }
 
         private static long[] gatherLongs(LongVector v, int[] keptIndices) {
-            long[] values = v.asArray();
             long[] out = new long[keptIndices.length];
             for (int i = 0; i < keptIndices.length; i++) {
-                out[i] = values[keptIndices[i]];
+                out[i] = v.valueAt(keptIndices[i]);
             }
             return out;
         }
 
         private static float[] gatherFloats(FloatVector v, int[] keptIndices) {
-            float[] values = v.asArray();
             float[] out = new float[keptIndices.length];
             for (int i = 0; i < keptIndices.length; i++) {
-                out[i] = values[keptIndices[i]];
+                out[i] = v.valueAt(keptIndices[i]);
             }
             return out;
         }
 
         private static double[] gatherDoubles(DoubleVector v, int[] keptIndices) {
-            double[] values = v.asArray();
             double[] out = new double[keptIndices.length];
             for (int i = 0; i < keptIndices.length; i++) {
-                out[i] = values[keptIndices[i]];
+                out[i] = v.valueAt(keptIndices[i]);
             }
             return out;
         }
 
         private static boolean[] gatherBooleans(BooleanVector v, int[] keptIndices) {
-            boolean[] values = v.asArray();
             boolean[] out = new boolean[keptIndices.length];
             for (int i = 0; i < keptIndices.length; i++) {
-                out[i] = values[keptIndices[i]];
+                out[i] = v.valueAt(keptIndices[i]);
             }
             return out;
         }

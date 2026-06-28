@@ -37,6 +37,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.testsupport.VectorArrays;
 
 class BatchSpillStoreTest {
 
@@ -54,7 +55,7 @@ class BatchSpillStoreTest {
             try (ParquetRecordBatch restored = store.restore(handle.get())) {
                 assertThat(restored.rowCount()).isEqualTo(3);
                 IntVector restoredColumn = (IntVector) restored.columns().get(ColumnPath.of("n"));
-                assertThat(restoredColumn.asArray()).containsExactly(7, 8, 9);
+                assertThat(VectorArrays.toArray(restoredColumn)).containsExactly(7, 8, 9);
             }
             assertThat(diskBudget.available()).isEqualTo(diskBudget.capacity());
         }

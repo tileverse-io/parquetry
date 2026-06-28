@@ -24,6 +24,8 @@ import java.lang.foreign.ValueLayout;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.testsupport.VectorArrays;
+
 class BooleanVectorTest {
 
     @Test
@@ -39,7 +41,7 @@ class BooleanVectorTest {
             assertThat(vector.getBoolean(2)).isTrue();
             assertThat(vector.getBoolean(3)).isTrue();
             assertThat(vector.getBoolean(4)).isFalse();
-            assertThat(vector.asArray()).containsExactly(true, false, true, true, false);
+            assertThat(VectorArrays.toArray(vector)).containsExactly(true, false, true, true, false);
             assertThat(vector.approximateHeapBytes())
                     .as("off-heap bitmap is not counted as heap")
                     .isEqualTo(vector.validity().heapBytes());
@@ -50,7 +52,7 @@ class BooleanVectorTest {
     void materializedHeapModeStillWorks() {
         BooleanVector vector = BooleanVector.materialized(new boolean[] {true, false}, Validity.allValid(2));
         assertThat(vector.getBoolean(0)).isTrue();
-        assertThat(vector.asArray()).containsExactly(true, false);
+        assertThat(VectorArrays.toArray(vector)).containsExactly(true, false);
     }
 
     @Nested

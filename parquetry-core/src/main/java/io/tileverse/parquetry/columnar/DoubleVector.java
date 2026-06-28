@@ -83,28 +83,11 @@ public sealed interface DoubleVector extends ColumnVector permits DoubleVector.H
         return validity().isNull(row) ? null : (T) Double.valueOf(getDouble(row));
     }
 
-    default double[] asArray() {
-        Selection selection = selection();
-        if (selection == Selection.ALL) {
-            return contiguousArray();
-        }
-        int n = size();
-        double[] out = new double[n];
-        for (int row = 0; row < n; row++) {
-            out[row] = valueAt(selection.physical(row));
-        }
-        return out;
-    }
-
-    /** The backing as a {@code double[]}, copying only when the backing is not already a heap array. */
-    double[] contiguousArray();
-
     /**
      * Copies {@code count} values starting at logical row {@code from} into {@code target} at byte
      * {@code targetOffset}, in little-endian Arrow layout. Lets a bulk consumer reuse one target instead of allocating
-     * via {@link #asArray()}. An unselected vector copies a contiguous run; a selected view scatters its survivors into
-     * the contiguous destination. Values at null rows are copied as stored; the caller applies validity separately, as
-     * with {@code asArray}.
+     * a fresh array. An unselected vector copies a contiguous run; a selected view scatters its survivors into the
+     * contiguous destination. Values at null rows are copied as stored; the caller applies validity separately.
      */
     default void copyInto(MemorySegment target, long targetOffset, int from, int count) {
         Selection selection = selection();
@@ -149,11 +132,6 @@ public sealed interface DoubleVector extends ColumnVector permits DoubleVector.H
         @Override
         public double valueAt(int physicalRow) {
             return values[physicalRow];
-        }
-
-        @Override
-        public double[] contiguousArray() {
-            return values;
         }
 
         @Override
@@ -203,13 +181,6 @@ public sealed interface DoubleVector extends ColumnVector permits DoubleVector.H
         @Override
         public double valueAt(int physicalRow) {
             return segmentValues.getAtIndex(DOUBLE, physicalRow);
-        }
-
-        @Override
-        public double[] contiguousArray() {
-            double[] out = new double[baseSize()];
-            MemorySegment.copy(segmentValues, DOUBLE, 0L, out, 0, out.length);
-            return out;
         }
 
         @Override

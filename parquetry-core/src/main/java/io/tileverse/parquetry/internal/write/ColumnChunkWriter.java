@@ -376,10 +376,9 @@ public final class ColumnChunkWriter implements AutoCloseable {
 
     private void appendIntVectorCells(
             io.tileverse.parquetry.columnar.IntVector vector, Validity validity, int size, int defLevelForValue) {
-        int[] values = vector.asArray();
         for (int i = 0; i < size; i++) {
             if (validity.isValid(i)) {
-                appendInt(values[i], 0, defLevelForValue);
+                appendInt(vector.valueAt(i), 0, defLevelForValue);
             } else {
                 appendNull(0, 0);
             }
@@ -388,10 +387,9 @@ public final class ColumnChunkWriter implements AutoCloseable {
 
     private void appendLongVectorCells(
             io.tileverse.parquetry.columnar.LongVector vector, Validity validity, int size, int defLevelForValue) {
-        long[] values = vector.asArray();
         for (int i = 0; i < size; i++) {
             if (validity.isValid(i)) {
-                appendLong(values[i], 0, defLevelForValue);
+                appendLong(vector.valueAt(i), 0, defLevelForValue);
             } else {
                 appendNull(0, 0);
             }
@@ -400,10 +398,9 @@ public final class ColumnChunkWriter implements AutoCloseable {
 
     private void appendFloatVectorCells(
             io.tileverse.parquetry.columnar.FloatVector vector, Validity validity, int size, int defLevelForValue) {
-        float[] values = vector.asArray();
         for (int i = 0; i < size; i++) {
             if (validity.isValid(i)) {
-                appendFloat(values[i], 0, defLevelForValue);
+                appendFloat(vector.valueAt(i), 0, defLevelForValue);
             } else {
                 appendNull(0, 0);
             }
@@ -412,10 +409,9 @@ public final class ColumnChunkWriter implements AutoCloseable {
 
     private void appendDoubleVectorCells(
             io.tileverse.parquetry.columnar.DoubleVector vector, Validity validity, int size, int defLevelForValue) {
-        double[] values = vector.asArray();
         for (int i = 0; i < size; i++) {
             if (validity.isValid(i)) {
-                appendDouble(values[i], 0, defLevelForValue);
+                appendDouble(vector.valueAt(i), 0, defLevelForValue);
             } else {
                 appendNull(0, 0);
             }
@@ -424,10 +420,9 @@ public final class ColumnChunkWriter implements AutoCloseable {
 
     private void appendBooleanVectorCells(
             io.tileverse.parquetry.columnar.BooleanVector vector, Validity validity, int size, int defLevelForValue) {
-        boolean[] values = vector.asArray();
         for (int i = 0; i < size; i++) {
             if (validity.isValid(i)) {
-                appendBoolean(values[i], 0, defLevelForValue);
+                appendBoolean(vector.valueAt(i), 0, defLevelForValue);
             } else {
                 appendNull(0, 0);
             }

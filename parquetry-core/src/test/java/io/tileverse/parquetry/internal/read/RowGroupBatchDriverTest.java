@@ -46,6 +46,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.testsupport.VectorArrays;
 
 /** Unit tests for {@link ClassicRowGroupDriver}, the standard per-row-group streaming path. */
 class RowGroupBatchDriverTest {
@@ -71,7 +72,7 @@ class RowGroupBatchDriverTest {
             while (driver.hasMore()) {
                 try (ParquetRecordBatch batch = driver.nextBatch()) {
                     IntVector vec = (IntVector) batch.columns().get(PATH_A);
-                    decoded.add(vec.asArray());
+                    decoded.add(VectorArrays.toArray(vec));
                 }
             }
         }

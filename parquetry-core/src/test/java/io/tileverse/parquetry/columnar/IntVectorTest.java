@@ -26,6 +26,8 @@ import java.util.BitSet;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.testsupport.VectorArrays;
+
 class IntVectorTest {
 
     @Test
@@ -50,7 +52,7 @@ class IntVectorTest {
     void materializedHeapModeStillWorks() {
         IntVector vector = IntVector.materialized(new int[] {4, 5}, Validity.allValid(2));
         assertThat(vector.getInt(1)).isEqualTo(5);
-        assertThat(vector.asArray()).containsExactly(4, 5);
+        assertThat(VectorArrays.toArray(vector)).containsExactly(4, 5);
     }
 
     @Test
@@ -160,7 +162,7 @@ class IntVectorTest {
         void selectedAsArrayGathersSurvivors() {
             IntVector vec = IntVector.materialized(new int[] {10, 20, 30, 40, 50}, Validity.allValid(5));
             IntVector selected = (IntVector) vec.select(Selection.bits(survivors(0, 2, 4)));
-            assertThat(selected.asArray()).containsExactly(10, 30, 50);
+            assertThat(VectorArrays.toArray(selected)).containsExactly(10, 30, 50);
         }
 
         @Test

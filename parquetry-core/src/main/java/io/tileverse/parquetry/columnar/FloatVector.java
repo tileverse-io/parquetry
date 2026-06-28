@@ -83,28 +83,11 @@ public sealed interface FloatVector extends ColumnVector permits FloatVector.Hea
         return validity().isNull(row) ? null : (T) Float.valueOf(getFloat(row));
     }
 
-    default float[] asArray() {
-        Selection selection = selection();
-        if (selection == Selection.ALL) {
-            return contiguousArray();
-        }
-        int n = size();
-        float[] out = new float[n];
-        for (int row = 0; row < n; row++) {
-            out[row] = valueAt(selection.physical(row));
-        }
-        return out;
-    }
-
-    /** The backing as a {@code float[]}, copying only when the backing is not already a heap array. */
-    float[] contiguousArray();
-
     /**
      * Copies {@code count} values starting at logical row {@code from} into {@code target} at byte
      * {@code targetOffset}, in little-endian Arrow layout. Lets a bulk consumer reuse one target instead of allocating
-     * via {@link #asArray()}. An unselected vector copies a contiguous run; a selected view scatters its survivors into
-     * the contiguous destination. Values at null rows are copied as stored; the caller applies validity separately, as
-     * with {@code asArray}.
+     * a fresh array. An unselected vector copies a contiguous run; a selected view scatters its survivors into the
+     * contiguous destination. Values at null rows are copied as stored; the caller applies validity separately.
      */
     default void copyInto(MemorySegment target, long targetOffset, int from, int count) {
         Selection selection = selection();
@@ -149,11 +132,6 @@ public sealed interface FloatVector extends ColumnVector permits FloatVector.Hea
         @Override
         public float valueAt(int physicalRow) {
             return values[physicalRow];
-        }
-
-        @Override
-        public float[] contiguousArray() {
-            return values;
         }
 
         @Override
@@ -203,13 +181,6 @@ public sealed interface FloatVector extends ColumnVector permits FloatVector.Hea
         @Override
         public float valueAt(int physicalRow) {
             return segmentValues.getAtIndex(FLOAT, physicalRow);
-        }
-
-        @Override
-        public float[] contiguousArray() {
-            float[] out = new float[baseSize()];
-            MemorySegment.copy(segmentValues, FLOAT, 0L, out, 0, out.length);
-            return out;
         }
 
         @Override
