@@ -38,6 +38,7 @@ import io.tileverse.parquetry.columnar.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.columnar.IntVector;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.columnar.Validity;
+import io.tileverse.parquetry.observe.SpillAccumulator;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -169,7 +170,7 @@ class BatchHandoffTest {
         ParquetSchema schema = singleIntColumnSchema("n");
         DiskBudget diskBudget = DiskBudget.ofBytes(1 << 20);
 
-        try (BatchSpillStore store = new BatchSpillStore(dir, diskBudget, schema)) {
+        try (BatchSpillStore store = new BatchSpillStore(dir, diskBudget, schema, SpillAccumulator.NONE)) {
             ParquetRecordBatch inHeap = intBatch(schema, "n", new int[] {1, 2});
             SpillHandle handle =
                     store.trySpill(intBatch(schema, "n", new int[] {3, 4, 5})).orElseThrow();
@@ -196,7 +197,7 @@ class BatchHandoffTest {
     void closeDiscardsQueuedItemsOfBothKinds(@TempDir Path dir) throws InterruptedException {
         ParquetSchema schema = singleIntColumnSchema("n");
         DiskBudget diskBudget = DiskBudget.ofBytes(1 << 20);
-        try (BatchSpillStore store = new BatchSpillStore(dir, diskBudget, schema)) {
+        try (BatchSpillStore store = new BatchSpillStore(dir, diskBudget, schema, SpillAccumulator.NONE)) {
             SpillHandle handle =
                     store.trySpill(intBatch(schema, "n", new int[] {3, 4, 5})).orElseThrow();
             long afterSpill = diskBudget.available();

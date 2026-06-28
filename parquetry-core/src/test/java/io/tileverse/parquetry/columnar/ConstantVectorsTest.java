@@ -22,6 +22,7 @@ import java.time.LocalDate;
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.filter.Value;
+import io.tileverse.parquetry.testsupport.VectorArrays;
 
 class ConstantVectorsTest {
 
@@ -30,14 +31,14 @@ class ConstantVectorsTest {
         ColumnVector vector = ConstantVectors.of(new Value.IntVal(2024), 3);
         assertThat(vector).isInstanceOf(IntVector.class);
         assertThat(vector.size()).isEqualTo(3);
-        assertThat(((IntVector) vector).asArray()).containsExactly(2024, 2024, 2024);
+        assertThat(VectorArrays.toArray(((IntVector) vector))).containsExactly(2024, 2024, 2024);
     }
 
     @Test
     void fillsLongConstant() {
         ColumnVector vector = ConstantVectors.of(new Value.LongVal(9000000000L), 2);
         assertThat(vector).isInstanceOf(LongVector.class);
-        assertThat(((LongVector) vector).asArray()).containsExactly(9000000000L, 9000000000L);
+        assertThat(VectorArrays.toArray(((LongVector) vector))).containsExactly(9000000000L, 9000000000L);
     }
 
     @Test
@@ -45,7 +46,7 @@ class ConstantVectorsTest {
         ColumnVector vector = ConstantVectors.of(new Value.FloatVal(1.5f), 2);
         assertThat(vector).isInstanceOf(FloatVector.class);
         assertThat(vector.size()).isEqualTo(2);
-        assertThat(((FloatVector) vector).asArray()).containsExactly(1.5f, 1.5f);
+        assertThat(VectorArrays.toArray(((FloatVector) vector))).containsExactly(1.5f, 1.5f);
     }
 
     @Test
@@ -53,7 +54,7 @@ class ConstantVectorsTest {
         ColumnVector vector = ConstantVectors.of(new Value.DateVal(LocalDate.parse("2024-01-15")), 2);
         assertThat(vector).isInstanceOf(IntVector.class);
         int epochDay = (int) LocalDate.parse("2024-01-15").toEpochDay();
-        assertThat(((IntVector) vector).asArray()).containsExactly(epochDay, epochDay);
+        assertThat(VectorArrays.toArray(((IntVector) vector))).containsExactly(epochDay, epochDay);
     }
 
     @Test

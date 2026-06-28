@@ -16,6 +16,9 @@
 package io.tileverse.parquetry.probes;
 
 import java.nio.file.Path;
+import java.util.Optional;
+
+import io.tileverse.parquetry.observe.QueryStats;
 
 /**
  * One engine's columnar full-scan arm: read the file column-major and touch every leaf value without assembling
@@ -39,12 +42,20 @@ interface ColumnarEngine extends AutoCloseable {
         return 0L;
     }
 
+    /**
+     * The aggregated {@link QueryStats} when running under {@code --analyze}; empty otherwise and for non-parquetry
+     * engines.
+     */
+    default Optional<QueryStats> analyzeStats() {
+        return Optional.empty();
+    }
+
     @Override
     default void close() {}
 
-    static ColumnarEngine of(String name, Path file) {
+    static ColumnarEngine of(String name, Path file, boolean analyze) {
         return switch (name) {
-            case "parquetry" -> new ParquetryColumnarEngine(file);
+            case "parquetry" -> new ParquetryColumnarEngine(file, analyze);
             case "parquet-java" -> new ParquetJavaColumnarEngine(file);
             case "duckdb" -> new DuckDbColumnarEngine(file);
             default -> throw new IllegalArgumentException("unknown engine: " + name);

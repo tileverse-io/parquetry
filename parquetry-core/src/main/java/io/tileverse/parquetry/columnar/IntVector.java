@@ -21,119 +21,182 @@ import java.lang.foreign.MemorySegment;
 
 import lombok.NonNull;
 
-public final class IntVector implements ColumnVector {
+/**
+ * A column of {@code INT32} values, backed either by a heap {@code int[]} ({@link Heap}) or by an off-heap
+ * little-endian {@link MemorySegment} ({@link Segment}). The backing is chosen at construction and reached only through
+ * the two implementations, which keeps the read accessors free of a per-row backing check. Selection, validity, and the
+ * logical-to-physical translation are centralized in this interface; each implementation contributes only its backing
+ * read ({@link #valueAt(int)}) and its contiguous bulk copy.
+ */
+public sealed interface IntVector extends ColumnVector permits IntVector.Heap, IntVector.Segment {
 
-    private final int[] values;
-    private final MemorySegment segmentValues;
-    private final Validity validity;
-    private final Selection selection;
-
-    private IntVector(
-            int[] values, MemorySegment segmentValues, @NonNull Validity validity, @NonNull Selection selection) {
-        this.values = values;
-        this.segmentValues = segmentValues;
-        this.validity = validity;
-        this.selection = selection;
+    /** A vector over heap-resident values, as produced by the assembly compaction lane and the Arrow packer. */
+    static IntVector materialized(@NonNull int[] values, @NonNull Validity validity) {
+        return new Heap(values, validity, Selection.ALL);
     }
 
-    public static IntVector materialized(@NonNull int[] values, @NonNull Validity validity) {
-        return new IntVector(values, null, validity, Selection.ALL);
+    /** A vector that reads from an off-heap little-endian segment; the segment's owner controls its lifetime. */
+    static IntVector segmentBacked(@NonNull MemorySegment segmentValues, @NonNull Validity validity) {
+        return new Segment(segmentValues, validity, Selection.ALL);
     }
 
-    /** Reads values from an off-heap little-endian segment; the segment's owner controls its lifetime. */
-    public static IntVector segmentBacked(@NonNull MemorySegment segmentValues, @NonNull Validity validity) {
-        return new IntVector(null, segmentValues, validity, Selection.ALL);
-    }
+    /**
+     * The stored value at backing index {@code physicalRow} WITHOUT consulting validity: a null row reads back its
+     * parked placeholder (the decode contract fills null slots deterministically). The index is physical, not logical;
+     * a caller on a selected view translates first via {@link #getInt(int)} or {@link #copyInto}.
+     */
+    int valueAt(int physicalRow);
+
+    /** Copies {@code count} backing values from {@code fromPhysical} into {@code target} at {@code targetOffset}. */
+    void copyContiguous(MemorySegment target, long targetOffset, int fromPhysical, int count);
+
+    /** This vector's backing exposed through {@code selection}; {@link Selection#ALL} returns it unchanged. */
+    IntVector withSelection(Selection selection);
 
     @Override
-    public Selection selection() {
-        return selection;
+    default ColumnVector select(Selection selection) {
+        if (selection == Selection.ALL) {
+            return this;
+        }
+        return withSelection(selection);
     }
 
-    @Override
-    public int baseSize() {
-        return segmentValues != null ? (int) (segmentValues.byteSize() / Integer.BYTES) : values.length;
-    }
-
-    @Override
-    public Validity validity() {
-        return validity;
+    private int physical(int row) {
+        Selection selection = selection();
+        return selection == Selection.ALL ? row : selection.physical(row);
     }
 
     /**
      * Returns the value at logical row {@code row}; throws {@link IllegalStateException} when the row is null. Guard
      * with {@link #isNull(int)} / {@link #hasNulls()}, or use {@link #get(int)} for a null-aware boxed read.
-     * Sequential-access optimized on a selected view.
      */
-    public int getInt(int row) {
-        if (validity.isNull(row)) {
+    default int getInt(int row) {
+        if (validity().isNull(row)) {
             throw new IllegalStateException("row %d is null; guard with isNull(row) or hasNulls()".formatted(row));
         }
-        int physical = selection == Selection.ALL ? row : selection.physical(row);
-        return segmentValues != null ? segmentValues.getAtIndex(INT32, physical) : values[physical];
+        return valueAt(physical(row));
     }
 
     @Override
     @SuppressWarnings("unchecked")
-    public <T> T get(int row) {
-        return validity.isNull(row) ? null : (T) Integer.valueOf(getInt(row));
-    }
-
-    public int[] asArray() {
-        if (selection == Selection.ALL) {
-            if (segmentValues == null) {
-                return values;
-            }
-            int[] out = new int[baseSize()];
-            MemorySegment.copy(segmentValues, INT32, 0L, out, 0, out.length);
-            return out;
-        }
-        int n = size();
-        int[] out = new int[n];
-        for (int row = 0; row < n; row++) {
-            int physical = selection.physical(row);
-            out[row] = segmentValues != null ? segmentValues.getAtIndex(INT32, physical) : values[physical];
-        }
-        return out;
+    default <T> T get(int row) {
+        return validity().isNull(row) ? null : (T) Integer.valueOf(getInt(row));
     }
 
     /**
      * Copies {@code count} values starting at logical row {@code from} into {@code target} at byte
      * {@code targetOffset}, in little-endian Arrow layout. Lets a bulk consumer reuse one target instead of allocating
-     * via {@link #asArray()}. An unselected vector copies a contiguous run; a selected view scatters its survivors into
-     * the contiguous destination. Values at null rows are copied as stored; the caller applies validity separately, as
-     * with {@code asArray}.
+     * a fresh array. An unselected vector copies a contiguous run; a selected view scatters its survivors into the
+     * contiguous destination. Values at null rows are copied as stored; the caller applies validity separately.
      */
-    public void copyInto(MemorySegment target, long targetOffset, int from, int count) {
+    default void copyInto(MemorySegment target, long targetOffset, int from, int count) {
+        Selection selection = selection();
         if (selection == Selection.ALL) {
-            if (segmentValues != null) {
-                MemorySegment.copy(
-                        segmentValues, INT32, (long) from * Integer.BYTES, target, INT32, targetOffset, count);
-            } else {
-                MemorySegment.copy(values, from, target, INT32, targetOffset, count);
-            }
+            copyContiguous(target, targetOffset, from, count);
             return;
         }
         for (int i = 0; i < count; i++) {
-            int physical = selection.physical(from + i);
-            int value = segmentValues != null ? segmentValues.getAtIndex(INT32, physical) : values[physical];
+            int value = valueAt(selection.physical(from + i));
             target.set(INT32, targetOffset + (long) i * Integer.BYTES, value);
         }
     }
 
-    @Override
-    public ColumnVector select(Selection selection) {
-        if (selection == Selection.ALL) {
-            return this;
+    /** Values held in a heap {@code int[]}. */
+    final class Heap implements IntVector {
+
+        private final int[] values;
+        private final Validity validity;
+        private final Selection selection;
+
+        private Heap(int[] values, @NonNull Validity validity, @NonNull Selection selection) {
+            this.values = values;
+            this.validity = validity;
+            this.selection = selection;
         }
-        return new IntVector(values, segmentValues, validity.select(selection), selection);
+
+        @Override
+        public Selection selection() {
+            return selection;
+        }
+
+        @Override
+        public int baseSize() {
+            return values.length;
+        }
+
+        @Override
+        public Validity validity() {
+            return validity;
+        }
+
+        @Override
+        public int valueAt(int physicalRow) {
+            return values[physicalRow];
+        }
+
+        @Override
+        public void copyContiguous(MemorySegment target, long targetOffset, int fromPhysical, int count) {
+            MemorySegment.copy(values, fromPhysical, target, INT32, targetOffset, count);
+        }
+
+        @Override
+        public IntVector withSelection(Selection selection) {
+            return new Heap(values, validity.select(selection), selection);
+        }
+
+        @Override
+        public long approximateHeapBytes() {
+            return (long) values.length * Integer.BYTES + validity.heapBytes();
+        }
     }
 
-    @Override
-    public long approximateHeapBytes() {
-        if (segmentValues != null) {
+    /** Values read from an off-heap little-endian segment. */
+    final class Segment implements IntVector {
+
+        private final MemorySegment segmentValues;
+        private final Validity validity;
+        private final Selection selection;
+
+        private Segment(MemorySegment segmentValues, @NonNull Validity validity, @NonNull Selection selection) {
+            this.segmentValues = segmentValues;
+            this.validity = validity;
+            this.selection = selection;
+        }
+
+        @Override
+        public Selection selection() {
+            return selection;
+        }
+
+        @Override
+        public int baseSize() {
+            return (int) (segmentValues.byteSize() / Integer.BYTES);
+        }
+
+        @Override
+        public Validity validity() {
+            return validity;
+        }
+
+        @Override
+        public int valueAt(int physicalRow) {
+            return segmentValues.getAtIndex(INT32, physicalRow);
+        }
+
+        @Override
+        public void copyContiguous(MemorySegment target, long targetOffset, int fromPhysical, int count) {
+            MemorySegment.copy(
+                    segmentValues, INT32, (long) fromPhysical * Integer.BYTES, target, INT32, targetOffset, count);
+        }
+
+        @Override
+        public IntVector withSelection(Selection selection) {
+            return new Segment(segmentValues, validity.select(selection), selection);
+        }
+
+        @Override
+        public long approximateHeapBytes() {
             return validity.heapBytes();
         }
-        return (long) values.length * Integer.BYTES + validity.heapBytes();
     }
 }

@@ -24,6 +24,8 @@ import java.lang.foreign.MemorySegment;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.testsupport.VectorArrays;
+
 class FloatVectorTest {
 
     @Test
@@ -48,7 +50,7 @@ class FloatVectorTest {
     void materializedHeapModeStillWorks() {
         FloatVector vector = FloatVector.materialized(new float[] {4f, 5f}, Validity.allValid(2));
         assertThat(vector.getFloat(1)).isEqualTo(5f);
-        assertThat(vector.asArray()).containsExactly(4f, 5f);
+        assertThat(VectorArrays.toArray(vector)).containsExactly(4f, 5f);
     }
 
     @Nested

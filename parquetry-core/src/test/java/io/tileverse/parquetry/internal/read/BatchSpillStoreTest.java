@@ -32,11 +32,14 @@ import io.tileverse.parquetry.columnar.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.columnar.IntVector;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.columnar.Validity;
+import io.tileverse.parquetry.observe.SpillAccumulator;
+import io.tileverse.parquetry.observe.SpillStats;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.testsupport.VectorArrays;
 
 class BatchSpillStoreTest {
 
@@ -45,18 +48,27 @@ class BatchSpillStoreTest {
         ParquetSchema schema = singleIntColumnSchema("n");
         ParquetRecordBatch original = intBatch(schema, "n", new int[] {7, 8, 9});
         DiskBudget diskBudget = DiskBudget.ofBytes(1 << 20);
+        SpillAccumulator spillAccumulator = SpillAccumulator.active();
 
-        try (BatchSpillStore store = new BatchSpillStore(dir, diskBudget, schema)) {
+        try (BatchSpillStore store = new BatchSpillStore(dir, diskBudget, schema, spillAccumulator)) {
             Optional<SpillHandle> handle = store.trySpill(original);
             assertThat(handle).isPresent();
             assertThat(diskBudget.available()).isLessThan(diskBudget.capacity());
 
+            SpillStats afterSpill = spillAccumulator.snapshot();
+            assertThat(afterSpill.batchesSpilled()).isEqualTo(1);
+            assertThat(afterSpill.bytesSpilled()).isEqualTo(handle.get().length());
+            assertThat(afterSpill.spillsRejectedDiskFull()).isZero();
+            assertThat(afterSpill.batchesRestored()).isZero();
+
             try (ParquetRecordBatch restored = store.restore(handle.get())) {
                 assertThat(restored.rowCount()).isEqualTo(3);
                 IntVector restoredColumn = (IntVector) restored.columns().get(ColumnPath.of("n"));
-                assertThat(restoredColumn.asArray()).containsExactly(7, 8, 9);
+                assertThat(VectorArrays.toArray(restoredColumn)).containsExactly(7, 8, 9);
             }
             assertThat(diskBudget.available()).isEqualTo(diskBudget.capacity());
+
+            assertThat(spillAccumulator.snapshot().batchesRestored()).isEqualTo(1);
         }
     }
 
@@ -65,9 +77,13 @@ class BatchSpillStoreTest {
         ParquetSchema schema = singleIntColumnSchema("n");
         ParquetRecordBatch batch = intBatch(schema, "n", new int[] {1, 2, 3});
         DiskBudget tinyBudget = DiskBudget.ofBytes(1);
+        SpillAccumulator spillAccumulator = SpillAccumulator.active();
 
-        try (BatchSpillStore store = new BatchSpillStore(dir, tinyBudget, schema)) {
+        try (BatchSpillStore store = new BatchSpillStore(dir, tinyBudget, schema, spillAccumulator)) {
             assertThat(store.trySpill(batch)).isEmpty();
+            SpillStats stats = spillAccumulator.snapshot();
+            assertThat(stats.spillsRejectedDiskFull()).isEqualTo(1);
+            assertThat(stats.batchesSpilled()).isZero();
         } finally {
             batch.close();
         }

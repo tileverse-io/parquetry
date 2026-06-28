@@ -17,6 +17,7 @@ package io.tileverse.parquetry.probes;
 
 import java.lang.foreign.MemorySegment;
 import java.nio.file.Path;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -43,6 +44,7 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.observe.QueryStats;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
@@ -54,12 +56,24 @@ import io.tileverse.parquetry.schema.ColumnPath;
 final class ParquetryColumnarEngine implements ColumnarEngine {
 
     private final Path file;
+    private final ProbeQueryObserver analyzeObserver;
+    private final ReadOptions readOptions;
     private ByteRangeSource source;
     private ParquetFileReader reader;
     private long sink;
 
     ParquetryColumnarEngine(Path file) {
+        this(file, false);
+    }
+
+    ParquetryColumnarEngine(Path file, boolean analyze) {
         this.file = file;
+        this.analyzeObserver = analyze ? new ProbeQueryObserver() : null;
+        this.readOptions = analyze
+                ? ReadOptions.DEFAULTS.toBuilder()
+                        .queryObserver(analyzeObserver)
+                        .build()
+                : ReadOptions.DEFAULTS;
     }
 
     @Override
@@ -78,7 +92,7 @@ final class ParquetryColumnarEngine implements ColumnarEngine {
     @Override
     public long scan() {
         try (Stream<ParquetRecordBatch> batches =
-                reader().readBatches(Predicate.ALWAYS_TRUE, projection(), ReadOptions.DEFAULTS)) {
+                reader().readBatches(Predicate.ALWAYS_TRUE, projection(), readOptions)) {
             long rows = 0L;
             for (ParquetRecordBatch batch : (Iterable<ParquetRecordBatch>) batches::iterator) {
                 try (batch) {
@@ -93,6 +107,11 @@ final class ParquetryColumnarEngine implements ColumnarEngine {
     @Override
     public long checksum() {
         return sink;
+    }
+
+    @Override
+    public Optional<QueryStats> analyzeStats() {
+        return analyzeObserver == null ? Optional.empty() : analyzeObserver.snapshot();
     }
 
     @Override
@@ -155,32 +174,37 @@ final class ParquetryColumnarEngine implements ColumnarEngine {
     }
 
     private void touchInts(IntVector vector) {
-        for (int value : vector.asArray()) {
-            sink += value;
+        int size = vector.size();
+        for (int row = 0; row < size; row++) {
+            sink += vector.valueAt(row);
         }
     }
 
     private void touchLongs(LongVector vector) {
-        for (long value : vector.asArray()) {
-            sink += value;
+        int size = vector.size();
+        for (int row = 0; row < size; row++) {
+            sink += vector.valueAt(row);
         }
     }
 
     private void touchFloats(FloatVector vector) {
-        for (float value : vector.asArray()) {
-            sink += (long) value;
+        int size = vector.size();
+        for (int row = 0; row < size; row++) {
+            sink += (long) vector.valueAt(row);
         }
     }
 
     private void touchDoubles(DoubleVector vector) {
-        for (double value : vector.asArray()) {
-            sink += (long) value;
+        int size = vector.size();
+        for (int row = 0; row < size; row++) {
+            sink += (long) vector.valueAt(row);
         }
     }
 
     private void touchBooleans(BooleanVector vector) {
-        for (boolean value : vector.asArray()) {
-            sink += value ? 1L : 0L;
+        int size = vector.size();
+        for (int row = 0; row < size; row++) {
+            sink += vector.valueAt(row) ? 1L : 0L;
         }
     }
 

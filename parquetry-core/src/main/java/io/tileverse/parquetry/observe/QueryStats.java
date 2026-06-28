@@ -35,6 +35,7 @@ public record QueryStats(
         long pagesDecoded,
         long pagesPruned,
         FetchStats totalFetch,
+        SpillStats spillStats,
         Optional<PhaseTimings> cpuTimings) {
 
     public QueryStats {
@@ -57,6 +58,27 @@ public record QueryStats(
                 pagesDecoded,
                 pagesPruned,
                 totalFetch,
+                spillStats,
+                cpuTimings);
+    }
+
+    /**
+     * A copy with {@code spillStats} replaced and every other field preserved. The observed read paths use this to fold
+     * the decode-time spill tally - measured by the {@link SpillAccumulator}, not by an observer event - into the stats
+     * right before delivering them.
+     */
+    public QueryStats withSpillStats(SpillStats spillStats) {
+        return new QueryStats(
+                wallClockNanos,
+                rowsDecoded,
+                rowsMatched,
+                rowGroupsEliminatedByTier,
+                rowGroupsRead,
+                rowGroupsTotal,
+                pagesDecoded,
+                pagesPruned,
+                totalFetch,
+                spillStats,
                 cpuTimings);
     }
 
@@ -75,6 +97,7 @@ public record QueryStats(
                 pagesDecoded,
                 pagesPruned,
                 totalFetch,
+                spillStats,
                 cpuTimings);
     }
 
@@ -89,6 +112,7 @@ public record QueryStats(
                 pagesDecoded + other.pagesDecoded,
                 pagesPruned + other.pagesPruned,
                 totalFetch.combine(other.totalFetch),
+                spillStats.combine(other.spillStats),
                 combineTimings(other.cpuTimings));
     }
 

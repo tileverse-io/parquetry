@@ -37,6 +37,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.testsupport.VectorArrays;
 
 /**
  * Unit tests for LIST and MAP authoring in {@link ParquetRecordBatchBuilder}.
@@ -71,7 +72,7 @@ class ListMapBuilderTest {
 
         IntVector elements = (IntVector) listVec.child();
         assertThat(elements.size()).isEqualTo(3);
-        assertThat(elements.asArray()).containsExactly(10, 20, 30);
+        assertThat(VectorArrays.toArray(elements)).containsExactly(10, 20, 30);
     }
 
     /**

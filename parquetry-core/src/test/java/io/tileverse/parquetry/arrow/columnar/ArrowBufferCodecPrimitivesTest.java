@@ -28,6 +28,7 @@ import io.tileverse.parquetry.columnar.FloatVector;
 import io.tileverse.parquetry.columnar.IntVector;
 import io.tileverse.parquetry.columnar.LongVector;
 import io.tileverse.parquetry.columnar.Validity;
+import io.tileverse.parquetry.testsupport.VectorArrays;
 
 class ArrowBufferCodecPrimitivesTest {
 
@@ -37,7 +38,7 @@ class ArrowBufferCodecPrimitivesTest {
 
         IntVector restored = (IntVector) roundTrip(original, LeafType.INT32);
 
-        assertThat(restored.asArray()).containsExactly(7, -3, 9);
+        assertThat(VectorArrays.toArray(restored)).containsExactly(7, -3, 9);
         assertThat(restored.hasNulls()).isFalse();
     }
 
@@ -50,7 +51,7 @@ class ArrowBufferCodecPrimitivesTest {
 
         IntVector restored = (IntVector) roundTrip(original, LeafType.INT32);
 
-        assertThat(restored.asArray()).containsExactly(7, 0, 9);
+        assertThat(VectorArrays.toArray(restored)).containsExactly(7, 0, 9);
         assertThat(restored.isNull(1)).isTrue();
         assertThat(restored.isValid(0)).isTrue();
         assertThat(restored.isValid(2)).isTrue();
@@ -62,7 +63,7 @@ class ArrowBufferCodecPrimitivesTest {
 
         LongVector restored = (LongVector) roundTrip(original, LeafType.INT64);
 
-        assertThat(restored.asArray()).containsExactly(10L, -20L, Long.MAX_VALUE);
+        assertThat(VectorArrays.toArray(restored)).containsExactly(10L, -20L, Long.MAX_VALUE);
         assertThat(restored.hasNulls()).isFalse();
     }
 
@@ -74,7 +75,7 @@ class ArrowBufferCodecPrimitivesTest {
 
         LongVector restored = (LongVector) roundTrip(original, LeafType.INT64);
 
-        assertThat(restored.asArray()).containsExactly(0L, 42L, 0L);
+        assertThat(VectorArrays.toArray(restored)).containsExactly(0L, 42L, 0L);
         assertThat(restored.isNull(0)).isTrue();
         assertThat(restored.isValid(1)).isTrue();
         assertThat(restored.isNull(2)).isTrue();
@@ -86,7 +87,7 @@ class ArrowBufferCodecPrimitivesTest {
 
         FloatVector restored = (FloatVector) roundTrip(original, LeafType.FLOAT);
 
-        assertThat(restored.asArray()).containsExactly(1.5f, -2.25f, 3.75f);
+        assertThat(VectorArrays.toArray(restored)).containsExactly(1.5f, -2.25f, 3.75f);
         assertThat(restored.hasNulls()).isFalse();
     }
 
@@ -99,7 +100,7 @@ class ArrowBufferCodecPrimitivesTest {
 
         FloatVector restored = (FloatVector) roundTrip(original, LeafType.FLOAT);
 
-        assertThat(restored.asArray()).containsExactly(1.5f, -2.25f, 0f);
+        assertThat(VectorArrays.toArray(restored)).containsExactly(1.5f, -2.25f, 0f);
         assertThat(restored.isValid(0)).isTrue();
         assertThat(restored.isNull(2)).isTrue();
     }
@@ -110,7 +111,7 @@ class ArrowBufferCodecPrimitivesTest {
 
         DoubleVector restored = (DoubleVector) roundTrip(original, LeafType.DOUBLE);
 
-        assertThat(restored.asArray()).containsExactly(1.5d, -2.25d, 3.75d);
+        assertThat(VectorArrays.toArray(restored)).containsExactly(1.5d, -2.25d, 3.75d);
         assertThat(restored.hasNulls()).isFalse();
     }
 
@@ -122,7 +123,7 @@ class ArrowBufferCodecPrimitivesTest {
 
         DoubleVector restored = (DoubleVector) roundTrip(original, LeafType.DOUBLE);
 
-        assertThat(restored.asArray()).containsExactly(0d, 0d, 9.5d);
+        assertThat(VectorArrays.toArray(restored)).containsExactly(0d, 0d, 9.5d);
         assertThat(restored.isNull(0)).isTrue();
         assertThat(restored.isNull(1)).isTrue();
         assertThat(restored.isValid(2)).isTrue();
@@ -135,7 +136,7 @@ class ArrowBufferCodecPrimitivesTest {
 
         BooleanVector restored = (BooleanVector) roundTrip(original, LeafType.BOOLEAN);
 
-        assertThat(restored.asArray()).containsExactly(true, false, true, true);
+        assertThat(VectorArrays.toArray(restored)).containsExactly(true, false, true, true);
         assertThat(restored.hasNulls()).isFalse();
     }
 
@@ -149,7 +150,7 @@ class ArrowBufferCodecPrimitivesTest {
 
         BooleanVector restored = (BooleanVector) roundTrip(original, LeafType.BOOLEAN);
 
-        assertThat(restored.asArray()).containsExactly(true, false, false, false);
+        assertThat(VectorArrays.toArray(restored)).containsExactly(true, false, false, false);
         assertThat(restored.isValid(0)).isTrue();
         assertThat(restored.isNull(1)).isTrue();
         assertThat(restored.isNull(2)).isTrue();

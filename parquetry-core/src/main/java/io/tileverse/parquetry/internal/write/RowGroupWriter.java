@@ -222,14 +222,13 @@ public final class RowGroupWriter implements AutoCloseable {
     /** Dispatches one value from {@code values} at {@code valueIndex} to the appropriate typed append on the writer. */
     private void appendValueAt(ColumnChunkWriter writer, ColumnVector values, int valueIndex, int rep, int def) {
         switch (values) {
-            case io.tileverse.parquetry.columnar.IntVector iv -> writer.appendInt(iv.asArray()[valueIndex], rep, def);
-            case io.tileverse.parquetry.columnar.LongVector lv -> writer.appendLong(lv.asArray()[valueIndex], rep, def);
-            case io.tileverse.parquetry.columnar.FloatVector fv ->
-                writer.appendFloat(fv.asArray()[valueIndex], rep, def);
+            case io.tileverse.parquetry.columnar.IntVector iv -> writer.appendInt(iv.valueAt(valueIndex), rep, def);
+            case io.tileverse.parquetry.columnar.LongVector lv -> writer.appendLong(lv.valueAt(valueIndex), rep, def);
+            case io.tileverse.parquetry.columnar.FloatVector fv -> writer.appendFloat(fv.valueAt(valueIndex), rep, def);
             case io.tileverse.parquetry.columnar.DoubleVector dv ->
-                writer.appendDouble(dv.asArray()[valueIndex], rep, def);
+                writer.appendDouble(dv.valueAt(valueIndex), rep, def);
             case io.tileverse.parquetry.columnar.BooleanVector bv ->
-                writer.appendBoolean(bv.asArray()[valueIndex], rep, def);
+                writer.appendBoolean(bv.valueAt(valueIndex), rep, def);
             case io.tileverse.parquetry.columnar.BinaryVector binv ->
                 writer.appendBinary(binv.get(valueIndex), rep, def);
             case io.tileverse.parquetry.columnar.FixedLenBinaryVector flbv ->

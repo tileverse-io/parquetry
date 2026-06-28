@@ -37,6 +37,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.testsupport.VectorArrays;
 
 /**
  * Unit tests for struct scope support in {@link ParquetRecordBatchBuilder}.
@@ -66,7 +67,7 @@ class StructBuilderTest {
         ColumnVector fCol = sv.children().get(ColumnPath.of("f"));
         assertThat(fCol).isInstanceOf(IntVector.class);
         IntVector iv = (IntVector) fCol;
-        assertThat(iv.asArray()[0]).isEqualTo(7);
+        assertThat(VectorArrays.toArray(iv)[0]).isEqualTo(7);
     }
 
     /** An OPTIONAL struct that is never explicitly set or nulled for a row defaults to null at endRow. */
@@ -145,7 +146,7 @@ class StructBuilderTest {
         assertThat(innerVec0.validity().isNull(1)).isTrue();
 
         IntVector xVec = (IntVector) innerVec0.children().get(ColumnPath.of("x"));
-        assertThat(xVec.asArray()[0]).isEqualTo(42);
+        assertThat(VectorArrays.toArray(xVec)[0]).isEqualTo(42);
     }
 
     /** The batch can mix a flat primitive column and a struct column in the same schema. */
@@ -177,7 +178,7 @@ class StructBuilderTest {
 
         StructVector sv = (StructVector) batch.columns().get(ColumnPath.of("s"));
         assertThat(sv.validity().isNull(0)).isFalse();
-        assertThat(((IntVector) sv.children().get(ColumnPath.of("f"))).asArray()[0])
+        assertThat(VectorArrays.toArray(((IntVector) sv.children().get(ColumnPath.of("f"))))[0])
                 .isEqualTo(10);
 
         // Row 1: both null.
@@ -213,12 +214,12 @@ class StructBuilderTest {
         StructVector bboxVec = (StructVector) bboxCol;
 
         FloatVector xminVec = (FloatVector) bboxVec.children().get(ColumnPath.of("xmin"));
-        assertThat(xminVec.asArray())
+        assertThat(VectorArrays.toArray(xminVec))
                 .as("xmin must hold the distinct per-row values authored via index setters")
                 .containsExactly(0.0f, 10.0f, 20.0f);
 
         FloatVector xmaxVec = (FloatVector) bboxVec.children().get(ColumnPath.of("xmax"));
-        assertThat(xmaxVec.asArray())
+        assertThat(VectorArrays.toArray(xmaxVec))
                 .as("xmax must hold the distinct per-row values authored via index setters")
                 .containsExactly(1.0f, 11.0f, 21.0f);
     }

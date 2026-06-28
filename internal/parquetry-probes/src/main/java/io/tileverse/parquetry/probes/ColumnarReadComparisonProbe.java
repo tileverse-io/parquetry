@@ -20,6 +20,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Columnar read-path comparison of parquetry, parquet-java 1.17.0, and DuckDB over one local Parquet file, full scan
@@ -71,6 +72,7 @@ public final class ColumnarReadComparisonProbe {
     private int measuredRuns;
     private int concurrency;
     private boolean silent;
+    private boolean analyze;
 
     /** Runs the columnar-path read comparison, configured from {@code parquetry.probe.*} system properties. */
     public static void main(String[] args) throws Exception {
@@ -89,6 +91,7 @@ public final class ColumnarReadComparisonProbe {
         this.measuredRuns = config.measuredRuns();
         this.concurrency = config.concurrency();
         this.silent = config.silent();
+        this.analyze = config.analyze();
     }
 
     private void run() throws Exception {
@@ -112,13 +115,20 @@ public final class ColumnarReadComparisonProbe {
         }
         long checksum = engines.stream().mapToLong(ColumnarEngine::checksum).sum();
         note("%n(consumed checksum %d)".formatted(checksum));
+        if (analyze) {
+            engines.stream()
+                    .map(ColumnarEngine::analyzeStats)
+                    .flatMap(Optional::stream)
+                    .findFirst()
+                    .ifPresent(stats -> note("%n%s".formatted(ProbeStats.format(stats))));
+        }
     }
 
     private List<ColumnarEngine> engines() {
         List<ColumnarEngine> engines = new ArrayList<>();
         for (String name : new String[] {"parquetry", "parquet-java", "duckdb"}) {
             if (engineEnabled(name)) {
-                engines.add(ColumnarEngine.of(name, file));
+                engines.add(ColumnarEngine.of(name, file, analyze));
             }
         }
         return engines;
@@ -357,7 +367,8 @@ public final class ColumnarReadComparisonProbe {
     }
 
     /** Resolved probe inputs. */
-    private record Config(Path file, int warmupRuns, int measuredRuns, int concurrency, boolean silent) {
+    private record Config(
+            Path file, int warmupRuns, int measuredRuns, int concurrency, boolean silent, boolean analyze) {
 
         static Config fromSystemProperties() {
             String path = System.getProperty("parquetry.probe.file");
@@ -370,7 +381,8 @@ public final class ColumnarReadComparisonProbe {
                     intProperty("parquetry.probe.warmup", 1),
                     intProperty("parquetry.probe.measure", 3),
                     intProperty("parquetry.probe.concurrency", 1),
-                    Boolean.getBoolean("parquetry.probe.silent"));
+                    Boolean.getBoolean("parquetry.probe.silent"),
+                    Boolean.getBoolean("parquetry.probe.analyze"));
         }
 
         private static int intProperty(String key, int fallback) {

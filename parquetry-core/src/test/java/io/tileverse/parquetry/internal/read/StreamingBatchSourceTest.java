@@ -27,6 +27,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
+import io.tileverse.parquetry.observe.SpillAccumulator;
 
 class StreamingBatchSourceTest {
 
@@ -36,7 +37,8 @@ class StreamingBatchSourceTest {
         // Comfortably above each batch's heap bytes, which leaves headroom for all three to be held in heap.
         DecodeBudget budget = DecodeBudget.ofBytes(64L * 1024 * 1024);
         DiskBudget diskBudget = DiskBudget.ofBytes(1 << 20);
-        BatchSpillStore store = new BatchSpillStore(dir, diskBudget, TestBatches.singleIntColumnSchema());
+        BatchSpillStore store =
+                new BatchSpillStore(dir, diskBudget, TestBatches.singleIntColumnSchema(), SpillAccumulator.NONE);
         List<ParquetRecordBatch> batches =
                 List.of(TestBatches.intBatch(8), TestBatches.intBatch(8), TestBatches.intBatch(8));
         BatchHandoff handoff = new BatchHandoff(2);

@@ -16,12 +16,12 @@
 package io.tileverse.parquetry.probes;
 
 import java.lang.management.ManagementFactory;
-import java.lang.management.MemoryPoolMXBean;
-import java.lang.management.MemoryType;
+import java.lang.management.MemoryMXBean;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import com.sun.management.ThreadMXBean;
@@ -240,22 +240,46 @@ final class ProbeMeasurement {
         }
     }
 
+    private static final MemoryMXBean MEMORY = ManagementFactory.getMemoryMXBean();
+    private static final long HEAP_SAMPLE_INTERVAL_MS = 5L;
+
+    // Peak of TOTAL live heap since the last reset, tracked by a background sampler. Summing each pool's
+    // getPeakUsage() instead (Eden + Survivor + Old) double-counts across time - the pools peak at different
+    // moments - and reports more than -Xmx; sampling the aggregate getHeapMemoryUsage().getUsed() is the true peak.
+    private static final AtomicLong peakHeapUsed = new AtomicLong();
+    private static final AtomicBoolean heapSamplerStarted = new AtomicBoolean();
+
     static void resetPeakHeap() {
-        for (MemoryPoolMXBean pool : ManagementFactory.getMemoryPoolMXBeans()) {
-            if (pool.getType() == MemoryType.HEAP) {
-                pool.resetPeakUsage();
-            }
-        }
+        ensureHeapSampler();
+        peakHeapUsed.set(currentHeapUsed());
     }
 
     static long peakHeapBytes() {
-        long peak = 0L;
-        for (MemoryPoolMXBean pool : ManagementFactory.getMemoryPoolMXBeans()) {
-            if (pool.getType() == MemoryType.HEAP) {
-                peak += pool.getPeakUsage().getUsed();
+        return peakHeapUsed.get();
+    }
+
+    private static long currentHeapUsed() {
+        return MEMORY.getHeapMemoryUsage().getUsed();
+    }
+
+    private static void ensureHeapSampler() {
+        if (heapSamplerStarted.compareAndSet(false, true)) {
+            Thread sampler = new Thread(ProbeMeasurement::sampleHeapForever, "probe-heap-sampler");
+            sampler.setDaemon(true);
+            sampler.start();
+        }
+    }
+
+    private static void sampleHeapForever() {
+        while (true) {
+            peakHeapUsed.accumulateAndGet(currentHeapUsed(), Math::max);
+            try {
+                Thread.sleep(HEAP_SAMPLE_INTERVAL_MS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
             }
         }
-        return peak;
     }
 
     /** Bytes allocated on the heap by all threads (including terminated decode workers) since JVM start. */

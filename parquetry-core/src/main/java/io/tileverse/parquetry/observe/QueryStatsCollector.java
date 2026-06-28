@@ -98,6 +98,7 @@ public final class QueryStatsCollector implements QueryObserver {
                 pagesDecoded.sum(),
                 pagesPruned.sum(),
                 fetchSnapshot(),
+                SpillStats.EMPTY,
                 timings.get());
     }
 

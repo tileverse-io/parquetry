@@ -28,6 +28,7 @@ import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.observe.FetchStats;
 import io.tileverse.parquetry.observe.QueryStats;
 import io.tileverse.parquetry.observe.RowGroupRead;
+import io.tileverse.parquetry.observe.SpillStats;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
@@ -93,7 +94,8 @@ class ExplainPlanExecutionTest {
     }
 
     private static QueryStats stats() {
-        return new QueryStats(123L, 100L, 10L, Map.of(), 1, 2, 5L, 3L, FetchStats.EMPTY, Optional.empty());
+        return new QueryStats(
+                123L, 100L, 10L, Map.of(), 1, 2, 5L, 3L, FetchStats.EMPTY, SpillStats.EMPTY, Optional.empty());
     }
 
     private static RowGroupRead rowGroupRead(int index) {

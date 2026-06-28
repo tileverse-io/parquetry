@@ -39,6 +39,7 @@ import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.geo.JtsGeometryFilter;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.observe.QueryStats;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -55,6 +56,8 @@ import io.tileverse.parquetry.tileverse.ByteRangeSources;
 final class ParquetryReadEngine implements ReadEngine {
 
     private final ReadContext context;
+    private final ProbeQueryObserver analyzeObserver;
+    private final ReadOptions readOptions;
     private ByteRangeSource source;
     private Storage remoteStorage;
     private RangeReader remoteReader;
@@ -65,7 +68,17 @@ final class ParquetryReadEngine implements ReadEngine {
     private final ParquetRecord.BinaryView<Object> lengthView = this::addLength;
 
     ParquetryReadEngine(ReadContext context) {
+        this(context, false);
+    }
+
+    ParquetryReadEngine(ReadContext context, boolean analyze) {
         this.context = context;
+        this.analyzeObserver = analyze ? new ProbeQueryObserver() : null;
+        this.readOptions = analyze
+                ? ReadOptions.DEFAULTS.toBuilder()
+                        .queryObserver(analyzeObserver)
+                        .build()
+                : ReadOptions.DEFAULTS;
     }
 
     @Override
@@ -76,7 +89,7 @@ final class ParquetryReadEngine implements ReadEngine {
     @Override
     public long read(Scenario scenario) {
         Predicate predicate = predicate(scenario);
-        try (Stream<ParquetRecord> records = reader().read(predicate, projection(), ReadOptions.DEFAULTS)) {
+        try (Stream<ParquetRecord> records = reader().read(predicate, projection(), readOptions)) {
             long count = 0L;
             for (ParquetRecord rec : (Iterable<ParquetRecord>) records::iterator) {
                 walkRecord(rec, rec.schema().root());
@@ -89,6 +102,11 @@ final class ParquetryReadEngine implements ReadEngine {
     @Override
     public long checksum() {
         return sink;
+    }
+
+    @Override
+    public Optional<QueryStats> analyzeStats() {
+        return analyzeObserver == null ? Optional.empty() : analyzeObserver.snapshot();
     }
 
     @Override

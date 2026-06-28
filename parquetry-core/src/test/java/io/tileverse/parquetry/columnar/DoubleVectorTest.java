@@ -24,6 +24,8 @@ import java.lang.foreign.MemorySegment;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.testsupport.VectorArrays;
+
 class DoubleVectorTest {
 
     @Test
@@ -48,7 +50,7 @@ class DoubleVectorTest {
     void materializedHeapModeStillWorks() {
         DoubleVector vector = DoubleVector.materialized(new double[] {4.0, 5.0}, Validity.allValid(2));
         assertThat(vector.getDouble(1)).isEqualTo(5.0);
-        assertThat(vector.asArray()).containsExactly(4.0, 5.0);
+        assertThat(VectorArrays.toArray(vector)).containsExactly(4.0, 5.0);
     }
 
     @Nested

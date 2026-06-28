@@ -38,6 +38,7 @@ class QueryStatsTest {
                 40,
                 4,
                 new FetchStats(10, 0, 1, 1, 0, 3),
+                SpillStats.EMPTY,
                 Optional.empty());
         QueryStats b = new QueryStats(
                 50,
@@ -49,6 +50,7 @@ class QueryStatsTest {
                 20,
                 2,
                 new FetchStats(5, 0, 1, 1, 0, 2),
+                SpillStats.EMPTY,
                 Optional.empty());
 
         QueryStats sum = a.combine(b);
@@ -68,7 +70,17 @@ class QueryStatsTest {
     void withTotalFetchReplacesFetchAndPreservesEveryOtherField() {
         PhaseTimings timings = new PhaseTimings(1, 2, 3, 4);
         QueryStats original = new QueryStats(
-                100, 1000, 400, Map.of(Tier.STATS, 2), 3, 5, 40, 4, FetchStats.EMPTY, Optional.of(timings));
+                100,
+                1000,
+                400,
+                Map.of(Tier.STATS, 2),
+                3,
+                5,
+                40,
+                4,
+                FetchStats.EMPTY,
+                SpillStats.EMPTY,
+                Optional.of(timings));
 
         FetchStats measured = new FetchStats(99, 1, 2, 3, 4, 7);
         QueryStats overridden = original.withTotalFetch(measured);
@@ -88,8 +100,10 @@ class QueryStatsTest {
     @Test
     void combineMergesCpuTimings() {
         PhaseTimings t = new PhaseTimings(1, 2, 3, 4);
-        QueryStats withTimings = new QueryStats(0, 0, 0, Map.of(), 0, 0, 0, 0, FetchStats.EMPTY, Optional.of(t));
-        QueryStats withoutTimings = new QueryStats(0, 0, 0, Map.of(), 0, 0, 0, 0, FetchStats.EMPTY, Optional.empty());
+        QueryStats withTimings =
+                new QueryStats(0, 0, 0, Map.of(), 0, 0, 0, 0, FetchStats.EMPTY, SpillStats.EMPTY, Optional.of(t));
+        QueryStats withoutTimings =
+                new QueryStats(0, 0, 0, Map.of(), 0, 0, 0, 0, FetchStats.EMPTY, SpillStats.EMPTY, Optional.empty());
 
         assertThat(withTimings.combine(withTimings).cpuTimings()).contains(new PhaseTimings(2, 4, 6, 8));
         assertThat(withTimings.combine(withoutTimings).cpuTimings()).contains(t);

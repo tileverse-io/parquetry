@@ -46,6 +46,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.testsupport.VectorArrays;
 
 /**
  * Unit tests for {@link BatchRowGroupReader}.
@@ -80,7 +81,7 @@ class BatchRowGroupReaderTest {
             try (ParquetRecordBatch batch = reader.nextBatch()) {
                 assertThat(batch.rowCount()).isEqualTo(4);
                 IntVector vec = (IntVector) batch.columns().get(PATH_A);
-                assertThat(vec.asArray()).containsExactly(1, 2, 3, 4);
+                assertThat(VectorArrays.toArray(vec)).containsExactly(1, 2, 3, 4);
             }
 
             assertThat(reader.hasMore()).isFalse();
@@ -119,8 +120,8 @@ class BatchRowGroupReaderTest {
                 assertThat(batch1.rowCount()).isEqualTo(4);
                 IntVector vecA = (IntVector) batch1.columns().get(PATH_A);
                 IntVector vecB = (IntVector) batch1.columns().get(PATH_B);
-                assertThat(vecA.asArray()).containsExactly(10, 20, 30, 40);
-                assertThat(vecB.asArray()).containsExactly(1, 2, 3, 4);
+                assertThat(VectorArrays.toArray(vecA)).containsExactly(10, 20, 30, 40);
+                assertThat(VectorArrays.toArray(vecB)).containsExactly(1, 2, 3, 4);
             }
 
             assertThat(reader.hasMore()).isTrue();
@@ -130,8 +131,8 @@ class BatchRowGroupReaderTest {
                 assertThat(batch2.rowCount()).isEqualTo(6);
                 IntVector vecA = (IntVector) batch2.columns().get(PATH_A);
                 IntVector vecB = (IntVector) batch2.columns().get(PATH_B);
-                assertThat(vecA.asArray()).containsExactly(50, 60, 70, 80, 90, 100);
-                assertThat(vecB.asArray()).containsExactly(5, 6, 7, 8, 9, 10);
+                assertThat(VectorArrays.toArray(vecA)).containsExactly(50, 60, 70, 80, 90, 100);
+                assertThat(VectorArrays.toArray(vecB)).containsExactly(5, 6, 7, 8, 9, 10);
             }
 
             assertThat(reader.hasMore()).isFalse();
@@ -287,7 +288,7 @@ class BatchRowGroupReaderTest {
                 assertThat(vec.getDouble(0))
                         .as("first value reads back through the off-heap buffer")
                         .isEqualTo(1.5);
-                assertThat(vec.asArray()).containsExactly(1.5, 2.5, 3.5, 4.5);
+                assertThat(VectorArrays.toArray(vec)).containsExactly(1.5, 2.5, 3.5, 4.5);
             }
         }
     }

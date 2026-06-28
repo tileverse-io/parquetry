@@ -21,118 +21,182 @@ import java.lang.foreign.MemorySegment;
 
 import lombok.NonNull;
 
-public final class FloatVector implements ColumnVector {
+/**
+ * A column of {@code FLOAT} values, backed either by a heap {@code float[]} ({@link Heap}) or by an off-heap
+ * little-endian {@link MemorySegment} ({@link Segment}). The backing is chosen at construction and reached only through
+ * the two implementations, which keeps the read accessors free of a per-row backing check. Selection, validity, and the
+ * logical-to-physical translation are centralized in this interface; each implementation contributes only its backing
+ * read ({@link #valueAt(int)}) and its contiguous bulk copy.
+ */
+public sealed interface FloatVector extends ColumnVector permits FloatVector.Heap, FloatVector.Segment {
 
-    private final float[] values;
-    private final MemorySegment segmentValues;
-    private final Validity validity;
-    private final Selection selection;
-
-    private FloatVector(
-            float[] values, MemorySegment segmentValues, @NonNull Validity validity, @NonNull Selection selection) {
-        this.values = values;
-        this.segmentValues = segmentValues;
-        this.validity = validity;
-        this.selection = selection;
+    /** A vector over heap-resident values, as produced by the assembly compaction lane and the Arrow packer. */
+    static FloatVector materialized(@NonNull float[] values, @NonNull Validity validity) {
+        return new Heap(values, validity, Selection.ALL);
     }
 
-    public static FloatVector materialized(@NonNull float[] values, @NonNull Validity validity) {
-        return new FloatVector(values, null, validity, Selection.ALL);
+    /** A vector that reads from an off-heap little-endian segment; the segment's owner controls its lifetime. */
+    static FloatVector segmentBacked(@NonNull MemorySegment segmentValues, @NonNull Validity validity) {
+        return new Segment(segmentValues, validity, Selection.ALL);
     }
 
-    /** Reads values from an off-heap little-endian segment; the segment's owner controls its lifetime. */
-    public static FloatVector segmentBacked(@NonNull MemorySegment segmentValues, @NonNull Validity validity) {
-        return new FloatVector(null, segmentValues, validity, Selection.ALL);
-    }
+    /**
+     * The stored value at backing index {@code physicalRow} WITHOUT consulting validity: a null row reads back its
+     * parked placeholder (the decode contract fills null slots deterministically). The index is physical, not logical;
+     * a caller on a selected view translates first via {@link #getFloat(int)} or {@link #copyInto}.
+     */
+    float valueAt(int physicalRow);
+
+    /** Copies {@code count} backing values from {@code fromPhysical} into {@code target} at {@code targetOffset}. */
+    void copyContiguous(MemorySegment target, long targetOffset, int fromPhysical, int count);
+
+    /** This vector's backing exposed through {@code selection}; {@link Selection#ALL} returns it unchanged. */
+    FloatVector withSelection(Selection selection);
 
     @Override
-    public Selection selection() {
-        return selection;
+    default ColumnVector select(Selection selection) {
+        if (selection == Selection.ALL) {
+            return this;
+        }
+        return withSelection(selection);
     }
 
-    @Override
-    public int baseSize() {
-        return segmentValues != null ? (int) (segmentValues.byteSize() / Integer.BYTES) : values.length;
-    }
-
-    @Override
-    public Validity validity() {
-        return validity;
+    private int physical(int row) {
+        Selection selection = selection();
+        return selection == Selection.ALL ? row : selection.physical(row);
     }
 
     /**
      * Returns the value at logical row {@code row}; throws {@link IllegalStateException} when the row is null. Guard
      * with {@link #isNull(int)} / {@link #hasNulls()}, or use {@link #get(int)} for a null-aware boxed read.
-     * Sequential-access optimized on a selected view.
      */
-    public float getFloat(int row) {
-        if (validity.isNull(row)) {
+    default float getFloat(int row) {
+        if (validity().isNull(row)) {
             throw new IllegalStateException("row %d is null; guard with isNull(row) or hasNulls()".formatted(row));
         }
-        int physical = selection == Selection.ALL ? row : selection.physical(row);
-        return segmentValues != null ? segmentValues.getAtIndex(FLOAT, physical) : values[physical];
+        return valueAt(physical(row));
     }
 
     @Override
     @SuppressWarnings("unchecked")
-    public <T> T get(int row) {
-        return validity.isNull(row) ? null : (T) Float.valueOf(getFloat(row));
-    }
-
-    public float[] asArray() {
-        if (selection == Selection.ALL) {
-            if (segmentValues == null) {
-                return values;
-            }
-            float[] out = new float[baseSize()];
-            MemorySegment.copy(segmentValues, FLOAT, 0L, out, 0, out.length);
-            return out;
-        }
-        int n = size();
-        float[] out = new float[n];
-        for (int row = 0; row < n; row++) {
-            int physical = selection.physical(row);
-            out[row] = segmentValues != null ? segmentValues.getAtIndex(FLOAT, physical) : values[physical];
-        }
-        return out;
+    default <T> T get(int row) {
+        return validity().isNull(row) ? null : (T) Float.valueOf(getFloat(row));
     }
 
     /**
      * Copies {@code count} values starting at logical row {@code from} into {@code target} at byte
      * {@code targetOffset}, in little-endian Arrow layout. Lets a bulk consumer reuse one target instead of allocating
-     * via {@link #asArray()}. An unselected vector copies a contiguous run; a selected view scatters its survivors into
-     * the contiguous destination. Values at null rows are copied as stored; the caller applies validity separately, as
-     * with {@code asArray}.
+     * a fresh array. An unselected vector copies a contiguous run; a selected view scatters its survivors into the
+     * contiguous destination. Values at null rows are copied as stored; the caller applies validity separately.
      */
-    public void copyInto(MemorySegment target, long targetOffset, int from, int count) {
+    default void copyInto(MemorySegment target, long targetOffset, int from, int count) {
+        Selection selection = selection();
         if (selection == Selection.ALL) {
-            if (segmentValues != null) {
-                MemorySegment.copy(segmentValues, FLOAT, (long) from * Float.BYTES, target, FLOAT, targetOffset, count);
-            } else {
-                MemorySegment.copy(values, from, target, FLOAT, targetOffset, count);
-            }
+            copyContiguous(target, targetOffset, from, count);
             return;
         }
         for (int i = 0; i < count; i++) {
-            int physical = selection.physical(from + i);
-            float value = segmentValues != null ? segmentValues.getAtIndex(FLOAT, physical) : values[physical];
+            float value = valueAt(selection.physical(from + i));
             target.set(FLOAT, targetOffset + (long) i * Float.BYTES, value);
         }
     }
 
-    @Override
-    public ColumnVector select(Selection selection) {
-        if (selection == Selection.ALL) {
-            return this;
+    /** Values held in a heap {@code float[]}. */
+    final class Heap implements FloatVector {
+
+        private final float[] values;
+        private final Validity validity;
+        private final Selection selection;
+
+        private Heap(float[] values, @NonNull Validity validity, @NonNull Selection selection) {
+            this.values = values;
+            this.validity = validity;
+            this.selection = selection;
         }
-        return new FloatVector(values, segmentValues, validity.select(selection), selection);
+
+        @Override
+        public Selection selection() {
+            return selection;
+        }
+
+        @Override
+        public int baseSize() {
+            return values.length;
+        }
+
+        @Override
+        public Validity validity() {
+            return validity;
+        }
+
+        @Override
+        public float valueAt(int physicalRow) {
+            return values[physicalRow];
+        }
+
+        @Override
+        public void copyContiguous(MemorySegment target, long targetOffset, int fromPhysical, int count) {
+            MemorySegment.copy(values, fromPhysical, target, FLOAT, targetOffset, count);
+        }
+
+        @Override
+        public FloatVector withSelection(Selection selection) {
+            return new Heap(values, validity.select(selection), selection);
+        }
+
+        @Override
+        public long approximateHeapBytes() {
+            return (long) values.length * Float.BYTES + validity.heapBytes();
+        }
     }
 
-    @Override
-    public long approximateHeapBytes() {
-        if (segmentValues != null) {
+    /** Values read from an off-heap little-endian segment. */
+    final class Segment implements FloatVector {
+
+        private final MemorySegment segmentValues;
+        private final Validity validity;
+        private final Selection selection;
+
+        private Segment(MemorySegment segmentValues, @NonNull Validity validity, @NonNull Selection selection) {
+            this.segmentValues = segmentValues;
+            this.validity = validity;
+            this.selection = selection;
+        }
+
+        @Override
+        public Selection selection() {
+            return selection;
+        }
+
+        @Override
+        public int baseSize() {
+            return (int) (segmentValues.byteSize() / Float.BYTES);
+        }
+
+        @Override
+        public Validity validity() {
+            return validity;
+        }
+
+        @Override
+        public float valueAt(int physicalRow) {
+            return segmentValues.getAtIndex(FLOAT, physicalRow);
+        }
+
+        @Override
+        public void copyContiguous(MemorySegment target, long targetOffset, int fromPhysical, int count) {
+            MemorySegment.copy(
+                    segmentValues, FLOAT, (long) fromPhysical * Float.BYTES, target, FLOAT, targetOffset, count);
+        }
+
+        @Override
+        public FloatVector withSelection(Selection selection) {
+            return new Segment(segmentValues, validity.select(selection), selection);
+        }
+
+        @Override
+        public long approximateHeapBytes() {
             return validity.heapBytes();
         }
-        return (long) values.length * Integer.BYTES + validity.heapBytes();
     }
 }

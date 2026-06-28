@@ -42,6 +42,7 @@ import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
+import io.tileverse.parquetry.observe.SpillAccumulator;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaBuilder;
 
@@ -135,7 +136,8 @@ class ParallelDecodeCoordinatorTest {
         BatchSpillStore spillStore = new BatchSpillStore(
                 Path.of(System.getProperty("java.io.tmpdir")),
                 DiskBudget.defaultBudget(),
-                TestBatches.singleIntColumnSchema());
+                TestBatches.singleIntColumnSchema(),
+                SpillAccumulator.NONE);
         StreamingBatchSource source =
                 new StreamingBatchSource(handoff, driver, DecodeBudget.defaultBudget(), spillStore, true);
         source.attachProducerTask(pool.submitAcquired(() -> {

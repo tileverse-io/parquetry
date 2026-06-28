@@ -38,6 +38,7 @@ import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.testsupport.VectorArrays;
 
 /**
  * Coverage for {@link ParquetFileReader#readBatches()} and the {@link ReadOptions#batchSize()} cap. Fixtures are
@@ -123,7 +124,7 @@ class ReadBatchesTest {
                 List<ParquetRecordBatch> emitted = batches.toList();
                 for (ParquetRecordBatch batch : emitted) {
                     IntVector yearVec = (IntVector) batch.columns().get(yearPath);
-                    int[] values = yearVec.asArray();
+                    int[] values = VectorArrays.toArray(yearVec);
                     for (int i = 0; i < batch.rowCount(); i++) {
                         seenYears.add(values[i]);
                     }

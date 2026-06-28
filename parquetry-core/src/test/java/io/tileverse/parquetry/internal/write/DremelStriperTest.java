@@ -46,6 +46,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.testsupport.VectorArrays;
 
 /**
  * The striper is the write-side inverse of {@code DremelAssembler}: it walks an eager nested batch and a schema and
@@ -345,7 +346,7 @@ class DremelStriperTest {
     private record RebuiltLayout(int[] offsets, BitSet validity) {}
 
     private static int[] intValues(StripedLeaf leaf) {
-        return ((IntVector) leaf.values()).asArray();
+        return VectorArrays.toArray(((IntVector) leaf.values()));
     }
 
     private static String[] stringValues(StripedLeaf leaf) {

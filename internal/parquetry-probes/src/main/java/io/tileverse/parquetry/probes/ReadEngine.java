@@ -17,6 +17,8 @@ package io.tileverse.parquetry.probes;
 
 import java.util.Optional;
 
+import io.tileverse.parquetry.observe.QueryStats;
+
 /**
  * One engine's read-and-consume arm of the comparison, built from a {@link ReadContext}. The probe drives measurement
  * (warmup, timing, heap, allocation) and calls {@link #read(Scenario)} for each pass; the engine only knows how to read
@@ -36,6 +38,14 @@ interface ReadEngine extends AutoCloseable {
      * Extra engine-reported metrics (DuckDB's profiler latency and off-heap buffer peak); empty for the JVM engines.
      */
     default Optional<DuckDbProfile> profile() {
+        return Optional.empty();
+    }
+
+    /**
+     * The aggregated {@link QueryStats} when running under {@code --analyze}; empty otherwise and for non-parquetry
+     * engines.
+     */
+    default Optional<QueryStats> analyzeStats() {
         return Optional.empty();
     }
 
