@@ -40,6 +40,7 @@ FILE="${REPO_ROOT}/buildings-1.0.parquet"
 PROBE="read"         # read | columnar
 REBUILD=0
 SILENT=0
+ANALYZE=0
 
 usage() {
   cat <<'EOF'
@@ -86,6 +87,9 @@ OPTIONS:
     --bbox-column PREFIX    GeoParquet 1.1 bbox covering struct for the parquet-java pushdown. Default: bbox.
 
   -s, --silent       Print only the table (suppress the header, "skipping", and footnote lines).
+    --analyze        parquetry only: attach a read observer and print summed query stats (rows, pages, and the
+                     spill tally) after the run. Off by default so the throughput/alloc numbers stay untainted;
+                     the stats block prints only when not --silent.
   -h, --help         This help.
 
 EXAMPLES:
@@ -142,6 +146,7 @@ while [[ $# -gt 0 ]]; do
     --image) IMAGE="$2"; shift 2 ;;
     --rebuild) REBUILD=1; shift ;;
     -s|--silent) SILENT=1; shift ;;
+    --analyze) ANALYZE=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 2 ;;
   esac
@@ -173,6 +178,24 @@ if [[ -z "$MEMORY" ]]; then
     *m|*M) MEMORY="$(( ${HEAP%[mM]} + 1024 ))m" ;;
     *) MEMORY="3g" ;;
   esac
+fi
+
+# Convert a docker/JVM size (2g, 512m, or a bare MiB count) to MiB for comparison.
+to_mib() {
+  case "$1" in
+    *g|*G) echo "$(( ${1%[gG]} * 1024 ))" ;;
+    *m|*M) echo "$(( ${1%[mM]} ))" ;;
+    *) echo "$1" ;;
+  esac
+}
+HEAP_MIB="$(to_mib "$HEAP")"
+MEM_MIB="$(to_mib "$MEMORY")"
+if (( HEAP_MIB >= MEM_MIB )); then
+  echo "!! Config error: --heap ${HEAP} (${HEAP_MIB} MiB) is >= --memory ${MEMORY} (${MEM_MIB} MiB)." >&2
+  echo "   The Java heap alone would meet or exceed the container limit and the JVM would be OOM-killed before it" >&2
+  echo "   measured anything - the JVM also needs native/metaspace/thread/off-heap memory inside the container." >&2
+  echo "   Set --heap below --memory with headroom for off-heap fetch/decode buffers, e.g. --heap 512m --memory 1g." >&2
+  exit 2
 fi
 
 FILE_NAME="$(basename "$FILE")"
@@ -209,6 +232,7 @@ PROBE_PROPS=(
 [[ -n "$CY" ]] && PROBE_PROPS+=("-Dparquetry.probe.cy=${CY}")
 [[ -n "$R" ]] && PROBE_PROPS+=("-Dparquetry.probe.r=${R}")
 [[ $SILENT -eq 1 ]] && PROBE_PROPS+=("-Dparquetry.probe.silent=true")
+[[ $ANALYZE -eq 1 ]] && PROBE_PROPS+=("-Dparquetry.probe.analyze=true")
 
 if [[ $SILENT -ne 1 ]]; then
   echo ">> probe=${PROBE} cores=${CORES} heap=${HEAP} container=${MEMORY} concurrency=${CONCURRENCY}" >&2
@@ -226,13 +250,22 @@ docker run --rm -i \
 
 # 137 = 128 + SIGKILL: the container OOM-killer hit the -m limit and killed the JVM before it could print.
 if [[ $status -eq 137 ]]; then
+  RAN_ENGINES="${ENGINES:-parquetry,parquet-java,duckdb}"
   echo "" >&2
   echo "!! OOM-KILLED (exit 137): the run exceeded the ${MEMORY} container memory limit and the kernel killed the" >&2
-  echo "   JVM with SIGKILL before it could print a table. This is an OFF-HEAP overrun: -Xmx (${HEAP}) bounds only" >&2
-  echo "   the Java heap, not native/off-heap memory, and a container OOM-kill is not a catchable Java OutOfMemoryError." >&2
-  echo "   DuckDB's internal buffer pool is off-heap and scales with concurrency (~1+ GB per connection), so" >&2
-  echo "   ${CONCURRENCY} concurrent scans can blow past ${MEMORY} that -Xmx never sees. Lower --concurrency or raise" >&2
-  echo "   --memory; that an engine's off-heap footprint can SIGKILL a pod the JVM heap limit cannot protect is the" >&2
-  echo "   point this probe exists to show." >&2
+  echo "   JVM with SIGKILL before it could print a table. -Xmx (${HEAP}) bounds only the Java heap, not native/off-heap" >&2
+  echo "   memory, and a container OOM-kill is not a catchable Java OutOfMemoryError. The overrun is off-heap, from the" >&2
+  echo "   engine(s) that ran (--engines ${RAN_ENGINES}):" >&2
+  case ",${RAN_ENGINES}," in
+    *,duckdb,*)
+      echo "     - DuckDB: an off-heap buffer pool that scales with concurrency (~1+ GB per connection)." >&2 ;;
+  esac
+  case ",${RAN_ENGINES}," in
+    *,parquetry,*)
+      echo "     - parquetry: off-heap fetch and decode buffers bounded by its fetch/decode budgets (a fraction of" >&2
+      echo "       -Xmx and -XX:MaxDirectMemorySize); a higher --concurrency or --decode-ahead raises the peak." >&2 ;;
+  esac
+  echo "   Lower --concurrency / --decode-ahead or raise --memory; that an engine's off-heap footprint can SIGKILL a" >&2
+  echo "   pod the JVM heap limit cannot protect is the point this probe exists to show." >&2
 fi
 exit $status

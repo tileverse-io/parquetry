@@ -130,6 +130,7 @@ public final class ReadComparisonProbe {
     private int measuredRuns;
     private int concurrency;
     private boolean silent;
+    private boolean analyze;
 
     /** Runs the row-path read comparison, configured from {@code parquetry.probe.*} system properties. */
     public static void main(String[] args) throws Exception {
@@ -179,6 +180,7 @@ public final class ReadComparisonProbe {
         this.measuredRuns = config.measuredRuns();
         this.concurrency = config.concurrency();
         this.silent = config.silent();
+        this.analyze = config.analyze();
     }
 
     /**
@@ -328,7 +330,7 @@ public final class ReadComparisonProbe {
     private List<ReadEngine> engines(ReadContext context) {
         List<ReadEngine> engines = new ArrayList<>();
         if (engineEnabled("parquetry")) {
-            engines.add(new ParquetryReadEngine(context));
+            engines.add(new ParquetryReadEngine(context, analyze));
         }
         if (engineEnabled("parquet-java")) {
             engines.add(new ParquetJavaReadEngine(context));
@@ -363,6 +365,13 @@ public final class ReadComparisonProbe {
         }
         long checksum = engines.stream().mapToLong(ReadEngine::checksum).sum();
         note("%n(consumed checksum %d)".formatted(checksum));
+        if (analyze) {
+            engines.stream()
+                    .map(ReadEngine::analyzeStats)
+                    .flatMap(Optional::stream)
+                    .findFirst()
+                    .ifPresent(stats -> note("%n%s".formatted(ProbeStats.format(stats))));
+        }
     }
 
     private static void closeQuietly(ReadEngine engine) {
@@ -645,7 +654,8 @@ public final class ReadComparisonProbe {
             int warmupRuns,
             int measuredRuns,
             int concurrency,
-            boolean silent) {
+            boolean silent,
+            boolean analyze) {
 
         static Config fromSystemProperties() {
             String path = System.getProperty("parquetry.probe.file");
@@ -670,7 +680,8 @@ public final class ReadComparisonProbe {
                     intProperty("parquetry.probe.warmup", 1),
                     intProperty("parquetry.probe.measure", 3),
                     intProperty("parquetry.probe.concurrency", 1),
-                    Boolean.getBoolean("parquetry.probe.silent"));
+                    Boolean.getBoolean("parquetry.probe.silent"),
+                    Boolean.getBoolean("parquetry.probe.analyze"));
         }
 
         private static Double doubleOrNull(String key) {
