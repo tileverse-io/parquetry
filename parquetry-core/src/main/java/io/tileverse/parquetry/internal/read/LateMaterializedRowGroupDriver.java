@@ -20,7 +20,7 @@ import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import lombok.NonNull;
 
 /**
- * Streams one row group two-phase: on first use, evaluates the predicate to a {@link Selection} (phase 1), then pulls
+ * Streams one row group two-phase: on first use, evaluates the predicate to a {@link MatchedRows} (phase 1), then pulls
  * the output batches for the matching rows one at a time (phase 2). Phase 1 runs lazily on the decoding thread, not at
  * construction.
  */
@@ -55,7 +55,7 @@ final class LateMaterializedRowGroupDriver implements RowGroupBatchDriver {
             return;
         }
         phase1Done = true;
-        Selection selection = reader.selectMatching();
+        MatchedRows selection = reader.selectMatching();
         if (!selection.isEmpty()) {
             outputReader = reader.outputReader(selection);
         }

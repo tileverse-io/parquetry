@@ -163,7 +163,7 @@ class LateMaterializingRowGroupReaderTest {
                         fixture.numRows(),
                         BatchForm.ASSEMBLED);
 
-                Selection selection = lateReader.selectMatching();
+                MatchedRows selection = lateReader.selectMatching();
                 List<ParquetRecordBatch> batches = decodeMatching(lateReader);
 
                 assertThat(selection.isEmpty())
@@ -239,7 +239,7 @@ class LateMaterializingRowGroupReaderTest {
 
     /** Runs both phases and collects the matching output batches; the caller owns and closes them. */
     private static List<ParquetRecordBatch> decodeMatching(LateMaterializingRowGroupReader reader) {
-        Selection selection = reader.selectMatching();
+        MatchedRows selection = reader.selectMatching();
         List<ParquetRecordBatch> batches = new ArrayList<>();
         if (!selection.isEmpty()) {
             try (BatchRowGroupReader outputReader = reader.outputReader(selection)) {

@@ -24,18 +24,18 @@ import org.junit.jupiter.api.Test;
 import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.filter.RowRanges.Range;
 
-class SelectionTest {
+class MatchedRowsTest {
 
     @Test
     void passedRowsCoalesceIntoContiguousRanges() {
         // Rows 3,4,5 form one run; row 9 is isolated.
-        Selection.Builder builder = Selection.builder();
+        MatchedRows.Builder builder = MatchedRows.builder();
         builder.accept(3, true);
         builder.accept(4, true);
         builder.accept(5, true);
         builder.accept(6, false);
         builder.accept(9, true);
-        Selection selection = builder.build();
+        MatchedRows selection = builder.build();
 
         List<Range> ranges = selection.rows().ranges();
         assertThat(ranges).as("expected two coalesced ranges").containsExactly(new Range(3, 5), new Range(9, 9));
@@ -45,11 +45,11 @@ class SelectionTest {
 
     @Test
     void allSurvivingRowsPassProducesSingleRange() {
-        Selection.Builder builder = Selection.builder();
+        MatchedRows.Builder builder = MatchedRows.builder();
         builder.accept(2, true);
         builder.accept(3, true);
         builder.accept(4, true);
-        Selection selection = builder.build();
+        MatchedRows selection = builder.build();
 
         RowRanges rows = selection.rows();
         assertThat(rows.ranges()).as("single contiguous range").containsExactly(new Range(2, 4));
@@ -58,10 +58,10 @@ class SelectionTest {
 
     @Test
     void noRowsPassProducesEmptySelection() {
-        Selection.Builder builder = Selection.builder();
+        MatchedRows.Builder builder = MatchedRows.builder();
         builder.accept(1, false);
         builder.accept(2, false);
-        Selection selection = builder.build();
+        MatchedRows selection = builder.build();
 
         assertThat(selection.isEmpty()).as("isEmpty when no rows passed").isTrue();
         assertThat(selection.rows().totalRows()).as("totalRows when empty").isZero();
@@ -70,11 +70,11 @@ class SelectionTest {
     @Test
     void passedRowsSeparatedByGapsStaySeparateRanges() {
         // Gaps wider than one (5 follows 3, 9 follows 5) must not coalesce, even with no explicit failing row between.
-        Selection.Builder builder = Selection.builder();
+        MatchedRows.Builder builder = MatchedRows.builder();
         builder.accept(3, true);
         builder.accept(5, true);
         builder.accept(9, true);
-        Selection selection = builder.build();
+        MatchedRows selection = builder.build();
 
         assertThat(selection.rows().ranges())
                 .as("non-adjacent passed rows form one singleton range each")
@@ -84,9 +84,9 @@ class SelectionTest {
 
     @Test
     void singlePassedRowProducesSingletonRange() {
-        Selection.Builder builder = Selection.builder();
+        MatchedRows.Builder builder = MatchedRows.builder();
         builder.accept(7, true);
-        Selection selection = builder.build();
+        MatchedRows selection = builder.build();
 
         assertThat(selection.rows().ranges()).as("singleton range").containsExactly(new Range(7, 7));
         assertThat(selection.rows().totalRows()).as("total rows").isEqualTo(1);

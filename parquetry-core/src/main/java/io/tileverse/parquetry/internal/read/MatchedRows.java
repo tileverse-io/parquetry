@@ -26,11 +26,11 @@ import io.tileverse.parquetry.filter.RowRanges;
  * <p>Built incrementally by {@link Builder#accept(long, boolean)} as phase-1 decode walks surviving rows in ascending
  * absolute-row order, recording which rows satisfied the predicate.
  */
-public final class Selection {
+final class MatchedRows {
 
     private final RowRanges rows;
 
-    private Selection(RowRanges rows) {
+    private MatchedRows(RowRanges rows) {
         this.rows = rows;
     }
 
@@ -98,13 +98,13 @@ public final class Selection {
         }
 
         /**
-         * Closes the final open run (if any) and returns the accumulated {@link Selection}. When no rows passed, the
+         * Closes the final open run (if any) and returns the accumulated {@link MatchedRows}. When no rows passed, the
          * returned selection is empty.
          */
-        public Selection build() {
+        public MatchedRows build() {
             closeCurrentRun();
             RowRanges rowRanges = new RowRanges(completedRanges);
-            return new Selection(rowRanges);
+            return new MatchedRows(rowRanges);
         }
 
         private void closeCurrentRun() {
