@@ -22,6 +22,7 @@ import java.util.OptionalInt;
 
 import io.tileverse.parquetry.format.ConvertedType;
 import io.tileverse.parquetry.format.FieldRepetitionType;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.SchemaElement;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -62,32 +63,105 @@ final class SchemaElementWriter {
         String name = isRoot && group.name().isEmpty() ? "schema" : group.name();
         Optional<FieldRepetitionType> repetition = isRoot ? Optional.empty() : Optional.of(mapRepetition(group));
         OptionalInt fieldId = group.fieldId() >= 0 ? OptionalInt.of(group.fieldId()) : OptionalInt.empty();
+        Optional<LogicalType> logicalType = group.logicalType();
         return new SchemaElement(
                 Optional.empty(),
                 OptionalInt.empty(),
                 repetition,
                 name,
                 OptionalInt.of(group.children().size()),
-                Optional.<ConvertedType>empty(),
+                legacyConvertedType(logicalType),
                 OptionalInt.empty(),
                 OptionalInt.empty(),
-                group.logicalType(),
+                logicalType,
                 fieldId);
     }
 
     private static SchemaElement toPrimitiveElement(SchemaNode.Primitive primitive) {
         OptionalInt fieldId = primitive.fieldId() >= 0 ? OptionalInt.of(primitive.fieldId()) : OptionalInt.empty();
+        Optional<LogicalType> logicalType = primitive.logicalType();
         return new SchemaElement(
                 Optional.of(toPhysicalType(primitive.kind())),
                 primitive.typeLength(),
                 Optional.of(mapRepetition(primitive)),
                 primitive.name(),
                 OptionalInt.empty(),
-                Optional.<ConvertedType>empty(),
-                OptionalInt.empty(),
-                OptionalInt.empty(),
-                primitive.logicalType(),
+                legacyConvertedType(logicalType),
+                decimalScale(logicalType),
+                decimalPrecision(logicalType),
+                logicalType,
                 fieldId);
+    }
+
+    /**
+     * Backfills the deprecated {@link ConvertedType} from a node's modern {@link LogicalType} so readers that honor
+     * only the legacy annotation (duckdb, older parquet-mr) still resolve strings, lists, maps, and the other
+     * pre-logical-type kinds. Inverse of {@link io.tileverse.parquetry.schema.SchemaBuilder}'s read-side backfill.
+     */
+    private static Optional<ConvertedType> legacyConvertedType(Optional<LogicalType> logicalType) {
+        return logicalType.flatMap(SchemaElementWriter::legacyEquivalent);
+    }
+
+    private static Optional<ConvertedType> legacyEquivalent(LogicalType logicalType) {
+        return switch (logicalType) {
+            case LogicalType.StringType _ -> Optional.of(ConvertedType.UTF8);
+            case LogicalType.EnumType _ -> Optional.of(ConvertedType.ENUM);
+            case LogicalType.JsonType _ -> Optional.of(ConvertedType.JSON);
+            case LogicalType.BsonType _ -> Optional.of(ConvertedType.BSON);
+            case LogicalType.ListType _ -> Optional.of(ConvertedType.LIST);
+            case LogicalType.MapType _ -> Optional.of(ConvertedType.MAP);
+            case LogicalType.DateType _ -> Optional.of(ConvertedType.DATE);
+            case LogicalType.Decimal _ -> Optional.of(ConvertedType.DECIMAL);
+            case LogicalType.IntType(byte bitWidth, boolean isSigned) -> intConvertedType(bitWidth, isSigned);
+            case LogicalType.Time(boolean isAdjustedToUtc, LogicalType.TimeUnit unit) ->
+                utcAdjustedConvertedType(isAdjustedToUtc, unit, ConvertedType.TIME_MILLIS, ConvertedType.TIME_MICROS);
+            case LogicalType.Timestamp(boolean isAdjustedToUtc, LogicalType.TimeUnit unit) ->
+                utcAdjustedConvertedType(
+                        isAdjustedToUtc, unit, ConvertedType.TIMESTAMP_MILLIS, ConvertedType.TIMESTAMP_MICROS);
+            // UUID, FLOAT16, GEOMETRY, GEOGRAPHY, VARIANT, UNKNOWN, and the local-time / NANOS time kinds postdate
+            // the converted-type enum and have no legacy equivalent.
+            default -> Optional.empty();
+        };
+    }
+
+    private static Optional<ConvertedType> intConvertedType(byte bitWidth, boolean isSigned) {
+        return switch (bitWidth) {
+            case 8 -> Optional.of(isSigned ? ConvertedType.INT_8 : ConvertedType.UINT_8);
+            case 16 -> Optional.of(isSigned ? ConvertedType.INT_16 : ConvertedType.UINT_16);
+            case 32 -> Optional.of(isSigned ? ConvertedType.INT_32 : ConvertedType.UINT_32);
+            case 64 -> Optional.of(isSigned ? ConvertedType.INT_64 : ConvertedType.UINT_64);
+            default -> Optional.empty();
+        };
+    }
+
+    /**
+     * The legacy TIME/TIMESTAMP converted types only ever meant the UTC-adjusted milli- and microsecond encodings;
+     * local-time and nanosecond columns have no equivalent and keep the modern annotation alone.
+     */
+    private static Optional<ConvertedType> utcAdjustedConvertedType(
+            boolean isAdjustedToUtc, LogicalType.TimeUnit unit, ConvertedType millis, ConvertedType micros) {
+        if (!isAdjustedToUtc) {
+            return Optional.empty();
+        }
+        return switch (unit) {
+            case MILLIS -> Optional.of(millis);
+            case MICROS -> Optional.of(micros);
+            case NANOS -> Optional.empty();
+        };
+    }
+
+    private static OptionalInt decimalScale(Optional<LogicalType> logicalType) {
+        if (logicalType.orElse(null) instanceof LogicalType.Decimal decimal) {
+            return OptionalInt.of(decimal.scale());
+        }
+        return OptionalInt.empty();
+    }
+
+    private static OptionalInt decimalPrecision(Optional<LogicalType> logicalType) {
+        if (logicalType.orElse(null) instanceof LogicalType.Decimal decimal) {
+            return OptionalInt.of(decimal.precision());
+        }
+        return OptionalInt.empty();
     }
 
     private static FieldRepetitionType mapRepetition(SchemaNode field) {
