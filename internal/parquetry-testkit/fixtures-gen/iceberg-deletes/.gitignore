@@ -2,3 +2,6 @@ work/
 probe-work/
 .venv/
 *.log
+equality-gen/target/
+equality-gen/work/
+equality-gen/cp.txt

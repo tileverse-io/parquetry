@@ -314,25 +314,33 @@ final class IcebergDataset implements ParquetDataset {
      * {@link Query#of}, which preserves nested and lineage columns the table schema does not model and keeps the corpus
      * fast path free of any output shaping.
      *
-     * <p>An evolved file is read through a reconciled output shape. The predicate is folded against the columns the
-     * table adds (which are null in this file) and against the identity-partition columns this file omits (each a
-     * constant taken from the file's manifest partition tuple): a leaf over an added column collapses, a leaf over an
-     * omitted partition column evaluates against its constant, and a predicate that folds to always-false skips the
-     * file (this method returns null). The pushdown projection is the physical sources the output actually reads; when
-     * the output is only injected nulls or constants, one cheap physical leaf still drives row enumeration. Evolved
-     * files present every table field; restricting the presented set to the caller projection is a later optimization.
+     * <p>An evolved file is read through a reconciled output shape. The predicate (already ANDed with any equality
+     * anti-predicate) is folded against the columns the table adds (which are null in this file) and against the
+     * identity-partition columns this file omits (each a constant taken from the file's manifest partition tuple): a
+     * leaf over an added column collapses, a leaf over an omitted partition column evaluates against its constant, and
+     * a predicate that folds to always-false skips the file (this method returns null). Folding the anti-predicate
+     * before the read keeps an equality field that reconciles to a constant or a null from reaching the file, which
+     * does not hold that column. The pushdown projection is the physical sources the output actually reads; when the
+     * output is only injected nulls or constants, one cheap physical leaf still drives row enumeration. Evolved files
+     * present every table field; restricting the presented set to the caller projection is a later optimization.
+     *
+     * <p>A pass-through file needs no widening for equality deletes: the core read decodes every column the predicate
+     * references for the record filter and narrows the output back to the caller projection on its own, dropping the
+     * equality columns the caller did not ask to see.
      */
     private Query oneFileQuery(int index, Predicate predicate, Projection projection) {
         IcebergManifests.DataFileRef ref = dataFiles.get(index);
         Optional<RowPositionSet> deleted = deletePlan.positionsFor(ref);
+        Optional<Predicate> equalityDeletes = deletePlan.equalityDeletesFor(ref);
         Map<Integer, Value> partitionConstants =
                 IcebergPartitionValues.constantsFor(partitionSpec, ref.partitionValues());
         IcebergFileSchema file = IcebergFileSchema.of(perFile(index).schema());
         Reconciliation recon = IcebergReconciliation.reconcile(icebergSchema, file, partitionConstants);
+        Predicate withEquality = andEqualityDeletes(predicate, equalityDeletes);
         if (recon.passThrough()) {
-            return Query.of(withDeletes(predicate, deleted), projection);
+            return Query.of(withDeletes(withEquality, deleted), projection);
         }
-        Predicate folded = ConstantFolding.fold(predicate, constantColumns(recon), addedNullColumns(recon));
+        Predicate folded = ConstantFolding.fold(withEquality, constantColumns(recon), addedNullColumns(recon));
         if (folded.equals(Predicate.ALWAYS_FALSE)) {
             return null;
         }
@@ -340,20 +348,38 @@ final class IcebergDataset implements ParquetDataset {
     }
 
     /**
-     * ANDs the data file's merge-on-read deletes into {@code base} as a {@link Predicate.RowIndexExcluded} leaf over
-     * the synthesized row-position column, dropping the rows the delete files mark. A file with no applicable delete
-     * keeps {@code base} unchanged; a bare delete (the caller passed no predicate) stays a single leaf so the reader
-     * can eliminate fully-deleted row groups and pages before decoding.
+     * ANDs the data file's positional deletes into {@code base} as a {@link Predicate.RowIndexExcluded} leaf over the
+     * synthesized row-position column. A file with no positional delete keeps {@code base} unchanged.
      */
     private static Predicate withDeletes(Predicate base, Optional<RowPositionSet> deleted) {
         if (deleted.isEmpty()) {
             return base;
         }
         Predicate deleteLeaf = new Predicate.RowIndexExcluded(ROW_POSITION, deleted.orElseThrow());
-        if (base.equals(Predicate.ALWAYS_TRUE)) {
-            return deleteLeaf;
+        return conjoin(base, deleteLeaf);
+    }
+
+    /**
+     * ANDs the data file's equality-delete anti-predicate into {@code base}. The anti-predicate keeps every row that
+     * matches no applicable delete tuple; a file with no applicable equality delete keeps {@code base} unchanged.
+     */
+    private static Predicate andEqualityDeletes(Predicate base, Optional<Predicate> equalityDeletes) {
+        if (equalityDeletes.isEmpty()) {
+            return base;
         }
-        return base.and(deleteLeaf);
+        return conjoin(base, equalityDeletes.orElseThrow());
+    }
+
+    /**
+     * ANDs {@code add} into {@code base}, keeping a bare delete (the caller passed no predicate) a single leaf rather
+     * than {@code ALWAYS_TRUE AND leaf}. The single leaf lets the reader eliminate fully-deleted row groups and pages
+     * before decoding.
+     */
+    private static Predicate conjoin(Predicate base, Predicate add) {
+        if (base.equals(Predicate.ALWAYS_TRUE)) {
+            return add;
+        }
+        return base.and(add);
     }
 
     /**

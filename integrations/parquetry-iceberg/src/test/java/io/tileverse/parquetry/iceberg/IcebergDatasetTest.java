@@ -23,6 +23,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.AfterEach;
@@ -107,6 +108,27 @@ class IcebergDatasetTest {
     }
 
     @Test
+    void skipsAFileWhenAConstantColumnEqualityCannotMatch() {
+        IcebergDataset dataset = datasetWithSchema(fieldsWithDefaultedColumn());
+        Predicate constantEqualsOther = new Predicate.Eq(ColumnPath.of("tier"), new Value.LongVal(2L));
+
+        Query query = dataset.oneFileQueryForTest(0, constantEqualsOther, Projection.ALL);
+
+        assertThat(query).isNull();
+    }
+
+    @Test
+    void keepsAFileWhenAConstantColumnEqualityMatches() {
+        IcebergDataset dataset = datasetWithSchema(fieldsWithDefaultedColumn());
+        Predicate constantEqualsDefault = new Predicate.Eq(ColumnPath.of("tier"), new Value.LongVal(7L));
+
+        Query query = dataset.oneFileQueryForTest(0, constantEqualsDefault, Projection.ALL);
+
+        assertThat(query).isNotNull();
+        assertThat(query.predicate()).isEqualTo(Predicate.ALWAYS_TRUE);
+    }
+
+    @Test
     void readsEveryRowThroughTheReconciledRenamePath() {
         IcebergDataset dataset = datasetWithSchema(renamedIdFields());
 
@@ -150,7 +172,7 @@ class IcebergDatasetTest {
         CatalogSnapshot snapshot =
                 new CatalogSnapshot(metadata.currentSnapshotId(), metadata.currentSnapshotTimestampMs());
         IcebergPartitionSpec partitionSpec = IcebergPartitionSpec.of(List.of(), List.of());
-        IcebergDeletePlan deletePlan = IcebergDeletePlan.of(List.of(), io);
+        IcebergDeletePlan deletePlan = IcebergDeletePlan.of(List.of(), io, null);
         return new IcebergDataset(
                 TABLE,
                 snapshot,
@@ -195,6 +217,16 @@ class IcebergDatasetTest {
     private static List<IcebergField> fieldsWithAddedColumn() {
         List<IcebergField> fields = new ArrayList<>(currentFields());
         fields.add(new IcebergField(99, "extra", "long", false));
+        return fields;
+    }
+
+    /**
+     * The current fields plus a column the data file does not hold whose schema declares an {@code initial-default}.
+     * Reconciliation presents it as a constant for every row, and a predicate over it folds against that default.
+     */
+    private static List<IcebergField> fieldsWithDefaultedColumn() {
+        List<IcebergField> fields = new ArrayList<>(currentFields());
+        fields.add(new IcebergField(99, "tier", "long", false, Optional.of(new Value.LongVal(7L))));
         return fields;
     }
 }
