@@ -32,6 +32,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.stream.Stream;
 
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -39,9 +40,15 @@ import io.tileverse.parquetry.columnar.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.columnar.IntVector;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.columnar.Validity;
+import io.tileverse.parquetry.data.ParquetFileReader;
+import io.tileverse.parquetry.data.ParquetFileWriter;
+import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.ParquetWriteException;
+import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.EncodingPolicy;
+import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.PageHeader;
@@ -50,6 +57,8 @@ import io.tileverse.parquetry.format.PageType;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.RowGroup;
+import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -385,6 +394,90 @@ class RowGroupWriterTest {
         ColumnMetaData meta = flushed.rowGroup().columns().get(0).metaData().orElseThrow();
         assertThat(meta.numValues()).isEqualTo(4L);
         assertThat(meta.statistics().orElseThrow().nullCount().orElseThrow()).isEqualTo(2L);
+    }
+
+    /**
+     * Authoring an OPTIONAL struct through the columnar {@code readBatches -> writeBatch} path. The assembled batch
+     * presents the struct both as a {@link io.tileverse.parquetry.columnar.StructVector} at the group path and as
+     * row-aligned leaf vectors at the leaf paths; the writer must shred the leaves from the struct vector rather than
+     * treat them as flat columns, which it cannot do for a leaf with an OPTIONAL ancestor (the
+     * {@code directlySuppliedNestedLeafWithOptionalAncestorIsRejected} sibling pins the flat-only rejection). A null
+     * struct row must round-trip as a null struct.
+     */
+    @Nested
+    class OptionalStructRoundTrip {
+
+        private final ColumnPath bbox = ColumnPath.of("bbox");
+        private final ColumnPath xmin = ColumnPath.of("bbox", "xmin");
+        private final ColumnPath xmax = ColumnPath.of("bbox", "xmax");
+
+        @Test
+        void optionalStructWithANullRowRoundTripsThroughReadBatchesAndWriteBatch() throws Exception {
+            Path source = writeOptionalStructFixture();
+            Path copy = tempDir.resolve("copy.parquet");
+
+            pumpBatches(source, copy);
+
+            try (ByteRangeSource read = ByteRangeSource.ofFile(copy)) {
+                ParquetFileReader reader = ParquetFileReader.open(read);
+                try (Stream<ParquetRecord> rows =
+                        reader.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
+                    List<ParquetRecord> records =
+                            rows.map(ParquetRecord::detach).toList();
+                    assertThat(records).hasSize(2);
+                    assertThat(records.get(0).isNull(bbox)).isFalse();
+                    assertThat(records.get(0).getInt(xmin)).isEqualTo(1);
+                    assertThat(records.get(0).getInt(xmax)).isEqualTo(2);
+                    assertThat(records.get(1).isNull(bbox)).isTrue();
+                    assertThat(records.get(1).isNull(xmin)).isTrue();
+                }
+            }
+        }
+
+        private void pumpBatches(Path source, Path copy) throws Exception {
+            ParquetSchema schema = optionalStructSchema();
+            WriteOptions writeOptions = options().tempDir(tempDir).build();
+            try (ByteRangeSource in = ByteRangeSource.ofFile(source);
+                    ParquetFileWriter writer =
+                            ParquetFileWriter.create(Files.newOutputStream(copy), schema, writeOptions)) {
+                ParquetFileReader reader = ParquetFileReader.open(in);
+                try (Stream<ParquetRecordBatch> batches =
+                        reader.readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
+                    batches.forEach(batch -> {
+                        try (batch) {
+                            writer.writeBatch(batch);
+                        }
+                    });
+                }
+            }
+        }
+
+        private Path writeOptionalStructFixture() throws Exception {
+            ParquetSchema schema = optionalStructSchema();
+            Path file = tempDir.resolve("source.parquet");
+            WriteOptions writeOptions = options().tempDir(tempDir).build();
+            try (ParquetFileWriter writer =
+                    ParquetFileWriter.create(Files.newOutputStream(file), schema, writeOptions)) {
+                ParquetRecordBatchBuilder appender = writer.appender();
+                appender.setInt(xmin, 1);
+                appender.setInt(xmax, 2);
+                appender.endRow();
+                appender.setNull(bbox);
+                appender.endRow();
+            }
+            return file;
+        }
+
+        private ParquetSchema optionalStructSchema() {
+            SchemaNode.Primitive xminLeaf = new SchemaNode.Primitive(
+                    "xmin", Repetition.REQUIRED, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
+            SchemaNode.Primitive xmaxLeaf = new SchemaNode.Primitive(
+                    "xmax", Repetition.REQUIRED, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
+            SchemaNode.Group bboxGroup = new SchemaNode.Group(
+                    "bbox", Repetition.OPTIONAL, List.of(xminLeaf, xmaxLeaf), Optional.empty(), -1);
+            return new ParquetSchema(
+                    new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(bboxGroup), Optional.empty(), -1));
+        }
     }
 
     // --- helpers ---

@@ -136,13 +136,36 @@ public final class RowGroupWriter implements AutoCloseable {
      */
     private void checkAllLeavesPresent(Map<ColumnPath, ColumnVector> columns) {
         for (LeafBinding binding : leaves) {
-            if (columns.containsKey(binding.path)) {
-                continue;
+            if (binding.requiresStriping()) {
+                checkStripedLeafSupplied(binding, columns);
+            } else {
+                checkFlatLeafSupplied(binding, columns);
             }
-            ColumnPath rootPath = ColumnPath.of(binding.path.part(0));
-            if (!columns.containsKey(rootPath)) {
-                throw new ParquetWriteException("Batch is missing column " + binding.path.dot());
-            }
+        }
+    }
+
+    /**
+     * A leaf with an OPTIONAL or REPEATED ancestor must be authored from its enclosing struct / list / map vector,
+     * present at the leaf's top-level path. The leaf's own row-aligned vector alone cannot express the ancestor levels,
+     * hence supplying only the flat leaf is rejected.
+     */
+    private static void checkStripedLeafSupplied(LeafBinding binding, Map<ColumnPath, ColumnVector> columns) {
+        ColumnPath rootPath = ColumnPath.of(binding.path.part(0));
+        if (!columns.containsKey(rootPath)) {
+            throw new ParquetWriteException("column " + binding.path.dot()
+                    + " has optional or repeated ancestors and cannot be supplied as a flat column; "
+                    + "author it through its enclosing struct or list");
+        }
+    }
+
+    /** A flat leaf is supplied directly by its full path, or through a top-level vector at its root path. */
+    private static void checkFlatLeafSupplied(LeafBinding binding, Map<ColumnPath, ColumnVector> columns) {
+        if (columns.containsKey(binding.path)) {
+            return;
+        }
+        ColumnPath rootPath = ColumnPath.of(binding.path.part(0));
+        if (!columns.containsKey(rootPath)) {
+            throw new ParquetWriteException("Batch is missing column " + binding.path.dot());
         }
     }
 
@@ -154,6 +177,9 @@ public final class RowGroupWriter implements AutoCloseable {
      */
     private void appendDirectLeaves(Map<ColumnPath, ColumnVector> columns, int batchRows) {
         for (LeafBinding binding : leaves) {
+            if (binding.requiresStriping()) {
+                continue;
+            }
             ColumnVector vector = columns.get(binding.path);
             if (vector == null) {
                 continue;
@@ -172,29 +198,39 @@ public final class RowGroupWriter implements AutoCloseable {
      * keeps a flat batch from constructing it.
      */
     private void appendStripedLeaves(ParquetRecordBatch batch, Map<ColumnPath, ColumnVector> columns) {
-        if (allLeavesSuppliedDirectly(columns)) {
+        if (allLeavesWrittenDirectly(columns)) {
             return;
         }
         List<StripedLeaf> striped = new DremelStriper(schema).stripe(batch);
         for (StripedLeaf sl : striped) {
-            if (columns.containsKey(sl.leaf())) {
+            LeafBinding binding = leafByPath.get(sl.leaf());
+            if (binding == null) {
+                continue;
+            }
+            if (writtenDirectly(binding, columns)) {
                 // Already written by the direct-leaf path; skip to avoid double-writing.
                 continue;
             }
-            LeafBinding binding = leafByPath.get(sl.leaf());
-            if (binding != null) {
-                appendStripedLeaf(binding.writer, sl);
-            }
+            appendStripedLeaf(binding.writer, sl);
         }
     }
 
-    private boolean allLeavesSuppliedDirectly(Map<ColumnPath, ColumnVector> columns) {
+    private boolean allLeavesWrittenDirectly(Map<ColumnPath, ColumnVector> columns) {
         for (LeafBinding binding : leaves) {
-            if (!columns.containsKey(binding.path)) {
+            if (!writtenDirectly(binding, columns)) {
                 return false;
             }
         }
         return true;
+    }
+
+    /**
+     * Whether the batch authors this leaf through the bulk flat-vector path: it needs no striping and the batch
+     * supplies it directly by its full leaf path. A leaf that requires striping is authored from its enclosing struct /
+     * list / map vector even when the batch also exposes the leaf's row-aligned vector by path.
+     */
+    private static boolean writtenDirectly(LeafBinding binding, Map<ColumnPath, ColumnVector> columns) {
+        return !binding.requiresStriping() && columns.containsKey(binding.path);
     }
 
     /**
@@ -444,7 +480,8 @@ public final class RowGroupWriter implements AutoCloseable {
             Path tempFile = Files.createTempFile(tempDir, "rgw-" + safeFileName(path) + "-", ".tmp");
             ColumnChunkWriter writer = openLeafWriter(options, schema, leaf, path, tempFile, nested);
             Compression compression = resolveCompression(options, leaf.name());
-            return new LeafBinding(path, leaf, writer, tempFile, compression, nested);
+            boolean requiresStriping = requiresStriping(schema, path, leaf);
+            return new LeafBinding(path, leaf, writer, tempFile, compression, nested, requiresStriping);
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to open column writer for " + path.dot(), e);
         }
@@ -477,6 +514,18 @@ public final class RowGroupWriter implements AutoCloseable {
      */
     private static boolean needsSchemaDerivedLevels(ColumnPath path, SchemaNode.Primitive leaf) {
         return path.numParts() > 1 || leaf.repetition() == Repetition.REPEATED;
+    }
+
+    /**
+     * Whether a leaf must be authored through the Dremel striper rather than the bulk flat-vector path. The flat path
+     * encodes only a leaf's own optionality; a leaf with an OPTIONAL or REPEATED ancestor accumulates definition or
+     * repetition levels that path cannot express and must be shredded from its enclosing struct / list / map vector
+     * instead. A flat leaf, or a leaf nested only under REQUIRED groups, writes correctly through the bulk path.
+     */
+    private static boolean requiresStriping(ParquetSchema schema, ColumnPath path, SchemaNode.Primitive leaf) {
+        LevelMaxima levels = schema.maxLevels(path);
+        int leafOwnDefinitionLevel = leaf.repetition() == Repetition.REQUIRED ? 0 : 1;
+        return levels.maxRepetitionLevel() > 0 || levels.maxDefinitionLevel() > leafOwnDefinitionLevel;
     }
 
     private static Map<ColumnPath, LeafBinding> indexByPath(List<LeafBinding> bindings) {
@@ -559,5 +608,6 @@ public final class RowGroupWriter implements AutoCloseable {
             ColumnChunkWriter writer,
             Path tempFile,
             Compression compression,
-            boolean nested) {}
+            boolean nested,
+            boolean requiresStriping) {}
 }
