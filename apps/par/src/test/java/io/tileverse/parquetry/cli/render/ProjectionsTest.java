@@ -42,7 +42,7 @@ class ProjectionsTest {
     void namedColumnsBecomeProjectionColumns() {
         Projections.Resolved resolved = Projections.resolve(List.of("name", "pop"), schema);
         assertThat(resolved.keptLeaves()).containsExactly(ColumnPath.of("name"), ColumnPath.of("pop"));
-        assertThat(resolved.projection()).isInstanceOf(Projection.Columns.class);
+        assertThat(resolved.projection()).isInstanceOf(Projection.Of.class);
     }
 
     @Test

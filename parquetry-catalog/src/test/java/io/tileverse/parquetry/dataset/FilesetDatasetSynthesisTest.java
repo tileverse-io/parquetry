@@ -78,7 +78,7 @@ class FilesetDatasetSynthesisTest {
         try (FilesetCatalog catalog =
                 FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
             ParquetDataset ds = catalog.dataset(catalog.datasets().get(0));
-            Projection onlyYear = Projection.of(Set.of(ColumnPath.of("year")));
+            Projection onlyYear = Projection.ofPhysical(Set.of(ColumnPath.of("year")));
             try (Stream<ParquetRecord> records = ds.read(Predicate.ALWAYS_TRUE, onlyYear, ReadOptions.DEFAULTS)) {
                 List<Long> years =
                         records.map(row -> row.getLong(ColumnPath.of("year"))).toList();

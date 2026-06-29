@@ -51,8 +51,8 @@ public final class ConstantVectors {
     /**
      * A length-{@code rowCount} vector with every row null; {@code typeOf} fixes the vector kind. Builds an all-null
      * constant column for null-column injection (a field absent from a file under schema evolution, or a typed-null
-     * partition). Reached through an {@link io.tileverse.parquetry.filter.OutputColumn.Null} output column; no catalog
-     * path emits one yet (the Iceberg field-id read is the first).
+     * partition). Reached through an {@link io.tileverse.parquetry.filter.Projection.Column.Null} output column; no
+     * catalog path emits one yet (the Iceberg field-id read is the first).
      */
     public static ColumnVector ofNull(Value typeOf, int rowCount) {
         Validity allNull = Validity.of(new BitSet(), rowCount);

@@ -15,29 +15,155 @@
  */
 package io.tileverse.parquetry.filter;
 
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.SequencedSet;
 import java.util.Set;
 
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.PrimitiveKind;
 
 /**
- * Column projection for {@code ParquetSource.read(predicate, projection, ...)}.
+ * The produce set of one read: which columns the read materializes, and in what order.
  *
- * <p>{@link #ALL} keeps every leaf column; otherwise the projection lists the leaf paths to keep. Nested ancestor
- * groups are preserved automatically by {@link io.tileverse.parquetry.schema.ParquetSchema#project(Set)}.
+ * <p>{@link #ALL} produces every physical leaf of the file, in schema order. {@link Of} is the explicit, ordered list
+ * of {@link Column}s to produce: decode a physical column (possibly renamed, reordered, or dropped), widen one to a
+ * broader primitive type, fill a constant for every row, or present an all-null typed column. The physical columns a
+ * read actually decodes are derived from the produce set; constants and nulls never reach
+ * {@link io.tileverse.parquetry.schema.ParquetSchema#project(Set)}.
  */
-public sealed interface Projection permits Projection.All, Projection.Columns {
+public sealed interface Projection permits Projection.All, Projection.Of {
 
     Projection ALL = new All();
 
-    static Projection of(Set<ColumnPath> kept) {
-        return new Columns(kept);
+    /**
+     * A produce set of the given columns, in iteration order.
+     *
+     * @throws IllegalArgumentException if {@code columns} is empty (use {@link #ALL}) or two columns share a name
+     */
+    static Projection of(SequencedSet<Column> columns) {
+        return new Of(columns);
+    }
+
+    /** A pure physical passthrough produce set ({@code name == source}) over {@code leaves}, in iteration order. */
+    static Projection ofPhysical(Collection<ColumnPath> leaves) {
+        SequencedSet<ColumnPath> distinct = new LinkedHashSet<>(leaves);
+        LinkedHashSet<Column> columns = LinkedHashSet.newLinkedHashSet(distinct.size());
+        for (ColumnPath leaf : distinct) {
+            columns.add(new Column.Physical(leaf, leaf));
+        }
+        return new Of(columns);
     }
 
     record All() implements Projection {}
 
-    record Columns(Set<ColumnPath> kept) implements Projection {
-        public Columns {
-            kept = Set.copyOf(kept);
+    /** An explicit, ordered produce set: one {@link Column} per produced result column, in iteration order. */
+    record Of(SequencedSet<Column> columns) implements Projection {
+
+        public Of {
+            columns = new LinkedHashSet<>(columns);
+            if (columns.isEmpty()) {
+                throw new IllegalArgumentException("Projection.Of must not be empty; use Projection.ALL");
+            }
+            rejectDuplicateNames(columns);
+        }
+
+        /** The physical leaf paths this produce set decodes: the source of every {@link Column.Physical}/Promoted. */
+        public Set<ColumnPath> physicalColumns() {
+            LinkedHashSet<ColumnPath> sources = new LinkedHashSet<>();
+            for (Column column : columns) {
+                physicalSource(column).ifPresent(sources::add);
+            }
+            return sources;
+        }
+
+        /** True when producing this set needs shaping beyond a plain physical passthrough (rename, fill, widen). */
+        public boolean needsShaping() {
+            for (Column column : columns) {
+                if (!(column instanceof Column.Physical passthrough)
+                        || !passthrough.name().equals(passthrough.source())) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static void rejectDuplicateNames(SequencedSet<Column> columns) {
+            Set<ColumnPath> seen = HashSet.newHashSet(columns.size());
+            for (Column column : columns) {
+                if (!seen.add(column.name())) {
+                    throw new IllegalArgumentException("duplicate projection column name " + column.name());
+                }
+            }
+        }
+    }
+
+    private static Optional<ColumnPath> physicalSource(Column column) {
+        return switch (column) {
+            case Column.Physical(ColumnPath _, ColumnPath source) -> Optional.of(source);
+            case Column.Promoted(ColumnPath _, ColumnPath source, PrimitiveKind _) -> Optional.of(source);
+            case Column.Constant _, Column.Null _ -> Optional.empty();
+        };
+    }
+
+    /**
+     * One column of a read's produced result, in the projection's order.
+     *
+     * <p>Each {@code Column} describes how to produce one result column: pass a physical column through (possibly
+     * renamed, reordered, or dropped), fill a constant value for every row, present an all-null typed column, or widen
+     * a physical column to a broader primitive type. Modelling the result this way lets callers express renames,
+     * literals, and sanctioned type promotions without the read itself needing to know why each presentation was
+     * chosen.
+     */
+    sealed interface Column permits Column.Physical, Column.Constant, Column.Null, Column.Promoted {
+
+        /** The result column path this column is presented under. */
+        ColumnPath name();
+
+        /** Present a decoded physical column under {@link #name()} (projection passthrough, rename, reorder, drop). */
+        record Physical(ColumnPath name, ColumnPath source) implements Column {
+            public Physical {
+                Objects.requireNonNull(name, "name");
+                Objects.requireNonNull(source, "source");
+            }
+        }
+
+        /**
+         * Present a constant literal value for every row. Supported types are limited to what {@code ConstantVectors}
+         * renders (Int/Long/Double/Float/Bool/Date/String); any other {@link Value} kind throws loudly.
+         */
+        record Constant(ColumnPath name, Value value) implements Column {
+            public Constant {
+                Objects.requireNonNull(name, "name");
+                Objects.requireNonNull(value, "value");
+            }
+        }
+
+        /**
+         * Present an all-null column; {@code typeOf} selects the column's type (its value is ignored). Supported types
+         * are the same set {@code ConstantVectors} renders (Int/Long/Double/Float/Bool/Date/String); any other
+         * {@link Value} kind throws loudly.
+         */
+        record Null(ColumnPath name, Value typeOf) implements Column {
+            public Null {
+                Objects.requireNonNull(name, "name");
+                Objects.requireNonNull(typeOf, "typeOf");
+            }
+        }
+
+        /**
+         * Present a physical column widened to {@code target} (a sanctioned promotion the caller has already
+         * validated).
+         */
+        record Promoted(ColumnPath name, ColumnPath source, PrimitiveKind target) implements Column {
+            public Promoted {
+                Objects.requireNonNull(name, "name");
+                Objects.requireNonNull(source, "source");
+                Objects.requireNonNull(target, "target");
+            }
         }
     }
 }

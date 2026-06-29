@@ -341,7 +341,7 @@ public final class FilterPipeline {
     private static ParquetSchema projectionOf(ParquetSchema fileSchema, Projection projection) {
         return switch (projection) {
             case Projection.All _ -> fileSchema;
-            case Projection.Columns(var kept) -> fileSchema.project(kept);
+            case Projection.Of of -> fileSchema.project(of.physicalColumns());
         };
     }
 

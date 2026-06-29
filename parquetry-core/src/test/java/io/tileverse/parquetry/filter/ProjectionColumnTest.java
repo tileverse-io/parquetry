@@ -23,20 +23,22 @@ import org.junit.jupiter.api.Test;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 
-class OutputColumnTest {
+class ProjectionColumnTest {
 
     @Test
     void sourcesExposeNameAndSource() {
         ColumnPath count = ColumnPath.of("count");
         ColumnPath n = ColumnPath.of("n");
-        assertThat(new OutputColumn.Physical(count, n).name()).isEqualTo(count);
-        assertThat(new OutputColumn.Physical(count, n).source()).isEqualTo(n);
-        assertThat(new OutputColumn.Constant(ColumnPath.of("label"), new Value.StringVal("x")).name())
+        assertThat(new Projection.Column.Physical(count, n).name()).isEqualTo(count);
+        assertThat(new Projection.Column.Physical(count, n).source()).isEqualTo(n);
+        assertThat(new Projection.Column.Constant(ColumnPath.of("label"), new Value.StringVal("x")).name())
                 .isEqualTo(ColumnPath.of("label"));
-        OutputColumn.Promoted promoted = new OutputColumn.Promoted(ColumnPath.of("big"), n, PrimitiveKind.INT64);
+        Projection.Column.Promoted promoted =
+                new Projection.Column.Promoted(ColumnPath.of("big"), n, PrimitiveKind.INT64);
         assertThat(promoted.target()).isEqualTo(PrimitiveKind.INT64);
         assertThat(promoted.source()).isEqualTo(n);
-        OutputColumn.Null nullColumn = new OutputColumn.Null(ColumnPath.of("label"), new Value.StringVal("x"));
+        Projection.Column.Null nullColumn =
+                new Projection.Column.Null(ColumnPath.of("label"), new Value.StringVal("x"));
         assertThat(nullColumn.name()).isEqualTo(ColumnPath.of("label"));
         assertThat(nullColumn.typeOf()).isEqualTo(new Value.StringVal("x"));
     }
@@ -44,12 +46,12 @@ class OutputColumnTest {
     @Test
     void nullChecksHold() {
         ColumnPath n = ColumnPath.of("n");
-        assertThatThrownBy(() -> new OutputColumn.Physical(null, n)).isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new OutputColumn.Constant(ColumnPath.of("x"), null))
+        assertThatThrownBy(() -> new Projection.Column.Physical(null, n)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new Projection.Column.Constant(ColumnPath.of("x"), null))
                 .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new OutputColumn.Promoted(ColumnPath.of("x"), n, null))
+        assertThatThrownBy(() -> new Projection.Column.Promoted(ColumnPath.of("x"), n, null))
                 .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new OutputColumn.Null(ColumnPath.of("x"), null))
+        assertThatThrownBy(() -> new Projection.Column.Null(ColumnPath.of("x"), null))
                 .isInstanceOf(NullPointerException.class);
     }
 }

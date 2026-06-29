@@ -111,7 +111,7 @@ class DuckDbCorpusRoundTripIT {
     private List<Row> readThroughArrowIntoDuckDb(FileChannel channel, DuckDBConnection conn) throws Exception {
         ParquetFileReader reader = ParquetFileReader.open(ByteRangeSource.ofChannel(channel));
         Predicate predicate = Pred.col(ID).gtEq(FILTER_THRESHOLD);
-        Projection projection = Projection.of(PROJECTED);
+        Projection projection = Projection.ofPhysical(PROJECTED);
 
         ParquetSchema projectedSchema = reader.schema().project(PROJECTED);
         ParquetRecordBatch batch = filteredBatch(reader, predicate, projection, projectedSchema);

@@ -27,31 +27,31 @@ import io.tileverse.parquetry.schema.ColumnPath;
 class QueryTest {
 
     @Test
-    void ofDefaultsToTheIdentityOutputShape() {
+    void ofDefaultsToTheIdentityOutputSelection() {
         Query query = Query.of(Predicate.ALWAYS_TRUE, Projection.ALL);
         assertThat(query.predicate()).isEqualTo(Predicate.ALWAYS_TRUE);
         assertThat(query.projection()).isEqualTo(Projection.ALL);
-        assertThat(query.output()).isEmpty();
+        assertThat(query.outputColumns()).isEmpty();
     }
 
     @Test
     void keepsOutputColumnsInOrder() {
-        OutputColumn a = new OutputColumn.Constant(ColumnPath.of("year"), new Value.IntVal(2024));
-        OutputColumn b = new OutputColumn.Constant(ColumnPath.of("month"), new Value.IntVal(1));
+        ColumnPath year = ColumnPath.of("year");
+        ColumnPath month = ColumnPath.of("month");
         Query query = Query.builder(Predicate.ALWAYS_TRUE, Projection.ALL)
-                .output(List.of(a, b))
+                .outputColumns(List.of(year, month))
                 .build();
-        assertThat(query.output()).containsExactly(a, b);
+        assertThat(query.outputColumns()).containsExactly(year, month);
     }
 
     @Test
     void outputColumnsAreDefensivelyCopied() {
-        List<OutputColumn> mutable = new ArrayList<>();
-        mutable.add(new OutputColumn.Constant(ColumnPath.of("year"), new Value.IntVal(2024)));
+        List<ColumnPath> mutable = new ArrayList<>();
+        mutable.add(ColumnPath.of("year"));
         Query query = Query.builder(Predicate.ALWAYS_TRUE, Projection.ALL)
-                .output(mutable)
+                .outputColumns(mutable)
                 .build();
         mutable.clear();
-        assertThat(query.output()).hasSize(1);
+        assertThat(query.outputColumns()).hasSize(1);
     }
 }

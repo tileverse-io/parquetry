@@ -127,7 +127,7 @@ class GeometryFilterGateTest {
         // Project only id: the geometry column is still decoded as a predicate input for the gate, but it is not
         // materialized as an output column. The count is exactly the number of rows the gate accepts.
         GeometryFilter<double[]> filter = pointInBox(2, 0, 6, 2, new AtomicInteger());
-        long matches = count(Predicate.geometryFilter(filter), Projection.of(Set.of(ID)));
+        long matches = count(Predicate.geometryFilter(filter), Projection.ofPhysical(Set.of(ID)));
         assertThat(matches)
                 .as("count through the gate equals the number of points inside the box")
                 .isEqualTo(2);
@@ -136,12 +136,12 @@ class GeometryFilterGateTest {
     @Test
     void existsThroughTheGateReflectsWhetherAnyRowPasses() {
         GeometryFilter<double[]> hasMatches = pointInBox(2, 0, 6, 2, new AtomicInteger());
-        assertThat(exists(Predicate.geometryFilter(hasMatches), Projection.of(Set.of(ID))))
+        assertThat(exists(Predicate.geometryFilter(hasMatches), Projection.ofPhysical(Set.of(ID))))
                 .as("a filter with matching rows reports existence")
                 .isTrue();
 
         GeometryFilter<double[]> noMatches = pointInBox(100, 100, 110, 110, new AtomicInteger());
-        assertThat(exists(Predicate.geometryFilter(noMatches), Projection.of(Set.of(ID))))
+        assertThat(exists(Predicate.geometryFilter(noMatches), Projection.ofPhysical(Set.of(ID))))
                 .as("a filter with no matching rows reports absence")
                 .isFalse();
     }

@@ -18,14 +18,14 @@ package io.tileverse.parquetry.dataset;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Path;
-import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.SequencedSet;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.filter.OutputColumn;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Query;
@@ -44,14 +44,12 @@ class ParquetSourceConstantColumnsTest {
         try (ByteRangeSource byteSource = ByteRangeSource.ofFile(FILE)) {
             ParquetSource source = ParquetSource.open(byteSource);
             ColumnPath yearPart = ColumnPath.of("year_part");
-            List<OutputColumn> output = new ArrayList<>();
+            SequencedSet<Projection.Column> columns = new LinkedHashSet<>();
             for (ColumnPath leaf : source.schema().leafColumns()) {
-                output.add(new OutputColumn.Physical(leaf, leaf));
+                columns.add(new Projection.Column.Physical(leaf, leaf));
             }
-            output.add(new OutputColumn.Constant(yearPart, new Value.IntVal(2024)));
-            Query query = Query.builder(Predicate.ALWAYS_TRUE, Projection.ALL)
-                    .output(output)
-                    .build();
+            columns.add(new Projection.Column.Constant(yearPart, new Value.IntVal(2024)));
+            Query query = Query.of(Predicate.ALWAYS_TRUE, Projection.of(columns));
             try (Stream<ParquetRecord> rows = source.read(query, ReadOptions.DEFAULTS)) {
                 List<ParquetRecord> materialized =
                         rows.map(ParquetRecord::detach).toList();

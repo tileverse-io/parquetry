@@ -113,7 +113,7 @@ final class QueryTranslator {
         }
         // The reader needs the feature id column to assign feature ids; decode it even when the query omits it.
         mapping.fidAttribute().ifPresent(fid -> kept.add(fid.path()));
-        return Projection.of(kept);
+        return Projection.ofPhysical(kept);
     }
 
     /**

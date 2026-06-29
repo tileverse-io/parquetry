@@ -95,7 +95,7 @@ class ReadBatchesNestedFilterTest {
     void readBatchesProjectingANestedColumnWhileFilteringMatchesRead(@TempDir Path tmp) throws Exception {
         Path file = writeNestedFixture(tmp);
         Predicate predicate = Pred.col("id").lt(ROW_COUNT / 2);
-        Projection projection = Projection.of(Set.of(PHONES, ATTRS));
+        Projection projection = Projection.ofPhysical(Set.of(PHONES, ATTRS));
 
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetFileReader reader = ParquetFileReader.open(source);

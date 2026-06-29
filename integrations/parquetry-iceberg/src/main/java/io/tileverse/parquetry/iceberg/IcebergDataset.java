@@ -42,7 +42,6 @@ import io.tileverse.parquetry.dataset.explain.FileExplain;
 import io.tileverse.parquetry.dataset.explain.Outcome;
 import io.tileverse.parquetry.dataset.explain.Totals;
 import io.tileverse.parquetry.filter.ConstantFolding;
-import io.tileverse.parquetry.filter.OutputColumn;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Query;
@@ -57,7 +56,6 @@ import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
-import io.tileverse.parquetry.schema.PrimitiveKind;
 
 /**
  * A {@link ParquetDataset} over one Iceberg table at a pinned snapshot. Before each query the dataset prunes the
@@ -210,10 +208,15 @@ final class IcebergDataset implements ParquetDataset {
         if (query == null) {
             return Stream.empty();
         }
-        if (query.output().isEmpty()) {
-            return perFile(index).read(query.predicate(), query.projection(), materializer, options);
+        if (isReconciled(query)) {
+            return perFile(index).read(query, options).map(row -> materializer.materialize(row.schema(), row));
         }
-        return perFile(index).read(query, options).map(record -> materializer.materialize(record.schema(), record));
+        return perFile(index).read(query.predicate(), query.projection(), materializer, options);
+    }
+
+    /** A reconciled read presents the table's produce set (renames, null-fills, constants); a pass-through does not. */
+    private static boolean isReconciled(Query query) {
+        return query.projection() instanceof Projection.Of of && of.needsShaping();
     }
 
     @Override
@@ -322,8 +325,7 @@ final class IcebergDataset implements ParquetDataset {
         if (folded.equals(Predicate.ALWAYS_FALSE)) {
             return null;
         }
-        Projection pushdown = pushdownProjection(recon, perFile(index).schema());
-        return Query.builder(folded, pushdown).output(recon.output()).build();
+        return Query.of(folded, Projection.of(recon.columns()));
     }
 
     /**
@@ -333,8 +335,8 @@ final class IcebergDataset implements ParquetDataset {
      */
     private static Map<ColumnPath, Value> constantColumns(Reconciliation recon) {
         Map<ColumnPath, Value> constants = new HashMap<>();
-        for (OutputColumn column : recon.output()) {
-            if (column instanceof OutputColumn.Constant(ColumnPath name, Value value)) {
+        for (Projection.Column column : recon.columns()) {
+            if (column instanceof Projection.Column.Constant(ColumnPath name, Value value)) {
                 constants.put(name, value);
             }
         }
@@ -344,36 +346,12 @@ final class IcebergDataset implements ParquetDataset {
     /** The names of the table columns this file does not hold, which reconciliation presents as typed nulls. */
     private static Set<ColumnPath> addedNullColumns(Reconciliation recon) {
         Set<ColumnPath> nulls = new LinkedHashSet<>();
-        for (OutputColumn column : recon.output()) {
-            if (column instanceof OutputColumn.Null injected) {
+        for (Projection.Column column : recon.columns()) {
+            if (column instanceof Projection.Column.Null injected) {
                 nulls.add(injected.name());
             }
         }
         return nulls;
-    }
-
-    /**
-     * The physical columns the reconciled output reads: every {@link OutputColumn.Physical} and
-     * {@link OutputColumn.Promoted} source. When the output is only injected nulls or constants there is no physical
-     * source to read; one cheap leaf is projected to enumerate the file's rows.
-     */
-    private static Projection pushdownProjection(Reconciliation recon, ParquetSchema fileSchema) {
-        Set<ColumnPath> sources = new LinkedHashSet<>();
-        for (OutputColumn column : recon.output()) {
-            physicalSource(column).ifPresent(sources::add);
-        }
-        if (sources.isEmpty()) {
-            return Projection.of(Set.of(fileSchema.leafColumns().get(0)));
-        }
-        return Projection.of(sources);
-    }
-
-    private static Optional<ColumnPath> physicalSource(OutputColumn column) {
-        return switch (column) {
-            case OutputColumn.Physical(ColumnPath _, ColumnPath source) -> Optional.of(source);
-            case OutputColumn.Promoted(ColumnPath _, ColumnPath source, PrimitiveKind _) -> Optional.of(source);
-            case OutputColumn.Constant _, OutputColumn.Null _ -> Optional.empty();
-        };
     }
 
     /**

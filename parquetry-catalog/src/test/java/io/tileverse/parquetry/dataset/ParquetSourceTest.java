@@ -208,7 +208,7 @@ class ParquetSourceTest {
         try (ByteRangeSource bytes = ByteRangeSource.ofFile(file)) {
             ParquetSource source = openWithPool(bytes, pool);
             ReadOptions options = ReadOptions.DEFAULTS;
-            Projection yearOnly = Projection.of(Set.of(YEAR));
+            Projection yearOnly = Projection.ofPhysical(Set.of(YEAR));
 
             try (Stream<ParquetRecord> records = source.read(Predicate.ALWAYS_TRUE, yearOnly, options)) {
                 List<ParquetRecord> collected = records.toList();

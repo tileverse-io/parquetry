@@ -27,6 +27,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongConsumer;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 import io.tileverse.parquetry.columnar.BatchMaterializer;
@@ -304,6 +305,9 @@ public class ParquetFileReader {
     private <T> Stream<T> readRows(
             Predicate rawPredicate, Projection projection, Materializer<T> materializer, Observation observation) {
 
+        if (needsShaping(projection)) {
+            return shapedRows(rawPredicate, projection, materializer, observation);
+        }
         return buildRowStream(
                 rawPredicate,
                 projection,
@@ -312,6 +316,29 @@ public class ParquetFileReader {
                 FetchAccumulator.NONE,
                 observation.spillAccumulator(),
                 observation::addPipelineNanos);
+    }
+
+    private static boolean needsShaping(Projection projection) {
+        return projection instanceof Projection.Of of && of.needsShaping();
+    }
+
+    /**
+     * A shaping read (constants, renames, widenings, or reorders) materializes through the batch produce path, then
+     * flattens each produced batch to rows. The optimized {@link #buildRowStream} late-materialization path applies
+     * only to a plain physical passthrough.
+     */
+    private <T> Stream<T> shapedRows(
+            Predicate rawPredicate, Projection projection, Materializer<T> materializer, Observation observation) {
+        Stream<ParquetRecordBatch> produced =
+                readBatchesLowered(rawPredicate, projection, BatchMaterializer.defaultBatch(), observation);
+        return produced.flatMap(batch -> flattenRows(batch, materializer));
+    }
+
+    private static <T> Stream<T> flattenRows(ParquetRecordBatch batch, Materializer<T> materializer) {
+        ParquetSchema producedSchema = batch.projectedSchema();
+        return IntStream.range(0, batch.rowCount())
+                .mapToObj(row -> materializer.materialize(producedSchema, batch.materialize(row)))
+                .onClose(batch::close);
     }
 
     /**
@@ -331,7 +358,9 @@ public class ParquetFileReader {
 
         Predicate predicate = lowerSpatialPredicates(rawPredicate);
         boolean recordLevel = options.useRecordLevelFilter();
-        Projection scanProjection = recordLevel ? scanProjectionFor(projection, predicate) : projection;
+        ProjectionPlan projectionPlan =
+                ProjectionPlan.resolve(fileSchema, projection, recordLevel ? predicate : Predicate.ALWAYS_TRUE);
+        Projection scanProjection = projectionPlan.scanProjection();
         List<RowGroupChunks> rowGroupChunks = rowGroupChunks(accumulator);
         boolean observe = observing(options);
         boolean wantsTimings = observe && options.queryObserver().wantsTimings();
@@ -339,7 +368,7 @@ public class ParquetFileReader {
                 predicate, scanProjection, options, rowGroupChunks, wantsTimings, pipelineNanosSink);
         List<RowGroupSurvivor> survivors = survivorsFor(plan, rowGroupChunks);
         ParquetSchema scanSchema = plan.projectedSchema();
-        ParquetSchema outputSchema = outputSchemaFor(projection);
+        ParquetSchema outputSchema = projectionPlan.physicalOutputSchema();
         List<Optional<RowMask>> decodeMasks = decodeMasksFor(survivors, scanSchema, options);
         Predicate normalized = plan.normalizedPredicate();
         Optional<LateMaterialization> lateMat =
@@ -530,29 +559,6 @@ public class ParquetFileReader {
     }
 
     /**
-     * Expands {@code projection} to also include the predicate's columns, and hence record-level evaluation can read
-     * them even when the caller did not project them. {@link Projection.All} already decodes every column.
-     */
-    private static Projection scanProjectionFor(Projection projection, Predicate predicate) {
-        return switch (projection) {
-            case Projection.All _ -> projection;
-            case Projection.Columns(Set<ColumnPath> kept) -> {
-                Set<ColumnPath> union = new LinkedHashSet<>(kept);
-                union.addAll(Predicate.columns(predicate));
-                yield Projection.of(union);
-            }
-        };
-    }
-
-    /** The schema rows are materialized through: exactly the caller's projection, not the expanded scan set. */
-    private ParquetSchema outputSchemaFor(Projection projection) {
-        return switch (projection) {
-            case Projection.All _ -> fileSchema;
-            case Projection.Columns(Set<ColumnPath> kept) -> fileSchema.project(kept);
-        };
-    }
-
-    /**
      * Rewrites GeoParquet bbox-relation leaves into equivalent comparisons on the geometry column's covering columns
      * when this file has covering metadata, letting the numeric stats and column-index tiers prune without decoding the
      * geometry. A file without covering keeps its spatial leaf for the record-level WKB path.
@@ -607,7 +613,7 @@ public class ParquetFileReader {
             FetchAccumulator accumulator,
             SpillAccumulator spillAccumulator,
             LongConsumer pipelineNanosSink) {
-        Projection predicateProjection = Projection.of(Predicate.columns(predicate));
+        Projection predicateProjection = Projection.ofPhysical(Predicate.columns(predicate));
         List<RowGroupChunks> rowGroupChunks = rowGroupChunks(accumulator);
         boolean observe = observing(options);
         boolean wantsTimings = observe && options.queryObserver().wantsTimings();
@@ -724,7 +730,9 @@ public class ParquetFileReader {
         ReadOptions options = observation.effectiveOptions();
         Predicate predicate = lowerSpatialPredicates(rawPredicate);
         boolean recordLevel = options.useRecordLevelFilter();
-        Projection scanProjection = recordLevel ? scanProjectionFor(projection, predicate) : projection;
+        ProjectionPlan projectionPlan =
+                ProjectionPlan.resolve(fileSchema, projection, recordLevel ? predicate : Predicate.ALWAYS_TRUE);
+        Projection scanProjection = projectionPlan.scanProjection();
         List<RowGroupChunks> rowGroupChunks = rowGroupChunks();
         boolean observe = observing(options);
         boolean wantsTimings = observe && options.queryObserver().wantsTimings();
@@ -732,7 +740,7 @@ public class ParquetFileReader {
                 predicate, scanProjection, options, rowGroupChunks, wantsTimings, observation::addPipelineNanos);
         List<RowGroupSurvivor> survivors = survivorsFor(plan, rowGroupChunks);
         ParquetSchema scanSchema = plan.projectedSchema();
-        ParquetSchema outputSchema = outputSchemaFor(projection);
+        ParquetSchema outputSchema = projectionPlan.physicalOutputSchema();
         List<Optional<RowMask>> decodeMasks = decodeMasksFor(survivors, scanSchema, options);
         Predicate normalized = plan.normalizedPredicate();
         Optional<LateMaterialization> lateMat =
@@ -752,7 +760,10 @@ public class ParquetFileReader {
         Stream<ParquetRecordBatch> batches = recordFilter == null
                 ? BatchPipeline.batches(coordinator)
                 : BatchPipeline.batches(coordinator, recordFilter, outputSchema);
-        return batches.map(batch -> materializer.materialize(outputSchema, batch));
+        Stream<ParquetRecordBatch> produced =
+                projectionPlan.needsShaping() ? batches.map(projectionPlan::produce) : batches;
+        ParquetSchema producedSchema = projectionPlan.producedSchema();
+        return produced.map(batch -> materializer.materialize(producedSchema, batch));
     }
 
     /**
@@ -799,6 +810,7 @@ public class ParquetFileReader {
      * shared decode pool while preserving file order. Closing the returned coordinator drains in-flight decodes and
      * cascades to {@link RowGroupPrefetcher#close()}; the per-read fetch executor still shuts down with the read.
      */
+    @SuppressWarnings("java:S107") // decode-coordinator wiring needs every input; splitting it would obscure, not help
     private ParallelDecodeCoordinator newDecodeCoordinator(
             List<RowGroupSurvivor> survivors,
             ParquetSchema projectedSchema,
@@ -1148,14 +1160,14 @@ public class ParquetFileReader {
     private List<ColumnPath> projectedLeafColumns(Projection projection) {
         return switch (projection) {
             case Projection.All _ -> fileSchema.leafColumns();
-            case Projection.Columns _ -> projectionOf(projection).leafColumns();
+            case Projection.Of _ -> projectionOf(projection).leafColumns();
         };
     }
 
     private ParquetSchema projectionOf(Projection projection) {
         return switch (projection) {
             case Projection.All _ -> fileSchema;
-            case Projection.Columns(Set<ColumnPath> kept) -> fileSchema.project(kept);
+            case Projection.Of of -> fileSchema.project(of.physicalColumns());
         };
     }
 

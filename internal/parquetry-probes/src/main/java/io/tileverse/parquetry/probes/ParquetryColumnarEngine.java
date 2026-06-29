@@ -86,7 +86,7 @@ final class ParquetryColumnarEngine implements ColumnarEngine {
         Set<ColumnPath> kept = ProbeColumns.requested().stream()
                 .map(name -> ColumnPath.of(name.split("\\.")))
                 .collect(Collectors.toSet());
-        return kept.isEmpty() ? Projection.ALL : Projection.of(kept);
+        return kept.isEmpty() ? Projection.ALL : Projection.ofPhysical(kept);
     }
 
     @Override

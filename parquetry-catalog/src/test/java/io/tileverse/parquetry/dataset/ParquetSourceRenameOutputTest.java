@@ -19,14 +19,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
 import java.nio.file.Path;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.SequencedSet;
 import java.util.Set;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.filter.OutputColumn;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Query;
@@ -150,10 +151,9 @@ class ParquetSourceRenameOutputTest {
     }
 
     private static Query renameIdToRecordIdQuery(Predicate predicate) {
-        List<OutputColumn> output = List.of(new OutputColumn.Physical(RECORD_ID, ID));
-        return Query.builder(predicate, Projection.of(Set.of(ID)))
-                .output(output)
-                .build();
+        SequencedSet<Projection.Column> columns =
+                new LinkedHashSet<>(List.of(new Projection.Column.Physical(RECORD_ID, ID)));
+        return Query.of(predicate, Projection.of(columns));
     }
 
     private static List<Integer> readPresentedIds(ParquetSource source, Query query) {
@@ -169,8 +169,8 @@ class ParquetSourceRenameOutputTest {
     }
 
     private static List<Integer> physicalIdsGreaterThan(ParquetSource source, int threshold) {
-        try (Stream<ParquetRecord> rows =
-                source.read(physicalIdGreaterThan(threshold), Projection.of(Set.of(ID)), ReadOptions.DEFAULTS)) {
+        try (Stream<ParquetRecord> rows = source.read(
+                physicalIdGreaterThan(threshold), Projection.ofPhysical(Set.of(ID)), ReadOptions.DEFAULTS)) {
             return rows.map(row -> row.getInt(ID)).toList();
         }
     }

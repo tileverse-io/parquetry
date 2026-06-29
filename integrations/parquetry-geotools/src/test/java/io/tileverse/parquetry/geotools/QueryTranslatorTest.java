@@ -165,7 +165,7 @@ class QueryTranslatorTest {
         Query q = new Query("t", Filter.INCLUDE, new String[] {"geom"});
         QueryTranslator.TranslatedQuery t = new QueryTranslator(mappingWithFid()).translate(q);
         assertThat(t.readProjection())
-                .isEqualTo(Projection.of(Set.of(ColumnPath.of("geometry"), ColumnPath.of("name"))));
+                .isEqualTo(Projection.ofPhysical(Set.of(ColumnPath.of("geometry"), ColumnPath.of("name"))));
     }
 
     @Test
@@ -192,7 +192,7 @@ class QueryTranslatorTest {
         QueryTranslator.TranslatedQuery t = new QueryTranslator(mapping()).translate(q);
         // geometry (output) + name (post filter); NOT pop (pushed predicate -> parquetry decodes it itself)
         assertThat(t.readProjection())
-                .isEqualTo(Projection.of(Set.of(ColumnPath.of("geometry"), ColumnPath.of("name"))));
+                .isEqualTo(Projection.ofPhysical(Set.of(ColumnPath.of("geometry"), ColumnPath.of("name"))));
     }
 
     @Test

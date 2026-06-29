@@ -115,7 +115,7 @@ class ReadBatchesExactTest {
         Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(tmp, ROW_COUNT);
         Predicate predicate = Pred.col("year").eq(2022);
         ColumnPath value = ColumnPath.of("value");
-        Projection projection = Projection.of(Set.of(value));
+        Projection projection = Projection.ofPhysical(Set.of(value));
 
         try (ByteRangeSource source = TestParquetFiles.openRangeReader(file)) {
             ParquetFileReader reader = ParquetFileReader.open(source);

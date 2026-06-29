@@ -100,9 +100,9 @@ class PredicateAdtTest {
 
     @Test
     void projectionOf() {
-        Projection p = Projection.of(java.util.Set.of(ColumnPath.of("a"), ColumnPath.of("b")));
-        assertThat(p).isInstanceOf(Projection.Columns.class);
-        assertThat(((Projection.Columns) p).kept()).hasSize(2);
+        Projection p = Projection.ofPhysical(java.util.Set.of(ColumnPath.of("a"), ColumnPath.of("b")));
+        assertThat(p).isInstanceOf(Projection.Of.class);
+        assertThat(((Projection.Of) p).columns()).hasSize(2);
 
         Projection all = Projection.ALL;
         assertThat(all).isInstanceOf(Projection.All.class);

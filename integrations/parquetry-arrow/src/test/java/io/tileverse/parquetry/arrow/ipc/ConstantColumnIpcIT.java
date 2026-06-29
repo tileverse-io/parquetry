@@ -20,9 +20,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.file.Path;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
+import java.util.SequencedSet;
 import java.util.stream.Stream;
 
 import org.apache.arrow.memory.RootAllocator;
@@ -35,7 +36,6 @@ import org.junit.jupiter.api.io.TempDir;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.ParquetSource;
-import io.tileverse.parquetry.filter.OutputColumn;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Query;
@@ -67,11 +67,10 @@ class ConstantColumnIpcIT {
     }
 
     private static byte[] writeIpcWithConstantYear(Path parquetFile) {
-        Query query = Query.builder(Predicate.ALWAYS_TRUE, Projection.of(Set.of(ID)))
-                .output(List.of(
-                        new OutputColumn.Physical(ID, ID),
-                        new OutputColumn.Constant(YEAR, new Value.LongVal(YEAR_CONSTANT))))
-                .build();
+        SequencedSet<Projection.Column> columns = new LinkedHashSet<>(List.of(
+                new Projection.Column.Physical(ID, ID),
+                new Projection.Column.Constant(YEAR, new Value.LongVal(YEAR_CONSTANT))));
+        Query query = Query.of(Predicate.ALWAYS_TRUE, Projection.of(columns));
         try (ByteRangeSource source = ByteRangeSource.ofFile(parquetFile)) {
             ParquetSource parquetSource = ParquetSource.open(source);
             try (Stream<ParquetRecordBatch> batches = parquetSource.readBatches(query, ReadOptions.DEFAULTS)) {
