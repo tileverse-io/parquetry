@@ -26,7 +26,6 @@ import java.nio.channels.WritableByteChannel;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
 
@@ -289,8 +288,7 @@ public final class ColumnChunkWriter implements AutoCloseable {
     /** Append one FIXED_LEN_BYTE_ARRAY cell. */
     public void appendFixedLenBinary(@NonNull MemorySegment value, int repLevel, int defLevel) {
         ensureKind(PrimitiveKind.FIXED_LEN_BYTE_ARRAY);
-        int expected = leaf.typeLength()
-                .orElseThrow(() -> new ParquetWriteException(FIXED_LEN_TYPE_LENGTH_REQUIRED_MESSAGE + leaf.name()));
+        int expected = requireTypeLength(leaf);
         if (value.byteSize() != expected) {
             throw new ParquetWriteException("FIXED_LEN_BYTE_ARRAY value byte size " + value.byteSize()
                     + " does not match column type_length " + expected);
@@ -314,7 +312,7 @@ public final class ColumnChunkWriter implements AutoCloseable {
         ensureKind(PrimitiveKind.INT96);
         recordLevels(repLevel, defLevel);
         byte[] packed = packInt96(timestampNanos, julianDay);
-        valueBuffer.addInt96Bytes(packed);
+        valueBuffer.addBinary(packed);
         chunkStats.update(null, false);
         pageStats.update(null, false);
         appendToDictionaryIfActive(packed);
@@ -709,10 +707,7 @@ public final class ColumnChunkWriter implements AutoCloseable {
             case FLOAT -> new PlainFloatEncoder();
             case DOUBLE -> new PlainDoubleEncoder();
             case BYTE_ARRAY -> new PlainBinaryEncoder();
-            case FIXED_LEN_BYTE_ARRAY ->
-                new PlainFixedLenBinaryEncoder(leaf.typeLength()
-                        .orElseThrow(
-                                () -> new ParquetWriteException(FIXED_LEN_TYPE_LENGTH_REQUIRED_MESSAGE + leaf.name())));
+            case FIXED_LEN_BYTE_ARRAY -> new PlainFixedLenBinaryEncoder(requireTypeLength(leaf));
         };
     }
 
@@ -824,6 +819,11 @@ public final class ColumnChunkWriter implements AutoCloseable {
         return leaf.repetition() == Repetition.REQUIRED ? 0 : 1;
     }
 
+    private static int requireTypeLength(SchemaNode.Primitive leaf) {
+        return leaf.typeLength()
+                .orElseThrow(() -> new ParquetWriteException(FIXED_LEN_TYPE_LENGTH_REQUIRED_MESSAGE + leaf.name()));
+    }
+
     private static Compression resolveCompression(WriteOptions options, String columnName) {
         Compression override = options.compression().get(columnName);
         if (override != null) {
@@ -861,9 +861,7 @@ public final class ColumnChunkWriter implements AutoCloseable {
             case DOUBLE -> DictionaryAttempt.DoubleAttempt.create(byteLimit);
             case BYTE_ARRAY -> DictionaryAttempt.BinaryAttempt.create(byteLimit, new PlainBinaryEncoder());
             case FIXED_LEN_BYTE_ARRAY -> {
-                int len = leaf.typeLength()
-                        .orElseThrow(
-                                () -> new ParquetWriteException(FIXED_LEN_TYPE_LENGTH_REQUIRED_MESSAGE + leaf.name()));
+                int len = requireTypeLength(leaf);
                 yield DictionaryAttempt.BinaryAttempt.createFixedLen(byteLimit, len);
             }
             case INT96 -> DictionaryAttempt.BinaryAttempt.createFixedLen(byteLimit, 12);
@@ -895,7 +893,7 @@ public final class ColumnChunkWriter implements AutoCloseable {
      * consolidation time.
      */
     private static MemorySegment captureBloomBytes(BloomFilterBuilder builder) {
-        java.io.ByteArrayOutputStream framed = new java.io.ByteArrayOutputStream();
+        ByteArrayOutputStream framed = new ByteArrayOutputStream();
         try {
             builder.writeTo(framed);
         } catch (IOException e) {
@@ -910,269 +908,5 @@ public final class ColumnChunkWriter implements AutoCloseable {
         byte[] bitset = new byte[bitsetLen];
         System.arraycopy(all, headerLen, bitset, 0, bitsetLen);
         return MemorySegment.ofArray(bitset).asReadOnly();
-    }
-
-    /**
-     * Per-page level buffer. Holds an {@code int[]} that grows as cells are appended; {@link #snapshot(int)} returns a
-     * defensive copy sized to the cell count, suitable for handing to {@link PageEncodeJob}.
-     */
-    private static final class LevelBuffer {
-
-        private int[] levels = new int[1024];
-        private int size;
-
-        void add(int level) {
-            if (size == levels.length) {
-                levels = Arrays.copyOf(levels, levels.length * 2);
-            }
-            levels[size++] = level;
-        }
-
-        int[] snapshot(int count) {
-            return Arrays.copyOf(levels, count);
-        }
-
-        void clear() {
-            size = 0;
-        }
-    }
-
-    /**
-     * Per-kind growable scratch buffer for non-null values. The carrier type matches the column's {@link PrimitiveKind}
-     * so the per-page {@link Encoder} can consume it directly.
-     */
-    private abstract static class ValueBuffer {
-
-        static ValueBuffer forKind(PrimitiveKind kind) {
-            return switch (kind) {
-                case BOOLEAN -> new BooleanBuffer();
-                case INT32 -> new IntBuffer();
-                case INT64 -> new LongBuffer();
-                case INT96 -> new Int96Buffer();
-                case FLOAT -> new FloatBuffer();
-                case DOUBLE -> new DoubleBuffer();
-                case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> new BinaryBuffer();
-            };
-        }
-
-        abstract Object payloadValues(int nonNullCount);
-
-        abstract void clear();
-
-        void addInt(int value) {
-            throw new UnsupportedOperationException();
-        }
-
-        void addLong(long value) {
-            throw new UnsupportedOperationException();
-        }
-
-        void addFloat(float value) {
-            throw new UnsupportedOperationException();
-        }
-
-        void addDouble(double value) {
-            throw new UnsupportedOperationException();
-        }
-
-        void addBoolean(boolean value) {
-            throw new UnsupportedOperationException();
-        }
-
-        void addBinary(byte[] value) {
-            throw new UnsupportedOperationException();
-        }
-
-        void addInt96Bytes(byte[] packed) {
-            throw new UnsupportedOperationException();
-        }
-    }
-
-    private static final class IntBuffer extends ValueBuffer {
-
-        private int[] values = new int[1024];
-        private int size;
-
-        @Override
-        void addInt(int value) {
-            ensureCapacity();
-            values[size++] = value;
-        }
-
-        private void ensureCapacity() {
-            if (size == values.length) {
-                values = Arrays.copyOf(values, values.length * 2);
-            }
-        }
-
-        @Override
-        Object payloadValues(int nonNullCount) {
-            return Arrays.copyOf(values, nonNullCount);
-        }
-
-        @Override
-        void clear() {
-            size = 0;
-        }
-    }
-
-    private static final class LongBuffer extends ValueBuffer {
-
-        private long[] values = new long[1024];
-        private int size;
-
-        @Override
-        void addLong(long value) {
-            ensureCapacity();
-            values[size++] = value;
-        }
-
-        private void ensureCapacity() {
-            if (size == values.length) {
-                values = Arrays.copyOf(values, values.length * 2);
-            }
-        }
-
-        @Override
-        Object payloadValues(int nonNullCount) {
-            return Arrays.copyOf(values, nonNullCount);
-        }
-
-        @Override
-        void clear() {
-            size = 0;
-        }
-    }
-
-    private static final class FloatBuffer extends ValueBuffer {
-
-        private float[] values = new float[1024];
-        private int size;
-
-        @Override
-        void addFloat(float value) {
-            ensureCapacity();
-            values[size++] = value;
-        }
-
-        private void ensureCapacity() {
-            if (size == values.length) {
-                values = Arrays.copyOf(values, values.length * 2);
-            }
-        }
-
-        @Override
-        Object payloadValues(int nonNullCount) {
-            return Arrays.copyOf(values, nonNullCount);
-        }
-
-        @Override
-        void clear() {
-            size = 0;
-        }
-    }
-
-    private static final class DoubleBuffer extends ValueBuffer {
-
-        private double[] values = new double[1024];
-        private int size;
-
-        @Override
-        void addDouble(double value) {
-            ensureCapacity();
-            values[size++] = value;
-        }
-
-        private void ensureCapacity() {
-            if (size == values.length) {
-                values = Arrays.copyOf(values, values.length * 2);
-            }
-        }
-
-        @Override
-        Object payloadValues(int nonNullCount) {
-            return Arrays.copyOf(values, nonNullCount);
-        }
-
-        @Override
-        void clear() {
-            size = 0;
-        }
-    }
-
-    private static final class BooleanBuffer extends ValueBuffer {
-
-        private boolean[] values = new boolean[1024];
-        private int size;
-
-        @Override
-        void addBoolean(boolean value) {
-            ensureCapacity();
-            values[size++] = value;
-        }
-
-        private void ensureCapacity() {
-            if (size == values.length) {
-                values = Arrays.copyOf(values, values.length * 2);
-            }
-        }
-
-        @Override
-        Object payloadValues(int nonNullCount) {
-            return Arrays.copyOf(values, nonNullCount);
-        }
-
-        @Override
-        void clear() {
-            size = 0;
-        }
-    }
-
-    private static final class BinaryBuffer extends ValueBuffer {
-
-        private final List<byte[]> values = new ArrayList<>(1024);
-
-        @Override
-        void addBinary(byte[] value) {
-            values.add(value);
-        }
-
-        @Override
-        Object payloadValues(int nonNullCount) {
-            byte[][] carrier = new byte[nonNullCount][];
-            for (int i = 0; i < nonNullCount; i++) {
-                carrier[i] = values.get(i);
-            }
-            return carrier;
-        }
-
-        @Override
-        void clear() {
-            values.clear();
-        }
-    }
-
-    private static final class Int96Buffer extends ValueBuffer {
-
-        private final List<byte[]> values = new ArrayList<>(1024);
-
-        @Override
-        void addInt96Bytes(byte[] packed) {
-            values.add(packed);
-        }
-
-        @Override
-        Object payloadValues(int nonNullCount) {
-            byte[][] carrier = new byte[nonNullCount][];
-            for (int i = 0; i < nonNullCount; i++) {
-                carrier[i] = values.get(i);
-            }
-            return carrier;
-        }
-
-        @Override
-        void clear() {
-            values.clear();
-        }
     }
 }
