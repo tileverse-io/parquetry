@@ -19,10 +19,7 @@ import java.io.UncheckedIOException;
 import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Deque;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -35,7 +32,6 @@ import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.internal.write.ColumnAccumulator;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
-import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.schema.UuidConverter;
@@ -71,11 +67,6 @@ public final class ParquetRecordBatchBuilder implements AutoCloseable {
     // Check for interrupt every 1024 rows: a cheap bitmask cadence that bounds cancellation latency without a per-row
     // branch cost.
     private static final int INTERRUPT_CHECK_ROW_MASK = 1023;
-
-    private static final String ADD_ELEMENT = "addElement";
-    private static final String END_ELEMENT = "endElement";
-    private static final String PUT_ENTRY = "putEntry";
-    private static final String END_ENTRY = "endEntry";
 
     private final ParquetSchema schema;
     private final List<ColumnPath> leaves;
@@ -146,150 +137,16 @@ public final class ParquetRecordBatchBuilder implements AutoCloseable {
         this.boundWriter = boundWriter;
         this.flushThresholdRows = flushThresholdRows;
         this.flushThresholdBytes = flushThresholdBytes;
-        this.leaves = List.copyOf(schema.leafColumns());
-        int leafCount = leaves.size();
-        this.indexByPath = HashMap.newHashMap(leafCount);
-        this.accumulators = new ColumnAccumulator[leafCount];
-        this.required = new boolean[leafCount];
-        this.setThisRow = new boolean[leafCount];
-        @SuppressWarnings("unchecked")
-        ColumnAccumulator.StructAccumulator[][] enclosing = new ColumnAccumulator.StructAccumulator[leafCount][];
-        this.leafEnclosingStructs = enclosing;
-
-        // Build top-level accumulators and map leaf indices to the actual leaf-level primitives within them.
-        List<SchemaNode> topLevelChildren = schema.root().children();
-        this.topLevel = LinkedHashMap.newLinkedHashMap(topLevelChildren.size());
-        this.topLevelRequiredContainer = new boolean[topLevelChildren.size()];
-        this.topLevelNames = new ArrayList<>(topLevelChildren.size());
-
-        // Leaf index counter as we walk top-level children.
-        int[] leafIndex = {0};
-        int topIdx = 0;
-        for (SchemaNode child : topLevelChildren) {
-            topLevelNames.add(child.name());
-            ColumnAccumulator acc = buildTopLevelAccumulator(child, leafIndex);
-            topLevel.put(child.name(), acc);
-            topLevelRequiredContainer[topIdx] = ColumnAccumulator.isRequiredContainer(child, acc);
-            topIdx++;
-        }
-    }
-
-    /**
-     * Builds an accumulator for one top-level schema node and populates the leaf-index arrays ({@code accumulators},
-     * {@code required}, {@code indexByPath}) for each leaf reachable from it.
-     */
-    private ColumnAccumulator buildTopLevelAccumulator(SchemaNode node, int[] leafIndex) {
-        return switch (node) {
-            case SchemaNode.Primitive primitive -> {
-                rejectRepeated(ColumnPath.of(primitive.name()), primitive);
-                PrimitiveKind kind = primitive.kind();
-                int width = primitive.typeLength().orElse(0);
-                ColumnAccumulator acc = ColumnAccumulator.forKind(kind, width);
-                int idx = leafIndex[0]++;
-                ColumnPath path = leaves.get(idx);
-                accumulators[idx] = acc;
-                required[idx] = primitive.repetition() == Repetition.REQUIRED;
-                indexByPath.put(path, idx);
-                yield acc;
-            }
-            case SchemaNode.Group group -> buildTopLevelGroupAccumulator(group, leafIndex);
-        };
-    }
-
-    /**
-     * Builds the accumulator for a top-level group. A plain struct registers each descendant leaf for the index-based
-     * setters; a list or map column is authored through the scope verbs ({@link #beginList}/{@link #beginMap}), and its
-     * element-aligned descendant leaves are not index-addressable, only consumed to keep the leaf-index counter aligned
-     * with {@link ParquetSchema#leafColumns()}.
-     */
-    private ColumnAccumulator buildTopLevelGroupAccumulator(SchemaNode.Group group, int[] leafIndex) {
-        ColumnAccumulator acc = ColumnAccumulator.forNode(group);
-        if (acc instanceof ColumnAccumulator.StructAccumulator structAcc) {
-            ColumnAccumulator.StructAccumulator[] outerChain = new ColumnAccumulator.StructAccumulator[] {structAcc};
-            registerStructLeaves(ColumnPath.of(group.name()), group, structAcc, outerChain, leafIndex);
-            return structAcc;
-        }
-        leafIndex[0] += countDescendantLeaves(group);
-        return acc;
-    }
-
-    /** Counts the primitive leaves under {@code group}, matching the depth-first order of {@code leafColumns()}. */
-    private static int countDescendantLeaves(SchemaNode.Group group) {
-        int count = 0;
-        for (SchemaNode child : group.children()) {
-            count += switch (child) {
-                case SchemaNode.Primitive ignored -> 1;
-                case SchemaNode.Group nested -> countDescendantLeaves(nested);
-            };
-        }
-        return count;
-    }
-
-    /**
-     * Walks the group's children recursively, registering each leaf in the flat leaf-index arrays and wiring it to the
-     * corresponding child accumulator inside the struct hierarchy.
-     *
-     * <p>{@code enclosingChain} is the sequence of struct accumulators from outermost to innermost enclosing this
-     * group. Each primitive leaf records this chain in {@link #leafEnclosingStructs}; an index-based setter then calls
-     * {@link ColumnAccumulator.StructAccumulator#markPresent()} on all ancestors when a value is authored without an
-     * explicit {@code beginStruct/endStruct} scope.
-     */
-    private void registerStructLeaves(
-            ColumnPath groupPath,
-            SchemaNode.Group group,
-            ColumnAccumulator.StructAccumulator structAcc,
-            ColumnAccumulator.StructAccumulator[] enclosingChain,
-            int[] leafIndex) {
-        for (SchemaNode child : group.children()) {
-            switch (child) {
-                case SchemaNode.Primitive primitive -> {
-                    int idx = leafIndex[0]++;
-                    ColumnPath leafPath = leaves.get(idx);
-                    ColumnAccumulator childAcc = structAcc.child(primitive.name());
-                    accumulators[idx] = childAcc;
-                    required[idx] = primitive.repetition() == Repetition.REQUIRED;
-                    indexByPath.put(leafPath, idx);
-                    leafEnclosingStructs[idx] = enclosingChain;
-                }
-                case SchemaNode.Group nestedGroup -> {
-                    ColumnAccumulator nestedAcc = structAcc.child(nestedGroup.name());
-                    registerNestedGroupLeaves(groupPath, nestedGroup, nestedAcc, enclosingChain, leafIndex);
-                }
-            }
-        }
-    }
-
-    /**
-     * Registers the leaves of a group nested inside a struct. A nested struct recurses, extending the enclosing chain
-     * with its accumulator. A nested list or map is authored through the container verbs ({@link #beginList} /
-     * {@link #beginMap}); its element-aligned descendant leaves are not index-addressable, only consumed to keep the
-     * leaf-index counter aligned with {@link ParquetSchema#leafColumns()}, exactly as a top-level list or map column is
-     * handled.
-     */
-    private void registerNestedGroupLeaves(
-            ColumnPath groupPath,
-            SchemaNode.Group nestedGroup,
-            ColumnAccumulator nestedAcc,
-            ColumnAccumulator.StructAccumulator[] enclosingChain,
-            int[] leafIndex) {
-        if (nestedAcc instanceof ColumnAccumulator.StructAccumulator nestedStructAcc) {
-            ColumnPath nestedPath = appendPath(groupPath, nestedGroup.name());
-            ColumnAccumulator.StructAccumulator[] deeperChain =
-                    Arrays.copyOf(enclosingChain, enclosingChain.length + 1);
-            deeperChain[enclosingChain.length] = nestedStructAcc;
-            registerStructLeaves(nestedPath, nestedGroup, nestedStructAcc, deeperChain, leafIndex);
-            return;
-        }
-        leafIndex[0] += countDescendantLeaves(nestedGroup);
-    }
-
-    private static ColumnPath appendPath(ColumnPath prefix, String name) {
-        List<String> parts = new ArrayList<>(prefix.numParts() + 1);
-        for (int i = 0; i < prefix.numParts(); i++) {
-            parts.add(prefix.part(i));
-        }
-        parts.add(name);
-        return ColumnPath.of(parts);
+        BatchBuilderLayout layout = new BatchBuilderLayout(schema);
+        this.leaves = layout.leaves();
+        this.indexByPath = layout.indexByPath();
+        this.accumulators = layout.accumulators();
+        this.required = layout.required();
+        this.setThisRow = new boolean[accumulators.length];
+        this.leafEnclosingStructs = layout.leafEnclosingStructs();
+        this.topLevel = layout.topLevel();
+        this.topLevelRequiredContainer = layout.topLevelRequiredContainer();
+        this.topLevelNames = layout.topLevelNames();
     }
 
     // --- struct scope protocol ---
@@ -381,14 +238,14 @@ public final class ParquetRecordBatchBuilder implements AutoCloseable {
      * path under the list's element node. Close the element with {@link #endElement()}.
      */
     public ParquetRecordBatchBuilder addElement() {
-        ContainerScope scope = requireListScope(ADD_ELEMENT);
+        ContainerScope scope = requireListScope(ContainerScope.ADD_ELEMENT);
         scope.openElement();
         return this;
     }
 
     /** Closes the innermost element scope and commits the element into the list. */
     public ParquetRecordBatchBuilder endElement() {
-        ContainerScope scope = requireListScope(END_ELEMENT);
+        ContainerScope scope = requireListScope(ContainerScope.END_ELEMENT);
         scope.closeElement();
         return this;
     }
@@ -452,7 +309,7 @@ public final class ParquetRecordBatchBuilder implements AutoCloseable {
      * element; mixing it with {@link #addElement()}/{@link #endElement()} within one element would double-commit.
      */
     private ContainerScope requireScalarElementScope() {
-        ContainerScope scope = requireListScope(ADD_ELEMENT);
+        ContainerScope scope = requireListScope(ContainerScope.ADD_ELEMENT);
         if (scope.elementStarted()) {
             throw new IllegalStateException(
                     "scalar element verbs (addInt/addLong/...) must not be mixed with addElement()/endElement() "
@@ -527,14 +384,14 @@ public final class ParquetRecordBatchBuilder implements AutoCloseable {
      * addressed by their relative paths under {@code key_value}. Close the entry with {@link #endEntry()}.
      */
     public ParquetRecordBatchBuilder putEntry() {
-        ContainerScope scope = requireMapScope(PUT_ENTRY);
+        ContainerScope scope = requireMapScope(ContainerScope.PUT_ENTRY);
         scope.openEntry();
         return this;
     }
 
     /** Closes the innermost entry scope and commits the entry into the map. */
     public ParquetRecordBatchBuilder endEntry() {
-        ContainerScope scope = requireMapScope(END_ENTRY);
+        ContainerScope scope = requireMapScope(ContainerScope.END_ENTRY);
         scope.closeEntry();
         return this;
     }
@@ -1092,172 +949,6 @@ public final class ParquetRecordBatchBuilder implements AutoCloseable {
         return index;
     }
 
-    private void rejectRepeated(ColumnPath path, SchemaNode.Primitive leaf) {
-        if (leaf.repetition() == Repetition.REPEATED) {
-            throw new ParquetWriteException("Repeated leaf columns are not supported by the writer: " + path.dot());
-        }
-    }
-
     /** Tracks an open struct scope on the beginStruct/endStruct stack. */
     private record StructScope(ColumnPath path, ColumnAccumulator.StructAccumulator structAcc) {}
-
-    /**
-     * Tracks an open list or map scope. A list scope routes element setters into the list's element accumulator; a map
-     * scope routes key and value setters into the map's two child accumulators. Both wrap their child setters in a
-     * relative path that starts at the repeated wrapper node ({@code element} for a list, {@code key_value} for a map),
-     * mirroring how the read path names those columns.
-     */
-    private static final class ContainerScope {
-
-        private final ColumnPath path;
-        private final ColumnAccumulator.ListAccumulator listAccumulator;
-        private final ColumnAccumulator.MapAccumulator mapAccumulator;
-        private final String elementNodeName;
-        private final String entryNodeName;
-        private final String keyNodeName;
-        private final String valueNodeName;
-        private boolean entryStarted;
-
-        private ContainerScope(
-                ColumnPath path,
-                ColumnAccumulator.ListAccumulator listAccumulator,
-                ColumnAccumulator.MapAccumulator mapAccumulator,
-                String elementNodeName,
-                String entryNodeName,
-                String keyNodeName,
-                String valueNodeName) {
-            this.path = path;
-            this.listAccumulator = listAccumulator;
-            this.mapAccumulator = mapAccumulator;
-            this.elementNodeName = elementNodeName;
-            this.entryNodeName = entryNodeName;
-            this.keyNodeName = keyNodeName;
-            this.valueNodeName = valueNodeName;
-        }
-
-        static ContainerScope list(
-                ColumnPath path, ColumnAccumulator.ListAccumulator listAccumulator, String elementNodeName) {
-            return new ContainerScope(path, listAccumulator, null, elementNodeName, null, null, null);
-        }
-
-        static ContainerScope map(
-                ColumnPath path,
-                ColumnAccumulator.MapAccumulator mapAccumulator,
-                String entryNodeName,
-                String keyNodeName,
-                String valueNodeName) {
-            return new ContainerScope(path, null, mapAccumulator, null, entryNodeName, keyNodeName, valueNodeName);
-        }
-
-        ColumnPath path() {
-            return path;
-        }
-
-        boolean elementStarted() {
-            return entryStarted;
-        }
-
-        boolean isList() {
-            return listAccumulator != null;
-        }
-
-        boolean isMap() {
-            return mapAccumulator != null;
-        }
-
-        ColumnAccumulator elementAccumulator() {
-            return listAccumulator.element();
-        }
-
-        void openElement() {
-            entryStarted = true;
-        }
-
-        void closeElement() {
-            requireStarted(END_ELEMENT, ADD_ELEMENT);
-            listAccumulator.endElement();
-            entryStarted = false;
-        }
-
-        void commitElement() {
-            listAccumulator.endElement();
-        }
-
-        void openEntry() {
-            entryStarted = true;
-        }
-
-        void closeEntry() {
-            requireStarted(END_ENTRY, PUT_ENTRY);
-            mapAccumulator.endEntry();
-            entryStarted = false;
-        }
-
-        /**
-         * Stages a value on the leaf addressed by {@code path} within the active element or entry. The path starts at
-         * the repeated wrapper node, then navigates struct children of the element (lists) or selects the key or value
-         * accumulator (maps).
-         */
-        void setRelative(ColumnPath path, Consumer<ColumnAccumulator> stage) {
-            if (isList()) {
-                setListElement(path, stage);
-            } else {
-                setMapEntry(path, stage);
-            }
-        }
-
-        private void setListElement(ColumnPath path, Consumer<ColumnAccumulator> stage) {
-            requireStarted("element setter", ADD_ELEMENT);
-            requireFirstPart(path, elementNodeName);
-            ColumnAccumulator target = navigate(listAccumulator.element(), path, 1);
-            stage.accept(target);
-        }
-
-        private void setMapEntry(ColumnPath path, Consumer<ColumnAccumulator> stage) {
-            requireStarted("entry setter", PUT_ENTRY);
-            requireFirstPart(path, entryNodeName);
-            ColumnAccumulator child = selectEntryChild(path.part(1));
-            ColumnAccumulator target = navigate(child, path, 2);
-            stage.accept(target);
-        }
-
-        private ColumnAccumulator selectEntryChild(String childName) {
-            if (childName.equals(keyNodeName)) {
-                return mapAccumulator.key();
-            }
-            if (childName.equals(valueNodeName)) {
-                return mapAccumulator.value();
-            }
-            throw new ParquetWriteException("Map entry has no field named " + childName);
-        }
-
-        /**
-         * Walks struct children of {@code start} from {@code path} part {@code fromPart} to the addressed leaf, marking
-         * each struct present along the way.
-         */
-        private ColumnAccumulator navigate(ColumnAccumulator start, ColumnPath path, int fromPart) {
-            ColumnAccumulator current = start;
-            for (int i = fromPart; i < path.numParts(); i++) {
-                if (!(current instanceof ColumnAccumulator.StructAccumulator structAcc)) {
-                    throw new ParquetWriteException("Column " + path.part(i - 1) + " is not a struct");
-                }
-                structAcc.markPresent();
-                current = structAcc.child(path.part(i));
-            }
-            return current;
-        }
-
-        private void requireStarted(String verb, String opener) {
-            if (!entryStarted) {
-                throw new ParquetWriteException(verb + " called without a matching " + opener);
-            }
-        }
-
-        private void requireFirstPart(ColumnPath path, String expected) {
-            if (path.numParts() == 0 || !path.part(0).equals(expected)) {
-                throw new ParquetWriteException(
-                        "Relative path " + path.dot() + " does not start with the expected node '" + expected + "'");
-            }
-        }
-    }
 }
