@@ -51,6 +51,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.testkit.TestCorpus;
 import io.tileverse.parquetry.tileverse.ByteRangeSources;
 
 import picocli.CommandLine;
@@ -330,6 +331,74 @@ class CpCmdTest {
             appender.endRow();
             appender.flush();
         }
+    }
+
+    @Test
+    void pumpsANestedMapColumnUnfiltered(@TempDir Path dir) throws Exception {
+        Path src = TestCorpus.extractFile("parquet-testing/data/nested_maps.snappy.parquet", dir);
+        Path dst = dir.resolve("copy.parquet");
+
+        int code = Par.newCommandLine().execute("cp", src.toString(), dst.toString());
+        assertThat(code).isZero();
+        assertThat(rowCount(dst)).isEqualTo(6L);
+        assertThat(catLines(dst)).isEqualTo(catLines(src));
+    }
+
+    @Test
+    void limitTruncatesANestedCopyToExactlyNRows(@TempDir Path dir) throws Exception {
+        Path src = TestCorpus.extractFile("parquet-testing/data/nested_maps.snappy.parquet", dir);
+        Path dst = dir.resolve("copy.parquet");
+
+        int code = Par.newCommandLine().execute("cp", src.toString(), dst.toString(), "--limit", "1");
+        assertThat(code).isZero();
+        assertThat(rowCount(dst)).isEqualTo(1L);
+        assertThat(catLines(dst)).isEqualTo(catLines(src).subList(0, 1));
+    }
+
+    @Test
+    void filterKeepsANestedOutputColumn(@TempDir Path dir) throws Exception {
+        Path src = TestCorpus.extractFile("parquet-testing/data/nested_maps.snappy.parquet", dir);
+        Path dst = dir.resolve("copy.parquet");
+
+        // All 6 nested_maps rows have b=1; the b > 0 filter keeps them all and preserves the nested column a.
+        int code = Par.newCommandLine().execute("cp", src.toString(), dst.toString(), "--filter", "b > 0");
+        assertThat(code).isZero();
+        assertThat(rowCount(dst)).isEqualTo(6L);
+        assertThat(catLines(dst)).isEqualTo(catLines(src));
+    }
+
+    @Test
+    void filterProducesExactlyTheFilteredRows(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("cities.parquet");
+        Path dst = dir.resolve("filtered.parquet");
+        Fixtures.writeCities(src);
+
+        // writeCities writes 4 rows; three have pop > 1_000_000 (1.3M, 1.4M, 3.1M), one has 500.
+        int code = Par.newCommandLine().execute("cp", src.toString(), dst.toString(), "--filter", "pop > 1000000");
+        assertThat(code).isZero();
+        assertThat(rowCount(dst)).isEqualTo(3L);
+    }
+
+    @Test
+    void filterAndLimitComposeToAtMostNFilteredRows(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("cities.parquet");
+        Path dst = dir.resolve("filtered-limited.parquet");
+        Fixtures.writeCities(src);
+
+        int code = Par.newCommandLine()
+                .execute("cp", src.toString(), dst.toString(), "--filter", "pop > 1000000", "--limit", "2");
+        assertThat(code).isZero();
+        assertThat(rowCount(dst)).isEqualTo(2L);
+    }
+
+    /** Runs {@code cat <file>} and returns its stdout split into lines, for a renderer-based round-trip comparison. */
+    private static List<String> catLines(Path file) {
+        StringWriter buffer = new StringWriter();
+        CommandLine cmd = Par.newCommandLine();
+        cmd.setOut(new PrintWriter(buffer));
+        int code = cmd.execute("cat", file.toString());
+        assertThat(code).isZero();
+        return List.of(buffer.toString().strip().split("\n"));
     }
 
     private static long rowCount(Path file) throws Exception {
