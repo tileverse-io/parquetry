@@ -82,6 +82,7 @@ smoke). CI splits the two phases into `make build-benchmarks` and
 
 | Class | Measures | Key parameters |
 |-------|----------|----------------|
+| `DecodeBenchmark` | Raw per-column decode throughput in isolation: a single-column file read in full through `readBatches`, every decoded value folded into a sink, with no filter, projection narrowing, or record assembly in the way. This is the only benchmark that times raw decode rather than the filter, pruning, or spatial machinery around it, and the harness for confirming a change to the decode path stays neutral on throughput. The `scenario` axis pairs a primitive kind with a forced on-disk encoding (PLAIN / DICTIONARY / DELTA / BYTE_STREAM_SPLIT, only the pairings a kind supports); `nullable` contrasts the all-present PLAIN fast path (values sliced straight from the page) against the null-positioning spread plus validity bitmap. The matrix is wide on purpose -- pin `scenario`/`nullable` to time the slice a change touches. | `scenario` (`INT32`/`INT64`/`FLOAT`/`DOUBLE`/`BOOLEAN`/`BYTE_ARRAY`/`FLBA` x the encodings each supports), `nullable` (`true`/`false`) |
 | `PagePruningBenchmark` | What column-index page pruning buys a filtered read: writes one row group with many small pages, then reads a 1%-selective band predicate with the COLUMN_INDEX tier on vs. off. | `layout` (`SORTED` clusters matches into a few pages; `SHUFFLED` scatters them across every page, leaving nothing to prune), `useColumnIndex` (`true`/`false`) |
 | `FilterTierBenchmark` | How far each metadata tier reduces a selective point lookup over a ten-row-group file. The result shows page pruning (COLUMN_INDEX) dominating for point lookups while row-group pruning (STATS/BLOOM) helps little. | `tiers` (`RECORD_ONLY`, `STATS`, `COLUMN_INDEX`, `BLOOM`, `ALL`) |
 | `LateMaterializationBenchmark` | Whether decoding output columns only for predicate-matching rows (late materialization) beats decoding all surviving rows up front. Uses a 16-column wide table. The win is largest on `SHUFFLED` data where column-index page pruning cannot skip pages and late materialization is the only lever; on `SORTED` data page pruning already skips non-matching pages and the two arms approach parity. | `layout` (`SORTED` clusters matches; `SHUFFLED` scatters them, defeating page pruning), `selectivity` (`POINT`, `P1`, `P10`), `lateMaterialize` (`true`/`false`) |
@@ -91,6 +92,39 @@ smoke). CI splits the two phases into `make build-benchmarks` and
 | `JtsSpatialFilterBenchmark` | End-to-end cost of three query strategies using the real JTS geometry engine and a non-axis-aligned diamond query polygon whose bbox over-selects. `BBOX_ONLY` reads all bbox-candidates (coarse superset); `IN_CORE_GATE` pushes `JtsGeometryFilter.intersects` into the read pipeline and avoids materialising the other columns of rows the exact JTS test rejects; `APP_SIDE_FILTER` reads with `BBOX_ONLY` (full materialization of all candidates) and then re-applies the exact JTS test in the stream. `IN_CORE_GATE` and `APP_SIDE_FILTER` return the same exact rows; `BBOX_ONLY` returns a superset. The `layout` axis shows row-group pruning effectiveness; `selectivity` (HIGH small diamond, LOW large diamond) scales how many rows the exact test rejects; `geometrySize` scales per-row WKB decode cost; `output` (`WKB`/`JTS`) selects whether the geometry output column is kept as raw bytes or parsed into a JTS `Geometry` (the JTS-minus-WKB gap on `IN_CORE_GATE` is the surviving rows' output parse, bounding what reusing the gate's decoded geometry as output would save). | `mode` (`BBOX_ONLY`/`IN_CORE_GATE`/`APP_SIDE_FILTER`), `layout` (`CLUSTERED`/`SHUFFLED`), `selectivity` (`HIGH`/`LOW`), `geometrySize` (`SMALL`/`LARGE`), `output` (`WKB`/`JTS`) |
 | `CountBenchmark` | The optimized `ParquetFileReader.count(predicate)` path against the `read(predicate).count()` baseline over a sorted `id INT64 + value DOUBLE` table of several row groups. The two `@Benchmark` methods (`optimizedCount`, `readCountBaseline`) form the optimized-vs-baseline axis; the `path` parameter selects how the count resolves. `ALWAYS_TRUE` sums per-row-group counts from metadata; `MATCHED` (`id >= 0`, sorted non-null) proves every row group matches and again counts from metadata; `ELIMINATED` (`id` above every group's max) prunes all row groups; `RESIDUAL` (`id > rows / 2`) forces record-level evaluation on the undecided middle groups; `IS_NOT_NULL` settles from the metadata null counts. COMPARISON, SPATIAL, IS_NULL, and PARTIAL paths are deferred: they need non-sorted, nullable, or geometry fixtures that do not exist, and this class does not cover them. | `path` (`ALWAYS_TRUE`/`MATCHED`/`ELIMINATED`/`RESIDUAL`/`IS_NOT_NULL`) |
 | `FetchSpillBenchmark` | The resident-memory cost of reading a large-row-group file under a deliberately tiny fetch budget. A mandatory fetch buffers a whole row group; pinning the fetch budget tiny (via `ResourceLimits.fixed`, whose derived budget is ten percent of the stated memory) forces every mandatory fetch off pooled native RAM and onto a mapped on-disk file (reclaimable page cache). The signal is peak resident set size (RSS), reported as the `peakRssKib` secondary counter: the `concurrency x row-group-span` overflow lands on reclaimable mmap rather than anonymous RAM. RSS is read from the OS with `ps` because file-backed mappings are invisible to the JVM's heap and allocation counters; it includes the JVM's own resident baseline (heap, metaspace, code cache), which dominates a small smoke fixture. This is a sizing tool, not a correctness check. | `concurrency` (`1`/`2`/`4`, overlapping reads per op) |
+
+## Decode baseline
+
+A reference point for `DecodeBenchmark`, to compare a decode-path change against. Average time per full read of a
+1,000,000-row single-column file (`ms/op`, lower is faster). Measured on a dev host (Temurin 25.0.2, default annotation
+settings: 2 warmup + 3 measurement iterations, one fork); error bars are wide on a few rows at this iteration count.
+Re-measure on the target host before drawing conclusions.
+
+| scenario | all-valid | nullable (~10% null) |
+|----------|-----------|----------------------|
+| `INT32_PLAIN` | 2.2 | 7.0 |
+| `INT32_DICTIONARY` | 9.8 | 12.4 |
+| `INT32_DELTA` | 10.0 | 12.3 |
+| `INT64_PLAIN` | 2.5 | 8.4 |
+| `INT64_DICTIONARY` | 10.2 | 12.9 |
+| `INT64_DELTA` | 10.1 | 12.7 |
+| `FLOAT_PLAIN` | 2.2 | 7.8 |
+| `FLOAT_BYTE_STREAM_SPLIT` | 10.0 | 12.6 |
+| `DOUBLE_PLAIN` | 3.1 | 7.4 |
+| `DOUBLE_BYTE_STREAM_SPLIT` | 10.1 | 12.6 |
+| `BOOLEAN_PLAIN` | 2.2 | 6.7 |
+| `BINARY_PLAIN` | 21.2 | 19.0 |
+| `BINARY_DICTIONARY` | 5.9 | 12.5 |
+| `BINARY_DELTA` | 6.0 | 12.3 |
+| `FLBA_PLAIN` | 16.4 | 15.5 |
+| `FLBA_DICTIONARY` | 8.5 | 15.3 |
+
+What the shape confirms (the benchmark discriminates the paths a decode change would touch): the all-present PLAIN
+fixed-width path is the floor (~2-3 ms), because it slices values straight from the page; dictionary, delta, and
+byte-stream-split each add ~7-8 ms of decode; variable-length `BINARY_PLAIN` is the heaviest and, tellingly, slower than
+`BINARY_DICTIONARY` (index decode beats re-parsing length-prefixed bytes); and on the fixed-width PLAIN path `nullable`
+roughly triples the time, the cost of the null-positioning spread and the validity bitmap over the all-valid live-page
+slice.
 
 ## Fetch-spill characterization
 
