@@ -16,36 +16,24 @@
 package io.tileverse.parquetry.data;
 
 import java.io.ByteArrayOutputStream;
-import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
-import java.nio.file.FileSystem;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.FileAttribute;
-import java.nio.file.attribute.PosixFilePermission;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.OptionalDouble;
-import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.function.Consumer;
-import java.util.stream.Stream;
 
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.format.BloomFilterHeader;
-import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.ColumnOrder;
@@ -141,7 +129,7 @@ public final class ParquetFileWriter implements AutoCloseable {
             long maxRowGroupBytesLimit) {
         GeoMetadataWriter geoWriter = new GeoMetadataWriter(options);
         ParquetSchema schema = geoWriter.applyV2LogicalTypes(rawSchema);
-        Path tempDir = createTempDir(options);
+        Path tempDir = WriterTempDirectory.createTempDir(options);
         writeLeadingMagic(sink, tempDir);
         RowGroupWriter first = openRowGroupWriter(options, schema, tempDir, sink.position());
         return new ParquetFileWriter(sink, options, schema, tempDir, geoWriter, first, maxRowGroupBytesLimit);
@@ -311,7 +299,7 @@ public final class ParquetFileWriter implements AutoCloseable {
             cleanupAfterFailure();
             throw e;
         }
-        deleteTempDirQuietly(tempDir);
+        WriterTempDirectory.deleteTempDirQuietly(tempDir);
         fireOnClose();
     }
 
@@ -388,9 +376,9 @@ public final class ParquetFileWriter implements AutoCloseable {
         List<long[]> columnIndexPlacements = writeColumnIndexes(artifacts);
         List<long[]> offsetIndexPlacements = writeOffsetIndexes(artifacts);
 
-        List<ColumnChunk> patched =
-                patchColumnChunks(sourceChunks, bloomPlacements, columnIndexPlacements, offsetIndexPlacements);
-        return buildPatchedRowGroup(flushed.rowGroup(), patched);
+        List<ColumnChunk> patched = RowGroupPatcher.patchColumnChunks(
+                sourceChunks, bloomPlacements, columnIndexPlacements, offsetIndexPlacements);
+        return RowGroupPatcher.buildPatchedRowGroup(flushed.rowGroup(), patched, completedRowGroups.size());
     }
 
     /**
@@ -528,7 +516,7 @@ public final class ParquetFileWriter implements AutoCloseable {
         } catch (RuntimeException _) {
             /* best effort: failure path */
         }
-        deleteTempDirQuietly(tempDir);
+        WriterTempDirectory.deleteTempDirQuietly(tempDir);
     }
 
     /** Fires the write-started event the first time a row reaches the writer. */
@@ -648,60 +636,6 @@ public final class ParquetFileWriter implements AutoCloseable {
         return new long[] {offset, bytes.length};
     }
 
-    private List<ColumnChunk> patchColumnChunks(
-            List<ColumnChunk> sourceChunks,
-            List<long[]> bloomPlacements,
-            List<long[]> columnIndexPlacements,
-            List<long[]> offsetIndexPlacements) {
-        List<ColumnChunk> patched = new ArrayList<>(sourceChunks.size());
-        for (int i = 0; i < sourceChunks.size(); i++) {
-            ColumnChunk source = sourceChunks.get(i);
-            ColumnMetaData patchedMeta = patchColumnMetaData(source.metaData().orElseThrow(), bloomPlacements.get(i));
-            patched.add(ColumnChunk.builder()
-                    .fileOffset(source.fileOffset())
-                    .metaData(Optional.of(patchedMeta))
-                    .columnIndexOffset(longToOptional(columnIndexPlacements.get(i)[0]))
-                    .columnIndexLength(intToOptional(columnIndexPlacements.get(i)[1]))
-                    .offsetIndexOffset(longToOptional(offsetIndexPlacements.get(i)[0]))
-                    .offsetIndexLength(intToOptional(offsetIndexPlacements.get(i)[1]))
-                    .build());
-        }
-        return patched;
-    }
-
-    private RowGroup buildPatchedRowGroup(RowGroup source, List<ColumnChunk> patchedColumns) {
-        return RowGroup.builder()
-                .columns(patchedColumns)
-                .totalByteSize(source.totalByteSize())
-                .numRows(source.numRows())
-                .fileOffset(source.fileOffset())
-                .totalCompressedSize(source.totalCompressedSize())
-                .ordinal(OptionalInt.of(completedRowGroups.size()))
-                .build();
-    }
-
-    private ColumnMetaData patchColumnMetaData(ColumnMetaData source, long[] bloomPlacement) {
-        return ColumnMetaData.builder()
-                .type(source.type())
-                .encodings(source.encodings())
-                .pathInSchema(source.pathInSchema())
-                .codec(source.codec())
-                .numValues(source.numValues())
-                .totalUncompressedSize(source.totalUncompressedSize())
-                .totalCompressedSize(source.totalCompressedSize())
-                .keyValueMetadata(source.keyValueMetadata())
-                .dataPageOffset(source.dataPageOffset())
-                .indexPageOffset(source.indexPageOffset())
-                .dictionaryPageOffset(source.dictionaryPageOffset())
-                .statistics(source.statistics())
-                .encodingStats(source.encodingStats())
-                .bloomFilterOffset(longToOptional(bloomPlacement[0]))
-                .bloomFilterLength(longToOptional(bloomPlacement[1]))
-                .sizeStatistics(source.sizeStatistics())
-                .geospatialStatistics(source.geospatialStatistics())
-                .build();
-    }
-
     private void accumulateGeoSummaries(RowGroupFlushResult flushed) {
         for (RowGroupFlushResult.ColumnArtifacts artifact : flushed.columnArtifacts()) {
             GeospatialStatistics stats = artifact.geospatialStatistics();
@@ -709,7 +643,7 @@ public final class ParquetFileWriter implements AutoCloseable {
                 continue;
             }
             GeoColumnSummary previous = geoSummaries.get(artifact.columnPath());
-            geoSummaries.put(artifact.columnPath(), mergeGeoSummary(previous, stats));
+            geoSummaries.put(artifact.columnPath(), GeoSummaryMerger.mergeGeoSummary(previous, stats));
         }
     }
 
@@ -726,147 +660,16 @@ public final class ParquetFileWriter implements AutoCloseable {
 
     // --- static helpers below this line ---
 
-    /**
-     * Creates a private working directory inside the caller-supplied {@link WriteOptions#tempDir()}.
-     *
-     * <p>The caller's {@code tempDir} (typically {@code $java.io.tmpdir}) must already exist, be a directory, and be
-     * writable; the writer never modifies its permissions or contents beyond the per-run subdirectory it creates here.
-     * The subdirectory is named with a random suffix to avoid collisions between concurrent writers, and on POSIX
-     * filesystems is created atomically with owner-only permissions (rwx------) so other users on the same machine
-     * cannot read intermediate column-chunk bytes. On non-POSIX filesystems the underlying platform's per-user temp
-     * conventions apply.
-     *
-     * <p>The directory is deleted when the writer closes (success or failure path).
-     */
-    private static Path createTempDir(WriteOptions options) {
-        Path parent = options.tempDir();
-        if (!Files.exists(parent)) {
-            throw new ParquetWriteException("WriteOptions.tempDir does not exist: " + parent);
-        }
-        if (!Files.isDirectory(parent)) {
-            throw new ParquetWriteException("WriteOptions.tempDir is not a directory: " + parent);
-        }
-        if (!Files.isWritable(parent)) {
-            throw new ParquetWriteException("WriteOptions.tempDir is not writable: " + parent);
-        }
-        try {
-            return Files.createTempDirectory(parent, "parquetry-write-", ownerOnlyAttributes(parent.getFileSystem()));
-        } catch (IOException e) {
-            throw new UncheckedIOException("Failed to create writer temp directory under " + parent, e);
-        }
-    }
-
-    private static FileAttribute<?>[] ownerOnlyAttributes(FileSystem fs) {
-        if (!fs.supportedFileAttributeViews().contains("posix")) {
-            return new FileAttribute<?>[0];
-        }
-        EnumSet<PosixFilePermission> ownerRwx = EnumSet.of(
-                PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE);
-        return new FileAttribute<?>[] {PosixFilePermissions.asFileAttribute(ownerRwx)};
-    }
-
     private static void writeLeadingMagic(ByteSink sink, Path tempDir) {
         try {
             sink.write(MemorySegment.ofArray(MAGIC));
         } catch (RuntimeException e) {
-            deleteTempDirQuietly(tempDir);
+            WriterTempDirectory.deleteTempDirQuietly(tempDir);
             throw e;
         }
     }
 
     private static long[] absentPlacement() {
         return new long[] {-1L, -1L};
-    }
-
-    private static GeoColumnSummary mergeGeoSummary(GeoColumnSummary previous, GeospatialStatistics chunk) {
-
-        Optional<BoundingBox> mergedBbox = chunk.bbox();
-        List<Integer> left = List.of();
-        if (previous != null) {
-            mergedBbox = unionBbox(previous.bbox(), chunk.bbox());
-            left = previous.geometryTypeCodes();
-        }
-        List<Integer> right = chunk.geospatialTypes().orElse(List.of());
-        List<Integer> mergedTypes = unionTypeCodes(left, right);
-        return GeoColumnSummary.wkb(mergedBbox, mergedTypes);
-    }
-
-    private static Optional<BoundingBox> unionBbox(Optional<BoundingBox> left, Optional<BoundingBox> right) {
-        if (left.isEmpty()) {
-            return right;
-        }
-        if (right.isEmpty()) {
-            return left;
-        }
-        BoundingBox a = left.get();
-        BoundingBox b = right.get();
-        return Optional.of(BoundingBox.builder()
-                .xmin(Math.min(a.xmin(), b.xmin()))
-                .xmax(Math.max(a.xmax(), b.xmax()))
-                .ymin(Math.min(a.ymin(), b.ymin()))
-                .ymax(Math.max(a.ymax(), b.ymax()))
-                .zmin(unionMin(a.zmin(), b.zmin()))
-                .zmax(unionMax(a.zmax(), b.zmax()))
-                .mmin(unionMin(a.mmin(), b.mmin()))
-                .mmax(unionMax(a.mmax(), b.mmax()))
-                .build());
-    }
-
-    private static OptionalDouble unionMin(OptionalDouble left, OptionalDouble right) {
-        if (left.isEmpty()) {
-            return right;
-        }
-        if (right.isEmpty()) {
-            return left;
-        }
-        return OptionalDouble.of(Math.min(left.getAsDouble(), right.getAsDouble()));
-    }
-
-    private static OptionalDouble unionMax(OptionalDouble left, OptionalDouble right) {
-        if (left.isEmpty()) {
-            return right;
-        }
-        if (right.isEmpty()) {
-            return left;
-        }
-        return OptionalDouble.of(Math.max(left.getAsDouble(), right.getAsDouble()));
-    }
-
-    private static List<Integer> unionTypeCodes(List<Integer> left, List<Integer> right) {
-        return Stream.concat(left.stream(), right.stream())
-                .distinct()
-                .sorted(Comparator.naturalOrder())
-                .toList();
-    }
-
-    private static OptionalLong longToOptional(long value) {
-        if (value < 0L) {
-            return OptionalLong.empty();
-        }
-        return OptionalLong.of(value);
-    }
-
-    private static OptionalInt intToOptional(long value) {
-        if (value < 0L) {
-            return OptionalInt.empty();
-        }
-        return OptionalInt.of(Math.toIntExact(value));
-    }
-
-    private static void deleteTempDirQuietly(Path dir) {
-        if (!Files.exists(dir)) {
-            return;
-        }
-        try (Stream<Path> walk = Files.walk(dir)) {
-            walk.sorted(Comparator.reverseOrder()).forEach(p -> {
-                try {
-                    Files.deleteIfExists(p);
-                } catch (IOException _) {
-                    /* best effort */
-                }
-            });
-        } catch (IOException _) {
-            /* best effort */
-        }
     }
 }
