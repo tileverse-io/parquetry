@@ -18,7 +18,6 @@ package io.tileverse.parquetry.cli.cmd;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Path;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -35,14 +34,14 @@ import io.tileverse.parquetry.cli.UriResolver;
 import io.tileverse.parquetry.cli.expr.FilterParser;
 import io.tileverse.parquetry.cli.expr.GeometryColumns;
 import io.tileverse.parquetry.cli.render.Projections;
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ParquetFileWriter;
-import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
-import io.tileverse.parquetry.record.ParquetRecord;
+import io.tileverse.parquetry.filter.Query;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -97,7 +96,7 @@ public final class CpCmd implements Callable<Integer> {
             ParquetSchema sourceSchema = source.schema();
             Projections.Resolved projection = Projections.resolve(options.columns, sourceSchema);
             ParquetSchema writeSchema = buildWriteSchema(sourceSchema, projection);
-            RecordCopier.requireWritable(writeSchema);
+            CpWritable.requireWritable(writeSchema);
             Set<ColumnPath> geometryColumns = GeometryColumns.resolve(sourceSchema, source.keyValueMetadata());
             Predicate predicate = buildPredicate(sourceSchema, geometryColumns);
             writeAll(source, writeSchema, projection, predicate, sourceFileName, source.keyValueMetadata());
@@ -159,9 +158,14 @@ public final class CpCmd implements Callable<Integer> {
     }
 
     /**
-     * Streams every surviving record into the writer and finalizes the file. The writer is closed (which writes the
-     * footer) before {@code writeAll} commits the destination. A failure anywhere in here leaves the sink uncommitted
-     * and the try-with-resources aborts it; a failed copy never leaves a visible footerless destination.
+     * Streams the matching rows into the writer as columnar batches and finalizes the file. The writer is closed (which
+     * writes the footer) before {@code writeAll} commits the destination. A failure anywhere in here leaves the sink
+     * uncommitted and the try-with-resources aborts it; a failed copy never leaves a visible footerless destination.
+     *
+     * <p>The read applies the predicate and the row limit exactly: each batch it emits already holds only the rows to
+     * write (narrowed to the projection, windowed by the limit), in the assembled shape the writer consumes. Struct,
+     * list, map and Variant columns reproduce faithfully because the batch passes straight to
+     * {@link ParquetFileWriter#writeBatch}.
      */
     private void writeAndFinalize(
             ParquetSource source,
@@ -172,18 +176,40 @@ public final class CpCmd implements Callable<Integer> {
             WriteOptions.RowGroupSize rowGroupSize,
             long limit,
             UriResolver.OpenSink sink) {
+        Query query = buildQuery(predicate, projection, limit);
         try (ParquetFileWriter writer = ParquetFileWriter.create(sink.out(), writeSchema, writeOptions);
-                Stream<ParquetRecord> rows = source.read(predicate, projection.projection(), ReadOptions.DEFAULTS)) {
-            ParquetRecordBatchBuilder appender = openAppender(writer, rowGroupSize);
-            RecordCopier copier = RecordCopier.forSchema(writeSchema);
-            long written = 0;
-            Iterator<ParquetRecord> it = rows.iterator();
-            while (it.hasNext() && written < limit) {
-                copier.copyInto(appender, it.next());
-                written++;
-            }
-            appender.flush();
+                Stream<ParquetRecordBatch> batches = source.readBatches(query, pumpReadOptions(rowGroupSize))) {
+            batches.forEach(batch -> {
+                try (batch) {
+                    writer.writeBatch(batch);
+                }
+            });
         }
+    }
+
+    /**
+     * Builds the read query. {@code Long.MAX_VALUE} marks an absent {@code --limit} and reads the identity window; a
+     * present limit bounds the read to that many matching rows.
+     */
+    private static Query buildQuery(Predicate predicate, Projections.Resolved projection, long limit) {
+        if (limit == Long.MAX_VALUE) {
+            return Query.of(predicate, projection.projection());
+        }
+        return Query.builder(predicate, projection.projection()).limit(limit).build();
+    }
+
+    /**
+     * Read options for the pump. A row-count row-group target caps each emitted batch to that target (bounded by
+     * {@link #MAX_COPY_BATCH_ROWS}), which lets the writer seal a row group at exactly the requested count; the writer
+     * seals a row group only at a batch boundary. A byte target or the adaptive default leaves the natural batch size,
+     * and the writer re-chunks row groups by byte budget across batches.
+     */
+    private static ReadOptions pumpReadOptions(WriteOptions.RowGroupSize rowGroupSize) {
+        if (rowGroupSize instanceof WriteOptions.RowGroupSize.Rows(long rows)) {
+            int batchRows = (int) Math.min(rows, MAX_COPY_BATCH_ROWS);
+            return ReadOptions.builder().batchSize(batchRows).build();
+        }
+        return ReadOptions.DEFAULTS;
     }
 
     /**
@@ -230,20 +256,6 @@ public final class CpCmd implements Callable<Integer> {
             return WriteOptions.RowGroupSize.rows(rowGroupSizing.rows);
         }
         return WriteOptions.RowGroupSize.bytes(rowGroupSizing.bytes);
-    }
-
-    /**
-     * Picks the appender's batch granularity. A row-count target caps the batch to that target, which lets a small
-     * target seal a row group at exactly the requested count while {@link #MAX_COPY_BATCH_ROWS} keeps a large target
-     * from buffering an unbounded number of rows. Byte targets and the adaptive default use the standard batch size.
-     */
-    private static ParquetRecordBatchBuilder openAppender(
-            ParquetFileWriter writer, WriteOptions.RowGroupSize rowGroupSize) {
-        if (rowGroupSize instanceof WriteOptions.RowGroupSize.Rows(long rows)) {
-            int batchRows = (int) Math.min(rows, MAX_COPY_BATCH_ROWS);
-            return writer.appender(batchRows);
-        }
-        return writer.appender();
     }
 
     private static long parseByteSize(String text) {
