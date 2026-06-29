@@ -16,36 +16,24 @@
 package io.tileverse.parquetry.data;
 
 import java.io.ByteArrayOutputStream;
-import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
-import java.nio.file.FileSystem;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.FileAttribute;
-import java.nio.file.attribute.PosixFilePermission;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.OptionalDouble;
-import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.function.Consumer;
-import java.util.stream.Stream;
 
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.format.BloomFilterHeader;
-import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.ColumnOrder;
@@ -87,18 +75,8 @@ import lombok.NonNull;
  * An interrupt mid-stream emerges as an {@link java.io.UncheckedIOException} wrapping an
  * {@link java.io.InterruptedIOException} on the next record-emitting call, with the interrupt status restored and the
  * writer transitioned to failed.
- *
- * <p>The class is non-final and the file-layout helpers ({@link #flushCurrentRowGroup flushCurrentRowGroup},
- * {@link #placeIndexBlobsAndPatch placeIndexBlobsAndPatch}, {@link #writeBloomFilters writeBloomFilters},
- * {@link #writeColumnIndexes writeColumnIndexes}, {@link #writeOffsetIndexes writeOffsetIndexes}, {@link #writeFooter
- * writeFooter}, {@link #buildKeyValueMetadata buildKeyValueMetadata}, {@link #openRowGroupWriter openRowGroupWriter})
- * are {@code protected}. A subclass can specialize how index blobs are laid out, where row-group writers come from, or
- * what extra key/value metadata lands in the footer without re-implementing the rest of the write pipeline. Lifecycle
- * primitives ({@link #checkOpen}, {@link #checkInterrupt}, {@link #markFailed}, {@link #cleanupAfterFailure},
- * {@link #maybeFlushRowGroup}) and the write-observer hooks ({@link #maybeFireProgress}, {@link #fireRowGroupFlushed},
- * {@link #fireOnClose}) are likewise {@code protected} for subclasses to participate in.
  */
-public class ParquetFileWriter implements AutoCloseable {
+public final class ParquetFileWriter implements AutoCloseable {
 
     private static final byte[] MAGIC = {'P', 'A', 'R', '1'};
     private static final String GEO_KEY = "geo";
@@ -151,7 +129,7 @@ public class ParquetFileWriter implements AutoCloseable {
             long maxRowGroupBytesLimit) {
         GeoMetadataWriter geoWriter = new GeoMetadataWriter(options);
         ParquetSchema schema = geoWriter.applyV2LogicalTypes(rawSchema);
-        Path tempDir = createTempDir(options);
+        Path tempDir = WriterTempDirectory.createTempDir(options);
         writeLeadingMagic(sink, tempDir);
         RowGroupWriter first = openRowGroupWriter(options, schema, tempDir, sink.position());
         return new ParquetFileWriter(sink, options, schema, tempDir, geoWriter, first, maxRowGroupBytesLimit);
@@ -175,7 +153,7 @@ public class ParquetFileWriter implements AutoCloseable {
         return create(ByteSink.ofOutputStream(out), schema, options);
     }
 
-    protected ParquetFileWriter(
+    private ParquetFileWriter(
             ByteSink out,
             WriteOptions options,
             ParquetSchema schema,
@@ -321,7 +299,7 @@ public class ParquetFileWriter implements AutoCloseable {
             cleanupAfterFailure();
             throw e;
         }
-        deleteTempDirQuietly(tempDir);
+        WriterTempDirectory.deleteTempDirQuietly(tempDir);
         fireOnClose();
     }
 
@@ -347,10 +325,10 @@ public class ParquetFileWriter implements AutoCloseable {
 
     /**
      * Flushes the in-flight row group to the sink, places its index blobs, accumulates GeoParquet summaries, fires the
-     * row-group-flushed progress event, and opens a fresh row-group writer. Subclasses may override to inject custom
-     * post-flush bookkeeping, but must preserve the invariant that {@link #currentRowGroup} is non-null on return.
+     * row-group-flushed progress event, and opens a fresh row-group writer, leaving {@link #currentRowGroup} non-null
+     * on return.
      */
-    protected void flushCurrentRowGroup() {
+    private void flushCurrentRowGroup() {
         RowGroupFlushResult flushed = currentRowGroup.flushTo(out);
         currentRowGroup.close();
         RowGroup patched = placeIndexBlobsAndPatch(flushed);
@@ -369,11 +347,8 @@ public class ParquetFileWriter implements AutoCloseable {
         observedUncompressedBytes += patched.totalByteSize();
     }
 
-    /**
-     * Trips the row-group flush when the sizing policy says the current row group is full. Subclasses may override to
-     * implement a richer sizing policy (e.g. based on column cardinality or external signals).
-     */
-    protected void maybeFlushRowGroup() {
+    /** Trips the row-group flush when the sizing policy says the current row group is full. */
+    private void maybeFlushRowGroup() {
         OptionalLong targetRows = RowGroupSizingPolicy.targetRows(options);
         if (targetRows.isPresent() && currentRowGroup.rowCount() >= targetRows.getAsLong()) {
             flushCurrentRowGroup();
@@ -392,26 +367,25 @@ public class ParquetFileWriter implements AutoCloseable {
 
     /**
      * Lays out the bloom-filter, column-index, and offset-index blobs after the row group, then returns a patched
-     * {@link RowGroup} whose column metadata points at the placed blobs. Subclasses may override to change the layout
-     * order or to skip individual index types.
+     * {@link RowGroup} whose column metadata points at the placed blobs.
      */
-    protected RowGroup placeIndexBlobsAndPatch(RowGroupFlushResult flushed) {
+    private RowGroup placeIndexBlobsAndPatch(RowGroupFlushResult flushed) {
         List<ColumnChunk> sourceChunks = flushed.rowGroup().columns();
         List<RowGroupFlushResult.ColumnArtifacts> artifacts = flushed.columnArtifacts();
         List<long[]> bloomPlacements = writeBloomFilters(artifacts);
         List<long[]> columnIndexPlacements = writeColumnIndexes(artifacts);
         List<long[]> offsetIndexPlacements = writeOffsetIndexes(artifacts);
 
-        List<ColumnChunk> patched =
-                patchColumnChunks(sourceChunks, bloomPlacements, columnIndexPlacements, offsetIndexPlacements);
-        return buildPatchedRowGroup(flushed.rowGroup(), patched);
+        List<ColumnChunk> patched = RowGroupPatcher.patchColumnChunks(
+                sourceChunks, bloomPlacements, columnIndexPlacements, offsetIndexPlacements);
+        return RowGroupPatcher.buildPatchedRowGroup(flushed.rowGroup(), patched, completedRowGroups.size());
     }
 
     /**
      * Writes the bloom-filter blob for every column artifact and returns one {@code {offset, length}} pair per column.
      * Columns without a bloom filter get {@code {-1, -1}}.
      */
-    protected List<long[]> writeBloomFilters(List<RowGroupFlushResult.ColumnArtifacts> artifacts) {
+    private List<long[]> writeBloomFilters(List<RowGroupFlushResult.ColumnArtifacts> artifacts) {
         List<long[]> placements = new ArrayList<>(artifacts.size());
         for (RowGroupFlushResult.ColumnArtifacts artifact : artifacts) {
             placements.add(writeOneBloomFilter(artifact.bloomFilterBytes()));
@@ -423,7 +397,7 @@ public class ParquetFileWriter implements AutoCloseable {
      * Writes the column-index blob for every column artifact and returns one {@code {offset, length}} pair per column.
      * Columns without a column index get {@code {-1, -1}}.
      */
-    protected List<long[]> writeColumnIndexes(List<RowGroupFlushResult.ColumnArtifacts> artifacts) {
+    private List<long[]> writeColumnIndexes(List<RowGroupFlushResult.ColumnArtifacts> artifacts) {
         List<long[]> placements = new ArrayList<>(artifacts.size());
         for (RowGroupFlushResult.ColumnArtifacts artifact : artifacts) {
             if (artifact.columnIndex() == null) {
@@ -439,7 +413,7 @@ public class ParquetFileWriter implements AutoCloseable {
      * Writes the offset-index blob for every column artifact and returns one {@code {offset, length}} pair per column.
      * Columns without an offset index get {@code {-1, -1}}.
      */
-    protected List<long[]> writeOffsetIndexes(List<RowGroupFlushResult.ColumnArtifacts> artifacts) {
+    private List<long[]> writeOffsetIndexes(List<RowGroupFlushResult.ColumnArtifacts> artifacts) {
         List<long[]> placements = new ArrayList<>(artifacts.size());
         for (RowGroupFlushResult.ColumnArtifacts artifact : artifacts) {
             if (artifact.offsetIndex() == null) {
@@ -453,10 +427,9 @@ public class ParquetFileWriter implements AutoCloseable {
 
     /**
      * Builds and writes the footer (schema, row groups, key-value metadata, created-by tag), the 4-byte little-endian
-     * footer length, and the trailing magic. Subclasses may override to inject extra fields, but must keep the
-     * footer-length and trailing-magic suffix intact.
+     * footer length, and the trailing magic.
      */
-    protected void writeFooter() {
+    private void writeFooter() {
         List<SchemaElement> elements = SchemaElementWriter.flatten(schema);
         List<KeyValue> keyValueMetadata = buildKeyValueMetadata();
         FileMetaData footer = FileMetaData.builder()
@@ -477,9 +450,8 @@ public class ParquetFileWriter implements AutoCloseable {
     /**
      * Builds the file's key/value metadata: the caller's {@link WriteOptions#keyValueMetadata()} entries followed by
      * the writer-managed GeoParquet 1.x {@code "geo"} entry, emitted when at least one geospatial column was written.
-     * Subclasses may override to add bespoke entries (e.g. authoring tool version, custom application metadata).
      */
-    protected List<KeyValue> buildKeyValueMetadata() {
+    private List<KeyValue> buildKeyValueMetadata() {
         List<KeyValue> entries = new ArrayList<>();
         options.keyValueMetadata().forEach((key, value) -> entries.add(new KeyValue(key, Optional.of(value))));
         Optional<String> geoJson = geoWriter.v1JsonPayload(schema, geoSummaries);
@@ -504,17 +476,14 @@ public class ParquetFileWriter implements AutoCloseable {
         return orders;
     }
 
-    /**
-     * Opens a fresh per-row-group writer rooted at {@code baseFileOffset}. Subclasses may override to inject a custom
-     * writer.
-     */
-    protected static RowGroupWriter openRowGroupWriter(
+    /** Opens a fresh per-row-group writer rooted at {@code baseFileOffset}. */
+    private static RowGroupWriter openRowGroupWriter(
             WriteOptions options, ParquetSchema schema, Path tempDir, long baseFileOffset) {
         return new RowGroupWriter(options, schema, tempDir, baseFileOffset);
     }
 
-    /** Throws when the writer has been closed or marked failed. Subclasses may override to add custom state checks. */
-    protected void checkOpen() {
+    /** Throws when the writer has been closed or marked failed. */
+    private void checkOpen() {
         if (closed) {
             throw new ParquetWriteException("ParquetWriter is closed");
         }
@@ -525,10 +494,9 @@ public class ParquetFileWriter implements AutoCloseable {
 
     /**
      * Throws an {@link UncheckedIOException} wrapping an {@link InterruptedIOException} when the current thread has a
-     * pending interrupt, after marking the writer failed and restoring the interrupt status. Subclasses may override to
-     * add cooperative cancellation hooks.
+     * pending interrupt, after marking the writer failed and restoring the interrupt status.
      */
-    protected void checkInterrupt() {
+    void checkInterrupt() {
         if (Thread.interrupted()) {
             markFailed();
             Thread.currentThread().interrupt();
@@ -536,21 +504,19 @@ public class ParquetFileWriter implements AutoCloseable {
         }
     }
 
-    /** Marks the writer as terminally failed. Subclasses may override to add their own bookkeeping. */
-    protected void markFailed() {
+    /** Marks the writer as terminally failed. */
+    private void markFailed() {
         failed = true;
     }
 
-    /**
-     * Closes the current row group quietly and deletes the temp directory. Subclasses may override to extend cleanup.
-     */
-    protected void cleanupAfterFailure() {
+    /** Closes the current row group quietly and deletes the temp directory. */
+    private void cleanupAfterFailure() {
         try {
             currentRowGroup.close();
         } catch (RuntimeException _) {
             /* best effort: failure path */
         }
-        deleteTempDirQuietly(tempDir);
+        WriterTempDirectory.deleteTempDirQuietly(tempDir);
     }
 
     /** Fires the write-started event the first time a row reaches the writer. */
@@ -562,8 +528,8 @@ public class ParquetFileWriter implements AutoCloseable {
         observer.onWriteStarted(new WriteStarted(schema));
     }
 
-    /** Fires the row-progress event at the configured cadence. Subclasses may override to add extra telemetry. */
-    protected void maybeFireProgress() {
+    /** Fires the row-progress event at the configured cadence. */
+    private void maybeFireProgress() {
         if (!observing()) {
             return;
         }
@@ -574,8 +540,8 @@ public class ParquetFileWriter implements AutoCloseable {
         }
     }
 
-    /** Fires the row-group-flushed event. Subclasses may override to add extra telemetry. */
-    protected void fireRowGroupFlushed(int rowGroupIndex, RowGroup patched, RowGroupFlushResult flushed) {
+    /** Fires the row-group-flushed event. */
+    private void fireRowGroupFlushed(int rowGroupIndex, RowGroup patched, RowGroupFlushResult flushed) {
         if (!observing()) {
             return;
         }
@@ -616,7 +582,7 @@ public class ParquetFileWriter implements AutoCloseable {
     }
 
     /** Fires the write-finished event with the file-level totals and total elapsed writer time. */
-    protected void fireOnClose() {
+    private void fireOnClose() {
         if (!observing()) {
             return;
         }
@@ -670,60 +636,6 @@ public class ParquetFileWriter implements AutoCloseable {
         return new long[] {offset, bytes.length};
     }
 
-    private List<ColumnChunk> patchColumnChunks(
-            List<ColumnChunk> sourceChunks,
-            List<long[]> bloomPlacements,
-            List<long[]> columnIndexPlacements,
-            List<long[]> offsetIndexPlacements) {
-        List<ColumnChunk> patched = new ArrayList<>(sourceChunks.size());
-        for (int i = 0; i < sourceChunks.size(); i++) {
-            ColumnChunk source = sourceChunks.get(i);
-            ColumnMetaData patchedMeta = patchColumnMetaData(source.metaData().orElseThrow(), bloomPlacements.get(i));
-            patched.add(ColumnChunk.builder()
-                    .fileOffset(source.fileOffset())
-                    .metaData(Optional.of(patchedMeta))
-                    .columnIndexOffset(longToOptional(columnIndexPlacements.get(i)[0]))
-                    .columnIndexLength(intToOptional(columnIndexPlacements.get(i)[1]))
-                    .offsetIndexOffset(longToOptional(offsetIndexPlacements.get(i)[0]))
-                    .offsetIndexLength(intToOptional(offsetIndexPlacements.get(i)[1]))
-                    .build());
-        }
-        return patched;
-    }
-
-    private RowGroup buildPatchedRowGroup(RowGroup source, List<ColumnChunk> patchedColumns) {
-        return RowGroup.builder()
-                .columns(patchedColumns)
-                .totalByteSize(source.totalByteSize())
-                .numRows(source.numRows())
-                .fileOffset(source.fileOffset())
-                .totalCompressedSize(source.totalCompressedSize())
-                .ordinal(OptionalInt.of(completedRowGroups.size()))
-                .build();
-    }
-
-    private ColumnMetaData patchColumnMetaData(ColumnMetaData source, long[] bloomPlacement) {
-        return ColumnMetaData.builder()
-                .type(source.type())
-                .encodings(source.encodings())
-                .pathInSchema(source.pathInSchema())
-                .codec(source.codec())
-                .numValues(source.numValues())
-                .totalUncompressedSize(source.totalUncompressedSize())
-                .totalCompressedSize(source.totalCompressedSize())
-                .keyValueMetadata(source.keyValueMetadata())
-                .dataPageOffset(source.dataPageOffset())
-                .indexPageOffset(source.indexPageOffset())
-                .dictionaryPageOffset(source.dictionaryPageOffset())
-                .statistics(source.statistics())
-                .encodingStats(source.encodingStats())
-                .bloomFilterOffset(longToOptional(bloomPlacement[0]))
-                .bloomFilterLength(longToOptional(bloomPlacement[1]))
-                .sizeStatistics(source.sizeStatistics())
-                .geospatialStatistics(source.geospatialStatistics())
-                .build();
-    }
-
     private void accumulateGeoSummaries(RowGroupFlushResult flushed) {
         for (RowGroupFlushResult.ColumnArtifacts artifact : flushed.columnArtifacts()) {
             GeospatialStatistics stats = artifact.geospatialStatistics();
@@ -731,7 +643,7 @@ public class ParquetFileWriter implements AutoCloseable {
                 continue;
             }
             GeoColumnSummary previous = geoSummaries.get(artifact.columnPath());
-            geoSummaries.put(artifact.columnPath(), mergeGeoSummary(previous, stats));
+            geoSummaries.put(artifact.columnPath(), GeoSummaryMerger.mergeGeoSummary(previous, stats));
         }
     }
 
@@ -748,147 +660,16 @@ public class ParquetFileWriter implements AutoCloseable {
 
     // --- static helpers below this line ---
 
-    /**
-     * Creates a private working directory inside the caller-supplied {@link WriteOptions#tempDir()}.
-     *
-     * <p>The caller's {@code tempDir} (typically {@code $java.io.tmpdir}) must already exist, be a directory, and be
-     * writable; the writer never modifies its permissions or contents beyond the per-run subdirectory it creates here.
-     * The subdirectory is named with a random suffix to avoid collisions between concurrent writers, and on POSIX
-     * filesystems is created atomically with owner-only permissions (rwx------) so other users on the same machine
-     * cannot read intermediate column-chunk bytes. On non-POSIX filesystems the underlying platform's per-user temp
-     * conventions apply.
-     *
-     * <p>The directory is deleted when the writer closes (success or failure path).
-     */
-    private static Path createTempDir(WriteOptions options) {
-        Path parent = options.tempDir();
-        if (!Files.exists(parent)) {
-            throw new ParquetWriteException("WriteOptions.tempDir does not exist: " + parent);
-        }
-        if (!Files.isDirectory(parent)) {
-            throw new ParquetWriteException("WriteOptions.tempDir is not a directory: " + parent);
-        }
-        if (!Files.isWritable(parent)) {
-            throw new ParquetWriteException("WriteOptions.tempDir is not writable: " + parent);
-        }
-        try {
-            return Files.createTempDirectory(parent, "parquetry-write-", ownerOnlyAttributes(parent.getFileSystem()));
-        } catch (IOException e) {
-            throw new UncheckedIOException("Failed to create writer temp directory under " + parent, e);
-        }
-    }
-
-    private static FileAttribute<?>[] ownerOnlyAttributes(FileSystem fs) {
-        if (!fs.supportedFileAttributeViews().contains("posix")) {
-            return new FileAttribute<?>[0];
-        }
-        EnumSet<PosixFilePermission> ownerRwx = EnumSet.of(
-                PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE);
-        return new FileAttribute<?>[] {PosixFilePermissions.asFileAttribute(ownerRwx)};
-    }
-
     private static void writeLeadingMagic(ByteSink sink, Path tempDir) {
         try {
             sink.write(MemorySegment.ofArray(MAGIC));
         } catch (RuntimeException e) {
-            deleteTempDirQuietly(tempDir);
+            WriterTempDirectory.deleteTempDirQuietly(tempDir);
             throw e;
         }
     }
 
     private static long[] absentPlacement() {
         return new long[] {-1L, -1L};
-    }
-
-    private static GeoColumnSummary mergeGeoSummary(GeoColumnSummary previous, GeospatialStatistics chunk) {
-
-        Optional<BoundingBox> mergedBbox = chunk.bbox();
-        List<Integer> left = List.of();
-        if (previous != null) {
-            mergedBbox = unionBbox(previous.bbox(), chunk.bbox());
-            left = previous.geometryTypeCodes();
-        }
-        List<Integer> right = chunk.geospatialTypes().orElse(List.of());
-        List<Integer> mergedTypes = unionTypeCodes(left, right);
-        return GeoColumnSummary.wkb(mergedBbox, mergedTypes);
-    }
-
-    private static Optional<BoundingBox> unionBbox(Optional<BoundingBox> left, Optional<BoundingBox> right) {
-        if (left.isEmpty()) {
-            return right;
-        }
-        if (right.isEmpty()) {
-            return left;
-        }
-        BoundingBox a = left.get();
-        BoundingBox b = right.get();
-        return Optional.of(BoundingBox.builder()
-                .xmin(Math.min(a.xmin(), b.xmin()))
-                .xmax(Math.max(a.xmax(), b.xmax()))
-                .ymin(Math.min(a.ymin(), b.ymin()))
-                .ymax(Math.max(a.ymax(), b.ymax()))
-                .zmin(unionMin(a.zmin(), b.zmin()))
-                .zmax(unionMax(a.zmax(), b.zmax()))
-                .mmin(unionMin(a.mmin(), b.mmin()))
-                .mmax(unionMax(a.mmax(), b.mmax()))
-                .build());
-    }
-
-    private static OptionalDouble unionMin(OptionalDouble left, OptionalDouble right) {
-        if (left.isEmpty()) {
-            return right;
-        }
-        if (right.isEmpty()) {
-            return left;
-        }
-        return OptionalDouble.of(Math.min(left.getAsDouble(), right.getAsDouble()));
-    }
-
-    private static OptionalDouble unionMax(OptionalDouble left, OptionalDouble right) {
-        if (left.isEmpty()) {
-            return right;
-        }
-        if (right.isEmpty()) {
-            return left;
-        }
-        return OptionalDouble.of(Math.max(left.getAsDouble(), right.getAsDouble()));
-    }
-
-    private static List<Integer> unionTypeCodes(List<Integer> left, List<Integer> right) {
-        return Stream.concat(left.stream(), right.stream())
-                .distinct()
-                .sorted(Comparator.naturalOrder())
-                .toList();
-    }
-
-    private static OptionalLong longToOptional(long value) {
-        if (value < 0L) {
-            return OptionalLong.empty();
-        }
-        return OptionalLong.of(value);
-    }
-
-    private static OptionalInt intToOptional(long value) {
-        if (value < 0L) {
-            return OptionalInt.empty();
-        }
-        return OptionalInt.of(Math.toIntExact(value));
-    }
-
-    private static void deleteTempDirQuietly(Path dir) {
-        if (!Files.exists(dir)) {
-            return;
-        }
-        try (Stream<Path> walk = Files.walk(dir)) {
-            walk.sorted(Comparator.reverseOrder()).forEach(p -> {
-                try {
-                    Files.deleteIfExists(p);
-                } catch (IOException _) {
-                    /* best effort */
-                }
-            });
-        } catch (IOException _) {
-            /* best effort */
-        }
     }
 }
