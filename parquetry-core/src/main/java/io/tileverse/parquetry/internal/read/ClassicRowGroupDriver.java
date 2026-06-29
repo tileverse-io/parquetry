@@ -29,8 +29,9 @@ final class ClassicRowGroupDriver implements RowGroupBatchDriver {
     private final RowGroupFetch fetch;
     private final BatchRowGroupReader reader;
 
-    @SuppressWarnings("java:S107") // the decode inputs plus the form flag; a parameter object would only relocate the
-    // arity
+    @SuppressWarnings(
+            "java:S107") // the decode inputs plus the form flag and row-position synthesis; a parameter object
+    // would only relocate the arity
     ClassicRowGroupDriver(
             @NonNull DecodeBufferAllocator decodeBufferAllocator,
             @NonNull RowGroupFetch fetch,
@@ -38,10 +39,18 @@ final class ClassicRowGroupDriver implements RowGroupBatchDriver {
             @NonNull ParquetSchema fileSchema,
             @NonNull OptionalInt batchSizeCap,
             @NonNull Optional<RowMask> rowMask,
-            @NonNull BatchForm batchForm) {
+            @NonNull BatchForm batchForm,
+            @NonNull Optional<RowPositionSynthesis> rowPosition) {
         this.fetch = fetch;
         this.reader = new BatchRowGroupReader(
-                decodeBufferAllocator, fetch.columns(), projectedSchema, fileSchema, batchSizeCap, rowMask, batchForm);
+                decodeBufferAllocator,
+                fetch.columns(),
+                projectedSchema,
+                fileSchema,
+                batchSizeCap,
+                rowMask,
+                batchForm,
+                rowPosition);
     }
 
     @Override

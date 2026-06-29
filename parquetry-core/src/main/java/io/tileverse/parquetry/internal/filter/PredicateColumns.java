@@ -62,6 +62,8 @@ public final class PredicateColumns {
             case Predicate.IsNotNull(ColumnPath col) -> new Predicate.IsNotNull(target(col, mapping));
             case Predicate.Spatial spatial -> remapSpatial(spatial, mapping);
             case Predicate.GeometryFilterPredicate gfp -> remapGeometryFilter(gfp, mapping);
+            // The row-position column is synthesized, not a physical file leaf; a physical-name remap leaves it as is.
+            case Predicate.RowIndexExcluded _ -> predicate;
             case Predicate.Quantified(MatchAction match, Predicate leaf) ->
                 new Predicate.Quantified(match, remap(leaf, mapping));
         };

@@ -380,6 +380,10 @@ public final class BatchPipeline {
         private DecodedRowGroup currentRowGroup;
         private Predicate currentFilter;
         private ParquetRecordBatch currentBatch;
+        // A zero-copy view of currentBatch narrowed to the output leaves, used to materialize rows. The predicate runs
+        // against the wider currentBatch (which may hold predicate-only or synthesized columns the output excludes),
+        // and the records the caller sees expose exactly the output columns.
+        private ParquetRecordBatch outputBatch;
         private BitSet currentMask;
         private boolean maskReady;
         private int rowIndex;
@@ -468,7 +472,7 @@ public final class BatchPipeline {
             if (observe) {
                 matchedInCurrentRowGroup++;
             }
-            ParquetRecord rec = currentBatch.materialize(row);
+            ParquetRecord rec = outputBatch.materialize(row);
             return materializer.materialize(outputSchema, rec);
         }
 
@@ -487,6 +491,7 @@ public final class BatchPipeline {
             while (true) {
                 if (currentRowGroup != null && currentRowGroup.hasNext()) {
                     currentBatch = currentRowGroup.next();
+                    outputBatch = FilteredRecordBatch.narrowed(currentBatch, outputSchema);
                     batchObserver.accept(currentBatch);
                     rowIndex = 0;
                     batchRowCount = currentBatch.rowCount();
@@ -533,6 +538,9 @@ public final class BatchPipeline {
         private void closeCurrentBatch() {
             ParquetRecordBatch batch = currentBatch;
             currentBatch = null;
+            // outputBatch is a zero-copy view sharing batch's resources; clear the reference but never close it
+            // separately, closing batch releases the shared backing.
+            outputBatch = null;
             rowIndex = 0;
             batchRowCount = 0;
             if (batch != null) {

@@ -86,6 +86,9 @@ public final class PredicateNormalizer {
             case Predicate.GeometryFilterPredicate _ -> {
                 /* opaque geometry leaf; column validated by the filter */
             }
+            case Predicate.RowIndexExcluded _ -> {
+                /* row-position leaf over a synthesized column; no physical column to validate against the schema */
+            }
             case Predicate.Quantified(MatchAction _, Predicate leaf) -> validate(leaf, schema);
         }
     }
@@ -138,6 +141,7 @@ public final class PredicateNormalizer {
             case Predicate.In _ -> new Predicate.Not(p);
             case Predicate.Spatial _ -> new Predicate.Not(p);
             case Predicate.GeometryFilterPredicate _ -> new Predicate.Not(p);
+            case Predicate.RowIndexExcluded _ -> new Predicate.Not(p);
             case Predicate.Quantified(MatchAction match, Predicate leaf) -> negateQuantified(match, leaf, p);
         };
     }

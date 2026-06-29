@@ -23,6 +23,7 @@ import java.util.function.IntPredicate;
 
 import io.tileverse.parquetry.filter.GeometryFilter;
 import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.filter.RowPositionSet;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.internal.filter.RecordAccessors;
 import io.tileverse.parquetry.internal.filter.RecordLevelEvaluator;
@@ -73,8 +74,29 @@ public final class VectorizedPredicateEvaluator {
             case Predicate.Spatial spatial -> spatialMask(batch, spatial, rowCount, false);
             case Predicate.GeometryFilterPredicate(GeometryFilter<?> filter) ->
                 geometryMask(batch, filter, rowCount, false);
+            case Predicate.RowIndexExcluded(ColumnPath col, RowPositionSet deleted) ->
+                rowPositionMask(batch, col, deleted, rowCount);
             case Predicate.Quantified q -> quantifiedMask(q, batch, rowCount);
         };
+    }
+
+    // Keeps each row whose synthesized absolute position is not a deleted position. The reader places the non-null
+    // long position column at the caller-named row-position path; a row survives when deleted.contains(position) is
+    // false.
+    private static BitSet rowPositionMask(
+            ParquetRecordBatch batch, ColumnPath col, RowPositionSet deleted, int rowCount) {
+        ColumnVector vector = batch.columns().get(col);
+        if (!(vector instanceof LongVector positions)) {
+            throw new IllegalStateException(
+                    "row-position column " + col.dot() + " is not present as a long for a RowIndexExcluded predicate");
+        }
+        BitSet out = new BitSet(rowCount);
+        for (int row = 0; row < rowCount; row++) {
+            if (!deleted.contains(positions.getLong(row))) {
+                out.set(row);
+            }
+        }
+        return out;
     }
 
     // A list/map leaf has no flat scalar vector to compare columnar-style; the existential/universal/exactly-one

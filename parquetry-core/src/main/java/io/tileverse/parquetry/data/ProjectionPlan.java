@@ -65,6 +65,9 @@ final class ProjectionPlan {
         Set<ColumnPath> physical = of.physicalColumns();
         Set<ColumnPath> decodeSet = new LinkedHashSet<>(physical);
         decodeSet.addAll(Predicate.columns(predicate));
+        // A predicate may reference synthesized row-position columns (a positional-delete leaf); the reader produces
+        // those rather than decoding them, and ParquetSchema.project must never receive them.
+        Predicate.rowPositionColumns(predicate).forEach(decodeSet::remove);
         if (decodeSet.isEmpty()) {
             decodeSet.add(fileSchema.leafColumns().get(0));
         }

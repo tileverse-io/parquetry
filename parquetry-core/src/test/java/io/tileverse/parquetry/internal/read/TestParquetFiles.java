@@ -16,7 +16,13 @@
 package io.tileverse.parquetry.internal.read;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.OptionalInt;
 
 import org.apache.avro.generic.GenericData;
 import org.apache.parquet.avro.AvroParquetWriter;
@@ -25,8 +31,15 @@ import org.apache.parquet.hadoop.ParquetWriter;
 import org.apache.parquet.hadoop.metadata.CompressionCodecName;
 import org.apache.parquet.io.LocalOutputFile;
 
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.format.ParquetFormat;
+import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.PrimitiveKind;
+import io.tileverse.parquetry.schema.Repetition;
+import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
  * Shared test-fixture helpers for Parquet read-path tests.
@@ -123,11 +136,39 @@ public final class TestParquetFiles {
     }
 
     /**
+     * Writes a one-column Parquet file whose single physical {@code INT64} column is named {@code columnName}, holding
+     * the row index in each row. Used to assert that a read whose caller-named row-position column collides with this
+     * physical column is rejected.
+     *
+     * @param dir directory in which to write the file
+     * @param rows total number of rows to write
+     * @param columnName the physical column's name
+     * @return path to the written file
+     */
+    public static Path writeSingleLongColumnFile(Path dir, int rows, String columnName) throws IOException {
+        Path file = dir.resolve("single-long-column.parquet");
+        SchemaNode.Primitive leaf = new SchemaNode.Primitive(
+                columnName, Repetition.REQUIRED, PrimitiveKind.INT64, OptionalInt.empty(), Optional.empty(), -1);
+        SchemaNode.Group root =
+                new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(leaf), Optional.empty(), -1);
+        ParquetSchema schema = new ParquetSchema(root);
+        ColumnPath columnPath = ColumnPath.of(columnName);
+        List<Map<ColumnPath, Object>> values = new ArrayList<>(rows);
+        for (int row = 0; row < rows; row++) {
+            values.add(Map.of(columnPath, (long) row));
+        }
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema)) {
+            writer.writeBatch(WriteFixtures.batch(schema, values));
+        }
+        return file;
+    }
+
+    /**
      * Returns the number of row groups in the given Parquet file.
      *
      * <p>Opens a fresh source for the sole purpose of reading the footer, then closes it before returning.
      */
-    static int rowGroupCount(Path file) {
+    public static int rowGroupCount(Path file) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             return ParquetFormat.readFooter(source).rowGroups().size();
         }

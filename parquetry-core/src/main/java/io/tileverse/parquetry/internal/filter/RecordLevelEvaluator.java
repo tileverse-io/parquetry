@@ -21,6 +21,7 @@ import java.util.List;
 import io.tileverse.parquetry.filter.GeometryFilter;
 import io.tileverse.parquetry.filter.MatchAction;
 import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.filter.RowPositionSet;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.internal.filter.spatial.WkbEnvelope;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -106,8 +107,24 @@ public final class RecordLevelEvaluator {
             case Predicate.IsNotNull(ColumnPath col) -> row.value(col) != null;
             case Predicate.Spatial spatial -> spatialHolds(spatial, row);
             case Predicate.GeometryFilterPredicate(GeometryFilter<?> filter) -> geometryFilterHolds(filter, row);
+            case Predicate.RowIndexExcluded(ColumnPath col, RowPositionSet deleted) ->
+                rowPositionSurvives(col, deleted, row);
             case Predicate.Quantified(MatchAction match, Predicate leaf) -> testQuantified(match, leaf, row);
         };
+    }
+
+    /**
+     * Keeps a row only when its synthesized absolute position is not a deleted position. The position is a non-null
+     * {@code long} the reader materializes at the predicate's {@code col} path, the synthesized row-position column the
+     * caller named; an absent value means the read did not synthesize the column the predicate requires.
+     */
+    private static boolean rowPositionSurvives(ColumnPath col, RowPositionSet deleted, RecordAccessor row) {
+        Object position = row.value(col);
+        if (!(position instanceof Long absolutePosition)) {
+            throw new IllegalStateException(
+                    "row-position column " + col.dot() + " is not present as a long for a RowIndexExcluded predicate");
+        }
+        return !deleted.contains(absolutePosition);
     }
 
     private static boolean testQuantified(MatchAction match, Predicate leaf, RecordAccessor row) {

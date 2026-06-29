@@ -27,6 +27,7 @@ import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.filter.SortedLongPositionSet;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -230,6 +231,28 @@ class PredicateNormalizerTest {
         Predicate.In bad =
                 new Predicate.In(ColumnPath.of("year"), List.of(new Value.IntVal(1), new Value.StringVal("oops")));
         assertThatThrownBy(() -> PredicateNormalizer.validate(bad, schema)).isInstanceOf(ParquetSchemaException.class);
+    }
+
+    @Test
+    void rowIndexExcludedSurvivesNormalizationUnchangedInsideAnd() {
+        Predicate deletes =
+                new Predicate.RowIndexExcluded(ColumnPath.of("_pos"), SortedLongPositionSet.of(new long[] {1, 3}));
+        Predicate input = col("year").eq(2020).and(deletes);
+
+        Predicate normalized = PredicateNormalizer.normalize(input);
+
+        assertThat(normalized)
+                .isEqualTo(new Predicate.And(
+                        List.of(new Predicate.Eq(ColumnPath.of("year"), new Value.IntVal(2020)), deletes)));
+    }
+
+    @Test
+    void validateDoesNotCheckRowIndexExcludedSyntheticColumn() {
+        ParquetSchema schema = flatSchema();
+        Predicate deletes =
+                new Predicate.RowIndexExcluded(ColumnPath.of("_pos"), SortedLongPositionSet.of(new long[] {0}));
+
+        PredicateNormalizer.validate(col("year").eq(2020).and(deletes), schema);
     }
 
     private static ParquetSchema flatSchema() {

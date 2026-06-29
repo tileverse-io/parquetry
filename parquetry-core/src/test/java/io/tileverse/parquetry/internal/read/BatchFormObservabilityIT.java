@@ -148,7 +148,8 @@ class BatchFormObservabilityIT {
                     recordEvalRequired,
                     Optional.empty(),
                     form,
-                    ParallelDecodeCoordinator.DecodeObservation.NONE);
+                    ParallelDecodeCoordinator.DecodeObservation.NONE,
+                    List.of());
         }
 
         private List<RowGroupSurvivor> survivors(ByteRangeSource source) {

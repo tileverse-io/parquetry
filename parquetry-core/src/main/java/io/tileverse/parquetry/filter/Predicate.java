@@ -15,8 +15,10 @@
  */
 package io.tileverse.parquetry.filter;
 
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -91,6 +93,48 @@ public sealed interface Predicate {
             case Spatial s -> columns.add(s.col());
             case GeometryFilterPredicate gfp -> columns.add(gfp.filter().column());
             case Quantified q -> collectColumns(q.leaf(), columns);
+            case RowIndexExcluded rowIndexExcluded -> columns.add(rowIndexExcluded.column());
+        }
+    }
+
+    /**
+     * The distinct columns named by {@link RowIndexExcluded} leaves: the synthesized row-position columns this
+     * predicate filters on, in encounter order. Empty when the predicate has no row-position delete. The reader
+     * produces a column at each of these paths rather than decoding it from the file, and the caller chooses the name
+     * when building the predicate (Iceberg uses {@code _pos}).
+     */
+    static List<ColumnPath> rowPositionColumns(Predicate predicate) {
+        List<ColumnPath> columns = new ArrayList<>();
+        collectRowPositionColumns(predicate, columns);
+        return columns;
+    }
+
+    @SuppressWarnings("java:S6878") // palantirJavaFormat 2.90.0 rejects unnamed record-pattern components
+    private static void collectRowPositionColumns(Predicate predicate, List<ColumnPath> columns) {
+        switch (predicate) {
+            case And and -> and.children().forEach(child -> collectRowPositionColumns(child, columns));
+            case Or or -> or.children().forEach(child -> collectRowPositionColumns(child, columns));
+            case Not not -> collectRowPositionColumns(not.child(), columns);
+            case Quantified q -> collectRowPositionColumns(q.leaf(), columns);
+            case RowIndexExcluded rowIndexExcluded -> {
+                if (!columns.contains(rowIndexExcluded.column())) {
+                    columns.add(rowIndexExcluded.column());
+                }
+            }
+            case Always _,
+                    Eq _,
+                    NotEq _,
+                    Lt _,
+                    LtEq _,
+                    Gt _,
+                    GtEq _,
+                    In _,
+                    IsNull _,
+                    IsNotNull _,
+                    Spatial _,
+                    GeometryFilterPredicate _ -> {
+                /* not a row-position column */
+            }
         }
     }
 
@@ -196,4 +240,19 @@ public sealed interface Predicate {
      * {@link GeometryFilter#gate} performs the exact per-row test.
      */
     record GeometryFilterPredicate(GeometryFilter<?> filter) implements Predicate {}
+
+    /**
+     * A leaf that keeps a row only when its absolute file row position is NOT a member of {@code deleted}. This is the
+     * already-negated form: the row survives iff {@code deleted.contains(position)} is {@code false}; no {@link Not}
+     * ever wraps it. Its {@code column} names a synthesized row-position column the reader produces (the absolute
+     * 0-based file position) rather than a physical Parquet leaf; the caller picks the name (Iceberg uses
+     * {@code _pos}). The schema-validation pass leaves the column alone and the statistics tiers cannot prune it. The
+     * merge-on-read delete path of an Iceberg table lowers its positional deletes into this leaf.
+     */
+    record RowIndexExcluded(ColumnPath column, RowPositionSet deleted) implements Predicate {
+        public RowIndexExcluded {
+            Objects.requireNonNull(column, "column");
+            Objects.requireNonNull(deleted, "deleted");
+        }
+    }
 }
