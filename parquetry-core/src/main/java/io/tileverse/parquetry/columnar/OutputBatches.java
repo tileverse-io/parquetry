@@ -107,7 +107,16 @@ public final class OutputBatches {
                 ConstantVectors.of(value, base.rowCount());
             case Projection.Column.Null(ColumnPath ignored, Value typeOf) ->
                 ConstantVectors.ofNull(typeOf, base.rowCount());
+            case Projection.Column.RowPosition(ColumnPath name, long _) -> rowPositionVector(name, base);
         };
+    }
+
+    private static ColumnVector rowPositionVector(ColumnPath name, ParquetRecordBatch base) {
+        ColumnVector synthesized = base.columns().get(name);
+        if (synthesized == null) {
+            throw new IllegalStateException("row-position column not synthesized: " + name);
+        }
+        return synthesized;
     }
 
     private static SchemaNode.Primitive leafFor(Projection.Column column, ParquetSchema sourceSchema, int fieldId) {
@@ -120,7 +129,19 @@ public final class OutputBatches {
                 ConstantLeaves.primitiveFor(name.name(), value, fieldId);
             case Projection.Column.Null(ColumnPath name, Value typeOf) ->
                 ConstantLeaves.primitiveFor(name.name(), typeOf, fieldId);
+            case Projection.Column.RowPosition(ColumnPath name, long _) -> rowPositionLeaf(name.name(), fieldId);
         };
+    }
+
+    /** The schema leaf for a synthesized row-position column: a never-null {@code INT64} top-level column. */
+    public static SchemaNode.Primitive rowPositionLeaf(String outputName, int outputFieldId) {
+        return new SchemaNode.Primitive(
+                outputName,
+                Repetition.REQUIRED,
+                PrimitiveKind.INT64,
+                OptionalInt.empty(),
+                Optional.empty(),
+                outputFieldId);
     }
 
     private static SchemaNode.Primitive sourceLeaf(ParquetSchema sourceSchema, ColumnPath source) {

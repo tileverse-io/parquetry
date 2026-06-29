@@ -17,16 +17,14 @@ package io.tileverse.parquetry.internal.read;
 
 import java.util.List;
 
-import io.tileverse.parquetry.schema.ColumnPath;
-
 /**
- * The inputs a row group needs to synthesize its absolute row-position column: the row group's {@code base} file row
+ * The inputs a row group needs to synthesize its absolute row-position columns: the row group's {@code base} file row
  * offset (the sum of {@code num_rows} of every prior row group, pruned ones included) and the {@code columns} the
- * caller named for it. The synthesized values are identical for every named column; the reader produces one position
- * vector per row group and exposes it under each path. {@code base} is per row group; {@code columns} are the same for
- * every row group of one read.
+ * caller named for it. Each column's value is {@code base} plus its own {@code firstRowId} plus the row's
+ * row-group-relative position. Columns with different first-row-id offsets get different vectors over the one shared
+ * position map. {@code base} is per row group; {@code columns} are the same for every row group of one read.
  */
-public record RowPositionSynthesis(long base, List<ColumnPath> columns) {
+public record RowPositionSynthesis(long base, List<RowPositionColumn> columns) {
 
     public RowPositionSynthesis {
         columns = List.copyOf(columns);
