@@ -135,46 +135,50 @@ class LateMaterializationCorrectnessTest {
     static Stream<Case> predicateCases() {
         return Stream.of(
                 // point lookup - exactly one row
-                new Case("point-lookup-id=50", col("id").eq(50L), Projection.of(Set.of(I32, I64, D, NAME)), 1),
+                new Case("point-lookup-id=50", col("id").eq(50L), Projection.ofPhysical(Set.of(I32, I64, D, NAME)), 1),
                 // point lookup including the predicate column in the projection
                 new Case(
                         "point-lookup-id=50-with-id-projected",
                         col("id").eq(50L),
-                        Projection.of(Set.of(ID, I32, D)),
+                        Projection.ofPhysical(Set.of(ID, I32, D)),
                         1),
                 // mid-file contiguous range spanning multiple pages
                 new Case(
                         "range-id-30-to-59",
                         col("id").gtEq(30L).and(col("id").lt(60L)),
-                        Projection.of(Set.of(I32, I64, D, NAME)),
+                        Projection.ofPhysical(Set.of(I32, I64, D, NAME)),
                         30),
                 // range that includes rows where i32 is null (straddles null / non-null output)
                 new Case(
                         "range-straddling-nulls-id-10-to-25",
                         col("id").gtEq(10L).and(col("id").lt(25L)),
-                        Projection.of(Set.of(ID, I32, NAME)),
+                        Projection.ofPhysical(Set.of(ID, I32, NAME)),
                         15),
                 // sparse range hitting page boundaries (first page of each row group)
-                new Case("sparse-range-id-lt-10", col("id").lt(10L), Projection.of(Set.of(I32, I64, D, NAME)), 10),
+                new Case(
+                        "sparse-range-id-lt-10",
+                        col("id").lt(10L),
+                        Projection.ofPhysical(Set.of(I32, I64, D, NAME)),
+                        10),
                 // range covering exactly the last row group
                 new Case(
                         "last-row-group-id-90-to-119",
                         col("id").gtEq(90L).and(col("id").lt(120L)),
-                        Projection.of(Set.of(I32, I64, D)),
+                        Projection.ofPhysical(Set.of(I32, I64, D)),
                         30),
                 // all rows - late materialization should not activate for ALWAYS_TRUE
                 new Case(
                         "all-rows-always-true",
                         Predicate.ALWAYS_TRUE,
-                        Projection.of(Set.of(I32, I64, D, NAME)),
+                        Projection.ofPhysical(Set.of(I32, I64, D, NAME)),
                         ROW_COUNT),
                 // no rows - predicate matches nothing
-                new Case("no-match-id-gt-999", col("id").gt(999L), Projection.of(Set.of(I32, I64, D, NAME)), 0),
+                new Case("no-match-id-gt-999", col("id").gt(999L), Projection.ofPhysical(Set.of(I32, I64, D, NAME)), 0),
                 // output-only projection (predicate column absent from output)
                 new Case(
                         "output-only-no-id-in-projection",
                         col("id").gtEq(100L),
-                        Projection.of(Set.of(I32, I64, D, NAME)),
+                        Projection.ofPhysical(Set.of(I32, I64, D, NAME)),
                         20));
     }
 
@@ -390,7 +394,7 @@ class LateMaterializationCorrectnessTest {
     private static Set<ColumnPath> resolveKept(Projection projection) {
         return switch (projection) {
             case Projection.All _ -> Set.of(ID, I32, I64, D, NAME);
-            case Projection.Columns(Set<ColumnPath> kept) -> kept;
+            case Projection.Of of -> of.physicalColumns();
         };
     }
 

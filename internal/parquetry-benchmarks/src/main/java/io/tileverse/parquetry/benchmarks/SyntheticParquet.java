@@ -123,7 +123,7 @@ final class SyntheticParquet {
         for (int i = 0; i < valueColumns; i++) {
             cols.add(valueColumn(i));
         }
-        return Projection.of(cols);
+        return Projection.ofPhysical(cols);
     }
 
     /**

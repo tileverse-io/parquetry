@@ -31,7 +31,6 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.CatalogSnapshot;
-import io.tileverse.parquetry.filter.OutputColumn;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Query;
@@ -69,7 +68,7 @@ class IcebergDatasetTest {
 
         Query query = dataset.oneFileQueryForTest(0, Predicate.ALWAYS_TRUE, Projection.ALL);
 
-        assertThat(query.output()).isEmpty();
+        assertThat(query.outputColumns()).isEmpty();
         assertThat(query.predicate()).isEqualTo(Predicate.ALWAYS_TRUE);
         assertThat(query.projection()).isEqualTo(Projection.ALL);
     }
@@ -80,8 +79,10 @@ class IcebergDatasetTest {
 
         Query query = dataset.oneFileQueryForTest(0, Predicate.ALWAYS_TRUE, Projection.ALL);
 
-        assertThat(query.output())
-                .contains(new OutputColumn.Physical(ColumnPath.of("identifier"), ColumnPath.of("id")));
+        assertThat(query.projection()).isInstanceOf(Projection.Of.class);
+        Projection.Of of = (Projection.Of) query.projection();
+        assertThat(of.columns())
+                .contains(new Projection.Column.Physical(ColumnPath.of("identifier"), ColumnPath.of("id")));
     }
 
     @Test

@@ -222,7 +222,7 @@ final class ParquetryReadEngine implements ReadEngine {
         }
         Set<ColumnPath> kept =
                 columns.stream().map(name -> ColumnPath.of(name.split("\\."))).collect(Collectors.toSet());
-        return Projection.of(kept);
+        return Projection.ofPhysical(kept);
     }
 
     private Predicate predicate(Scenario scenario) {

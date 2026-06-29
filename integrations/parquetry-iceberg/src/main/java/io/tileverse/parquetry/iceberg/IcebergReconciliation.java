@@ -16,12 +16,12 @@
 package io.tileverse.parquetry.iceberg;
 
 import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Optional;
+import java.util.SequencedSet;
 
-import io.tileverse.parquetry.filter.OutputColumn;
+import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.iceberg.IcebergFileSchema.FileColumn;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -33,7 +33,7 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
  * <p>Given the table's {@link IcebergSchema} and a single file's {@link IcebergFileSchema}, this decides whether the
  * file can be read untouched by name (the fast path) or must be presented through an ordered output shape that renames,
  * reorders, null-fills, promotes, and drops columns to match the table. The output shape presents one
- * {@link OutputColumn} per table field, in table order.
+ * {@link Projection.Column} per table field, in table order.
  *
  * <p>Known limitations: drops are honored only when reconciliation is otherwise triggered (a file that differs from the
  * table by a pure drop takes the pass-through path and keeps the extra column, acceptable because real evolved tables
@@ -45,26 +45,26 @@ final class IcebergReconciliation {
 
     private IcebergReconciliation() {}
 
-    /** Either read the file untouched by name, or present it through an ordered output shape. */
-    record Reconciliation(boolean passThrough, List<OutputColumn> output) {
+    /** Either read the file untouched by name, or present it through an ordered produce set. */
+    record Reconciliation(boolean passThrough, SequencedSet<Projection.Column> columns) {
 
         Reconciliation {
-            output = List.copyOf(output);
+            columns = new LinkedHashSet<>(columns);
         }
 
         static Reconciliation ofPassThrough() {
-            return new Reconciliation(true, List.of());
+            return new Reconciliation(true, new LinkedHashSet<>());
         }
 
-        static Reconciliation ofReconciled(List<OutputColumn> output) {
-            return new Reconciliation(false, output);
+        static Reconciliation ofReconciled(SequencedSet<Projection.Column> columns) {
+            return new Reconciliation(false, columns);
         }
     }
 
     /**
      * Reconciles {@code file} against {@code table}, returning the fast path when possible. A table field absent from
      * the file whose id appears in {@code partitionConstants} is an omitted identity-partition column: it reconstructs
-     * to a {@link OutputColumn.Constant} of its partition value rather than a null column.
+     * to a {@link Projection.Column.Constant} of its partition value rather than a null column.
      */
     static Reconciliation reconcile(
             IcebergSchema table, IcebergFileSchema file, Map<Integer, Value> partitionConstants) {
@@ -97,16 +97,17 @@ final class IcebergReconciliation {
         return sameName && sameKind;
     }
 
-    private static List<OutputColumn> presentTableFields(
+    private static SequencedSet<Projection.Column> presentTableFields(
             IcebergSchema table, IcebergFileSchema file, Map<Integer, Value> partitionConstants) {
-        List<OutputColumn> output = new ArrayList<>(table.fields().size());
+        SequencedSet<Projection.Column> columns =
+                LinkedHashSet.newLinkedHashSet(table.fields().size());
         for (IcebergField field : table.fields()) {
-            output.add(presentField(field, file, partitionConstants));
+            columns.add(presentField(field, file, partitionConstants));
         }
-        return output;
+        return columns;
     }
 
-    private static OutputColumn presentField(
+    private static Projection.Column presentField(
             IcebergField field, IcebergFileSchema file, Map<Integer, Value> partitionConstants) {
         Optional<FileColumn> column = file.byFieldId(field.fieldId());
         if (column.isEmpty()) {
@@ -115,33 +116,33 @@ final class IcebergReconciliation {
         return presentExistingColumn(field, column.get());
     }
 
-    private static OutputColumn presentAbsentColumn(IcebergField field, Map<Integer, Value> partitionConstants) {
+    private static Projection.Column presentAbsentColumn(IcebergField field, Map<Integer, Value> partitionConstants) {
         Value partitionValue = partitionConstants.get(field.fieldId());
         if (partitionValue != null) {
-            return new OutputColumn.Constant(ColumnPath.of(field.name()), partitionValue);
+            return new Projection.Column.Constant(ColumnPath.of(field.name()), partitionValue);
         }
         Optional<Value> initialDefault = field.initialDefault();
         if (initialDefault.isPresent()) {
-            return new OutputColumn.Constant(ColumnPath.of(field.name()), initialDefault.get());
+            return new Projection.Column.Constant(ColumnPath.of(field.name()), initialDefault.get());
         }
         return injectNullColumn(field);
     }
 
-    private static OutputColumn presentExistingColumn(IcebergField field, FileColumn fileColumn) {
+    private static Projection.Column presentExistingColumn(IcebergField field, FileColumn fileColumn) {
         ColumnPath name = ColumnPath.of(field.name());
         PrimitiveKind expectedKind = IcebergSchema.kindOf(field);
         if (fileColumn.kind() == expectedKind) {
-            return new OutputColumn.Physical(name, fileColumn.path());
+            return new Projection.Column.Physical(name, fileColumn.path());
         }
         if (isSanctionedWidening(fileColumn.kind(), expectedKind)) {
-            return new OutputColumn.Promoted(name, fileColumn.path(), expectedKind);
+            return new Projection.Column.Promoted(name, fileColumn.path(), expectedKind);
         }
         throw new IcebergFormatException("cannot reconcile field %s: file type %s is not promotable to %s"
                 .formatted(field.name(), fileColumn.kind(), expectedKind));
     }
 
-    private static OutputColumn injectNullColumn(IcebergField field) {
-        return new OutputColumn.Null(ColumnPath.of(field.name()), nullTypeOf(field));
+    private static Projection.Column injectNullColumn(IcebergField field) {
+        return new Projection.Column.Null(ColumnPath.of(field.name()), nullTypeOf(field));
     }
 
     private static boolean isSanctionedWidening(PrimitiveKind fileKind, PrimitiveKind expectedKind) {

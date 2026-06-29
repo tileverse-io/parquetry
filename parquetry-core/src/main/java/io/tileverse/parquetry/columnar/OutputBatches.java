@@ -22,7 +22,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 
-import io.tileverse.parquetry.filter.OutputColumn;
+import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -31,34 +31,63 @@ import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
- * Reshapes a decoded batch into a read's ordered output shape. Each {@link OutputColumn} describes one result column:
- * pass a physical column through (renamed, reordered, or dropped), widen one to a broader primitive type, fill a
- * constant for every row, or add an all-null column. Physical passthrough reuses the decoded vector zero-copy; closing
- * the shaped batch closes the base it was built from.
+ * Produces a read's result columns from a decoded physical batch, and selects a subset by name.
  *
- * <p>The output schema is name-addressed, not field-id-addressed, hence every output leaf gets a fresh synthetic field
- * id (its position in the output order). Two output columns sourced from one physical column therefore stay distinct.
- * Duplicate output names are rejected.
+ * <p>{@link #produce} reshapes a decoded batch into a {@link Projection.Of} produce set: each {@link Projection.Column}
+ * passes a physical column through (renamed, reordered, or dropped), widens one to a broader primitive type, fills a
+ * constant for every row, or adds an all-null column. {@link #select} narrows and reorders an already-produced batch to
+ * a list of output names. Physical passthrough reuses the decoded vector zero-copy; closing the produced or selected
+ * batch closes the base it was built from.
+ *
+ * <p>The produced schema is name-addressed, not field-id-addressed, hence every produced leaf gets a fresh synthetic
+ * field id (its position in the produce/select order). Two columns sourced from one physical column therefore stay
+ * distinct. Duplicate names are rejected.
  */
 public final class OutputBatches {
 
     private OutputBatches() {}
 
-    /** The output-ordered batch built from {@code base} per the {@code output} columns, in their given order. */
-    public static ParquetRecordBatch shape(ParquetRecordBatch base, List<OutputColumn> output) {
-        Map<ColumnPath, ColumnVector> columnsByOutputName = new LinkedHashMap<>();
-        List<SchemaNode> outputLeaves = new ArrayList<>(output.size());
-
-        for (int outputFieldId = 0; outputFieldId < output.size(); outputFieldId++) {
-            OutputColumn column = output.get(outputFieldId);
-            rejectDuplicateName(columnsByOutputName.put(column.name(), vectorFor(column, base)), column.name());
-            outputLeaves.add(leafFor(column, base, outputFieldId));
+    /** The produce-ordered schema for {@code of}, with leaf types resolved against {@code sourceSchema}. */
+    public static ParquetSchema producedSchema(ParquetSchema sourceSchema, Projection.Of of) {
+        List<SchemaNode> leaves = new ArrayList<>(of.columns().size());
+        int fieldId = 0;
+        for (Projection.Column column : of.columns()) {
+            leaves.add(leafFor(column, sourceSchema, fieldId++));
         }
+        return schemaFrom(sourceSchema, leaves);
+    }
 
-        ParquetSchema outputSchema = schemaFrom(base.projectedSchema(), outputLeaves);
-        DefaultParquetRecordBatch result =
-                DefaultParquetRecordBatch.ofHeap(outputSchema, columnsByOutputName, base.rowCount());
+    /**
+     * The produced batch built from {@code base} per {@code of}, in produce order, under the precomputed
+     * {@code producedSchema} (see {@link #producedSchema(ParquetSchema, Projection.Of)}).
+     */
+    public static ParquetRecordBatch produce(ParquetRecordBatch base, Projection.Of of, ParquetSchema producedSchema) {
+        Map<ColumnPath, ColumnVector> byName =
+                LinkedHashMap.newLinkedHashMap(of.columns().size());
+        for (Projection.Column column : of.columns()) {
+            byName.put(column.name(), vectorFor(column, base));
+        }
+        DefaultParquetRecordBatch result = DefaultParquetRecordBatch.ofHeap(producedSchema, byName, base.rowCount());
         result.attachReleaseAction(base::close);
+        return result;
+    }
+
+    /** Narrows and reorders {@code produced}'s columns to {@code outputColumns} by name (fresh field ids). */
+    public static ParquetRecordBatch select(ParquetRecordBatch produced, List<ColumnPath> outputColumns) {
+        Map<ColumnPath, ColumnVector> byName = LinkedHashMap.newLinkedHashMap(outputColumns.size());
+        List<SchemaNode> leaves = new ArrayList<>(outputColumns.size());
+        for (int fieldId = 0; fieldId < outputColumns.size(); fieldId++) {
+            ColumnPath name = outputColumns.get(fieldId);
+            ColumnVector vector = produced.columns().get(name);
+            if (vector == null) {
+                throw new IllegalArgumentException("output column not produced: " + name);
+            }
+            rejectDuplicateName(byName.put(name, vector), name);
+            leaves.add(renamed(sourceLeaf(produced.projectedSchema(), name), name.name(), fieldId));
+        }
+        ParquetSchema schema = schemaFrom(produced.projectedSchema(), leaves);
+        DefaultParquetRecordBatch result = DefaultParquetRecordBatch.ofHeap(schema, byName, produced.rowCount());
+        result.attachReleaseAction(produced::close);
         return result;
     }
 
@@ -68,32 +97,34 @@ public final class OutputBatches {
         }
     }
 
-    private static ColumnVector vectorFor(OutputColumn column, ParquetRecordBatch base) {
+    private static ColumnVector vectorFor(Projection.Column column, ParquetRecordBatch base) {
         return switch (column) {
-            case OutputColumn.Physical(ColumnPath ignored, ColumnPath source) ->
+            case Projection.Column.Physical(ColumnPath ignored, ColumnPath source) ->
                 base.columns().get(source);
-            case OutputColumn.Promoted(ColumnPath ignored, ColumnPath source, PrimitiveKind target) ->
+            case Projection.Column.Promoted(ColumnPath ignored, ColumnPath source, PrimitiveKind target) ->
                 VectorWidening.widen(base.columns().get(source), target);
-            case OutputColumn.Constant(ColumnPath ignored, Value value) -> ConstantVectors.of(value, base.rowCount());
-            case OutputColumn.Null(ColumnPath ignored, Value typeOf) -> ConstantVectors.ofNull(typeOf, base.rowCount());
+            case Projection.Column.Constant(ColumnPath ignored, Value value) ->
+                ConstantVectors.of(value, base.rowCount());
+            case Projection.Column.Null(ColumnPath ignored, Value typeOf) ->
+                ConstantVectors.ofNull(typeOf, base.rowCount());
         };
     }
 
-    private static SchemaNode.Primitive leafFor(OutputColumn column, ParquetRecordBatch base, int outputFieldId) {
+    private static SchemaNode.Primitive leafFor(Projection.Column column, ParquetSchema sourceSchema, int fieldId) {
         return switch (column) {
-            case OutputColumn.Physical(ColumnPath name, ColumnPath source) ->
-                renamed(sourceLeaf(base, source), name.name(), outputFieldId);
-            case OutputColumn.Promoted(ColumnPath name, ColumnPath ignored, PrimitiveKind target) ->
-                promotedLeaf(name.name(), target, outputFieldId);
-            case OutputColumn.Constant(ColumnPath name, Value value) ->
-                ConstantLeaves.primitiveFor(name.name(), value, outputFieldId);
-            case OutputColumn.Null(ColumnPath name, Value typeOf) ->
-                ConstantLeaves.primitiveFor(name.name(), typeOf, outputFieldId);
+            case Projection.Column.Physical(ColumnPath name, ColumnPath source) ->
+                renamed(sourceLeaf(sourceSchema, source), name.name(), fieldId);
+            case Projection.Column.Promoted(ColumnPath name, ColumnPath ignored, PrimitiveKind target) ->
+                promotedLeaf(name.name(), target, fieldId);
+            case Projection.Column.Constant(ColumnPath name, Value value) ->
+                ConstantLeaves.primitiveFor(name.name(), value, fieldId);
+            case Projection.Column.Null(ColumnPath name, Value typeOf) ->
+                ConstantLeaves.primitiveFor(name.name(), typeOf, fieldId);
         };
     }
 
-    private static SchemaNode.Primitive sourceLeaf(ParquetRecordBatch base, ColumnPath source) {
-        SchemaNode node = base.projectedSchema()
+    private static SchemaNode.Primitive sourceLeaf(ParquetSchema sourceSchema, ColumnPath source) {
+        SchemaNode node = sourceSchema
                 .find(source)
                 .orElseThrow(() -> new IllegalArgumentException("no source leaf for " + source));
         if (node instanceof SchemaNode.Primitive primitive) {

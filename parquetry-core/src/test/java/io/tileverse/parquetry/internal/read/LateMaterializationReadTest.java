@@ -68,7 +68,7 @@ class LateMaterializationReadTest {
     void selectivePredicateWithOutputOnlyColumnsMatchesBaseline() throws Exception {
         Path file = writeRows(WriteOptions.RowGroupSize.adaptive());
         Predicate predicate = col("id").gtEq(40L).and(col("id").lt(50L));
-        Projection projection = Projection.of(Set.of(V, NAME));
+        Projection projection = Projection.ofPhysical(Set.of(V, NAME));
 
         List<Row> actual = readRows(file, predicate, projection, ReadOptions.DEFAULTS);
         List<Row> expected = baseline(predicate, projection);
@@ -84,7 +84,7 @@ class LateMaterializationReadTest {
     void predicateColumnAlsoProjectedMatchesBaseline() throws Exception {
         Path file = writeRows(WriteOptions.RowGroupSize.adaptive());
         Predicate predicate = col("id").eq(73L);
-        Projection projection = Projection.of(Set.of(ID, V));
+        Projection projection = Projection.ofPhysical(Set.of(ID, V));
 
         List<Row> actual = readRows(file, predicate, projection, ReadOptions.DEFAULTS);
         List<Row> expected = baseline(predicate, projection);
@@ -102,7 +102,7 @@ class LateMaterializationReadTest {
     void predicateColumnNotProjectedIsAbsentFromOutput() throws Exception {
         Path file = writeRows(WriteOptions.RowGroupSize.adaptive());
         Predicate predicate = col("id").gtEq(95L);
-        Projection projection = Projection.of(Set.of(TAG));
+        Projection projection = Projection.ofPhysical(Set.of(TAG));
 
         List<Row> actual = readRows(file, predicate, projection, ReadOptions.DEFAULTS);
         List<Row> expected = baseline(predicate, projection);
@@ -119,7 +119,7 @@ class LateMaterializationReadTest {
     void recordFilterOffReturnsNoFilteredSuperset() throws Exception {
         Path file = writeRows(WriteOptions.RowGroupSize.adaptive());
         Predicate predicate = col("id").gtEq(40L).and(col("id").lt(50L));
-        Projection projection = Projection.of(Set.of(V, NAME));
+        Projection projection = Projection.ofPhysical(Set.of(V, NAME));
         ReadOptions noRecordFilter =
                 ReadOptions.builder().useRecordLevelFilter(false).build();
         ReadOptions noFiltering = ReadOptions.builder()
@@ -144,7 +144,7 @@ class LateMaterializationReadTest {
     @Test
     void triviallyTruePredicateReturnsEveryRow() throws Exception {
         Path file = writeRows(WriteOptions.RowGroupSize.adaptive());
-        Projection projection = Projection.of(Set.of(V, NAME));
+        Projection projection = Projection.ofPhysical(Set.of(V, NAME));
 
         List<Row> actual = readRows(file, Predicate.ALWAYS_TRUE, projection, ReadOptions.DEFAULTS);
 
@@ -157,7 +157,7 @@ class LateMaterializationReadTest {
     void multiRowGroupSelectivePredicateMatchesBaseline() throws Exception {
         Path file = writeRows(WriteOptions.RowGroupSize.rows(25));
         Predicate predicate = col("id").gtEq(10L).and(col("id").lt(80L));
-        Projection projection = Projection.of(Set.of(V, NAME));
+        Projection projection = Projection.ofPhysical(Set.of(V, NAME));
 
         List<Row> actual = readRows(file, predicate, projection, ReadOptions.DEFAULTS);
         List<Row> expected = baseline(predicate, projection);
@@ -173,7 +173,7 @@ class LateMaterializationReadTest {
     void disablingLateMaterializationKeepsResultsIdentical() throws Exception {
         Path file = writeRows(WriteOptions.RowGroupSize.rows(25));
         Predicate predicate = col("id").gtEq(10L).and(col("id").lt(80L));
-        Projection projection = Projection.of(Set.of(V, NAME));
+        Projection projection = Projection.ofPhysical(Set.of(V, NAME));
         ReadOptions lateMatOff =
                 ReadOptions.builder().useLateMaterialization(false).build();
 
@@ -255,7 +255,7 @@ class LateMaterializationReadTest {
     private static Set<ColumnPath> keptColumns(Projection projection) {
         return switch (projection) {
             case Projection.All _ -> Set.of(ID, V, NAME, TAG);
-            case Projection.Columns(Set<ColumnPath> kept) -> kept;
+            case Projection.Of of -> of.physicalColumns();
         };
     }
 

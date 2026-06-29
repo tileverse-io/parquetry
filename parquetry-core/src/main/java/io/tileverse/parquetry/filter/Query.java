@@ -19,24 +19,26 @@ import java.util.List;
 import java.util.Objects;
 import java.util.OptionalLong;
 
+import io.tileverse.parquetry.schema.ColumnPath;
+
 /**
- * The shape of one read: the row filter, the physical column projection, the ordered output shape, and an optional
- * row-shaping window.
+ * The shape of one read: the row filter, the produce-set {@code projection}, the columns to select from it, and an
+ * optional row-shaping window.
  *
- * <p>An empty {@code output} is the identity shape: the read presents the projected physical columns exactly as
- * decoded. A non-empty {@code output} is the complete, ordered list of result columns; each
- * {@link OutputColumn.Physical} or {@link OutputColumn.Promoted} names a physical column the {@code projection}
- * decodes, while constants and typed nulls are filled per row.
+ * <p>The {@code projection} is the produce set: which columns the read materializes (decode physical, fill constants
+ * and typed nulls, rename, widen). {@code outputColumns} then selects and orders the produced columns by name; an empty
+ * {@code outputColumns} is the identity, presenting every produced column in produce order. A nested member such as
+ * {@code bbox.minx} is just a path in {@code outputColumns}.
  *
  * <p>{@code offset} skips the first {@code offset} rows that satisfy {@code predicate}, and {@code limit} bounds how
  * many rows past that the read returns. Both apply in natural read order, after the exact predicate filter, across
  * single-file and multi-file reads. The identity is {@code offset == 0} and an empty {@code limit}.
  *
  * <p>Build with {@link #of(Predicate, Projection)} for the identity, or {@link #builder(Predicate, Projection)} when
- * setting an output shape or a window.
+ * selecting output columns or setting a window.
  */
 public record Query(
-        Predicate predicate, Projection projection, List<OutputColumn> output, long offset, OptionalLong limit) {
+        Predicate predicate, Projection projection, List<ColumnPath> outputColumns, long offset, OptionalLong limit) {
 
     public Query {
         Objects.requireNonNull(predicate, "predicate");
@@ -48,25 +50,27 @@ public record Query(
         if (limit.isPresent() && limit.getAsLong() < 0) {
             throw new IllegalArgumentException("limit must be >= 0: " + limit.getAsLong());
         }
-        output = List.copyOf(output);
+        outputColumns = List.copyOf(outputColumns);
     }
 
-    /** A query with the given filter and projection, the identity output shape, and no window. */
+    /** A query with the given filter and projection, the identity output selection, and no window. */
     public static Query of(Predicate predicate, Projection projection) {
         return new Query(predicate, projection, List.of(), 0L, OptionalLong.empty());
     }
 
-    /** A builder seeded with the required filter and projection; output shape and window default to the identity. */
+    /**
+     * A builder seeded with the required filter and projection; output selection and window default to the identity.
+     */
     public static Builder builder(Predicate predicate, Projection projection) {
         return new Builder(predicate, projection);
     }
 
-    /** Fluent builder for the output shape and the offset/limit window; the filter and projection are required. */
+    /** Fluent builder for the output selection and the offset/limit window; the filter and projection are required. */
     public static final class Builder {
 
         private final Predicate predicate;
         private final Projection projection;
-        private List<OutputColumn> output = List.of();
+        private List<ColumnPath> outputColumns = List.of();
         private long offset = 0L;
         private OptionalLong limit = OptionalLong.empty();
 
@@ -75,9 +79,11 @@ public record Query(
             this.projection = projection;
         }
 
-        /** Sets the ordered output shape; an empty list keeps the identity shape. */
-        public Builder output(List<OutputColumn> output) {
-            this.output = output;
+        /**
+         * Selects and orders the produced columns by name; an empty list keeps the identity (every produced column).
+         */
+        public Builder outputColumns(List<ColumnPath> outputColumns) {
+            this.outputColumns = outputColumns;
             return this;
         }
 
@@ -100,7 +106,7 @@ public record Query(
         }
 
         public Query build() {
-            return new Query(predicate, projection, output, offset, limit);
+            return new Query(predicate, projection, outputColumns, offset, limit);
         }
     }
 }

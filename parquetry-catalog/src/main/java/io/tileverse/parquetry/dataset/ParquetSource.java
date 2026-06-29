@@ -32,7 +32,6 @@ import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.RowGroupSummary;
-import io.tileverse.parquetry.filter.OutputColumn;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Query;
@@ -164,29 +163,28 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
      * file-level pushdown needs the physical name. This method lowers the predicate from output names to physical names
      * via the output mapping before pushing it down, then shapes each surviving batch into the output order.
      *
-     * <p>Only {@link OutputColumn.Physical} and {@link OutputColumn.Promoted} contribute to that mapping;
-     * {@link OutputColumn.Constant} and {@link OutputColumn.Null} have no physical source. The contract is therefore
-     * that predicate leaves over injected (constant or null) columns are already folded out by the caller before the
-     * {@link Query} is built; a predicate leaf naming an injected column would lower to a physical name the file does
-     * not have and the pushdown would reject it.
+     * <p>Only {@link Projection.Column.Physical} and {@link Projection.Column.Promoted} contribute to that mapping;
+     * {@link Projection.Column.Constant} and {@link Projection.Column.Null} have no physical source. The contract is
+     * therefore that predicate leaves over injected (constant or null) columns are already folded out by the caller
+     * before the {@link Query} is built; a predicate leaf naming an injected column would lower to a physical name the
+     * file does not have and the pushdown would reject it.
      */
     @MustBeClosed
     default Stream<ParquetRecordBatch> readBatches(Query query, ReadOptions options) {
-        List<OutputColumn> output = query.output();
-        Predicate pushed = output.isEmpty() ? query.predicate() : lowerToPhysicalColumns(query.predicate(), output);
-        Stream<ParquetRecordBatch> raw = readBatches(pushed, query.projection(), options);
-        Stream<ParquetRecordBatch> windowed = applyWindow(raw, query.offset(), query.limit());
-        if (output.isEmpty()) {
+        Predicate pushed = lowerToPhysicalColumns(query);
+        Stream<ParquetRecordBatch> produced = readBatches(pushed, query.projection(), options);
+        Stream<ParquetRecordBatch> windowed = applyWindow(produced, query.offset(), query.limit());
+        if (query.outputColumns().isEmpty()) {
             return windowed;
         }
-        return windowed.map(batch -> OutputBatches.shape(batch, output));
+        return windowed.map(batch -> OutputBatches.select(batch, query.outputColumns()));
     }
 
     /**
-     * Applies the offset/limit window to the exact batch stream before any output shaping, leaving the identity window
-     * (offset 0, no limit) untouched. Windowing before shaping keeps the slice over the raw filtered batches, never
-     * re-selecting an already-shaped batch's columns. Applied here in the default, virtual dispatch makes the window
-     * span each multi-file dataset's cross-file batch concatenation.
+     * Applies the offset/limit window to the produced batch stream before the output selection, leaving the identity
+     * window (offset 0, no limit) untouched. Windowing before the selection keeps the slice over the produced filtered
+     * batches, never re-selecting an already-selected batch's columns. Applied here in the default, virtual dispatch
+     * makes the window span each multi-file dataset's cross-file batch concatenation.
      */
     private static Stream<ParquetRecordBatch> applyWindow(
             Stream<ParquetRecordBatch> batches, long offset, OptionalLong limit) {
@@ -197,23 +195,28 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
     }
 
     /**
-     * Lowers {@code predicate} from output (presented) column names to file-physical names using the source mapping of
-     * {@code output}. Each {@link OutputColumn.Physical} and {@link OutputColumn.Promoted} maps its presented name to
-     * its physical source; injected columns contribute nothing.
+     * Lowers {@code query.predicate()} from presented column names to file-physical names using the produce set's
+     * rename mapping. Each {@link Projection.Column.Physical} and {@link Projection.Column.Promoted} maps its presented
+     * name to its physical source; injected columns contribute nothing. A non-produce-set projection ({@code All}) has
+     * no renames, leaving the predicate unchanged.
      */
-    private static Predicate lowerToPhysicalColumns(Predicate predicate, List<OutputColumn> output) {
+    private static Predicate lowerToPhysicalColumns(Query query) {
         Map<ColumnPath, ColumnPath> outputToPhysical = new HashMap<>();
-        for (OutputColumn column : output) {
-            switch (column) {
-                case OutputColumn.Physical(ColumnPath name, ColumnPath source) -> outputToPhysical.put(name, source);
-                case OutputColumn.Promoted(ColumnPath name, ColumnPath source, PrimitiveKind _) ->
-                    outputToPhysical.put(name, source);
-                case OutputColumn.Constant _, OutputColumn.Null _ -> {
-                    /* injected column has no physical source */
-                }
+        if (query.projection() instanceof Projection.Of of) {
+            of.columns().forEach(column -> addPhysicalMapping(outputToPhysical, column));
+        }
+        return PredicateColumns.remap(query.predicate(), outputToPhysical);
+    }
+
+    private static void addPhysicalMapping(Map<ColumnPath, ColumnPath> mapping, Projection.Column column) {
+        switch (column) {
+            case Projection.Column.Physical(ColumnPath name, ColumnPath source) -> mapping.put(name, source);
+            case Projection.Column.Promoted(ColumnPath name, ColumnPath source, PrimitiveKind _) ->
+                mapping.put(name, source);
+            case Projection.Column.Constant _, Projection.Column.Null _ -> {
+                /* injected column has no physical source */
             }
         }
-        return PredicateColumns.remap(predicate, outputToPhysical);
     }
 
     /**
@@ -231,8 +234,8 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
      */
     @MustBeClosed
     default Stream<ParquetRecord> read(Query query, ReadOptions options) {
-        if (query.output().isEmpty()) {
-            Stream<ParquetRecord> rows = read(query.predicate(), query.projection(), options);
+        if (query.outputColumns().isEmpty()) {
+            Stream<ParquetRecord> rows = read(lowerToPhysicalColumns(query), query.projection(), options);
             return applyRowWindow(rows, query.offset(), query.limit());
         }
         return readBatches(query, options).flatMap(ConstantColumnBatches::rows);
@@ -263,8 +266,7 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
      * predicate-only, not read-shaping.
      */
     default long count(Query query, ReadOptions options) {
-        Predicate lowered = lowerToPhysicalColumns(query.predicate(), query.output());
-        return count(lowered, options);
+        return count(lowerToPhysicalColumns(query), options);
     }
 
     /**
@@ -275,8 +277,7 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
      * namespace needs lowering, after which this delegates to {@link #explain(Predicate, Projection, ReadOptions)}.
      */
     default ExplainPlan explain(Query query, ReadOptions options) {
-        Predicate lowered = lowerToPhysicalColumns(query.predicate(), query.output());
-        return explain(lowered, query.projection(), options);
+        return explain(lowerToPhysicalColumns(query), query.projection(), options);
     }
 
     /**
@@ -288,8 +289,7 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
      * {@link #explainAnalyze(Predicate, Projection, ReadOptions)}.
      */
     default ExplainPlan explainAnalyze(Query query, ReadOptions options) {
-        Predicate lowered = lowerToPhysicalColumns(query.predicate(), query.output());
-        return explainAnalyze(lowered, query.projection(), options);
+        return explainAnalyze(lowerToPhysicalColumns(query), query.projection(), options);
     }
 
     /**

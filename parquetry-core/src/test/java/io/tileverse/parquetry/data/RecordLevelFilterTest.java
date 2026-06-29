@@ -72,7 +72,7 @@ class RecordLevelFilterTest {
         Path file = writeFixture();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetFileReader dataset = ParquetFileReader.open(source);
-            Projection idOnly = Projection.of(Set.of(ID));
+            Projection idOnly = Projection.ofPhysical(Set.of(ID));
             try (Stream<ParquetRecord> rows = dataset.read(col("pop").gt(1_000_000), idOnly, ReadOptions.DEFAULTS)) {
                 List<Integer> ids = rows.map(r -> r.getInt(ID)).sorted().toList();
                 assertThat(ids).containsExactly(2, 4);

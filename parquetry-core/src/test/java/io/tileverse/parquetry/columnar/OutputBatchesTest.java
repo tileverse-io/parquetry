@@ -19,15 +19,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.SequencedSet;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.filter.OutputColumn;
+import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -38,59 +40,62 @@ import io.tileverse.parquetry.schema.SchemaNode;
 class OutputBatchesTest {
 
     @Test
-    void shapesIntoOutputOrderWithReuseConstantAndWidening() {
+    void producesAnAllNullColumn() {
         DefaultParquetRecordBatch base = sourceBatch();
+        SequencedSet<Projection.Column> columns = new LinkedHashSet<>(List.of(
+                new Projection.Column.Physical(ColumnPath.of("count"), ColumnPath.of("n")),
+                new Projection.Column.Null(ColumnPath.of("label"), new Value.StringVal(""))));
+        Projection.Of of = (Projection.Of) Projection.of(columns);
 
-        List<OutputColumn> output = List.of(
-                new OutputColumn.Physical(ColumnPath.of("count"), ColumnPath.of("n")),
-                new OutputColumn.Constant(ColumnPath.of("label"), new Value.StringVal("x")),
-                new OutputColumn.Promoted(ColumnPath.of("big"), ColumnPath.of("n"), PrimitiveKind.INT64));
+        ParquetRecordBatch produced =
+                OutputBatches.produce(base, of, OutputBatches.producedSchema(base.projectedSchema(), of));
 
-        ParquetRecordBatch shaped = OutputBatches.shape(base, output);
-
-        assertThat(shaped.projectedSchema().leafColumns())
-                .containsExactly(ColumnPath.of("count"), ColumnPath.of("label"), ColumnPath.of("big"));
-        assertThat(shaped.columns().get(ColumnPath.of("count")))
-                .isSameAs(base.columns().get(ColumnPath.of("n")));
-        assertThat(((LongVector) shaped.columns().get(ColumnPath.of("big"))).getLong(0))
-                .isEqualTo(10L);
-        assertThat(((LongVector) shaped.columns().get(ColumnPath.of("big"))).getLong(1))
-                .isEqualTo(20L);
-        assertThat(shaped.rowCount()).isEqualTo(2);
-
-        int countFieldId = leafFieldId(shaped, ColumnPath.of("count"));
-        int bigFieldId = leafFieldId(shaped, ColumnPath.of("big"));
-        assertThat(countFieldId).isNotEqualTo(bigFieldId);
-    }
-
-    @Test
-    void addsAnAllNullColumn() {
-        DefaultParquetRecordBatch base = sourceBatch();
-
-        List<OutputColumn> output = List.of(
-                new OutputColumn.Physical(ColumnPath.of("count"), ColumnPath.of("n")),
-                new OutputColumn.Null(ColumnPath.of("label"), new Value.StringVal("")));
-
-        ParquetRecordBatch shaped = OutputBatches.shape(base, output);
-
-        assertThat(shaped.projectedSchema().leafColumns())
+        assertThat(produced.projectedSchema().leafColumns())
                 .containsExactly(ColumnPath.of("count"), ColumnPath.of("label"));
-        ColumnVector label = shaped.columns().get(ColumnPath.of("label"));
+        ColumnVector label = produced.columns().get(ColumnPath.of("label"));
         assertThat(label.isNull(0)).isTrue();
         assertThat(label.isNull(1)).isTrue();
     }
 
     @Test
-    void rejectsDuplicateOutputNames() {
+    void producesIntoProduceOrderWithConstantAndWidening() {
+        DefaultParquetRecordBatch base = sourceBatch();
+        SequencedSet<Projection.Column> columns = new LinkedHashSet<>(List.of(
+                new Projection.Column.Physical(ColumnPath.of("count"), ColumnPath.of("n")),
+                new Projection.Column.Constant(ColumnPath.of("label"), new Value.StringVal("x")),
+                new Projection.Column.Promoted(ColumnPath.of("big"), ColumnPath.of("n"), PrimitiveKind.INT64)));
+        Projection.Of of = (Projection.Of) Projection.of(columns);
+
+        ParquetSchema producedSchema = OutputBatches.producedSchema(base.projectedSchema(), of);
+        ParquetRecordBatch produced = OutputBatches.produce(base, of, producedSchema);
+
+        assertThat(produced.projectedSchema().leafColumns())
+                .containsExactly(ColumnPath.of("count"), ColumnPath.of("label"), ColumnPath.of("big"));
+        assertThat(produced.columns().get(ColumnPath.of("count")))
+                .isSameAs(base.columns().get(ColumnPath.of("n")));
+        assertThat(((LongVector) produced.columns().get(ColumnPath.of("big"))).getLong(0))
+                .isEqualTo(10L);
+        assertThat(produced.rowCount()).isEqualTo(2);
+    }
+
+    @Test
+    void selectSubsetsAndReordersByName() {
         DefaultParquetRecordBatch base = sourceBatch();
 
-        List<OutputColumn> output = List.of(
-                new OutputColumn.Physical(ColumnPath.of("count"), ColumnPath.of("n")),
-                new OutputColumn.Physical(ColumnPath.of("count"), ColumnPath.of("id")));
+        ParquetRecordBatch selected = OutputBatches.select(base, List.of(ColumnPath.of("n"), ColumnPath.of("id")));
 
-        assertThatThrownBy(() -> OutputBatches.shape(base, output))
+        assertThat(selected.projectedSchema().leafColumns()).containsExactly(ColumnPath.of("n"), ColumnPath.of("id"));
+        assertThat(selected.columns().get(ColumnPath.of("n")))
+                .isSameAs(base.columns().get(ColumnPath.of("n")));
+    }
+
+    @Test
+    void selectRejectsAnUnknownName() {
+        DefaultParquetRecordBatch base = sourceBatch();
+
+        assertThatThrownBy(() -> OutputBatches.select(base, List.of(ColumnPath.of("missing"))))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("duplicate output column name");
+                .hasMessageContaining("not produced");
     }
 
     private static int leafFieldId(ParquetRecordBatch batch, ColumnPath leaf) {
@@ -99,15 +104,18 @@ class OutputBatchesTest {
     }
 
     @Test
-    void closingShapedClosesBase() {
+    void closingProducedClosesBase() {
         DefaultParquetRecordBatch base = sourceBatch();
         AtomicBoolean baseClosed = new AtomicBoolean(false);
         base.attachReleaseAction(() -> baseClosed.set(true));
+        SequencedSet<Projection.Column> columns = new LinkedHashSet<>(
+                List.of(new Projection.Column.Physical(ColumnPath.of("count"), ColumnPath.of("n"))));
+        Projection.Of of = (Projection.Of) Projection.of(columns);
 
-        ParquetRecordBatch shaped = OutputBatches.shape(
-                base, List.of(new OutputColumn.Physical(ColumnPath.of("count"), ColumnPath.of("n"))));
+        ParquetRecordBatch produced =
+                OutputBatches.produce(base, of, OutputBatches.producedSchema(base.projectedSchema(), of));
 
-        shaped.close();
+        produced.close();
 
         assertThat(baseClosed).isTrue();
     }

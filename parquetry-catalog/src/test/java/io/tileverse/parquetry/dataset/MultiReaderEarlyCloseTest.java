@@ -18,9 +18,10 @@ package io.tileverse.parquetry.dataset;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.SequencedSet;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -28,7 +29,6 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.filter.OutputColumn;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Query;
@@ -115,14 +115,12 @@ class MultiReaderEarlyCloseTest {
                     .build();
             ParquetSource source = ParquetSource.open(twoFileFileset(first, second), openOptions);
 
-            List<OutputColumn> output = new ArrayList<>();
+            SequencedSet<Projection.Column> columns = new LinkedHashSet<>();
             for (ColumnPath leaf : source.schema().leafColumns()) {
-                output.add(new OutputColumn.Physical(leaf, leaf));
+                columns.add(new Projection.Column.Physical(leaf, leaf));
             }
-            output.add(new OutputColumn.Constant(ColumnPath.of("region"), new Value.StringVal("emea")));
-            Query query = Query.builder(Predicate.ALWAYS_TRUE, Projection.ALL)
-                    .output(output)
-                    .build();
+            columns.add(new Projection.Column.Constant(ColumnPath.of("region"), new Value.StringVal("emea")));
+            Query query = Query.of(Predicate.ALWAYS_TRUE, Projection.of(columns));
 
             try (Stream<ParquetRecord> stream = source.read(query, ReadOptions.DEFAULTS)) {
                 Iterator<ParquetRecord> it = stream.iterator();

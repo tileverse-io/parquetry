@@ -135,7 +135,7 @@ class RowGroupReadFiringIT {
             RecordingObserver observer = new RecordingObserver();
             ReadOptions options = optionsWith(observer);
             Predicate keyIs61 = col("key").eq(61L);
-            Projection payloadOnly = Projection.of(Set.of(ColumnPath.of("payload")));
+            Projection payloadOnly = Projection.ofPhysical(Set.of(ColumnPath.of("payload")));
 
             try (Stream<?> rows = reader.read(keyIs61, payloadOnly, options)) {
                 rows.forEach(row -> {});

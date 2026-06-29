@@ -58,7 +58,7 @@ public final class Projections {
         for (String name : columns) {
             kept.addAll(leavesFor(name, schema));
         }
-        return new Resolved(Projection.of(kept), List.copyOf(kept));
+        return new Resolved(Projection.ofPhysical(kept), List.copyOf(kept));
     }
 
     /**

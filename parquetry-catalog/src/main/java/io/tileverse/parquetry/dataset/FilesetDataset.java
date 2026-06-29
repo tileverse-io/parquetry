@@ -22,6 +22,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.SequencedSet;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.IntFunction;
@@ -37,7 +38,6 @@ import io.tileverse.parquetry.dataset.explain.Outcome;
 import io.tileverse.parquetry.dataset.explain.Totals;
 import io.tileverse.parquetry.filter.ConstantColumn;
 import io.tileverse.parquetry.filter.ConstantFolding;
-import io.tileverse.parquetry.filter.OutputColumn;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Query;
@@ -280,45 +280,58 @@ public final class FilesetDataset implements GeoParquetDataset {
             return null;
         }
         Map<String, String> filePartitions = perFilePartitions.get(index);
-        Projection physical = physicalProjection(projection);
         List<ConstantColumn> constants = projectedConstants(projection, filePartitions);
         if (constants.isEmpty()) {
-            return Query.of(residual, physical);
+            return Query.of(residual, physicalProjection(projection));
         }
-        return Query.builder(residual, physical)
-                .output(outputShape(physical, constants))
-                .build();
+        return Query.of(residual, Projection.of(produceSet(projection, constants)));
     }
 
     /**
-     * The ordered output shape for a file with projected synthetic columns: a {@link OutputColumn.Physical} passthrough
-     * for each physical column the read decodes, in decode order, followed by a {@link OutputColumn.Constant} for each
-     * projected partition column.
+     * The produce set for a file with projected synthetic columns: a {@link Projection.Column.Physical} passthrough for
+     * each physical column the read decodes, in the file's depth-first order, followed by a
+     * {@link Projection.Column.Constant} for each projected partition column.
      */
-    private List<OutputColumn> outputShape(Projection physical, List<ConstantColumn> constants) {
-        List<OutputColumn> output = new ArrayList<>();
-        for (ColumnPath column : presentedPhysicalColumns(physical)) {
-            output.add(new OutputColumn.Physical(column, column));
+    private SequencedSet<Projection.Column> produceSet(Projection projection, List<ConstantColumn> constants) {
+        SequencedSet<Projection.Column> columns = new LinkedHashSet<>();
+        for (ColumnPath leaf : presentedPhysicalColumns(projection)) {
+            columns.add(new Projection.Column.Physical(leaf, leaf));
         }
         for (ConstantColumn constant : constants) {
-            output.add(new OutputColumn.Constant(constant.path(), constant.value()));
+            columns.add(new Projection.Column.Constant(constant.path(), constant.value()));
         }
-        return output;
+        return columns;
     }
 
-    /** The physical leaf columns the decoded batch presents for {@code physical}, in the file's depth-first order. */
-    private List<ColumnPath> presentedPhysicalColumns(Projection physical) {
+    /** The physical leaf columns the decoded batch presents for {@code projection}, in the file's depth-first order. */
+    private List<ColumnPath> presentedPhysicalColumns(Projection projection) {
         List<ColumnPath> fileLeaves = allFiles.schema().leafColumns();
-        if (physical instanceof Projection.Columns(Set<ColumnPath> kept)) {
-            List<ColumnPath> presented = new ArrayList<>();
-            for (ColumnPath leaf : fileLeaves) {
-                if (kept.contains(leaf)) {
-                    presented.add(leaf);
-                }
-            }
-            return presented;
+        Optional<Set<ColumnPath>> names = projectedNames(projection);
+        if (names.isEmpty()) {
+            return fileLeaves;
         }
-        return fileLeaves;
+        Set<ColumnPath> kept = names.get();
+        List<ColumnPath> presented = new ArrayList<>();
+        for (ColumnPath leaf : fileLeaves) {
+            if (kept.contains(leaf)) {
+                presented.add(leaf);
+            }
+        }
+        return presented;
+    }
+
+    /** The projected column names, or empty for {@link Projection#ALL} (which presents every column). */
+    private static Optional<Set<ColumnPath>> projectedNames(Projection projection) {
+        return switch (projection) {
+            case Projection.All _ -> Optional.empty();
+            case Projection.Of(SequencedSet<Projection.Column> columns) -> {
+                Set<ColumnPath> names = new LinkedHashSet<>();
+                for (Projection.Column column : columns) {
+                    names.add(column.name());
+                }
+                yield Optional.of(names);
+            }
+        };
     }
 
     private Predicate residualFor(int index, Predicate predicate) {
@@ -334,36 +347,36 @@ public final class FilesetDataset implements GeoParquetDataset {
      * and the synthetic constants are appended to it.
      */
     private Projection physicalProjection(Projection projection) {
-        if (projection instanceof Projection.Columns(Set<ColumnPath> kept)) {
-            Set<ColumnPath> physical = new LinkedHashSet<>(kept);
-            physical.removeAll(partitioning.syntheticPaths());
-            if (physical.isEmpty()) {
-                return rowEnumerationProjection();
-            }
-            return Projection.of(physical);
+        if (projectedNames(projection).isEmpty()) {
+            return Projection.ALL;
         }
-        return projection;
+        List<ColumnPath> physical = presentedPhysicalColumns(projection);
+        if (physical.isEmpty()) {
+            return rowEnumerationProjection();
+        }
+        return Projection.ofPhysical(physical);
     }
 
     /** A projection of a single physical leaf, used to drive row enumeration when only synthetic columns are read. */
     private Projection rowEnumerationProjection() {
-        ColumnPath firstLeaf = allFiles.schema().leafColumns().get(0);
-        return Projection.of(Set.of(firstLeaf));
+        return Projection.ofPhysical(List.of(allFiles.schema().leafColumns().get(0)));
     }
 
     /** The projected synthetic columns of this file as constant output columns. */
     private List<ConstantColumn> projectedConstants(Projection projection, Map<String, String> filePartitions) {
         List<ConstantColumn> all = partitioning.constantsFor(filePartitions);
-        if (projection instanceof Projection.Columns(Set<ColumnPath> keptColumns)) {
-            List<ConstantColumn> kept = new ArrayList<>();
-            for (ConstantColumn constant : all) {
-                if (keptColumns.contains(constant.path())) {
-                    kept.add(constant);
-                }
-            }
-            return kept;
+        Optional<Set<ColumnPath>> names = projectedNames(projection);
+        if (names.isEmpty()) {
+            return all;
         }
-        return all;
+        Set<ColumnPath> kept = names.get();
+        List<ConstantColumn> result = new ArrayList<>();
+        for (ConstantColumn constant : all) {
+            if (kept.contains(constant.path())) {
+                result.add(constant);
+            }
+        }
+        return result;
     }
 
     /**
@@ -378,10 +391,8 @@ public final class FilesetDataset implements GeoParquetDataset {
     }
 
     private boolean projectionNamesSynthetic(Projection projection) {
-        if (projection instanceof Projection.Columns(Set<ColumnPath> kept)) {
-            return intersectsSynthetic(kept);
-        }
-        return true;
+        Optional<Set<ColumnPath>> names = projectedNames(projection);
+        return names.isEmpty() || intersectsSynthetic(names.get());
     }
 
     private boolean predicateNamesSynthetic(Predicate predicate) {

@@ -69,7 +69,7 @@ class PagePruningReadTest {
         Path file = writeOneHundredRows();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetFileReader dataset = ParquetFileReader.open(source);
-            Projection tagOnly = Projection.of(Set.of(TAG));
+            Projection tagOnly = Projection.ofPhysical(Set.of(TAG));
             try (Stream<ParquetRecord> rows = dataset.read(col("v").gtEq(95), tagOnly, ReadOptions.DEFAULTS)) {
                 List<Integer> tags = rows.map(r -> r.getInt(TAG)).sorted().toList();
                 assertThat(tags).containsExactly(950, 960, 970, 980, 990);

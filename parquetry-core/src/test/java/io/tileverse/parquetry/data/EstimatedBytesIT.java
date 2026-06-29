@@ -78,7 +78,7 @@ class EstimatedBytesIT {
         Path file = writeThreeRowGroups(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetFileReader reader = ParquetFileReader.open(source);
-            Projection idOnly = Projection.of(Set.of(ColumnPath.of("id")));
+            Projection idOnly = Projection.ofPhysical(Set.of(ColumnPath.of("id")));
 
             long allColumns = reader.explain(MATCH_ALL, Projection.ALL, ReadOptions.DEFAULTS)
                     .estimatedBytesRead();

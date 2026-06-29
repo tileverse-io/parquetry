@@ -25,7 +25,7 @@ import java.util.OptionalInt;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.filter.OutputColumn;
+import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.iceberg.IcebergReconciliation.Reconciliation;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -46,7 +46,7 @@ class IcebergReconciliationTest {
         Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file), Map.of());
 
         assertThat(result.passThrough()).isTrue();
-        assertThat(result.output()).isEmpty();
+        assertThat(result.columns()).isEmpty();
     }
 
     @Test
@@ -77,8 +77,8 @@ class IcebergReconciliationTest {
         Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file), Map.of());
 
         assertThat(result.passThrough()).isFalse();
-        assertThat(result.output())
-                .containsExactly(new OutputColumn.Physical(ColumnPath.of("count"), ColumnPath.of("n")));
+        assertThat(result.columns())
+                .containsExactly(new Projection.Column.Physical(ColumnPath.of("count"), ColumnPath.of("n")));
     }
 
     @Test
@@ -89,10 +89,10 @@ class IcebergReconciliationTest {
         Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file), Map.of());
 
         assertThat(result.passThrough()).isFalse();
-        assertThat(result.output())
+        assertThat(result.columns())
                 .containsExactly(
-                        new OutputColumn.Physical(ColumnPath.of("n"), ColumnPath.of("n")),
-                        new OutputColumn.Null(ColumnPath.of("label"), new Value.StringVal("")));
+                        new Projection.Column.Physical(ColumnPath.of("n"), ColumnPath.of("n")),
+                        new Projection.Column.Null(ColumnPath.of("label"), new Value.StringVal("")));
     }
 
     @Test
@@ -104,10 +104,10 @@ class IcebergReconciliationTest {
         Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file), partitionConstants);
 
         assertThat(result.passThrough()).isFalse();
-        assertThat(result.output())
+        assertThat(result.columns())
                 .containsExactly(
-                        new OutputColumn.Physical(ColumnPath.of("id"), ColumnPath.of("id")),
-                        new OutputColumn.Constant(ColumnPath.of("category"), new Value.StringVal("b")));
+                        new Projection.Column.Physical(ColumnPath.of("id"), ColumnPath.of("id")),
+                        new Projection.Column.Constant(ColumnPath.of("category"), new Value.StringVal("b")));
     }
 
     @Test
@@ -117,10 +117,10 @@ class IcebergReconciliationTest {
 
         Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file), Map.of());
 
-        assertThat(result.output())
+        assertThat(result.columns())
                 .containsExactly(
-                        new OutputColumn.Physical(ColumnPath.of("id"), ColumnPath.of("id")),
-                        new OutputColumn.Null(ColumnPath.of("label"), new Value.StringVal("")));
+                        new Projection.Column.Physical(ColumnPath.of("id"), ColumnPath.of("id")),
+                        new Projection.Column.Null(ColumnPath.of("label"), new Value.StringVal("")));
     }
 
     @Test
@@ -133,10 +133,10 @@ class IcebergReconciliationTest {
         Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file), NO_PARTITIONS);
 
         assertThat(result.passThrough()).isFalse();
-        assertThat(result.output())
+        assertThat(result.columns())
                 .containsExactly(
-                        new OutputColumn.Physical(ColumnPath.of("id"), ColumnPath.of("id")),
-                        new OutputColumn.Constant(ColumnPath.of("label"), new Value.StringVal("n/a")));
+                        new Projection.Column.Physical(ColumnPath.of("id"), ColumnPath.of("id")),
+                        new Projection.Column.Constant(ColumnPath.of("label"), new Value.StringVal("n/a")));
     }
 
     @Test
@@ -149,10 +149,10 @@ class IcebergReconciliationTest {
 
         Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file), partitionConstants);
 
-        assertThat(result.output())
+        assertThat(result.columns())
                 .containsExactly(
-                        new OutputColumn.Physical(ColumnPath.of("id"), ColumnPath.of("id")),
-                        new OutputColumn.Constant(ColumnPath.of("category"), new Value.StringVal("b")));
+                        new Projection.Column.Physical(ColumnPath.of("id"), ColumnPath.of("id")),
+                        new Projection.Column.Constant(ColumnPath.of("category"), new Value.StringVal("b")));
     }
 
     @Test
@@ -163,10 +163,10 @@ class IcebergReconciliationTest {
         Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file), Map.of());
 
         assertThat(result.passThrough()).isFalse();
-        assertThat(result.output())
+        assertThat(result.columns())
                 .containsExactly(
-                        new OutputColumn.Physical(ColumnPath.of("count"), ColumnPath.of("n")),
-                        new OutputColumn.Physical(ColumnPath.of("id"), ColumnPath.of("id")));
+                        new Projection.Column.Physical(ColumnPath.of("count"), ColumnPath.of("n")),
+                        new Projection.Column.Physical(ColumnPath.of("id"), ColumnPath.of("id")));
     }
 
     @Test
@@ -177,8 +177,8 @@ class IcebergReconciliationTest {
         Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file), Map.of());
 
         assertThat(result.passThrough()).isFalse();
-        assertThat(result.output())
-                .containsExactly(new OutputColumn.Physical(ColumnPath.of("count"), ColumnPath.of("n")));
+        assertThat(result.columns())
+                .containsExactly(new Projection.Column.Physical(ColumnPath.of("count"), ColumnPath.of("n")));
     }
 
     @Test
@@ -189,9 +189,9 @@ class IcebergReconciliationTest {
         Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file), Map.of());
 
         assertThat(result.passThrough()).isFalse();
-        assertThat(result.output())
+        assertThat(result.columns())
                 .containsExactly(
-                        new OutputColumn.Promoted(ColumnPath.of("n"), ColumnPath.of("n"), PrimitiveKind.INT64));
+                        new Projection.Column.Promoted(ColumnPath.of("n"), ColumnPath.of("n"), PrimitiveKind.INT64));
     }
 
     @Test
@@ -202,9 +202,9 @@ class IcebergReconciliationTest {
         Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file), Map.of());
 
         assertThat(result.passThrough()).isFalse();
-        assertThat(result.output())
+        assertThat(result.columns())
                 .containsExactly(
-                        new OutputColumn.Promoted(ColumnPath.of("x"), ColumnPath.of("x"), PrimitiveKind.DOUBLE));
+                        new Projection.Column.Promoted(ColumnPath.of("x"), ColumnPath.of("x"), PrimitiveKind.DOUBLE));
     }
 
     @Test
