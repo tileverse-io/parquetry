@@ -75,7 +75,7 @@ class BatchPipelineRowsTest {
             ParallelDecodeCoordinator coordinator = fixture.serialCoordinator(source, AllFull.INSTANCE);
             long rows = 0;
             try (Stream<Integer> stream = BatchPipeline.rows(
-                    coordinator, yearMaterializer(), fixture.schema(), null, false, false, tracker)) {
+                    coordinator, yearMaterializer(), fixture.schema(), null, false, false, Optional.empty(), tracker)) {
                 Iterator<Integer> it = stream.iterator();
                 while (it.hasNext()) {
                     it.next();
@@ -127,7 +127,7 @@ class BatchPipelineRowsTest {
             ExecutorService fetchExecutor = newFetchExecutor();
             ParallelDecodeCoordinator coordinator = fixture.serialCoordinator(source, AllFull.INSTANCE, fetchExecutor);
             try (Stream<Integer> stream = BatchPipeline.rows(
-                    coordinator, yearMaterializer(), fixture.schema(), null, false, false, tracker)) {
+                    coordinator, yearMaterializer(), fixture.schema(), null, false, false, Optional.empty(), tracker)) {
                 Iterator<Integer> it = stream.iterator();
                 assertThat(it.hasNext()).as("the stream has rows to consume").isTrue();
                 it.next();
@@ -149,7 +149,14 @@ class BatchPipelineRowsTest {
             ParallelDecodeCoordinator coordinator = fixture.serialCoordinator(source, mode);
             List<Integer> years = new ArrayList<>();
             try (Stream<Integer> stream = BatchPipeline.rows(
-                    coordinator, yearMaterializer(), fixture.schema(), filter, false, false, batch -> {})) {
+                    coordinator,
+                    yearMaterializer(),
+                    fixture.schema(),
+                    filter,
+                    false,
+                    false,
+                    Optional.empty(),
+                    batch -> {})) {
                 stream.forEach(years::add);
             }
             return years;
@@ -251,7 +258,8 @@ class BatchPipelineRowsTest {
                     Optional.empty(),
                     BatchForm.LEVELS,
                     ParallelDecodeCoordinator.DecodeObservation.NONE,
-                    List.of());
+                    List.of(),
+                    Optional.empty());
         }
 
         private List<RowGroupSurvivor> survivors(ByteRangeSource source, SurvivorMode mode) {

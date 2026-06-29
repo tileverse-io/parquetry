@@ -124,13 +124,14 @@ public final class WkbEnvelope {
     }
 
     /**
-     * Computes the full 2D envelope of the WKB geometry.
+     * Computes the full 2D envelope of the WKB geometry without building an engine geometry; Z and M are ignored. The
+     * spatial decimation gate uses this to bound a row's geometry directly from its WKB.
      *
      * @param wkb one geometry's WKB, with the byte-order byte at offset 0; read forward by structure (any trailing
      *     bytes are ignored)
      * @return the 2D bounding box spanning every coordinate
      */
-    static Bbox compute(MemorySegment wkb) {
+    public static Bbox compute(MemorySegment wkb) {
         EnvelopeVisitor visitor = new EnvelopeVisitor();
         walk(wkb, visitor);
         return visitor.toBbox();

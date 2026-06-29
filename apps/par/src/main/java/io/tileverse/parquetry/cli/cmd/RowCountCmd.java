@@ -22,12 +22,12 @@ import io.tileverse.parquetry.cli.DatasetResolver;
 import io.tileverse.parquetry.cli.GlobalOptions;
 import io.tileverse.parquetry.cli.StorageOptions;
 import io.tileverse.parquetry.cli.expr.FilterParser;
-import io.tileverse.parquetry.cli.expr.GeometryColumns;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.geo.geoparquet.GeometryColumns;
 
 import picocli.CommandLine.ArgGroup;
 import picocli.CommandLine.Command;

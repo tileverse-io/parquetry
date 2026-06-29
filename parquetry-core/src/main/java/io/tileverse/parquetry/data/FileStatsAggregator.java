@@ -16,14 +16,12 @@
 package io.tileverse.parquetry.data;
 
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
 import io.tileverse.parquetry.filter.prune.FileStats;
 import io.tileverse.parquetry.format.FileMetaData;
-import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.internal.filter.FilterPipeline;
 import io.tileverse.parquetry.internal.filter.StatsEvaluator;
 import io.tileverse.parquetry.internal.filter.StatsEvaluator.ColumnSummary;
@@ -32,8 +30,8 @@ import io.tileverse.parquetry.internal.filter.spatial.SpatialBoundsSource;
 import io.tileverse.parquetry.internal.read.RowGroupChunks;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
-import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
+import io.tileverse.parquetry.schema.geo.geoparquet.GeometryColumns;
 
 /**
  * Builds the footer-aggregated prunable {@link FileStats} for one file from its row-group chunk views: per-column
@@ -54,7 +52,7 @@ final class FileStatsAggregator {
 
     FileStats aggregate(List<RowGroupChunks> groups) {
         FileStats.Builder builder = FileStats.builder().recordCount(recordCount(groups));
-        Set<ColumnPath> geometryColumns = geometryColumnPaths();
+        Set<ColumnPath> geometryColumns = GeometryColumns.resolve(fileSchema, geoMetadata);
         for (ColumnPath leaf : fileSchema.leafColumns()) {
             if (geometryColumns.contains(leaf)) {
                 continue;
@@ -98,35 +96,6 @@ final class FileStatsAggregator {
             // A malformed or truncated footer value disables pruning for this column; it never fails the read.
             return Optional.empty();
         }
-    }
-
-    /**
-     * The geometry leaf columns, kept out of the numeric statistics. A GeoParquet 1.x file names its (top-level)
-     * geometry columns only in the {@code geo} metadata; a GeoParquet 2.0 file annotates the leaf with a
-     * GEOMETRY/GEOGRAPHY logical type. Honoring both keeps a WKB column out of {@code columns()} regardless of which
-     * encoding wrote it, even when the two disagree.
-     */
-    private Set<ColumnPath> geometryColumnPaths() {
-        Set<ColumnPath> paths = new LinkedHashSet<>();
-        geoMetadata.ifPresent(geo -> geo.columns().keySet().forEach(name -> paths.add(ColumnPath.of(name))));
-        for (ColumnPath leaf : fileSchema.leafColumns()) {
-            if (isGeometryLeaf(leaf)) {
-                paths.add(leaf);
-            }
-        }
-        return paths;
-    }
-
-    private boolean isGeometryLeaf(ColumnPath leaf) {
-        return fileSchema.find(leaf).orElse(null) instanceof SchemaNode.Primitive primitive
-                && primitive
-                        .logicalType()
-                        .map(FileStatsAggregator::isGeometryLike)
-                        .orElse(false);
-    }
-
-    private static boolean isGeometryLike(LogicalType logicalType) {
-        return logicalType instanceof LogicalType.Geometry || logicalType instanceof LogicalType.Geography;
     }
 
     private void addGeometryBounds(FileStats.Builder builder, Set<ColumnPath> geometryColumns) {

@@ -15,8 +15,10 @@
  */
 package io.tileverse.parquetry.data;
 
+import java.util.Optional;
 import java.util.OptionalInt;
 
+import io.tileverse.parquetry.filter.SpatialReadProbe;
 import io.tileverse.parquetry.observe.QueryObserver;
 
 import lombok.NonNull;
@@ -48,6 +50,9 @@ import lombok.NonNull;
  *     {@link QueryObserver#NONE})
  * @param batchSize maximum row count per emitted batch on the {@code readBatches(...)} path; empty means each batch is
  *     bounded only by the natural page row count
+ * @param spatialReadProbe A stateful, single-use spatial decimation probe consulted per structural unit during the
+ *     read; empty by default. Never share a probe-bearing options instance across concurrent reads; {@code DEFAULTS}
+ *     never holds one.
  */
 public record ReadOptions(
         boolean useStatsFilter,
@@ -57,7 +62,8 @@ public record ReadOptions(
         boolean useRecordLevelFilter,
         boolean useLateMaterialization,
         @NonNull QueryObserver queryObserver,
-        @NonNull OptionalInt batchSize) {
+        @NonNull OptionalInt batchSize,
+        @NonNull Optional<SpatialReadProbe> spatialReadProbe) {
 
     public ReadOptions {
         if (batchSize.isPresent() && batchSize.getAsInt() <= 0) {
@@ -86,6 +92,7 @@ public record ReadOptions(
         builder.useLateMaterialization = useLateMaterialization;
         builder.queryObserver = queryObserver;
         builder.batchSize = batchSize;
+        builder.spatialReadProbe = spatialReadProbe;
         return builder;
     }
 
@@ -100,6 +107,7 @@ public record ReadOptions(
         private boolean useLateMaterialization = true;
         private QueryObserver queryObserver = QueryObserver.NONE;
         private OptionalInt batchSize = OptionalInt.empty();
+        private Optional<SpatialReadProbe> spatialReadProbe = Optional.empty();
 
         private Builder() {}
 
@@ -151,6 +159,15 @@ public record ReadOptions(
             return this;
         }
 
+        /**
+         * Installs a stateful, single-use spatial decimation probe consulted per structural unit during the read. The
+         * resulting options instance must not be shared across concurrent reads.
+         */
+        public Builder spatialReadProbe(@NonNull SpatialReadProbe probe) {
+            this.spatialReadProbe = Optional.of(probe);
+            return this;
+        }
+
         public ReadOptions build() {
             return new ReadOptions(
                     useStatsFilter,
@@ -160,7 +177,8 @@ public record ReadOptions(
                     useRecordLevelFilter,
                     useLateMaterialization,
                     queryObserver,
-                    batchSize);
+                    batchSize,
+                    spatialReadProbe);
         }
     }
 }

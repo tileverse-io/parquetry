@@ -34,8 +34,10 @@ import org.geotools.data.MaxFeatureReader;
 import org.geotools.data.ReTypeFeatureReader;
 import org.geotools.data.store.ContentEntry;
 import org.geotools.data.store.ContentFeatureSource;
+import org.geotools.data.util.ScreenMap;
 import org.geotools.feature.simple.SimpleFeatureTypeBuilder;
 import org.geotools.geometry.jts.ReferencedEnvelope;
+import org.geotools.util.factory.Hints;
 
 import io.tileverse.parquetry.catalog.DatasetCatalog;
 import io.tileverse.parquetry.data.ReadOptions;
@@ -184,6 +186,15 @@ final class GeoParquetFeatureSource extends ContentFeatureSource {
         return startIndex != null && startIndex > 0;
     }
 
+    /**
+     * Advertises support for the renderer's {@link Hints#SCREENMAP}. The renderer attaches its ScreenMap to the query
+     * only when the feature source claims the hint; {@link #getReaderInternal(Query)} reads it and decimates the read.
+     */
+    @Override
+    protected void addHints(Set<Hints.Key> hints) {
+        hints.add(Hints.SCREENMAP);
+    }
+
     @Override
     protected FeatureReader<SimpleFeatureType, SimpleFeature> getReaderInternal(Query query) throws IOException {
         GeoParquetSchemaMapper.Mapping m = mapping();
@@ -199,7 +210,8 @@ final class GeoParquetFeatureSource extends ContentFeatureSource {
                 dataset(),
                 t.predicate(),
                 t.readProjection(),
-                m.fidAttribute());
+                m.fidAttribute(),
+                readOptionsFor(query, t));
 
         if (t.postFilter() != Filter.INCLUDE) {
             reader = new FilteringFeatureReader<>(reader, t.postFilter());
@@ -211,6 +223,26 @@ final class GeoParquetFeatureSource extends ContentFeatureSource {
         }
 
         return applyLimit(reader, query);
+    }
+
+    /**
+     * The read options for this query. When the renderer attaches a {@link Hints#SCREENMAP} and the query pushes down
+     * fully (no residual filter remains), the read runs through a {@link ScreenMapReadProbe} that decimates redundant
+     * features per painted pixel inside the core read. Otherwise the read uses the default options.
+     *
+     * <p>The probe is withheld when a residual filter remains because the probe paints during the core read, before the
+     * residual {@link FilteringFeatureReader} runs. A painted feature later rejected by the residual would leave its
+     * pixel painted but empty and wrongly skip a valid later feature in that pixel. With no residual the renderer's
+     * pushed query selects exactly the output features, which makes painting safe.
+     */
+    private static ReadOptions readOptionsFor(Query query, QueryTranslator.TranslatedQuery t) {
+        Object hint = query.getHints().get(Hints.SCREENMAP);
+        if (hint instanceof ScreenMap screenMap && t.postFilter() == Filter.INCLUDE) {
+            return ReadOptions.builder()
+                    .spatialReadProbe(new ScreenMapReadProbe(screenMap))
+                    .build();
+        }
+        return ReadOptions.DEFAULTS;
     }
 
     /**

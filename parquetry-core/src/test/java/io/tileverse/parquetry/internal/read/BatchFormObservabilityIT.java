@@ -100,6 +100,7 @@ class BatchFormObservabilityIT {
                     /*recordFilter*/ null,
                     /*observe*/ false,
                     /*wantsTimings*/ false,
+                    /*gate*/ Optional.empty(),
                     batch -> listVectors.add(batch.columns().get(LIST_COLUMN)))) {
                 rows.forEach(ignored -> {});
             }
@@ -149,7 +150,8 @@ class BatchFormObservabilityIT {
                     Optional.empty(),
                     form,
                     ParallelDecodeCoordinator.DecodeObservation.NONE,
-                    List.of());
+                    List.of(),
+                    Optional.empty());
         }
 
         private List<RowGroupSurvivor> survivors(ByteRangeSource source) {

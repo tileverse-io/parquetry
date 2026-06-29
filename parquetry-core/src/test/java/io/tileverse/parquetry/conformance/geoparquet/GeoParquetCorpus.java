@@ -21,15 +21,14 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
-import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
-import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.geo.geoparquet.GeometryColumns;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
 import tools.jackson.databind.json.JsonMapper;
@@ -67,20 +66,7 @@ final class GeoParquetCorpus {
 
     /** Leaf paths annotated with the native GEOMETRY / GEOGRAPHY logical type. */
     static Set<ColumnPath> geometryColumns(ParquetSchema schema) {
-        Set<ColumnPath> out = new LinkedHashSet<>();
-        for (ColumnPath leaf : schema.leafColumns()) {
-            schema.find(leaf)
-                    .filter(SchemaNode.Primitive.class::isInstance)
-                    .map(SchemaNode.Primitive.class::cast)
-                    .flatMap(SchemaNode.Primitive::logicalType)
-                    .filter(GeoParquetCorpus::isGeometry)
-                    .ifPresent(logicalType -> out.add(leaf));
-        }
-        return out;
-    }
-
-    private static boolean isGeometry(LogicalType logicalType) {
-        return logicalType instanceof LogicalType.Geometry || logicalType instanceof LogicalType.Geography;
+        return GeometryColumns.resolve(schema, Optional.empty());
     }
 
     /** A length-bounded copy of the WKB bytes at {@code column}, or {@code null} when the value is absent. */

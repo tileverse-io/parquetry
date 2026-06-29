@@ -21,6 +21,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.data.ReadOptions;
+import io.tileverse.parquetry.filter.SpatialReadProbe;
+import io.tileverse.parquetry.filter.SpatialReadProbe.Decision;
 import io.tileverse.parquetry.observe.QueryObserver;
 
 class ReadOptionsTest {
@@ -98,5 +100,18 @@ class ReadOptionsTest {
         assertThat(swapped.useRecordLevelFilter()).isTrue();
         assertThat(swapped.useLateMaterialization()).isTrue();
         assertThat(swapped.batchSize()).isEqualTo(original.batchSize());
+    }
+
+    @Test
+    void defaultsHoldNoSpatialReadProbe() {
+        assertThat(ReadOptions.DEFAULTS.spatialReadProbe()).isEmpty();
+    }
+
+    @Test
+    void builderAndToBuilderRoundTripTheSpatialReadProbe() {
+        SpatialReadProbe probe = (minX, minY, maxX, maxY) -> Decision.keep();
+        ReadOptions options = ReadOptions.builder().spatialReadProbe(probe).build();
+        assertThat(options.spatialReadProbe()).contains(probe);
+        assertThat(options.toBuilder().build().spatialReadProbe()).contains(probe);
     }
 }

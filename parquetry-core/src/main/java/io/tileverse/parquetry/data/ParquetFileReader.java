@@ -59,10 +59,12 @@ import io.tileverse.parquetry.internal.read.LateMaterialization;
 import io.tileverse.parquetry.internal.read.ParallelDecodeCoordinator;
 import io.tileverse.parquetry.internal.read.ParallelDecodeCoordinator.DecodeObservation;
 import io.tileverse.parquetry.internal.read.RowGroupChunks;
+import io.tileverse.parquetry.internal.read.RowGroupGate;
 import io.tileverse.parquetry.internal.read.RowGroupSurvivor;
 import io.tileverse.parquetry.internal.read.RowMask;
 import io.tileverse.parquetry.internal.read.RowPositionColumn;
 import io.tileverse.parquetry.internal.read.RowPositionSynthesis;
+import io.tileverse.parquetry.internal.read.SpatialDecimationGate;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.observe.FetchAccumulator;
@@ -110,6 +112,7 @@ public final class ParquetFileReader {
     private final Optional<GeoParquetMetadata> geoMetadata;
     private final ParquetRuntime runtime;
     private final ReadResources readResources;
+    private final SpatialReadGates spatialReadGates;
 
     // Held for an encrypted file; the footer-decryption path that reads it is not wired in yet.
     @SuppressWarnings("java:S1068")
@@ -131,6 +134,7 @@ public final class ParquetFileReader {
         this.geoMetadata = FooterModel.parseGeoMetadata(keyValueMetadata);
         this.runtime = runtime;
         this.readResources = new ReadResources(source, fileSchema, runtime);
+        this.spatialReadGates = new SpatialReadGates(footer, fileSchema, geoMetadata);
         this.decryptionKeyRetriever = decryptionKeyRetriever;
     }
 
@@ -278,6 +282,7 @@ public final class ParquetFileReader {
                 ReadObservation.decodeObservationFor(plan, observe, options.queryObserver(), false, spillAccumulator);
         List<RowPositionSynthesis> rowPositions =
                 rowPositionSynthesesFor(survivors, rowGroupChunks, rowPositionRequests);
+        Optional<RowGroupGate> rowGroupGate = spatialReadGates.rowGroupGate(survivors, options);
         ParallelDecodeCoordinator coordinator = readResources.newDecodeCoordinator(
                 survivors,
                 scanSchema,
@@ -287,8 +292,11 @@ public final class ParquetFileReader {
                 rowsForm(recordFilter),
                 accumulator,
                 decodeObservation,
-                rowPositions);
-        return BatchPipeline.rows(coordinator, materializer, outputSchema, recordFilter, observe, wantsTimings);
+                rowPositions,
+                rowGroupGate);
+        Optional<SpatialDecimationGate> leafGate = spatialReadGates.leafGate(options);
+        return BatchPipeline.rows(
+                coordinator, materializer, outputSchema, recordFilter, observe, wantsTimings, leafGate);
     }
 
     /** True when an observer is attached; the read paths skip every observability allocation when it is false. */
@@ -590,6 +598,7 @@ public final class ParquetFileReader {
         List<Optional<RowMask>> masks = decodeMasksFor(residual, scanSchema, options);
         DecodeObservation observation =
                 ReadObservation.residualObservationFor(plan, observe, options.queryObserver(), spillAccumulator);
+        Optional<RowGroupGate> rowGroupGate = spatialReadGates.rowGroupGate(residual, options);
         ParallelDecodeCoordinator coordinator = readResources.newDecodeCoordinator(
                 residual,
                 scanSchema,
@@ -599,8 +608,10 @@ public final class ParquetFileReader {
                 BatchForm.LEVELS,
                 accumulator,
                 observation,
-                rowPositions);
-        return BatchPipeline.countMatching(coordinator, normalized, observe);
+                rowPositions,
+                rowGroupGate);
+        Optional<SpatialDecimationGate> leafGate = spatialReadGates.leafGate(options);
+        return BatchPipeline.countMatching(coordinator, normalized, observe, leafGate);
     }
 
     /** Total rows across every row group, read from the per-row-group summaries with no I/O. */
@@ -670,6 +681,7 @@ public final class ParquetFileReader {
                 plan, observe, options.queryObserver(), true, observation.spillAccumulator());
         List<RowPositionSynthesis> rowPositions =
                 rowPositionSynthesesFor(survivors, rowGroupChunks, rowPositionRequests);
+        Optional<RowGroupGate> rowGroupGate = spatialReadGates.rowGroupGate(survivors, options);
         ParallelDecodeCoordinator coordinator = readResources.newDecodeCoordinator(
                 survivors,
                 scanSchema,
@@ -679,10 +691,12 @@ public final class ParquetFileReader {
                 BatchForm.ASSEMBLED,
                 FetchAccumulator.NONE,
                 decodeObservation,
-                rowPositions);
-        Stream<ParquetRecordBatch> batches = recordFilter == null
+                rowPositions,
+                rowGroupGate);
+        Optional<SpatialDecimationGate> leafGate = spatialReadGates.leafGate(options);
+        Stream<ParquetRecordBatch> batches = (recordFilter == null && leafGate.isEmpty())
                 ? BatchPipeline.batches(coordinator)
-                : BatchPipeline.batches(coordinator, recordFilter, outputSchema);
+                : BatchPipeline.batches(coordinator, recordFilter, outputSchema, leafGate);
         Stream<ParquetRecordBatch> produced =
                 projectionPlan.needsShaping() ? batches.map(projectionPlan::produce) : batches;
         ParquetSchema producedSchema = projectionPlan.producedSchema();
