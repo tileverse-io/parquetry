@@ -45,6 +45,7 @@ import io.tileverse.parquetry.filter.ConstantFolding;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Query;
+import io.tileverse.parquetry.filter.RowPositionSet;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
@@ -70,6 +71,9 @@ import io.tileverse.parquetry.schema.ParquetSchema;
  */
 final class IcebergDataset implements ParquetDataset {
 
+    /** The synthesized row-position column the reader produces; the delete predicate filters on it. */
+    private static final ColumnPath ROW_POSITION = ColumnPath.of("_pos");
+
     private final String name;
     private final CatalogSnapshot snapshot;
     private final IcebergSchema icebergSchema;
@@ -77,8 +81,12 @@ final class IcebergDataset implements ParquetDataset {
     private final List<IcebergManifests.DataFileRef> dataFiles;
     private final List<FileStats> fileStats;
     private final List<ByteRangeSource> sources;
+    private final IcebergDeletePlan deletePlan;
     private final Map<Integer, ParquetSource> perFileDatasets = new ConcurrentHashMap<>();
 
+    // The catalog hands the dataset its fully resolved snapshot state in one place; these are cohesive fields, not a
+    // long argument list worth bundling into a parameter object.
+    @SuppressWarnings("java:S107")
     IcebergDataset(
             String name,
             CatalogSnapshot snapshot,
@@ -86,7 +94,8 @@ final class IcebergDataset implements ParquetDataset {
             IcebergPartitionSpec partitionSpec,
             List<IcebergManifests.DataFileRef> dataFiles,
             List<FileStats> fileStats,
-            List<ByteRangeSource> sources) {
+            List<ByteRangeSource> sources,
+            IcebergDeletePlan deletePlan) {
         this.name = Objects.requireNonNull(name, "name");
         this.snapshot = Objects.requireNonNull(snapshot, "snapshot");
         this.icebergSchema = Objects.requireNonNull(icebergSchema, "icebergSchema");
@@ -94,6 +103,7 @@ final class IcebergDataset implements ParquetDataset {
         this.dataFiles = List.copyOf(dataFiles);
         this.fileStats = List.copyOf(fileStats);
         this.sources = List.copyOf(sources);
+        this.deletePlan = Objects.requireNonNull(deletePlan, "deletePlan");
     }
 
     /** A data file the dataset eliminated for a predicate, with the pruning decision that ruled it out. */
@@ -314,18 +324,36 @@ final class IcebergDataset implements ParquetDataset {
      */
     private Query oneFileQuery(int index, Predicate predicate, Projection projection) {
         IcebergManifests.DataFileRef ref = dataFiles.get(index);
+        Optional<RowPositionSet> deleted = deletePlan.positionsFor(ref);
         Map<Integer, Value> partitionConstants =
                 IcebergPartitionValues.constantsFor(partitionSpec, ref.partitionValues());
         IcebergFileSchema file = IcebergFileSchema.of(perFile(index).schema());
         Reconciliation recon = IcebergReconciliation.reconcile(icebergSchema, file, partitionConstants);
         if (recon.passThrough()) {
-            return Query.of(predicate, projection);
+            return Query.of(withDeletes(predicate, deleted), projection);
         }
         Predicate folded = ConstantFolding.fold(predicate, constantColumns(recon), addedNullColumns(recon));
         if (folded.equals(Predicate.ALWAYS_FALSE)) {
             return null;
         }
-        return Query.of(folded, Projection.of(recon.columns()));
+        return Query.of(withDeletes(folded, deleted), Projection.of(recon.columns()));
+    }
+
+    /**
+     * ANDs the data file's merge-on-read deletes into {@code base} as a {@link Predicate.RowIndexExcluded} leaf over
+     * the synthesized row-position column, dropping the rows the delete files mark. A file with no applicable delete
+     * keeps {@code base} unchanged; a bare delete (the caller passed no predicate) stays a single leaf so the reader
+     * can eliminate fully-deleted row groups and pages before decoding.
+     */
+    private static Predicate withDeletes(Predicate base, Optional<RowPositionSet> deleted) {
+        if (deleted.isEmpty()) {
+            return base;
+        }
+        Predicate deleteLeaf = new Predicate.RowIndexExcluded(ROW_POSITION, deleted.orElseThrow());
+        if (base.equals(Predicate.ALWAYS_TRUE)) {
+            return deleteLeaf;
+        }
+        return base.and(deleteLeaf);
     }
 
     /**

@@ -150,8 +150,16 @@ class IcebergDatasetTest {
         CatalogSnapshot snapshot =
                 new CatalogSnapshot(metadata.currentSnapshotId(), metadata.currentSnapshotTimestampMs());
         IcebergPartitionSpec partitionSpec = IcebergPartitionSpec.of(List.of(), List.of());
+        IcebergDeletePlan deletePlan = IcebergDeletePlan.of(List.of(), io);
         return new IcebergDataset(
-                TABLE, snapshot, IcebergSchema.of(tableFields), partitionSpec, dataFiles, fileStats, sources);
+                TABLE,
+                snapshot,
+                IcebergSchema.of(tableFields),
+                partitionSpec,
+                dataFiles,
+                fileStats,
+                sources,
+                deletePlan);
     }
 
     private static IcebergTableMetadata readMetadata(Path tableDir, IcebergFileIO io) {
