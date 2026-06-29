@@ -47,27 +47,12 @@ import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.OffsetIndex;
-import io.tileverse.parquetry.internal.read.page.ByteStreamSplitDoubleDecoder;
-import io.tileverse.parquetry.internal.read.page.ByteStreamSplitFloatDecoder;
 import io.tileverse.parquetry.internal.read.page.DecodedPage;
-import io.tileverse.parquetry.internal.read.page.DeltaBinaryPackedInt32Decoder;
-import io.tileverse.parquetry.internal.read.page.DeltaBinaryPackedInt64Decoder;
-import io.tileverse.parquetry.internal.read.page.DeltaByteArrayDecoder;
-import io.tileverse.parquetry.internal.read.page.DeltaLengthByteArrayDecoder;
 import io.tileverse.parquetry.internal.read.page.Dictionary;
 import io.tileverse.parquetry.internal.read.page.LevelDecoder;
 import io.tileverse.parquetry.internal.read.page.PageCursor;
 import io.tileverse.parquetry.internal.read.page.PageDecoder;
 import io.tileverse.parquetry.internal.read.page.PageSelection;
-import io.tileverse.parquetry.internal.read.page.PlainBinaryDecoder;
-import io.tileverse.parquetry.internal.read.page.PlainBooleanDecoder;
-import io.tileverse.parquetry.internal.read.page.PlainDoubleDecoder;
-import io.tileverse.parquetry.internal.read.page.PlainFixedLenBinaryDecoder;
-import io.tileverse.parquetry.internal.read.page.PlainFloatDecoder;
-import io.tileverse.parquetry.internal.read.page.PlainInt32Decoder;
-import io.tileverse.parquetry.internal.read.page.PlainInt64Decoder;
-import io.tileverse.parquetry.internal.read.page.PlainInt96Decoder;
-import io.tileverse.parquetry.internal.read.page.RleBooleanDecoder;
 import io.tileverse.parquetry.internal.read.page.RleDictionaryPageDecoder;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -389,7 +374,7 @@ final class BatchColumnReader {
         }
         pageLogicalRowCount = (pageRepLevels == null) ? pageSize : pageRepLevels.countOf(0);
         clearTypedPayloads();
-        pageWasDictionary = isDictionaryEncoded(page.valuesEncoding());
+        pageWasDictionary = PageDecoders.isDictionaryEncoded(page.valuesEncoding());
         if (skipDecode && survivingRows != null) {
             decodeSelectedRows(page, pageCursor.currentPageFirstRowIndex());
         } else {
@@ -659,7 +644,7 @@ final class BatchColumnReader {
             out.fill((byte) 0);
             return;
         }
-        PageDecoder<?> decoder = intDecoderFor(encoding, dict);
+        PageDecoder<?> decoder = PageDecoders.intDecoderFor(encoding, dict);
         decoder.load(buf, nonNullCount);
         decoder.decodeInts(nonNullCount, out, 0L);
         if (nonNullCount < pageSize) {
@@ -674,7 +659,7 @@ final class BatchColumnReader {
             out.fill((byte) 0);
             return;
         }
-        PageDecoder<?> decoder = longDecoderFor(encoding, dict);
+        PageDecoder<?> decoder = PageDecoders.longDecoderFor(encoding, dict);
         decoder.load(buf, nonNullCount);
         decoder.decodeLongs(nonNullCount, out, 0L);
         if (nonNullCount < pageSize) {
@@ -690,7 +675,7 @@ final class BatchColumnReader {
             out.fill((byte) 0);
             return;
         }
-        PageDecoder<?> decoder = floatDecoderFor(encoding, dict);
+        PageDecoder<?> decoder = PageDecoders.floatDecoderFor(encoding, dict);
         decoder.load(buf, nonNullCount);
         decoder.decodeFloats(nonNullCount, out, 0L);
         if (nonNullCount < pageSize) {
@@ -706,7 +691,7 @@ final class BatchColumnReader {
             out.fill((byte) 0);
             return;
         }
-        PageDecoder<?> decoder = doubleDecoderFor(encoding, dict);
+        PageDecoder<?> decoder = PageDecoders.doubleDecoderFor(encoding, dict);
         decoder.load(buf, nonNullCount);
         decoder.decodeDoubles(nonNullCount, out, 0L);
         if (nonNullCount < pageSize) {
@@ -796,7 +781,7 @@ final class BatchColumnReader {
             out.fill((byte) 0);
             return IntSequence.ofSegment(out, pageSize);
         }
-        RleDictionaryPageDecoder<?> decoder = dictionaryDecoderFor(encoding, dict);
+        RleDictionaryPageDecoder<?> decoder = PageDecoders.dictionaryDecoderFor(leaf.kind(), encoding, dict);
         decoder.load(buf, nonNullCount);
         decoder.decodeIndicesInto(nonNullCount, out);
         if (nonNullCount < pageSize) {
@@ -813,7 +798,7 @@ final class BatchColumnReader {
         if (nonNullCount == 0) {
             return indices;
         }
-        RleDictionaryPageDecoder<?> decoder = dictionaryDecoderFor(encoding, dict);
+        RleDictionaryPageDecoder<?> decoder = PageDecoders.dictionaryDecoderFor(leaf.kind(), encoding, dict);
         decoder.load(buf, nonNullCount);
         if (nonNullCount == pageSize) {
             decoder.decodeIndices(pageSize, indices, 0);
@@ -831,7 +816,7 @@ final class BatchColumnReader {
         if (nonNullCount == 0) {
             return out;
         }
-        PageDecoder<?> decoder = intDecoderFor(encoding, dict);
+        PageDecoder<?> decoder = PageDecoders.intDecoderFor(encoding, dict);
         decoder.load(buf, nonNullCount);
         if (nonNullCount == pageSize) {
             decoder.decodeInts(pageSize, out, 0);
@@ -849,7 +834,7 @@ final class BatchColumnReader {
         if (nonNullCount == 0) {
             return out;
         }
-        PageDecoder<?> decoder = longDecoderFor(encoding, dict);
+        PageDecoder<?> decoder = PageDecoders.longDecoderFor(encoding, dict);
         decoder.load(buf, nonNullCount);
         if (nonNullCount == pageSize) {
             decoder.decodeLongs(pageSize, out, 0);
@@ -867,7 +852,7 @@ final class BatchColumnReader {
         if (nonNullCount == 0) {
             return out;
         }
-        PageDecoder<?> decoder = floatDecoderFor(encoding, dict);
+        PageDecoder<?> decoder = PageDecoders.floatDecoderFor(encoding, dict);
         decoder.load(buf, nonNullCount);
         if (nonNullCount == pageSize) {
             decoder.decodeFloats(pageSize, out, 0);
@@ -885,7 +870,7 @@ final class BatchColumnReader {
         if (nonNullCount == 0) {
             return out;
         }
-        PageDecoder<?> decoder = doubleDecoderFor(encoding, dict);
+        PageDecoder<?> decoder = PageDecoders.doubleDecoderFor(encoding, dict);
         decoder.load(buf, nonNullCount);
         if (nonNullCount == pageSize) {
             decoder.decodeDoubles(pageSize, out, 0);
@@ -902,7 +887,7 @@ final class BatchColumnReader {
         if (nonNullCount == 0) {
             return out;
         }
-        PageDecoder<?> decoder = booleanDecoderFor(encoding);
+        PageDecoder<?> decoder = PageDecoders.booleanDecoderFor(encoding);
         decoder.load(buf, nonNullCount);
         if (nonNullCount == pageSize) {
             decoder.decodeBooleans(pageSize, out, 0);
@@ -955,7 +940,7 @@ final class BatchColumnReader {
         int[] densePositions = densePositionsScratch.array(nonNullCount);
         int[] denseLengths = denseLengthsScratch.array(nonNullCount);
         if (nonNullCount > 0) {
-            PageDecoder<?> decoder = binaryDecoderFor(encoding, null); // PLAIN/DELTA need no dictionary
+            PageDecoder<?> decoder = PageDecoders.binaryDecoderFor(encoding, null); // PLAIN/DELTA need no dictionary
             decoder.load(buf, nonNullCount);
             decoder.decodeBinaryLayout(nonNullCount, densePositions, denseLengths, 0);
         }
@@ -1012,7 +997,7 @@ final class BatchColumnReader {
         if (nonNullCount == 0) {
             return out;
         }
-        PageDecoder<?> decoder = binaryDecoderFor(encoding, dict);
+        PageDecoder<?> decoder = PageDecoders.binaryDecoderFor(encoding, dict);
         decoder.load(buf, nonNullCount);
         if (nonNullCount == pageSize) {
             decoder.decodeBinary(pageSize, out, 0);
@@ -1031,7 +1016,7 @@ final class BatchColumnReader {
         if (nonNullCount == 0) {
             return out;
         }
-        PageDecoder<?> decoder = fixedLenBinaryDecoderFor(encoding, byteWidth, dict);
+        PageDecoder<?> decoder = PageDecoders.fixedLenBinaryDecoderFor(encoding, byteWidth, dict);
         decoder.load(buf, nonNullCount);
         if (nonNullCount == pageSize) {
             decoder.decodeBinary(pageSize, out, 0);
@@ -1048,7 +1033,7 @@ final class BatchColumnReader {
         if (nonNullCount == 0) {
             return out;
         }
-        PageDecoder<?> decoder = int96DecoderFor(encoding, dict);
+        PageDecoder<?> decoder = PageDecoders.int96DecoderFor(encoding, dict);
         decoder.load(buf, nonNullCount);
         if (nonNullCount == pageSize) {
             decoder.decodeBinary(pageSize, out, 0);
@@ -1064,16 +1049,6 @@ final class BatchColumnReader {
         return leaf.typeLength()
                 .orElseThrow(() -> new IllegalStateException(
                         "FIXED_LEN_BYTE_ARRAY column " + columnPath.dot() + " is missing typeLength in schema"));
-    }
-
-    /**
-     * Dictionary-encoded binary values are references into the column's {@link Dictionary}, whose values are
-     * heap-owned, immutable, GC-managed segments (not page-Arena or pool memory). They outlive the page Arena, survive
-     * the chunk's close, and need no per-row heap copy. PLAIN/DELTA values are zero-copy views into the page Arena and
-     * must be copied out before that Arena closes.
-     */
-    private static boolean isDictionaryEncoded(Encoding encoding) {
-        return encoding == Encoding.RLE_DICTIONARY || encoding == Encoding.PLAIN_DICTIONARY;
     }
 
     /**
@@ -1199,100 +1174,6 @@ final class BatchColumnReader {
         }
     }
 
-    // ---- decoder dispatch ----
-
-    private PageDecoder<?> intDecoderFor(Encoding encoding, Dictionary<?> dict) {
-        return switch (encoding) {
-            case PLAIN -> new PlainInt32Decoder();
-            case DELTA_BINARY_PACKED -> new DeltaBinaryPackedInt32Decoder();
-            case RLE_DICTIONARY, PLAIN_DICTIONARY -> requireDictionaryDecoder(dict, "INT32");
-            default -> throw unsupported(encoding, "INT32");
-        };
-    }
-
-    private PageDecoder<?> longDecoderFor(Encoding encoding, Dictionary<?> dict) {
-        return switch (encoding) {
-            case PLAIN -> new PlainInt64Decoder();
-            case DELTA_BINARY_PACKED -> new DeltaBinaryPackedInt64Decoder();
-            case RLE_DICTIONARY, PLAIN_DICTIONARY -> requireDictionaryDecoder(dict, "INT64");
-            default -> throw unsupported(encoding, "INT64");
-        };
-    }
-
-    private PageDecoder<?> floatDecoderFor(Encoding encoding, Dictionary<?> dict) {
-        return switch (encoding) {
-            case PLAIN -> new PlainFloatDecoder();
-            case BYTE_STREAM_SPLIT -> new ByteStreamSplitFloatDecoder();
-            case RLE_DICTIONARY, PLAIN_DICTIONARY -> requireDictionaryDecoder(dict, "FLOAT");
-            default -> throw unsupported(encoding, "FLOAT");
-        };
-    }
-
-    private PageDecoder<?> doubleDecoderFor(Encoding encoding, Dictionary<?> dict) {
-        return switch (encoding) {
-            case PLAIN -> new PlainDoubleDecoder();
-            case BYTE_STREAM_SPLIT -> new ByteStreamSplitDoubleDecoder();
-            case RLE_DICTIONARY, PLAIN_DICTIONARY -> requireDictionaryDecoder(dict, "DOUBLE");
-            default -> throw unsupported(encoding, "DOUBLE");
-        };
-    }
-
-    private static PageDecoder<?> booleanDecoderFor(Encoding encoding) {
-        return switch (encoding) {
-            case PLAIN -> new PlainBooleanDecoder();
-            case RLE -> new RleBooleanDecoder();
-            default -> throw unsupported(encoding, "BOOLEAN");
-        };
-    }
-
-    private PageDecoder<?> binaryDecoderFor(Encoding encoding, Dictionary<?> dict) {
-        return switch (encoding) {
-            case PLAIN -> new PlainBinaryDecoder();
-            case DELTA_BYTE_ARRAY -> new DeltaByteArrayDecoder();
-            case DELTA_LENGTH_BYTE_ARRAY -> new DeltaLengthByteArrayDecoder();
-            case RLE_DICTIONARY, PLAIN_DICTIONARY -> requireDictionaryDecoder(dict, "BYTE_ARRAY");
-            default -> throw unsupported(encoding, "BYTE_ARRAY");
-        };
-    }
-
-    private PageDecoder<?> fixedLenBinaryDecoderFor(Encoding encoding, int byteWidth, Dictionary<?> dict) {
-        return switch (encoding) {
-            case PLAIN -> new PlainFixedLenBinaryDecoder(byteWidth);
-            case RLE_DICTIONARY, PLAIN_DICTIONARY -> requireDictionaryDecoder(dict, "FIXED_LEN_BYTE_ARRAY");
-            default -> throw unsupported(encoding, "FIXED_LEN_BYTE_ARRAY");
-        };
-    }
-
-    private PageDecoder<?> int96DecoderFor(Encoding encoding, Dictionary<?> dict) {
-        return switch (encoding) {
-            case PLAIN -> new PlainInt96Decoder();
-            case RLE_DICTIONARY, PLAIN_DICTIONARY -> requireDictionaryDecoder(dict, "INT96");
-            default -> throw unsupported(encoding, "INT96");
-        };
-    }
-
-    private static PageDecoder<?> requireDictionaryDecoder(Dictionary<?> dict, String kindLabel) {
-        if (dict == null) {
-            throw new IllegalStateException(
-                    "Dictionary-encoded data page requires a loaded Dictionary; none supplied for " + kindLabel);
-        }
-        return new RleDictionaryPageDecoder<>(dict);
-    }
-
-    /** The index decoder for a dictionary binary page; raw indexes are read with {@code decodeIndices}. */
-    private RleDictionaryPageDecoder<?> dictionaryDecoderFor(Encoding encoding, Dictionary<?> dict) {
-        if (!isDictionaryEncoded(encoding)) {
-            throw unsupported(encoding, leaf.kind().name());
-        }
-        return (RleDictionaryPageDecoder<?>)
-                requireDictionaryDecoder(dict, leaf.kind().name());
-    }
-
-    private static UnsupportedOperationException unsupported(Encoding encoding, String kindLabel) {
-        return new UnsupportedOperationException(
-                "BatchColumnReader has no decoder wired for encoding " + encoding + " on " + kindLabel);
-    }
-
     // ---- skip-decode for masked reads ----
 
     /**
@@ -1314,7 +1195,7 @@ final class BatchColumnReader {
         BitSet keptValidity = new BitSet(keep.length);
 
         if (nonNullCount > 0) {
-            PageDecoder<?> decoder = decoderFor(encoding, dict);
+            PageDecoder<?> decoder = PageDecoders.decoderFor(leaf.kind(), this::requiredByteWidth, encoding, dict);
             decoder.load(page.valueBytes(), nonNullCount);
             gatherSelectedValues(decoder, keep, keptValidity);
         }
@@ -1387,19 +1268,6 @@ final class BatchColumnReader {
             case BOOLEAN -> decoder.decodeBooleans(1, pageBooleans, index);
             case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> decoder.decodeBinary(1, pageSegments, index);
         }
-    }
-
-    private PageDecoder<?> decoderFor(Encoding encoding, Dictionary<?> dict) {
-        return switch (leaf.kind()) {
-            case INT32 -> intDecoderFor(encoding, dict);
-            case INT64 -> longDecoderFor(encoding, dict);
-            case FLOAT -> floatDecoderFor(encoding, dict);
-            case DOUBLE -> doubleDecoderFor(encoding, dict);
-            case BOOLEAN -> booleanDecoderFor(encoding);
-            case BYTE_ARRAY -> binaryDecoderFor(encoding, dict);
-            case FIXED_LEN_BYTE_ARRAY -> fixedLenBinaryDecoderFor(encoding, requiredByteWidth(), dict);
-            case INT96 -> int96DecoderFor(encoding, dict);
-        };
     }
 
     // ---- row compaction for masked reads ----
