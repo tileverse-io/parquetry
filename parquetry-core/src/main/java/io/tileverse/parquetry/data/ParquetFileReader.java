@@ -109,14 +109,8 @@ import lombok.NonNull;
  * {@code read()} call allocates its own filter survivors, row-group prefetcher, and batch pipeline. The underlying
  * {@link ByteRangeSource} must itself be thread-safe; the reader does not own it, and the caller closes it after the
  * last returned stream has been closed.
- *
- * <p>The class is non-final and the per-row-group filter helpers ({@link #runFilterPipeline runFilterPipeline},
- * {@link #filterInputsFor filterInputsFor}, {@link #bloomLookupFor bloomLookupFor}, {@link #statsLookup statsLookup},
- * {@link #survivorsFor survivorsFor}) are {@code protected}. A subclass can specialize how stats, bloom filters, or
- * column page indexes are sourced (for example, to plug in a cached or remote lookup) without re-implementing the rest
- * of the read pipeline.
  */
-public class ParquetFileReader {
+public final class ParquetFileReader {
 
     private static final String GEO_KEY = "geo";
 
@@ -139,7 +133,7 @@ public class ParquetFileReader {
     @SuppressWarnings("java:S1068")
     private final Optional<DecryptionKeyRetriever> decryptionKeyRetriever;
 
-    protected ParquetFileReader(
+    private ParquetFileReader(
             ByteRangeSource source,
             FileMetaData footer,
             ParquetSchema fileSchema,
@@ -1084,11 +1078,11 @@ public class ParquetFileReader {
     }
 
     /**
-     * Binds index-section reads to this reader's {@link ByteRangeSource}. Subclasses may override to plug a cached
-     * source. Index, offset-index, and bloom reads do not record into a {@link FetchAccumulator}; the accumulating form
-     * lives in {@link #indexSectionLoader(FetchAccumulator)}, which the read entry points use.
+     * Binds index-section reads to this reader's {@link ByteRangeSource}. Index, offset-index, and bloom reads do not
+     * record into a {@link FetchAccumulator}; the accumulating form lives in
+     * {@link #indexSectionLoader(FetchAccumulator)}, which the read entry points use.
      */
-    protected IndexSectionLoader indexSectionLoader() {
+    private IndexSectionLoader indexSectionLoader() {
         return indexSectionLoader(FetchAccumulator.NONE);
     }
 
@@ -1101,7 +1095,7 @@ public class ParquetFileReader {
      * the only figure cheaply available on that path. Passing {@link FetchAccumulator#NONE} reduces every record call
      * to a no-op, matching {@link #indexSectionLoader()}.
      */
-    protected IndexSectionLoader indexSectionLoader(FetchAccumulator accumulator) {
+    private IndexSectionLoader indexSectionLoader(FetchAccumulator accumulator) {
         return new IndexSectionLoader() {
             @Override
             public OffsetIndex readOffsetIndex(long offset, int length) {
@@ -1136,7 +1130,7 @@ public class ParquetFileReader {
      * phases. Index-section reads do not record into a {@link FetchAccumulator}; the accumulating form is
      * {@link #rowGroupChunks(FetchAccumulator)}.
      */
-    protected List<RowGroupChunks> rowGroupChunks() {
+    private List<RowGroupChunks> rowGroupChunks() {
         return rowGroupChunks(FetchAccumulator.NONE);
     }
 
@@ -1144,7 +1138,7 @@ public class ParquetFileReader {
      * Builds one {@link RowGroupChunks} per footer row group, in file order, with index-section reads recording into
      * {@code accumulator}.
      */
-    protected List<RowGroupChunks> rowGroupChunks(FetchAccumulator accumulator) {
+    private List<RowGroupChunks> rowGroupChunks(FetchAccumulator accumulator) {
         IndexSectionLoader loader = indexSectionLoader(accumulator);
         List<RowGroup> rgs = footer.rowGroups();
         List<RowGroupChunks> chunks = new ArrayList<>(rgs.size());
@@ -1175,11 +1169,8 @@ public class ParquetFileReader {
         return plan;
     }
 
-    /**
-     * Builds inputs for and runs the filter pipeline. Subclasses may override to inject extra inputs (e.g. an external
-     * row-group catalog) before delegation.
-     */
-    protected ExplainPlan runFilterPipeline(
+    /** Builds inputs for and runs the filter pipeline. */
+    private ExplainPlan runFilterPipeline(
             Predicate predicate, Projection projection, ReadOptions options, List<RowGroupChunks> rowGroupChunks) {
         List<ColumnPath> projectedLeaves = projectedLeafColumns(projection);
         boolean rowPositionDeletes = !Predicate.rowPositionColumns(predicate).isEmpty();
@@ -1213,14 +1204,13 @@ public class ParquetFileReader {
     }
 
     /**
-     * Builds one {@link FilterPipeline.RowGroupInputs} per row group from the pre-built chunk views. Subclasses may
-     * override to supply richer dictionary or page-stats lookups than the in-footer defaults.
+     * Builds one {@link FilterPipeline.RowGroupInputs} per row group from the pre-built chunk views.
      *
      * @param projectedLeaves the projected leaf column paths, used to size each row group's projected compressed bytes
      * @param rowPositionDeletes whether the predicate has a positional delete; only then are each row group's file
      *     offset and page boundaries (the row-position pruning inputs) computed, which keeps them off the common path
      */
-    protected List<FilterPipeline.RowGroupInputs> filterInputsFor(
+    private List<FilterPipeline.RowGroupInputs> filterInputsFor(
             List<RowGroupChunks> rowGroupChunks,
             ReadOptions options,
             List<ColumnPath> projectedLeaves,
@@ -1304,10 +1294,9 @@ public class ParquetFileReader {
 
     /**
      * Returns the inline statistics lookup for {@code chunks}. Each call to the returned lookup delegates to
-     * {@link RowGroupChunks#stats}, which reads from the in-footer column metadata without any I/O. Subclasses may
-     * override to merge external stats sources (e.g. a sidecar index) with the in-footer statistics.
+     * {@link RowGroupChunks#stats}, which reads from the in-footer column metadata without any I/O.
      */
-    protected ColumnStatsLookup statsLookup(RowGroupChunks chunks) {
+    private ColumnStatsLookup statsLookup(RowGroupChunks chunks) {
         return chunks::stats;
     }
 
@@ -1316,7 +1305,7 @@ public class ParquetFileReader {
      * off. Each call to the returned lookup delegates to {@link RowGroupChunks#pageStats}, which memoizes the result so
      * each column's index sections are read at most once per call.
      */
-    protected ColumnPageStatsLookup pageStatsLookupFor(RowGroupChunks chunks, ReadOptions options) {
+    private ColumnPageStatsLookup pageStatsLookupFor(RowGroupChunks chunks, ReadOptions options) {
         if (!options.useColumnIndexFilter()) {
             return noColumnPageStatsLookup();
         }
@@ -1327,10 +1316,9 @@ public class ParquetFileReader {
      * Returns the bloom-filter lookup for {@code chunks}. Each call to the returned lookup delegates to
      * {@link RowGroupChunks#bloom}, which memoizes the result so each column's bloom filter is read at most once per
      * call. Returns {@link FilterPipeline#emptyBloomLookup()} when {@code options.useBloomFilter()} is off; the bloom
-     * tier degrades gracefully without forcing the evaluator to handle nulls. Subclasses may override to plug a cached
-     * or remote bloom-filter source.
+     * tier degrades gracefully without forcing the evaluator to handle nulls.
      */
-    protected BloomFilterLookup bloomLookupFor(RowGroupChunks chunks, ReadOptions options) {
+    private BloomFilterLookup bloomLookupFor(RowGroupChunks chunks, ReadOptions options) {
         if (!options.useBloomFilter()) {
             return FilterPipeline.emptyBloomLookup();
         }
@@ -1357,8 +1345,8 @@ public class ParquetFileReader {
      * The per-survivor row-position synthesis inputs, parallel to {@code survivors}: each survivor's file row offset
      * paired with the caller-named columns. Returns an empty list when the predicate has no positional delete, which
      * keeps the decode path untouched. Keying the offsets by {@link RowGroupChunks} identity rather than by re-walking
-     * the plan lets a subclass that drops or reorders survivors in {@link #survivorsFor} still get each survivor's true
-     * file offset.
+     * the plan maps each survivor back to its true file offset after {@link #survivorsFor} has dropped the eliminated
+     * groups.
      */
     private static List<RowPositionSynthesis> rowPositionSynthesesFor(
             List<RowGroupSurvivor> survivors,
@@ -1381,9 +1369,8 @@ public class ParquetFileReader {
 
     /**
      * Translates the explain plan's row-group outcomes into materialization-ready {@link RowGroupSurvivor survivors}.
-     * Subclasses may override to drop or reorder survivors before they enter the batch pipeline.
      */
-    protected List<RowGroupSurvivor> survivorsFor(ExplainPlan plan, List<RowGroupChunks> rowGroupChunks) {
+    private List<RowGroupSurvivor> survivorsFor(ExplainPlan plan, List<RowGroupChunks> rowGroupChunks) {
         List<RowGroupSurvivor> survivors = new ArrayList<>(plan.rowGroups().size());
         for (RowGroupPlan rgPlan : plan.rowGroups()) {
             RowGroupChunks chunks = rowGroupChunks.get(rgPlan.index());
@@ -1405,7 +1392,7 @@ public class ParquetFileReader {
      * every scanned column flat, and every scanned column has an offset index. Otherwise the entry is empty and the row
      * group decodes in full.
      */
-    protected List<Optional<RowMask>> decodeMasksFor(
+    private List<Optional<RowMask>> decodeMasksFor(
             List<RowGroupSurvivor> survivors, ParquetSchema scanSchema, ReadOptions options) {
         List<Optional<RowMask>> masks = new ArrayList<>(survivors.size());
         boolean scanFlat = options.useColumnIndexFilter() && allFlat(fileSchema, scanSchema.leafColumns());
