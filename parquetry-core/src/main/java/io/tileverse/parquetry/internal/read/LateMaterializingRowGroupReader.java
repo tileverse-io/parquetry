@@ -42,8 +42,8 @@ import lombok.NonNull;
  *
  * <ol>
  *   <li><b>Phase 1</b> decodes only the predicate columns over the surviving rows (the page-skip mask, or all rows when
- *       there is no mask), evaluates the predicate per row, and records the matching rows as a {@link Selection}.
- *   <li><b>Phase 2</b> decodes the output columns under that {@link Selection} with skip-decode on, materializing
+ *       there is no mask), evaluates the predicate per row, and records the matching rows as a {@link MatchedRows}.
+ *   <li><b>Phase 2</b> decodes the output columns under that {@link MatchedRows} with skip-decode on, materializing
  *       values only for the matching rows.
  * </ol>
  *
@@ -105,9 +105,9 @@ public final class LateMaterializingRowGroupReader {
 
     /**
      * Phase 1: decodes the predicate columns over the surviving rows, evaluates the predicate per row, and returns the
-     * matching rows as a {@link Selection}. An empty selection means no surviving row satisfied the predicate.
+     * matching rows as a {@link MatchedRows}. An empty selection means no surviving row satisfied the predicate.
      */
-    public Selection selectMatching() {
+    public MatchedRows selectMatching() {
         RowRanges surviving = rowMask.map(RowMask::survivingRows).orElseGet(() -> RowRanges.all(numRows));
         return phase1Selection(surviving);
     }
@@ -115,9 +115,9 @@ public final class LateMaterializingRowGroupReader {
     /**
      * Phase 2: returns a reader that, under {@code selection}, decodes the output columns with skip-decode on,
      * materializing values only for the matching rows. The caller drains and closes the reader. Returns a reader over
-     * an empty selection only when the caller passes one; callers should check {@link Selection#isEmpty()} first.
+     * an empty selection only when the caller passes one; callers should check {@link MatchedRows#isEmpty()} first.
      */
-    public BatchRowGroupReader outputReader(Selection selection) {
+    public BatchRowGroupReader outputReader(MatchedRows selection) {
         List<ColumnPath> outputLeaves = outputSchema.leafColumns();
         List<FetchedColumnChunk> outputChunks = chunks.stream()
                 .filter(chunk -> outputLeaves.contains(chunk.path()))
@@ -136,15 +136,15 @@ public final class LateMaterializingRowGroupReader {
 
     /**
      * Phase 1: decodes the predicate columns over {@code surviving}, evaluates the predicate per row, and accumulates
-     * the matching rows into a {@link Selection}. Walks the surviving absolute rows in ascending order in lockstep with
-     * the phase-1 batch rows; each batch is closed as soon as its rows are evaluated.
+     * the matching rows into a {@link MatchedRows}. Walks the surviving absolute rows in ascending order in lockstep
+     * with the phase-1 batch rows; each batch is closed as soon as its rows are evaluated.
      */
-    private Selection phase1Selection(RowRanges surviving) {
+    private MatchedRows phase1Selection(RowRanges surviving) {
         ParquetSchema predicateSchema = fileSchema.project(predicateLeaves);
         List<FetchedColumnChunk> predicateChunks = chunks.stream()
                 .filter(chunk -> predicateLeaves.contains(chunk.path()))
                 .toList();
-        Selection.Builder selectionBuilder = Selection.builder();
+        MatchedRows.Builder selectionBuilder = MatchedRows.builder();
         RowRangeCursor cursor = new RowRangeCursor(surviving);
         // Phase 1 batches only feed the predicate evaluator; they never reach the consumer record stream, hence the
         // form does not matter and they stay assembled (the scanned predicate columns are flat by contract anyway).
@@ -184,7 +184,7 @@ public final class LateMaterializingRowGroupReader {
         return phase1RowsProduced;
     }
 
-    private void evaluateBatch(ParquetRecordBatch batch, RowRangeCursor cursor, Selection.Builder selectionBuilder) {
+    private void evaluateBatch(ParquetRecordBatch batch, RowRangeCursor cursor, MatchedRows.Builder selectionBuilder) {
         BitSet matches = VectorizedPredicateEvaluator.eval(predicate, batch);
         for (int row = 0; row < batch.rowCount(); row++) {
             long absoluteRow = cursor.next();
