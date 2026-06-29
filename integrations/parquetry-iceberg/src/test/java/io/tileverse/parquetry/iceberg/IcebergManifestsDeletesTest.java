@@ -16,6 +16,8 @@
 package io.tileverse.parquetry.iceberg;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -73,6 +75,34 @@ class IcebergManifestsDeletesTest {
             assertThat(delete.equalityFieldIds()).containsExactly(2, 3);
             assertThat(delete.referencedDataFile()).isNull();
         });
+    }
+
+    @Test
+    void rejectsADeletionVectorThatNamesNoReferencedDataFile() {
+        assertThatThrownBy(() -> IcebergManifests.requireReferencedDataFileForDeletionVectorForTest(128L, null))
+                .isInstanceOf(IcebergFormatException.class)
+                .hasMessageContaining("referenced data file");
+    }
+
+    @Test
+    void acceptsADeletionVectorThatNamesItsReferencedDataFile() {
+        assertThatCode(() -> IcebergManifests.requireReferencedDataFileForDeletionVectorForTest(
+                        128L, "file:///data/file.parquet"))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void readsANumericEqualityFieldId() {
+        assertThat(IcebergManifests.equalityFieldIdForTest(7L)).isEqualTo(7);
+    }
+
+    @Test
+    void rejectsANonNumericEqualityFieldId() {
+        assertThatThrownBy(() -> IcebergManifests.equalityFieldIdForTest("not-a-number"))
+                .isInstanceOf(IcebergFormatException.class)
+                .hasMessageContaining("equality_ids");
+        assertThatThrownBy(() -> IcebergManifests.equalityFieldIdForTest(null))
+                .isInstanceOf(IcebergFormatException.class);
     }
 
     private Snapshot readPositionalSnapshot() throws Exception {

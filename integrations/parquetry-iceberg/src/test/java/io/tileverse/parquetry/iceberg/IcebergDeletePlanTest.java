@@ -17,6 +17,7 @@ package io.tileverse.parquetry.iceberg;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.lang.foreign.MemorySegment;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -128,6 +129,36 @@ class IcebergDeletePlanTest {
     }
 
     @Test
+    void matchesEqualBinaryPartitionValuesByContentNotByMemorySegmentIdentity() {
+        MemorySegment deleteValue = segmentOf((byte) 1, (byte) 2, (byte) 3);
+        MemorySegment dataValue = segmentOf((byte) 1, (byte) 2, (byte) 3);
+        DeleteFileRef equalityDelete = equalityDeleteAtSequence(2L, Map.of(1000, deleteValue));
+        DataFileRef sameContentPartition = dataFileAtSequence(1L, Map.of(1000, dataValue));
+
+        assertThat(deleteValue).isNotSameAs(dataValue);
+        assertThat(IcebergDeletePlan.appliesToForTest(equalityDelete, sameContentPartition))
+                .isTrue();
+    }
+
+    @Test
+    void doesNotMatchDifferentBinaryPartitionValues() {
+        DeleteFileRef equalityDelete = equalityDeleteAtSequence(2L, Map.of(1000, segmentOf((byte) 1, (byte) 2)));
+        DataFileRef otherPartition = dataFileAtSequence(1L, Map.of(1000, segmentOf((byte) 1, (byte) 9)));
+
+        assertThat(IcebergDeletePlan.appliesToForTest(equalityDelete, otherPartition))
+                .isFalse();
+    }
+
+    @Test
+    void aGlobalEqualityDeleteAppliesToADataFileWithANonEmptyPartition() {
+        DeleteFileRef globalDelete = equalityDeleteAtSequence(3L, Map.of());
+        DataFileRef partitioned = dataFileAtSequence(1L, Map.of(1000, "a"));
+
+        assertThat(IcebergDeletePlan.appliesToForTest(globalDelete, partitioned))
+                .isTrue();
+    }
+
+    @Test
     void anEqualityDeleteAppliesToADataFileStrictlyBeforeItsSequence() throws Exception {
         Fixture fixture = openEquality();
         DataFileRef dataFile = fixture.snapshot().dataFiles().get(0);
@@ -139,6 +170,86 @@ class IcebergDeletePlanTest {
         assertThat(keep).isPresent();
     }
 
+    @Test
+    void aDeletionVectorAppliesToItsReferencedDataFileAtOrBeforeItsSequence() throws Exception {
+        Fixture fixture = openDeletionVectors();
+        DeleteFileRef deletionVector = onlyDeletionVector(fixture.snapshot());
+        DataFileRef referenced = referencedDataFile(deletionVector, deletionVector.dataSequenceNumber() - 1);
+        IcebergDeletePlan plan = IcebergDeletePlan.of(fixture.snapshot().deleteFiles(), fixture.io(), null);
+
+        RowPositionSet deleted = plan.positionsFor(referenced).orElseThrow();
+
+        assertThat(deleted.cardinality()).isEqualTo(10L);
+        assertThat(deleted.contains(10L)).isTrue();
+        assertThat(deleted.contains(99L)).isTrue();
+        assertThat(deleted.contains(0L)).isFalse();
+    }
+
+    @Test
+    void aDeletionVectorDoesNotApplyToADataFileNewerThanTheDelete() throws Exception {
+        Fixture fixture = openDeletionVectors();
+        DeleteFileRef deletionVector = onlyDeletionVector(fixture.snapshot());
+        DataFileRef newer = referencedDataFile(deletionVector, deletionVector.dataSequenceNumber() + 1);
+        IcebergDeletePlan plan = IcebergDeletePlan.of(fixture.snapshot().deleteFiles(), fixture.io(), null);
+
+        assertThat(plan.positionsFor(newer)).isEmpty();
+    }
+
+    @Test
+    void aDeletionVectorDoesNotApplyToADataFileItDoesNotReference() throws Exception {
+        Fixture fixture = openDeletionVectors();
+        DeleteFileRef deletionVector = onlyDeletionVector(fixture.snapshot());
+        DataFileRef otherFile = dataFileLocatedAt(
+                "file:///iceberg-deletes/deletion-vectors/data/other.parquet", deletionVector.dataSequenceNumber() - 1);
+        IcebergDeletePlan plan = IcebergDeletePlan.of(fixture.snapshot().deleteFiles(), fixture.io(), null);
+
+        assertThat(plan.positionsFor(otherFile)).isEmpty();
+    }
+
+    @Test
+    void aDeletionVectorSupersedesAPositionalDeleteFileForTheSameDataFile() throws Exception {
+        Fixture fixture = openDeletionVectors();
+        DeleteFileRef deletionVector = onlyDeletionVector(fixture.snapshot());
+        DataFileRef referenced = referencedDataFile(deletionVector, deletionVector.dataSequenceNumber() - 1);
+        DeleteFileRef unreadablePositional =
+                positionalDeleteFor(referenced.location(), deletionVector.dataSequenceNumber());
+        IcebergDeletePlan plan =
+                IcebergDeletePlan.of(List.of(deletionVector, unreadablePositional), fixture.io(), null);
+
+        RowPositionSet deleted = plan.positionsFor(referenced).orElseThrow();
+
+        assertThat(deleted.cardinality()).isEqualTo(10L);
+        assertThat(deleted.contains(10L)).isTrue();
+    }
+
+    private static DeleteFileRef onlyDeletionVector(Snapshot snapshot) {
+        return snapshot.deleteFiles().stream()
+                .filter(DeleteFileRef::isDeletionVector)
+                .findFirst()
+                .orElseThrow();
+    }
+
+    private static DataFileRef referencedDataFile(DeleteFileRef deletionVector, long dataSequenceNumber) {
+        return dataFileLocatedAt(deletionVector.referencedDataFile(), dataSequenceNumber);
+    }
+
+    private static DataFileRef dataFileLocatedAt(String location, long dataSequenceNumber) {
+        return new DataFileRef(location, 100L, dataSequenceNumber, Map.of(), Map.of(), Map.of(), Map.of());
+    }
+
+    private static DeleteFileRef positionalDeleteFor(String referencedDataFile, long dataSequenceNumber) {
+        return new DeleteFileRef(
+                "file:///iceberg-deletes/deletion-vectors/data/missing-deletes.parquet",
+                1,
+                dataSequenceNumber,
+                referencedDataFile,
+                5L,
+                List.of(),
+                Map.of(),
+                null,
+                null);
+    }
+
     private static DeleteFileRef equalityDeleteAtSequence(long dataSequenceNumber) {
         return equalityDeleteAtSequence(dataSequenceNumber, Map.of());
     }
@@ -146,7 +257,11 @@ class IcebergDeletePlanTest {
     private static DeleteFileRef equalityDeleteAtSequence(
             long dataSequenceNumber, Map<Integer, Object> partitionValues) {
         return new DeleteFileRef(
-                "file:///delete.parquet", 2, dataSequenceNumber, null, 1L, List.of(2, 3), partitionValues);
+                "file:///delete.parquet", 2, dataSequenceNumber, null, 1L, List.of(2, 3), partitionValues, null, null);
+    }
+
+    private static MemorySegment segmentOf(byte... bytes) {
+        return MemorySegment.ofArray(bytes).asReadOnly();
     }
 
     private static DataFileRef dataFileAtSequence(long dataSequenceNumber) {
@@ -188,6 +303,10 @@ class IcebergDeletePlanTest {
 
     private Fixture openEquality() throws Exception {
         return open("equality");
+    }
+
+    private Fixture openDeletionVectors() throws Exception {
+        return open("deletion-vectors");
     }
 
     private Fixture open(String table) throws Exception {
