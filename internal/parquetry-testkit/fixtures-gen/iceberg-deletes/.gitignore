@@ -1,0 +1,4 @@
+work/
+probe-work/
+.venv/
+*.log

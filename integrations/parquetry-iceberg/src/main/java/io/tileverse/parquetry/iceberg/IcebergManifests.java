@@ -31,22 +31,28 @@ import io.tileverse.parquetry.avro.AvroSchema.Record;
 import io.tileverse.parquetry.io.ByteRangeSource;
 
 /**
- * Reads an Iceberg snapshot's manifest list and its data manifests (Avro) into data-file references. Delete manifests
- * and delete-content entries fail fast: merge-on-read is not yet supported.
+ * Reads an Iceberg snapshot's manifest list and its manifests (Avro) into the data files and merge-on-read delete files
+ * the snapshot references. Each entry's data sequence number is resolved by inheritance (an entry that records no
+ * sequence number inherits its manifest's), which the delete planner needs to decide which deletes apply to a data
+ * file.
  *
- * <p>This reader holds no table schema. It keeps each file's bounds as raw, field-id-keyed bytes and leaves decoding
- * them to {@link IcebergFileStats}, which has the schema; see {@link DataFileRef}.
+ * <p>This reader holds no table schema. It keeps each data file's bounds as raw, field-id-keyed bytes and leaves
+ * decoding them to {@link IcebergFileStats}, which has the schema; see {@link DataFileRef}.
  */
 final class IcebergManifests {
 
     private static final int CONTENT_DATA = 0;
+    private static final int CONTENT_POSITION_DELETES = 1;
+    private static final int CONTENT_EQUALITY_DELETES = 2;
     private static final int STATUS_DELETED = 2;
+    private static final String FILE_PATH = "file_path";
+    private static final String RECORD_COUNT = "record_count";
 
     private IcebergManifests() {}
 
     /**
-     * A surviving data file: its location, the row count the manifest records, the raw per-column statistics a later
-     * pruning step consumes, and the partition tuple.
+     * A surviving data file: its location, the row count the manifest records, its data sequence number, the raw
+     * per-column statistics a later pruning step consumes, and the partition tuple.
      *
      * <p>The bound maps, the null-count map, and the partition tuple mirror the manifest's on-disk shape, each an
      * Iceberg {@code map<field-id, value>}: a missing key means the manifest recorded no such value for that column.
@@ -60,6 +66,7 @@ final class IcebergManifests {
      *
      * @param location the absolute data-file location
      * @param recordCount the number of rows the manifest records for this file
+     * @param dataSequenceNumber the file's data sequence number, inherited from its manifest when the entry omits it
      * @param lowerBounds per-column lower bounds keyed by field id; a missing key means no recorded bound
      * @param upperBounds per-column upper bounds keyed by field id; a missing key means no recorded bound
      * @param nullValueCounts per-column null counts keyed by field id
@@ -69,6 +76,7 @@ final class IcebergManifests {
     public record DataFileRef(
             String location,
             long recordCount,
+            long dataSequenceNumber,
             Map<Integer, MemorySegment> lowerBounds,
             Map<Integer, MemorySegment> upperBounds,
             Map<Integer, Long> nullValueCounts,
@@ -83,83 +91,144 @@ final class IcebergManifests {
         }
     }
 
-    /** Reads every surviving data file referenced by {@code manifestListLocation}. */
-    public static List<DataFileRef> readDataFiles(String manifestListLocation, IcebergFileIO io) {
-        List<String> manifestLocations = readManifestLocations(manifestListLocation, io);
-        List<DataFileRef> dataFiles = new ArrayList<>();
-        // Each manifest is an independent I/O (one object-store read). Reading them serially stalls on round-trip
-        // latency once a table has many manifests on cloud storage; parallelize across virtual threads here when the
-        // cloud IcebergFileIO lands. The per-manifest result lists keep this order-preserving when that happens.
-        for (String manifestLocation : manifestLocations) {
-            dataFiles.addAll(readManifest(manifestLocation, io));
+    /**
+     * A merge-on-read positional delete file. A positional delete file is a Parquet file of {@code (file_path, pos)}
+     * rows; {@code pos} is an absolute row position within the data file named by {@code file_path}. The delete planner
+     * applies it to a data file by matching that path and by the sequence rule (a positional delete applies to data
+     * files at or before its own sequence).
+     *
+     * @param location the absolute delete-file location
+     * @param content the Iceberg file content code (1 for position deletes)
+     * @param dataSequenceNumber the delete file's data sequence number, inherited from its manifest when omitted
+     * @param referencedDataFile the single data file this delete is scoped to, or {@code null} when the delete file
+     *     lists its targets in its own {@code file_path} column instead (the writer may record either)
+     * @param recordCount the number of delete rows the manifest records
+     */
+    public record DeleteFileRef(
+            String location, int content, long dataSequenceNumber, String referencedDataFile, long recordCount) {
+
+        public DeleteFileRef {
+            Objects.requireNonNull(location, "location");
         }
-        return dataFiles;
     }
 
-    private static List<String> readManifestLocations(String manifestListLocation, IcebergFileIO io) {
-        List<String> manifests = new ArrayList<>();
+    /** The data files and merge-on-read delete files a single snapshot references. */
+    public record Snapshot(List<DataFileRef> dataFiles, List<DeleteFileRef> deleteFiles) {
+
+        public Snapshot {
+            dataFiles = List.copyOf(dataFiles);
+            deleteFiles = List.copyOf(deleteFiles);
+        }
+    }
+
+    /** Reads the data files and delete files referenced by {@code manifestListLocation}. */
+    public static Snapshot readSnapshot(String manifestListLocation, IcebergFileIO io) {
+        List<ManifestFileRef> manifests = readManifestFiles(manifestListLocation, io);
+        List<DataFileRef> dataFiles = new ArrayList<>();
+        List<DeleteFileRef> deleteFiles = new ArrayList<>();
+        // Each manifest is an independent I/O (one object-store read). Reading them serially stalls on round-trip
+        // latency once a table has many manifests on cloud storage; parallelize across virtual threads here when the
+        // cloud IcebergFileIO lands. The per-manifest appends keep this order-preserving when that happens.
+        for (ManifestFileRef manifest : manifests) {
+            readManifestEntries(manifest, io, dataFiles, deleteFiles);
+        }
+        return new Snapshot(dataFiles, deleteFiles);
+    }
+
+    /** Reads every surviving data file referenced by {@code manifestListLocation}, ignoring any delete files. */
+    public static List<DataFileRef> readDataFiles(String manifestListLocation, IcebergFileIO io) {
+        return readSnapshot(manifestListLocation, io).dataFiles();
+    }
+
+    /** One manifest the manifest list references, with the sequence number its ADDED entries inherit. */
+    private record ManifestFileRef(String location, long sequenceNumber) {}
+
+    private static List<ManifestFileRef> readManifestFiles(String manifestListLocation, IcebergFileIO io) {
+        List<ManifestFileRef> manifests = new ArrayList<>();
         try (ByteRangeSource source = io.open(manifestListLocation);
                 AvroDataFileReader reader = AvroDataFileReader.open(source);
                 Stream<AvroRecord> entries = reader.records()) {
             entries.forEach(entry -> {
-                requireDataManifest(entry);
-                manifests.add((String) entry.get("manifest_path"));
+                String path = (String) entry.get("manifest_path");
+                long sequenceNumber = longOrDefault(safeGet(entry, "sequence_number"), 0L);
+                manifests.add(new ManifestFileRef(path, sequenceNumber));
             });
         }
         return manifests;
     }
 
-    /**
-     * The manifest-list {@code content} field (0=data, 1=deletes) became required only in v2; v1 manifest lists omit it
-     * and reference data manifests implicitly. Treat absent/null as data; only a present delete value fails fast.
-     */
-    private static void requireDataManifest(AvroRecord entry) {
-        Object content = safeGet(entry, "content");
-        if (content != null && intValue(content) != CONTENT_DATA) {
-            throw new IcebergFormatException(
-                    "merge-on-read is not supported: manifest list references a delete manifest");
-        }
-    }
-
-    private static List<DataFileRef> readManifest(String manifestLocation, IcebergFileIO io) {
-        List<DataFileRef> dataFiles = new ArrayList<>();
-        try (ByteRangeSource source = io.open(manifestLocation);
+    private static void readManifestEntries(
+            ManifestFileRef manifest, IcebergFileIO io, List<DataFileRef> dataFiles, List<DeleteFileRef> deleteFiles) {
+        try (ByteRangeSource source = io.open(manifest.location());
                 AvroDataFileReader reader = AvroDataFileReader.open(source);
                 Stream<AvroRecord> entries = reader.records()) {
-
             entries.forEach(entry -> {
                 int status = requiredNumber(entry.get("status"), "status").intValue();
                 if (status == STATUS_DELETED) {
                     return;
                 }
+                long sequenceNumber = inheritedSequenceNumber(entry, manifest);
                 AvroRecord dataFile = (AvroRecord) entry.get("data_file");
-                requireDataContent(dataFile);
-                String location = (String) dataFile.get("file_path");
-                long recordCount = requiredNumber(dataFile.get("record_count"), "record_count")
-                        .longValue();
-                Map<Integer, MemorySegment> lowerBounds =
-                        readIntKeyedMap(safeGet(dataFile, "lower_bounds"), MemorySegment.class::cast);
-                Map<Integer, MemorySegment> upperBounds =
-                        readIntKeyedMap(safeGet(dataFile, "upper_bounds"), MemorySegment.class::cast);
-                Map<Integer, Long> nullValueCounts =
-                        readIntKeyedMap(safeGet(dataFile, "null_value_counts"), value -> ((Number) value).longValue());
-                Object partition = safeGet(dataFile, "partition");
-                Map<Integer, Object> partitionValues = partition instanceof AvroRecord partitionRecord
-                        ? readPartitionTuple(partitionRecord)
-                        : Map.of();
-                dataFiles.add(new DataFileRef(
-                        location, recordCount, lowerBounds, upperBounds, nullValueCounts, partitionValues));
+                addClassified(dataFile, sequenceNumber, dataFiles, deleteFiles);
             });
         }
-        return dataFiles;
     }
 
-    /** The data_file record has a {@code content} field (0=data) in v2+; treat a non-data value as merge-on-read. */
-    private static void requireDataContent(AvroRecord dataFile) {
-        Object content = safeGet(dataFile, "content");
-        if (content != null && intValue(content) != CONTENT_DATA) {
-            throw new IcebergFormatException("merge-on-read is not supported: a manifest entry has delete content");
+    private static void addClassified(
+            AvroRecord dataFile, long sequenceNumber, List<DataFileRef> dataFiles, List<DeleteFileRef> deleteFiles) {
+        int content = intOrDefault(safeGet(dataFile, "content"), CONTENT_DATA);
+        switch (content) {
+            case CONTENT_DATA -> dataFiles.add(readDataFile(dataFile, sequenceNumber));
+            case CONTENT_POSITION_DELETES -> deleteFiles.add(readDeleteFile(dataFile, content, sequenceNumber));
+            case CONTENT_EQUALITY_DELETES ->
+                throw new IcebergFormatException("equality deletes are not yet supported: " + dataFile.get(FILE_PATH));
+            default -> throw new IcebergFormatException("unknown manifest entry content " + content);
         }
+    }
+
+    /**
+     * The entry's data sequence number. An entry that records no sequence number (a freshly ADDED entry) inherits its
+     * manifest's sequence number from the manifest list; an EXISTING entry that records one keeps it.
+     */
+    private static long inheritedSequenceNumber(AvroRecord entry, ManifestFileRef manifest) {
+        Object explicit = safeGet(entry, "sequence_number");
+        if (explicit != null) {
+            return ((Number) explicit).longValue();
+        }
+        return manifest.sequenceNumber();
+    }
+
+    private static DataFileRef readDataFile(AvroRecord dataFile, long sequenceNumber) {
+        String location = (String) dataFile.get(FILE_PATH);
+        long recordCount =
+                requiredNumber(dataFile.get(RECORD_COUNT), RECORD_COUNT).longValue();
+        Map<Integer, MemorySegment> lowerBounds =
+                readIntKeyedMap(safeGet(dataFile, "lower_bounds"), MemorySegment.class::cast);
+        Map<Integer, MemorySegment> upperBounds =
+                readIntKeyedMap(safeGet(dataFile, "upper_bounds"), MemorySegment.class::cast);
+        Map<Integer, Long> nullValueCounts =
+                readIntKeyedMap(safeGet(dataFile, "null_value_counts"), value -> ((Number) value).longValue());
+        Object partition = safeGet(dataFile, "partition");
+        Map<Integer, Object> partitionValues =
+                partition instanceof AvroRecord partitionRecord ? readPartitionTuple(partitionRecord) : Map.of();
+        return new DataFileRef(
+                location, recordCount, sequenceNumber, lowerBounds, upperBounds, nullValueCounts, partitionValues);
+    }
+
+    /**
+     * Reads a position-delete file entry. A deletion vector (v3) is also content 1 but locates a Puffin blob through
+     * {@code content_offset}; that form is not yet supported and fails fast rather than reading a non-existent Parquet
+     * file.
+     */
+    private static DeleteFileRef readDeleteFile(AvroRecord dataFile, int content, long sequenceNumber) {
+        if (safeGet(dataFile, "content_offset") != null) {
+            throw new IcebergFormatException("deletion vectors are not yet supported: " + dataFile.get(FILE_PATH));
+        }
+        String location = (String) dataFile.get(FILE_PATH);
+        long recordCount =
+                requiredNumber(dataFile.get(RECORD_COUNT), RECORD_COUNT).longValue();
+        String referencedDataFile = (String) safeGet(dataFile, "referenced_data_file");
+        return new DeleteFileRef(location, content, sequenceNumber, referencedDataFile, recordCount);
     }
 
     /**
@@ -218,7 +287,11 @@ final class IcebergManifests {
         return (Number) value;
     }
 
-    private static int intValue(Object value) {
-        return ((Number) value).intValue();
+    private static int intOrDefault(Object value, int fallback) {
+        return value == null ? fallback : ((Number) value).intValue();
+    }
+
+    private static long longOrDefault(Object value, long fallback) {
+        return value == null ? fallback : ((Number) value).longValue();
     }
 }
