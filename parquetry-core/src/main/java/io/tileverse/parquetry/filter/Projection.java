@@ -105,7 +105,7 @@ public sealed interface Projection permits Projection.All, Projection.Of {
         return switch (column) {
             case Column.Physical(ColumnPath _, ColumnPath source) -> Optional.of(source);
             case Column.Promoted(ColumnPath _, ColumnPath source, PrimitiveKind _) -> Optional.of(source);
-            case Column.Constant _, Column.Null _ -> Optional.empty();
+            case Column.Constant _, Column.Null _, Column.RowPosition _ -> Optional.empty();
         };
     }
 
@@ -118,7 +118,7 @@ public sealed interface Projection permits Projection.All, Projection.Of {
      * literals, and sanctioned type promotions without the read itself needing to know why each presentation was
      * chosen.
      */
-    sealed interface Column permits Column.Physical, Column.Constant, Column.Null, Column.Promoted {
+    sealed interface Column permits Column.Physical, Column.Constant, Column.Null, Column.Promoted, Column.RowPosition {
 
         /** The result column path this column is presented under. */
         ColumnPath name();
@@ -163,6 +163,19 @@ public sealed interface Projection permits Projection.All, Projection.Of {
                 Objects.requireNonNull(name, "name");
                 Objects.requireNonNull(source, "source");
                 Objects.requireNonNull(target, "target");
+            }
+        }
+
+        /**
+         * Present each row's absolute file position as an {@code INT64} column: {@code firstRowId} plus the row's
+         * 0-based physical position in the file, the position kept true under deletes and column-index page-skipping. A
+         * deleted or skipped row leaves a gap rather than renumbering its successors. {@code firstRowId} is the
+         * caller's per-file base offset: 0 presents the raw within-file position, a file's Iceberg {@code first_row_id}
+         * presents a freshly-assigned row id. The position has no physical source; the read synthesizes it.
+         */
+        record RowPosition(ColumnPath name, long firstRowId) implements Column {
+            public RowPosition {
+                Objects.requireNonNull(name, "name");
             }
         }
     }

@@ -15,7 +15,9 @@
  */
 package io.tileverse.parquetry.data;
 
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
@@ -25,6 +27,7 @@ import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
  * The resolved projection for one read: the {@link Projection} the filter pipeline and decode run over (physical leaves
@@ -74,12 +77,27 @@ final class ProjectionPlan {
         Set<ColumnPath> outputPhysical =
                 physical.isEmpty() ? Set.of(decodeSet.iterator().next()) : physical;
         Projection scan = Projection.ofPhysical(decodeSet);
-        ParquetSchema physicalOutput = fileSchema.project(outputPhysical);
+        ParquetSchema physicalOutput = fileSchema.project(outputPhysical).withAppendedLeaves(rowPositionLeaves(of));
         if (of.needsShaping()) {
             ParquetSchema produced = OutputBatches.producedSchema(fileSchema, of);
             return new ProjectionPlan(scan, physicalOutput, produced, Optional.of(of));
         }
         return new ProjectionPlan(scan, physicalOutput, physicalOutput, Optional.empty());
+    }
+
+    /**
+     * The synthesized row-position output leaves of {@code of}. The record-level filter narrows a surviving batch to
+     * this schema; appending these leaves keeps the decode-time row-position vector through that narrow step and into
+     * {@link #produce}. A produce set with no row-position output appends nothing.
+     */
+    private static List<SchemaNode.Primitive> rowPositionLeaves(Projection.Of of) {
+        List<SchemaNode.Primitive> leaves = new ArrayList<>();
+        for (Projection.Column column : of.columns()) {
+            if (column instanceof Projection.Column.RowPosition rowPosition) {
+                leaves.add(OutputBatches.rowPositionLeaf(rowPosition.name().name(), -1));
+            }
+        }
+        return leaves;
     }
 
     /** The projection the filter pipeline and decode run over: physical leaves only. */

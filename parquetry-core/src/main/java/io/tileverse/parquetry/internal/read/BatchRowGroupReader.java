@@ -30,13 +30,12 @@ import io.tileverse.parquetry.columnar.ColumnVector;
 import io.tileverse.parquetry.columnar.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.columnar.Levels;
 import io.tileverse.parquetry.columnar.LongVector;
+import io.tileverse.parquetry.columnar.OutputBatches;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
-import io.tileverse.parquetry.schema.PrimitiveKind;
-import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 import lombok.NonNull;
@@ -182,16 +181,10 @@ public final class BatchRowGroupReader implements AutoCloseable {
                 .orElse(projectedSchema);
     }
 
-    private static List<SchemaNode.Primitive> rowPositionLeaves(List<ColumnPath> columns) {
+    private static List<SchemaNode.Primitive> rowPositionLeaves(List<RowPositionColumn> columns) {
         List<SchemaNode.Primitive> leaves = new ArrayList<>(columns.size());
-        for (ColumnPath column : columns) {
-            leaves.add(new SchemaNode.Primitive(
-                    column.name(),
-                    Repetition.REQUIRED,
-                    PrimitiveKind.INT64,
-                    OptionalInt.empty(),
-                    Optional.empty(),
-                    -1));
+        for (RowPositionColumn column : columns) {
+            leaves.add(OutputBatches.rowPositionLeaf(column.name().name(), -1));
         }
         return leaves;
     }
@@ -274,12 +267,12 @@ public final class BatchRowGroupReader implements AutoCloseable {
         }
         RowPositionSynthesis synthesis = rowPosition.orElseThrow();
         io.tileverse.parquetry.columnar.Selection positions = rowGroupRelativePositions(firstRowDenseIndex, batchRows);
-        LongVector positionVector = LongVector.rowPositions(synthesis.base(), positions, batchRows);
-        // The position is identical for every named column, hence one vector shared under each path. Each consumer
-        // reads it in row order, the sequential access its position map is optimized for.
+        // One position map shared across columns, each offset by the row group base plus its own first row id. A
+        // within-file position (firstRowId 0) and an Iceberg row id over the same rows therefore get distinct vectors.
         Map<ColumnPath, ColumnVector> withPosition = new HashMap<>(vectors);
-        for (ColumnPath column : synthesis.columns()) {
-            withPosition.put(column, positionVector);
+        for (RowPositionColumn column : synthesis.columns()) {
+            long base = synthesis.base() + column.firstRowId();
+            withPosition.put(column.name(), LongVector.rowPositions(base, positions, batchRows));
         }
         return withPosition;
     }

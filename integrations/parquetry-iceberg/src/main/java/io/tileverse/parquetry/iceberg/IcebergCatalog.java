@@ -43,8 +43,8 @@ import io.tileverse.parquetry.io.ByteRangeSource;
  * catalog pre-opens every data file's byte source once and owns them for its lifetime; each query opens a short-lived
  * {@link ParquetSource} over only the survivor subset and never closes the shared sources. The catalog closes all
  * sources and the IO in {@link #close()}. Identity-partitioned tables prune files by partition value and reconstruct
- * omitted partition columns; merge-on-read positional deletes are applied per data file so the read returns only the
- * live rows.
+ * omitted partition columns; merge-on-read positional and equality deletes are applied per data file, leaving the read
+ * to return only the live rows.
  */
 public final class IcebergCatalog implements DatasetCatalog {
 
@@ -145,7 +145,7 @@ public final class IcebergCatalog implements DatasetCatalog {
             IcebergSchema icebergSchema = IcebergSchema.of(fields);
             CatalogSnapshot snapshot =
                     new CatalogSnapshot(metadata.currentSnapshotId(), metadata.currentSnapshotTimestampMs());
-            IcebergDeletePlan deletePlan = IcebergDeletePlan.of(manifestFiles.deleteFiles(), io);
+            IcebergDeletePlan deletePlan = IcebergDeletePlan.of(manifestFiles.deleteFiles(), io, icebergSchema);
             IcebergDataset dataset = new IcebergDataset(
                     tableName, snapshot, icebergSchema, partitionSpec, dataFiles, fileStats, opened, deletePlan);
             return new IcebergCatalog(tableName, dataset, opened, io);

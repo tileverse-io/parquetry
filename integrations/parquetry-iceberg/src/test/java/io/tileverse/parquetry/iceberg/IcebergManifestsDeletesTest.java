@@ -16,6 +16,8 @@
 package io.tileverse.parquetry.iceberg;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -27,9 +29,11 @@ import io.tileverse.parquetry.iceberg.IcebergManifests.Snapshot;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
 /**
- * Reads the merge-on-read positional-delete fixture's manifests. The snapshot references one data file (from the data
+ * Reads the merge-on-read delete fixtures' manifests. The positional snapshot references one data file (from the data
  * manifest) and one position-delete file (from the delete manifest); both manifest entries record a null sequence
- * number, leaving each file's data sequence number to be inherited from its manifest.
+ * number, leaving each file's data sequence number to be inherited from its manifest. The equality snapshot references
+ * one data file and one equality-delete file whose manifest entry records the equality field ids the delete tuples
+ * filter on.
  */
 class IcebergManifestsDeletesTest {
 
@@ -62,8 +66,55 @@ class IcebergManifestsDeletesTest {
         assertThat(deleteSequenceNumber).isEqualTo(2L);
     }
 
+    @Test
+    void classifiesTheEqualityDeleteFileWithItsEqualityFieldIds() throws Exception {
+        Snapshot snapshot = readEqualitySnapshot();
+
+        assertThat(snapshot.deleteFiles()).singleElement().satisfies(delete -> {
+            assertThat(delete.isEqualityDelete()).isTrue();
+            assertThat(delete.equalityFieldIds()).containsExactly(2, 3);
+            assertThat(delete.referencedDataFile()).isNull();
+        });
+    }
+
+    @Test
+    void rejectsADeletionVectorThatNamesNoReferencedDataFile() {
+        assertThatThrownBy(() -> IcebergManifests.requireReferencedDataFileForDeletionVectorForTest(128L, null))
+                .isInstanceOf(IcebergFormatException.class)
+                .hasMessageContaining("referenced data file");
+    }
+
+    @Test
+    void acceptsADeletionVectorThatNamesItsReferencedDataFile() {
+        assertThatCode(() -> IcebergManifests.requireReferencedDataFileForDeletionVectorForTest(
+                        128L, "file:///data/file.parquet"))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void readsANumericEqualityFieldId() {
+        assertThat(IcebergManifests.equalityFieldIdForTest(7L)).isEqualTo(7);
+    }
+
+    @Test
+    void rejectsANonNumericEqualityFieldId() {
+        assertThatThrownBy(() -> IcebergManifests.equalityFieldIdForTest("not-a-number"))
+                .isInstanceOf(IcebergFormatException.class)
+                .hasMessageContaining("equality_ids");
+        assertThatThrownBy(() -> IcebergManifests.equalityFieldIdForTest(null))
+                .isInstanceOf(IcebergFormatException.class);
+    }
+
     private Snapshot readPositionalSnapshot() throws Exception {
-        Path tableDir = TestCorpus.extractDirectory("iceberg-deletes/positional", tempDir.resolve("positional"));
+        return readSnapshot("positional");
+    }
+
+    private Snapshot readEqualitySnapshot() throws Exception {
+        return readSnapshot("equality");
+    }
+
+    private Snapshot readSnapshot(String table) throws Exception {
+        Path tableDir = TestCorpus.extractDirectory("iceberg-deletes/" + table, tempDir.resolve(table));
         IcebergTableMetadata metadata =
                 IcebergTableMetadata.read(Files.readString(tableDir.resolve("metadata/v1.metadata.json")));
         IcebergFileIO io = new LocalIcebergFileIO(metadata.tableLocation(), tableDir);

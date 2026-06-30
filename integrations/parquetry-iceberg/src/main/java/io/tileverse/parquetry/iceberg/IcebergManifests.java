@@ -92,23 +92,69 @@ final class IcebergManifests {
     }
 
     /**
-     * A merge-on-read positional delete file. A positional delete file is a Parquet file of {@code (file_path, pos)}
-     * rows; {@code pos} is an absolute row position within the data file named by {@code file_path}. The delete planner
-     * applies it to a data file by matching that path and by the sequence rule (a positional delete applies to data
-     * files at or before its own sequence).
+     * A merge-on-read delete file, either positional or equality.
      *
-     * @param location the absolute delete-file location
-     * @param content the Iceberg file content code (1 for position deletes)
+     * <p>A positional delete file is a Parquet file of {@code (file_path, pos)} rows; {@code pos} is an absolute row
+     * position within the data file named by {@code file_path}. The delete planner applies it to a data file by
+     * matching that path and by the sequence rule (a positional delete applies to data files at or before its own
+     * sequence). Its {@code equalityFieldIds} list is empty.
+     *
+     * <p>An equality delete file is a Parquet file whose columns are the equality-id fields named by
+     * {@code equalityFieldIds}; each row is a tuple of values to delete. The delete planner applies it to a data file
+     * by partition match and the strict sequence rule (an equality delete applies to data files strictly before its own
+     * sequence). It has no {@code referencedDataFile}.
+     *
+     * <p>A deletion vector (Iceberg v3) is also a position delete (content 1) but stores its deleted positions as a
+     * roaring bitmap inside a Puffin blob rather than as a Parquet file of {@code (file_path, pos)} rows. The manifest
+     * locates the blob within the Puffin file by {@code contentOffset} and {@code contentSizeInBytes}, and a deletion
+     * vector always names the single {@code referencedDataFile} it deletes from. {@link #isDeletionVector()} tells the
+     * two position-delete forms apart.
+     *
+     * @param location the absolute delete-file location (the Puffin file for a deletion vector)
+     * @param content the Iceberg file content code (1 for position deletes, 2 for equality deletes)
      * @param dataSequenceNumber the delete file's data sequence number, inherited from its manifest when omitted
-     * @param referencedDataFile the single data file this delete is scoped to, or {@code null} when the delete file
-     *     lists its targets in its own {@code file_path} column instead (the writer may record either)
+     * @param referencedDataFile the single data file a positional delete is scoped to, or {@code null} when the delete
+     *     file lists its targets in its own {@code file_path} column instead (the writer may record either); always set
+     *     for a deletion vector
      * @param recordCount the number of delete rows the manifest records
+     * @param equalityFieldIds the Iceberg field ids of the equality fields for an equality delete file, in delete-file
+     *     column order; empty for a positional delete file
+     * @param partitionValues the delete file's partition tuple keyed by Iceberg partition-field-id, mirroring
+     *     {@link DataFileRef#partitionValues()}; an equality delete applies only to data files with a matching
+     *     partition
+     * @param contentOffset the byte offset of the deletion-vector blob within the Puffin file, or {@code null} when
+     *     this is not a deletion vector
+     * @param contentSizeInBytes the length in bytes of the deletion-vector blob, or {@code null} when this is not a
+     *     deletion vector
      */
     public record DeleteFileRef(
-            String location, int content, long dataSequenceNumber, String referencedDataFile, long recordCount) {
+            String location,
+            int content,
+            long dataSequenceNumber,
+            String referencedDataFile,
+            long recordCount,
+            List<Integer> equalityFieldIds,
+            Map<Integer, Object> partitionValues,
+            Long contentOffset,
+            Long contentSizeInBytes) {
 
         public DeleteFileRef {
             Objects.requireNonNull(location, "location");
+            equalityFieldIds = List.copyOf(equalityFieldIds);
+            partitionValues = Map.copyOf(partitionValues);
+        }
+
+        /** Whether this delete file deletes by equality tuples rather than by absolute row position. */
+        public boolean isEqualityDelete() {
+            return content == CONTENT_EQUALITY_DELETES;
+        }
+
+        /**
+         * Whether this position delete is a deletion vector, that is, a roaring bitmap of positions inside a Puffin
+         * blob rather than a Parquet file of {@code (file_path, pos)} rows. A deletion vector records its blob offset.
+         */
+        public boolean isDeletionVector() {
+            return content == CONTENT_POSITION_DELETES && contentOffset != null;
         }
     }
 
@@ -179,9 +225,8 @@ final class IcebergManifests {
         int content = intOrDefault(safeGet(dataFile, "content"), CONTENT_DATA);
         switch (content) {
             case CONTENT_DATA -> dataFiles.add(readDataFile(dataFile, sequenceNumber));
-            case CONTENT_POSITION_DELETES -> deleteFiles.add(readDeleteFile(dataFile, content, sequenceNumber));
-            case CONTENT_EQUALITY_DELETES ->
-                throw new IcebergFormatException("equality deletes are not yet supported: " + dataFile.get(FILE_PATH));
+            case CONTENT_POSITION_DELETES, CONTENT_EQUALITY_DELETES ->
+                deleteFiles.add(readDeleteFile(dataFile, content, sequenceNumber));
             default -> throw new IcebergFormatException("unknown manifest entry content " + content);
         }
     }
@@ -216,19 +261,81 @@ final class IcebergManifests {
     }
 
     /**
-     * Reads a position-delete file entry. A deletion vector (v3) is also content 1 but locates a Puffin blob through
-     * {@code content_offset}; that form is not yet supported and fails fast rather than reading a non-existent Parquet
-     * file.
+     * Reads a delete-file entry, either positional (content 1) or equality (content 2). A deletion vector (v3) is also
+     * content 1 but records a {@code content_offset}/{@code content_size_in_bytes} into a Puffin blob instead of being
+     * a Parquet file; those coordinates ride through to the delete planner, which reads the blob.
      */
     private static DeleteFileRef readDeleteFile(AvroRecord dataFile, int content, long sequenceNumber) {
-        if (safeGet(dataFile, "content_offset") != null) {
-            throw new IcebergFormatException("deletion vectors are not yet supported: " + dataFile.get(FILE_PATH));
-        }
         String location = (String) dataFile.get(FILE_PATH);
         long recordCount =
                 requiredNumber(dataFile.get(RECORD_COUNT), RECORD_COUNT).longValue();
         String referencedDataFile = (String) safeGet(dataFile, "referenced_data_file");
-        return new DeleteFileRef(location, content, sequenceNumber, referencedDataFile, recordCount);
+        List<Integer> equalityFieldIds = readEqualityFieldIds(dataFile);
+        Object partition = safeGet(dataFile, "partition");
+        Map<Integer, Object> partitionValues =
+                partition instanceof AvroRecord partitionRecord ? readPartitionTuple(partitionRecord) : Map.of();
+        Long contentOffset = nullableLong(safeGet(dataFile, "content_offset"));
+        Long contentSizeInBytes = nullableLong(safeGet(dataFile, "content_size_in_bytes"));
+        requireReferencedDataFileForDeletionVector(contentOffset, referencedDataFile);
+        return new DeleteFileRef(
+                location,
+                content,
+                sequenceNumber,
+                referencedDataFile,
+                recordCount,
+                equalityFieldIds,
+                partitionValues,
+                contentOffset,
+                contentSizeInBytes);
+    }
+
+    /**
+     * Rejects a deletion vector that names no referenced data file. A deletion vector records a {@code content_offset}
+     * into a Puffin blob and always names the single data file it deletes from; a null {@code referenced_data_file}
+     * with an offset present is a malformed entry that {@link IcebergDeletePlan} would otherwise read as applying to
+     * every data file.
+     */
+    private static void requireReferencedDataFileForDeletionVector(Long contentOffset, String referencedDataFile) {
+        if (contentOffset != null && referencedDataFile == null) {
+            throw new IcebergFormatException("deletion vector has a content offset but no referenced data file");
+        }
+    }
+
+    /** Test hook: rejects a deletion vector (content offset present) that names no referenced data file. */
+    static void requireReferencedDataFileForDeletionVectorForTest(Long contentOffset, String referencedDataFile) {
+        requireReferencedDataFileForDeletionVector(contentOffset, referencedDataFile);
+    }
+
+    /**
+     * The Iceberg field ids of an equality delete file's equality fields, from the manifest's {@code equality_ids}
+     * array, in delete-file column order. A positional delete entry records no such array and yields an empty list.
+     */
+    private static List<Integer> readEqualityFieldIds(AvroRecord dataFile) {
+        Object equalityIds = safeGet(dataFile, "equality_ids");
+        if (!(equalityIds instanceof List<?> ids)) {
+            return List.of();
+        }
+        List<Integer> fieldIds = new ArrayList<>(ids.size());
+        for (Object id : ids) {
+            fieldIds.add(equalityFieldId(id));
+        }
+        return fieldIds;
+    }
+
+    /**
+     * One {@code equality_ids} element as an int. A null or non-numeric element is a malformed manifest, rejected with
+     * a clear message rather than a raw {@code NullPointerException} or {@code ClassCastException}.
+     */
+    private static int equalityFieldId(Object id) {
+        if (!(id instanceof Number number)) {
+            throw new IcebergFormatException("equality_ids element is not a number: " + id);
+        }
+        return number.intValue();
+    }
+
+    /** Test hook: one {@code equality_ids} element as an int, rejecting a null or non-numeric element. */
+    static int equalityFieldIdForTest(Object id) {
+        return equalityFieldId(id);
     }
 
     /**
@@ -293,5 +400,9 @@ final class IcebergManifests {
 
     private static long longOrDefault(Object value, long fallback) {
         return value == null ? fallback : ((Number) value).longValue();
+    }
+
+    private static Long nullableLong(Object value) {
+        return value == null ? null : ((Number) value).longValue();
     }
 }

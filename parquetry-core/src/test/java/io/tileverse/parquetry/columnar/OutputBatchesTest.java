@@ -79,6 +79,28 @@ class OutputBatchesTest {
     }
 
     @Test
+    void producesARowPositionColumnFromTheSynthesizedVector() {
+        DefaultParquetRecordBatch base = sourceBatchWithRowPosition();
+        SequencedSet<Projection.Column> columns = new LinkedHashSet<>(List.of(
+                new Projection.Column.Physical(ColumnPath.of("count"), ColumnPath.of("n")),
+                new Projection.Column.RowPosition(ColumnPath.of("_pos"), 0L)));
+        Projection.Of of = (Projection.Of) Projection.of(columns);
+
+        ParquetSchema producedSchema = OutputBatches.producedSchema(base.projectedSchema(), of);
+        ParquetRecordBatch produced = OutputBatches.produce(base, of, producedSchema);
+
+        assertThat(produced.projectedSchema().leafColumns())
+                .containsExactly(ColumnPath.of("count"), ColumnPath.of("_pos"));
+        SchemaNode.Primitive posLeaf = (SchemaNode.Primitive)
+                produced.projectedSchema().find(ColumnPath.of("_pos")).orElseThrow();
+        assertThat(posLeaf.kind()).isEqualTo(PrimitiveKind.INT64);
+        assertThat(posLeaf.repetition()).isEqualTo(Repetition.REQUIRED);
+        LongVector pos = (LongVector) produced.columns().get(ColumnPath.of("_pos"));
+        assertThat(pos.getLong(0)).isEqualTo(1000L);
+        assertThat(pos.getLong(1)).isEqualTo(1001L);
+    }
+
+    @Test
     void selectSubsetsAndReordersByName() {
         DefaultParquetRecordBatch base = sourceBatch();
 
@@ -132,6 +154,19 @@ class OutputBatchesTest {
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         columns.put(ColumnPath.of("id"), IntVector.materialized(new int[] {1, 2}, Validity.allValid(2)));
         columns.put(ColumnPath.of("n"), IntVector.materialized(new int[] {10, 20}, Validity.allValid(2)));
+        return DefaultParquetRecordBatch.ofHeap(schema, columns, 2);
+    }
+
+    private static DefaultParquetRecordBatch sourceBatchWithRowPosition() {
+        SchemaNode.Primitive nLeaf = new SchemaNode.Primitive(
+                "n", Repetition.OPTIONAL, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), 1);
+        SchemaNode.Group root =
+                new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(nLeaf), Optional.empty(), 0);
+        ParquetSchema schema = new ParquetSchema(root);
+
+        Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
+        columns.put(ColumnPath.of("n"), IntVector.materialized(new int[] {10, 20}, Validity.allValid(2)));
+        columns.put(ColumnPath.of("_pos"), LongVector.rowPositions(1000L, Selection.ALL, 2));
         return DefaultParquetRecordBatch.ofHeap(schema, columns, 2);
     }
 }

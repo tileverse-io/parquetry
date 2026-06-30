@@ -74,6 +74,18 @@ class ProjectionTest {
         Projection.Of constant = (Projection.Of)
                 Projection.of(set(new Projection.Column.Constant(ColumnPath.of("k"), new Value.IntVal(1))));
         assertThat(constant.needsShaping()).isTrue();
+
+        Projection.Of rowPosition =
+                (Projection.Of) Projection.of(set(new Projection.Column.RowPosition(ColumnPath.of("_pos"), 0L)));
+        assertThat(rowPosition.needsShaping()).isTrue();
+    }
+
+    @Test
+    void physicalColumnsIgnoresASynthesizedRowPosition() {
+        Projection.Of of = (Projection.Of) Projection.of(set(
+                new Projection.Column.Physical(ColumnPath.of("a"), ColumnPath.of("src_a")),
+                new Projection.Column.RowPosition(ColumnPath.of("_pos"), 0L)));
+        assertThat(of.physicalColumns()).containsExactly(ColumnPath.of("src_a"));
     }
 
     @Test

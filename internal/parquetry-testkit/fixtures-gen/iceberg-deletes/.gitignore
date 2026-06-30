@@ -2,3 +2,12 @@ work/
 probe-work/
 .venv/
 *.log
+equality-gen/target/
+equality-gen/work/
+equality-gen/cp.txt
+equality-evolved-gen/target/
+equality-evolved-gen/work/
+equality-evolved-gen/cp.txt
+dv-gen/target/
+dv-gen/work/
+dv-gen/cp.txt

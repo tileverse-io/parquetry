@@ -41,6 +41,9 @@ class ProjectionColumnTest {
                 new Projection.Column.Null(ColumnPath.of("label"), new Value.StringVal("x"));
         assertThat(nullColumn.name()).isEqualTo(ColumnPath.of("label"));
         assertThat(nullColumn.typeOf()).isEqualTo(new Value.StringVal("x"));
+        Projection.Column.RowPosition rowPosition = new Projection.Column.RowPosition(ColumnPath.of("_row_id"), 1000L);
+        assertThat(rowPosition.name()).isEqualTo(ColumnPath.of("_row_id"));
+        assertThat(rowPosition.firstRowId()).isEqualTo(1000L);
     }
 
     @Test
@@ -53,5 +56,6 @@ class ProjectionColumnTest {
                 .isInstanceOf(NullPointerException.class);
         assertThatThrownBy(() -> new Projection.Column.Null(ColumnPath.of("x"), null))
                 .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new Projection.Column.RowPosition(null, 0L)).isInstanceOf(NullPointerException.class);
     }
 }

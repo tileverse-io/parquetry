@@ -60,6 +60,9 @@
           <include>iceberg-partitioned/by_category/**</include>
           <include>iceberg-partitioned/by_category_omitted/**</include>
           <include>iceberg-deletes/positional/**</include>
+          <include>iceberg-deletes/equality/**</include>
+          <include>iceberg-deletes/equality-evolved/**</include>
+          <include>iceberg-deletes/deletion-vectors/**</include>
         </includes>
         <excludes>
           <exclude>**/.git</exclude>

@@ -22,6 +22,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.SequencedSet;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongConsumer;
@@ -60,6 +61,7 @@ import io.tileverse.parquetry.internal.read.ParallelDecodeCoordinator.DecodeObse
 import io.tileverse.parquetry.internal.read.RowGroupChunks;
 import io.tileverse.parquetry.internal.read.RowGroupSurvivor;
 import io.tileverse.parquetry.internal.read.RowMask;
+import io.tileverse.parquetry.internal.read.RowPositionColumn;
 import io.tileverse.parquetry.internal.read.RowPositionSynthesis;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.materializer.Materializer;
@@ -252,8 +254,8 @@ public final class ParquetFileReader {
             LongConsumer pipelineNanosSink) {
 
         Predicate predicate = lowerSpatialPredicates(rawPredicate);
-        List<ColumnPath> rowPositionColumns = rowPositionColumnsValidated(predicate);
-        boolean synthesizeRowPosition = !rowPositionColumns.isEmpty();
+        List<RowPositionColumn> rowPositionRequests = rowPositionColumns(predicate);
+        boolean synthesizeRowPosition = !rowPositionRequests.isEmpty();
         boolean recordLevel = options.useRecordLevelFilter() || synthesizeRowPosition;
         ProjectionPlan projectionPlan =
                 ProjectionPlan.resolve(fileSchema, projection, recordLevel ? predicate : Predicate.ALWAYS_TRUE);
@@ -275,7 +277,7 @@ public final class ParquetFileReader {
         DecodeObservation decodeObservation =
                 ReadObservation.decodeObservationFor(plan, observe, options.queryObserver(), false, spillAccumulator);
         List<RowPositionSynthesis> rowPositions =
-                rowPositionSynthesesFor(survivors, rowGroupChunks, rowPositionColumns);
+                rowPositionSynthesesFor(survivors, rowGroupChunks, rowPositionRequests);
         ParallelDecodeCoordinator coordinator = readResources.newDecodeCoordinator(
                 survivors,
                 scanSchema,
@@ -401,6 +403,47 @@ public final class ParquetFileReader {
     }
 
     /**
+     * The row-position columns to synthesize for a count or plain passthrough read: every column the predicate
+     * references positionally, each presented as a within-file position (a {@code firstRowId} of 0). This is the
+     * shaping form with no produce set, since {@link Projection#ALL} adds no row-position outputs.
+     */
+    private List<RowPositionColumn> rowPositionColumns(Predicate predicate) {
+        return rowPositionColumns(predicate, Projection.ALL);
+    }
+
+    /**
+     * The row-position columns to synthesize for a shaping read: the predicate's positional columns (within-file
+     * positions) unioned with the produce set's {@link Projection.Column.RowPosition} outputs (each offset by its own
+     * {@code firstRowId}). A name shared by a positional-delete predicate and a row-position output is synthesized
+     * once; the two must agree on the offset.
+     */
+    private List<RowPositionColumn> rowPositionColumns(Predicate predicate, Projection projection) {
+        LinkedHashMap<ColumnPath, Long> firstRowIdByName = new LinkedHashMap<>();
+        for (ColumnPath column : rowPositionColumnsValidated(predicate)) {
+            firstRowIdByName.put(column, 0L);
+        }
+        if (projection instanceof Projection.Of(SequencedSet<Projection.Column> columns)) {
+            for (Projection.Column column : columns) {
+                if (column instanceof Projection.Column.RowPosition(ColumnPath name, long firstRowId)) {
+                    addRowPositionOutput(firstRowIdByName, name, firstRowId);
+                }
+            }
+        }
+        List<RowPositionColumn> rowPositionColumns = new ArrayList<>(firstRowIdByName.size());
+        firstRowIdByName.forEach((name, firstRowId) -> rowPositionColumns.add(new RowPositionColumn(name, firstRowId)));
+        return rowPositionColumns;
+    }
+
+    private void addRowPositionOutput(Map<ColumnPath, Long> firstRowIdByName, ColumnPath name, long firstRowId) {
+        validateRowPositionColumn(name);
+        Long previous = firstRowIdByName.putIfAbsent(name, firstRowId);
+        if (previous != null && previous != firstRowId) {
+            throw new ParquetSchemaException("Conflicting first row id for the row-position column " + name.dot() + ": "
+                    + previous + " and " + firstRowId);
+        }
+    }
+
+    /**
      * Rejects a caller-named row-position column the reader cannot produce: a nested path (the synthesized column is
      * always a top-level leaf), or a name a physical column of the file already has (the produced column cannot coexist
      * with a real column at that path). The caller must pick a free top-level name (Iceberg uses {@code _pos}).
@@ -471,7 +514,7 @@ public final class ParquetFileReader {
             FetchAccumulator accumulator,
             SpillAccumulator spillAccumulator,
             LongConsumer pipelineNanosSink) {
-        List<ColumnPath> rowPositionColumns = rowPositionColumnsValidated(predicate);
+        List<RowPositionColumn> rowPositionRequests = rowPositionColumns(predicate);
         Projection predicateProjection = predicateScanProjection(predicate);
         List<RowGroupChunks> rowGroupChunks = rowGroupChunks(accumulator);
         boolean observe = observing(options);
@@ -484,7 +527,8 @@ public final class ParquetFileReader {
         if (residual.isEmpty()) {
             return matchedRows;
         }
-        List<RowPositionSynthesis> rowPositions = rowPositionSynthesesFor(residual, rowGroupChunks, rowPositionColumns);
+        List<RowPositionSynthesis> rowPositions =
+                rowPositionSynthesesFor(residual, rowGroupChunks, rowPositionRequests);
         return matchedRows
                 + countResidual(residual, plan, options, accumulator, spillAccumulator, observe, rowPositions);
     }
@@ -602,8 +646,8 @@ public final class ParquetFileReader {
 
         ReadOptions options = observation.effectiveOptions();
         Predicate predicate = lowerSpatialPredicates(rawPredicate);
-        List<ColumnPath> rowPositionColumns = rowPositionColumnsValidated(predicate);
-        boolean synthesizeRowPosition = !rowPositionColumns.isEmpty();
+        List<RowPositionColumn> rowPositionRequests = rowPositionColumns(predicate, projection);
+        boolean synthesizeRowPosition = !rowPositionRequests.isEmpty();
         boolean recordLevel = options.useRecordLevelFilter() || synthesizeRowPosition;
         ProjectionPlan projectionPlan =
                 ProjectionPlan.resolve(fileSchema, projection, recordLevel ? predicate : Predicate.ALWAYS_TRUE);
@@ -625,7 +669,7 @@ public final class ParquetFileReader {
         DecodeObservation decodeObservation = ReadObservation.decodeObservationFor(
                 plan, observe, options.queryObserver(), true, observation.spillAccumulator());
         List<RowPositionSynthesis> rowPositions =
-                rowPositionSynthesesFor(survivors, rowGroupChunks, rowPositionColumns);
+                rowPositionSynthesesFor(survivors, rowGroupChunks, rowPositionRequests);
         ParallelDecodeCoordinator coordinator = readResources.newDecodeCoordinator(
                 survivors,
                 scanSchema,
@@ -984,7 +1028,7 @@ public final class ParquetFileReader {
     private static List<RowPositionSynthesis> rowPositionSynthesesFor(
             List<RowGroupSurvivor> survivors,
             List<RowGroupChunks> rowGroupChunks,
-            List<ColumnPath> rowPositionColumns) {
+            List<RowPositionColumn> rowPositionColumns) {
         if (rowPositionColumns.isEmpty()) {
             return List.of();
         }
