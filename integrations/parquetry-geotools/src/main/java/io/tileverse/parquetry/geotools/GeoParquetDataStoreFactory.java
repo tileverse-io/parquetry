@@ -17,6 +17,7 @@ package io.tileverse.parquetry.geotools;
 
 import java.io.IOException;
 import java.net.URI;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 
@@ -81,11 +82,8 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
         String namespace = (String) NAMESPACE.lookUp(params);
         String fidColumn = (String) FID.lookUp(params);
 
-        URI base = baseContainer(datasetUri);
-        String pattern = filePattern(datasetUri);
         Properties storageProps = StorageParams.toProperties(params);
-
-        FileSource source = ParquetFileSources.open(base, pattern, storageProps);
+        FileSource source = openSource(datasetUri, storageProps);
         FilesetCatalog catalog = FilesetCatalog.open(source, CatalogOptions.defaults());
 
         GeoParquetDataStore store = new GeoParquetDataStore(catalog);
@@ -104,7 +102,22 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
     }
 
     /**
-     * A single-file URI is opened by rooting the Storage at the parent directory. A directory URI roots there directly.
+     * Opens the file source for the store's URI. A single-file URI opens the object directly by key (a GET, with no
+     * directory listing), which lets a remote store work over HTTP and with a GET-only credential; a directory or glob
+     * URI lists its container for the files to merge.
+     */
+    private static FileSource openSource(URI datasetUri, Properties storageProps) {
+        if (isSingleFileUri(datasetUri)) {
+            return ParquetFileSources.openObject(datasetUri, storageProps);
+        }
+        URI base = baseContainer(datasetUri);
+        String pattern = filePattern(datasetUri);
+        return ParquetFileSources.open(base, pattern, storageProps);
+    }
+
+    /**
+     * A URI whose last path segment is a {@code .parquet} file name (a single file, or a {@code *.parquet} glob) roots
+     * the Storage at the parent directory. A directory URI roots there directly.
      */
     private static URI baseContainer(URI uri) {
         String path = uri.getPath();
@@ -136,5 +149,28 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
         }
         String fileName = path.substring(path.lastIndexOf('/') + 1);
         return "{" + fileName + "}";
+    }
+
+    /**
+     * Whether the URI names a single object to open directly, rather than a container to list. True when the path ends
+     * in {@code .parquet} and holds no glob metacharacter - a plain file name like {@code .../place.parquet}. A glob
+     * such as {@code .../*.parquet}, a recursive {@code .../}{@code **}{@code /*.parquet}, or a directory is listed
+     * instead.
+     */
+    static boolean isSingleFileUri(URI uri) {
+        String path = uri.getPath();
+        if (path == null) {
+            return false;
+        }
+        return path.toLowerCase(Locale.ROOT).endsWith(".parquet") && !hasGlobCharacters(path);
+    }
+
+    private static boolean hasGlobCharacters(String path) {
+        for (int index = 0; index < path.length(); index++) {
+            if ("*?{}[]".indexOf(path.charAt(index)) >= 0) {
+                return true;
+            }
+        }
+        return false;
     }
 }
