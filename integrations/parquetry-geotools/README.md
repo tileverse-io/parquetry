@@ -89,6 +89,31 @@ The pushed predicate is always a sound necessary condition of the full filter,
 and the residual catches anything it over-accepts. Results therefore match an
 unfiltered scan exactly.
 
+## Spatial decimation (ScreenMap)
+
+At overview zoom the renderer attaches a `ScreenMap` to the query under
+`Hints.SCREENMAP`: once a feature paints an output pixel, later features in that
+pixel are redundant. `GeoParquetFeatureSource` reads the hint and, when the query
+pushes down fully (no residual filter remains), builds a `ScreenMapReadProbe` and
+attaches it to the read. The probe rides the read down three levels and drops
+already-covered units by bounding box, without decoding their geometry:
+
+- **File** - a file whose geometry bounds fall in painted pixels is never read;
+  with a probe the multi-file read also visits files in spatial order, which lets
+  painting accumulate coherently.
+- **Row group** - a painted row group is skipped before its bytes are fetched.
+- **Row** - a painted feature is dropped after the predicate test, before output.
+
+The coarse levels (file, row group) consult the probe read-only and never paint;
+only the per-row level records coverage, which keeps a painted region from
+dropping the very features that should fill it. A read without the hint, or a
+query that keeps a residual filter, reads with the default options unchanged.
+
+The probe drops a redundant feature; it does not yet substitute a synthetic
+pixel-sized representative for the first feature kept per cell (the renderer's own
+`ScreenMap` still draws the kept feature at full resolution). Page-level skipping
+and decimation counts in explain-analyze are deferred.
+
 ## Feature ids
 
 Each feature needs an id. The store resolves it in this order:

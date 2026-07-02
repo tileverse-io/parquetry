@@ -28,7 +28,6 @@ import io.tileverse.parquetry.cli.StorageOptions;
 import io.tileverse.parquetry.cli.arrow.ArrowOutput;
 import io.tileverse.parquetry.cli.arrow.ArrowOutputRequest;
 import io.tileverse.parquetry.cli.expr.FilterParser;
-import io.tileverse.parquetry.cli.expr.GeometryColumns;
 import io.tileverse.parquetry.cli.render.Projections;
 import io.tileverse.parquetry.cli.render.RecordRenderer;
 import io.tileverse.parquetry.data.ReadOptions;
@@ -39,6 +38,7 @@ import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
+import io.tileverse.parquetry.schema.geo.geoparquet.GeometryColumns;
 
 import picocli.CommandLine.ArgGroup;
 import picocli.CommandLine.Command;

@@ -29,6 +29,7 @@ import io.tileverse.parquetry.internal.read.LateMaterialization;
 import io.tileverse.parquetry.internal.read.ParallelDecodeCoordinator;
 import io.tileverse.parquetry.internal.read.ParallelDecodeCoordinator.DecodeObservation;
 import io.tileverse.parquetry.internal.read.RowGroupFetcher;
+import io.tileverse.parquetry.internal.read.RowGroupGate;
 import io.tileverse.parquetry.internal.read.RowGroupPrefetcher;
 import io.tileverse.parquetry.internal.read.RowGroupSurvivor;
 import io.tileverse.parquetry.internal.read.RowMask;
@@ -70,7 +71,8 @@ final class ReadResources {
             BatchForm batchForm,
             FetchAccumulator accumulator,
             DecodeObservation observation,
-            List<RowPositionSynthesis> rowPositions) {
+            List<RowPositionSynthesis> rowPositions,
+            Optional<RowGroupGate> rowGroupGate) {
         RowGroupPrefetcher prefetcher =
                 newPrefetcher(survivors, projectedSchema, accumulator, observation.wantsTimings());
         List<Boolean> recordEvalRequired = recordEvalFlagsFor(survivors);
@@ -92,7 +94,8 @@ final class ReadResources {
                 lateMat,
                 batchForm,
                 observation,
-                rowPositions);
+                rowPositions,
+                rowGroupGate);
     }
 
     /**

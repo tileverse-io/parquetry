@@ -68,6 +68,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     private final BatchForm batchForm;
     private final DecodeObservation observation;
     private final List<RowPositionSynthesis> rowPositions;
+    private final RowGroupGate rowGroupGate;
 
     private final Map<Integer, DecodedRowGroup> window = new HashMap<>();
     private final int size;
@@ -93,7 +94,8 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
             @NonNull Optional<LateMaterialization> lateMat,
             @NonNull BatchForm batchForm,
             @NonNull DecodeObservation observation,
-            @NonNull List<RowPositionSynthesis> rowPositions) {
+            @NonNull List<RowPositionSynthesis> rowPositions,
+            @NonNull Optional<RowGroupGate> rowGroupGate) {
         this.prefetcher = prefetcher;
         this.decodeExecutor = decodeExecutor;
         this.decodeBudget = decodeBudget;
@@ -111,11 +113,16 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
         this.batchForm = batchForm;
         this.observation = observation;
         this.rowPositions = List.copyOf(rowPositions);
+        this.rowGroupGate = rowGroupGate.orElse(null);
         this.size = prefetcher.size();
     }
 
     /** Returns the next decoded row group in file order, or {@code null} when all row groups have been consumed. */
     DecodedRowGroup next() throws IOException {
+        if (nextToConsume >= size) {
+            return null;
+        }
+        skipPaintedGroups();
         if (nextToConsume >= size) {
             return null;
         }
@@ -130,6 +137,28 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
         DecodedRowGroup inline = decodeInline(index);
         inline.markDelivered();
         return inline;
+    }
+
+    /**
+     * Advances past any leading survivor row groups the gate skips, in strict file order on the consumer thread. By the
+     * time the gate sees position {@code nextToConsume} every earlier group has been fully drained and painted by the
+     * leaf tier, hence its bounds test reads correct accumulated coverage; the skip is monotone, and dropping a group
+     * the speculation already decoded is safe. A skipped group performs no fetch and no decode: any speculatively
+     * decoded entry is discarded, and {@code nextToSubmit} is advanced past it to keep {@link #submitAhead()} from
+     * fetching it. When no gate is wired this is a pure no-op with no allocation.
+     */
+    private void skipPaintedGroups() {
+        if (rowGroupGate == null) {
+            return;
+        }
+        while (nextToConsume < size && rowGroupGate.skip(nextToConsume)) {
+            DecodedRowGroup speculativelyDecoded = window.remove(nextToConsume);
+            if (speculativelyDecoded != null) {
+                speculativelyDecoded.close();
+            }
+            nextToConsume++;
+            nextToSubmit = Math.max(nextToSubmit, nextToConsume);
+        }
     }
 
     private void submitAhead() throws IOException {

@@ -59,6 +59,7 @@ final class GeoParquetFeatureReader implements FeatureReader<SimpleFeatureType, 
     private final Iterator<ParquetRecord> rows;
     private long syntheticId;
 
+    @SuppressWarnings("java:S107") // cohesive read collaborators; a parameter object would only relocate the arity
     GeoParquetFeatureReader(
             SimpleFeatureType readType,
             List<AttributeMapping> attributes,
@@ -66,13 +67,14 @@ final class GeoParquetFeatureReader implements FeatureReader<SimpleFeatureType, 
             ParquetDataset dataset,
             Predicate predicate,
             Projection projection,
-            Optional<AttributeMapping> fidAttribute) {
+            Optional<AttributeMapping> fidAttribute,
+            ReadOptions options) {
         this.featureType = readType;
         this.attributes = attributes;
         this.geometrySrids = geometrySrids;
         this.fidAttribute = fidAttribute;
         this.builder = new SimpleFeatureBuilder(readType);
-        this.stream = dataset.read(predicate, projection, ReadOptions.DEFAULTS);
+        this.stream = dataset.read(predicate, projection, options);
         this.rows = stream.iterator();
     }
 

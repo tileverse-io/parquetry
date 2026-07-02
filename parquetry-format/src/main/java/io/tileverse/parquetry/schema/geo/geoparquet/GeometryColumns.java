@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.cli.expr;
+package io.tileverse.parquetry.schema.geo.geoparquet;
 
 import java.util.LinkedHashSet;
 import java.util.Map;
@@ -24,16 +24,16 @@ import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaNode;
-import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 /**
- * Resolves the set of geometry columns in a Parquet file from two independent signals.
+ * Resolves the geometry columns of a Parquet file from two independent signals.
  *
- * <p>A column may be a geometry by its native Parquet logical type ({@link LogicalType.Geometry} /
+ * <p>A column is a geometry by its native Parquet logical type ({@link LogicalType.Geometry} /
  * {@link LogicalType.Geography}, GeoParquet 2.0), by being listed in the GeoParquet {@code "geo"} file metadata
- * (GeoParquet 1.x, where WKB columns have no native annotation), or by both. Both signals matter because no single one
- * covers every producer: 1.x files declare geometries only in the {@code "geo"} JSON, while 2.0 files annotate the
- * logical type and may omit or duplicate the metadata entry. The resolved set is the union of both.
+ * (GeoParquet 1.x, where WKB columns have no native annotation), or by both. No single signal covers every producer:
+ * 1.x files declare geometries only in the {@code "geo"} JSON, while 2.0 files annotate the logical type and may omit
+ * or duplicate the metadata entry. {@link #resolve} returns the union; {@link #primary} picks the GeoParquet
+ * {@code primary_column} when it is one of them.
  */
 public final class GeometryColumns {
 
@@ -41,6 +41,7 @@ public final class GeometryColumns {
 
     private GeometryColumns() {}
 
+    /** The geometry columns named by the schema's logical types or by the parsed {@code "geo"} metadata, or both. */
     public static Set<ColumnPath> resolve(ParquetSchema schema, Optional<GeoParquetMetadata> geoMetadata) {
         Set<ColumnPath> geometryColumns = new LinkedHashSet<>();
         addLogicalTypeGeometries(schema, geometryColumns);
@@ -48,8 +49,27 @@ public final class GeometryColumns {
         return geometryColumns;
     }
 
+    /** The geometry columns, reading the {@code "geo"} metadata straight from a file's raw key-value metadata. */
     public static Set<ColumnPath> resolve(ParquetSchema schema, Map<String, String> keyValueMetadata) {
         return resolve(schema, parseGeoMetadata(keyValueMetadata));
+    }
+
+    /**
+     * The file's primary geometry column: the GeoParquet {@code primary_column} when the metadata names one that is a
+     * resolved geometry, otherwise the first resolved geometry column in schema order. Empty when the file has no
+     * geometry column.
+     */
+    public static Optional<ColumnPath> primary(ParquetSchema schema, Optional<GeoParquetMetadata> geoMetadata) {
+        Set<ColumnPath> geometryColumns = resolve(schema, geoMetadata);
+        if (geometryColumns.isEmpty()) {
+            return Optional.empty();
+        }
+        Optional<ColumnPath> declaredPrimary = geoMetadata
+                .map(GeoParquetMetadata::primaryColumn)
+                .filter(name -> !name.isBlank())
+                .map(name -> ColumnPath.of(name.split("\\.")))
+                .filter(geometryColumns::contains);
+        return declaredPrimary.or(() -> geometryColumns.stream().findFirst());
     }
 
     private static Optional<GeoParquetMetadata> parseGeoMetadata(Map<String, String> keyValueMetadata) {
