@@ -27,12 +27,15 @@ import java.util.concurrent.RejectedExecutionException;
 
 import io.tileverse.parquetry.observe.QueryObserver;
 import io.tileverse.parquetry.observe.SpillAccumulator;
+import io.tileverse.parquetry.runtime.ComputeExecutor;
+import io.tileverse.parquetry.runtime.DecodeBudget;
+import io.tileverse.parquetry.runtime.DiskBudget;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 import lombok.NonNull;
 
 /**
- * Decodes row groups in file order, overlapping the decode of upcoming row groups on a shared {@link DecodeExecutor}
+ * Decodes row groups in file order, overlapping the decode of upcoming row groups on a shared {@link ComputeExecutor}
  * while the consumer drains the current one. Pulls fetched row groups from the {@link RowGroupPrefetcher} (fetch path
  * unchanged) and reorders out-of-order worker completions via an index-keyed window.
  *
@@ -52,7 +55,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     private static final int HANDOFF_CAPACITY = 2;
 
     private final RowGroupPrefetcher prefetcher;
-    private final DecodeExecutor decodeExecutor;
+    private final ComputeExecutor decodeExecutor;
     private final DecodeBudget decodeBudget;
     private final DecodeBufferAllocator decodeBufferAllocator;
     private final DiskBudget diskBudget;
@@ -79,7 +82,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     @SuppressWarnings("java:S107")
     public ParallelDecodeCoordinator(
             @NonNull RowGroupPrefetcher prefetcher,
-            @NonNull DecodeExecutor decodeExecutor,
+            @NonNull ComputeExecutor decodeExecutor,
             @NonNull DecodeBudget decodeBudget,
             @NonNull DecodeBufferAllocator decodeBufferAllocator,
             @NonNull DiskBudget diskBudget,

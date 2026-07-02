@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.data.ParquetRuntime;
+import io.tileverse.parquetry.runtime.ParquetRuntime;
 
 class OpenOptionsTest {
 

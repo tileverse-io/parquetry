@@ -21,6 +21,8 @@ import java.util.concurrent.Future;
 import java.util.function.BooleanSupplier;
 
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
+import io.tileverse.parquetry.runtime.DecodeBudget;
+import io.tileverse.parquetry.runtime.DiskBudget;
 
 import lombok.NonNull;
 

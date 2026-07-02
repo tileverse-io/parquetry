@@ -23,6 +23,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.io.SegmentPool;
+import io.tileverse.parquetry.runtime.DiskBudget;
+import io.tileverse.parquetry.runtime.FetchBudget;
 
 class FetchBufferAllocatorTest {
 

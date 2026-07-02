@@ -19,6 +19,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.runtime.FetchBudget;
+
 class BudgetReservationTest {
 
     @Test

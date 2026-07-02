@@ -30,6 +30,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Stream;
 
 import io.tileverse.parquetry.io.SegmentPool;
+import io.tileverse.parquetry.runtime.DiskBudget;
 
 import lombok.NonNull;
 

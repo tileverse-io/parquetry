@@ -31,6 +31,7 @@ import io.tileverse.parquetry.arrow.columnar.BatchArrowLayout;
 import io.tileverse.parquetry.arrow.columnar.EncodedBatch;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.observe.SpillAccumulator;
+import io.tileverse.parquetry.runtime.DiskBudget;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 import lombok.NonNull;

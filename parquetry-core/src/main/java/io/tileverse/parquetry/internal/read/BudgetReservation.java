@@ -17,6 +17,8 @@ package io.tileverse.parquetry.internal.read;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import io.tileverse.parquetry.runtime.FetchBudget;
+
 /**
  * An idempotent handle that returns a previously reserved number of bytes to a {@link FetchBudget} exactly once. A
  * {@code RowGroupFetch} releases its reservation when it is closed, after its row group has been decoded.

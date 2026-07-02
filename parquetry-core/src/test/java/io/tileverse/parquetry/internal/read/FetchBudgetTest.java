@@ -20,6 +20,8 @@ import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException
 
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.runtime.FetchBudget;
+
 class FetchBudgetTest {
 
     @Test

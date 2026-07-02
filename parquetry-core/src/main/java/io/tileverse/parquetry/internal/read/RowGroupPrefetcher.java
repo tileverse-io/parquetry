@@ -26,6 +26,8 @@ import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.Semaphore;
 
+import io.tileverse.parquetry.runtime.FetchBudget;
+
 import lombok.NonNull;
 
 /**

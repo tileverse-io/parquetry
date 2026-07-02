@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.data;
+package io.tileverse.parquetry.runtime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
@@ -28,10 +28,6 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import io.tileverse.parquetry.internal.read.DecodeBudget;
-import io.tileverse.parquetry.internal.read.DecodeExecutor;
-import io.tileverse.parquetry.internal.read.DiskBudget;
-import io.tileverse.parquetry.internal.read.FetchBudget;
 import io.tileverse.parquetry.io.limits.IoLimits;
 import io.tileverse.parquetry.io.limits.ResourceLimits;
 
@@ -58,7 +54,7 @@ class ParquetRuntimeTest {
         assertThat(rt.maxCoalescedSpan()).isEqualTo(8 << 20);
         assertThat(rt.fetchBudget().capacity())
                 .isEqualTo(IoLimits.from(ResourceLimits.getDefault()).maxOffHeapBytes());
-        assertThat(rt.decodeExecutor()).isSameAs(DecodeExecutor.shared());
+        assertThat(rt.computeExecutor()).isSameAs(ComputeExecutor.shared());
         assertThat(rt.decodeBudget().capacity())
                 .isEqualTo(DecodeBudget.defaultBudget().capacity());
     }
@@ -139,7 +135,7 @@ class ParquetRuntimeTest {
         ParquetRuntime derived = base.withPrefetchDepth(1);
         assertThat(derived.prefetchDepth()).isEqualTo(1);
         assertThat(derived.segmentPool()).isSameAs(base.segmentPool());
-        assertThat(derived.decodeExecutor()).isSameAs(base.decodeExecutor());
+        assertThat(derived.computeExecutor()).isSameAs(base.computeExecutor());
         assertThat(derived.decodeBudget()).isSameAs(base.decodeBudget());
         assertThat(derived.diskBudget()).isSameAs(base.diskBudget());
     }

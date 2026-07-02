@@ -29,6 +29,7 @@ import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.io.SegmentPool.Pooled;
 import io.tileverse.parquetry.observe.FetchAccumulator;
 import io.tileverse.parquetry.observe.FetchPurpose;
+import io.tileverse.parquetry.runtime.FetchBudget;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 

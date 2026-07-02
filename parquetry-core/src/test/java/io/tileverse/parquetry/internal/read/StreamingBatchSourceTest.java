@@ -28,6 +28,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.observe.SpillAccumulator;
+import io.tileverse.parquetry.runtime.DecodeBudget;
+import io.tileverse.parquetry.runtime.DiskBudget;
 
 class StreamingBatchSourceTest {
 

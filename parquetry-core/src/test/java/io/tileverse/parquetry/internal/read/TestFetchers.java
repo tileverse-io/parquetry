@@ -23,6 +23,8 @@ import java.nio.file.Path;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.observe.FetchAccumulator;
+import io.tileverse.parquetry.runtime.DiskBudget;
+import io.tileverse.parquetry.runtime.FetchBudget;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**

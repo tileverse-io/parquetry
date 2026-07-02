@@ -36,6 +36,7 @@ import io.tileverse.parquetry.internal.read.RowMask;
 import io.tileverse.parquetry.internal.read.RowPositionSynthesis;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.observe.FetchAccumulator;
+import io.tileverse.parquetry.runtime.ParquetRuntime;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
@@ -79,7 +80,7 @@ final class ReadResources {
         DecodeBufferAllocator decodeBufferAllocator = newDecodeBufferAllocator();
         return new ParallelDecodeCoordinator(
                 prefetcher,
-                runtime.decodeExecutor(),
+                runtime.computeExecutor(),
                 runtime.decodeBudget(),
                 decodeBufferAllocator,
                 runtime.diskBudget(),

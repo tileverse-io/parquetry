@@ -43,6 +43,10 @@ import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.observe.SpillAccumulator;
+import io.tileverse.parquetry.runtime.ComputeExecutor;
+import io.tileverse.parquetry.runtime.DecodeBudget;
+import io.tileverse.parquetry.runtime.DiskBudget;
+import io.tileverse.parquetry.runtime.FetchBudget;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaBuilder;
 
@@ -60,7 +64,7 @@ class ParallelDecodeCoordinatorTest {
                 .as("the fixture spans several row groups")
                 .isGreaterThanOrEqualTo(3);
 
-        DecodeExecutor pool = DecodeExecutor.ofParallelism(4);
+        ComputeExecutor pool = ComputeExecutor.ofParallelism(4);
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixture.file)) {
             ParallelDecodeCoordinator coordinator =
                     fixture.coordinator(source, pool, DecodeBudget.defaultBudget(), /*decodeAhead*/ 2);
@@ -84,7 +88,7 @@ class ParallelDecodeCoordinatorTest {
     void completesUnderATinyDecodeBudget(@TempDir Path tmp) throws Exception {
         Fixture fixture = Fixture.write(tmp, 4_000);
 
-        DecodeExecutor pool = DecodeExecutor.ofParallelism(4);
+        ComputeExecutor pool = ComputeExecutor.ofParallelism(4);
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixture.file)) {
             ParallelDecodeCoordinator coordinator =
                     fixture.coordinator(source, pool, DecodeBudget.ofBytes(1), /*decodeAhead*/ 2);
@@ -106,7 +110,7 @@ class ParallelDecodeCoordinatorTest {
 
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixture.file)) {
             ParallelDecodeCoordinator coordinator = fixture.coordinator(
-                    source, DecodeExecutor.shared(), DecodeBudget.defaultBudget(), /*decodeAhead*/ 0);
+                    source, ComputeExecutor.shared(), DecodeBudget.defaultBudget(), /*decodeAhead*/ 0);
             try (coordinator) {
                 long total = drainTotalRows(coordinator);
                 assertThat(total)
@@ -119,7 +123,7 @@ class ParallelDecodeCoordinatorTest {
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void decodeFailurePropagatesToConsumer() {
-        DecodeExecutor pool = DecodeExecutor.ofParallelism(1);
+        ComputeExecutor pool = ComputeExecutor.ofParallelism(1);
         try (DecodedRowGroup rowGroup = failingStreamingRowGroup(pool)) {
             assertThatThrownBy(() -> drainRowGroup(rowGroup))
                     .as("a worker decode failure reaches the consumer that drains the row group")
@@ -130,7 +134,7 @@ class ParallelDecodeCoordinatorTest {
         }
     }
 
-    private static DecodedRowGroup failingStreamingRowGroup(DecodeExecutor pool) {
+    private static DecodedRowGroup failingStreamingRowGroup(ComputeExecutor pool) {
         RowGroupBatchDriver driver = new FailingDriver(new IllegalStateException("decode blew up"));
         BatchHandoff handoff = new BatchHandoff(2);
         BatchSpillStore spillStore = new BatchSpillStore(
@@ -219,7 +223,7 @@ class ParallelDecodeCoordinatorTest {
         }
 
         ParallelDecodeCoordinator coordinator(
-                ByteRangeSource source, DecodeExecutor executor, DecodeBudget budget, int decodeAhead) {
+                ByteRangeSource source, ComputeExecutor executor, DecodeBudget budget, int decodeAhead) {
             List<RowGroupSurvivor> survivors = survivors(source);
             RowGroupPrefetcher prefetcher = prefetcher(source, survivors);
             List<Optional<RowMask>> masks = Collections.nCopies(survivors.size(), Optional.empty());

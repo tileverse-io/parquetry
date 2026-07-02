@@ -45,21 +45,21 @@ import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
 import io.tileverse.parquetry.data.ParquetFileReader;
-import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.limits.ResourceLimits;
 import io.tileverse.parquetry.record.ParquetRecord;
+import io.tileverse.parquetry.runtime.ParquetRuntime;
 
 /**
  * Characterizes the resident-memory cost of reading a large-row-group file under a deliberately tiny fetch budget.
  *
  * <p>A mandatory fetch buffers a whole row group's column chunks for progress. The read path holds that buffer in
- * pooled native memory while the {@link io.tileverse.parquetry.internal.read.FetchBudget} has room, otherwise it maps
- * an on-disk file. This benchmark pins the budget tiny (via {@link ResourceLimits#fixed}, which derives a fetch budget
- * of ten percent of the stated memory), forcing every mandatory fetch onto a mapped file. A mapped file is reclaimable
+ * pooled native memory while the {@link io.tileverse.parquetry.runtime.FetchBudget} has room, otherwise it maps an
+ * on-disk file. This benchmark pins the budget tiny (via {@link ResourceLimits#fixed}, which derives a fetch budget of
+ * ten percent of the stated memory), forcing every mandatory fetch onto a mapped file. A mapped file is reclaimable
  * page cache: the kernel can drop those pages under pressure, unlike the anonymous RAM a native buffer occupies. The
  * signal is therefore peak resident set size (RSS): the {@code concurrency x row-group-span} term lands on reclaimable
  * mmap rather than on anonymous RAM, and peak RSS stays far below what holding every concurrent fetch in RAM would

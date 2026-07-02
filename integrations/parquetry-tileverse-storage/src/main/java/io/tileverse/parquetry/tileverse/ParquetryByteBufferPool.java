@@ -18,9 +18,9 @@ package io.tileverse.parquetry.tileverse;
 import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import io.tileverse.parquetry.data.ParquetRuntime;
-import io.tileverse.parquetry.internal.read.FetchBudget;
 import io.tileverse.parquetry.io.SegmentPool;
+import io.tileverse.parquetry.runtime.FetchBudget;
+import io.tileverse.parquetry.runtime.ParquetRuntime;
 
 import io.tileverse.io.ByteBufferPool;
 

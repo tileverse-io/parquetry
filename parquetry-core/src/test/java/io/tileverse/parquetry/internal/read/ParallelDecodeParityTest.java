@@ -27,20 +27,21 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.data.ParquetFileReader;
-import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
+import io.tileverse.parquetry.runtime.ComputeExecutor;
+import io.tileverse.parquetry.runtime.ParquetRuntime;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
  * Proves that the parallel decode path returns identical records in identical (strict file) order as the serial path.
  *
  * <p>Reads the same multi-row-group file twice: once with serial inline decode ({@code maxDecodeAheadPerRead=0}) and
- * once with a dedicated {@link DecodeExecutor} and a decode-ahead window of 3. The rendered row sequences must be
+ * once with a dedicated {@link ComputeExecutor} and a decode-ahead window of 3. The rendered row sequences must be
  * element-for-element equal.
  */
 class ParallelDecodeParityTest {
@@ -54,9 +55,9 @@ class ParallelDecodeParityTest {
         int rows = 4_000;
         Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(tmp, rows);
 
-        List<String> serial = read(file, /*decodeAhead*/ 0, DecodeExecutor.shared());
+        List<String> serial = read(file, /*decodeAhead*/ 0, ComputeExecutor.shared());
 
-        DecodeExecutor pool = DecodeExecutor.ofParallelism(4);
+        ComputeExecutor pool = ComputeExecutor.ofParallelism(4);
         List<String> parallel;
         try {
             parallel = read(file, /*decodeAhead*/ 3, pool);
@@ -70,13 +71,13 @@ class ParallelDecodeParityTest {
                 .containsExactlyElementsOf(serial);
     }
 
-    private static List<String> read(Path file, int decodeAhead, DecodeExecutor executor) {
+    private static List<String> read(Path file, int decodeAhead, ComputeExecutor executor) {
         SegmentPool pool = SegmentPool.create();
         List<String> rendered = new ArrayList<>();
         try (ByteRangeSource source = TestParquetFiles.openRangeReader(file)) {
             ParquetRuntime runtime = ParquetRuntime.builder()
                     .segmentPool(pool)
-                    .decodeExecutor(executor)
+                    .computeExecutor(executor)
                     .maxDecodeAhead(decodeAhead)
                     .build();
             ParquetFileReader dataset = ParquetFileReader.open(source, runtime, Optional.empty());

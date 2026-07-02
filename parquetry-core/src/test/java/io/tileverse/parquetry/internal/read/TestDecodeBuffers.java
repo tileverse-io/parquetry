@@ -21,6 +21,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import io.tileverse.parquetry.io.SegmentPool;
+import io.tileverse.parquetry.runtime.DecodeBudget;
+import io.tileverse.parquetry.runtime.DiskBudget;
 
 /**
  * Builds {@link DecodeBufferAllocator}s for tests over the default {@link SegmentPool} with an ample off-heap decode

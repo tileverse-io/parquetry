@@ -33,10 +33,11 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
-import io.tileverse.parquetry.internal.read.DiskBudget;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.limits.ResourceLimits;
 import io.tileverse.parquetry.record.ParquetRecord;
+import io.tileverse.parquetry.runtime.DiskBudget;
+import io.tileverse.parquetry.runtime.ParquetRuntime;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.testsupport.CorpusFixtures;
 

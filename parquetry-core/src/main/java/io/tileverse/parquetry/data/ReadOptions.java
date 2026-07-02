@@ -20,6 +20,7 @@ import java.util.OptionalInt;
 
 import io.tileverse.parquetry.filter.SpatialReadProbe;
 import io.tileverse.parquetry.observe.QueryObserver;
+import io.tileverse.parquetry.runtime.ParquetRuntime;
 
 import lombok.NonNull;
 
