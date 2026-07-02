@@ -13,14 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.data;
+package io.tileverse.parquetry.runtime;
 
 import java.nio.file.Path;
 
-import io.tileverse.parquetry.internal.read.DecodeBudget;
-import io.tileverse.parquetry.internal.read.DecodeExecutor;
-import io.tileverse.parquetry.internal.read.DiskBudget;
-import io.tileverse.parquetry.internal.read.FetchBudget;
+import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.internal.read.FetchSpillStore;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.io.limits.IoLimits;
@@ -37,8 +34,30 @@ import lombok.NonNull;
  * <p>Immutable and composable: {@link #withPrefetchDepth(int)} and the other {@code withX} methods return a new runtime
  * that shares the same pool, executor, and budget instances and changes only the named scalar. The heavy resources are
  * never replaced on a live runtime.
+ *
+ * @param computeExecutor shared, process-wide, core-sized pool that runs CPU-bound work (row-group decode today)
+ *     through a submit-or-inline fallback
+ * @param segmentPool shared pool of reusable native buffers backing column-chunk fetches and page decompression scratch
+ * @param fetchBudget bounds the off-heap memory held by in-flight and speculatively prefetched column-chunk fetches,
+ *     shared process-wide across reads
+ * @param decodeBudget bounds the heap held by decoded row-group batches awaiting consumption, shared process-wide
+ *     across reads
+ * @param offHeapDecodeBudget bounds the off-heap memory holding segment-backed decoded values, shared process-wide
+ *     across reads
+ * @param diskBudget bounds the disk consumed by batches spilled when the decode budget is exhausted
+ * @param spillDir directory that holds decode and fetch spill files
+ * @param spillEnabled whether a batch exceeding the decode budget may spill to disk instead of blocking its producer
+ * @param maxDecodeAhead per-read speculative decode-ahead window, in row groups; must be {@code >= 0}
+ * @param maxCoalesceGap largest gap, in bytes, between two adjacent fetch ranges still merged into a single request;
+ *     must be {@code >= 0}
+ * @param maxCoalescedSpan largest span, in bytes, a single coalesced fetch may cover; must be {@code > 0}
+ * @param prefetchDepth how many row groups ahead to speculatively fetch before the current one is consumed; must be
+ *     {@code >= 0}
+ * @param maxConcurrentFetchesPerRead maximum concurrent column-chunk fetches a single read may have in flight; must be
+ *     {@code > 0}
  */
 public record ParquetRuntime(
+        @NonNull ComputeExecutor computeExecutor,
         @NonNull SegmentPool segmentPool,
         @NonNull FetchBudget fetchBudget,
         @NonNull DecodeBudget decodeBudget,
@@ -46,7 +65,6 @@ public record ParquetRuntime(
         @NonNull DiskBudget diskBudget,
         @NonNull Path spillDir,
         boolean spillEnabled,
-        @NonNull DecodeExecutor decodeExecutor,
         int maxDecodeAhead,
         int maxCoalesceGap,
         int maxCoalescedSpan,
@@ -93,6 +111,7 @@ public record ParquetRuntime(
     /** A copy sharing every resource, with {@code prefetchDepth} replaced. */
     public ParquetRuntime withPrefetchDepth(int prefetchDepth) {
         return new ParquetRuntime(
+                computeExecutor,
                 segmentPool,
                 fetchBudget,
                 decodeBudget,
@@ -100,7 +119,6 @@ public record ParquetRuntime(
                 diskBudget,
                 spillDir,
                 spillEnabled,
-                decodeExecutor,
                 maxDecodeAhead,
                 maxCoalesceGap,
                 maxCoalescedSpan,
@@ -111,6 +129,7 @@ public record ParquetRuntime(
     /** A copy sharing every resource, with {@code maxConcurrentFetchesPerRead} replaced. */
     public ParquetRuntime withMaxConcurrentFetchesPerRead(int maxConcurrentFetchesPerRead) {
         return new ParquetRuntime(
+                computeExecutor,
                 segmentPool,
                 fetchBudget,
                 decodeBudget,
@@ -118,7 +137,6 @@ public record ParquetRuntime(
                 diskBudget,
                 spillDir,
                 spillEnabled,
-                decodeExecutor,
                 maxDecodeAhead,
                 maxCoalesceGap,
                 maxCoalescedSpan,
@@ -129,6 +147,7 @@ public record ParquetRuntime(
     /** A copy sharing every resource, with {@code maxDecodeAhead} replaced. */
     public ParquetRuntime withMaxDecodeAhead(int maxDecodeAhead) {
         return new ParquetRuntime(
+                computeExecutor,
                 segmentPool,
                 fetchBudget,
                 decodeBudget,
@@ -136,7 +155,6 @@ public record ParquetRuntime(
                 diskBudget,
                 spillDir,
                 spillEnabled,
-                decodeExecutor,
                 maxDecodeAhead,
                 maxCoalesceGap,
                 maxCoalescedSpan,
@@ -164,7 +182,7 @@ public record ParquetRuntime(
         private DiskBudget diskBudget;
         private Path spillDir;
         private boolean spillEnabled = true;
-        private DecodeExecutor decodeExecutor = DecodeExecutor.shared();
+        private ComputeExecutor computeExecutor = ComputeExecutor.shared();
         private int maxDecodeAhead = UNSET_DECODE_AHEAD;
         private int maxCoalesceGap = 1 << 20;
         private int maxCoalescedSpan = 8 << 20;
@@ -217,8 +235,8 @@ public record ParquetRuntime(
             return this;
         }
 
-        public Builder decodeExecutor(@NonNull DecodeExecutor decodeExecutor) {
-            this.decodeExecutor = decodeExecutor;
+        public Builder computeExecutor(@NonNull ComputeExecutor computeExecutor) {
+            this.computeExecutor = computeExecutor;
             return this;
         }
 
@@ -263,6 +281,7 @@ public record ParquetRuntime(
                     ? decodeAheadDefault(Runtime.getRuntime().availableProcessors(), decodeBudget.capacity())
                     : maxDecodeAhead;
             return new ParquetRuntime(
+                    computeExecutor,
                     segmentPool,
                     resolvedFetchBudget,
                     decodeBudget,
@@ -270,7 +289,6 @@ public record ParquetRuntime(
                     resolvedDiskBudget,
                     resolvedSpillDir,
                     spillEnabled,
-                    decodeExecutor,
                     resolvedDecodeAhead,
                     maxCoalesceGap,
                     maxCoalescedSpan,

@@ -26,13 +26,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.data.ParquetFileReader;
-import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
+import io.tileverse.parquetry.runtime.ComputeExecutor;
+import io.tileverse.parquetry.runtime.ParquetRuntime;
 
 /**
  * Proves that closing a parallel-decode stream early - after consuming just one record - drains any in-flight decode
@@ -43,12 +44,12 @@ class ParallelDecodeEarlyCloseTest {
     @Test
     void closingEarlyDrainsInFlightDecodesWithoutLeaks(@TempDir Path tmp) throws Exception {
         Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(tmp, 4_000);
-        DecodeExecutor decodePool = DecodeExecutor.ofParallelism(4);
+        ComputeExecutor decodePool = ComputeExecutor.ofParallelism(4);
         SegmentPool pool = SegmentPool.create();
         try (ByteRangeSource source = TestParquetFiles.openRangeReader(file)) {
             ParquetRuntime runtime = ParquetRuntime.builder()
                     .segmentPool(pool)
-                    .decodeExecutor(decodePool)
+                    .computeExecutor(decodePool)
                     .maxDecodeAhead(4)
                     .build();
             ParquetFileReader dataset = ParquetFileReader.open(source, runtime, Optional.empty());

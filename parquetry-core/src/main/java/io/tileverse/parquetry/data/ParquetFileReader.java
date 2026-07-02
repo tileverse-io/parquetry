@@ -77,6 +77,7 @@ import io.tileverse.parquetry.observe.QueryStatsCollector;
 import io.tileverse.parquetry.observe.RowGroupRead;
 import io.tileverse.parquetry.observe.SpillAccumulator;
 import io.tileverse.parquetry.record.ParquetRecord;
+import io.tileverse.parquetry.runtime.ParquetRuntime;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.ParquetSchemaException;

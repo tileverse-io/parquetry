@@ -35,7 +35,6 @@ import org.apache.parquet.io.LocalOutputFile;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.RowGroupSummary;
 import io.tileverse.parquetry.filter.Pred;
@@ -46,6 +45,7 @@ import io.tileverse.parquetry.filter.explain.RowGroupOutcome;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
+import io.tileverse.parquetry.runtime.ParquetRuntime;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**

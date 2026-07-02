@@ -19,6 +19,7 @@ import java.lang.foreign.MemorySegment;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.tileverse.parquetry.io.SegmentPool;
+import io.tileverse.parquetry.runtime.DecodeBudget;
 
 import lombok.NonNull;
 

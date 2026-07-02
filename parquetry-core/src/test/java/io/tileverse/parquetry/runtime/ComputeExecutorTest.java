@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.internal.read;
+package io.tileverse.parquetry.runtime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
@@ -22,11 +22,11 @@ import java.util.concurrent.Future;
 
 import org.junit.jupiter.api.Test;
 
-class DecodeExecutorTest {
+class ComputeExecutorTest {
 
     @Test
     void runsSubmittedTaskAndReleasesItsSlotOnCompletion() throws Exception {
-        DecodeExecutor executor = DecodeExecutor.ofParallelism(1);
+        ComputeExecutor executor = ComputeExecutor.ofParallelism(1);
         try {
             assertThat(executor.tryAcquire()).isTrue();
             Future<String> future = executor.submitAcquired(() -> "done");
@@ -39,7 +39,7 @@ class DecodeExecutorTest {
 
     @Test
     void boundsConcurrencyToParallelism() {
-        DecodeExecutor executor = DecodeExecutor.ofParallelism(2);
+        ComputeExecutor executor = ComputeExecutor.ofParallelism(2);
         try {
             assertThat(executor.tryAcquire()).isTrue();
             assertThat(executor.tryAcquire()).isTrue();
@@ -56,7 +56,7 @@ class DecodeExecutorTest {
 
     @Test
     void releasesSlotAndThrowsWhenSubmittingToAShutDownPool() {
-        DecodeExecutor executor = DecodeExecutor.ofParallelism(1);
+        ComputeExecutor executor = ComputeExecutor.ofParallelism(1);
         executor.shutdownNow();
         assertThat(executor.tryAcquire()).isTrue();
         try {
@@ -71,7 +71,7 @@ class DecodeExecutorTest {
 
     @Test
     void releasesSlotWhenTaskThrows() throws Exception {
-        DecodeExecutor executor = DecodeExecutor.ofParallelism(1);
+        ComputeExecutor executor = ComputeExecutor.ofParallelism(1);
         try {
             assertThat(executor.tryAcquire()).isTrue();
             Future<String> future = executor.submitAcquired(() -> {
@@ -92,11 +92,11 @@ class DecodeExecutorTest {
 
     @Test
     void rejectsNonPositiveParallelism() {
-        assertThatIllegalArgumentException().isThrownBy(() -> DecodeExecutor.ofParallelism(0));
+        assertThatIllegalArgumentException().isThrownBy(() -> ComputeExecutor.ofParallelism(0));
     }
 
     @Test
     void sharedSingletonHasPositiveParallelism() {
-        assertThat(DecodeExecutor.shared().parallelism()).isPositive();
+        assertThat(ComputeExecutor.shared().parallelism()).isPositive();
     }
 }

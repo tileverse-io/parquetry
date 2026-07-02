@@ -44,6 +44,10 @@ import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
+import io.tileverse.parquetry.runtime.ComputeExecutor;
+import io.tileverse.parquetry.runtime.DecodeBudget;
+import io.tileverse.parquetry.runtime.DiskBudget;
+import io.tileverse.parquetry.runtime.FetchBudget;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaBuilder;
@@ -135,7 +139,7 @@ class BatchFormObservabilityIT {
                     survivors.stream().map(RowGroupSurvivor::recordEvalRequired).toList();
             return new ParallelDecodeCoordinator(
                     prefetcher,
-                    DecodeExecutor.shared(),
+                    ComputeExecutor.shared(),
                     DecodeBudget.defaultBudget(),
                     TestDecodeBuffers.ample(),
                     DiskBudget.defaultBudget(),

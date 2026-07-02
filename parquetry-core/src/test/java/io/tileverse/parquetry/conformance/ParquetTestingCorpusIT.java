@@ -36,13 +36,13 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ParquetFileReader;
-import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
+import io.tileverse.parquetry.runtime.ParquetRuntime;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.testsupport.CorpusFixtures;
 

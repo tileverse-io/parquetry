@@ -17,6 +17,8 @@ package io.tileverse.parquetry.internal.read;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import io.tileverse.parquetry.runtime.DecodeBudget;
+
 /**
  * An idempotent handle that returns a previously reserved number of bytes to a {@link DecodeBudget} exactly once. A
  * decoded batch releases its reservation when it is closed, after the consumer drains its rows.

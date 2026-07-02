@@ -29,16 +29,17 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.data.ParquetFileReader;
-import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
+import io.tileverse.parquetry.runtime.ComputeExecutor;
+import io.tileverse.parquetry.runtime.ParquetRuntime;
 
 /**
- * Proves that many concurrent reads sharing one small {@link DecodeExecutor} never deadlock, never leak decode slots,
+ * Proves that many concurrent reads sharing one small {@link ComputeExecutor} never deadlock, never leak decode slots,
  * and produce the correct row count.
  *
  * <p>The executor parallelism is deliberately smaller than the number of concurrent readers, so slot contention is high
@@ -52,7 +53,7 @@ class ConcurrentParallelDecodeTest {
         Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(tmp, rows);
 
         // Smaller than reader count to ensure contention and inline-fallback coverage.
-        DecodeExecutor decodePool = DecodeExecutor.ofParallelism(2);
+        ComputeExecutor decodePool = ComputeExecutor.ofParallelism(2);
         SegmentPool pool = SegmentPool.create();
         int readers = 12;
         List<Throwable> failures = new CopyOnWriteArrayList<>();
@@ -64,7 +65,7 @@ class ConcurrentParallelDecodeTest {
                     try (ByteRangeSource source = TestParquetFiles.openRangeReader(file)) {
                         ParquetRuntime runtime = ParquetRuntime.builder()
                                 .segmentPool(pool)
-                                .decodeExecutor(decodePool)
+                                .computeExecutor(decodePool)
                                 .maxDecodeAhead(3)
                                 .build();
                         ParquetFileReader dataset = ParquetFileReader.open(source, runtime, Optional.empty());

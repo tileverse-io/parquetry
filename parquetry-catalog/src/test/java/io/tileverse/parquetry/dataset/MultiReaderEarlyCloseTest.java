@@ -27,17 +27,17 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Query;
 import io.tileverse.parquetry.filter.Value;
-import io.tileverse.parquetry.internal.read.FetchBudget;
 import io.tileverse.parquetry.internal.read.TestParquetFiles;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
+import io.tileverse.parquetry.runtime.FetchBudget;
+import io.tileverse.parquetry.runtime.ParquetRuntime;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**

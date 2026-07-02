@@ -25,19 +25,20 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.data.ParquetFileReader;
-import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
+import io.tileverse.parquetry.runtime.ComputeExecutor;
+import io.tileverse.parquetry.runtime.ParquetRuntime;
 
 /**
  * Proves that {@code maxDecodeAheadPerRead=0} routes all decodes through the inline (serial) path and never touches the
- * {@link DecodeExecutor} slot semaphore.
+ * {@link ComputeExecutor} slot semaphore.
  *
- * <p>If any slot were acquired, {@link DecodeExecutor#availableSlots()} would drop below the pool size during or after
+ * <p>If any slot were acquired, {@link ComputeExecutor#availableSlots()} would drop below the pool size during or after
  * the read. The assertion at the end would then catch the leak.
  */
 class SerialDecodeFallbackTest {
@@ -46,13 +47,13 @@ class SerialDecodeFallbackTest {
     void maxDecodeAheadZeroDecodesInlineAndTouchesNoDecodePool(@TempDir Path tmp) throws Exception {
         int rows = 4_000;
         Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(tmp, rows);
-        DecodeExecutor decodePool = DecodeExecutor.ofParallelism(4);
+        ComputeExecutor decodePool = ComputeExecutor.ofParallelism(4);
         SegmentPool pool = SegmentPool.create();
         long count;
         try (ByteRangeSource source = TestParquetFiles.openRangeReader(file)) {
             ParquetRuntime runtime = ParquetRuntime.builder()
                     .segmentPool(pool)
-                    .decodeExecutor(decodePool)
+                    .computeExecutor(decodePool)
                     .maxDecodeAhead(0)
                     .build();
             ParquetFileReader dataset = ParquetFileReader.open(source, runtime, Optional.empty());

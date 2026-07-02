@@ -17,9 +17,9 @@ package io.tileverse.parquetry.dataset;
 
 import java.util.Optional;
 
-import io.tileverse.parquetry.data.ParquetRuntime;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.internal.read.DecryptionKeyRetriever;
+import io.tileverse.parquetry.runtime.ParquetRuntime;
 
 import lombok.NonNull;
 
