@@ -107,14 +107,16 @@ public final class OutputBatches {
                 ConstantVectors.of(value, base.rowCount());
             case Projection.Column.Null(ColumnPath ignored, Value typeOf) ->
                 ConstantVectors.ofNull(typeOf, base.rowCount());
-            case Projection.Column.RowPosition(ColumnPath name, long _) -> rowPositionVector(name, base);
+            case Projection.Column.RowPosition(ColumnPath name, long _) -> synthesizedVector(name, base);
+            case Projection.Column.Coalesce(ColumnPath name, ColumnPath _, Projection.Column.Coalesce.Fallback _) ->
+                synthesizedVector(name, base);
         };
     }
 
-    private static ColumnVector rowPositionVector(ColumnPath name, ParquetRecordBatch base) {
+    private static ColumnVector synthesizedVector(ColumnPath name, ParquetRecordBatch base) {
         ColumnVector synthesized = base.columns().get(name);
         if (synthesized == null) {
-            throw new IllegalStateException("row-position column not synthesized: " + name);
+            throw new IllegalStateException("synthesized column not built: " + name);
         }
         return synthesized;
     }
@@ -130,6 +132,9 @@ public final class OutputBatches {
             case Projection.Column.Null(ColumnPath name, Value typeOf) ->
                 ConstantLeaves.primitiveFor(name.name(), typeOf, fieldId);
             case Projection.Column.RowPosition(ColumnPath name, long _) -> rowPositionLeaf(name.name(), fieldId);
+            // The coalesced column is a never-null INT64: the fallback fills every cell the source leaves null.
+            case Projection.Column.Coalesce(ColumnPath name, ColumnPath _, Projection.Column.Coalesce.Fallback _) ->
+                rowPositionLeaf(name.name(), fieldId);
         };
     }
 

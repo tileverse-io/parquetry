@@ -6,10 +6,9 @@ No dependency on `iceberg-core`, `apache-avro`, or Hadoop: Iceberg's Avro metada
 `parquetry-avro` reader and the data files through the core Parquet engine. It plugs into the same `DatasetCatalog` ->
 `ParquetDataset` API the pure-parquet and GeoTools paths use, and an Iceberg table reads like any other dataset.
 
-It reads **v1, v2, and v3** data files for copy-on-write tables, where an update rewrites the affected data file and the
-data files alone represent the table at a snapshot. Merge-on-read deletes (v2 delete files, v3 deletion vectors) are not
-yet applied; a snapshot that references them fails fast rather than returning deleted rows. The table below tracks what
-reads today and what is next.
+It reads **v1, v2, and v3** tables, copy-on-write and merge-on-read alike: v2 positional and equality delete files and
+v3 deletion vectors are applied during the scan, and a deleted row is never returned. The v3 row-lineage columns
+(`_row_id`, `_last_updated_sequence_number`) read on request. The table below tracks what reads today and what is next.
 
 ## Capabilities
 
@@ -25,7 +24,7 @@ clear message rather than returning wrong rows. The `Spec` column notes the Iceb
 | Snapshot selection | v1+ | Full | current snapshot, or a pinned `snapshotId` |
 | Branches, tags, and as-of-time travel | v2+ | Planned | named refs and timestamp-based selection are not yet wired |
 | Manifest list + manifests | v1+ | Full | clean-room Avro reader |
-| Data-file read, all format versions | v1-v3 | Full | data files only (copy-on-write); merge-on-read deletes not applied |
+| Data-file read, all format versions | v1-v3 | Full | copy-on-write and merge-on-read |
 | Local + object-storage I/O | - | Full | `LocalIcebergFileIO`; `StorageIcebergFileIO` over tileverse-storage (S3, Azure, GCS, HTTP) |
 | REST catalog, multiple tables | - | Planned | the [REST Catalog spec](https://iceberg.apache.org/rest-catalog-spec/) read slice: loadTable, namespace/table listing, OAuth2, vended credentials. One table per catalog today; metadata resolved by listing or explicit location |
 
@@ -56,7 +55,7 @@ clear message rather than returning wrong rows. The `Spec` column notes the Iceb
 | Partition-value file pruning | v1+ | Full | an equality or range on an identity-partition column skips whole files before opening them |
 | Transform-partition pruning (`days`/`bucket`/`truncate`/...) | v1+ | Planned | a predicate on a transform's source column does not yet prune by partition; only identity-partition values prune |
 | Manifest bounds for `timestamp`/`time`/`decimal`/`fixed`/`binary` | v1+ | Planned | a predicate on these does not prune; the file is kept and filtered |
-| Row-group pruning inside a file (L4) | v1+ | Planned | file-level pruning skips whole files only |
+| Row-group pruning inside a file (L4) | v1+ | Full | the engine's per-row-group tiers run on every kept file; a disjoint row group is skipped from the file's native geometry bounds or column statistics, when the writer recorded them |
 | Dataset-level explain / analyze | - | Full | reports the file dimension: files kept/skipped, each skip reason, each kept file's row-group plan |
 | Column projection on an evolved file | v1+ | Partial | an evolved file presents every table field |
 | Exact engine-backed (JTS) geometry filter on a renamed column | v3 | Planned | the filter binds its column at construction; bbox predicates work across a rename |
@@ -66,8 +65,9 @@ clear message rather than returning wrong rows. The `Spec` column notes the Iceb
 | Feature | Spec | Status | Notes |
 | --- | --- | --- | --- |
 | Copy-on-write tables | v1+ | Full | |
-| Merge-on-read: positional + equality deletes | v2 | Planned | a snapshot referencing delete manifests fails fast |
-| Merge-on-read: deletion vectors | v3 | Planned | |
+| Merge-on-read: positional + equality deletes | v2 | Full | applied during the scan; a delete applies only to the data files its sequence number covers |
+| Merge-on-read: deletion vectors | v3 | Full | Puffin-serialized roaring bitmaps; a deletion vector supersedes positional deletes for its data file |
+| Row lineage (`_row_id`, `_last_updated_sequence_number`) | v3 | Full | projected by name; absent from the schema and the default read. A materialized cell keeps its stored value; a null cell falls back to `first_row_id` + position (`_row_id`) or the file's data sequence number. Below v3 the reserved names are ordinary columns |
 | Partitioned tables | v1+ | Full | identity-partition value reconstruction, transform partitions read as-is, partition-value file pruning; `decimal`/`timestamp` partition source types fail fast |
 
 ## Spatial grading (CARTO iceberg-geo-testbed)
@@ -76,7 +76,10 @@ The CARTO [`iceberg-geo-testbed`](https://github.com/jatorre/iceberg-geo-testbed
 five-rung ladder: L0 cannot read, L1 full scan, L2 spatial predicates return correct rows, L3 file-level pruning from the
 manifest geometry bounds, L4 row-group pruning inside a file. This module is at **L3** on the testbed's V1/V2/V3
 fixtures: on `v3_geometry` (10 files) a California-window query reads 1 file and skips 9, with results identical to a
-brute-force scan. L4 is the remaining rung.
+brute-force scan. The L4 behavior is implemented and proven at the engine level (a kept file's disjoint row groups are
+skipped from its native per-row-group geometry bounds); the testbed's data files hold a single row group each, on which
+file-level and row-group-level pruning coincide, and a multi-row-group demonstration fixture is the remaining grading
+step.
 
 ## Reading a table
 

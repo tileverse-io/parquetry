@@ -105,6 +105,7 @@ public sealed interface Projection permits Projection.All, Projection.Of {
         return switch (column) {
             case Column.Physical(ColumnPath _, ColumnPath source) -> Optional.of(source);
             case Column.Promoted(ColumnPath _, ColumnPath source, PrimitiveKind _) -> Optional.of(source);
+            case Column.Coalesce(ColumnPath _, ColumnPath source, Column.Coalesce.Fallback _) -> Optional.of(source);
             case Column.Constant _, Column.Null _, Column.RowPosition _ -> Optional.empty();
         };
     }
@@ -118,7 +119,13 @@ public sealed interface Projection permits Projection.All, Projection.Of {
      * literals, and sanctioned type promotions without the read itself needing to know why each presentation was
      * chosen.
      */
-    sealed interface Column permits Column.Physical, Column.Constant, Column.Null, Column.Promoted, Column.RowPosition {
+    sealed interface Column
+            permits Column.Physical,
+                    Column.Constant,
+                    Column.Null,
+                    Column.Promoted,
+                    Column.RowPosition,
+                    Column.Coalesce {
 
         /** The result column path this column is presented under. */
         ColumnPath name();
@@ -176,6 +183,42 @@ public sealed interface Projection permits Projection.All, Projection.Of {
         record RowPosition(ColumnPath name, long firstRowId) implements Column {
             public RowPosition {
                 Objects.requireNonNull(name, "name");
+            }
+        }
+
+        /**
+         * Present the physical column at {@code source} coalesced per row with {@code fallback}: a non-null cell keeps
+         * its value, a null cell takes the fallback. The source is decoded and its null cells are filled, which models
+         * an Iceberg materialized row-lineage column whose stored value wins where present. The output has no nulls.
+         *
+         * <p>{@code name} may equal {@code source} (the coalesce fills the source column's null cells in place) or
+         * differ from it (the filled column is presented under a new name, as {@link Physical} models for a plain
+         * rename). A renamed coalesce requires a free top-level output name: the read rejects a {@code name} that a
+         * physical column of the file already has.
+         */
+        record Coalesce(ColumnPath name, ColumnPath source, Fallback fallback) implements Column {
+
+            public Coalesce {
+                Objects.requireNonNull(name, "name");
+                Objects.requireNonNull(source, "source");
+                Objects.requireNonNull(fallback, "fallback");
+            }
+
+            /** The value a null cell of the coalesced column falls back to. */
+            public sealed interface Fallback permits Fallback.Position, Fallback.Constant {
+
+                /**
+                 * Fall back to {@code firstRowId} plus the row's within-file position (an unmaterialized
+                 * {@code _row_id}).
+                 */
+                record Position(long firstRowId) implements Fallback {}
+
+                /** Fall back to a constant value (an unmaterialized {@code _last_updated_sequence_number}). */
+                record Constant(Value value) implements Fallback {
+                    public Constant {
+                        Objects.requireNonNull(value, "value");
+                    }
+                }
             }
         }
     }

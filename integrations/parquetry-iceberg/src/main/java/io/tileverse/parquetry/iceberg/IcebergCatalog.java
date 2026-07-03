@@ -147,7 +147,15 @@ public final class IcebergCatalog implements DatasetCatalog {
                     new CatalogSnapshot(metadata.currentSnapshotId(), metadata.currentSnapshotTimestampMs());
             IcebergDeletePlan deletePlan = IcebergDeletePlan.of(manifestFiles.deleteFiles(), io, icebergSchema);
             IcebergDataset dataset = new IcebergDataset(
-                    tableName, snapshot, icebergSchema, partitionSpec, dataFiles, fileStats, opened, deletePlan);
+                    tableName,
+                    snapshot,
+                    icebergSchema,
+                    partitionSpec,
+                    dataFiles,
+                    fileStats,
+                    opened,
+                    deletePlan,
+                    metadata.formatVersion());
             return new IcebergCatalog(tableName, dataset, opened, io);
         } catch (RuntimeException failure) {
             RuntimeException cleanup = closeAll(opened, io);

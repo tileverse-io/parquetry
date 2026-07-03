@@ -17,12 +17,14 @@ package io.tileverse.parquetry.iceberg;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.SequencedSet;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
@@ -74,6 +76,22 @@ final class IcebergDataset implements ParquetDataset {
     /** The synthesized row-position column the reader produces; the delete predicate filters on it. */
     private static final ColumnPath ROW_POSITION = ColumnPath.of("_pos");
 
+    /**
+     * The Iceberg row-lineage columns a caller may project by name; both are read-only and absent from the schema. Row
+     * lineage (and the reservation of these names) exists from format version 3; below that a column with one of these
+     * names is ordinary user data and is never rewritten.
+     */
+    private static final ColumnPath ROW_ID = ColumnPath.of("_row_id");
+
+    private static final ColumnPath LAST_UPDATED_SEQUENCE_NUMBER = ColumnPath.of("_last_updated_sequence_number");
+
+    // The reserved metadata field ids Iceberg assigns the two lineage columns (org.apache.iceberg.MetadataColumns).
+    private static final int ROW_ID_FIELD_ID = Integer.MAX_VALUE - 107;
+
+    private static final int LAST_UPDATED_SEQUENCE_NUMBER_FIELD_ID = Integer.MAX_VALUE - 108;
+
+    private static final int FIRST_FORMAT_VERSION_WITH_ROW_LINEAGE = 3;
+
     private final String name;
     private final CatalogSnapshot snapshot;
     private final IcebergSchema icebergSchema;
@@ -82,6 +100,7 @@ final class IcebergDataset implements ParquetDataset {
     private final List<FileStats> fileStats;
     private final List<ByteRangeSource> sources;
     private final IcebergDeletePlan deletePlan;
+    private final int formatVersion;
     private final Map<Integer, ParquetSource> perFileDatasets = new ConcurrentHashMap<>();
 
     // The catalog hands the dataset its fully resolved snapshot state in one place; these are cohesive fields, not a
@@ -95,7 +114,8 @@ final class IcebergDataset implements ParquetDataset {
             List<IcebergManifests.DataFileRef> dataFiles,
             List<FileStats> fileStats,
             List<ByteRangeSource> sources,
-            IcebergDeletePlan deletePlan) {
+            IcebergDeletePlan deletePlan,
+            int formatVersion) {
         this.name = Objects.requireNonNull(name, "name");
         this.snapshot = Objects.requireNonNull(snapshot, "snapshot");
         this.icebergSchema = Objects.requireNonNull(icebergSchema, "icebergSchema");
@@ -104,6 +124,12 @@ final class IcebergDataset implements ParquetDataset {
         this.fileStats = List.copyOf(fileStats);
         this.sources = List.copyOf(sources);
         this.deletePlan = Objects.requireNonNull(deletePlan, "deletePlan");
+        this.formatVersion = formatVersion;
+    }
+
+    /** Whether this table's format version has row lineage; the reserved names have no meaning below it. */
+    private boolean rowLineage() {
+        return formatVersion >= FIRST_FORMAT_VERSION_WITH_ROW_LINEAGE;
     }
 
     /** A data file the dataset eliminated for a predicate, with the pruning decision that ruled it out. */
@@ -334,17 +360,182 @@ final class IcebergDataset implements ParquetDataset {
         Optional<Predicate> equalityDeletes = deletePlan.equalityDeletesFor(ref);
         Map<Integer, Value> partitionConstants =
                 IcebergPartitionValues.constantsFor(partitionSpec, ref.partitionValues());
-        IcebergFileSchema file = IcebergFileSchema.of(perFile(index).schema());
+        ParquetSchema fileSchema = perFile(index).schema();
+        IcebergFileSchema file = IcebergFileSchema.of(fileSchema);
         Reconciliation recon = IcebergReconciliation.reconcile(icebergSchema, file, partitionConstants);
         Predicate withEquality = andEqualityDeletes(predicate, equalityDeletes);
         if (recon.passThrough()) {
-            return Query.of(withDeletes(withEquality, deleted), projection);
+            Projection produce = passThroughProjection(projection, fileSchema, file, ref);
+            return Query.of(withDeletes(withEquality, deleted), produce);
         }
         Predicate folded = ConstantFolding.fold(withEquality, constantColumns(recon), addedNullColumns(recon));
         if (folded.equals(Predicate.ALWAYS_FALSE)) {
             return null;
         }
-        return Query.of(withDeletes(folded, deleted), Projection.of(recon.columns()));
+        Projection produce = reconciledProjection(recon, projection, file, ref);
+        return Query.of(withDeletes(folded, deleted), produce);
+    }
+
+    /**
+     * The produce set for a pass-through file. A caller projection that names a lineage column has it rewritten to the
+     * synthesized column for this file; {@link Projection#ALL} is narrowed to exclude any physically materialized
+     * reserved lineage leaf, keeping {@code _row_id} / {@code _last_updated_sequence_number} out of a default read. A
+     * projection that names no lineage column and a file with no materialized lineage leaf pass through unchanged,
+     * keeping a plain read byte-identical to a read of a table without lineage. Below format version 3 there is no row
+     * lineage: every projection passes through untouched, and a column that merely shares a reserved name is read as
+     * the user data it is.
+     */
+    private Projection passThroughProjection(
+            Projection projection, ParquetSchema fileSchema, IcebergFileSchema file, IcebergManifests.DataFileRef ref) {
+        if (!rowLineage()) {
+            return projection;
+        }
+        if (!(projection instanceof Projection.Of(SequencedSet<Projection.Column> columns))) {
+            return allExcludingReservedLineage(fileSchema, file);
+        }
+        if (!requestsLineage(columns)) {
+            return projection;
+        }
+        SequencedSet<Projection.Column> rewritten = LinkedHashSet.newLinkedHashSet(columns.size());
+        for (Projection.Column column : columns) {
+            rewritten.add(isLineage(column.name()) ? lineageColumn(column.name(), file, ref) : column);
+        }
+        return Projection.of(rewritten);
+    }
+
+    /**
+     * {@link Projection#ALL} narrowed to drop the physically materialized reserved lineage leaves a data file holds,
+     * which keeps the lineage columns out of a default ({@code SELECT *}) read. The leaves are located exactly as
+     * {@link #rowIdColumn} finds them ({@link #materializedLineageColumn}), whatever their physical names. A file that
+     * holds no such leaf keeps {@link Projection#ALL}, preserving the plain-read fast path.
+     */
+    private static Projection allExcludingReservedLineage(ParquetSchema fileSchema, IcebergFileSchema file) {
+        Set<ColumnPath> reserved = reservedLineagePaths(file);
+        if (reserved.isEmpty()) {
+            return Projection.ALL;
+        }
+        List<ColumnPath> leaves = fileSchema.leafColumns();
+        List<ColumnPath> kept = new ArrayList<>(leaves.size());
+        for (ColumnPath leaf : leaves) {
+            if (!reserved.contains(leaf)) {
+                kept.add(leaf);
+            }
+        }
+        return Projection.ofPhysical(kept);
+    }
+
+    /** The physical paths of the reserved lineage leaves the file materializes. */
+    private static Set<ColumnPath> reservedLineagePaths(IcebergFileSchema file) {
+        Set<ColumnPath> reserved = new HashSet<>();
+        materializedLineageColumn(file, ROW_ID_FIELD_ID, ROW_ID).ifPresent(column -> reserved.add(column.path()));
+        materializedLineageColumn(file, LAST_UPDATED_SEQUENCE_NUMBER_FIELD_ID, LAST_UPDATED_SEQUENCE_NUMBER)
+                .ifPresent(column -> reserved.add(column.path()));
+        return reserved;
+    }
+
+    /**
+     * The file's materialized reserved lineage column, located by reserved field id. A file written without Iceberg
+     * field ids cannot be matched by id; per the {@link IcebergFileSchema} contract the lookup then falls back to the
+     * reserved name, keeping the SELECT-* exclusion and the projection rewrite consistent for such files. A file that
+     * has field ids never falls back: a column merely named like a reserved one is user data there.
+     */
+    static Optional<IcebergFileSchema.FileColumn> materializedLineageColumn(
+            IcebergFileSchema file, int reservedFieldId, ColumnPath reservedName) {
+        Optional<IcebergFileSchema.FileColumn> byId = file.byFieldId(reservedFieldId);
+        if (byId.isPresent() || file.hasFieldIds()) {
+            return byId;
+        }
+        return file.byName(reservedName.name());
+    }
+
+    /**
+     * The reconciled produce set with the caller's requested lineage columns appended. An evolved file already presents
+     * every table field; a projected lineage column rides on top of that produce set rather than being dropped. Below
+     * format version 3 nothing is appended: a reserved name in the caller projection is not a lineage request there.
+     */
+    private Projection reconciledProjection(
+            Reconciliation recon, Projection projection, IcebergFileSchema file, IcebergManifests.DataFileRef ref) {
+        SequencedSet<Projection.Column> columns = new LinkedHashSet<>(recon.columns());
+        if (rowLineage()) {
+            for (ColumnPath name : requestedLineageNames(projection)) {
+                columns.add(lineageColumn(name, file, ref));
+            }
+        }
+        return Projection.of(columns);
+    }
+
+    private static boolean requestsLineage(SequencedSet<Projection.Column> columns) {
+        for (Projection.Column column : columns) {
+            if (isLineage(column.name())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static List<ColumnPath> requestedLineageNames(Projection projection) {
+        if (!(projection instanceof Projection.Of(SequencedSet<Projection.Column> columns))) {
+            return List.of();
+        }
+        List<ColumnPath> names = new ArrayList<>();
+        for (Projection.Column column : columns) {
+            if (isLineage(column.name())) {
+                names.add(column.name());
+            }
+        }
+        return names;
+    }
+
+    private static boolean isLineage(ColumnPath name) {
+        return name.equals(ROW_ID) || name.equals(LAST_UPDATED_SEQUENCE_NUMBER);
+    }
+
+    /**
+     * The synthesized Iceberg row-lineage column for this data file: the per-row coalesce of the file's materialized
+     * value and the value computed from the manifest. A file that physically holds the reserved lineage field presents
+     * a coalesce column where a stored cell wins and a null cell falls back to the computed value; otherwise
+     * {@code _row_id} is the file's {@code first_row_id} plus each row's position, and
+     * {@code _last_updated_sequence_number} is the file's data sequence number. A file with no row lineage presents
+     * both columns as null.
+     */
+    private static Projection.Column lineageColumn(
+            ColumnPath name, IcebergFileSchema file, IcebergManifests.DataFileRef ref) {
+        if (name.equals(ROW_ID)) {
+            return rowIdColumn(name, file, ref);
+        }
+        return lastUpdatedSequenceNumberColumn(name, file, ref);
+    }
+
+    private static Projection.Column rowIdColumn(
+            ColumnPath name, IcebergFileSchema file, IcebergManifests.DataFileRef ref) {
+        Optional<IcebergFileSchema.FileColumn> materialized = materializedLineageColumn(file, ROW_ID_FIELD_ID, name);
+        if (materialized.isPresent() && ref.firstRowId() != null) {
+            Projection.Column.Coalesce.Fallback fallback =
+                    new Projection.Column.Coalesce.Fallback.Position(ref.firstRowId());
+            return new Projection.Column.Coalesce(name, materialized.get().path(), fallback);
+        }
+        if (materialized.isPresent()) {
+            return new Projection.Column.Physical(name, materialized.get().path());
+        }
+        if (ref.firstRowId() != null) {
+            return new Projection.Column.RowPosition(name, ref.firstRowId());
+        }
+        return new Projection.Column.Null(name, new Value.LongVal(0L));
+    }
+
+    private static Projection.Column lastUpdatedSequenceNumberColumn(
+            ColumnPath name, IcebergFileSchema file, IcebergManifests.DataFileRef ref) {
+        Optional<IcebergFileSchema.FileColumn> materialized =
+                materializedLineageColumn(file, LAST_UPDATED_SEQUENCE_NUMBER_FIELD_ID, name);
+        if (materialized.isPresent()) {
+            Projection.Column.Coalesce.Fallback fallback =
+                    new Projection.Column.Coalesce.Fallback.Constant(new Value.LongVal(ref.dataSequenceNumber()));
+            return new Projection.Column.Coalesce(name, materialized.get().path(), fallback);
+        }
+        if (ref.firstRowId() == null) {
+            return new Projection.Column.Null(name, new Value.LongVal(0L));
+        }
+        return new Projection.Column.Constant(name, new Value.LongVal(ref.dataSequenceNumber()));
     }
 
     /**

@@ -19,6 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
@@ -72,6 +73,46 @@ class IcebergManifestsTest {
         assertThat(ref.upperBounds()).containsKey(geometryFieldId);
         assertThat(ref.lowerBounds().get(geometryFieldId).byteSize()).isIn(16L, 21L);
         assertThat(ref.upperBounds().get(geometryFieldId).byteSize()).isIn(16L, 21L);
+    }
+
+    @Test
+    void assignsFirstRowIdByCumulativeWithinManifestInheritance() throws Exception {
+        Path root = TestCorpus.extractDirectory("iceberg-row-lineage/fresh", tempDir);
+        IcebergTableMetadata metadata =
+                IcebergTableMetadata.read(Files.readString(root.resolve("metadata/v1.metadata.json")));
+        IcebergFileIO io = new LocalIcebergFileIO(metadata.tableLocation(), root);
+
+        List<IcebergManifests.DataFileRef> dataFiles =
+                IcebergManifests.readDataFiles(metadata.manifestListLocation(), io);
+
+        assertThat(dataFiles).hasSize(3);
+        assertThat(firstRowIdOf(dataFiles, "data-file-a.parquet")).isZero();
+        assertThat(firstRowIdOf(dataFiles, "data-file-b.parquet")).isEqualTo(5L);
+        assertThat(firstRowIdOf(dataFiles, "data-file-c.parquet")).isEqualTo(10L);
+    }
+
+    private static Long firstRowIdOf(List<IcebergManifests.DataFileRef> dataFiles, String suffix) {
+        return dataFiles.stream()
+                .filter(ref -> ref.location().endsWith(suffix))
+                .map(IcebergManifests.DataFileRef::firstRowId)
+                .findFirst()
+                .orElseThrow();
+    }
+
+    @Test
+    void keepsAnExplicitFirstRowIdAndDoesNotAdvanceTheOffsetForIt() {
+        List<Long> assigned = IcebergManifests.assignFirstRowIdsForTest(
+                1000L, Arrays.asList(800L, null, null), List.of(25L, 50L, 50L));
+
+        assertThat(assigned).containsExactly(800L, 1000L, 1050L);
+    }
+
+    @Test
+    void assignsNoLineageWhenTheManifestHasNoBase() {
+        List<Long> assigned =
+                IcebergManifests.assignFirstRowIdsForTest(null, Arrays.asList(null, null), List.of(5L, 5L));
+
+        assertThat(assigned).containsExactly(null, null);
     }
 
     @Test

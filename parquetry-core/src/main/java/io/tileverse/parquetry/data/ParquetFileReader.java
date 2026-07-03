@@ -34,6 +34,7 @@ import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.RowRanges;
+import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.filter.explain.RowGroupOutcome;
@@ -427,44 +428,81 @@ public final class ParquetFileReader {
      * once; the two must agree on the offset.
      */
     private List<RowPositionColumn> rowPositionColumns(Predicate predicate, Projection projection) {
-        LinkedHashMap<ColumnPath, Long> firstRowIdByName = new LinkedHashMap<>();
+        LinkedHashMap<ColumnPath, RowPositionColumn> byName = new LinkedHashMap<>();
         for (ColumnPath column : rowPositionColumnsValidated(predicate)) {
-            firstRowIdByName.put(column, 0L);
+            byName.putIfAbsent(column, RowPositionColumn.position(column, 0L));
         }
         if (projection instanceof Projection.Of(SequencedSet<Projection.Column> columns)) {
             for (Projection.Column column : columns) {
-                if (column instanceof Projection.Column.RowPosition(ColumnPath name, long firstRowId)) {
-                    addRowPositionOutput(firstRowIdByName, name, firstRowId);
-                }
+                addSynthesizedColumn(byName, column);
             }
         }
-        List<RowPositionColumn> rowPositionColumns = new ArrayList<>(firstRowIdByName.size());
-        firstRowIdByName.forEach((name, firstRowId) -> rowPositionColumns.add(new RowPositionColumn(name, firstRowId)));
-        return rowPositionColumns;
+        return new ArrayList<>(byName.values());
     }
 
-    private void addRowPositionOutput(Map<ColumnPath, Long> firstRowIdByName, ColumnPath name, long firstRowId) {
-        validateRowPositionColumn(name);
-        Long previous = firstRowIdByName.putIfAbsent(name, firstRowId);
-        if (previous != null && previous != firstRowId) {
-            throw new ParquetSchemaException("Conflicting first row id for the row-position column " + name.dot() + ": "
-                    + previous + " and " + firstRowId);
+    private void addSynthesizedColumn(Map<ColumnPath, RowPositionColumn> byName, Projection.Column column) {
+        switch (column) {
+            case Projection.Column.RowPosition(ColumnPath name, long firstRowId) ->
+                addRowPositionOutput(byName, name, firstRowId);
+            case Projection.Column.Coalesce(
+                    ColumnPath name,
+                    ColumnPath sourceColumn,
+                    Projection.Column.Coalesce.Fallback f) -> byName.put(name, coalesceColumn(name, sourceColumn, f));
+            default -> {
+                // physical, constant, null, and promoted columns synthesize nothing
+            }
         }
     }
 
     /**
-     * Rejects a caller-named row-position column the reader cannot produce: a nested path (the synthesized column is
-     * always a top-level leaf), or a name a physical column of the file already has (the produced column cannot coexist
-     * with a real column at that path). The caller must pick a free top-level name (Iceberg uses {@code _pos}).
+     * A coalesce column presented under its source name is exempt from {@link #validateRowPositionColumn}: its name
+     * deliberately equals a physical leaf (the materialized lineage column it coalesces with), which the row-position
+     * rule forbids for a pure synthesized column. A renamed coalesce presents a new output column and its name must
+     * pass the same rule.
+     */
+    private RowPositionColumn coalesceColumn(
+            ColumnPath name, ColumnPath sourceColumn, Projection.Column.Coalesce.Fallback fallback) {
+        if (!name.equals(sourceColumn)) {
+            validateRowPositionColumn(name);
+        }
+        return switch (fallback) {
+            case Projection.Column.Coalesce.Fallback.Position(long firstRowId) ->
+                RowPositionColumn.coalesceWithPosition(name, sourceColumn, firstRowId);
+            case Projection.Column.Coalesce.Fallback.Constant(Value value) ->
+                RowPositionColumn.coalesceWithConstant(name, sourceColumn, longValue(value));
+        };
+    }
+
+    private static long longValue(Value value) {
+        if (value instanceof Value.LongVal(long v)) {
+            return v;
+        }
+        throw new ParquetSchemaException("A coalesce constant fallback must be a long value, got " + value);
+    }
+
+    private void addRowPositionOutput(Map<ColumnPath, RowPositionColumn> byName, ColumnPath name, long firstRowId) {
+        validateRowPositionColumn(name);
+        RowPositionColumn previous = byName.putIfAbsent(name, RowPositionColumn.position(name, firstRowId));
+        if (previous != null && previous.firstRowId() != firstRowId) {
+            throw new ParquetSchemaException("Conflicting first row id for the row-position column " + name.dot() + ": "
+                    + previous.firstRowId() + " and " + firstRowId);
+        }
+    }
+
+    /**
+     * Rejects a caller-named synthesized column (a row position, or a renamed coalesce's presented name) the reader
+     * cannot produce: a nested path (the synthesized column is always a top-level leaf), or a name a physical column of
+     * the file already has (the produced column cannot coexist with a real column at that path). The caller must pick a
+     * free top-level name (Iceberg uses {@code _pos}).
      */
     private void validateRowPositionColumn(ColumnPath column) {
         if (column.numParts() > 1) {
             throw new ParquetSchemaException(
-                    "A row-position column must be a top-level name, not the nested path " + column.dot());
+                    "A synthesized column must be a top-level name, not the nested path " + column.dot());
         }
         if (fileSchema.find(column).isPresent()) {
-            throw new ParquetSchemaException(
-                    "Cannot synthesize the row-position column: the file already has a " + column.dot() + " column");
+            throw new ParquetSchemaException("Cannot synthesize the " + column.dot()
+                    + " column: the file already has a physical column with that name");
         }
     }
 

@@ -51,6 +51,7 @@ class IcebergFileStatsTest {
                 "s3://bucket/data/file-0.parquet",
                 42L,
                 1L,
+                null,
                 Map.of(VAL_FIELD_ID, leLong(VAL_LOWER), GEOM_FIELD_ID, packedXy(XMIN, YMIN)),
                 Map.of(VAL_FIELD_ID, leLong(VAL_UPPER), GEOM_FIELD_ID, packedXy(XMAX, YMAX)),
                 Map.of(),
@@ -74,6 +75,7 @@ class IcebergFileStatsTest {
                 "s3://bucket/data/file-0.parquet",
                 42L,
                 1L,
+                null,
                 Map.of(VAL_FIELD_ID, leLong(VAL_LOWER), GEOM_FIELD_ID, malformedPoint),
                 Map.of(VAL_FIELD_ID, leLong(VAL_UPPER), GEOM_FIELD_ID, malformedPoint),
                 Map.of(),
@@ -95,6 +97,7 @@ class IcebergFileStatsTest {
                 "s3://bucket/data/file-0.parquet",
                 42L,
                 1L,
+                null,
                 Map.of(VAL_FIELD_ID, leLong(VAL_LOWER)),
                 Map.of(VAL_FIELD_ID, leLong(VAL_UPPER)),
                 Map.of(),
@@ -117,7 +120,7 @@ class IcebergFileStatsTest {
         Map<Integer, Value> partitionConstants = IcebergPartitionValues.constantsFor(spec, Map.of(1000, "b"));
 
         IcebergManifests.DataFileRef ref = new IcebergManifests.DataFileRef(
-                "data/category=b/f.parquet", 100L, 1L, Map.of(), Map.of(), Map.of(), Map.of(1000, "b"));
+                "data/category=b/f.parquet", 100L, 1L, null, Map.of(), Map.of(), Map.of(), Map.of(1000, "b"));
 
         FileStats stats = IcebergFileStats.from(ref, List.of(id, category), partitionConstants);
 

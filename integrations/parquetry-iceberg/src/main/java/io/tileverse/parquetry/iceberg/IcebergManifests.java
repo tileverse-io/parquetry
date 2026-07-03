@@ -67,6 +67,11 @@ final class IcebergManifests {
      * @param location the absolute data-file location
      * @param recordCount the number of rows the manifest records for this file
      * @param dataSequenceNumber the file's data sequence number, inherited from its manifest when the entry omits it
+     * @param firstRowId the row id of this file's first row (Iceberg v3 row lineage), or {@code null} when the table
+     *     has no row lineage. The manifest entry leaves it null for a freshly written file; it is assigned on read as
+     *     the manifest's {@code first_row_id} base plus the cumulative record count of the earlier null-first_row_id
+     *     data files in the same manifest. A row's {@code _row_id} is this base plus the row's position within the
+     *     file.
      * @param lowerBounds per-column lower bounds keyed by field id; a missing key means no recorded bound
      * @param upperBounds per-column upper bounds keyed by field id; a missing key means no recorded bound
      * @param nullValueCounts per-column null counts keyed by field id
@@ -77,6 +82,7 @@ final class IcebergManifests {
             String location,
             long recordCount,
             long dataSequenceNumber,
+            Long firstRowId,
             Map<Integer, MemorySegment> lowerBounds,
             Map<Integer, MemorySegment> upperBounds,
             Map<Integer, Long> nullValueCounts,
@@ -186,8 +192,11 @@ final class IcebergManifests {
         return readSnapshot(manifestListLocation, io).dataFiles();
     }
 
-    /** One manifest the manifest list references, with the sequence number its ADDED entries inherit. */
-    private record ManifestFileRef(String location, long sequenceNumber) {}
+    /**
+     * One manifest the manifest list references, with the sequence number its ADDED entries inherit and the
+     * {@code first_row_id} base its data files inherit (Iceberg v3 row lineage; null when the table has no lineage).
+     */
+    private record ManifestFileRef(String location, long sequenceNumber, Long firstRowId) {}
 
     private static List<ManifestFileRef> readManifestFiles(String manifestListLocation, IcebergFileIO io) {
         List<ManifestFileRef> manifests = new ArrayList<>();
@@ -197,7 +206,8 @@ final class IcebergManifests {
             entries.forEach(entry -> {
                 String path = (String) entry.get("manifest_path");
                 long sequenceNumber = longOrDefault(safeGet(entry, "sequence_number"), 0L);
-                manifests.add(new ManifestFileRef(path, sequenceNumber));
+                Long firstRowId = nullableLong(safeGet(entry, "first_row_id"));
+                manifests.add(new ManifestFileRef(path, sequenceNumber, firstRowId));
             });
         }
         return manifests;
@@ -205,6 +215,7 @@ final class IcebergManifests {
 
     private static void readManifestEntries(
             ManifestFileRef manifest, IcebergFileIO io, List<DataFileRef> dataFiles, List<DeleteFileRef> deleteFiles) {
+        RowIdAssigner rowIds = new RowIdAssigner(manifest.firstRowId());
         try (ByteRangeSource source = io.open(manifest.location());
                 AvroDataFileReader reader = AvroDataFileReader.open(source);
                 Stream<AvroRecord> entries = reader.records()) {
@@ -215,20 +226,63 @@ final class IcebergManifests {
                 }
                 long sequenceNumber = inheritedSequenceNumber(entry, manifest);
                 AvroRecord dataFile = (AvroRecord) entry.get("data_file");
-                addClassified(dataFile, sequenceNumber, dataFiles, deleteFiles);
+                addClassified(dataFile, sequenceNumber, rowIds, dataFiles, deleteFiles);
             });
         }
     }
 
     private static void addClassified(
-            AvroRecord dataFile, long sequenceNumber, List<DataFileRef> dataFiles, List<DeleteFileRef> deleteFiles) {
+            AvroRecord dataFile,
+            long sequenceNumber,
+            RowIdAssigner rowIds,
+            List<DataFileRef> dataFiles,
+            List<DeleteFileRef> deleteFiles) {
         int content = intOrDefault(safeGet(dataFile, "content"), CONTENT_DATA);
         switch (content) {
-            case CONTENT_DATA -> dataFiles.add(readDataFile(dataFile, sequenceNumber));
+            case CONTENT_DATA -> dataFiles.add(readDataFile(dataFile, sequenceNumber, rowIds));
             case CONTENT_POSITION_DELETES, CONTENT_EQUALITY_DELETES ->
                 deleteFiles.add(readDeleteFile(dataFile, content, sequenceNumber));
             default -> throw new IcebergFormatException("unknown manifest entry content " + content);
         }
+    }
+
+    /**
+     * Assigns each data file its {@code first_row_id} within one manifest (Iceberg v3 row lineage). A file that records
+     * its own {@code first_row_id} keeps that value and does not advance the running offset; a file that leaves it null
+     * inherits the manifest's base plus the cumulative record count of the earlier null-{@code first_row_id} data files
+     * in the manifest. The manifest is read in entry order; deleted entries and delete files never reach the assigner
+     * and consume no row ids. When the manifest has no base the table has no row lineage, and each file keeps whatever
+     * the entry recorded (null for a freshly written file). This mirrors Iceberg's own {@code ManifestReader} id
+     * assigner, which advances its counter only for a live data file whose {@code first_row_id} is null.
+     */
+    private static final class RowIdAssigner {
+
+        private final Long manifestFirstRowId;
+        private long offset;
+
+        RowIdAssigner(Long manifestFirstRowId) {
+            this.manifestFirstRowId = manifestFirstRowId;
+        }
+
+        Long assign(Long explicitFirstRowId, long recordCount) {
+            if (manifestFirstRowId == null || explicitFirstRowId != null) {
+                return explicitFirstRowId;
+            }
+            long assigned = manifestFirstRowId + offset;
+            offset += recordCount;
+            return assigned;
+        }
+    }
+
+    /** Test hook: the first row ids the assigner gives a sequence of (explicit first_row_id, record count) entries. */
+    static List<Long> assignFirstRowIdsForTest(
+            Long manifestFirstRowId, List<Long> explicitFirstRowIds, List<Long> recordCounts) {
+        RowIdAssigner assigner = new RowIdAssigner(manifestFirstRowId);
+        List<Long> assigned = new ArrayList<>(explicitFirstRowIds.size());
+        for (int index = 0; index < explicitFirstRowIds.size(); index++) {
+            assigned.add(assigner.assign(explicitFirstRowIds.get(index), recordCounts.get(index)));
+        }
+        return assigned;
     }
 
     /**
@@ -243,10 +297,11 @@ final class IcebergManifests {
         return manifest.sequenceNumber();
     }
 
-    private static DataFileRef readDataFile(AvroRecord dataFile, long sequenceNumber) {
+    private static DataFileRef readDataFile(AvroRecord dataFile, long sequenceNumber, RowIdAssigner rowIds) {
         String location = (String) dataFile.get(FILE_PATH);
         long recordCount =
                 requiredNumber(dataFile.get(RECORD_COUNT), RECORD_COUNT).longValue();
+        Long firstRowId = rowIds.assign(nullableLong(safeGet(dataFile, "first_row_id")), recordCount);
         Map<Integer, MemorySegment> lowerBounds =
                 readIntKeyedMap(safeGet(dataFile, "lower_bounds"), MemorySegment.class::cast);
         Map<Integer, MemorySegment> upperBounds =
@@ -257,7 +312,14 @@ final class IcebergManifests {
         Map<Integer, Object> partitionValues =
                 partition instanceof AvroRecord partitionRecord ? readPartitionTuple(partitionRecord) : Map.of();
         return new DataFileRef(
-                location, recordCount, sequenceNumber, lowerBounds, upperBounds, nullValueCounts, partitionValues);
+                location,
+                recordCount,
+                sequenceNumber,
+                firstRowId,
+                lowerBounds,
+                upperBounds,
+                nullValueCounts,
+                partitionValues);
     }
 
     /**

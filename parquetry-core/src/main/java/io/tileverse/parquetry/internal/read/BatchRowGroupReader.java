@@ -27,12 +27,14 @@ import java.util.OptionalInt;
 import com.google.errorprone.annotations.MustBeClosed;
 
 import io.tileverse.parquetry.columnar.ColumnVector;
+import io.tileverse.parquetry.columnar.ConstantVectors;
 import io.tileverse.parquetry.columnar.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.columnar.Levels;
 import io.tileverse.parquetry.columnar.LongVector;
 import io.tileverse.parquetry.columnar.OutputBatches;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.filter.RowRanges;
+import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -184,7 +186,11 @@ public final class BatchRowGroupReader implements AutoCloseable {
     private static List<SchemaNode.Primitive> rowPositionLeaves(List<RowPositionColumn> columns) {
         List<SchemaNode.Primitive> leaves = new ArrayList<>(columns.size());
         for (RowPositionColumn column : columns) {
-            leaves.add(OutputBatches.rowPositionLeaf(column.name().name(), -1));
+            // A coalesce presented under its source name reuses that physical leaf; a pure row position and a
+            // renamed coalesce each add a new leaf.
+            if (!column.reusesSourceLeaf()) {
+                leaves.add(OutputBatches.rowPositionLeaf(column.name().name(), -1));
+            }
         }
         return leaves;
     }
@@ -271,10 +277,38 @@ public final class BatchRowGroupReader implements AutoCloseable {
         // within-file position (firstRowId 0) and an Iceberg row id over the same rows therefore get distinct vectors.
         Map<ColumnPath, ColumnVector> withPosition = new HashMap<>(vectors);
         for (RowPositionColumn column : synthesis.columns()) {
-            long base = synthesis.base() + column.firstRowId();
-            withPosition.put(column.name(), LongVector.rowPositions(base, positions, batchRows));
+            withPosition.put(column.name(), synthesizedColumn(column, synthesis.base(), positions, batchRows, vectors));
         }
         return withPosition;
+    }
+
+    /**
+     * The vector for one synthesized column. A pure row position is {@code base + firstRowId} plus each row's position.
+     * A coalesce reads the decoded physical column at its source and fills each null cell with the row position or the
+     * constant; the physical value wins where present.
+     */
+    private static ColumnVector synthesizedColumn(
+            RowPositionColumn column,
+            long groupBase,
+            io.tileverse.parquetry.columnar.Selection positions,
+            int batchRows,
+            Map<ColumnPath, ColumnVector> vectors) {
+        if (!column.isCoalesce()) {
+            return LongVector.rowPositions(groupBase + column.firstRowId(), positions, batchRows);
+        }
+        LongVector physical = coalesceSource(vectors, column.coalesceSource().orElseThrow());
+        LongVector fallback = column.coalesceConstant().isPresent()
+                ? (LongVector) ConstantVectors.of(
+                        new Value.LongVal(column.coalesceConstant().getAsLong()), batchRows)
+                : LongVector.rowPositions(groupBase + column.firstRowId(), positions, batchRows);
+        return LongVector.coalesced(physical, fallback);
+    }
+
+    private static LongVector coalesceSource(Map<ColumnPath, ColumnVector> vectors, ColumnPath source) {
+        if (vectors.get(source) instanceof LongVector longVector) {
+            return longVector;
+        }
+        throw new IllegalStateException("coalesce source column " + source + " was not decoded as an INT64 column");
     }
 
     /**
