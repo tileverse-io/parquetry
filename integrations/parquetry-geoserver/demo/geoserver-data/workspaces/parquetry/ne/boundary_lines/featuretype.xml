@@ -1,34 +1,34 @@
 <featureType>
-  <id>FeatureTypeInfoImpl-1428db6f:19ea58c4651:-7fd8</id>
-  <name>coastlines</name>
-  <nativeName>coastlines</nativeName>
+  <id>FeatureTypeInfoImpl--2fb5fd2d:19ea55565ed:-7fd7</id>
+  <name>boundary_lines</name>
+  <nativeName>boundary_lines_land</nativeName>
   <namespace>
-    <id>NamespaceInfoImpl-1428db6f:19ea58c4651:-7fe2</id>
+    <id>NamespaceInfoImpl--2fb5fd2d:19ea55565ed:-7fe2</id>
   </namespace>
-  <title>coastlines</title>
+  <title>boundary_lines_land</title>
   <keywords>
     <string>features</string>
-    <string>coastlines</string>
+    <string>boundary_lines_land</string>
   </keywords>
   <srs>EPSG:4326</srs>
   <nativeBoundingBox>
-    <minx>-180.0</minx>
-    <maxx>180.0</maxx>
-    <miny>-85.19218750000002</miny>
-    <maxy>83.599609375</maxy>
+    <minx>-141.00213640665194</minx>
+    <maxx>145.9401672711012</maxx>
+    <miny>-55.11400074012312</miny>
+    <maxy>70.06481924099897</maxy>
     <crs>EPSG:4326</crs>
   </nativeBoundingBox>
   <latLonBoundingBox>
-    <minx>-180.0</minx>
-    <maxx>180.0</maxx>
-    <miny>-85.19218750000002</miny>
-    <maxy>83.599609375</maxy>
+    <minx>-141.00213640665194</minx>
+    <maxx>145.9401672711012</maxx>
+    <miny>-55.11400074012312</miny>
+    <maxy>70.06481924099897</maxy>
     <crs>EPSG:4326</crs>
   </latLonBoundingBox>
   <projectionPolicy>FORCE_DECLARED</projectionPolicy>
   <enabled>true</enabled>
   <store class="dataStore">
-    <id>DataStoreInfoImpl-1428db6f:19ea58c4651:-7fdf</id>
+    <id>DataStoreInfoImpl--2fb5fd2d:19ea55565ed:-7fdb</id>
   </store>
   <serviceConfiguration>false</serviceConfiguration>
   <maxFeatures>0</maxFeatures>

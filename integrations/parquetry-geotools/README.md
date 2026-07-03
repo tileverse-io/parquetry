@@ -28,12 +28,29 @@ feature cap, and counting down into the parquetry read path.
 | `uri`       | yes      | URI of a GeoParquet file (local path, `s3://`, `gs://`, `https://`, ... per the tileverse storage backends) |
 | `namespace` | no       | Feature type namespace |
 | `fid`       | no       | Column to use as the feature id (see [Feature ids](#feature-ids)) |
+| `layer-grouping` | no  | For a directory URI: `merged` (default) reads all files as one layer (files must share a schema); `file` publishes each top-level `.parquet` file as its own layer |
 
 ```java
 Map<String, Object> params = Map.of("filetype", "geoparquet", "uri", "s3://bucket/roads.parquet");
 DataStore store = DataStoreFinder.getDataStore(params);
 SimpleFeatureSource roads = store.getFeatureSource(store.getTypeNames()[0]);
 ```
+
+## Directories and layers
+
+A directory (or glob) URI resolves through the `layer-grouping` parameter:
+
+- `merged` (default) - every matched file, recursively, including a
+  Hive-partitioned tree, is one dataset and one layer; all files must share a
+  schema by equality.
+- `file` - each top-level `.parquet` file in the directory is its own layer,
+  named by its file name without the extension. Files need not share a schema
+  (e.g. a directory of Natural Earth themes, one file per theme). The listing
+  never recurses and drops any glob in the URI; a Hive-partitioned tree has no
+  top-level files and fails with "no files found" - serve it with
+  `layer-grouping=merged`.
+
+A single-file URI is always exactly one layer; `layer-grouping` has no effect on it.
 
 ## Cloud storage
 

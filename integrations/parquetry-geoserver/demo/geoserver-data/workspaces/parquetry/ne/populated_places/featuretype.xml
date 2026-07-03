@@ -1,34 +1,34 @@
 <featureType>
-  <id>FeatureTypeInfoImpl-1428db6f:19ea58c4651:-7fd6</id>
-  <name>disputed_areas</name>
-  <nativeName>disputed_areas</nativeName>
+  <id>FeatureTypeInfoImpl--2fb5fd2d:19ea55565ed:-7fce</id>
+  <name>populated_places</name>
+  <nativeName>populated_places</nativeName>
   <namespace>
-    <id>NamespaceInfoImpl-1428db6f:19ea58c4651:-7fe2</id>
+    <id>NamespaceInfoImpl--2fb5fd2d:19ea55565ed:-7fe2</id>
   </namespace>
-  <title>disputed_areas</title>
+  <title>populated_places</title>
   <keywords>
     <string>features</string>
-    <string>disputed_areas</string>
+    <string>populated_places</string>
   </keywords>
   <srs>EPSG:4326</srs>
   <nativeBoundingBox>
-    <minx>-58.42730668804971</minx>
-    <maxx>148.83714806538353</maxx>
-    <miny>1.475362453615233</miny>
-    <maxy>48.70561341257377</maxy>
+    <minx>-175.2205645</minx>
+    <maxx>179.2166471</maxx>
+    <miny>-89.9999998</miny>
+    <maxy>78.22097104117844</maxy>
     <crs>EPSG:4326</crs>
   </nativeBoundingBox>
   <latLonBoundingBox>
-    <minx>-58.42730668804971</minx>
-    <maxx>148.83714806538353</maxx>
-    <miny>1.475362453615233</miny>
-    <maxy>48.70561341257377</maxy>
+    <minx>-175.2205645</minx>
+    <maxx>179.2166471</maxx>
+    <miny>-89.9999998</miny>
+    <maxy>78.22097104117844</maxy>
     <crs>EPSG:4326</crs>
   </latLonBoundingBox>
   <projectionPolicy>FORCE_DECLARED</projectionPolicy>
   <enabled>true</enabled>
   <store class="dataStore">
-    <id>DataStoreInfoImpl-1428db6f:19ea58c4651:-7fde</id>
+    <id>DataStoreInfoImpl--2fb5fd2d:19ea55565ed:-7fdb</id>
   </store>
   <serviceConfiguration>false</serviceConfiguration>
   <maxFeatures>0</maxFeatures>
