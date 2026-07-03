@@ -30,7 +30,7 @@ import lombok.NonNull;
  * ({@link #valueAt(int)}) and its contiguous bulk copy.
  */
 public sealed interface LongVector extends ColumnVector
-        permits LongVector.Heap, LongVector.Segment, LongVector.RowPositions {
+        permits LongVector.Heap, LongVector.Segment, LongVector.RowPositions, LongVector.Coalesced {
 
     /** A vector over heap-resident values, as produced by the assembly compaction lane and the Arrow packer. */
     static LongVector materialized(@NonNull long[] values, @NonNull Validity validity) {
@@ -54,6 +54,17 @@ public sealed interface LongVector extends ColumnVector
             throw new IllegalArgumentException("length must be >= 0, got " + length);
         }
         return new RowPositions(base, positionMap, length, Validity.allValid(length), Selection.ALL);
+    }
+
+    /**
+     * A per-row coalesce of a physical column with a fallback: logical row {@code j} reports the physical value when
+     * the physical cell is non-null, otherwise the fallback's value at {@code j}. The result has no nulls (the fallback
+     * is always valid). The two inputs must expose the same logical rows in the same order; the fallback is the
+     * synthesized row-position column (an Iceberg {@code _row_id}) or a constant (an Iceberg
+     * {@code _last_updated_sequence_number}).
+     */
+    static LongVector coalesced(@NonNull LongVector physical, @NonNull LongVector fallback) {
+        return new Coalesced(physical, fallback);
     }
 
     /**
@@ -279,6 +290,68 @@ public sealed interface LongVector extends ColumnVector
         @Override
         public long approximateHeapBytes() {
             return validity.heapBytes();
+        }
+    }
+
+    /**
+     * A per-row coalesce: logical row {@code j} reports the {@code physical} value when that cell is non-null,
+     * otherwise the {@code fallback} value at {@code j}. Holds no backing array and no selection of its own; it
+     * delegates to the two inputs' logical accessors and re-selects both on {@link #withSelection}, which keeps it
+     * aligned to the batch's rows through record-level filtering and column-index page-skipping. Always non-null: the
+     * fallback fills every cell the physical column leaves null.
+     */
+    final class Coalesced implements LongVector {
+
+        private final LongVector physical;
+        private final LongVector fallback;
+        private final Validity validity;
+
+        private Coalesced(@NonNull LongVector physical, @NonNull LongVector fallback) {
+            if (physical.size() != fallback.size()) {
+                throw new IllegalArgumentException("coalesce inputs expose different row counts: %d and %d"
+                        .formatted(physical.size(), fallback.size()));
+            }
+            this.physical = physical;
+            this.fallback = fallback;
+            this.validity = Validity.allValid(physical.size());
+        }
+
+        @Override
+        public int baseSize() {
+            return physical.size();
+        }
+
+        @Override
+        public Validity validity() {
+            return validity;
+        }
+
+        // This vector has no single backing: it keeps its own selection at ALL and reads the two inputs through their
+        // logical accessors (which apply their own selection). Here valueAt's index is a logical row, not a backing
+        // index, and the physical null it consults selects between the stored value and the fallback.
+        @Override
+        public long valueAt(int physicalRow) {
+            if (physical.isNull(physicalRow)) {
+                return fallback.getLong(physicalRow);
+            }
+            return physical.getLong(physicalRow);
+        }
+
+        @Override
+        public void copyContiguous(MemorySegment target, long targetOffset, int fromPhysical, int count) {
+            for (int i = 0; i < count; i++) {
+                target.set(INT64, targetOffset + (long) i * Long.BYTES, valueAt(fromPhysical + i));
+            }
+        }
+
+        @Override
+        public LongVector withSelection(Selection selection) {
+            return new Coalesced((LongVector) physical.select(selection), (LongVector) fallback.select(selection));
+        }
+
+        @Override
+        public long approximateHeapBytes() {
+            return physical.approximateHeapBytes() + fallback.approximateHeapBytes();
         }
     }
 }

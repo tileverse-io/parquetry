@@ -213,8 +213,11 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
             case Projection.Column.Physical(ColumnPath name, ColumnPath source) -> mapping.put(name, source);
             case Projection.Column.Promoted(ColumnPath name, ColumnPath source, PrimitiveKind _) ->
                 mapping.put(name, source);
-            case Projection.Column.Constant _, Projection.Column.Null _, Projection.Column.RowPosition _ -> {
-                /* injected column has no physical source */
+            case Projection.Column.Constant _,
+                    Projection.Column.Null _,
+                    Projection.Column.RowPosition _,
+                    Projection.Column.Coalesce _ -> {
+                /* injected or coalesced column presents no physical source to lower a predicate through */
             }
         }
     }

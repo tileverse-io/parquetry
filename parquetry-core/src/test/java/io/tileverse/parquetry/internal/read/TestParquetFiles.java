@@ -64,6 +64,15 @@ public final class TestParquetFiles {
               {"name":"uid","type":{"type":"fixed","name":"Uid","size":16}}
             ]}""";
 
+    private static final String NULLABLE_LONG_SCHEMA = """
+            {"type":"record","name":"Row","fields":[
+              {"name":"id","type":"long"},
+              {"name":"stored","type":["null","long"],"default":null}
+            ]}""";
+
+    /** The base a non-null {@code stored} cell adds to its row's {@code id} in the nullable-long fixture. */
+    public static final long STORED_BASE = 1_000L;
+
     static final int FIXED_UID_WIDTH = 16;
 
     /**
@@ -119,6 +128,36 @@ public final class TestParquetFiles {
                 GenericData.Record rec = new GenericData.Record(schema);
                 rec.put("id", i);
                 rec.put("uid", new GenericData.Fixed(uidSchema, fixedUid(i)));
+                writer.write(rec);
+            }
+        }
+        return file;
+    }
+
+    /**
+     * Writes a Parquet 2.0 / Snappy file with a required {@code id} INT64 column (the row index) and an optional
+     * {@code stored} INT64 column, spanning multiple row groups. Every third row (id divisible by 3) stores
+     * {@code STORED_BASE + id}; the other rows leave {@code stored} null. The pattern makes each cell's expected value
+     * recoverable from its row's {@code id}, letting coalesce tests verify stored cells win and null cells fall back.
+     *
+     * @param dir directory in which to write the file
+     * @param rows total number of rows to write
+     * @return path to the written file
+     */
+    public static Path writeNullableLongColumnFileMultiRowGroup(Path dir, int rows) throws IOException {
+        Path file = dir.resolve("nullable-long-multi-rg.parquet");
+        org.apache.avro.Schema schema = new org.apache.avro.Schema.Parser().parse(NULLABLE_LONG_SCHEMA);
+        try (ParquetWriter<GenericData.Record> writer = AvroParquetWriter.<GenericData.Record>builder(
+                        new LocalOutputFile(file))
+                .withSchema(schema)
+                .withCompressionCodec(CompressionCodecName.SNAPPY)
+                .withWriterVersion(WriterVersion.PARQUET_2_0)
+                .withRowGroupSize(8_192L)
+                .build()) {
+            for (long id = 0; id < rows; id++) {
+                GenericData.Record rec = new GenericData.Record(schema);
+                rec.put("id", id);
+                rec.put("stored", (id % 3 == 0) ? STORED_BASE + id : null);
                 writer.write(rec);
             }
         }

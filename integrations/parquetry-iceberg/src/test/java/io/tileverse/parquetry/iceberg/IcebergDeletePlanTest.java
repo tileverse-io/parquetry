@@ -94,7 +94,7 @@ class IcebergDeletePlanTest {
 
     @Test
     void theEmptyPlanAppliesNoDeletes() {
-        DataFileRef anyDataFile = new DataFileRef("x", 0L, 0L, Map.of(), Map.of(), Map.of(), Map.of());
+        DataFileRef anyDataFile = new DataFileRef("x", 0L, 0L, null, Map.of(), Map.of(), Map.of(), Map.of());
         IcebergDeletePlan plan = IcebergDeletePlan.of(List.of(), null, null);
 
         assertThat(plan.isEmpty()).isTrue();
@@ -234,7 +234,7 @@ class IcebergDeletePlanTest {
     }
 
     private static DataFileRef dataFileLocatedAt(String location, long dataSequenceNumber) {
-        return new DataFileRef(location, 100L, dataSequenceNumber, Map.of(), Map.of(), Map.of(), Map.of());
+        return new DataFileRef(location, 100L, dataSequenceNumber, null, Map.of(), Map.of(), Map.of(), Map.of());
     }
 
     private static DeleteFileRef positionalDeleteFor(String referencedDataFile, long dataSequenceNumber) {
@@ -270,7 +270,7 @@ class IcebergDeletePlanTest {
 
     private static DataFileRef dataFileAtSequence(long dataSequenceNumber, Map<Integer, Object> partitionValues) {
         return new DataFileRef(
-                "file:///data.parquet", 10L, dataSequenceNumber, Map.of(), Map.of(), Map.of(), partitionValues);
+                "file:///data.parquet", 10L, dataSequenceNumber, null, Map.of(), Map.of(), Map.of(), partitionValues);
     }
 
     private static DataFileRef withSequenceNumber(DataFileRef ref, long dataSequenceNumber) {
@@ -278,6 +278,7 @@ class IcebergDeletePlanTest {
                 ref.location(),
                 ref.recordCount(),
                 dataSequenceNumber,
+                ref.firstRowId(),
                 ref.lowerBounds(),
                 ref.upperBounds(),
                 ref.nullValueCounts(),
@@ -289,6 +290,7 @@ class IcebergDeletePlanTest {
                 location,
                 ref.recordCount(),
                 ref.dataSequenceNumber(),
+                ref.firstRowId(),
                 ref.lowerBounds(),
                 ref.upperBounds(),
                 ref.nullValueCounts(),

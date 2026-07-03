@@ -1,0 +1,6 @@
+fresh-gen/target/
+fresh-gen/work/
+fresh-gen/cp.txt
+materialized-gen/target/
+materialized-gen/work/
+materialized-gen/cp.txt

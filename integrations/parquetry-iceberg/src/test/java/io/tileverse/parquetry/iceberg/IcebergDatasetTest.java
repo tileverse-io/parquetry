@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.AfterEach;
@@ -40,6 +41,10 @@ import io.tileverse.parquetry.filter.prune.FileStats;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.PrimitiveKind;
+import io.tileverse.parquetry.schema.Repetition;
+import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
 /**
@@ -84,6 +89,60 @@ class IcebergDatasetTest {
         Projection.Of of = (Projection.Of) query.projection();
         assertThat(of.columns())
                 .contains(new Projection.Column.Physical(ColumnPath.of("identifier"), ColumnPath.of("id")));
+    }
+
+    @Test
+    void keepsAReservedLineageNameUntouchedBelowFormatV3() {
+        // The corpus table is format version 2: row lineage does not exist, and a projection naming _row_id is
+        // passed through as an ordinary column instead of being rewritten to a synthesized lineage column.
+        IcebergDataset dataset = datasetWithSchema(currentFields());
+        Projection lineageNamed = Projection.ofPhysical(List.of(ColumnPath.of("id"), ColumnPath.of("_row_id")));
+
+        Query query = dataset.oneFileQueryForTest(0, Predicate.ALWAYS_TRUE, lineageNamed);
+
+        assertThat(query.projection()).isEqualTo(lineageNamed);
+    }
+
+    @Test
+    void locatesAMaterializedLineageLeafByReservedFieldId() {
+        IcebergFileSchema file = fileSchemaOf(leaf("id", 1), leaf("row_id_alt", Integer.MAX_VALUE - 107));
+
+        Optional<IcebergFileSchema.FileColumn> found =
+                IcebergDataset.materializedLineageColumn(file, Integer.MAX_VALUE - 107, ColumnPath.of("_row_id"));
+
+        assertThat(found).map(IcebergFileSchema.FileColumn::path).contains(ColumnPath.of("row_id_alt"));
+    }
+
+    @Test
+    void fallsBackToTheReservedNameWhenTheFileHasNoFieldIds() {
+        IcebergFileSchema file = fileSchemaOf(leaf("id", -1), leaf("_row_id", -1));
+
+        Optional<IcebergFileSchema.FileColumn> found =
+                IcebergDataset.materializedLineageColumn(file, Integer.MAX_VALUE - 107, ColumnPath.of("_row_id"));
+
+        assertThat(found).map(IcebergFileSchema.FileColumn::path).contains(ColumnPath.of("_row_id"));
+    }
+
+    @Test
+    void neverMatchesByNameWhenTheFileHasFieldIds() {
+        // A column merely named _row_id with an ordinary field id is user data, not a materialized lineage leaf.
+        IcebergFileSchema file = fileSchemaOf(leaf("id", 1), leaf("_row_id", 2));
+
+        Optional<IcebergFileSchema.FileColumn> found =
+                IcebergDataset.materializedLineageColumn(file, Integer.MAX_VALUE - 107, ColumnPath.of("_row_id"));
+
+        assertThat(found).isEmpty();
+    }
+
+    private static IcebergFileSchema fileSchemaOf(SchemaNode... leaves) {
+        SchemaNode.Group root =
+                new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(leaves), Optional.empty(), -1);
+        return IcebergFileSchema.of(new ParquetSchema(root));
+    }
+
+    private static SchemaNode.Primitive leaf(String name, int fieldId) {
+        return new SchemaNode.Primitive(
+                name, Repetition.OPTIONAL, PrimitiveKind.INT64, OptionalInt.empty(), Optional.empty(), fieldId);
     }
 
     @Test
@@ -181,7 +240,8 @@ class IcebergDatasetTest {
                 dataFiles,
                 fileStats,
                 sources,
-                deletePlan);
+                deletePlan,
+                metadata.formatVersion());
     }
 
     private static IcebergTableMetadata readMetadata(Path tableDir, IcebergFileIO io) {

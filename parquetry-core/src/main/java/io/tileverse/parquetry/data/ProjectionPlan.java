@@ -86,15 +86,28 @@ final class ProjectionPlan {
     }
 
     /**
-     * The synthesized row-position output leaves of {@code of}. The record-level filter narrows a surviving batch to
-     * this schema; appending these leaves keeps the decode-time row-position vector through that narrow step and into
-     * {@link #produce}. A produce set with no row-position output appends nothing.
+     * The synthesized output leaves of {@code of}: its row-position outputs plus any coalesce presented under a name
+     * other than its source (a coalesce under its source name reuses that physical leaf). The record-level filter
+     * narrows a surviving batch to this schema; appending these leaves keeps the decode-time synthesized vectors
+     * through that narrow step and into {@link #produce}. A produce set with no synthesized output appends nothing.
      */
     private static List<SchemaNode.Primitive> rowPositionLeaves(Projection.Of of) {
         List<SchemaNode.Primitive> leaves = new ArrayList<>();
         for (Projection.Column column : of.columns()) {
-            if (column instanceof Projection.Column.RowPosition rowPosition) {
-                leaves.add(OutputBatches.rowPositionLeaf(rowPosition.name().name(), -1));
+            switch (column) {
+                case Projection.Column.RowPosition(ColumnPath name, long _) ->
+                    leaves.add(OutputBatches.rowPositionLeaf(name.name(), -1));
+                case Projection.Column.Coalesce(
+                        ColumnPath name,
+                        ColumnPath source,
+                        Projection.Column.Coalesce.Fallback _) -> {
+                    if (!name.equals(source)) {
+                        leaves.add(OutputBatches.rowPositionLeaf(name.name(), -1));
+                    }
+                }
+                default -> {
+                    // physical, promoted, constant, and null columns synthesize nothing
+                }
             }
         }
         return leaves;
