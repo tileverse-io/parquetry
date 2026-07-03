@@ -59,6 +59,7 @@ import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
+import io.tileverse.parquetry.runtime.ComputeExecutor;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -394,6 +395,51 @@ class RowGroupWriterTest {
         ColumnMetaData meta = flushed.rowGroup().columns().get(0).metaData().orElseThrow();
         assertThat(meta.numValues()).isEqualTo(4L);
         assertThat(meta.statistics().orElseThrow().nullCount().orElseThrow()).isEqualTo(2L);
+    }
+
+    @Test
+    void parallelAppendProducesBytesIdenticalToInlineAppend() throws Exception {
+        ParquetSchema schema = flatSchema(requiredInt32("id"), requiredInt64("timestamp"), requiredBinary("name"));
+        WriteOptions options = options().pageValueLimit(64).build();
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (int i = 0; i < 500; i++) {
+            rows.add(Map.of(
+                    ColumnPath.of("id"),
+                    i,
+                    ColumnPath.of("timestamp"),
+                    1_000_000L + i,
+                    ColumnPath.of("name"),
+                    wrap("name-" + i)));
+        }
+        ParquetRecordBatch batch = WriteFixtures.batch(schema, rows);
+
+        ComputeExecutor parallel = ComputeExecutor.ofParallelism(4);
+        ComputeExecutor exhausted = ComputeExecutor.ofParallelism(1);
+        try {
+            // Holding the only slot forces every fan-out unit onto the caller: the serial reference.
+            assertThat(exhausted.tryAcquire()).isTrue();
+            byte[] parallelBytes = appendAndFlush(schema, options, batch, parallel, tempDir.resolve("parallel"));
+            byte[] inlineBytes = appendAndFlush(schema, options, batch, exhausted, tempDir.resolve("inline"));
+            assertThat(parallelBytes).isEqualTo(inlineBytes);
+        } finally {
+            exhausted.release();
+            parallel.shutdownNow();
+            exhausted.shutdownNow();
+        }
+    }
+
+    private byte[] appendAndFlush(
+            ParquetSchema schema,
+            WriteOptions options,
+            ParquetRecordBatch batch,
+            ComputeExecutor executor,
+            Path rowGroupTempDir) {
+        ByteArrayByteSink sink = new ByteArrayByteSink();
+        try (RowGroupWriter rgw = new RowGroupWriter(options, schema, rowGroupTempDir, 0L, executor)) {
+            rgw.appendBatch(batch);
+            rgw.flushTo(sink);
+        }
+        return sink.toByteArray();
     }
 
     /**
