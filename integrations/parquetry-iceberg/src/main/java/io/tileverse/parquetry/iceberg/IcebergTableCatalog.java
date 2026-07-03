@@ -46,14 +46,14 @@ import io.tileverse.parquetry.io.ByteRangeSource;
  * omitted partition columns; merge-on-read positional and equality deletes are applied per data file, leaving the read
  * to return only the live rows.
  */
-public final class IcebergCatalog implements DatasetCatalog {
+public final class IcebergTableCatalog implements DatasetCatalog {
 
     private final String tableName;
     private final IcebergDataset dataset;
     private final List<ByteRangeSource> openSources;
     private final IcebergFileIO io;
 
-    private IcebergCatalog(
+    private IcebergTableCatalog(
             String tableName, IcebergDataset dataset, List<ByteRangeSource> openSources, IcebergFileIO io) {
         this.tableName = tableName;
         this.dataset = dataset;
@@ -62,7 +62,7 @@ public final class IcebergCatalog implements DatasetCatalog {
     }
 
     /** Opens an Iceberg table from a local table directory, resolving the current {@code vN.metadata.json}. */
-    public static IcebergCatalog openLocal(Path tableDir, IcebergOptions options) {
+    public static IcebergTableCatalog openLocal(Path tableDir, IcebergOptions options) {
         Objects.requireNonNull(tableDir, "tableDir");
         Objects.requireNonNull(options, "options");
         String physicalTableLocation = tableDir.toUri().toString();
@@ -80,7 +80,7 @@ public final class IcebergCatalog implements DatasetCatalog {
      * {@code io} maps. The returned catalog owns {@code io} and closes it in {@link #close()} (a no-op for an IO over a
      * borrowed Storage).
      */
-    public static IcebergCatalog open(String tableLocation, IcebergFileIO io, IcebergOptions options) {
+    public static IcebergTableCatalog open(String tableLocation, IcebergFileIO io, IcebergOptions options) {
         Objects.requireNonNull(tableLocation, "tableLocation");
         Objects.requireNonNull(io, "io");
         Objects.requireNonNull(options, "options");
@@ -96,7 +96,7 @@ public final class IcebergCatalog implements DatasetCatalog {
      * physical storage the same way {@link #openLocal} does for local tables. The returned catalog owns {@code storage}
      * and closes it in {@link #close()}.
      */
-    public static IcebergCatalog openStorage(String physicalLocation, Storage storage, IcebergOptions options) {
+    public static IcebergTableCatalog openStorage(String physicalLocation, Storage storage, IcebergOptions options) {
         Objects.requireNonNull(physicalLocation, "physicalLocation");
         Objects.requireNonNull(storage, "storage");
         Objects.requireNonNull(options, "options");
@@ -124,7 +124,7 @@ public final class IcebergCatalog implements DatasetCatalog {
     }
 
     /** Opens a table given parsed metadata and a file IO. The IO is owned by the returned catalog. */
-    static IcebergCatalog openWithMetadata(String tableName, IcebergTableMetadata metadata, IcebergFileIO io) {
+    static IcebergTableCatalog openWithMetadata(String tableName, IcebergTableMetadata metadata, IcebergFileIO io) {
         Objects.requireNonNull(tableName, "tableName");
         Objects.requireNonNull(metadata, "metadata");
         Objects.requireNonNull(io, "io");
@@ -156,7 +156,7 @@ public final class IcebergCatalog implements DatasetCatalog {
                     opened,
                     deletePlan,
                     metadata.formatVersion());
-            return new IcebergCatalog(tableName, dataset, opened, io);
+            return new IcebergTableCatalog(tableName, dataset, opened, io);
         } catch (RuntimeException failure) {
             RuntimeException cleanup = closeAll(opened, io);
             if (cleanup != null) {

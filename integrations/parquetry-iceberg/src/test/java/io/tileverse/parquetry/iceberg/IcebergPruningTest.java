@@ -52,7 +52,7 @@ class IcebergPruningTest {
     @Test
     void prunesToSpatialSurvivors() {
         Path tableDir = extractTable();
-        try (IcebergCatalog catalog = IcebergCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
+        try (IcebergTableCatalog catalog = IcebergTableCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
             IcebergDataset dataset = (IcebergDataset) catalog.dataset(TABLE);
             int totalFiles = dataset.plan(Predicate.ALWAYS_TRUE).survivors().size();
 
@@ -80,7 +80,7 @@ class IcebergPruningTest {
     @Test
     void alwaysTrueKeepsAllAndReadsEveryRow() {
         Path tableDir = extractTable();
-        try (IcebergCatalog catalog = IcebergCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
+        try (IcebergTableCatalog catalog = IcebergTableCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
             IcebergDataset dataset = (IcebergDataset) catalog.dataset(TABLE);
             int totalFiles = dataset.plan(Predicate.ALWAYS_TRUE).survivors().size();
             assertThat(totalFiles).isGreaterThan(1);
@@ -98,7 +98,7 @@ class IcebergPruningTest {
     @Test
     void eliminatingEveryFileReadsNothing() {
         Path tableDir = extractTable();
-        try (IcebergCatalog catalog = IcebergCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
+        try (IcebergTableCatalog catalog = IcebergTableCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
             IcebergDataset dataset = (IcebergDataset) catalog.dataset(TABLE);
             int totalFiles = dataset.plan(Predicate.ALWAYS_TRUE).survivors().size();
 

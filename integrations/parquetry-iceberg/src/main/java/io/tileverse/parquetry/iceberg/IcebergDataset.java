@@ -67,7 +67,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
  * survivors are still filtered at row-group and record level during the read. The result is identical to scanning every
  * file.
  *
- * <p>The byte sources are pre-opened and owned by the {@link IcebergCatalog}; the per-query {@link ParquetSource}
+ * <p>The byte sources are pre-opened and owned by the {@link IcebergTableCatalog}; the per-query {@link ParquetSource}
  * borrows the survivor subset and never closes them. The dataset presents the table's current schema and reconciles
  * each data file's columns to it by Iceberg field id; a file whose schema already matches the table reads untouched.
  */

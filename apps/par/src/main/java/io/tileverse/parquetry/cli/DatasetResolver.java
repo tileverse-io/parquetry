@@ -33,8 +33,8 @@ import io.tileverse.parquetry.catalog.DatasetCatalog;
 import io.tileverse.parquetry.catalog.FilesetCatalog;
 import io.tileverse.parquetry.dataset.GeoParquetDataset;
 import io.tileverse.parquetry.dataset.ParquetDataset;
-import io.tileverse.parquetry.iceberg.IcebergCatalog;
 import io.tileverse.parquetry.iceberg.IcebergOptions;
+import io.tileverse.parquetry.iceberg.IcebergTableCatalog;
 import io.tileverse.parquetry.io.LocalFileSource;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 import io.tileverse.parquetry.tileverse.ParquetFileSources;
@@ -43,8 +43,8 @@ import io.tileverse.parquetry.tileverse.ParquetStorage;
 /**
  * Resolves a CLI path or URI into an open {@link ParquetDataset}, auto-detecting the input kind: a single Parquet file
  * or a directory/glob of same-schema files become one merged {@link FilesetCatalog} dataset; a directory or remote
- * prefix whose {@code metadata/} holds an Iceberg table metadata file becomes an {@link IcebergCatalog} dataset. The
- * returned {@link OpenDataset} owns the catalog and releases it on {@link OpenDataset#close()}.
+ * prefix whose {@code metadata/} holds an Iceberg table metadata file becomes an {@link IcebergTableCatalog} dataset.
+ * The returned {@link OpenDataset} owns the catalog and releases it on {@link OpenDataset#close()}.
  *
  * <p>Detection probes the filesystem for local paths and uses the trailing-slash convention for remote prefixes. A
  * remote prefix is probed for an Iceberg metadata marker over its {@link Storage} and opened as an Iceberg table when
@@ -101,7 +101,8 @@ public final class DatasetResolver {
 
     private static DatasetCatalog buildCatalog(InputKind kind, Properties storageProperties) {
         return switch (kind) {
-            case InputKind.IcebergLocal local -> IcebergCatalog.openLocal(local.tableDir(), IcebergOptions.defaults());
+            case InputKind.IcebergLocal local ->
+                IcebergTableCatalog.openLocal(local.tableDir(), IcebergOptions.defaults());
             case InputKind.LocalFile local ->
                 FilesetCatalog.open(LocalFileSource.file(local.file()), CatalogOptions.defaults());
             case InputKind.Fileset fileset ->
@@ -126,7 +127,7 @@ public final class DatasetResolver {
         }
         if (iceberg) {
             // openStorage takes ownership of storage and closes it on failure or on catalog.close().
-            return IcebergCatalog.openStorage(tableLocation(uri), storage, IcebergOptions.defaults());
+            return IcebergTableCatalog.openStorage(tableLocation(uri), storage, IcebergOptions.defaults());
         }
         closeQuietly(storage);
         return FilesetCatalog.open(
@@ -140,7 +141,7 @@ public final class DatasetResolver {
         }
     }
 
-    /** The table location passed to IcebergCatalog.openStorage: the prefix URI without a trailing slash. */
+    /** The table location passed to IcebergTableCatalog.openStorage: the prefix URI without a trailing slash. */
     private static String tableLocation(URI uri) {
         String text = uri.toString();
         return text.endsWith("/") ? text.substring(0, text.length() - 1) : text;

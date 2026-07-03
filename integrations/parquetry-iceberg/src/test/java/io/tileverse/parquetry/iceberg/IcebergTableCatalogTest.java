@@ -40,7 +40,7 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
-class IcebergCatalogTest {
+class IcebergTableCatalogTest {
 
     @TempDir
     Path tempDir;
@@ -57,7 +57,8 @@ class IcebergCatalogTest {
             })
     void fullScanReadsEveryRow(String table) {
         Path root = TestCorpus.extractDirectory("iceberg-geo-testbed", tempDir.resolve(table));
-        try (IcebergCatalog catalog = IcebergCatalog.openLocal(root.resolve(table), IcebergOptions.defaults())) {
+        try (IcebergTableCatalog catalog =
+                IcebergTableCatalog.openLocal(root.resolve(table), IcebergOptions.defaults())) {
             assertThat(catalog.datasets()).containsExactly(table);
             ParquetDataset dataset = catalog.dataset(table);
             long count = dataset.count(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
@@ -89,7 +90,7 @@ class IcebergCatalogTest {
         IcebergTableMetadata metadata = readMetadata(tableDir);
         ParquetSchema presented = IcebergSchema.of(metadata.fields()).parquetSchema();
 
-        try (IcebergCatalog catalog = IcebergCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
+        try (IcebergTableCatalog catalog = IcebergTableCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
             ParquetDataset dataset = catalog.dataset(table);
             assertThat(dataset.schema()).isEqualTo(presented);
         }
@@ -115,8 +116,8 @@ class IcebergCatalogTest {
     @Test
     void spatialPredicateReturnsCorrectRows() {
         Path root = TestCorpus.extractDirectory("iceberg-geo-testbed", tempDir.resolve("v3_geometry"));
-        try (IcebergCatalog catalog =
-                IcebergCatalog.openLocal(root.resolve("v3_geometry"), IcebergOptions.defaults())) {
+        try (IcebergTableCatalog catalog =
+                IcebergTableCatalog.openLocal(root.resolve("v3_geometry"), IcebergOptions.defaults())) {
             ParquetDataset dataset = catalog.dataset("v3_geometry");
             Bbox california = Bbox.of2d(-125.0, 32.0, -115.0, 42.0);
             Predicate predicate = new Predicate.Spatial.BboxIntersects(ColumnPath.of("geom"), california);

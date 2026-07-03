@@ -31,9 +31,9 @@ import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
 /**
- * Proves {@link IcebergCatalog#openStorage} opens a remote-style table given only the physical location, reconciling
- * the table's baked-in logical location against the physically-rooted {@link Storage} the same way
- * {@link IcebergCatalog#openLocal} does for local tables. The {@code v3_geometry} testbed records a
+ * Proves {@link IcebergTableCatalog#openStorage} opens a remote-style table given only the physical location,
+ * reconciling the table's baked-in logical location against the physically-rooted {@link Storage} the same way
+ * {@link IcebergTableCatalog#openLocal} does for local tables. The {@code v3_geometry} testbed records a
  * {@code file:///iceberg-geo-testbed/v3_geometry} logical location while the physical bytes live in a temp directory,
  * hence opening it from the physical location exercises the logical-to-physical reconciliation.
  */
@@ -43,8 +43,8 @@ class OpenStorageReconciliationTest {
     void opensRemoteStyleTableReconcilingLogicalLocation(@TempDir Path tmp) {
         Path tableDir = TestCorpus.extractDirectory("iceberg-geo-testbed", tmp).resolve("v3_geometry");
         Storage storage = StorageFactory.open(tableDir.toUri());
-        try (IcebergCatalog catalog =
-                IcebergCatalog.openStorage(tableDir.toUri().toString(), storage, IcebergOptions.defaults())) {
+        try (IcebergTableCatalog catalog =
+                IcebergTableCatalog.openStorage(tableDir.toUri().toString(), storage, IcebergOptions.defaults())) {
             ParquetDataset dataset = catalog.dataset(catalog.datasets().get(0));
             assertThat(dataset.snapshot()).isPresent();
             assertThat(dataset.count(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS))

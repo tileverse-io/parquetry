@@ -48,4 +48,4 @@ Only `by_category/` and `by_category_omitted/` are bundled into the testkit jar 
 includes in `pom.xml`); `generate_fixture.py` and this README are kept in source for reproducibility.
 
 To consume a table from a test, extract it with `TestCorpus.extractDirectory("iceberg-partitioned/by_category", tempDir)`
-and open it with `IcebergCatalog.openLocal(tempDir, IcebergOptions.defaults())`.
+and open it with `IcebergTableCatalog.openLocal(tempDir, IcebergOptions.defaults())`.

@@ -84,7 +84,7 @@ step.
 ## Reading a table
 
 ```java
-try (IcebergCatalog catalog = IcebergCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
+try (IcebergTableCatalog catalog = IcebergTableCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
     ParquetDataset table = catalog.dataset(catalog.datasets().get(0));
 
     long total = table.count(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
@@ -101,7 +101,7 @@ try (IcebergCatalog catalog = IcebergCatalog.openLocal(tableDir, IcebergOptions.
 owns the byte sources it opens; `close()` releases them.
 
 To read over object storage, supply a tileverse-storage `Storage` rooted at the table and pass the table location as the
-logical root: `IcebergCatalog.open(tableLocation, StorageIcebergFileIO.over(storage, tableLocation), options)`. `over(...)`
+logical root: `IcebergTableCatalog.open(tableLocation, StorageIcebergFileIO.over(storage, tableLocation), options)`. `over(...)`
 borrows the `Storage` (the caller closes it); `owning(...)` hands its lifecycle to the catalog. Because an HTTP-served
 table cannot list a directory, pin the metadata document with
 `IcebergOptions.builder().metadataLocation(tableLocation + "/metadata/v3.metadata.json").build()`.
