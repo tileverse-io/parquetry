@@ -196,7 +196,7 @@ public final class BinaryDictionaryEncoder implements PageDictionaryEncoder {
 
     private void overflowToPlain(byte[] value) {
         overflowed = true;
-        // Replay the page's indices as raw values so the fallback page reflects the same row sequence.
+        // Replay the page's indices as raw values: the fallback page must reflect the same row sequence.
         for (int i = 0; i < pageIndexCount; i++) {
             pageFallbackValues.add(dictionaryValues.get(pageIndices[i]));
         }

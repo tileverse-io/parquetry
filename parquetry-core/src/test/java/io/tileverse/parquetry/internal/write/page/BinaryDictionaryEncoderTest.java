@@ -145,6 +145,45 @@ class BinaryDictionaryEncoderTest {
         assertThat(tested.dictionaryCarrier()).isEqualTo(carrierOf(reference.dictionaryValues()));
     }
 
+    @Test
+    void overflowAfterDictionaryPageFlushMatchesGenericEncoder() throws IOException {
+        long limit = 40;
+        int pageSize = 3;
+        DictionaryAttemptEncoder<ByteBuffer, byte[][]> reference = referenceVariableLengthEncoder(limit);
+        BinaryDictionaryEncoder tested = BinaryDictionaryEncoder.variableLength(new PlainBinaryEncoder(), limit);
+
+        List<byte[]> values = new ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            values.add(("val-" + i).getBytes(StandardCharsets.UTF_8));
+        }
+
+        boolean sawDictionaryPageBeforeOverflow = false;
+        for (int i = 0; i < values.size(); i++) {
+            byte[] value = values.get(i);
+            reference.appendValue(ByteBuffer.wrap(value));
+            tested.appendValue(MemorySegment.ofArray(value), value);
+            boolean pageBoundary = (i + 1) % pageSize == 0 || i == values.size() - 1;
+            if (pageBoundary) {
+                if (!tested.overflowed()) {
+                    sawDictionaryPageBeforeOverflow = true;
+                }
+                assertPageFlushIdentical(reference, tested, "overflow-after-dict page ending at " + i);
+            }
+        }
+
+        assertThat(sawDictionaryPageBeforeOverflow)
+                .as("a dictionary page must flush before the overflow")
+                .isTrue();
+        assertThat(tested.overflowed())
+                .as("the sequence must overflow the budget")
+                .isTrue();
+        assertThat(tested.emittedDictionaryPage())
+                .as("the dictionary page flag stays true after overflow")
+                .isTrue();
+        assertThat(tested.emittedDictionaryPage()).isEqualTo(reference.emittedDictionaryPage());
+        assertThat(tested.dictionaryCarrier()).isEqualTo(carrierOf(reference.dictionaryValues()));
+    }
+
     private static void assertPageFlushIdentical(
             DictionaryAttemptEncoder<ByteBuffer, byte[][]> reference, BinaryDictionaryEncoder tested, String context)
             throws IOException {

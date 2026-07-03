@@ -44,6 +44,7 @@ import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.PageLocation;
 import io.tileverse.parquetry.format.Statistics;
+import io.tileverse.parquetry.internal.write.page.BinaryDictionaryEncoder;
 import io.tileverse.parquetry.internal.write.page.DictionaryAttempt;
 import io.tileverse.parquetry.internal.write.page.DictionaryAttemptEncoder;
 import io.tileverse.parquetry.internal.write.page.EncodedPage;
@@ -272,14 +273,13 @@ public final class ColumnChunkWriter implements AutoCloseable {
         recordLevels(repLevel, defLevel);
         byte[] bytes = value.toArray(ValueLayout.JAVA_BYTE);
         valueBuffer.addBinary(bytes);
-        MemorySegment readOnly = MemorySegment.ofArray(bytes).asReadOnly();
-        chunkStats.update(readOnly, false);
-        pageStats.update(readOnly, false);
-        addToBloom(readOnly);
+        chunkStats.updateBinary(value);
+        pageStats.updateBinary(value);
+        addToBloom(value);
         if (geoStats != null) {
-            geoStats.update(readOnly);
+            geoStats.update(value);
         }
-        appendToDictionaryIfActive(bytes);
+        appendToDictionaryIfActive(value, bytes);
         pageByteEstimate += Integer.BYTES + (long) bytes.length;
         pageCellCount++;
         totalCells++;
@@ -297,11 +297,10 @@ public final class ColumnChunkWriter implements AutoCloseable {
         recordLevels(repLevel, defLevel);
         byte[] bytes = value.toArray(ValueLayout.JAVA_BYTE);
         valueBuffer.addBinary(bytes);
-        MemorySegment readOnly = MemorySegment.ofArray(bytes).asReadOnly();
-        chunkStats.update(readOnly, false);
-        pageStats.update(readOnly, false);
-        addToBloom(readOnly);
-        appendToDictionaryIfActive(bytes);
+        chunkStats.updateBinary(value);
+        pageStats.updateBinary(value);
+        addToBloom(value);
+        appendToDictionaryIfActive(value, bytes);
         pageByteEstimate += bytes.length;
         pageCellCount++;
         totalCells++;
@@ -802,13 +801,19 @@ public final class ColumnChunkWriter implements AutoCloseable {
 
     // S7475: Palantir formatter does not accept the bare `_` unnamed pattern; keep the typed unnamed binding.
     @SuppressWarnings("java:S7475")
-    private void appendToDictionaryIfActive(byte[] bytes) {
+    private void appendToDictionaryIfActive(MemorySegment value, byte[] retainable) {
         if (dictionary
-                instanceof
-                DictionaryAttempt.BinaryAttempt(
-                        DictionaryAttemptEncoder<ByteBuffer, byte[][]> encoder,
-                        Encoder<byte[][]> _)) {
-            encoder.appendValue(ByteBuffer.wrap(bytes));
+                instanceof DictionaryAttempt.BinaryAttempt(BinaryDictionaryEncoder encoder, Encoder<byte[][]> _)) {
+            encoder.appendValue(value, retainable);
+        }
+    }
+
+    // S7475: Palantir formatter does not accept the bare `_` unnamed pattern; keep the typed unnamed binding.
+    @SuppressWarnings("java:S7475")
+    private void appendToDictionaryIfActive(byte[] packed) {
+        if (dictionary
+                instanceof DictionaryAttempt.BinaryAttempt(BinaryDictionaryEncoder encoder, Encoder<byte[][]> _)) {
+            encoder.appendValue(packed);
         }
     }
 

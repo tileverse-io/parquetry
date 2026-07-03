@@ -23,7 +23,6 @@ import java.util.List;
 import java.util.Map;
 
 import io.tileverse.parquetry.format.Encoding;
-import io.tileverse.parquetry.internal.write.page.PageDictionaryEncoder.PageResult;
 
 /**
  * Page-level dictionary attempt with PLAIN fallback. Tracks unique values in a column-chunk dictionary while the
@@ -39,10 +38,9 @@ import io.tileverse.parquetry.internal.write.page.PageDictionaryEncoder.PageResu
  * <p>One {@link DictionaryAttemptEncoder} instance is dedicated to a single primitive kind; the geometry-aware policy
  * lives outside this class.
  *
- * @param <V> the value type the dictionary keys against; for binary kinds use a stable wrapper (e.g.,
- *     {@link java.nio.ByteBuffer#wrap(byte[])} or a {@code byte[]}-keyed {@code IdentityHashMap}); for primitives use
- *     the boxed {@code Integer}/{@code Long}/{@code Float}/{@code Double}/{@code Boolean}.
- * @param <C> the carrier array type the fallback {@link Encoder} accepts (e.g., {@code int[]}, {@code byte[][]})
+ * @param <V> the value type the dictionary keys against: the boxed {@code Integer}/{@code Long}/{@code Float}/
+ *     {@code Double}/{@code Boolean} for the numeric and boolean kinds.
+ * @param <C> the carrier array type the fallback {@link Encoder} accepts (e.g., {@code int[]})
  */
 public final class DictionaryAttemptEncoder<V, C> implements PageDictionaryEncoder {
 
@@ -85,7 +83,7 @@ public final class DictionaryAttemptEncoder<V, C> implements PageDictionaryEncod
         long candidateBytes = dictionaryBytes + valueSizer.sizeOf(value);
         if (candidateBytes > dictionaryByteLimit) {
             overflowed = true;
-            // Replay the page's indices as raw values so the fallback page reflects the same row sequence.
+            // Replay the page's indices as raw values: the fallback page must reflect the same row sequence.
             for (Integer idx : pageIndices) {
                 pageFallbackValues.add(dictionaryValues.get(idx));
             }
