@@ -76,8 +76,8 @@ public final class StatisticsAccumulator {
     private float floatMax;
     private double doubleMin;
     private double doubleMax;
-    private byte[] binaryMin;
-    private byte[] binaryMax;
+    private MemorySegment binaryMin;
+    private MemorySegment binaryMax;
 
     private StatisticsAccumulator(PrimitiveKind kind, boolean tracksMinMax, boolean legacyOrderMatchesModern) {
         this.kind = kind;
@@ -127,9 +127,9 @@ public final class StatisticsAccumulator {
     /**
      * Adds one cell to the accumulation window. {@code value} is the unboxed primitive for numeric / boolean kinds and
      * a {@link MemorySegment} for binary kinds ({@code BYTE_ARRAY}, {@code FIXED_LEN_BYTE_ARRAY}, {@code INT96}). The
-     * binary path defensive-copies the segment bytes into the accumulator's internal scratch buffer so the caller can
-     * reuse or release the source after this call returns. {@code value} is only consulted when {@code isNull} is
-     * {@code false}.
+     * binary path copies the segment bytes only on the first observation or a strict min/max improvement; the caller
+     * may reuse or release the source segment after this call returns because any retained bytes are copies.
+     * {@code value} is only consulted when {@code isNull} is {@code false}.
      */
     public void update(Object value, boolean isNull) {
         if (isNull) {
@@ -143,6 +143,18 @@ public final class StatisticsAccumulator {
         updateMinMax(value);
     }
 
+    /**
+     * Adds one non-null binary cell. The segment is compared in place against the retained bounds; its bytes are copied
+     * only on the first observation or a strict min/max improvement, never per cell.
+     */
+    public void updateBinary(@NonNull MemorySegment value) {
+        nonNullCount++;
+        if (!tracksMinMax) {
+            return;
+        }
+        updateBinaryMinMax(value);
+    }
+
     private void updateMinMax(Object value) {
         switch (kind) {
             case BOOLEAN -> updateBoolean((boolean) value);
@@ -150,7 +162,7 @@ public final class StatisticsAccumulator {
             case INT64 -> updateInt64((long) value);
             case FLOAT -> updateFloat((float) value);
             case DOUBLE -> updateDouble((double) value);
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> updateBinary((MemorySegment) value);
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> updateBinaryMinMax((MemorySegment) value);
             case INT96 -> {
                 /* unreachable: tracksMinMax is false for INT96 */
             }
@@ -239,33 +251,42 @@ public final class StatisticsAccumulator {
         }
     }
 
-    private void updateBinary(MemorySegment segment) {
-        // toArray copies into a fresh byte[]; safe to retain without further cloning. binaryMin and binaryMax start
-        // aliased to the same array on the first observation and diverge as min/max move independently afterwards.
-        byte[] bytes = segment.toArray(ValueLayout.JAVA_BYTE);
+    private void updateBinaryMinMax(MemorySegment value) {
         if (!hasMinMax) {
-            binaryMin = bytes;
-            binaryMax = bytes;
+            MemorySegment retained = retainCopy(value);
+            binaryMin = retained;
+            binaryMax = retained;
             hasMinMax = true;
             return;
         }
-        if (compareBytes(bytes, binaryMin) < 0) {
-            binaryMin = bytes;
+        if (compareUnsignedLex(value, binaryMin) < 0) {
+            binaryMin = retainCopy(value);
         }
-        if (compareBytes(bytes, binaryMax) > 0) {
-            binaryMax = bytes;
+        if (compareUnsignedLex(value, binaryMax) > 0) {
+            binaryMax = retainCopy(value);
         }
     }
 
-    private static int compareBytes(byte[] a, byte[] b) {
-        int common = Math.min(a.length, b.length);
-        for (int i = 0; i < common; i++) {
-            int diff = (a[i] & 0xff) - (b[i] & 0xff);
-            if (diff != 0) {
-                return diff;
-            }
+    private static MemorySegment retainCopy(MemorySegment value) {
+        return MemorySegment.ofArray(value.toArray(ValueLayout.JAVA_BYTE)).asReadOnly();
+    }
+
+    /**
+     * Unsigned lexicographic order with shorter-is-smaller on prefix equality, matching Parquet's default BYTE_ARRAY /
+     * FIXED_LEN_BYTE_ARRAY column order.
+     */
+    private static int compareUnsignedLex(MemorySegment a, MemorySegment b) {
+        long mismatch = a.mismatch(b);
+        if (mismatch == -1) {
+            return 0;
         }
-        return Integer.compare(a.length, b.length);
+        if (mismatch == a.byteSize()) {
+            return -1;
+        }
+        if (mismatch == b.byteSize()) {
+            return 1;
+        }
+        return Byte.compareUnsigned(a.get(ValueLayout.JAVA_BYTE, mismatch), b.get(ValueLayout.JAVA_BYTE, mismatch));
     }
 
     /**
@@ -353,11 +374,11 @@ public final class StatisticsAccumulator {
     }
 
     private void mergeBinaryMinMax(StatisticsAccumulator other) {
-        if (compareBytes(other.binaryMin, binaryMin) < 0) {
-            binaryMin = other.binaryMin.clone();
+        if (compareUnsignedLex(other.binaryMin, binaryMin) < 0) {
+            binaryMin = other.binaryMin;
         }
-        if (compareBytes(other.binaryMax, binaryMax) > 0) {
-            binaryMax = other.binaryMax.clone();
+        if (compareUnsignedLex(other.binaryMax, binaryMax) > 0) {
+            binaryMax = other.binaryMax;
         }
     }
 
@@ -384,8 +405,8 @@ public final class StatisticsAccumulator {
                 doubleMax = other.doubleMax;
             }
             case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> {
-                binaryMin = other.binaryMin.clone();
-                binaryMax = other.binaryMax.clone();
+                binaryMin = other.binaryMin;
+                binaryMax = other.binaryMax;
             }
             case INT96 -> {
                 /* unreachable */
@@ -473,7 +494,7 @@ public final class StatisticsAccumulator {
             case INT64 -> readOnlyHeap(encodeInt64(longMin));
             case FLOAT -> readOnlyHeap(encodeFloat(floatMin));
             case DOUBLE -> readOnlyHeap(encodeDouble(doubleMin));
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> readOnlyHeap(binaryMin.clone());
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> binaryMin;
             case INT96 -> MemorySegment.NULL;
         };
     }
@@ -488,7 +509,7 @@ public final class StatisticsAccumulator {
             case INT64 -> readOnlyHeap(encodeInt64(longMax));
             case FLOAT -> readOnlyHeap(encodeFloat(floatMax));
             case DOUBLE -> readOnlyHeap(encodeDouble(doubleMax));
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> readOnlyHeap(binaryMax.clone());
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> binaryMax;
             case INT96 -> MemorySegment.NULL;
         };
     }
