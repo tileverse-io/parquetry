@@ -21,11 +21,11 @@ but reading GeoParquet) are baked in. Working layers are served the moment the s
 
 Each appears in two workspaces, plus a `world` layer group ("World Map") in each:
 
-- **`parquetry`** - reads each layer from its own single-file GeoParquet datastore on the local
-  filesystem (baked into the image).
-- **`parquetry-s3`** - reads the same data over S3 from the bundled `s3proxy` emulator. The
-  datastores carry no credentials; GeoServer uses the AWS default credential chain
-  (`secrets/aws/credentials` mounted as `~/.aws`), and s3proxy serves `data/ne` as the bucket
+- **`parquetry`** - reads all five layers from a single GeoParquet directory store
+  (`layer-grouping=file`, one layer per file) on the local filesystem (baked into the image).
+- **`parquetry-s3`** - reads the same data over S3 from the bundled `s3proxy` emulator, again as a
+  single directory store. The store has no credentials; GeoServer uses the AWS default credential
+  chain (`secrets/aws/credentials` mounted as `~/.aws`), and s3proxy serves `data/ne` as the bucket
   `naturalearth` (a bind mount, no upload). This mirrors a real deployment reading from S3 with an
   instance role or environment credentials.
 
@@ -83,7 +83,7 @@ curl "http://localhost:8080/geoserver/parquetry/wfs?service=WFS&version=2.0.0&re
 The GeoParquet files in `data/ne/` are converted from the Natural Earth GeoPackage that ships
 with the GeoServer release (`data/release/data/ne/natural_earth.gpkg`) using GDAL. Regenerate them
 with `data/generate.sh` (see that script for the source path and conversion options). To use your
-own data, drop GeoParquet files in `data/ne/` and adjust the datastores under
+own data, drop GeoParquet files in `data/ne/` and adjust the `ne` datastore under
 `geoserver-data/workspaces/parquetry/`.
 
 ## How it is built

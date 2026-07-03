@@ -1,9 +1,9 @@
 <featureType>
-  <id>FeatureTypeInfoImpl--2fb5fd2d:19ea55565ed:-7fd4</id>
+  <id>FeatureTypeInfoImpl-1428db6f:19ea58c4651:-7fd8</id>
   <name>coastlines</name>
   <nativeName>coastlines</nativeName>
   <namespace>
-    <id>NamespaceInfoImpl--2fb5fd2d:19ea55565ed:-7fe2</id>
+    <id>NamespaceInfoImpl-1428db6f:19ea58c4651:-7fe2</id>
   </namespace>
   <title>coastlines</title>
   <keywords>
@@ -28,7 +28,7 @@
   <projectionPolicy>FORCE_DECLARED</projectionPolicy>
   <enabled>true</enabled>
   <store class="dataStore">
-    <id>DataStoreInfoImpl--2fb5fd2d:19ea55565ed:-7fd5</id>
+    <id>DataStoreInfoImpl-1428db6f:19ea58c4651:-7fe1</id>
   </store>
   <serviceConfiguration>false</serviceConfiguration>
   <maxFeatures>0</maxFeatures>

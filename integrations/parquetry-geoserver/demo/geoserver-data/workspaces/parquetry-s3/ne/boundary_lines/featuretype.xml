@@ -1,34 +1,34 @@
 <featureType>
-  <id>FeatureTypeInfoImpl--2fb5fd2d:19ea55565ed:-7fd1</id>
-  <name>disputed_areas</name>
-  <nativeName>disputed_areas</nativeName>
+  <id>FeatureTypeInfoImpl-1428db6f:19ea58c4651:-7fda</id>
+  <name>boundary_lines</name>
+  <nativeName>boundary_lines_land</nativeName>
   <namespace>
-    <id>NamespaceInfoImpl--2fb5fd2d:19ea55565ed:-7fe2</id>
+    <id>NamespaceInfoImpl-1428db6f:19ea58c4651:-7fe2</id>
   </namespace>
-  <title>disputed_areas</title>
+  <title>boundary_lines_land</title>
   <keywords>
     <string>features</string>
-    <string>disputed_areas</string>
+    <string>boundary_lines_land</string>
   </keywords>
   <srs>EPSG:4326</srs>
   <nativeBoundingBox>
-    <minx>-58.42730668804971</minx>
-    <maxx>148.83714806538353</maxx>
-    <miny>1.475362453615233</miny>
-    <maxy>48.70561341257377</maxy>
+    <minx>-141.00213640665194</minx>
+    <maxx>145.9401672711012</maxx>
+    <miny>-55.11400074012312</miny>
+    <maxy>70.06481924099897</maxy>
     <crs>EPSG:4326</crs>
   </nativeBoundingBox>
   <latLonBoundingBox>
-    <minx>-58.42730668804971</minx>
-    <maxx>148.83714806538353</maxx>
-    <miny>1.475362453615233</miny>
-    <maxy>48.70561341257377</maxy>
+    <minx>-141.00213640665194</minx>
+    <maxx>145.9401672711012</maxx>
+    <miny>-55.11400074012312</miny>
+    <maxy>70.06481924099897</maxy>
     <crs>EPSG:4326</crs>
   </latLonBoundingBox>
   <projectionPolicy>FORCE_DECLARED</projectionPolicy>
   <enabled>true</enabled>
   <store class="dataStore">
-    <id>DataStoreInfoImpl--2fb5fd2d:19ea55565ed:-7fd2</id>
+    <id>DataStoreInfoImpl-1428db6f:19ea58c4651:-7fe1</id>
   </store>
   <serviceConfiguration>false</serviceConfiguration>
   <maxFeatures>0</maxFeatures>

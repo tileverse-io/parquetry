@@ -39,13 +39,13 @@ local files and one from S3:
 
 ### Reading from S3 the way you would in production
 
-The `parquetry-s3` datastores carry **no credentials**. GeoServer obtains them from the AWS
+The `parquetry-s3` store has **no credentials**. GeoServer obtains them from the AWS
 default credential chain - here, `secrets/aws/credentials` mounted as `~/.aws` - exactly as it
 would use an instance role or environment credentials on real AWS. The bundled `s3proxy`
 emulator is configured to accept those same demo keys and serves `data/ne` directly as the
 bucket `naturalearth` (a bind mount, no upload). To point at real AWS instead, drop the
 `s3proxy` service, set your own `secrets/aws/credentials` (or environment credentials), and edit
-the `storage.s3.*` parameters of the `parquetry-s3` datastores.
+the `storage.s3.*` parameters of the `parquetry-s3` store.
 
 Example requests:
 
@@ -64,7 +64,8 @@ curl "http://localhost:8080/geoserver/parquetry/wfs?service=WFS&version=2.0.0&re
 
 The plugin registers a `GeoParquet` datastore type. Create stores and layers for your own
 datasets through the GeoServer REST API (the examples use the default `admin` / `geoserver`
-credentials). Each store currently points at a **single `.parquet` file**.
+credentials). A store points at a single `.parquet` file, or at a directory of files (see
+[Directory stores](#directory-stores) below).
 
 ### Connection parameters
 
@@ -105,7 +106,7 @@ curl -u admin:geoserver -XPOST -H "Content-Type: application/xml" \
 
 ### 2b. A store over S3 with the default credential chain
 
-The store carries **no keys**; GeoServer obtains credentials from the AWS default chain. On real
+The store has **no keys**; GeoServer obtains credentials from the AWS default chain. On real
 AWS you only need the region:
 
 ```bash
@@ -151,14 +152,17 @@ curl -u admin:geoserver \
 If a batch of REST calls starts returning HTTP 401, GeoServer's brute-force protection is
 throttling repeated logins from a non-local address; space the calls out.
 
-### Multi-file datasets
+### Directory stores
 
-Each store currently reads a single `.parquet` file. Multi-file datasets - a store over a
-directory or glob of GeoParquet files, with directory listing - are under development.
+A store's `uri` can also point at a directory. With `layer-grouping=file` each top-level
+`.parquet` file in the directory becomes its own layer, named after the file; this is how the
+bundled `parquetry` and `parquetry-s3` workspaces serve their five Natural Earth layers from one
+store. Without `layer-grouping`, a directory of files that share a schema reads as a single
+merged layer.
 
 ## Notes
 
-Replacing the bundled data: swap the files under `data/ne/` (and adjust the datastores under
+Replacing the bundled data: swap the files under `data/ne/` (and adjust the `ne` datastore under
 `geoserver-data/workspaces/parquetry/`), then `docker compose up --build`.
 
 Credentials are the GeoServer defaults (`admin` / `geoserver`); change them for anything beyond a

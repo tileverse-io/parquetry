@@ -20,7 +20,7 @@ class StorageParamVisibilityTest {
 
     @Test
     void coreParamsAlwaysVisible() {
-        for (String key : new String[] {"filetype", "uri", "namespace", "fid", "storage.provider"}) {
+        for (String key : new String[] {"filetype", "uri", "namespace", "fid", "layer-grouping", "storage.provider"}) {
             assertThat(StorageParamVisibility.isVisible(key, "")).as(key).isTrue();
             assertThat(StorageParamVisibility.isVisible(key, "s3")).as(key).isTrue();
         }
@@ -28,7 +28,7 @@ class StorageParamVisibilityTest {
 
     @Test
     void alwaysVisibleCoversTheCoreParamsAndNothingElse() {
-        for (String key : new String[] {"filetype", "uri", "namespace", "fid", "storage.provider"}) {
+        for (String key : new String[] {"filetype", "uri", "namespace", "fid", "layer-grouping", "storage.provider"}) {
             assertThat(StorageParamVisibility.isAlwaysVisible(key)).as(key).isTrue();
         }
         assertThat(StorageParamVisibility.isAlwaysVisible("storage.s3.region")).isFalse();

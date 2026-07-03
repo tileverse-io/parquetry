@@ -17,6 +17,7 @@ package io.tileverse.parquetry.geotools;
 
 import java.io.IOException;
 import java.net.URI;
+import java.util.Arrays;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
@@ -27,6 +28,7 @@ import org.geotools.api.data.DataStoreFactorySpi;
 import org.geotools.api.data.Parameter;
 
 import io.tileverse.parquetry.catalog.CatalogOptions;
+import io.tileverse.parquetry.catalog.DatasetCatalog;
 import io.tileverse.parquetry.catalog.FilesetCatalog;
 import io.tileverse.parquetry.io.FileSource;
 import io.tileverse.parquetry.tileverse.ParquetFileSources;
@@ -45,6 +47,17 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
             String.class,
             "Column to use as the feature id (defaults to a column named 'id' when present; otherwise feature ids are synthetic and Id filters are rejected)",
             false);
+    public static final Param LAYER_GROUPING = new Param(
+            "layer-grouping",
+            String.class,
+            "Layer grouping for a directory URI: 'merged' reads all files as one layer (files must share a schema);"
+                    + " 'file' publishes each top-level .parquet file as its own layer. Absent means 'merged'.",
+            false,
+            null,
+            // GeoServer's store edit page (ParamInfo) sorts the options list in place; it must be sortable
+            Map.of(Parameter.OPTIONS, Arrays.asList("merged", "file")));
+
+    private static final String PARQUET_EXTENSION = ".parquet";
 
     @Override
     public String getDisplayName() {
@@ -58,7 +71,7 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
 
     @Override
     public Param[] getParametersInfo() {
-        return StorageParams.withStorageParams(FILETYPE, URIP, NAMESPACE, FID);
+        return StorageParams.withStorageParams(FILETYPE, URIP, NAMESPACE, FID, LAYER_GROUPING);
     }
 
     @Override
@@ -81,10 +94,10 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
         URI datasetUri = URI.create(uriText);
         String namespace = (String) NAMESPACE.lookUp(params);
         String fidColumn = (String) FID.lookUp(params);
+        LayerGrouping layers = LayerGrouping.parse((String) LAYER_GROUPING.lookUp(params));
 
         Properties storageProps = StorageParams.toProperties(params);
-        FileSource source = openSource(datasetUri, storageProps);
-        FilesetCatalog catalog = FilesetCatalog.open(source, CatalogOptions.defaults());
+        DatasetCatalog catalog = openCatalog(datasetUri, layers, storageProps);
 
         GeoParquetDataStore store = new GeoParquetDataStore(catalog);
         if (namespace != null) {
@@ -101,18 +114,43 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
         throw new UnsupportedOperationException("GeoParquet is read-only");
     }
 
-    /**
-     * Opens the file source for the store's URI. A single-file URI opens the object directly by key (a GET, with no
-     * directory listing), which lets a remote store work over HTTP and with a GET-only credential; a directory or glob
-     * URI lists its container for the files to merge.
-     */
-    private static FileSource openSource(URI datasetUri, Properties storageProps) {
-        if (isSingleFileUri(datasetUri)) {
-            return ParquetFileSources.openObject(datasetUri, storageProps);
+    /** How a directory URI maps to layers: one merged dataset over all files, or one dataset per top-level file. */
+    enum LayerGrouping {
+        MERGED,
+        FILE;
+
+        /** Parses the {@code layer-grouping} parameter value; absent or blank means {@link #MERGED}. */
+        static LayerGrouping parse(String value) throws IOException {
+            if (value == null || value.isBlank()) {
+                return MERGED;
+            }
+            return switch (value.trim().toLowerCase(Locale.ROOT)) {
+                case "merged" -> MERGED;
+                case "file" -> FILE;
+                default ->
+                    throw new IOException("unsupported layer-grouping value '" + value + "': use 'merged' or 'file'");
+            };
         }
-        URI base = baseContainer(datasetUri);
-        String pattern = filePattern(datasetUri);
-        return ParquetFileSources.open(base, pattern, storageProps);
+    }
+
+    /**
+     * Opens the catalog for the store's URI. A single-file URI opens the object directly by key (a GET, with no
+     * directory listing), which lets a remote store work over HTTP and with a GET-only credential; it is one layer by
+     * definition and ignores the layer grouping. A directory or glob URI lists its container: {@code merged} resolves
+     * every matched file (recursively) into one dataset, {@code file} lists the top level only and publishes one
+     * dataset per file.
+     */
+    private static DatasetCatalog openCatalog(URI datasetUri, LayerGrouping layers, Properties storageProps) {
+        if (isSingleFileUri(datasetUri)) {
+            FileSource object = ParquetFileSources.openObject(datasetUri, storageProps);
+            return FilesetCatalog.open(object, CatalogOptions.defaults());
+        }
+        if (layers == LayerGrouping.FILE) {
+            FileSource topLevel = ParquetFileSources.open(fileModeContainer(datasetUri), "*.parquet", storageProps);
+            return FilesetCatalog.openPerFile(topLevel);
+        }
+        FileSource merged = ParquetFileSources.open(baseContainer(datasetUri), filePattern(datasetUri), storageProps);
+        return FilesetCatalog.open(merged, CatalogOptions.defaults());
     }
 
     /**
@@ -121,7 +159,7 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
      */
     private static URI baseContainer(URI uri) {
         String path = uri.getPath();
-        boolean isFile = path != null && path.toLowerCase().endsWith(".parquet");
+        boolean isFile = path != null && path.toLowerCase().endsWith(PARQUET_EXTENSION);
         if (!isFile) {
             return uri;
         }
@@ -143,7 +181,7 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
      */
     private static String filePattern(URI uri) {
         String path = uri.getPath();
-        boolean isFile = path != null && path.toLowerCase().endsWith(".parquet");
+        boolean isFile = path != null && path.toLowerCase().endsWith(PARQUET_EXTENSION);
         if (!isFile) {
             return "**/*.parquet";
         }
@@ -162,15 +200,37 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
         if (path == null) {
             return false;
         }
-        return path.toLowerCase(Locale.ROOT).endsWith(".parquet") && !hasGlobCharacters(path);
+        return path.toLowerCase(Locale.ROOT).endsWith(PARQUET_EXTENSION) && !hasGlobCharacters(path);
+    }
+
+    /**
+     * The container listed in {@code layer-grouping=file} mode: the directory itself for a directory URI, the parent
+     * directory for a glob URI. Any glob tail ({@code *.parquet}, {@code **}{@code /*.parquet}) is dropped: file mode
+     * always lists the top level, one dataset per file, and never recurses.
+     */
+    static URI fileModeContainer(URI uri) {
+        String path = uri.getPath();
+        if (path == null) {
+            return uri;
+        }
+        int firstGlob = indexOfGlobCharacter(path);
+        if (firstGlob < 0) {
+            return baseContainer(uri);
+        }
+        String containerPath = path.substring(0, path.lastIndexOf('/', firstGlob) + 1);
+        return uri.resolve(containerPath);
     }
 
     private static boolean hasGlobCharacters(String path) {
+        return indexOfGlobCharacter(path) >= 0;
+    }
+
+    private static int indexOfGlobCharacter(String path) {
         for (int index = 0; index < path.length(); index++) {
             if ("*?{}[]".indexOf(path.charAt(index)) >= 0) {
-                return true;
+                return index;
             }
         }
-        return false;
+        return -1;
     }
 }

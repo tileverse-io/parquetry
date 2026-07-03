@@ -28,7 +28,7 @@
   <projectionPolicy>FORCE_DECLARED</projectionPolicy>
   <enabled>true</enabled>
   <store class="dataStore">
-    <id>DataStoreInfoImpl-1428db6f:19ea58c4651:-7fdd</id>
+    <id>DataStoreInfoImpl-1428db6f:19ea58c4651:-7fe1</id>
   </store>
   <serviceConfiguration>false</serviceConfiguration>
   <maxFeatures>0</maxFeatures>

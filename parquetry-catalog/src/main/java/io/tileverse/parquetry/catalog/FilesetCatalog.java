@@ -18,10 +18,13 @@ package io.tileverse.parquetry.catalog;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.SequencedMap;
 import java.util.stream.Stream;
 
 import io.tileverse.parquetry.dataset.DatasetCapabilities;
@@ -40,13 +43,14 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 /**
- * The file-based {@link DatasetCatalog}: it resolves exactly one merged {@link FilesetDataset} from a
- * {@link FileSource}, whether that source is a single file, a directory glob, or a Hive-partitioned tree. All matched
- * files must share a schema by equality.
+ * The file-based {@link DatasetCatalog}: it resolves datasets from a {@link FileSource} in one of two groupings.
+ * {@link #open} merges every matched file into one {@link FilesetDataset} (all files must share a schema by equality),
+ * whether that source is a single file, a directory glob, or a Hive-partitioned tree. {@link #openPerFile} publishes
+ * each listed file as its own single-file dataset. The merged case is the single-entry form of the same name-keyed map.
  *
- * <p>Open reads each file's footer in a gather pass (schema, GeoParquet {@code geo} metadata, row count, and Hive
- * partition values) and again when the all-files dataset opens; composing the already-opened single-file readers into
- * the multi-file dataset is a possible follow-up. From the gathered metadata the partition keys are bound
+ * <p>Merged open reads each file's footer in a gather pass (schema, GeoParquet {@code geo} metadata, row count, and
+ * Hive partition values) and again when the all-files dataset opens; composing the already-opened single-file readers
+ * into the multi-file dataset is a possible follow-up. From the gathered metadata the partition keys are bound
  * ({@link HivePartitioning#bind}: a key matching a physical column prunes that column, a path-only key is synthesized
  * into an appended column), the per-file {@code geo} metadata is unioned ({@link GeoMetadataAggregator#aggregate}), and
  * one {@link FilesetDataset} is built with per-file partition {@link FileStats} for pruning.
@@ -62,15 +66,19 @@ public final class FilesetCatalog implements DatasetCatalog {
 
     private final FileSource source;
     private final List<ByteRangeSource> openSources;
-    private final ParquetDataset dataset;
+    private final SequencedMap<String, ParquetDataset> datasetsByName;
     private final CatalogCapabilities capabilities;
 
-    private FilesetCatalog(FileSource source, List<ByteRangeSource> openSources, ParquetDataset dataset) {
+    private FilesetCatalog(
+            FileSource source,
+            List<ByteRangeSource> openSources,
+            SequencedMap<String, ParquetDataset> datasetsByName,
+            boolean enumeratesDatasets) {
         this.source = source;
         this.openSources = openSources;
-        this.dataset = dataset;
+        this.datasetsByName = datasetsByName;
         this.capabilities = CatalogCapabilities.builder()
-                .enumeratesDatasets(false)
+                .enumeratesDatasets(enumeratesDatasets)
                 .schemaSource(CatalogCapabilities.SchemaSource.MERGED_FILES)
                 .build();
     }
@@ -91,12 +99,7 @@ public final class FilesetCatalog implements DatasetCatalog {
 
         List<FileEntry> files = listSorted(source);
         if (files.isEmpty()) {
-            RuntimeException cleanup = closeAll(List.of(), source);
-            IllegalArgumentException failure = new IllegalArgumentException("no files found at " + source.root());
-            if (cleanup != null) {
-                failure.addSuppressed(cleanup);
-            }
-            throw failure;
+            throw closeAndReportNoFiles(source);
         }
 
         List<ByteRangeSource> opened = new ArrayList<>(files.size());
@@ -105,7 +108,9 @@ public final class FilesetCatalog implements DatasetCatalog {
                 opened.add(file.open());
             }
             ParquetDataset built = buildDataset(files, opened, options, source.root());
-            return new FilesetCatalog(source, opened, built);
+            SequencedMap<String, ParquetDataset> byName = new LinkedHashMap<>();
+            byName.put(built.name(), built);
+            return new FilesetCatalog(source, opened, byName, false);
         } catch (RuntimeException failure) {
             RuntimeException cleanup = closeAll(opened, source);
             if (cleanup != null) {
@@ -113,6 +118,59 @@ public final class FilesetCatalog implements DatasetCatalog {
             }
             throw failure;
         }
+    }
+
+    /**
+     * Opens a catalog publishing one dataset per file: every file the {@link FileSource} lists becomes its own
+     * single-file dataset, named by its file name with the extension stripped, in relative-path order. Files never
+     * merge and need not share a schema; a directory of heterogeneous files (one Natural Earth theme per file) resolves
+     * to one dataset each.
+     *
+     * <p>The source is expected to list a flat set of uniquely named files (a non-recursive {@code *.parquet} match).
+     * Should two entries still derive the same dataset name, open fails naming both files rather than silently dropping
+     * one.
+     *
+     * @throws IllegalArgumentException if {@code source} lists no files
+     * @throws IllegalStateException if two files derive the same dataset name
+     * @throws io.tileverse.parquetry.format.ParquetFormatException if any footer fails to conform to the spec
+     * @throws java.io.UncheckedIOException if any source fails to deliver bytes
+     */
+    public static FilesetCatalog openPerFile(FileSource source) {
+        Objects.requireNonNull(source, "source");
+        List<FileEntry> files = listSorted(source);
+        if (files.isEmpty()) {
+            throw closeAndReportNoFiles(source);
+        }
+        List<ByteRangeSource> opened = new ArrayList<>(files.size());
+        try {
+            SequencedMap<String, ParquetDataset> byName = buildPerFileDatasets(files, opened, source);
+            return new FilesetCatalog(source, List.copyOf(opened), byName, true);
+        } catch (RuntimeException failure) {
+            RuntimeException cleanup = closeAll(opened, source);
+            if (cleanup != null) {
+                failure.addSuppressed(cleanup);
+            }
+            throw failure;
+        }
+    }
+
+    private static SequencedMap<String, ParquetDataset> buildPerFileDatasets(
+            List<FileEntry> files, List<ByteRangeSource> opened, FileSource source) {
+        SequencedMap<String, ParquetDataset> byName = new LinkedHashMap<>();
+        Map<String, String> fileByName = new HashMap<>();
+        for (FileEntry file : files) {
+            ByteRangeSource bytes = file.open();
+            opened.add(bytes);
+            ParquetDataset dataset =
+                    buildDataset(List.of(file), List.of(bytes), CatalogOptions.defaults(), source.root());
+            String colliding = fileByName.putIfAbsent(dataset.name(), file.relativePath());
+            if (colliding != null) {
+                throw new IllegalStateException("files '" + colliding + "' and '" + file.relativePath()
+                        + "' both derive the dataset name '" + dataset.name() + "'");
+            }
+            byName.put(dataset.name(), dataset);
+        }
+        return byName;
     }
 
     @SuppressWarnings("java:S2259") // open() guarantees at least one file; the loop always assigns unifiedSchema
@@ -201,13 +259,14 @@ public final class FilesetCatalog implements DatasetCatalog {
 
     @Override
     public List<String> datasets() {
-        return List.of(dataset.name());
+        return List.copyOf(datasetsByName.keySet());
     }
 
     @Override
     public ParquetDataset dataset(String name) {
-        if (!dataset.name().equals(name)) {
-            throw new IllegalArgumentException("no dataset named '" + name + "' (have '" + dataset.name() + "')");
+        ParquetDataset dataset = datasetsByName.get(name);
+        if (dataset == null) {
+            throw new IllegalArgumentException("no dataset named '" + name + "' (have " + datasets() + ")");
         }
         return dataset;
     }
@@ -253,6 +312,16 @@ public final class FilesetCatalog implements DatasetCatalog {
         String base = filename.substring(filename.lastIndexOf('/') + 1);
         int dot = base.lastIndexOf('.');
         return dot > 0 ? base.substring(0, dot) : base;
+    }
+
+    /** Closes {@code source} and returns the no-files failure, with any close failure attached as suppressed. */
+    private static IllegalArgumentException closeAndReportNoFiles(FileSource source) {
+        RuntimeException cleanup = closeAll(List.of(), source);
+        IllegalArgumentException failure = new IllegalArgumentException("no files found at " + source.root());
+        if (cleanup != null) {
+            failure.addSuppressed(cleanup);
+        }
+        return failure;
     }
 
     /**

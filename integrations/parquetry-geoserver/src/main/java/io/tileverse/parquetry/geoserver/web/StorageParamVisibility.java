@@ -21,7 +21,8 @@ import java.util.Set;
  */
 final class StorageParamVisibility {
 
-    private static final Set<String> ALWAYS_VISIBLE = Set.of("filetype", "uri", "namespace", "fid", "storage.provider");
+    private static final Set<String> ALWAYS_VISIBLE =
+            Set.of("filetype", "uri", "namespace", "fid", "layer-grouping", "storage.provider");
     private static final Set<String> CLOUD_PROVIDERS = Set.of("s3", "azure", "gcs", "http");
     private static final String CACHING_PREFIX = "storage.caching.";
     private static final String STORAGE_PREFIX = "storage.";
@@ -30,9 +31,9 @@ final class StorageParamVisibility {
 
     /**
      * True for the core parameters that are shown regardless of the selected provider ({@code filetype}, {@code uri},
-     * {@code namespace}, {@code fid}, {@code storage.provider}). These do not take part in the provider-driven
-     * show/hide toggle, and the store edit panel leaves them to GeoServer's stock handling - in particular so the
-     * namespace field keeps following the workspace as GeoServer expects.
+     * {@code namespace}, {@code fid}, {@code layer-grouping}, {@code storage.provider}). These do not take part in the
+     * provider-driven show/hide toggle, and the store edit panel leaves them to GeoServer's stock handling - in
+     * particular so the namespace field keeps following the workspace as GeoServer expects.
      */
     static boolean isAlwaysVisible(String paramKey) {
         return ALWAYS_VISIBLE.contains(paramKey);

@@ -1,6 +1,6 @@
 <dataStore>
-  <id>DataStoreInfoImpl--2fb5fd2d:19ea55565ed:-7fd2</id>
-  <name>disputed_areas</name>
+  <id>DataStoreInfoImpl--2fb5fd2d:19ea55565ed:-7fdb</id>
+  <name>ne</name>
   <type>GeoParquet</type>
   <enabled>true</enabled>
   <workspace>
@@ -9,9 +9,9 @@
   <connectionParameters>
     <entry key="filetype">geoparquet</entry>
     <entry key="namespace">http://parquetry</entry>
-    <entry key="uri">file:///data/ne/disputed_areas.parquet</entry>
+    <entry key="uri">file:///data/ne/</entry>
+    <entry key="layer-grouping">file</entry>
   </connectionParameters>
   <__default>false</__default>
-  <dateCreated>2026-06-08 03:45:19.180 UTC</dateCreated>
   <disableOnConnFailure>false</disableOnConnFailure>
 </dataStore>
