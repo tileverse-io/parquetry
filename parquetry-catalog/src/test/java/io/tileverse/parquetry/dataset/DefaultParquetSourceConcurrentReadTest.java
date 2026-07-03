@@ -199,10 +199,10 @@ class DefaultParquetSourceConcurrentReadTest {
     }
 
     /** A per-row key over all three columns; two rows with the same key are genuinely identical rows. */
-    private static String rowKey(ParquetRecord record) {
-        int year = record.getInt(YEAR);
-        String country = record.getString(COUNTRY);
-        double value = record.getDouble(VALUE);
+    private static String rowKey(ParquetRecord row) {
+        int year = row.getInt(YEAR);
+        String country = row.getString(COUNTRY);
+        double value = row.getDouble(VALUE);
         return year + "|" + country + "|" + value;
     }
 

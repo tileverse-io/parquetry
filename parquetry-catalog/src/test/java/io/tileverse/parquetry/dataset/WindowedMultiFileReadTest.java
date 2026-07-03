@@ -134,8 +134,8 @@ class WindowedMultiFileReadTest {
                     .build();
             ParquetSource source = ParquetSource.open(TestFilesets.of(sources), openOptions);
 
-            // A limit far smaller than one file ends the window inside file 0 while files 1..3 have decoded ahead;
-            // closing the stream must discard their buffered batches.
+            // A limit far smaller than one file ends the window inside the first file while the later files have
+            // decoded ahead. Closing the stream must discard their buffered batches.
             Query earlyLimit = Query.builder(Predicate.ALWAYS_TRUE, Projection.ALL)
                     .limit(10)
                     .build();
@@ -218,10 +218,10 @@ class WindowedMultiFileReadTest {
     /**
      * A per-row key over all three columns; the file-order sequence of these keys is what the window must reproduce.
      */
-    private static String rowKey(ParquetRecord record) {
-        int year = record.getInt(YEAR);
-        String country = record.getString(COUNTRY);
-        double value = record.getDouble(VALUE);
+    private static String rowKey(ParquetRecord row) {
+        int year = row.getInt(YEAR);
+        String country = row.getString(COUNTRY);
+        double value = row.getDouble(VALUE);
         return year + "|" + country + "|" + value;
     }
 
