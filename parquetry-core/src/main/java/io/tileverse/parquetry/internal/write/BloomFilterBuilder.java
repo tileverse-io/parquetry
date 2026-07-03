@@ -85,12 +85,10 @@ public final class BloomFilterBuilder {
 
     /**
      * Hashes the raw bytes of {@code binary} as a plain-encoded BYTE_ARRAY / FIXED_LEN_BYTE_ARRAY value and flips the
-     * corresponding SBBF bits. Callers retain ownership of the segment; the builder copies whichever bytes it needs
-     * before returning.
+     * corresponding SBBF bits. The segment is hashed in place; nothing is copied or retained.
      */
     public void add(@NonNull MemorySegment binary) {
-        byte[] copy = binary.toArray(java.lang.foreign.ValueLayout.JAVA_BYTE);
-        SplitBlockBloomFilter.insertHash(bitsetSegment, SplitBlockBloomFilter.hashBytes(copy));
+        SplitBlockBloomFilter.insertHash(bitsetSegment, SplitBlockBloomFilter.hashBytes(binary));
     }
 
     /**

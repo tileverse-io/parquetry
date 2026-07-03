@@ -189,6 +189,11 @@ public final class SplitBlockBloomFilter {
         return XxHash64Hasher.hash(bytes, offset, length);
     }
 
+    /** xxHash64 of the segment's bytes; matches {@link #hashBytes(byte[])} over the same bytes. */
+    public static long hashBytes(@NonNull MemorySegment bytes) {
+        return XxHash64Hasher.hash(bytes);
+    }
+
     /**
      * Inserts {@code hash} into the writable bitset at {@code writableBitset}. The bitset's byte length must be a
      * positive multiple of {@link #BYTES_PER_BLOCK}; otherwise an {@link IllegalArgumentException} is raised. Uses the

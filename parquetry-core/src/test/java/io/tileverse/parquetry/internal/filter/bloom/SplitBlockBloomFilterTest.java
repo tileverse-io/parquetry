@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 
 import org.junit.jupiter.api.Test;
 
@@ -133,6 +134,29 @@ class SplitBlockBloomFilterTest {
         long sliced = SplitBlockBloomFilter.hashBytes(all, 2, 2);
         long full = SplitBlockBloomFilter.hashBytes(new byte[] {'h', 'i'});
         assertThat(sliced).isEqualTo(full);
+    }
+
+    @Test
+    void hashBytesSegmentMatchesByteArrayHash() {
+        byte[][] vectors = {
+            {},
+            {42},
+            "abc".getBytes(StandardCharsets.UTF_8),
+            "0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8),
+            "the quick brown fox jumps over the lazy dog, and then some".getBytes(StandardCharsets.UTF_8)
+        };
+        for (byte[] bytes : vectors) {
+            long fromArray = SplitBlockBloomFilter.hashBytes(bytes);
+            long fromSegment = SplitBlockBloomFilter.hashBytes(MemorySegment.ofArray(bytes));
+            assertThat(fromSegment).as("hash of %d-byte value", bytes.length).isEqualTo(fromArray);
+        }
+    }
+
+    @Test
+    void hashBytesSegmentSliceMatchesRangeHash() {
+        byte[] backing = "prefix-PAYLOAD-suffix".getBytes(StandardCharsets.UTF_8);
+        MemorySegment slice = MemorySegment.ofArray(backing).asSlice(7, 7);
+        assertThat(SplitBlockBloomFilter.hashBytes(slice)).isEqualTo(SplitBlockBloomFilter.hashBytes(backing, 7, 7));
     }
 
     @Test
