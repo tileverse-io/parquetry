@@ -55,6 +55,8 @@ import lombok.NonNull;
  *     {@code >= 0}
  * @param maxConcurrentFetchesPerRead maximum concurrent column-chunk fetches a single read may have in flight; must be
  *     {@code > 0}
+ * @param maxConcurrentFiles maximum survivor files a multi-file read drains concurrently; the fan-out is I/O-bound
+ *     (each producer mostly parks on round-trips), hence the default exceeds core count; must be {@code > 0}
  */
 public record ParquetRuntime(
         @NonNull ComputeExecutor computeExecutor,
@@ -69,7 +71,8 @@ public record ParquetRuntime(
         int maxCoalesceGap,
         int maxCoalescedSpan,
         int prefetchDepth,
-        int maxConcurrentFetchesPerRead) {
+        int maxConcurrentFetchesPerRead,
+        int maxConcurrentFiles) {
 
     private static final long NOMINAL_AHEAD_SLOT_BYTES = 32L << 20;
 
@@ -97,6 +100,9 @@ public record ParquetRuntime(
             throw new IllegalArgumentException(
                     "maxConcurrentFetchesPerRead must be > 0, got " + maxConcurrentFetchesPerRead);
         }
+        if (maxConcurrentFiles <= 0) {
+            throw new IllegalArgumentException("maxConcurrentFiles must be > 0, got " + maxConcurrentFiles);
+        }
     }
 
     /** The elastic default runtime, sized to this pod's heap, cores, and free disk. */
@@ -123,7 +129,8 @@ public record ParquetRuntime(
                 maxCoalesceGap,
                 maxCoalescedSpan,
                 prefetchDepth,
-                maxConcurrentFetchesPerRead);
+                maxConcurrentFetchesPerRead,
+                maxConcurrentFiles);
     }
 
     /** A copy sharing every resource, with {@code maxConcurrentFetchesPerRead} replaced. */
@@ -141,7 +148,27 @@ public record ParquetRuntime(
                 maxCoalesceGap,
                 maxCoalescedSpan,
                 prefetchDepth,
-                maxConcurrentFetchesPerRead);
+                maxConcurrentFetchesPerRead,
+                maxConcurrentFiles);
+    }
+
+    /** A copy sharing every resource, with {@code maxConcurrentFiles} replaced. */
+    public ParquetRuntime withMaxConcurrentFiles(int maxConcurrentFiles) {
+        return new ParquetRuntime(
+                computeExecutor,
+                segmentPool,
+                fetchBudget,
+                decodeBudget,
+                offHeapDecodeBudget,
+                diskBudget,
+                spillDir,
+                spillEnabled,
+                maxDecodeAhead,
+                maxCoalesceGap,
+                maxCoalescedSpan,
+                prefetchDepth,
+                maxConcurrentFetchesPerRead,
+                maxConcurrentFiles);
     }
 
     /** A copy sharing every resource, with {@code maxDecodeAhead} replaced. */
@@ -159,7 +186,8 @@ public record ParquetRuntime(
                 maxCoalesceGap,
                 maxCoalescedSpan,
                 prefetchDepth,
-                maxConcurrentFetchesPerRead);
+                maxConcurrentFetchesPerRead,
+                maxConcurrentFiles);
     }
 
     static int decodeAheadDefault(int availableProcessors, long decodeBudgetCapacity) {
@@ -188,6 +216,7 @@ public record ParquetRuntime(
         private int maxCoalescedSpan = 8 << 20;
         private int prefetchDepth = 2;
         private int maxConcurrentFetchesPerRead = 4;
+        private int maxConcurrentFiles = 8;
 
         private Builder() {}
 
@@ -268,6 +297,14 @@ public record ParquetRuntime(
             return this;
         }
 
+        public Builder maxConcurrentFiles(int maxConcurrentFiles) {
+            if (maxConcurrentFiles <= 0) {
+                throw new IllegalArgumentException("maxConcurrentFiles must be > 0, got " + maxConcurrentFiles);
+            }
+            this.maxConcurrentFiles = maxConcurrentFiles;
+            return this;
+        }
+
         public ParquetRuntime build() {
             IoLimits limits = IoLimits.from(resourceLimits);
             FetchBudget resolvedFetchBudget =
@@ -293,7 +330,8 @@ public record ParquetRuntime(
                     maxCoalesceGap,
                     maxCoalescedSpan,
                     prefetchDepth,
-                    maxConcurrentFetchesPerRead);
+                    maxConcurrentFetchesPerRead,
+                    maxConcurrentFiles);
         }
     }
 
