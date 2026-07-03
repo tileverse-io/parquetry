@@ -103,7 +103,7 @@ class IcebergDeletionVectorsIT {
 
     private void withDataset(Consumer<ParquetDataset> assertions) {
         Path tableDir = TestCorpus.extractDirectory("iceberg-deletes/deletion-vectors", tempDir.resolve(TABLE));
-        try (IcebergCatalog catalog = IcebergCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
+        try (IcebergTableCatalog catalog = IcebergTableCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
             assertions.accept(catalog.dataset(TABLE));
         }
     }

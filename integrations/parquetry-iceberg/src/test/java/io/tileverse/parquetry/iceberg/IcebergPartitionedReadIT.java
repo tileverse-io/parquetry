@@ -84,7 +84,7 @@ class IcebergPartitionedReadIT {
 
     private void withDataset(Consumer<IcebergDataset> assertions) {
         Path tableDir = extractTable();
-        try (IcebergCatalog catalog = IcebergCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
+        try (IcebergTableCatalog catalog = IcebergTableCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
             IcebergDataset dataset = (IcebergDataset) catalog.dataset(TABLE);
             assertions.accept(dataset);
         }

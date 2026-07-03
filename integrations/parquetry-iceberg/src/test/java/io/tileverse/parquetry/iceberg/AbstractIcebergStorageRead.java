@@ -129,7 +129,7 @@ abstract class AbstractIcebergStorageRead {
 
     private void withDataset(Consumer<ParquetDataset> assertions) throws Exception {
         try (Backend backend = openBackend();
-                IcebergCatalog catalog = IcebergCatalog.open(
+                IcebergTableCatalog catalog = IcebergTableCatalog.open(
                         backend.tableLocation(),
                         StorageIcebergFileIO.over(backend.storage(), backend.tableLocation()),
                         catalogOptions())) {

@@ -99,7 +99,7 @@ class IcebergGeometryEvolutionIT {
     }
 
     private void withDataset(Path tableDir, Consumer<IcebergDataset> assertions) {
-        try (IcebergCatalog catalog = IcebergCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
+        try (IcebergTableCatalog catalog = IcebergTableCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
             IcebergDataset dataset = (IcebergDataset) catalog.dataset(TABLE);
             assertions.accept(dataset);
         }

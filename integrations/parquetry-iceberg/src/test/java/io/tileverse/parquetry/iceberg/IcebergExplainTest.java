@@ -51,7 +51,7 @@ class IcebergExplainTest {
     @Test
     void explainReportsKeptAndSkippedFiles() {
         Path tableDir = extractTable();
-        try (IcebergCatalog catalog = IcebergCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
+        try (IcebergTableCatalog catalog = IcebergTableCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
             ParquetDataset dataset = catalog.dataset(TABLE);
 
             DatasetExplainPlan plan = dataset.explain(CALIFORNIA, Projection.ALL, ReadOptions.DEFAULTS);
@@ -75,7 +75,7 @@ class IcebergExplainTest {
         Path tableDir = extractTable();
         Predicate farOffshore =
                 new Predicate.Spatial.BboxIntersects(ColumnPath.of(GEOM_COLUMN), Bbox.of2d(160.0, -80.0, 170.0, -70.0));
-        try (IcebergCatalog catalog = IcebergCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
+        try (IcebergTableCatalog catalog = IcebergTableCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
             ParquetDataset dataset = catalog.dataset(TABLE);
 
             DatasetExplainPlan plan = dataset.explain(farOffshore, Projection.ALL, ReadOptions.DEFAULTS);
@@ -90,7 +90,7 @@ class IcebergExplainTest {
     @Test
     void explainAnalyzeFillsExecutionForTheSurvivor() {
         Path tableDir = extractTable();
-        try (IcebergCatalog catalog = IcebergCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
+        try (IcebergTableCatalog catalog = IcebergTableCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
             ParquetDataset dataset = catalog.dataset(TABLE);
 
             DatasetExplainPlan plan = dataset.explainAnalyze(CALIFORNIA, Projection.ALL, ReadOptions.DEFAULTS);

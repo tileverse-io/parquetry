@@ -17,7 +17,7 @@
  * A clean-room Apache Iceberg table reader on the parquetry dataset/catalog SPI, with no dependency on
  * {@code iceberg-core}, {@code apache-avro}, or Hadoop.
  *
- * <p>The public API is small: {@link io.tileverse.parquetry.iceberg.IcebergCatalog} opens a table (with
+ * <p>The public API is small: {@link io.tileverse.parquetry.iceberg.IcebergTableCatalog} opens a table (with
  * {@link io.tileverse.parquetry.iceberg.IcebergOptions}) and exposes its snapshot as one
  * {@link io.tileverse.parquetry.catalog.DatasetCatalog} / {@link io.tileverse.parquetry.dataset.ParquetDataset}.
  * Data-file bytes come through an {@link io.tileverse.parquetry.iceberg.IcebergFileIO};

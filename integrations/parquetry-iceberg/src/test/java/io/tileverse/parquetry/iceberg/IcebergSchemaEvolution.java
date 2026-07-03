@@ -39,7 +39,7 @@ import tools.jackson.databind.node.ObjectNode;
  * {@code current-schema-id} at it, and writes the result as {@code v<version>.metadata.json}. Everything else,
  * including {@code current-snapshot-id}, the snapshots array, and the manifest-list location, stays byte-identical,
  * hence the evolved table reads over the original data files. The metadata resolver then picks the highest version,
- * presenting the evolved schema to {@link IcebergCatalog#openLocal}.
+ * presenting the evolved schema to {@link IcebergTableCatalog#openLocal}.
  */
 final class IcebergSchemaEvolution {
 
@@ -50,7 +50,7 @@ final class IcebergSchemaEvolution {
 
     /**
      * Writes {@code v2.metadata.json} into {@code tableDir/metadata}, evolving the current schema to {@code evolved}.
-     * Returns {@code tableDir} for chaining into {@link IcebergCatalog#openLocal}.
+     * Returns {@code tableDir} for chaining into {@link IcebergTableCatalog#openLocal}.
      */
     static Path evolveCurrentSchema(Path tableDir, List<IcebergField> evolved) {
         Path metadataDir = tableDir.resolve("metadata");

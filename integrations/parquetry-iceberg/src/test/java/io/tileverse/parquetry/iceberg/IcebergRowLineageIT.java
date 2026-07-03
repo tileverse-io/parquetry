@@ -209,7 +209,7 @@ class IcebergRowLineageIT {
 
     private void withTable(String resource, String name, Consumer<ParquetDataset> assertions) {
         Path tableDir = TestCorpus.extractDirectory(resource, tempDir.resolve(name));
-        try (IcebergCatalog catalog = IcebergCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
+        try (IcebergTableCatalog catalog = IcebergTableCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
             assertions.accept(catalog.dataset(name));
         }
     }

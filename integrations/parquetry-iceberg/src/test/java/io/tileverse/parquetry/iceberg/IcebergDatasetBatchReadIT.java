@@ -51,7 +51,7 @@ class IcebergDatasetBatchReadIT {
         Path root = TestCorpus.extractDirectory("iceberg-geo-testbed", tempDir.resolve("t"));
         Path tableDir = root.resolve(TABLE);
 
-        try (IcebergCatalog catalog = IcebergCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
+        try (IcebergTableCatalog catalog = IcebergTableCatalog.openLocal(tableDir, IcebergOptions.defaults())) {
             ParquetDataset dataset = catalog.dataset(TABLE);
 
             long unfilteredTotal = sumBatchRows(dataset, Predicate.ALWAYS_TRUE);
