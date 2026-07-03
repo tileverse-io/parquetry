@@ -43,7 +43,7 @@ class MultiReaderCountTest {
             long single =
                     ra.rowGroups().stream().mapToLong(RowGroupSummary::rowCount).sum();
 
-            DefaultParquetSource ds = new DefaultParquetSource(List.of(ra, rb));
+            DefaultParquetSource ds = new DefaultParquetSource(List.of(ra, rb), 8);
             assertThat(ds.count()).isEqualTo(2 * single);
         }
     }
@@ -60,7 +60,7 @@ class MultiReaderCountTest {
             assertThat(perFile).isPositive();
 
             DefaultParquetSource ds =
-                    new DefaultParquetSource(List.of(ParquetFileReader.open(a), ParquetFileReader.open(b)));
+                    new DefaultParquetSource(List.of(ParquetFileReader.open(a), ParquetFileReader.open(b)), 8);
             assertThat(ds.count(residual)).isEqualTo(2 * perFile);
         }
     }

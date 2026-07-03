@@ -74,7 +74,7 @@ class DatasetExplainAnalyzeIT {
 
             ParquetFileReader ra = ParquetFileReader.open(a);
             ParquetFileReader rb = ParquetFileReader.open(b);
-            DefaultParquetSource dataset = new DefaultParquetSource(List.of(ra, rb));
+            DefaultParquetSource dataset = new DefaultParquetSource(List.of(ra, rb), 8);
 
             assertThatThrownBy(() -> dataset.explainAnalyze(KEEP_HIGH_IDS, Projection.ALL, ReadOptions.DEFAULTS))
                     .isInstanceOf(UnsupportedOperationException.class)
