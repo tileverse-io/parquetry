@@ -53,6 +53,8 @@ import io.tileverse.parquetry.observe.RowGroupFlushed;
 import io.tileverse.parquetry.observe.WriteObserver;
 import io.tileverse.parquetry.observe.WriteStarted;
 import io.tileverse.parquetry.observe.WriteStats;
+import io.tileverse.parquetry.runtime.ComputeExecutor;
+import io.tileverse.parquetry.runtime.ParquetRuntime;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
@@ -68,8 +70,9 @@ import lombok.NonNull;
  * commits by closing the sink after a successful {@link #close()}; on the failure path the caller does not close the
  * sink (and closes its backing storage instead). A close that finalizes the footer does not commit by itself.
  *
- * <p>Writers are not thread-safe; one logical record stream per instance. {@link #close()} is required: it
- * force-flushes the in-flight row group, writes the footer, and deletes the temp directory backing the per-column
+ * <p>Writers are not thread-safe; one logical record stream per instance. Column-chunk encode fans out internally on
+ * the bound runtime's shared compute pool; that parallelism never changes output bytes. {@link #close()} is required:
+ * it force-flushes the in-flight row group, writes the footer, and deletes the temp directory backing the per-column
  * accumulators. Close is idempotent. On any internal failure the writer enters a terminal failed state; subsequent
  * record-emitting calls throw {@link ParquetWriteException}, and {@link #close()} cleans up without writing a footer.
  * An interrupt mid-stream emerges as an {@link java.io.UncheckedIOException} wrapping an
@@ -89,6 +92,7 @@ public final class ParquetFileWriter implements AutoCloseable {
     private final Path tempDir;
     private final GeoMetadataWriter geoWriter;
     private final long maxRowGroupBytesLimit;
+    private final ComputeExecutor computeExecutor;
     private final List<RowGroup> completedRowGroups = new ArrayList<>();
     private final Map<ColumnPath, GeoColumnSummary> geoSummaries = new LinkedHashMap<>();
     private final Instant writerStart = Instant.now();
@@ -111,10 +115,26 @@ public final class ParquetFileWriter implements AutoCloseable {
         return create(sink, schema, WriteOptions.defaults());
     }
 
-    /** Opens a writer with the supplied options. The writer never closes {@code sink}; the caller owns it. */
+    /**
+     * Opens a writer with the supplied options and {@link ParquetRuntime#defaultRuntime()}. The writer never closes
+     * {@code sink}; the caller owns it.
+     */
     public static ParquetFileWriter create(
             @NonNull ByteSink sink, @NonNull ParquetSchema rawSchema, @NonNull WriteOptions options) {
-        return assembleWriter(sink, rawSchema, options, WriteOptions.MAX_ROW_GROUP_BYTES_LIMIT);
+        return create(sink, rawSchema, options, ParquetRuntime.defaultRuntime());
+    }
+
+    /**
+     * Opens a writer bound to {@code runtime}, whose shared compute pool the writer fans per-column encode work out on.
+     * Writers built through the runtime-less overloads use {@link ParquetRuntime#defaultRuntime()}; the parallelism
+     * never changes output bytes. The writer never closes {@code sink}; the caller owns it.
+     */
+    public static ParquetFileWriter create(
+            @NonNull ByteSink sink,
+            @NonNull ParquetSchema rawSchema,
+            @NonNull WriteOptions options,
+            @NonNull ParquetRuntime runtime) {
+        return assembleWriter(sink, rawSchema, options, runtime, WriteOptions.MAX_ROW_GROUP_BYTES_LIMIT);
     }
 
     /**
@@ -126,13 +146,16 @@ public final class ParquetFileWriter implements AutoCloseable {
             @NonNull ByteSink sink,
             @NonNull ParquetSchema rawSchema,
             @NonNull WriteOptions options,
+            @NonNull ParquetRuntime runtime,
             long maxRowGroupBytesLimit) {
         GeoMetadataWriter geoWriter = new GeoMetadataWriter(options);
         ParquetSchema schema = geoWriter.applyV2LogicalTypes(rawSchema);
         Path tempDir = WriterTempDirectory.createTempDir(options);
         writeLeadingMagic(sink, tempDir);
-        RowGroupWriter first = openRowGroupWriter(options, schema, tempDir, sink.position());
-        return new ParquetFileWriter(sink, options, schema, tempDir, geoWriter, first, maxRowGroupBytesLimit);
+        ComputeExecutor computeExecutor = runtime.computeExecutor();
+        RowGroupWriter first = openRowGroupWriter(options, schema, tempDir, sink.position(), computeExecutor);
+        return new ParquetFileWriter(
+                sink, options, schema, tempDir, geoWriter, first, maxRowGroupBytesLimit, computeExecutor);
     }
 
     /**
@@ -153,6 +176,18 @@ public final class ParquetFileWriter implements AutoCloseable {
         return create(ByteSink.ofOutputStream(out), schema, options);
     }
 
+    /**
+     * Convenience overload wrapping {@code out} in a {@link ByteSink} via {@link ByteSink#ofOutputStream} and binding
+     * the writer to {@code runtime}. The writer never closes the sink, and therefore never closes {@code out}; the
+     * caller keeps ownership and closes {@code out} to commit after a successful {@link #close()}.
+     */
+    public static ParquetFileWriter create(
+            OutputStream out, ParquetSchema schema, WriteOptions options, ParquetRuntime runtime) {
+        return create(ByteSink.ofOutputStream(out), schema, options, runtime);
+    }
+
+    // S107: aggregates the writer's collaborators; a parameter object would only relocate the arity.
+    @SuppressWarnings("java:S107")
     private ParquetFileWriter(
             ByteSink out,
             WriteOptions options,
@@ -160,7 +195,8 @@ public final class ParquetFileWriter implements AutoCloseable {
             Path tempDir,
             GeoMetadataWriter geoWriter,
             RowGroupWriter first,
-            long maxRowGroupBytesLimit) {
+            long maxRowGroupBytesLimit,
+            ComputeExecutor computeExecutor) {
         this.out = out;
         this.options = options;
         this.observer = options.writeObserver();
@@ -169,6 +205,7 @@ public final class ParquetFileWriter implements AutoCloseable {
         this.geoWriter = geoWriter;
         this.currentRowGroup = first;
         this.maxRowGroupBytesLimit = maxRowGroupBytesLimit;
+        this.computeExecutor = computeExecutor;
     }
 
     /** Appends a whole batch of rows via the vectorised column-chunk path. */
@@ -338,7 +375,7 @@ public final class ParquetFileWriter implements AutoCloseable {
         accumulateColumnDataBytes(patched, flushed);
         fireRowGroupFlushed(rowGroupIndex, patched, flushed);
         fireIndexesWritten(patched);
-        currentRowGroup = openRowGroupWriter(options, schema, tempDir, out.position());
+        currentRowGroup = openRowGroupWriter(options, schema, tempDir, out.position(), computeExecutor);
         currentRowGroupStart = Instant.now();
     }
 
@@ -476,10 +513,14 @@ public final class ParquetFileWriter implements AutoCloseable {
         return orders;
     }
 
-    /** Opens a fresh per-row-group writer rooted at {@code baseFileOffset}. */
+    /** Opens a fresh per-row-group writer rooted at {@code baseFileOffset}, fanning appends out on the compute pool. */
     private static RowGroupWriter openRowGroupWriter(
-            WriteOptions options, ParquetSchema schema, Path tempDir, long baseFileOffset) {
-        return new RowGroupWriter(options, schema, tempDir, baseFileOffset);
+            WriteOptions options,
+            ParquetSchema schema,
+            Path tempDir,
+            long baseFileOffset,
+            ComputeExecutor computeExecutor) {
+        return new RowGroupWriter(options, schema, tempDir, baseFileOffset, computeExecutor);
     }
 
     /** Throws when the writer has been closed or marked failed. */

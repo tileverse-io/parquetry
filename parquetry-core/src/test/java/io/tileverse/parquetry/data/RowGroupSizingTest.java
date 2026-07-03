@@ -31,6 +31,7 @@ import org.junit.jupiter.api.io.TempDir;
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteSink;
+import io.tileverse.parquetry.runtime.ParquetRuntime;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -138,8 +139,8 @@ class RowGroupSizingTest {
             throws Exception {
         ParquetSchema schema = flatSchema(requiredInt32("id"));
         ByteArrayOutputStream sink = new ByteArrayOutputStream();
-        try (ParquetFileWriter writer =
-                ParquetFileWriter.assembleWriter(ByteSink.ofOutputStream(sink), schema, options, tinyLimit)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.assembleWriter(
+                ByteSink.ofOutputStream(sink), schema, options, ParquetRuntime.defaultRuntime(), tinyLimit)) {
             ParquetRecordBatchBuilder appender = writer.appender(1);
             for (int i = 0; i < rows; i++) {
                 WriteFixtures.appendRow(appender, schema, Map.of(ColumnPath.of("id"), i));

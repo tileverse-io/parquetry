@@ -40,6 +40,7 @@ import io.tileverse.parquetry.format.PageLocation;
 import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.io.ByteSink;
+import io.tileverse.parquetry.runtime.ComputeExecutor;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.LevelMaxima;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -56,10 +57,13 @@ import lombok.NonNull;
  * <p>Flat and struct-nested schemas are both supported. Repeated columns (list / map elements) are rejected at
  * construction. A dataset-level writer layer wires this writer to record sources.
  *
- * <p>Consolidation runs sequentially in schema order. {@code ColumnChunkWriter.finishChunk()} is bookkeeping plus a
- * final partial-page flush; parallelising it via {@link java.util.concurrent.StructuredTaskScope} buys nothing until
- * the dataset-level benchmark says otherwise. The per-column writers themselves are still single-threaded and
- * independently owned: a future move to parallel consolidation is a local change at this layer.
+ * <p>{@link #appendBatch} fans each column's append out as one unit on the shared
+ * {@link io.tileverse.parquetry.runtime.ComputeExecutor} (submit-or-inline, joined per batch), keeping encode and
+ * compress work off the single caller thread. Each {@link ColumnChunkWriter} is touched by at most one thread at a
+ * time, and the per-batch join publishes its state back to the caller. Consolidation in {@link #flushTo} stays
+ * sequential in schema order, which keeps output bytes independent of encode completion order.
+ * {@code ColumnChunkWriter.finishChunk()} is bookkeeping plus a final partial-page flush; parallelising it buys nothing
+ * until the dataset-level benchmark says otherwise.
  *
  * <p>The writer copies each column's temp file straight into the supplied {@link ByteSink} and rewrites every
  * {@link OffsetIndex} entry to absolute file offsets in the process. Bloom filter blobs and column / offset indexes are
@@ -73,6 +77,7 @@ public final class RowGroupWriter implements AutoCloseable {
 
     private final List<LeafBinding> leaves;
     private final Map<ColumnPath, LeafBinding> leafByPath;
+    private final ColumnFanOut fanOut;
 
     private long rowCount;
     private long currentFileOffset;
@@ -80,22 +85,35 @@ public final class RowGroupWriter implements AutoCloseable {
     private boolean closed;
 
     public RowGroupWriter(WriteOptions options, ParquetSchema schema, Path tempDir) {
-        this(options, schema, tempDir, 0L);
+        this(options, schema, tempDir, 0L, ComputeExecutor.shared());
     }
 
     /**
-     * Variant that places this row group at {@code baseFileOffset} bytes into the surrounding file. The dataset-level
-     * writer passes the post-magic, post-prior-row-group cursor so the absolute offsets baked into every
-     * {@link ColumnMetaData} and {@link OffsetIndex} entry match the file's true byte layout.
+     * Places this row group at {@code baseFileOffset} bytes into the surrounding file. The dataset-level writer passes
+     * the post-magic, post-prior-row-group cursor; the absolute offsets baked into every {@link ColumnMetaData} and
+     * {@link OffsetIndex} entry then match the file's true byte layout.
+     */
+    public RowGroupWriter(WriteOptions options, ParquetSchema schema, Path tempDir, long baseFileOffset) {
+        this(options, schema, tempDir, baseFileOffset, ComputeExecutor.shared());
+    }
+
+    /**
+     * Canonical constructor: {@code computeExecutor} is the shared pool each batch's per-column appends fan out on,
+     * submit-or-inline. The overloads without an executor use {@link ComputeExecutor#shared()}.
      */
     public RowGroupWriter(
-            @NonNull WriteOptions options, @NonNull ParquetSchema schema, @NonNull Path tempDir, long baseFileOffset) {
+            @NonNull WriteOptions options,
+            @NonNull ParquetSchema schema,
+            @NonNull Path tempDir,
+            long baseFileOffset,
+            @NonNull ComputeExecutor computeExecutor) {
         if (baseFileOffset < 0L) {
             throw new IllegalArgumentException("baseFileOffset must be non-negative: " + baseFileOffset);
         }
         this.schema = schema;
         this.tempDir = tempDir;
         this.currentFileOffset = baseFileOffset;
+        this.fanOut = new ColumnFanOut(computeExecutor);
 
         createTempDir(tempDir);
 
@@ -115,7 +133,9 @@ public final class RowGroupWriter implements AutoCloseable {
      * Appends one whole batch of rows. Flat leaves (top-level primitives) feed directly to their
      * {@link ColumnChunkWriter} via the per-vector fast path, keeping the flat path byte-identical to the pre-struct
      * writer. Struct leaves (top-level struct vectors) are shredded once per batch by {@link DremelStriper} and then
-     * fed cell-by-cell through the level-aware {@code appendXxx} / {@code appendNull} API.
+     * fed cell-by-cell through the level-aware {@code appendXxx} / {@code appendNull} API. Both stages fan out per
+     * column on the shared compute pool and join before this method returns; {@code rowCount} advances on the caller
+     * after the join.
      */
     public void appendBatch(@NonNull ParquetRecordBatch batch) {
         if (flushed) {
@@ -172,10 +192,13 @@ public final class RowGroupWriter implements AutoCloseable {
     /**
      * Writes every leaf the batch supplies directly as its own primitive vector, keyed by the full leaf path. This
      * covers flat columns and pre-flattened nested leaves (a producer that emits {@code bbox.xmin} as a standalone
-     * column), and stays byte-identical to the pre-struct writer. Leaves the batch supplies only through a top-level
-     * nested vector are written by {@link #appendStripedLeaves}.
+     * column), and stays byte-identical to the pre-struct writer. Size validation runs on the caller before any column
+     * is touched; each surviving leaf's append then runs as one fan-out unit on the shared compute pool, joined before
+     * returning. Leaves the batch supplies only through a top-level nested vector are written by
+     * {@link #appendStripedLeaves}.
      */
     private void appendDirectLeaves(Map<ColumnPath, ColumnVector> columns, int batchRows) {
+        List<Runnable> units = new ArrayList<>(leaves.size());
         for (LeafBinding binding : leaves) {
             if (binding.requiresStriping()) {
                 continue;
@@ -188,20 +211,24 @@ public final class RowGroupWriter implements AutoCloseable {
                 throw new ParquetWriteException("Batch column " + binding.path.dot() + " size " + vector.size()
                         + " does not match batch rowCount " + batchRows);
             }
-            binding.writer.appendVector(binding.leaf, vector);
+            units.add(() -> binding.writer.appendVector(binding.leaf, vector));
         }
+        fanOut.run(units);
     }
 
     /**
      * Shreds the leaves the batch supplies only through a top-level nested vector (a struct column) and feeds each
-     * leaf's level stream cell by cell. The striper runs only when at least one leaf is supplied indirectly, which
-     * keeps a flat batch from constructing it.
+     * leaf's level stream cell by cell. The striper runs once, serially, on the caller: it is shared work over the
+     * whole batch. Each shredded leaf's feed then runs as one fan-out unit on the shared compute pool, joined before
+     * returning. The striper runs only when at least one leaf is supplied indirectly, which keeps a flat batch from
+     * constructing it.
      */
     private void appendStripedLeaves(ParquetRecordBatch batch, Map<ColumnPath, ColumnVector> columns) {
         if (allLeavesWrittenDirectly(columns)) {
             return;
         }
         List<StripedLeaf> striped = new DremelStriper(schema).stripe(batch);
+        List<Runnable> units = new ArrayList<>(striped.size());
         for (StripedLeaf sl : striped) {
             LeafBinding binding = leafByPath.get(sl.leaf());
             if (binding == null) {
@@ -211,8 +238,9 @@ public final class RowGroupWriter implements AutoCloseable {
                 // Already written by the direct-leaf path; skip to avoid double-writing.
                 continue;
             }
-            appendStripedLeaf(binding.writer, sl);
+            units.add(() -> appendStripedLeaf(binding.writer, sl));
         }
+        fanOut.run(units);
     }
 
     private boolean allLeavesWrittenDirectly(Map<ColumnPath, ColumnVector> columns) {
