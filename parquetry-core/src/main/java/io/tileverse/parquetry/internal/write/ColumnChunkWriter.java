@@ -48,6 +48,7 @@ import io.tileverse.parquetry.internal.write.page.DictionaryAttempt;
 import io.tileverse.parquetry.internal.write.page.DictionaryAttemptEncoder;
 import io.tileverse.parquetry.internal.write.page.EncodedPage;
 import io.tileverse.parquetry.internal.write.page.Encoder;
+import io.tileverse.parquetry.internal.write.page.PageDictionaryEncoder;
 import io.tileverse.parquetry.internal.write.page.PageEncodeJob;
 import io.tileverse.parquetry.internal.write.page.PageStatistics;
 import io.tileverse.parquetry.internal.write.page.PageWriter;
@@ -114,7 +115,7 @@ public final class ColumnChunkWriter implements AutoCloseable {
      * Dictionary attempt encoder, when the column's encoding policy permits dictionary encoding and the primitive kind
      * supports it. {@code null} for forced-plain columns or kinds that bypass dictionary attempt.
      */
-    private final DictionaryAttempt<?, ?> dictionary;
+    private final DictionaryAttempt dictionary;
 
     /**
      * Buffers each data page's bytes in memory while {@link #dictionary} is active. The dictionary page is unknown
@@ -624,7 +625,7 @@ public final class ColumnChunkWriter implements AutoCloseable {
             throws IOException {
         ByteArrayOutputStream valueBytesBuffer = new ByteArrayOutputStream();
         WritableByteChannel valueBytesChannel = Channels.newChannel(valueBytesBuffer);
-        DictionaryAttemptEncoder.PageResult pageResult = dictionary.encoder().flushPage(valueBytesChannel);
+        PageDictionaryEncoder.PageResult pageResult = dictionary.encoder().flushPage(valueBytesChannel);
         MemorySegment encodedValues =
                 MemorySegment.ofArray(valueBytesBuffer.toByteArray()).asReadOnly();
         Encoding marker =
@@ -847,7 +848,7 @@ public final class ColumnChunkWriter implements AutoCloseable {
         return logicalType instanceof LogicalType.Geometry || logicalType instanceof LogicalType.Geography;
     }
 
-    private static DictionaryAttempt<?, ?> createDictionaryAttempt(
+    private static DictionaryAttempt createDictionaryAttempt(
             WriteOptions options, SchemaNode.Primitive leaf, PrimitiveKind kind) {
         EncodingPolicy policy = options.encodingPolicies().getOrDefault(leaf.name(), EncodingPolicy.AUTO);
         if (!dictionaryAttemptAllowed(policy, kind)) {

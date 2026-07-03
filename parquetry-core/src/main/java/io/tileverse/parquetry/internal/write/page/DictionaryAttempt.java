@@ -30,18 +30,15 @@ import io.tileverse.parquetry.internal.write.ColumnChunkWriter;
  * <p>The {@link ColumnChunkWriter} owns one case per column and routes each {@code appendXxx} call to the matching
  * pattern. {@link #writeDictionaryPage} produces the dictionary page bytes against the held plain encoder once the
  * chunk closes.
- *
- * @param <V> value-key type used inside {@link DictionaryAttemptEncoder}
- * @param <C> carrier type the encoder's fallback {@code plainEncoder} consumes
  */
-public sealed interface DictionaryAttempt<V, C>
+public sealed interface DictionaryAttempt
         permits DictionaryAttempt.IntAttempt,
                 DictionaryAttempt.LongAttempt,
                 DictionaryAttempt.FloatAttempt,
                 DictionaryAttempt.DoubleAttempt,
                 DictionaryAttempt.BinaryAttempt {
 
-    DictionaryAttemptEncoder<V, C> encoder();
+    PageDictionaryEncoder encoder();
 
     /**
      * Writes the dictionary page for the values accumulated in {@link #encoder()}. The plain encoder for the dictionary
@@ -49,8 +46,7 @@ public sealed interface DictionaryAttempt<V, C>
      */
     EncodedPage writeDictionaryPage(PageWriter pageWriter, WritableByteChannel dst) throws IOException;
 
-    public record IntAttempt(DictionaryAttemptEncoder<Integer, int[]> encoder)
-            implements DictionaryAttempt<Integer, int[]> {
+    public record IntAttempt(DictionaryAttemptEncoder<Integer, int[]> encoder) implements DictionaryAttempt {
 
         public static IntAttempt create(long byteLimit) {
             DictionaryAttemptEncoder<Integer, int[]> enc = new DictionaryAttemptEncoder<>(
@@ -73,7 +69,7 @@ public sealed interface DictionaryAttempt<V, C>
         }
     }
 
-    record LongAttempt(DictionaryAttemptEncoder<Long, long[]> encoder) implements DictionaryAttempt<Long, long[]> {
+    record LongAttempt(DictionaryAttemptEncoder<Long, long[]> encoder) implements DictionaryAttempt {
 
         public static LongAttempt create(long byteLimit) {
             DictionaryAttemptEncoder<Long, long[]> enc = new DictionaryAttemptEncoder<>(
@@ -96,7 +92,7 @@ public sealed interface DictionaryAttempt<V, C>
         }
     }
 
-    record FloatAttempt(DictionaryAttemptEncoder<Float, float[]> encoder) implements DictionaryAttempt<Float, float[]> {
+    record FloatAttempt(DictionaryAttemptEncoder<Float, float[]> encoder) implements DictionaryAttempt {
 
         public static FloatAttempt create(long byteLimit) {
             DictionaryAttemptEncoder<Float, float[]> enc = new DictionaryAttemptEncoder<>(
@@ -119,8 +115,7 @@ public sealed interface DictionaryAttempt<V, C>
         }
     }
 
-    record DoubleAttempt(DictionaryAttemptEncoder<Double, double[]> encoder)
-            implements DictionaryAttempt<Double, double[]> {
+    record DoubleAttempt(DictionaryAttemptEncoder<Double, double[]> encoder) implements DictionaryAttempt {
 
         public static DoubleAttempt create(long byteLimit) {
             DictionaryAttemptEncoder<Double, double[]> enc = new DictionaryAttemptEncoder<>(
@@ -144,7 +139,7 @@ public sealed interface DictionaryAttempt<V, C>
     }
 
     public record BinaryAttempt(DictionaryAttemptEncoder<ByteBuffer, byte[][]> encoder, Encoder<byte[][]> plainEncoder)
-            implements DictionaryAttempt<ByteBuffer, byte[][]> {
+            implements DictionaryAttempt {
 
         public static BinaryAttempt create(long byteLimit, Encoder<byte[][]> plainEncoder) {
             DictionaryAttemptEncoder<ByteBuffer, byte[][]> enc = new DictionaryAttemptEncoder<>(

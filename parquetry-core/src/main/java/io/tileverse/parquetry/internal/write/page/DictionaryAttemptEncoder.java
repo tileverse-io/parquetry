@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 
 import io.tileverse.parquetry.format.Encoding;
+import io.tileverse.parquetry.internal.write.page.PageDictionaryEncoder.PageResult;
 
 /**
  * Page-level dictionary attempt with PLAIN fallback. Tracks unique values in a column-chunk dictionary while the
@@ -43,7 +44,7 @@ import io.tileverse.parquetry.format.Encoding;
  *     the boxed {@code Integer}/{@code Long}/{@code Float}/{@code Double}/{@code Boolean}.
  * @param <C> the carrier array type the fallback {@link Encoder} accepts (e.g., {@code int[]}, {@code byte[][]})
  */
-public final class DictionaryAttemptEncoder<V, C> {
+public final class DictionaryAttemptEncoder<V, C> implements PageDictionaryEncoder {
 
     private final Encoder<C> plainEncoder;
     private final CarrierFactory<V, C> carrierFactory;
@@ -99,10 +100,7 @@ public final class DictionaryAttemptEncoder<V, C> {
         pageIndices.add(newIndex);
     }
 
-    /**
-     * Close the current page: write its encoded body to {@code dst} and return the page's encoding marker. The next
-     * appendValue call starts a fresh page on the same column chunk.
-     */
+    @Override
     public PageResult flushPage(WritableByteChannel dst) throws IOException {
         if (overflowed) {
             return flushPlainFallbackPage(dst);
@@ -115,15 +113,12 @@ public final class DictionaryAttemptEncoder<V, C> {
         return List.copyOf(dictionaryValues);
     }
 
-    /** True if this column chunk has overflowed the byte budget and falls back to PLAIN pages. */
+    @Override
     public boolean overflowed() {
         return overflowed;
     }
 
-    /**
-     * True once at least one page has been flushed as {@link Encoding#RLE_DICTIONARY}. Those pages index into the chunk
-     * dictionary; the dictionary page must therefore be written even when a later page overflows to PLAIN.
-     */
+    @Override
     public boolean emittedDictionaryPage() {
         return emittedDictionaryPage;
     }
@@ -160,7 +155,4 @@ public final class DictionaryAttemptEncoder<V, C> {
     public interface ValueSizer<V> {
         long sizeOf(V value);
     }
-
-    /** Outcome of {@link #flushPage(WritableByteChannel)}: page-header encoding markers, value count, and byte size. */
-    public record PageResult(Encoding v2Encoding, Encoding v1Encoding, int valueCount, int bytesWritten) {}
 }
