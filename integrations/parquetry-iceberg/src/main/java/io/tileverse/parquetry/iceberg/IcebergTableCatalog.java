@@ -32,6 +32,7 @@ import io.tileverse.parquetry.catalog.CatalogCapabilities;
 import io.tileverse.parquetry.catalog.CatalogCapabilities.SchemaSource;
 import io.tileverse.parquetry.catalog.DatasetCatalog;
 import io.tileverse.parquetry.dataset.CatalogSnapshot;
+import io.tileverse.parquetry.dataset.OpenOptions;
 import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.filter.Value;
@@ -166,7 +167,8 @@ public final class IcebergTableCatalog implements DatasetCatalog {
                     fileStats,
                     opened,
                     deletePlan,
-                    metadata.formatVersion());
+                    metadata.formatVersion(),
+                    OpenOptions.DEFAULTS);
             return new IcebergTableCatalog(tableName, dataset, opened, io);
         } catch (RuntimeException failure) {
             RuntimeException cleanup = closeAll(opened, io);

@@ -34,9 +34,11 @@ import com.google.errorprone.annotations.MustBeClosed;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.CatalogSnapshot;
+import io.tileverse.parquetry.dataset.ConcurrentSurvivorReads;
 import io.tileverse.parquetry.dataset.DatasetCapabilities;
 import io.tileverse.parquetry.dataset.DatasetCapabilities.FileStatsSource;
 import io.tileverse.parquetry.dataset.FilesetReader;
+import io.tileverse.parquetry.dataset.OpenOptions;
 import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.dataset.explain.DatasetExplainPlan;
@@ -101,6 +103,7 @@ final class IcebergDataset implements ParquetDataset {
     private final List<ByteRangeSource> sources;
     private final IcebergDeletePlan deletePlan;
     private final int formatVersion;
+    private final OpenOptions openOptions;
     private final Map<Integer, ParquetSource> perFileDatasets = new ConcurrentHashMap<>();
 
     // The catalog hands the dataset its fully resolved snapshot state in one place; these are cohesive fields, not a
@@ -115,7 +118,8 @@ final class IcebergDataset implements ParquetDataset {
             List<FileStats> fileStats,
             List<ByteRangeSource> sources,
             IcebergDeletePlan deletePlan,
-            int formatVersion) {
+            int formatVersion,
+            OpenOptions openOptions) {
         this.name = Objects.requireNonNull(name, "name");
         this.snapshot = Objects.requireNonNull(snapshot, "snapshot");
         this.icebergSchema = Objects.requireNonNull(icebergSchema, "icebergSchema");
@@ -125,6 +129,7 @@ final class IcebergDataset implements ParquetDataset {
         this.sources = List.copyOf(sources);
         this.deletePlan = Objects.requireNonNull(deletePlan, "deletePlan");
         this.formatVersion = formatVersion;
+        this.openOptions = Objects.requireNonNull(openOptions, "openOptions");
     }
 
     /** Whether this table's format version has row lineage; the reserved names have no meaning below it. */
@@ -183,21 +188,7 @@ final class IcebergDataset implements ParquetDataset {
     @Override
     @MustBeClosed
     public Stream<ParquetRecord> read(Predicate predicate, Projection projection, ReadOptions options) {
-        List<Integer> survivors = prune(predicate).survivorIndices();
-        if (survivors.isEmpty()) {
-            return Stream.empty();
-        }
-        return survivors.stream().flatMap(index -> readOneFile(index, predicate, projection, options));
-    }
-
-    @MustBeClosed
-    private Stream<ParquetRecord> readOneFile(
-            int index, Predicate predicate, Projection projection, ReadOptions options) {
-        Query query = oneFileQuery(index, predicate, projection);
-        if (query == null) {
-            return Stream.empty();
-        }
-        return perFile(index).read(query, options);
+        return readSurvivors(predicate, projection, Materializer.defaultRecord(), options);
     }
 
     @Override
@@ -207,7 +198,13 @@ final class IcebergDataset implements ParquetDataset {
         if (survivors.isEmpty()) {
             return Stream.empty();
         }
-        return survivors.stream().flatMap(index -> readOneFileBatches(index, predicate, projection, options));
+        if (options.spatialReadProbe().isPresent()) {
+            return survivors.stream().flatMap(index -> readOneFileBatches(index, predicate, projection, options));
+        }
+        return ConcurrentSurvivorReads.batches(
+                survivors.size(),
+                dense -> readOneFileBatches(survivors.get(dense), predicate, projection, options),
+                maxConcurrentFiles());
     }
 
     @MustBeClosed
@@ -224,11 +221,32 @@ final class IcebergDataset implements ParquetDataset {
     @MustBeClosed
     public <T> Stream<T> read(
             Predicate predicate, Projection projection, Materializer<T> materializer, ReadOptions options) {
+        return readSurvivors(predicate, projection, materializer, options);
+    }
+
+    /**
+     * Reads the survivor data files' reconciled rows, draining them concurrently. A spatial-decimation probe pins the
+     * per-file visit order onto a single thread, which the fan-out would break; a probe read therefore keeps the
+     * sequential per-file composition. Otherwise each survivor's rows ride its columnar batches across the fan-out and
+     * flatten to rows on the consuming thread. Flattening reconciles a pass-through and an evolved file uniformly: the
+     * materializer builds each row against that batch's own reconciled schema.
+     */
+    @MustBeClosed
+    private <T> Stream<T> readSurvivors(
+            Predicate predicate, Projection projection, Materializer<T> materializer, ReadOptions options) {
         List<Integer> survivors = prune(predicate).survivorIndices();
         if (survivors.isEmpty()) {
             return Stream.empty();
         }
-        return survivors.stream().flatMap(index -> readOneFile(index, predicate, projection, materializer, options));
+        if (options.spatialReadProbe().isPresent()) {
+            return survivors.stream()
+                    .flatMap(index -> readOneFile(index, predicate, projection, materializer, options));
+        }
+        return ConcurrentSurvivorReads.records(
+                survivors.size(),
+                dense -> readOneFileBatches(survivors.get(dense), predicate, projection, options),
+                materializer,
+                maxConcurrentFiles());
     }
 
     /**
@@ -613,7 +631,11 @@ final class IcebergDataset implements ParquetDataset {
      */
     private ParquetSource perFile(int index) {
         return perFileDatasets.computeIfAbsent(
-                index, i -> ParquetSource.open(new SurvivorFileset(sources, List.of(i))));
+                index, i -> ParquetSource.open(new SurvivorFileset(sources, List.of(i)), openOptions));
+    }
+
+    private int maxConcurrentFiles() {
+        return openOptions.runtime().maxConcurrentFiles();
     }
 
     /**

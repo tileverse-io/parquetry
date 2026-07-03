@@ -35,6 +35,7 @@ import io.tileverse.storage.StorageFactory;
 
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.CatalogSnapshot;
+import io.tileverse.parquetry.dataset.OpenOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Query;
@@ -244,7 +245,8 @@ class IcebergDatasetTest {
                 fileStats,
                 sources,
                 deletePlan,
-                metadata.formatVersion());
+                metadata.formatVersion(),
+                OpenOptions.DEFAULTS);
     }
 
     private static IcebergTableMetadata readMetadata(Path tableDir, IcebergFileIO io) {

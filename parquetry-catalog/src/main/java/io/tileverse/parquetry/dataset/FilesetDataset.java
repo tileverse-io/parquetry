@@ -25,7 +25,6 @@ import java.util.OptionalLong;
 import java.util.SequencedSet;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.function.IntFunction;
 import java.util.stream.Stream;
 
 import com.google.errorprone.annotations.MustBeClosed;
@@ -74,8 +73,12 @@ public final class FilesetDataset implements GeoParquetDataset {
     private final DatasetCapabilities capabilities;
     private final Optional<GeoParquetMetadata> geoMetadata;
     private final Optional<BoundingBox> aggregatedBounds;
+    private final OpenOptions openOptions;
     private final Map<Integer, ParquetSource> perFileDatasets = new ConcurrentHashMap<>();
 
+    // The eight construction inputs are cohesive dataset state the catalog resolves in one place, not a long argument
+    // list worth bundling into a parameter object.
+    @SuppressWarnings("java:S107")
     public FilesetDataset(
             String name,
             ParquetSource allFiles,
@@ -83,7 +86,8 @@ public final class FilesetDataset implements GeoParquetDataset {
             List<ByteRangeSource> sources,
             List<String> locations,
             DatasetCapabilities capabilities,
-            Optional<GeoParquetMetadata> geoMetadata) {
+            Optional<GeoParquetMetadata> geoMetadata,
+            OpenOptions openOptions) {
         this.name = Objects.requireNonNull(name, "name");
         this.allFiles = Objects.requireNonNull(allFiles, "allFiles");
         Objects.requireNonNull(partitions, "partitions");
@@ -96,6 +100,7 @@ public final class FilesetDataset implements GeoParquetDataset {
         this.capabilities = Objects.requireNonNull(capabilities, "capabilities");
         this.geoMetadata = Objects.requireNonNull(geoMetadata, "geoMetadata");
         this.aggregatedBounds = geoMetadata.flatMap(FilesetDataset::primaryBbox);
+        this.openOptions = Objects.requireNonNull(openOptions, "openOptions");
     }
 
     /**
@@ -156,7 +161,7 @@ public final class FilesetDataset implements GeoParquetDataset {
         if (!referencesSynthetic(predicate, projection)) {
             return readAllFiles(predicate, projection, options);
         }
-        return concatSurvivors(predicate, index -> readOneFile(index, predicate, projection, options));
+        return readSurvivors(predicate, projection, options);
     }
 
     /**
@@ -170,7 +175,7 @@ public final class FilesetDataset implements GeoParquetDataset {
         if (!referencesSynthetic(predicate, projection)) {
             return readAllFileBatches(predicate, projection, options);
         }
-        return concatSurvivors(predicate, index -> readOneFileBatches(index, predicate, projection, options));
+        return readSurvivorBatches(predicate, projection, options);
     }
 
     /**
@@ -237,12 +242,48 @@ public final class FilesetDataset implements GeoParquetDataset {
     }
 
     /**
-     * Concatenates the per-file streams of the files surviving {@code predicate}; each one-file stream's resources
+     * Reads the synthesized rows of the files surviving {@code predicate}, draining the survivors concurrently. A
+     * spatial-decimation probe pins the per-file visit order onto a single thread, which the fan-out would break; a
+     * probe read therefore keeps the sequential per-file composition. Otherwise each survivor's records ride its
+     * columnar batches across the fan-out and flatten to rows on the consuming thread. Each one-file stream's resources
      * close with the composed stream.
      */
     @MustBeClosed
-    private <T> Stream<T> concatSurvivors(Predicate predicate, IntFunction<Stream<T>> oneFile) {
-        return pruneSurvivors(predicate).stream().flatMap(oneFile::apply);
+    private Stream<ParquetRecord> readSurvivors(Predicate predicate, Projection projection, ReadOptions options) {
+        List<Integer> survivors = pruneSurvivors(predicate);
+        if (survivors.isEmpty()) {
+            return Stream.empty();
+        }
+        if (options.spatialReadProbe().isPresent()) {
+            return survivors.stream().flatMap(index -> readOneFile(index, predicate, projection, options));
+        }
+        return ConcurrentSurvivorReads.records(
+                survivors.size(),
+                dense -> readOneFileBatches(survivors.get(dense), predicate, projection, options),
+                maxConcurrentFiles());
+    }
+
+    /**
+     * The batch analogue of {@link #readSurvivors}: the survivors' augmented batches, fanned out or kept sequential.
+     */
+    @MustBeClosed
+    private Stream<ParquetRecordBatch> readSurvivorBatches(
+            Predicate predicate, Projection projection, ReadOptions options) {
+        List<Integer> survivors = pruneSurvivors(predicate);
+        if (survivors.isEmpty()) {
+            return Stream.empty();
+        }
+        if (options.spatialReadProbe().isPresent()) {
+            return survivors.stream().flatMap(index -> readOneFileBatches(index, predicate, projection, options));
+        }
+        return ConcurrentSurvivorReads.batches(
+                survivors.size(),
+                dense -> readOneFileBatches(survivors.get(dense), predicate, projection, options),
+                maxConcurrentFiles());
+    }
+
+    private int maxConcurrentFiles() {
+        return openOptions.runtime().maxConcurrentFiles();
     }
 
     @MustBeClosed
@@ -465,7 +506,7 @@ public final class FilesetDataset implements GeoParquetDataset {
             // Nothing pruned: pruneSurvivors emits [0..n) ascending, identical to allFiles.
             return allFiles;
         }
-        return ParquetSource.open(new SurvivorFileset(sources, survivors));
+        return ParquetSource.open(new SurvivorFileset(sources, survivors), openOptions);
     }
 
     /**
@@ -475,7 +516,7 @@ public final class FilesetDataset implements GeoParquetDataset {
      */
     private ParquetSource perFile(int index) {
         return perFileDatasets.computeIfAbsent(
-                index, i -> ParquetSource.open(new SurvivorFileset(sources, List.of(i))));
+                index, i -> ParquetSource.open(new SurvivorFileset(sources, List.of(i)), openOptions));
     }
 
     /** Test hook: the memoized single-file dataset for {@code index}, proving footer reuse across queries. */
