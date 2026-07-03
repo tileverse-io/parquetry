@@ -28,14 +28,14 @@ import io.tileverse.storage.StorageFactory;
  * logical-to-physical key mapping end-to-end with no Docker, acting as the no-container oracle for the container-backed
  * suites.
  */
-class FileStorageIcebergReadTest extends AbstractIcebergStorageRead {
+class FileStorageIcebergReadTest implements IcebergStorageReadAssertions {
 
     @TempDir
     Path tempDir;
 
     @Override
-    protected Backend openBackend() {
-        Path tableDir = extractTable(tempDir.resolve(TABLE));
+    public Backend openBackend() {
+        Path tableDir = IcebergStorageReadAssertions.extractTable(tempDir.resolve(TABLE));
         Storage storage = StorageFactory.open(tableDir.toUri());
         return new Backend(storage, TABLE_LOCATION);
     }

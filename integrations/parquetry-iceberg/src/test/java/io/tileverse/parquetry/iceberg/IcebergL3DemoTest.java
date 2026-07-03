@@ -27,6 +27,8 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.tileverse.storage.StorageFactory;
+
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.Predicate;
@@ -95,7 +97,8 @@ class IcebergL3DemoTest {
                 .append(")  [California]\n\n");
         out.append(String.format("%-26s %-44s %9s   %s%n", "file", "geometry bbox", "rows", "decision"));
 
-        try (IcebergFileIO io = new LocalIcebergFileIO(metadata.tableLocation(), tableDir)) {
+        try (IcebergFileIO io =
+                StorageIcebergFileIO.owning(StorageFactory.open(tableDir.toUri()), metadata.tableLocation())) {
             String manifestListLocation = metadata.manifestListLocation();
             List<IcebergManifests.DataFileRef> refs = IcebergManifests.readDataFiles(manifestListLocation, io);
             int filesRead = 0;

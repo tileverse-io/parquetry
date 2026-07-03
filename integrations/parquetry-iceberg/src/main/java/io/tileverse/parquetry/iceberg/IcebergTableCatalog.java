@@ -26,6 +26,7 @@ import java.util.Map;
 import java.util.Objects;
 
 import io.tileverse.storage.Storage;
+import io.tileverse.storage.StorageFactory;
 
 import io.tileverse.parquetry.catalog.CatalogCapabilities;
 import io.tileverse.parquetry.catalog.CatalogCapabilities.SchemaSource;
@@ -61,17 +62,15 @@ public final class IcebergTableCatalog implements DatasetCatalog {
         this.io = io;
     }
 
-    /** Opens an Iceberg table from a local table directory, resolving the current {@code vN.metadata.json}. */
+    /**
+     * Opens an Iceberg table from a local table directory, resolving the current {@code vN.metadata.json}. The bytes
+     * ride a file-backed tileverse {@link Storage}, the same path the object-store backends use.
+     */
     public static IcebergTableCatalog openLocal(Path tableDir, IcebergOptions options) {
         Objects.requireNonNull(tableDir, "tableDir");
         Objects.requireNonNull(options, "options");
-        String physicalTableLocation = tableDir.toUri().toString();
-        IcebergFileIO bootstrap = new LocalIcebergFileIO(physicalTableLocation, tableDir);
-        String metadataLocation = IcebergMetadataResolver.resolve(bootstrap, physicalTableLocation, options);
-        String json = readJson(bootstrap, metadataLocation);
-        IcebergTableMetadata metadata = IcebergTableMetadata.read(json, options);
-        IcebergFileIO io = new LocalIcebergFileIO(metadata.tableLocation(), tableDir);
-        return openWithMetadata(tableName(tableDir), metadata, io);
+        String physicalTableLocation = stripTrailingSlash(tableDir.toUri().toString());
+        return openStorage(tableName(tableDir), physicalTableLocation, StorageFactory.open(tableDir.toUri()), options);
     }
 
     /**
@@ -84,9 +83,7 @@ public final class IcebergTableCatalog implements DatasetCatalog {
         Objects.requireNonNull(tableLocation, "tableLocation");
         Objects.requireNonNull(io, "io");
         Objects.requireNonNull(options, "options");
-        String metadataLocation = IcebergMetadataResolver.resolve(io, tableLocation, options);
-        String json = readJson(io, metadataLocation);
-        IcebergTableMetadata metadata = IcebergTableMetadata.read(json, options);
+        IcebergTableMetadata metadata = resolveMetadata(io, tableLocation, options);
         return openWithMetadata(tableNameFromLocation(tableLocation), metadata, io);
     }
 
@@ -104,15 +101,29 @@ public final class IcebergTableCatalog implements DatasetCatalog {
         StorageIcebergFileIO io;
         try {
             StorageIcebergFileIO bootstrap = StorageIcebergFileIO.over(storage, physicalLocation);
-            String metadataLocation = IcebergMetadataResolver.resolve(bootstrap, physicalLocation, options);
-            String json = readJson(bootstrap, metadataLocation);
-            metadata = IcebergTableMetadata.read(json, options);
+            metadata = resolveMetadata(bootstrap, physicalLocation, options);
             io = StorageIcebergFileIO.owning(storage, metadata.tableLocation());
         } catch (RuntimeException failure) {
             closeStorageQuietly(storage, failure);
             throw failure;
         }
         return openWithMetadata(tableNameFromLocation(metadata.tableLocation()), metadata, io);
+    }
+
+    /** Opens the table as {@code openStorage} does, presenting it under the given dataset name. */
+    static IcebergTableCatalog openStorage(
+            String datasetName, String physicalLocation, Storage storage, IcebergOptions options) {
+        IcebergTableMetadata metadata;
+        StorageIcebergFileIO io;
+        try {
+            StorageIcebergFileIO bootstrap = StorageIcebergFileIO.over(storage, physicalLocation);
+            metadata = resolveMetadata(bootstrap, physicalLocation, options);
+            io = StorageIcebergFileIO.owning(storage, metadata.tableLocation());
+        } catch (RuntimeException failure) {
+            closeStorageQuietly(storage, failure);
+            throw failure;
+        }
+        return openWithMetadata(datasetName, metadata, io);
     }
 
     private static void closeStorageQuietly(Storage storage, RuntimeException failure) {
@@ -164,6 +175,14 @@ public final class IcebergTableCatalog implements DatasetCatalog {
             }
             throw failure;
         }
+    }
+
+    /** Resolves and parses the table's current metadata document through {@code bootstrap}. */
+    static IcebergTableMetadata resolveMetadata(
+            IcebergFileIO bootstrap, String physicalLocation, IcebergOptions options) {
+        String metadataLocation = IcebergMetadataResolver.resolve(bootstrap, physicalLocation, options);
+        String json = readJson(bootstrap, metadataLocation);
+        return IcebergTableMetadata.read(json, options);
     }
 
     @Override
@@ -224,11 +243,14 @@ public final class IcebergTableCatalog implements DatasetCatalog {
     }
 
     private static String tableNameFromLocation(String tableLocation) {
-        String trimmed =
-                tableLocation.endsWith("/") ? tableLocation.substring(0, tableLocation.length() - 1) : tableLocation;
+        String trimmed = stripTrailingSlash(tableLocation);
         int lastSlash = trimmed.lastIndexOf('/');
         String lastSegment = lastSlash < 0 ? trimmed : trimmed.substring(lastSlash + 1);
         return lastSegment.isEmpty() ? "table" : lastSegment;
+    }
+
+    private static String stripTrailingSlash(String value) {
+        return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
     }
 
     private static RuntimeException closeAll(List<ByteRangeSource> sources, IcebergFileIO io) {

@@ -29,6 +29,8 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import io.tileverse.storage.StorageFactory;
+
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.filter.Bbox;
@@ -97,7 +99,8 @@ class IcebergTableCatalogTest {
     }
 
     private static IcebergTableMetadata readMetadata(Path tableDir) {
-        try (IcebergFileIO io = new LocalIcebergFileIO(tableDir.toUri().toString(), tableDir)) {
+        try (IcebergFileIO io = StorageIcebergFileIO.owning(
+                StorageFactory.open(tableDir.toUri()), tableDir.toUri().toString())) {
             String metadataLocation =
                     IcebergMetadataResolver.resolve(io, tableDir.toUri().toString(), IcebergOptions.defaults());
             return IcebergTableMetadata.read(readUtf8(io, metadataLocation), IcebergOptions.defaults());

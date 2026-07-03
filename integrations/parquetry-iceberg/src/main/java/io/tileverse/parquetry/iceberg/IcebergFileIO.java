@@ -34,6 +34,13 @@ public interface IcebergFileIO extends AutoCloseable {
      */
     List<String> list(String prefix);
 
+    /**
+     * Absolute locations of every {@code <table>/metadata/*.metadata.json} file at any depth under {@code rootPrefix},
+     * sorted; empty when the backend cannot list. A hit is a regular file whose name ends in {@code .metadata.json}
+     * inside a directory named {@code metadata} - the warehouse table layout. No metadata content is read.
+     */
+    List<String> listMetadataFiles(String rootPrefix);
+
     @Override
     default void close() {}
 }

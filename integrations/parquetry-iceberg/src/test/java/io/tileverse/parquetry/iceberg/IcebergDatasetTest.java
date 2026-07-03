@@ -31,6 +31,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.tileverse.storage.StorageFactory;
+
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.CatalogSnapshot;
 import io.tileverse.parquetry.filter.Predicate;
@@ -210,11 +212,12 @@ class IcebergDatasetTest {
     private IcebergDataset datasetWithSchema(List<IcebergField> tableFields) {
         Path root = TestCorpus.extractDirectory("iceberg-geo-testbed", tempDir.resolve(TABLE));
         Path tableDir = root.resolve(TABLE);
-        IcebergFileIO bootstrap = new LocalIcebergFileIO(tableDir.toUri().toString(), tableDir);
+        IcebergFileIO bootstrap = StorageIcebergFileIO.owning(
+                StorageFactory.open(tableDir.toUri()), tableDir.toUri().toString());
         openResources.add(bootstrap);
         IcebergTableMetadata metadata = readMetadata(tableDir, bootstrap);
 
-        IcebergFileIO io = new LocalIcebergFileIO(metadata.tableLocation(), tableDir);
+        IcebergFileIO io = StorageIcebergFileIO.owning(StorageFactory.open(tableDir.toUri()), metadata.tableLocation());
         openResources.add(io);
         List<IcebergManifests.DataFileRef> dataFiles =
                 IcebergManifests.readDataFiles(metadata.manifestListLocation(), io);

@@ -47,7 +47,7 @@ import io.tileverse.storage.azure.AzureBlobStorageProvider;
  * resource to release.
  */
 @Testcontainers(disabledWithoutDocker = true)
-class AzuriteIcebergReadIT extends AbstractIcebergStorageRead {
+class AzuriteIcebergReadIT implements IcebergStorageReadAssertions {
 
     private static final String ACCOUNT_NAME = "devstoreaccount1";
     private static final String ACCOUNT_KEY =
@@ -67,7 +67,7 @@ class AzuriteIcebergReadIT extends AbstractIcebergStorageRead {
 
     @BeforeAll
     static void uploadTable() {
-        Path tableDir = extractTable(corpusDir.resolve(TABLE));
+        Path tableDir = IcebergStorageReadAssertions.extractTable(corpusDir.resolve(TABLE));
         blobServiceClient = new BlobServiceClientBuilder()
                 .endpoint(blobEndpoint())
                 .credential(new StorageSharedKeyCredential(ACCOUNT_NAME, ACCOUNT_KEY))
@@ -77,7 +77,7 @@ class AzuriteIcebergReadIT extends AbstractIcebergStorageRead {
     }
 
     @Override
-    protected Backend openBackend() {
+    public Backend openBackend() {
         Storage storage =
                 AzureBlobStorageProvider.open(URI.create(blobEndpoint() + "/" + CONTAINER), blobServiceClient);
         return new Backend(storage, TABLE_LOCATION);
