@@ -24,6 +24,8 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.tileverse.storage.StorageFactory;
+
 import io.tileverse.parquetry.iceberg.IcebergManifests.Snapshot;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
@@ -42,17 +44,19 @@ class IcebergPositionDeletesTest {
         Path tableDir = TestCorpus.extractDirectory("iceberg-deletes/positional", tempDir.resolve("positional"));
         IcebergTableMetadata metadata =
                 IcebergTableMetadata.read(Files.readString(tableDir.resolve("metadata/v1.metadata.json")));
-        IcebergFileIO io = new LocalIcebergFileIO(metadata.tableLocation(), tableDir);
-        Snapshot snapshot = IcebergManifests.readSnapshot(metadata.manifestListLocation(), io);
-        String dataFile = snapshot.dataFiles().get(0).location();
-        String deleteFile = snapshot.deleteFiles().get(0).location();
+        try (IcebergFileIO io =
+                StorageIcebergFileIO.owning(StorageFactory.open(tableDir.toUri()), metadata.tableLocation())) {
+            Snapshot snapshot = IcebergManifests.readSnapshot(metadata.manifestListLocation(), io);
+            String dataFile = snapshot.dataFiles().get(0).location();
+            String deleteFile = snapshot.deleteFiles().get(0).location();
 
-        Map<String, long[]> positionsByDataFile = IcebergPositionDeletes.read(io, deleteFile);
+            Map<String, long[]> positionsByDataFile = IcebergPositionDeletes.read(io, deleteFile);
 
-        assertThat(positionsByDataFile).containsOnlyKeys(dataFile);
-        long[] positions = positionsByDataFile.get(dataFile);
-        assertThat(positions).hasSize(110);
-        assertThat(positions).contains(300L, 399L, 595L, 604L);
-        assertThat(positions).doesNotContain(299L, 400L, 594L, 605L);
+            assertThat(positionsByDataFile).containsOnlyKeys(dataFile);
+            long[] positions = positionsByDataFile.get(dataFile);
+            assertThat(positions).hasSize(110);
+            assertThat(positions).contains(300L, 399L, 595L, 604L);
+            assertThat(positions).doesNotContain(299L, 400L, 594L, 605L);
+        }
     }
 }

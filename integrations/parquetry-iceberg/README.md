@@ -25,8 +25,9 @@ clear message rather than returning wrong rows. The `Spec` column notes the Iceb
 | Branches, tags, and as-of-time travel | v2+ | Planned | named refs and timestamp-based selection are not yet wired |
 | Manifest list + manifests | v1+ | Full | clean-room Avro reader |
 | Data-file read, all format versions | v1-v3 | Full | copy-on-write and merge-on-read |
-| Local + object-storage I/O | - | Full | `LocalIcebergFileIO`; `StorageIcebergFileIO` over tileverse-storage (S3, Azure, GCS, HTTP) |
-| REST catalog, multiple tables | - | Planned | the [REST Catalog spec](https://iceberg.apache.org/rest-catalog-spec/) read slice: loadTable, namespace/table listing, OAuth2, vended credentials. One table per catalog today; metadata resolved by listing or explicit location |
+| Local + object-storage I/O | - | Full | `StorageIcebergFileIO` over tileverse-storage (local, S3, Azure, GCS, HTTP) |
+| Warehouse of tables (multi-table catalog) | - | Full | `IcebergWarehouseCatalog`: recursive discovery under a warehouse root (`<root>/<ns...>/<table>/metadata/`), dotted dataset names, lazy per-table open at the current snapshot; explicit name-to-path registry for backends that cannot list |
+| REST catalog | - | Planned | the [REST Catalog spec](https://iceberg.apache.org/rest-catalog-spec/) read slice: loadTable, namespace/table listing, OAuth2, vended credentials |
 
 ### Schema, types, and evolution
 
@@ -99,6 +100,23 @@ try (IcebergTableCatalog catalog = IcebergTableCatalog.openLocal(tableDir, Icebe
 
 `IcebergOptions.builder().snapshotId(id).build()` pins a specific snapshot; the default pins the current one. The catalog
 owns the byte sources it opens; `close()` releases them.
+
+A warehouse directory of many tables reads as one catalog, one dataset per table:
+
+```java
+try (IcebergWarehouseCatalog warehouse = IcebergWarehouseCatalog.openLocal(warehouseDir)) {
+    for (String table : warehouse.datasets()) {
+        ParquetDataset dataset = warehouse.dataset(table);
+        // read as any other dataset
+    }
+}
+```
+
+`IcebergWarehouseCatalog` discovers every `<root>/<ns...>/<table>/metadata/*.metadata.json` under the warehouse root
+and names each table by its path (`ns1/sales/orders` becomes the dataset `ns1.sales.orders`); each table opens lazily at
+its current snapshot on first access. For a backend that cannot list a directory, an explicit name-to-path registry
+(`ofLocalTables`, `ofTables`) skips discovery. Over object storage, `IcebergWarehouseCatalog.open(warehouseLocation,
+storage)` takes ownership of the `Storage` and closes it in `close()`.
 
 To read over object storage, supply a tileverse-storage `Storage` rooted at the table and pass the table location as the
 logical root: `IcebergTableCatalog.open(tableLocation, StorageIcebergFileIO.over(storage, tableLocation), options)`. `over(...)`

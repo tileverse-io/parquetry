@@ -39,51 +39,52 @@ import io.tileverse.parquetry.testkit.TestCorpus;
 
 /**
  * Backend-agnostic read assertions over the {@code v3_geometry} testbed table reached through a tileverse
- * {@link Storage}. Subclasses supply a {@link Backend} that makes the table readable through some Storage (a local
+ * {@link Storage}. Implementers supply a {@link Backend} that makes the table readable through some Storage (a local
  * directory or an uploaded object-store prefix, for example); the assertions here prove the catalog reads, counts, and
- * prunes identically regardless of the backend.
+ * prunes identically regardless of the backend. This is a test interface (JUnit runs the {@code default} test methods
+ * on every implementing test class), leaving each backend class free to also extend a container-harness base.
  *
- * <p>The class has no {@code Test}/{@code IT} suffix, hence neither Surefire nor Failsafe runs it directly.
+ * <p>The interface has no {@code Test}/{@code IT} suffix, hence neither Surefire nor Failsafe runs it directly.
  */
-abstract class AbstractIcebergStorageRead {
+interface IcebergStorageReadAssertions {
 
-    protected static final String TABLE = "v3_geometry";
-    protected static final String TABLE_LOCATION = "file:///iceberg-geo-testbed/v3_geometry";
-    protected static final long EXPECTED_TOTAL_ROWS = 10_000L;
-    protected static final Predicate CALIFORNIA =
+    String TABLE = "v3_geometry";
+    String TABLE_LOCATION = "file:///iceberg-geo-testbed/v3_geometry";
+    long EXPECTED_TOTAL_ROWS = 10_000L;
+    Predicate CALIFORNIA =
             new Predicate.Spatial.BboxIntersects(ColumnPath.of("geom"), Bbox.of2d(-125.0, 32.0, -115.0, 42.0));
-    protected static final Predicate FAR_OFFSHORE =
+    Predicate FAR_OFFSHORE =
             new Predicate.Spatial.BboxIntersects(ColumnPath.of("geom"), Bbox.of2d(160.0, -80.0, 170.0, -70.0));
 
     /**
      * A {@link Storage} rooted at the table's physical bytes, plus the table's logical location URI. Closing the
      * Backend closes the Storage.
      */
-    protected record Backend(Storage storage, String tableLocation) implements AutoCloseable {
+    record Backend(Storage storage, String tableLocation) implements AutoCloseable {
         @Override
         public void close() throws IOException {
             storage.close();
         }
     }
 
-    /** Subclasses build a Backend by making the {@code v3_geometry} table readable through a Storage. */
-    protected abstract Backend openBackend() throws Exception;
+    /** Implementers build a Backend by making the {@code v3_geometry} table readable through a Storage. */
+    Backend openBackend() throws Exception;
 
     /**
      * The options used to open the catalog. Backends that cannot list (HTTP) override this to pin an explicit metadata
      * location.
      */
-    protected IcebergOptions catalogOptions() {
+    default IcebergOptions catalogOptions() {
         return IcebergOptions.defaults();
     }
 
     /** Extract the {@code v3_geometry} table into {@code targetDir} and return its table directory. */
-    protected static Path extractTable(Path targetDir) {
+    static Path extractTable(Path targetDir) {
         return TestCorpus.extractDirectory("iceberg-geo-testbed", targetDir).resolve(TABLE);
     }
 
     @Test
-    void fullScanCountsEveryRow() throws Exception {
+    default void fullScanCountsEveryRow() throws Exception {
         withDataset(dataset -> {
             long total = dataset.count(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
             assertThat(total).isEqualTo(EXPECTED_TOTAL_ROWS);
@@ -91,7 +92,7 @@ abstract class AbstractIcebergStorageRead {
     }
 
     @Test
-    void spatialQueryReturnsTheSurvivingRows() throws Exception {
+    default void spatialQueryReturnsTheSurvivingRows() throws Exception {
         withDataset(dataset -> {
             long matched = countRows(dataset, CALIFORNIA);
             assertThat(matched).isPositive().isEqualTo(dataset.count(CALIFORNIA, ReadOptions.DEFAULTS));
@@ -99,7 +100,7 @@ abstract class AbstractIcebergStorageRead {
     }
 
     @Test
-    void explainReportsManifestPruning() throws Exception {
+    default void explainReportsManifestPruning() throws Exception {
         withDataset(dataset -> {
             Totals totals = explainTotals(dataset, CALIFORNIA);
             assertThat(totals.filesTotal()).isEqualTo(10);
@@ -109,7 +110,7 @@ abstract class AbstractIcebergStorageRead {
     }
 
     @Test
-    void explainSkipsEveryFileForADisjointQuery() throws Exception {
+    default void explainSkipsEveryFileForADisjointQuery() throws Exception {
         withDataset(dataset -> {
             Totals totals = explainTotals(dataset, FAR_OFFSHORE);
             assertThat(totals.filesSkipped()).isEqualTo(totals.filesTotal()).isEqualTo(10);

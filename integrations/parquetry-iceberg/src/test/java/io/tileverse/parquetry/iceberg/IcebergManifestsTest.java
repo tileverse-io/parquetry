@@ -25,6 +25,8 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.tileverse.storage.StorageFactory;
+
 import io.tileverse.parquetry.testkit.TestCorpus;
 
 class IcebergManifestsTest {
@@ -38,16 +40,18 @@ class IcebergManifestsTest {
         Path tableDir = root.resolve("v2_flat_columns");
         IcebergTableMetadata metadata =
                 IcebergTableMetadata.read(Files.readString(tableDir.resolve("metadata/v1.metadata.json")));
-        IcebergFileIO io = new LocalIcebergFileIO(metadata.tableLocation(), tableDir);
+        try (IcebergFileIO io =
+                StorageIcebergFileIO.owning(StorageFactory.open(tableDir.toUri()), metadata.tableLocation())) {
+            List<IcebergManifests.DataFileRef> dataFiles =
+                    IcebergManifests.readDataFiles(metadata.manifestListLocation(), io);
 
-        List<IcebergManifests.DataFileRef> dataFiles =
-                IcebergManifests.readDataFiles(metadata.manifestListLocation(), io);
-
-        assertThat(dataFiles).hasSize(10);
-        assertThat(dataFiles).allSatisfy(ref -> assertThat(ref.recordCount()).isEqualTo(1000L));
-        assertThat(dataFiles)
-                .extracting(IcebergManifests.DataFileRef::location)
-                .allMatch(location -> location.endsWith(".parquet"));
+            assertThat(dataFiles).hasSize(10);
+            assertThat(dataFiles)
+                    .allSatisfy(ref -> assertThat(ref.recordCount()).isEqualTo(1000L));
+            assertThat(dataFiles)
+                    .extracting(IcebergManifests.DataFileRef::location)
+                    .allMatch(location -> location.endsWith(".parquet"));
+        }
     }
 
     @Test
@@ -56,23 +60,24 @@ class IcebergManifestsTest {
         Path tableDir = root.resolve("v3_geometry");
         IcebergTableMetadata metadata =
                 IcebergTableMetadata.read(Files.readString(tableDir.resolve("metadata/v1.metadata.json")));
-        IcebergFileIO io = new LocalIcebergFileIO(metadata.tableLocation(), tableDir);
+        try (IcebergFileIO io =
+                StorageIcebergFileIO.owning(StorageFactory.open(tableDir.toUri()), metadata.tableLocation())) {
+            List<IcebergManifests.DataFileRef> dataFiles =
+                    IcebergManifests.readDataFiles(metadata.manifestListLocation(), io);
 
-        List<IcebergManifests.DataFileRef> dataFiles =
-                IcebergManifests.readDataFiles(metadata.manifestListLocation(), io);
+            assertThat(dataFiles).isNotEmpty();
+            IcebergManifests.DataFileRef ref = dataFiles.get(0);
 
-        assertThat(dataFiles).isNotEmpty();
-        IcebergManifests.DataFileRef ref = dataFiles.get(0);
+            assertThat(ref.recordCount()).isEqualTo(1000L);
+            assertThat(ref.lowerBounds()).isNotEmpty();
+            assertThat(ref.upperBounds()).isNotEmpty();
 
-        assertThat(ref.recordCount()).isEqualTo(1000L);
-        assertThat(ref.lowerBounds()).isNotEmpty();
-        assertThat(ref.upperBounds()).isNotEmpty();
-
-        int geometryFieldId = 2;
-        assertThat(ref.lowerBounds()).containsKey(geometryFieldId);
-        assertThat(ref.upperBounds()).containsKey(geometryFieldId);
-        assertThat(ref.lowerBounds().get(geometryFieldId).byteSize()).isIn(16L, 21L);
-        assertThat(ref.upperBounds().get(geometryFieldId).byteSize()).isIn(16L, 21L);
+            int geometryFieldId = 2;
+            assertThat(ref.lowerBounds()).containsKey(geometryFieldId);
+            assertThat(ref.upperBounds()).containsKey(geometryFieldId);
+            assertThat(ref.lowerBounds().get(geometryFieldId).byteSize()).isIn(16L, 21L);
+            assertThat(ref.upperBounds().get(geometryFieldId).byteSize()).isIn(16L, 21L);
+        }
     }
 
     @Test
@@ -80,15 +85,16 @@ class IcebergManifestsTest {
         Path root = TestCorpus.extractDirectory("iceberg-row-lineage/fresh", tempDir);
         IcebergTableMetadata metadata =
                 IcebergTableMetadata.read(Files.readString(root.resolve("metadata/v1.metadata.json")));
-        IcebergFileIO io = new LocalIcebergFileIO(metadata.tableLocation(), root);
+        try (IcebergFileIO io =
+                StorageIcebergFileIO.owning(StorageFactory.open(root.toUri()), metadata.tableLocation())) {
+            List<IcebergManifests.DataFileRef> dataFiles =
+                    IcebergManifests.readDataFiles(metadata.manifestListLocation(), io);
 
-        List<IcebergManifests.DataFileRef> dataFiles =
-                IcebergManifests.readDataFiles(metadata.manifestListLocation(), io);
-
-        assertThat(dataFiles).hasSize(3);
-        assertThat(firstRowIdOf(dataFiles, "data-file-a.parquet")).isZero();
-        assertThat(firstRowIdOf(dataFiles, "data-file-b.parquet")).isEqualTo(5L);
-        assertThat(firstRowIdOf(dataFiles, "data-file-c.parquet")).isEqualTo(10L);
+            assertThat(dataFiles).hasSize(3);
+            assertThat(firstRowIdOf(dataFiles, "data-file-a.parquet")).isZero();
+            assertThat(firstRowIdOf(dataFiles, "data-file-b.parquet")).isEqualTo(5L);
+            assertThat(firstRowIdOf(dataFiles, "data-file-c.parquet")).isEqualTo(10L);
+        }
     }
 
     private static Long firstRowIdOf(List<IcebergManifests.DataFileRef> dataFiles, String suffix) {
@@ -120,21 +126,22 @@ class IcebergManifestsTest {
         Path root = TestCorpus.extractDirectory("iceberg-partitioned/by_category", tempDir);
         IcebergTableMetadata metadata =
                 IcebergTableMetadata.read(Files.readString(root.resolve("metadata/v1.metadata.json")));
-        IcebergFileIO io = new LocalIcebergFileIO(metadata.tableLocation(), root);
+        try (IcebergFileIO io =
+                StorageIcebergFileIO.owning(StorageFactory.open(root.toUri()), metadata.tableLocation())) {
+            List<IcebergManifests.DataFileRef> dataFiles =
+                    IcebergManifests.readDataFiles(metadata.manifestListLocation(), io);
 
-        List<IcebergManifests.DataFileRef> dataFiles =
-                IcebergManifests.readDataFiles(metadata.manifestListLocation(), io);
-
-        int categoryPartitionFieldId = 1000;
-        assertThat(dataFiles).hasSize(3);
-        assertThat(dataFiles)
-                .allSatisfy(ref -> assertThat(ref.partitionValues()).containsKey(categoryPartitionFieldId));
-        assertThat(dataFiles.stream()
-                        .map(ref -> ref.partitionValues()
-                                .get(categoryPartitionFieldId)
-                                .toString())
-                        .sorted()
-                        .toList())
-                .containsExactly("a", "b", "c");
+            int categoryPartitionFieldId = 1000;
+            assertThat(dataFiles).hasSize(3);
+            assertThat(dataFiles)
+                    .allSatisfy(ref -> assertThat(ref.partitionValues()).containsKey(categoryPartitionFieldId));
+            assertThat(dataFiles.stream()
+                            .map(ref -> ref.partitionValues()
+                                    .get(categoryPartitionFieldId)
+                                    .toString())
+                            .sorted()
+                            .toList())
+                    .containsExactly("a", "b", "c");
+        }
     }
 }

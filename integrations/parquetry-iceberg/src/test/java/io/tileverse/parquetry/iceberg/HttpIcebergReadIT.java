@@ -42,7 +42,7 @@ import io.tileverse.storage.http.HttpStorageProvider;
  * tests closes only the Storage, not the client.
  */
 @Testcontainers(disabledWithoutDocker = true)
-class HttpIcebergReadIT extends AbstractIcebergStorageRead {
+class HttpIcebergReadIT implements IcebergStorageReadAssertions {
 
     @SuppressWarnings("resource")
     static GenericContainer<?> httpd;
@@ -52,7 +52,7 @@ class HttpIcebergReadIT extends AbstractIcebergStorageRead {
 
     @BeforeAll
     static void startHttpd(@TempDir Path tempDir) {
-        Path tableDir = extractTable(tempDir.resolve(TABLE));
+        Path tableDir = IcebergStorageReadAssertions.extractTable(tempDir.resolve(TABLE));
         httpd = new GenericContainer<>(DockerImageName.parse("httpd:alpine"))
                 .withExposedPorts(80)
                 .withCopyToContainer(MountableFile.forHostPath(tableDir), "/usr/local/apache2/htdocs/" + TABLE)
@@ -76,14 +76,14 @@ class HttpIcebergReadIT extends AbstractIcebergStorageRead {
      * HTTP cannot list, hence pin the current metadata document explicitly (the logical location the IO maps to a key).
      */
     @Override
-    protected IcebergOptions catalogOptions() {
+    public IcebergOptions catalogOptions() {
         return IcebergOptions.builder()
                 .metadataLocation(TABLE_LOCATION + "/metadata/v1.metadata.json")
                 .build();
     }
 
     @Override
-    protected Backend openBackend() {
+    public Backend openBackend() {
         Storage storage = HttpStorageProvider.open(URI.create(baseUrl + "/" + TABLE + "/"), httpClient);
         return new Backend(storage, TABLE_LOCATION);
     }

@@ -25,6 +25,8 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.tileverse.storage.StorageFactory;
+
 import io.tileverse.parquetry.iceberg.IcebergManifests.Snapshot;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
@@ -117,7 +119,9 @@ class IcebergManifestsDeletesTest {
         Path tableDir = TestCorpus.extractDirectory("iceberg-deletes/" + table, tempDir.resolve(table));
         IcebergTableMetadata metadata =
                 IcebergTableMetadata.read(Files.readString(tableDir.resolve("metadata/v1.metadata.json")));
-        IcebergFileIO io = new LocalIcebergFileIO(metadata.tableLocation(), tableDir);
-        return IcebergManifests.readSnapshot(metadata.manifestListLocation(), io);
+        try (IcebergFileIO io =
+                StorageIcebergFileIO.owning(StorageFactory.open(tableDir.toUri()), metadata.tableLocation())) {
+            return IcebergManifests.readSnapshot(metadata.manifestListLocation(), io);
+        }
     }
 }

@@ -20,12 +20,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import io.tileverse.storage.StorageFactory;
 
 import io.tileverse.parquetry.filter.RowPositionSet;
 import io.tileverse.parquetry.iceberg.IcebergManifests.DeleteFileRef;
@@ -45,6 +49,15 @@ class IcebergDeletionVectorDecodeTest {
 
     @TempDir
     Path tempDir;
+
+    private final List<AutoCloseable> openResources = new ArrayList<>();
+
+    @AfterEach
+    void closeResources() throws Exception {
+        for (AutoCloseable resource : openResources) {
+            resource.close();
+        }
+    }
 
     @Test
     void decodesTheVendoredDeletionVectorToItsExactPositions() throws Exception {
@@ -125,7 +138,8 @@ class IcebergDeletionVectorDecodeTest {
                 TestCorpus.extractDirectory("iceberg-deletes/deletion-vectors", tempDir.resolve("deletion-vectors"));
         IcebergTableMetadata metadata =
                 IcebergTableMetadata.read(Files.readString(tableDir.resolve("metadata/v1.metadata.json")));
-        IcebergFileIO io = new LocalIcebergFileIO(metadata.tableLocation(), tableDir);
+        IcebergFileIO io = StorageIcebergFileIO.owning(StorageFactory.open(tableDir.toUri()), metadata.tableLocation());
+        openResources.add(io);
         Snapshot snapshot = IcebergManifests.readSnapshot(metadata.manifestListLocation(), io);
         return new Fixture(snapshot, io);
     }

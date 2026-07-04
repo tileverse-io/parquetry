@@ -49,7 +49,7 @@ import io.aiven.testcontainers.fakegcsserver.FakeGcsServerContainer;
  * the client. The client is created once in {@link #uploadTable()} and closed once in {@link #closeClient()}.
  */
 @Testcontainers(disabledWithoutDocker = true)
-class FakeGcsIcebergReadIT extends AbstractIcebergStorageRead {
+class FakeGcsIcebergReadIT implements IcebergStorageReadAssertions {
 
     private static final String BUCKET = "parquetry-iceberg-it";
     private static final String PROJECT = "test-project";
@@ -66,7 +66,7 @@ class FakeGcsIcebergReadIT extends AbstractIcebergStorageRead {
 
     @BeforeAll
     static void uploadTable() {
-        Path tableDir = extractTable(corpusDir.resolve(TABLE));
+        Path tableDir = IcebergStorageReadAssertions.extractTable(corpusDir.resolve(TABLE));
         String emulatorEndpoint = "http://" + gcs.getHost() + ":" + gcs.getFirstMappedPort();
         gcsClient = StorageOptions.newBuilder()
                 .setHost(emulatorEndpoint)
@@ -86,7 +86,7 @@ class FakeGcsIcebergReadIT extends AbstractIcebergStorageRead {
     }
 
     @Override
-    protected Backend openBackend() {
+    public Backend openBackend() {
         Storage storage = GoogleCloudStorageProvider.open(URI.create("gs://" + BUCKET + "/"), gcsClient);
         return new Backend(storage, TABLE_LOCATION);
     }

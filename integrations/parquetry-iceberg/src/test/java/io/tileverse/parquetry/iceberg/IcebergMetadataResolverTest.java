@@ -21,15 +21,28 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import io.tileverse.storage.StorageFactory;
 
 class IcebergMetadataResolverTest {
 
     @TempDir
     Path tempDir;
+
+    private final List<AutoCloseable> openResources = new ArrayList<>();
+
+    @AfterEach
+    void closeResources() throws Exception {
+        for (AutoCloseable resource : openResources) {
+            resource.close();
+        }
+    }
 
     @Test
     void picksHighestVersionWhenNoHint() throws Exception {
@@ -107,7 +120,7 @@ class IcebergMetadataResolverTest {
     @Test
     void listReturnsMetadataEntriesThatRoundTripThroughOpen() throws Exception {
         Path tableDir = tableWithMetadataVersions(1, 2);
-        LocalIcebergFileIO io = bootstrapFor(tableDir);
+        IcebergFileIO io = bootstrapFor(tableDir);
 
         List<String> entries = io.list(tableDir.toUri() + "metadata/");
 
@@ -133,8 +146,10 @@ class IcebergMetadataResolverTest {
                 tableDir.resolve("metadata").resolve("version-hint.text"), content.getBytes(StandardCharsets.UTF_8));
     }
 
-    private LocalIcebergFileIO bootstrapFor(Path tableDir) {
-        return new LocalIcebergFileIO(tableLocation(tableDir), tableDir);
+    private IcebergFileIO bootstrapFor(Path tableDir) {
+        IcebergFileIO io = StorageIcebergFileIO.owning(StorageFactory.open(tableDir.toUri()), tableLocation(tableDir));
+        openResources.add(io);
+        return io;
     }
 
     private String tableLocation(Path tableDir) {
