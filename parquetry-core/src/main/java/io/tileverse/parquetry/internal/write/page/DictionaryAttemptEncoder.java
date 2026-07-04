@@ -38,12 +38,11 @@ import io.tileverse.parquetry.format.Encoding;
  * <p>One {@link DictionaryAttemptEncoder} instance is dedicated to a single primitive kind; the geometry-aware policy
  * lives outside this class.
  *
- * @param <V> the value type the dictionary keys against; for binary kinds use a stable wrapper (e.g.,
- *     {@link java.nio.ByteBuffer#wrap(byte[])} or a {@code byte[]}-keyed {@code IdentityHashMap}); for primitives use
- *     the boxed {@code Integer}/{@code Long}/{@code Float}/{@code Double}/{@code Boolean}.
- * @param <C> the carrier array type the fallback {@link Encoder} accepts (e.g., {@code int[]}, {@code byte[][]})
+ * @param <V> the value type the dictionary keys against: the boxed {@code Integer}/{@code Long}/{@code Float}/
+ *     {@code Double}/{@code Boolean} for the numeric and boolean kinds.
+ * @param <C> the carrier array type the fallback {@link Encoder} accepts (e.g., {@code int[]})
  */
-public final class DictionaryAttemptEncoder<V, C> {
+public final class DictionaryAttemptEncoder<V, C> implements PageDictionaryEncoder {
 
     private final Encoder<C> plainEncoder;
     private final CarrierFactory<V, C> carrierFactory;
@@ -84,7 +83,7 @@ public final class DictionaryAttemptEncoder<V, C> {
         long candidateBytes = dictionaryBytes + valueSizer.sizeOf(value);
         if (candidateBytes > dictionaryByteLimit) {
             overflowed = true;
-            // Replay the page's indices as raw values so the fallback page reflects the same row sequence.
+            // Replay the page's indices as raw values: the fallback page must reflect the same row sequence.
             for (Integer idx : pageIndices) {
                 pageFallbackValues.add(dictionaryValues.get(idx));
             }
@@ -99,10 +98,7 @@ public final class DictionaryAttemptEncoder<V, C> {
         pageIndices.add(newIndex);
     }
 
-    /**
-     * Close the current page: write its encoded body to {@code dst} and return the page's encoding marker. The next
-     * appendValue call starts a fresh page on the same column chunk.
-     */
+    @Override
     public PageResult flushPage(WritableByteChannel dst) throws IOException {
         if (overflowed) {
             return flushPlainFallbackPage(dst);
@@ -115,15 +111,12 @@ public final class DictionaryAttemptEncoder<V, C> {
         return List.copyOf(dictionaryValues);
     }
 
-    /** True if this column chunk has overflowed the byte budget and falls back to PLAIN pages. */
+    @Override
     public boolean overflowed() {
         return overflowed;
     }
 
-    /**
-     * True once at least one page has been flushed as {@link Encoding#RLE_DICTIONARY}. Those pages index into the chunk
-     * dictionary; the dictionary page must therefore be written even when a later page overflows to PLAIN.
-     */
+    @Override
     public boolean emittedDictionaryPage() {
         return emittedDictionaryPage;
     }
@@ -160,7 +153,4 @@ public final class DictionaryAttemptEncoder<V, C> {
     public interface ValueSizer<V> {
         long sizeOf(V value);
     }
-
-    /** Outcome of {@link #flushPage(WritableByteChannel)}: page-header encoding markers, value count, and byte size. */
-    public record PageResult(Encoding v2Encoding, Encoding v1Encoding, int valueCount, int bytesWritten) {}
 }

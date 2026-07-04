@@ -251,6 +251,72 @@ class StatisticsAccumulatorTest {
     }
 
     @Test
+    void updateBinaryRecordsNonNullObservationAndMinMax() {
+        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.BYTE_ARRAY, null);
+        acc.updateBinary(segmentOf("banana"));
+        acc.updateBinary(segmentOf("apple"));
+        acc.updateBinary(segmentOf("cherry"));
+        Statistics stats = acc.finishChunk();
+        assertThat(stats.nullCount()).hasValue(0L);
+        assertThat(utf8(stats.minValue())).isEqualTo("apple");
+        assertThat(utf8(stats.maxValue())).isEqualTo("cherry");
+    }
+
+    @Test
+    void updateBinaryOrdersUnsignedAndShorterPrefixFirst() {
+        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.BYTE_ARRAY, null);
+        // 0x80 must order above 0x7f (unsigned), and "ab" above "a" (prefix tiebreak).
+        acc.updateBinary(MemorySegment.ofArray(new byte[] {(byte) 0x80}));
+        acc.updateBinary(MemorySegment.ofArray(new byte[] {(byte) 0x7f}));
+        acc.updateBinary(segmentOf("ab"));
+        acc.updateBinary(segmentOf("a"));
+        Statistics stats = acc.finishChunk();
+        assertThat(stats.minValue().toArray(JAVA_BYTE)).containsExactly(0x61); // "a"
+        assertThat(stats.maxValue().toArray(JAVA_BYTE)).containsExactly(0x80);
+    }
+
+    @Test
+    void updateBinaryCopiesOnImprovementNotAliasingCallerMemory() {
+        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.BYTE_ARRAY, null);
+        byte[] mutable = "mmm".getBytes(StandardCharsets.UTF_8);
+        acc.updateBinary(MemorySegment.ofArray(mutable));
+        mutable[0] = 'z';
+        Statistics stats = acc.finishChunk();
+        assertThat(utf8(stats.minValue())).isEqualTo("mmm");
+        assertThat(utf8(stats.maxValue())).isEqualTo("mmm");
+    }
+
+    @Test
+    void objectUpdatePathMatchesUpdateBinary() {
+        StatisticsAccumulator viaObject = StatisticsAccumulator.forKind(PrimitiveKind.BYTE_ARRAY, null);
+        StatisticsAccumulator viaTyped = StatisticsAccumulator.forKind(PrimitiveKind.BYTE_ARRAY, null);
+        viaObject.update(segmentOf("beta"), false);
+        viaObject.update(null, true);
+        viaTyped.updateBinary(segmentOf("beta"));
+        viaTyped.update(null, true);
+        Statistics fromObject = viaObject.finishChunk();
+        Statistics fromTyped = viaTyped.finishChunk();
+        assertThat(fromTyped.nullCount()).isEqualTo(fromObject.nullCount());
+        assertThat(fromTyped.minValue().toArray(JAVA_BYTE))
+                .isEqualTo(fromObject.minValue().toArray(JAVA_BYTE));
+        assertThat(fromTyped.maxValue().toArray(JAVA_BYTE))
+                .isEqualTo(fromObject.maxValue().toArray(JAVA_BYTE));
+    }
+
+    @Test
+    void mergePicksBinaryBoundsAcrossAccumulators() {
+        StatisticsAccumulator left = StatisticsAccumulator.forKind(PrimitiveKind.BYTE_ARRAY, null);
+        StatisticsAccumulator right = StatisticsAccumulator.forKind(PrimitiveKind.BYTE_ARRAY, null);
+        left.updateBinary(segmentOf("m"));
+        right.updateBinary(segmentOf("a"));
+        right.updateBinary(segmentOf("z"));
+        left.merge(right);
+        Statistics stats = left.finishChunk();
+        assertThat(utf8(stats.minValue())).isEqualTo("a");
+        assertThat(utf8(stats.maxValue())).isEqualTo("z");
+    }
+
+    @Test
     void geometryColumnTracksNullCountOnly() {
         StatisticsAccumulator acc =
                 StatisticsAccumulator.forKind(PrimitiveKind.BYTE_ARRAY, new LogicalType.Geometry(Optional.empty()));
@@ -397,6 +463,14 @@ class StatisticsAccumulatorTest {
 
     private static MemorySegment asSegment(byte[] bytes) {
         return MemorySegment.ofArray(bytes).asReadOnly();
+    }
+
+    private static MemorySegment segmentOf(String text) {
+        return MemorySegment.ofArray(text.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String utf8(MemorySegment segment) {
+        return new String(segment.toArray(JAVA_BYTE), StandardCharsets.UTF_8);
     }
 
     private static int decodeInt32(MemorySegment seg) {

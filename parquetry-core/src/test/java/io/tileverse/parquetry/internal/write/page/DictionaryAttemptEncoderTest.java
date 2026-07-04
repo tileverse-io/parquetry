@@ -40,7 +40,7 @@ class DictionaryAttemptEncoderTest {
         encoder.appendValue(20);
 
         ByteArrayWritableChannel out = new ByteArrayWritableChannel();
-        DictionaryAttemptEncoder.PageResult result = encoder.flushPage(out);
+        PageDictionaryEncoder.PageResult result = encoder.flushPage(out);
 
         assertThat(result.v2Encoding()).isEqualTo(Encoding.RLE_DICTIONARY);
         assertThat(result.v1Encoding()).isEqualTo(Encoding.PLAIN_DICTIONARY);
@@ -60,7 +60,7 @@ class DictionaryAttemptEncoderTest {
         encoder.appendValue(2);
         encoder.appendValue(1);
         ByteArrayWritableChannel page1 = new ByteArrayWritableChannel();
-        DictionaryAttemptEncoder.PageResult result1 = encoder.flushPage(page1);
+        PageDictionaryEncoder.PageResult result1 = encoder.flushPage(page1);
         assertThat(result1.v2Encoding()).isEqualTo(Encoding.RLE_DICTIONARY);
         assertThat(result1.valueCount()).isEqualTo(3);
         Dictionary.IntDict dict = newIntDict(encoder.dictionaryValues());
@@ -73,7 +73,7 @@ class DictionaryAttemptEncoderTest {
         assertThat(encoder.overflowed()).isTrue();
 
         ByteArrayWritableChannel page2 = new ByteArrayWritableChannel();
-        DictionaryAttemptEncoder.PageResult result2 = encoder.flushPage(page2);
+        PageDictionaryEncoder.PageResult result2 = encoder.flushPage(page2);
         assertThat(result2.v2Encoding()).isEqualTo(Encoding.PLAIN);
         assertThat(result2.v1Encoding()).isEqualTo(Encoding.PLAIN);
         assertThat(result2.valueCount()).isEqualTo(3);
@@ -97,7 +97,7 @@ class DictionaryAttemptEncoderTest {
         assertThat(encoder.dictionaryValues()).containsExactly(10, 20);
 
         ByteArrayWritableChannel out = new ByteArrayWritableChannel();
-        DictionaryAttemptEncoder.PageResult result = encoder.flushPage(out);
+        PageDictionaryEncoder.PageResult result = encoder.flushPage(out);
         assertThat(result.v2Encoding()).isEqualTo(Encoding.RLE_DICTIONARY);
         assertThat(result.valueCount()).isEqualTo(2);
     }
@@ -114,7 +114,7 @@ class DictionaryAttemptEncoderTest {
         encoder.appendValue(10);
 
         ByteArrayWritableChannel out = new ByteArrayWritableChannel();
-        DictionaryAttemptEncoder.PageResult result = encoder.flushPage(out);
+        PageDictionaryEncoder.PageResult result = encoder.flushPage(out);
         assertThat(result.v2Encoding()).isEqualTo(Encoding.PLAIN);
         assertThat(result.valueCount()).isEqualTo(5);
 
