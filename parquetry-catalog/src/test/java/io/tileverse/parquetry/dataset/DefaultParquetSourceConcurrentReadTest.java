@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.dataset;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -34,6 +35,7 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.SpatialReadProbe;
+import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.internal.read.TestParquetFiles;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
@@ -218,6 +220,29 @@ class DefaultParquetSourceConcurrentReadTest {
                         .maxConcurrentFiles(maxConcurrentFiles)
                         .build())
                 .build();
+    }
+
+    /**
+     * A per-file footer failure inside the overlapped opens propagates to the caller with the type the sequential open
+     * loop would have thrown. The sources stay borrowed either way; the caller closes them.
+     */
+    @Test
+    void openPropagatesAPerFileFooterFailure(@TempDir Path tmp) throws IOException {
+        Path good = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(tmp, 100);
+        Path junk = tmp.resolve("junk.parquet");
+        Files.write(junk, new byte[64]);
+
+        List<ByteRangeSource> sources = new ArrayList<>();
+        try {
+            sources.add(TestParquetFiles.openRangeReader(good));
+            sources.add(TestParquetFiles.openRangeReader(junk));
+            sources.add(TestParquetFiles.openRangeReader(good));
+
+            assertThatThrownBy(() -> ParquetSource.open(TestFilesets.of(sources)))
+                    .isInstanceOf(ParquetFormatException.class);
+        } finally {
+            closeAll(sources);
+        }
     }
 
     private static List<Path> writeDistinctFiles(Path tmp) throws IOException {

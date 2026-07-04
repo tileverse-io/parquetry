@@ -15,12 +15,17 @@
  */
 package io.tileverse.parquetry.dataset;
 
+import java.io.InterruptedIOException;
+import java.io.UncheckedIOException;
 import java.nio.channels.FileChannel;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalLong;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.StructuredTaskScope;
+import java.util.concurrent.StructuredTaskScope.Subtask;
 import java.util.stream.Stream;
 
 import com.google.errorprone.annotations.MustBeClosed;
@@ -397,7 +402,8 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
 
     /**
      * Opens a dataset over every file in {@code fileset}, in index order. Each file is opened immediately (its footer
-     * is read), and all files must agree on {@link ParquetSchema} by equality. The byte sources returned by
+     * is read), with the footer reads of up to {@link ParquetRuntime#maxConcurrentFiles()} files overlapped on virtual
+     * threads; all files must agree on {@link ParquetSchema} by equality. The byte sources returned by
      * {@link FilesetReader#openFile(int)} are borrowed; the caller owns and closes them.
      *
      * @throws IllegalArgumentException if {@code fileset} reports zero files
@@ -414,11 +420,71 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
         if (fileCount <= 0) {
             throw new IllegalArgumentException("fileset must contain at least one file");
         }
-        List<ParquetFileReader> readers = new ArrayList<>(fileCount);
+        List<ByteRangeSource> sources = new ArrayList<>(fileCount);
         for (int index = 0; index < fileCount; index++) {
-            readers.add(ParquetFileReader.open(
-                    fileset.openFile(index), options.runtime(), options.decryptionKeyRetriever()));
+            sources.add(fileset.openFile(index));
         }
+        List<ParquetFileReader> readers = openReaders(sources, options);
         return new DefaultParquetSource(readers, options.runtime().maxConcurrentFiles());
+    }
+
+    /**
+     * Opens one reader per source, overlapping the footer reads of up to {@code maxConcurrentFiles} files on virtual
+     * threads. An open is a handful of positional reads; against remote storage those round-trips dominate a sequential
+     * loop over many files. The returned readers keep {@code sources}' index order. The sources stay borrowed: a
+     * failure propagates without closing them, exactly like the sequential loop this replaces, and the caller owns
+     * their lifecycle.
+     */
+    private static List<ParquetFileReader> openReaders(List<ByteRangeSource> sources, OpenOptions options) {
+        if (sources.size() == 1) {
+            ParquetFileReader single =
+                    ParquetFileReader.open(sources.get(0), options.runtime(), options.decryptionKeyRetriever());
+            return List.of(single);
+        }
+        Semaphore openSlots = new Semaphore(options.runtime().maxConcurrentFiles());
+        try (StructuredTaskScope<ParquetFileReader, Void> scope = StructuredTaskScope.open()) {
+            List<Subtask<ParquetFileReader>> opens = new ArrayList<>(sources.size());
+            for (ByteRangeSource source : sources) {
+                opens.add(scope.fork(() -> openOneReader(source, options, openSlots)));
+            }
+            scope.join();
+            return collectInOrder(opens);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            InterruptedIOException interrupted = new InterruptedIOException("Interrupted while opening dataset files");
+            interrupted.initCause(e);
+            throw new UncheckedIOException(interrupted);
+        } catch (StructuredTaskScope.FailedException e) {
+            throw asOpenFailure(e.getCause());
+        }
+    }
+
+    private static ParquetFileReader openOneReader(ByteRangeSource source, OpenOptions options, Semaphore openSlots)
+            throws InterruptedException {
+        openSlots.acquire();
+        try {
+            return ParquetFileReader.open(source, options.runtime(), options.decryptionKeyRetriever());
+        } finally {
+            openSlots.release();
+        }
+    }
+
+    private static List<ParquetFileReader> collectInOrder(List<Subtask<ParquetFileReader>> opens) {
+        List<ParquetFileReader> readers = new ArrayList<>(opens.size());
+        for (Subtask<ParquetFileReader> open : opens) {
+            readers.add(open.get());
+        }
+        return readers;
+    }
+
+    /** Rethrows a per-file open failure with the type the sequential open loop would have thrown. */
+    private static RuntimeException asOpenFailure(Throwable cause) {
+        if (cause instanceof RuntimeException runtime) {
+            return runtime;
+        }
+        if (cause instanceof Error error) {
+            throw error;
+        }
+        return new IllegalStateException("Opening a dataset file failed", cause);
     }
 }
