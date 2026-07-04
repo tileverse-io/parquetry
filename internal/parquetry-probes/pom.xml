@@ -41,6 +41,12 @@
       <artifactId>parquetry-core</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- The multi-file concurrent-read probe opens a ParquetSource over a FilesetReader (io.tileverse.parquetry.dataset). -->
+    <dependency>
+      <groupId>io.tileverse.parquetry</groupId>
+      <artifactId>parquetry-catalog</artifactId>
+      <version>${project.version}</version>
+    </dependency>
     <!-- Reads fixtures over tileverse-storage (HTTP/S3/...) when parquetry.probe.url is set, letting a
          latency-injecting file server stand in for object storage. Transitively brings tileverse-storage-all. -->
     <dependency>
