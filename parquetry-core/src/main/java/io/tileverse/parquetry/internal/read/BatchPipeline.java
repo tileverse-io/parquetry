@@ -17,6 +17,7 @@ package io.tileverse.parquetry.internal.read;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.lang.foreign.MemorySegment;
 import java.util.BitSet;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
@@ -29,12 +30,17 @@ import java.util.stream.StreamSupport;
 
 import com.google.errorprone.annotations.MustBeClosed;
 
+import io.tileverse.parquetry.columnar.BinaryVector;
 import io.tileverse.parquetry.columnar.FilteredRecordBatch;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.columnar.VectorizedPredicateEvaluator;
+import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.internal.filter.spatial.BoundsAccumulator;
+import io.tileverse.parquetry.internal.filter.spatial.WkbEnvelope;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
+import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 import lombok.NonNull;
@@ -180,6 +186,53 @@ public final class BatchPipeline {
             gate.narrow(batch, matches);
         }
         return matches.cardinality();
+    }
+
+    /**
+     * Folds the WKB envelope of every {@code predicate}-matching row's {@code geometryColumn} cell across the
+     * coordinator's batches into {@code accumulator}, with no materialization. A {@code null} {@code predicate}
+     * contributes every row (the unfiltered scan); a null geometry cell is skipped. Every batch is closed as it is
+     * consumed; closing the stream cascades to the coordinator.
+     */
+    public static void boundsMatching(
+            @NonNull ParallelDecodeCoordinator coordinator,
+            Predicate predicate,
+            @NonNull ColumnPath geometryColumn,
+            @NonNull BoundsAccumulator accumulator) {
+        BatchIterator iterator = new BatchIterator(coordinator);
+        try (Stream<ParquetRecordBatch> batches = stream(iterator)) {
+            Iterator<ParquetRecordBatch> it = batches.iterator();
+            while (it.hasNext()) {
+                try (ParquetRecordBatch batch = it.next()) {
+                    foldBatchBounds(predicate, geometryColumn, batch, accumulator);
+                }
+            }
+        }
+    }
+
+    /** Folds the WKB envelope of each contributing row's geometry cell in {@code batch} into {@code accumulator}. */
+    private static void foldBatchBounds(
+            Predicate predicate, ColumnPath geometryColumn, ParquetRecordBatch batch, BoundsAccumulator accumulator) {
+        BitSet matches = predicate == null ? null : VectorizedPredicateEvaluator.eval(predicate, batch);
+        BinaryVector geometry = (BinaryVector) batch.columns().get(geometryColumn);
+        if (matches == null) {
+            for (int row = 0; row < batch.rowCount(); row++) {
+                foldRowBounds(geometry, row, accumulator);
+            }
+            return;
+        }
+        for (int row = matches.nextSetBit(0); row >= 0; row = matches.nextSetBit(row + 1)) {
+            foldRowBounds(geometry, row, accumulator);
+        }
+    }
+
+    private static void foldRowBounds(BinaryVector geometry, int row, BoundsAccumulator accumulator) {
+        MemorySegment wkb = geometry.get(row);
+        if (wkb == null) {
+            return;
+        }
+        Bbox envelope = WkbEnvelope.compute(wkb);
+        accumulator.unionXy(envelope.minX(), envelope.minY(), envelope.maxX(), envelope.maxY());
     }
 
     // ---- iterators ----

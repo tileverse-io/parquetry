@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.data;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -40,6 +41,7 @@ import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.filter.explain.RowGroupOutcome;
 import io.tileverse.parquetry.filter.explain.RowGroupPlan;
 import io.tileverse.parquetry.filter.prune.FileStats;
+import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.OffsetIndex;
@@ -50,6 +52,7 @@ import io.tileverse.parquetry.internal.filter.FilterPipeline;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.BloomFilterLookup;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnPageStatsLookup;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnStatsLookup;
+import io.tileverse.parquetry.internal.filter.spatial.BoundsAccumulator;
 import io.tileverse.parquetry.internal.filter.spatial.SpatialBoundsSource;
 import io.tileverse.parquetry.internal.filter.spatial.SpatialCoveringRewrite;
 import io.tileverse.parquetry.internal.read.BatchForm;
@@ -83,6 +86,7 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.ParquetSchemaException;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
+import io.tileverse.parquetry.schema.geo.geoparquet.GeometryColumns;
 
 import lombok.NonNull;
 
@@ -660,6 +664,294 @@ public final class ParquetFileReader {
             sum += rowGroup.rowCount();
         }
         return sum;
+    }
+
+    /**
+     * The exact bounding box of the primary geometry column over the rows matching {@code rawPredicate}, or empty when
+     * the file has no geometry column or no row matches. The box is 2D-exact; its Z and M extents are present only when
+     * the whole answer came from metadata boxes, and any scanned row drops them.
+     *
+     * <p>Cost mirrors {@link #count}: an eliminated row group contributes nothing, a row group whose statistics prove
+     * every row matches unions its tight geometry box without decoding, and the rest decode only the geometry and the
+     * predicate columns to fold their matching rows' WKB envelopes. A row group whose conservative geometry box the
+     * accumulated bounds already cover is skipped before any fetch. A conservative box only ever justifies skipping,
+     * while the tight box of an all-match row group is unioned directly.
+     *
+     * <p>An unfiltered call returns the tight file-level metadata box when the file records one, visiting no row group.
+     */
+    public Optional<BoundingBox> bounds(@NonNull Predicate rawPredicate, @NonNull ReadOptions options) {
+        Optional<ColumnPath> geometryColumn = primaryGeometryColumn();
+        if (geometryColumn.isEmpty()) {
+            return Optional.empty();
+        }
+        ColumnPath geometry = geometryColumn.orElseThrow();
+        Predicate predicate = lowerSpatialPredicates(rawPredicate);
+        if (predicate instanceof Predicate.Always(boolean value)) {
+            return value ? unfilteredBounds(geometry, options) : Optional.empty();
+        }
+        return boundsLowered(predicate, geometry, options);
+    }
+
+    /**
+     * The file's primary geometry column, or empty when the file exposes none. A GeoParquet {@code "geo"} metadata
+     * document names its primary column directly. Without that metadata, a single footer geometry bounding box
+     * identifies the column, and failing that a lone geometry logical-type leaf in the schema does.
+     */
+    private Optional<ColumnPath> primaryGeometryColumn() {
+        Optional<ColumnPath> declared = declaredPrimaryGeometryColumn();
+        if (declared.isPresent()) {
+            return declared;
+        }
+        Optional<ColumnPath> boundedGeometry =
+                fileStats().geometryBounds().keySet().stream().findFirst();
+        if (boundedGeometry.isPresent()) {
+            return boundedGeometry;
+        }
+        return soleSchemaGeometryColumn();
+    }
+
+    /**
+     * The GeoParquet metadata's declared primary geometry column, when the file has {@code "geo"} metadata naming one.
+     */
+    private Optional<ColumnPath> declaredPrimaryGeometryColumn() {
+        return geoMetadata
+                .map(GeoParquetMetadata::primaryColumn)
+                .filter(name -> !name.isBlank())
+                .map(name -> ColumnPath.of(name.split("\\.")));
+    }
+
+    /** The file schema's sole geometry logical-type leaf, or empty when there is none or more than one. */
+    private Optional<ColumnPath> soleSchemaGeometryColumn() {
+        Set<ColumnPath> geometryColumns = GeometryColumns.resolve(fileSchema, geoMetadata);
+        if (geometryColumns.size() != 1) {
+            return Optional.empty();
+        }
+        return Optional.of(geometryColumns.iterator().next());
+    }
+
+    /**
+     * Bounds for an unfiltered read of {@code geometryColumn}: the tight file-level metadata box when the file records
+     * one (zero I/O), otherwise the union of every row group's tight metadata box with a scan of the row groups that
+     * expose none.
+     */
+    private Optional<BoundingBox> unfilteredBounds(ColumnPath geometryColumn, ReadOptions options) {
+        SpatialBoundsSource spatialBounds = SpatialBoundsSource.of(footer, fileSchema, geoMetadata);
+        Optional<BoundingBox> fileBox = spatialBounds.fileBounds(geometryColumn);
+        if (fileBox.isPresent()) {
+            return fileBox;
+        }
+        return unionRowGroupBoundsAndScanTheRest(geometryColumn, spatialBounds, options);
+    }
+
+    private Optional<BoundingBox> unionRowGroupBoundsAndScanTheRest(
+            ColumnPath geometryColumn, SpatialBoundsSource spatialBounds, ReadOptions options) {
+        BoundsAccumulator accumulator = new BoundsAccumulator();
+        List<RowGroupChunks> rowGroupChunks = rowGroupChunks();
+        List<RowGroupSurvivor> boxLess = new ArrayList<>();
+        for (int i = 0; i < rowGroupChunks.size(); i++) {
+            Optional<BoundingBox> box = spatialBounds.rowGroupBounds(geometryColumn, i);
+            if (box.isPresent()) {
+                accumulator.union(box.orElseThrow());
+            } else {
+                boxLess.add(RowGroupSurvivor.full(rowGroupChunks.get(i)));
+            }
+        }
+        if (!boxLess.isEmpty()) {
+            ParquetSchema scanSchema = fileSchema.project(Set.of(geometryColumn));
+            ParallelDecodeCoordinator coordinator =
+                    boundsDecodeCoordinator(boxLess, scanSchema, options, DecodeObservation.NONE);
+            BatchPipeline.boundsMatching(coordinator, null, geometryColumn, accumulator);
+        }
+        return accumulator.snapshot();
+    }
+
+    /**
+     * Bounds for a filtered read: run the filter pipeline, union the tight box of every all-match row group, then scan
+     * the residue - skipping any row group the accumulated bounds already cover - to fold matching rows' envelopes.
+     * Threads {@link ReadObservation} as {@link #count} does, letting the residual decode emit the same per-row-group
+     * read events.
+     */
+    private Optional<BoundingBox> boundsLowered(
+            Predicate predicate, ColumnPath geometryColumn, ReadOptions rawOptions) {
+        ReadObservation observation = ReadObservation.observe(rawOptions);
+        try {
+            return foldFilteredBounds(predicate, geometryColumn, observation);
+        } finally {
+            observation.fireFinishedIfObserving();
+        }
+    }
+
+    private Optional<BoundingBox> foldFilteredBounds(
+            Predicate predicate, ColumnPath geometryColumn, ReadObservation observation) {
+        ReadOptions options = observation.effectiveOptions();
+        BoundsAccumulator accumulator = new BoundsAccumulator();
+        SpatialBoundsSource spatialBounds = SpatialBoundsSource.of(footer, fileSchema, geoMetadata);
+        List<RowGroupChunks> rowGroupChunks = rowGroupChunks();
+        boolean observe = observing(options);
+        boolean wantsTimings = observe && options.queryObserver().wantsTimings();
+        ExplainPlan plan = timedFilterPipeline(
+                predicate,
+                boundsScanProjection(predicate, geometryColumn),
+                options,
+                rowGroupChunks,
+                wantsTimings,
+                observation::addPipelineNanos);
+        List<ResidualGroup> residual =
+                unionMatchedAndCollectResidual(plan, rowGroupChunks, spatialBounds, geometryColumn, accumulator);
+        scanResidualBounds(
+                residual, plan, geometryColumn, options, observation.spillAccumulator(), observe, accumulator);
+        return accumulator.snapshot();
+    }
+
+    /** The physical scan projection for bounds: the predicate's columns plus the geometry column the residue folds. */
+    private Projection boundsScanProjection(Predicate predicate, ColumnPath geometryColumn) {
+        Set<ColumnPath> columns = new LinkedHashSet<>(physicalColumns(predicate));
+        columns.add(geometryColumn);
+        return Projection.ofPhysical(columns);
+    }
+
+    /**
+     * Pass one: union the tight geometry box of every row group whose statistics prove all rows match, and collect the
+     * rest (FULL, PARTIAL, and box-less all-match groups) for the residual scan. A box-less all-match group joins the
+     * residual as a full survivor: all its rows match, only its extent is unknown.
+     */
+    private List<ResidualGroup> unionMatchedAndCollectResidual(
+            ExplainPlan plan,
+            List<RowGroupChunks> rowGroupChunks,
+            SpatialBoundsSource spatialBounds,
+            ColumnPath geometryColumn,
+            BoundsAccumulator accumulator) {
+        List<ResidualGroup> residual = new ArrayList<>();
+        for (RowGroupPlan rgPlan : plan.rowGroups()) {
+            RowGroupChunks chunks = rowGroupChunks.get(rgPlan.index());
+            Optional<BoundingBox> box = spatialBounds.rowGroupBounds(geometryColumn, rgPlan.index());
+            switch (rgPlan.outcome()) {
+                case ELIMINATED -> {
+                    /* pruned; contributes nothing */
+                }
+                case MATCHED -> unionOrCollectMatched(rgPlan, chunks, box, accumulator, residual);
+                case FULL -> residual.add(new ResidualGroup(RowGroupSurvivor.full(chunks), rgPlan.index(), box));
+                case PARTIAL ->
+                    residual.add(new ResidualGroup(
+                            new RowGroupSurvivor(chunks, rgPlan.survivingRows(), true), rgPlan.index(), box));
+            }
+        }
+        return residual;
+    }
+
+    private static void unionOrCollectMatched(
+            RowGroupPlan rgPlan,
+            RowGroupChunks chunks,
+            Optional<BoundingBox> box,
+            BoundsAccumulator accumulator,
+            List<ResidualGroup> residual) {
+        if (box.isPresent()) {
+            accumulator.union(box.orElseThrow());
+        } else {
+            residual.add(new ResidualGroup(RowGroupSurvivor.full(chunks), rgPlan.index(), Optional.empty()));
+        }
+    }
+
+    /**
+     * Pass two: scan the residual row groups largest box first, folding their matching rows' WKB envelopes. Before each
+     * decode the row group's conservative box is re-checked against the accumulated bounds; a covered row group is
+     * skipped without any fetch, and the growing extent lets a big early row group cover later ones. A box-less row
+     * group sorts last and is never skipped.
+     */
+    private void scanResidualBounds(
+            List<ResidualGroup> residual,
+            ExplainPlan plan,
+            ColumnPath geometryColumn,
+            ReadOptions options,
+            SpillAccumulator spillAccumulator,
+            boolean observe,
+            BoundsAccumulator accumulator) {
+        Predicate predicate = plan.normalizedPredicate();
+        ParquetSchema scanSchema = plan.projectedSchema();
+        for (ResidualGroup group : orderedByDescendingArea(residual)) {
+            if (isCovered(group, accumulator)) {
+                continue;
+            }
+            DecodeObservation observation =
+                    boundsDecodeObservation(group.rowGroupIndex(), observe, options, spillAccumulator);
+            scanResidualGroup(
+                    group.survivor(), predicate, geometryColumn, scanSchema, options, observation, accumulator);
+        }
+    }
+
+    private void scanResidualGroup(
+            RowGroupSurvivor survivor,
+            Predicate predicate,
+            ColumnPath geometryColumn,
+            ParquetSchema scanSchema,
+            ReadOptions options,
+            DecodeObservation observation,
+            BoundsAccumulator accumulator) {
+        ParallelDecodeCoordinator coordinator =
+                boundsDecodeCoordinator(List.of(survivor), scanSchema, options, observation);
+        BatchPipeline.boundsMatching(coordinator, predicate, geometryColumn, accumulator);
+    }
+
+    /**
+     * Builds a decode coordinator over {@code survivors} that decodes only {@code scanSchema}, as count's residual
+     * does.
+     */
+    private ParallelDecodeCoordinator boundsDecodeCoordinator(
+            List<RowGroupSurvivor> survivors,
+            ParquetSchema scanSchema,
+            ReadOptions options,
+            DecodeObservation observation) {
+        List<Optional<RowMask>> masks = decodeMasksFor(survivors, scanSchema, options);
+        Optional<RowGroupGate> rowGroupGate = spatialReadGates.rowGroupGate(survivors, options);
+        return readResources.newDecodeCoordinator(
+                survivors,
+                scanSchema,
+                masks,
+                options,
+                Optional.empty(),
+                BatchForm.LEVELS,
+                FetchAccumulator.NONE,
+                observation,
+                List.of(),
+                rowGroupGate);
+    }
+
+    /** The read event context for one residual row group: the observer and the group's true file ordinal, or none. */
+    private static DecodeObservation boundsDecodeObservation(
+            int rowGroupIndex, boolean observe, ReadOptions options, SpillAccumulator spillAccumulator) {
+        if (!observe) {
+            return DecodeObservation.NONE;
+        }
+        QueryObserver observer = options.queryObserver();
+        return new DecodeObservation(
+                observer, List.of(rowGroupIndex), false, observer.wantsTimings(), spillAccumulator);
+    }
+
+    private static List<ResidualGroup> orderedByDescendingArea(List<ResidualGroup> residual) {
+        List<ResidualGroup> ordered = new ArrayList<>(residual);
+        ordered.sort(Comparator.comparingDouble(ResidualGroup::area).reversed());
+        return ordered;
+    }
+
+    private static boolean isCovered(ResidualGroup group, BoundsAccumulator accumulator) {
+        Optional<BoundingBox> box = group.box();
+        return box.isPresent() && accumulator.covers(box.orElseThrow());
+    }
+
+    /**
+     * One residual row group to fold into the bounds: its materialization-ready survivor, its file ordinal (the true
+     * index reported to an observer), and its conservative metadata box when the file records one. A box-less row group
+     * reports a {@link Double#NEGATIVE_INFINITY} area that sorts it last, and is never containment-skipped.
+     */
+    private record ResidualGroup(RowGroupSurvivor survivor, int rowGroupIndex, Optional<BoundingBox> box) {
+
+        double area() {
+            if (box.isEmpty()) {
+                return Double.NEGATIVE_INFINITY;
+            }
+            BoundingBox b = box.orElseThrow();
+            return (b.xmax() - b.xmin()) * (b.ymax() - b.ymin());
+        }
     }
 
     /**
