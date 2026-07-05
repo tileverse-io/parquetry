@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.context.support.ClassPathXmlApplicationContext;
 
 import io.tileverse.parquetry.geoserver.web.GeoParquetDataStoreEditPanel;
-import io.tileverse.parquetry.geotools.GeoParquetDataStoreFactory;
+import io.tileverse.parquetry.geotools.parquet.GeoParquetDataStoreFactory;
 
 /**
  * Loads the plugin's {@code applicationContext.xml} the same way GeoServer does (Spring bean definitions at the jar

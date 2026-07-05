@@ -1,2 +1,2 @@
-io.tileverse.parquetry.geotools.GeoParquetDataStoreFactory
-io.tileverse.parquetry.geotools.StacDataStoreFactory
+io.tileverse.parquetry.geotools.parquet.GeoParquetDataStoreFactory
+io.tileverse.parquetry.geotools.parquet.StacDataStoreFactory
