@@ -371,7 +371,7 @@ final class DremelAssembler {
         private TypedInput compactTyped(TypedInput typed, int[] keptIndices) {
             return switch (typed) {
                 case null -> null;
-                case ScalarInput scalar -> new ScalarInput(Compaction.compact(scalar.vector(), keptIndices));
+                case ScalarInput(ColumnVector vector) -> new ScalarInput(Compaction.compact(vector, keptIndices));
                 case ObjectInput object -> compactObject(object, keptIndices);
                 case ArrayInput array -> compactArray(array, keptIndices);
             };
