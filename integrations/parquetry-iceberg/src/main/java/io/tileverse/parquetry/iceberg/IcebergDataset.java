@@ -354,14 +354,20 @@ final class IcebergDataset implements ParquetDataset {
     }
 
     /**
-     * Whether the accumulated bounds already cover this file's footer geometry box, read from the opened data file: its
-     * primary geometry extent, the first entry of {@link FileStats#geometryBounds()}. A file whose footer records no
-     * geometry box is never reported as covered: an unknown extent might reach past the accumulated bounds.
+     * Whether the accumulated bounds already cover this file's footer geometry box, read from the opened data file. The
+     * skip fires only when {@link FileStats#geometryBounds()} records exactly one entry: with several geometry columns
+     * the declared primary the engine bounds may differ from an arbitrary map entry, and a skip keyed to the wrong
+     * column could under-report; with a single entry the engine's fallback resolution lands on that same entry whenever
+     * the declared primary has statistics at all. A file with no footer geometry box is never reported as covered
+     * either: an unknown extent might reach past the accumulated bounds.
      */
     private boolean accumulatedBoundsCoverFooter(int index, BoundsAccumulator accumulator) {
-        Optional<BoundingBox> footerBox =
-                perFile(index).fileStats().geometryBounds().values().stream().findFirst();
-        return footerBox.isPresent() && accumulator.covers(footerBox.orElseThrow());
+        Map<ColumnPath, BoundingBox> footerBounds = perFile(index).fileStats().geometryBounds();
+        if (footerBounds.size() != 1) {
+            return false;
+        }
+        BoundingBox footerBox = footerBounds.values().iterator().next();
+        return accumulator.covers(footerBox);
     }
 
     /**

@@ -41,6 +41,7 @@ import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.filter.SortedLongPositionSet;
 import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.internal.filter.spatial.BoundsAccumulator;
 import io.tileverse.parquetry.internal.filter.spatial.WkbEnvelope;
@@ -66,6 +67,8 @@ class ReaderBoundsTest {
 
     private static final ColumnPath GEOMETRY = ColumnPath.of("geometry");
     private static final ColumnPath ID = ColumnPath.of("id");
+    // The caller names the synthesized row-position column; the engine mandates no fixed name (Iceberg uses _pos).
+    private static final ColumnPath POS = ColumnPath.of("_pos");
 
     @TempDir
     Path tempDir;
@@ -189,6 +192,37 @@ class ReaderBoundsTest {
         }
     }
 
+    @Test
+    void positionalDeleteResidualSynthesizesRowPositionAndEqualsOracle() throws IOException {
+        // An Iceberg merge-on-read positional delete reaches the reader as a RowIndexExcluded leaf. The bounds residual
+        // decode must synthesize the row-position column the evaluator reads, exactly as count and readBatches do; the
+        // grid's points at (i, 2*i) put the min corner at position 0 and the max corner at the last position, which
+        // makes excluding both edges discriminating.
+        Path file = writeGeometryFixture("positional-delete.parquet", 4L, grid(12));
+        long[] excludedPositions = {0L, 11L};
+        Predicate predicate = Pred.and(
+                Pred.col("id").gtEq(0),
+                new Predicate.RowIndexExcluded(POS, SortedLongPositionSet.of(excludedPositions)));
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+
+            Optional<BoundingBox> bounds = reader.bounds(predicate, ReadOptions.DEFAULTS);
+            Optional<BoundingBox> oracle = bruteForce(reader, predicate);
+            Optional<BoundingBox> unfiltered = reader.bounds(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
+
+            assertThat(oracle)
+                    .as("the positional delete must leave a non-empty subset for a meaningful test")
+                    .isPresent();
+            assertThat(bounds).isPresent();
+            assertSameBox2d(bounds.orElseThrow(), oracle.orElseThrow());
+            assertThat(bounds.orElseThrow().xmax())
+                    .as("excluding the max-coordinate row must shrink the box, not widen it")
+                    .isLessThan(unfiltered.orElseThrow().xmax());
+            assertThat(bounds.orElseThrow().ymax())
+                    .isLessThan(unfiltered.orElseThrow().ymax());
+        }
+    }
+
     // --- oracle ---
 
     /** The exact bounding box of every {@code predicate}-matching row, scanned row by row from the geometry WKB. */
@@ -286,7 +320,7 @@ class ReaderBoundsTest {
 
     private static ParquetSchema flatSchema(SchemaNode.Primitive... leaves) {
         List<SchemaNode> children =
-                Stream.of(leaves).map(leaf -> (SchemaNode) leaf).toList();
+                Stream.of(leaves).map(SchemaNode.class::cast).toList();
         SchemaNode.Group root = new SchemaNode.Group("schema", Repetition.REQUIRED, children, Optional.empty(), -1);
         return new ParquetSchema(root);
     }

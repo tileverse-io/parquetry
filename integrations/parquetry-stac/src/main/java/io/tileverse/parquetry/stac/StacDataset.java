@@ -153,7 +153,7 @@ public final class StacDataset implements GeoParquetDataset {
                 .fileStats(FileStatsSource.STAC_ITEM)
                 .fileSpatialBounds(FileSpatialBounds.NATIVE_GEO)
                 .cheapCount(false)
-                .cheapBounds(geoMetadata().isPresent())
+                .cheapBounds(geoMetadata().flatMap(StacDataset::primaryBbox).isPresent())
                 .build();
     }
 

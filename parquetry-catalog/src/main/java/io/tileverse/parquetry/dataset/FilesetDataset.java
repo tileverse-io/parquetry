@@ -207,14 +207,40 @@ public final class FilesetDataset implements GeoParquetDataset {
 
     /**
      * Whether the accumulated bounds already cover this file's footer geometry box. Partition statistics record no
-     * geometry box. The box is read from the opened file's footer: its primary geometry extent, the first geometry
-     * entry of {@link FileStats#geometryBounds()}. A file whose footer records no geometry box is never reported as
-     * covered: an unknown extent might reach past the accumulated bounds, and skipping it could lose rows.
+     * geometry box. The box is read from the opened file's footer, resolved to the same geometry column the engine
+     * bounds. A file whose footer records no box for that column is never reported as covered: an unknown extent might
+     * reach past the accumulated bounds, and skipping it could lose rows.
      */
     private boolean accumulatedBoundsCoverFooter(int index, BoundsAccumulator accumulator) {
-        Optional<BoundingBox> footerBox =
-                perFile(index).fileStats().geometryBounds().values().stream().findFirst();
+        Optional<BoundingBox> footerBox = footerSkipBox(index);
         return footerBox.isPresent() && accumulator.covers(footerBox.orElseThrow());
+    }
+
+    /**
+     * The footer geometry box the containment skip tests, resolved to the column the engine bounds: the declared
+     * primary geometry column when the fileset's {@code "geo"} metadata names one, otherwise the first entry of the
+     * per-file {@link FileStats#geometryBounds()}. A declared primary the file records no box for yields no box,
+     * keeping the file in the scan. The fallback reads the first entry of the one map instance this method obtains;
+     * that matches the engine's own no-metadata fallback, which reads the first key of an equivalent immutable
+     * geometry-bounds map whose iteration order, though unspecified, is fixed for the run.
+     */
+    private Optional<BoundingBox> footerSkipBox(int index) {
+        Map<ColumnPath, BoundingBox> footerBounds = perFile(index).fileStats().geometryBounds();
+        Optional<ColumnPath> primary = declaredPrimaryColumn();
+        if (primary.isPresent()) {
+            return Optional.ofNullable(footerBounds.get(primary.orElseThrow()));
+        }
+        return footerBounds.values().stream().findFirst();
+    }
+
+    /**
+     * The fileset's declared primary geometry column, as the engine resolves it, or empty when the metadata names none.
+     */
+    private Optional<ColumnPath> declaredPrimaryColumn() {
+        return geoMetadata
+                .map(GeoParquetMetadata::primaryColumn)
+                .filter(name -> !name.isBlank())
+                .map(name -> ColumnPath.of(name.split("\\.")));
     }
 
     /**

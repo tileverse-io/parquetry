@@ -52,6 +52,7 @@ import io.tileverse.parquetry.internal.filter.spatial.BoundsAccumulator;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
+import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
@@ -423,10 +424,10 @@ final class DefaultParquetSource implements ParquetSource {
     }
 
     /**
-     * Rethrows a per-file open or count failure with the type the sequential path would have thrown. The scope reports
-     * the first failed subtask's exception, and neither {@link ParquetFileReader#open} nor
-     * {@link ParquetFileReader#count} declares checked exceptions: the cause is a {@link RuntimeException} or an
-     * {@link Error}, with anything else falling back to {@link IllegalStateException}.
+     * Rethrows a per-file open, count, or bounds failure with the type the sequential path would have thrown. The scope
+     * reports the first failed subtask's exception, and none of {@link ParquetFileReader#open},
+     * {@link ParquetFileReader#count}, or {@link ParquetFileReader#bounds} declares a checked exception: the cause is a
+     * {@link RuntimeException} or an {@link Error}, with anything else falling back to {@link IllegalStateException}.
      */
     private static RuntimeException asUnchecked(Throwable cause) {
         if (cause instanceof RuntimeException runtime) {
@@ -435,7 +436,7 @@ final class DefaultParquetSource implements ParquetSource {
         if (cause instanceof Error error) {
             throw error;
         }
-        return new IllegalStateException("Counting a dataset file failed", cause);
+        return new IllegalStateException("Reading a dataset file failed", cause);
     }
 
     @Override
@@ -485,15 +486,20 @@ final class DefaultParquetSource implements ParquetSource {
     }
 
     /**
-     * Whether the accumulated bounds already cover this file's footer geometry box. A file whose footer records no
-     * geometry box is never reported as covered: an unknown extent might reach past the accumulated bounds, and
-     * skipping it could lose rows. The footer box is the file's primary geometry extent, the first geometry entry of
-     * {@link FileStats#geometryBounds()}, matching how the single-file reader picks its primary geometry.
+     * Whether the accumulated bounds already cover this file's footer geometry box. The skip fires only when
+     * {@link FileStats#geometryBounds()} records exactly one entry: with several geometry columns the declared primary
+     * the engine bounds may differ from an arbitrary map entry, and a skip keyed to the wrong column could
+     * under-report; with a single entry the engine's fallback resolution lands on that same entry whenever the declared
+     * primary has statistics at all. A file with no footer geometry box is never reported as covered either: an unknown
+     * extent might reach past the accumulated bounds, and skipping it could lose rows.
      */
     private static boolean accumulatedBoundsCover(ParquetFileReader reader, BoundsAccumulator accumulator) {
-        Optional<BoundingBox> footerBox =
-                reader.fileStats().geometryBounds().values().stream().findFirst();
-        return footerBox.isPresent() && accumulator.covers(footerBox.orElseThrow());
+        Map<ColumnPath, BoundingBox> footerBounds = reader.fileStats().geometryBounds();
+        if (footerBounds.size() != 1) {
+            return false;
+        }
+        BoundingBox footerBox = footerBounds.values().iterator().next();
+        return accumulator.covers(footerBox);
     }
 
     private void ensureSingleReader(String operation) {

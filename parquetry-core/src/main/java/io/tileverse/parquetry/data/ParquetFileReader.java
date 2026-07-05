@@ -671,6 +671,9 @@ public final class ParquetFileReader {
      * the file has no geometry column or no row matches. The box is 2D-exact; its Z and M extents are present only when
      * the whole answer came from metadata boxes, and any scanned row drops them.
      *
+     * <p>The box is exact relative to the file's declared geometry statistics, which are trusted as tight; a writer
+     * that declared rounded boxes widens the answer accordingly.
+     *
      * <p>Cost mirrors {@link #count}: an eliminated row group contributes nothing, a row group whose statistics prove
      * every row matches unions its tight geometry box without decoding, and the rest decode only the geometry and the
      * predicate columns to fold their matching rows' WKB envelopes. A row group whose conservative geometry box the
@@ -758,8 +761,9 @@ public final class ParquetFileReader {
         }
         if (!boxLess.isEmpty()) {
             ParquetSchema scanSchema = fileSchema.project(Set.of(geometryColumn));
+            // An unfiltered box-less scan runs a null predicate, hence it references no row-position column.
             ParallelDecodeCoordinator coordinator =
-                    boundsDecodeCoordinator(boxLess, scanSchema, options, DecodeObservation.NONE);
+                    boundsDecodeCoordinator(boxLess, scanSchema, options, DecodeObservation.NONE, List.of());
             BatchPipeline.boundsMatching(coordinator, null, geometryColumn, accumulator);
         }
         return accumulator.snapshot();
@@ -787,6 +791,7 @@ public final class ParquetFileReader {
         BoundsAccumulator accumulator = new BoundsAccumulator();
         SpatialBoundsSource spatialBounds = SpatialBoundsSource.of(footer, fileSchema, geoMetadata);
         List<RowGroupChunks> rowGroupChunks = rowGroupChunks();
+        List<RowPositionColumn> rowPositionRequests = rowPositionColumns(predicate);
         boolean observe = observing(options);
         boolean wantsTimings = observe && options.queryObserver().wantsTimings();
         ExplainPlan plan = timedFilterPipeline(
@@ -799,7 +804,15 @@ public final class ParquetFileReader {
         List<ResidualGroup> residual =
                 unionMatchedAndCollectResidual(plan, rowGroupChunks, spatialBounds, geometryColumn, accumulator);
         scanResidualBounds(
-                residual, plan, geometryColumn, options, observation.spillAccumulator(), observe, accumulator);
+                residual,
+                plan,
+                geometryColumn,
+                options,
+                observation.spillAccumulator(),
+                observe,
+                accumulator,
+                rowGroupChunks,
+                rowPositionRequests);
         return accumulator.snapshot();
     }
 
@@ -865,7 +878,9 @@ public final class ParquetFileReader {
             ReadOptions options,
             SpillAccumulator spillAccumulator,
             boolean observe,
-            BoundsAccumulator accumulator) {
+            BoundsAccumulator accumulator,
+            List<RowGroupChunks> rowGroupChunks,
+            List<RowPositionColumn> rowPositionRequests) {
         Predicate predicate = plan.normalizedPredicate();
         ParquetSchema scanSchema = plan.projectedSchema();
         for (ResidualGroup group : orderedByDescendingArea(residual)) {
@@ -875,7 +890,15 @@ public final class ParquetFileReader {
             DecodeObservation observation =
                     boundsDecodeObservation(group.rowGroupIndex(), observe, options, spillAccumulator);
             scanResidualGroup(
-                    group.survivor(), predicate, geometryColumn, scanSchema, options, observation, accumulator);
+                    group.survivor(),
+                    predicate,
+                    geometryColumn,
+                    scanSchema,
+                    options,
+                    observation,
+                    accumulator,
+                    rowGroupChunks,
+                    rowPositionRequests);
         }
     }
 
@@ -886,9 +909,13 @@ public final class ParquetFileReader {
             ParquetSchema scanSchema,
             ReadOptions options,
             DecodeObservation observation,
-            BoundsAccumulator accumulator) {
+            BoundsAccumulator accumulator,
+            List<RowGroupChunks> rowGroupChunks,
+            List<RowPositionColumn> rowPositionRequests) {
+        List<RowPositionSynthesis> rowPositions =
+                rowPositionSynthesesFor(List.of(survivor), rowGroupChunks, rowPositionRequests);
         ParallelDecodeCoordinator coordinator =
-                boundsDecodeCoordinator(List.of(survivor), scanSchema, options, observation);
+                boundsDecodeCoordinator(List.of(survivor), scanSchema, options, observation, rowPositions);
         BatchPipeline.boundsMatching(coordinator, predicate, geometryColumn, accumulator);
     }
 
@@ -900,7 +927,8 @@ public final class ParquetFileReader {
             List<RowGroupSurvivor> survivors,
             ParquetSchema scanSchema,
             ReadOptions options,
-            DecodeObservation observation) {
+            DecodeObservation observation,
+            List<RowPositionSynthesis> rowPositions) {
         List<Optional<RowMask>> masks = decodeMasksFor(survivors, scanSchema, options);
         Optional<RowGroupGate> rowGroupGate = spatialReadGates.rowGroupGate(survivors, options);
         return readResources.newDecodeCoordinator(
@@ -912,7 +940,7 @@ public final class ParquetFileReader {
                 BatchForm.LEVELS,
                 FetchAccumulator.NONE,
                 observation,
-                List.of(),
+                rowPositions,
                 rowGroupGate);
     }
 

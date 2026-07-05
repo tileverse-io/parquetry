@@ -28,7 +28,8 @@ import io.tileverse.parquetry.format.BoundingBox;
  * contribution was a metadata box that provided them; the first contribution without a dimension - a Z-less box or any
  * {@link #unionXy} scan fold, which is 2D only - drops that dimension permanently, because an extent that ignores a
  * dimension some contributions lack could not enclose them in that dimension. A dropped dimension never returns, even
- * if later contributions provide it.
+ * if later contributions provide it. Under concurrent fan-outs with containment skips, which Z and M contributions are
+ * seen can depend on completion order; the 2D extent never does.
  *
  * <p>Callers apply two trust levels. A conservative metadata box may only justify skipping work, through
  * {@link #covers(BoundingBox)}: containment of an enclosure implies containment of whatever it encloses. A box may be
