@@ -43,7 +43,6 @@ import io.tileverse.parquetry.catalog.DatasetCatalog;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.GeoParquetDataset;
 import io.tileverse.parquetry.dataset.ParquetDataset;
-import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.format.BoundingBox;
 
 /**
@@ -56,8 +55,8 @@ import io.tileverse.parquetry.format.BoundingBox;
  * {@link GeoParquetFeatureReader} and layers GeoTools decorators that apply the residual filter, retype to the
  * requested attributes, and enforce the feature cap.
  *
- * <p>Unfiltered and fully-pushable counts delegate to the dataset's count optimization; unfiltered bounds come from the
- * dataset's aggregated spatial extent.
+ * <p>Unfiltered and fully-pushable counts delegate to the dataset's count optimization, and the matching bounds to the
+ * dataset's exact bounds; the unfiltered case reduces to the dataset's full aggregated extent.
  */
 final class GeoParquetFeatureSource extends ContentFeatureSource {
 
@@ -141,27 +140,27 @@ final class GeoParquetFeatureSource extends ContentFeatureSource {
     }
 
     /**
-     * Returns the dataset's aggregated bounding box for unfiltered queries, or {@code null} when a filter is present or
-     * the dataset has no usable spatial extent.
+     * Returns the exact bounding box of the query's matching rows when the whole filter pushes down, or {@code null} to
+     * signal that GeoTools should compute the bounds by iterating the filtered reader.
+     *
+     * <p>A residual post-filter means the pushed predicate over-approximates the query; an exact bounds cannot be
+     * promised, and returning {@code null} is the documented answer that hands the computation back to the caller. An
+     * empty result - no geometry column, or no matching rows - returns {@code null} for the same reason. The unfiltered
+     * case translates to an always-true predicate and the dataset answers it from its aggregated spatial extent.
      */
     @Override
     protected ReferencedEnvelope getBoundsInternal(Query query) throws IOException {
-        if (!isUnfiltered(query)) {
+        QueryTranslator.TranslatedQuery t = translate(query);
+        if (t.postFilter() != Filter.INCLUDE) {
             return null;
         }
-        Optional<BoundingBox> bbox = dataset().bounds(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
+        Optional<BoundingBox> bbox = dataset().bounds(t.predicate(), ReadOptions.DEFAULTS);
         if (bbox.isEmpty()) {
             return null;
         }
         BoundingBox b = bbox.get();
         SimpleFeatureType ft = getSchema();
         return new ReferencedEnvelope(b.xmin(), b.xmax(), b.ymin(), b.ymax(), ft.getCoordinateReferenceSystem());
-    }
-
-    /** Returns {@code true} when the query has no filter or an INCLUDE filter. */
-    private static boolean isUnfiltered(Query query) {
-        Filter filter = query.getFilter();
-        return filter == null || Filter.INCLUDE.equals(filter);
     }
 
     @Override
