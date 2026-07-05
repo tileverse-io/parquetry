@@ -239,8 +239,8 @@ public final class FilesetDataset implements GeoParquetDataset {
     private Optional<ColumnPath> declaredPrimaryColumn() {
         return geoMetadata
                 .map(GeoParquetMetadata::primaryColumn)
-                .filter(name -> !name.isBlank())
-                .map(name -> ColumnPath.of(name.split("\\.")));
+                .filter(primary -> !primary.isBlank())
+                .map(primary -> ColumnPath.of(primary.split("\\.")));
     }
 
     /**

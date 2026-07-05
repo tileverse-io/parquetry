@@ -871,6 +871,8 @@ public final class ParquetFileReader {
      * skipped without any fetch, and the growing extent lets a big early row group cover later ones. A box-less row
      * group sorts last and is never skipped.
      */
+    // The arguments are the same cohesive pipeline threading the count path uses; a bundle would only rename them.
+    @SuppressWarnings("java:S107")
     private void scanResidualBounds(
             List<ResidualGroup> residual,
             ExplainPlan plan,
@@ -902,6 +904,8 @@ public final class ParquetFileReader {
         }
     }
 
+    // The arguments are the same cohesive pipeline threading the count path uses; a bundle would only rename them.
+    @SuppressWarnings("java:S107")
     private void scanResidualGroup(
             RowGroupSurvivor survivor,
             Predicate predicate,
