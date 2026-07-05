@@ -23,14 +23,18 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.BitSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.function.Function;
+import java.util.function.ToDoubleFunction;
 
 import io.tileverse.parquetry.columnar.BinaryVector;
 import io.tileverse.parquetry.columnar.ColumnVector;
 import io.tileverse.parquetry.columnar.DefaultParquetRecordBatch;
+import io.tileverse.parquetry.columnar.DoubleVector;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.data.ParquetFileWriter;
@@ -43,9 +47,12 @@ import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
- * Materializes a trimmed Overture-shaped STAC catalog tree on disk for the factory test: a {@code catalog.json}, one
- * {@code building} collection with two items, and the two GeoParquet parts the items reference. The parts hold disjoint
- * 2D points (west and east) and are written in GeoParquet 2.0 mode so native per-row-group bounds exist.
+ * Materializes trimmed Overture-shaped STAC catalogs on disk for the factory tests, in both flavors the factory can
+ * open. {@link #writeOvertureMini} produces the JSON flavor: a {@code catalog.json}, one {@code building} collection
+ * with two items, and the two GeoParquet parts the items reference. {@link #writeItemTable} produces the
+ * stac-geoparquet flavor: an {@code items.parquet} index whose rows point at the same two parts. Both flavors reference
+ * the same GeoParquet parts, which hold disjoint 2D points (west and east) and are written in GeoParquet 2.0 mode so
+ * native per-row-group bounds exist.
  */
 final class StacFixtures {
 
@@ -53,11 +60,27 @@ final class StacFixtures {
 
     private StacFixtures() {}
 
-    /** Writes the whole tree under {@code root} and returns the path to {@code catalog.json}. */
+    /** Writes the JSON-catalog tree under {@code root} and returns the path to {@code catalog.json}. */
     static Path writeOvertureMini(Path root) throws Exception {
         writeJsonDocuments(root);
         writeParquetParts(root);
         return root.resolve("catalog.json");
+    }
+
+    /**
+     * Writes the stac-geoparquet flavor under {@code root} and returns the path to the {@code items.parquet} index. The
+     * index holds one row per item, each pointing at a GeoParquet part written under {@code parts/}; the factory opens
+     * the index through {@code GeoParquetStacReader} and resolves each part relative to the index's container.
+     */
+    static Path writeItemTable(Path root) throws Exception {
+        writeParquetParts(root);
+        Path index = root.resolve("items.parquet");
+        writeItemTableIndex(
+                index,
+                List.of(
+                        new ItemRow("item-west", "building", 0, 0, 10, 10, "building/parts/west.parquet"),
+                        new ItemRow("item-east", "building", 100, 0, 110, 10, "building/parts/east.parquet")));
+        return index;
     }
 
     private static void writeJsonDocuments(Path root) throws Exception {
@@ -119,6 +142,73 @@ final class StacFixtures {
         buffer.putDouble(x);
         buffer.putDouble(y);
         return buffer.array();
+    }
+
+    /** One item-table row: the item id, its collection, a flat bbox, and the href of its GeoParquet data part. */
+    private record ItemRow(
+            String id, String collection, double xmin, double ymin, double xmax, double ymax, String assetHref) {}
+
+    private static void writeItemTableIndex(Path file, List<ItemRow> rows) throws Exception {
+        ParquetSchema schema = itemTableSchema();
+        WriteOptions options = WriteOptions.builder().tempDir(file.getParent()).build();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options);
+                ParquetRecordBatch batch = itemTableBatch(schema, rows)) {
+            writer.writeBatch(batch);
+        }
+    }
+
+    private static ParquetRecordBatch itemTableBatch(ParquetSchema schema, List<ItemRow> rows) {
+        int count = rows.size();
+        Validity allValid = Validity.allValid(count);
+        Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
+        columns.put(ColumnPath.of("item_id"), utf8Column(rows, ItemRow::id, allValid));
+        columns.put(ColumnPath.of("asset_href"), utf8Column(rows, ItemRow::assetHref, allValid));
+        columns.put(ColumnPath.of("bbox_xmin"), doubleColumn(rows, ItemRow::xmin, allValid));
+        columns.put(ColumnPath.of("bbox_ymin"), doubleColumn(rows, ItemRow::ymin, allValid));
+        columns.put(ColumnPath.of("bbox_xmax"), doubleColumn(rows, ItemRow::xmax, allValid));
+        columns.put(ColumnPath.of("bbox_ymax"), doubleColumn(rows, ItemRow::ymax, allValid));
+        columns.put(ColumnPath.of("collection"), utf8Column(rows, ItemRow::collection, allValid));
+        return new DefaultParquetRecordBatch(schema, columns, count, Arena.ofShared());
+    }
+
+    private static ColumnVector utf8Column(List<ItemRow> rows, Function<ItemRow, String> field, Validity validity) {
+        MemorySegment[] values = new MemorySegment[rows.size()];
+        for (int i = 0; i < rows.size(); i++) {
+            byte[] utf8 = field.apply(rows.get(i)).getBytes(StandardCharsets.UTF_8);
+            values[i] = MemorySegment.ofArray(utf8);
+        }
+        return BinaryVector.materialized(values, validity);
+    }
+
+    private static ColumnVector doubleColumn(List<ItemRow> rows, ToDoubleFunction<ItemRow> field, Validity validity) {
+        double[] values = new double[rows.size()];
+        for (int i = 0; i < rows.size(); i++) {
+            values[i] = field.applyAsDouble(rows.get(i));
+        }
+        return DoubleVector.materialized(values, validity);
+    }
+
+    private static ParquetSchema itemTableSchema() {
+        List<SchemaNode> leaves = List.of(
+                utf8Leaf("item_id"),
+                utf8Leaf("asset_href"),
+                doubleLeaf("bbox_xmin"),
+                doubleLeaf("bbox_ymin"),
+                doubleLeaf("bbox_xmax"),
+                doubleLeaf("bbox_ymax"),
+                utf8Leaf("collection"));
+        SchemaNode.Group root = new SchemaNode.Group("schema", Repetition.REQUIRED, leaves, Optional.empty(), -1);
+        return new ParquetSchema(root);
+    }
+
+    private static SchemaNode.Primitive utf8Leaf(String name) {
+        return new SchemaNode.Primitive(
+                name, Repetition.REQUIRED, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1);
+    }
+
+    private static SchemaNode.Primitive doubleLeaf(String name) {
+        return new SchemaNode.Primitive(
+                name, Repetition.REQUIRED, PrimitiveKind.DOUBLE, OptionalInt.empty(), Optional.empty(), -1);
     }
 
     private static final String CATALOG_JSON = """

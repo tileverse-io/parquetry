@@ -69,4 +69,20 @@ class StacDataStoreFactoryIT {
             store.dispose();
         }
     }
+
+    @Test
+    void parquetUriOpensTheStacGeoParquetReader(@TempDir Path tempDir) throws Exception {
+        Path itemTable = StacFixtures.writeItemTable(tempDir);
+
+        StacDataStoreFactory factory = new StacDataStoreFactory();
+        Map<String, Object> params =
+                Map.of(StacDataStoreFactory.STAC_URI.key, itemTable.toUri().toString());
+
+        DataStore store = factory.createDataStore(params);
+        try {
+            assertThat(store.getTypeNames()).containsExactly("building");
+        } finally {
+            store.dispose();
+        }
+    }
 }

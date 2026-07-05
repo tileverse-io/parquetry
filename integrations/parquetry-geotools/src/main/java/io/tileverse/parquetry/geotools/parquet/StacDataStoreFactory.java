@@ -17,20 +17,24 @@ package io.tileverse.parquetry.geotools.parquet;
 
 import java.io.IOException;
 import java.net.URI;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Properties;
 
 import org.geotools.api.data.DataAccessFactory.Param;
 import org.geotools.api.data.DataStore;
 import org.geotools.api.data.DataStoreFactorySpi;
 
 import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
 
 import io.tileverse.parquetry.geotools.data.StorageParams;
+import io.tileverse.parquetry.stac.GeoParquetStacReader;
 import io.tileverse.parquetry.stac.StacCatalogOptions;
 import io.tileverse.parquetry.stac.StacDatasetCatalog;
+import io.tileverse.parquetry.tileverse.ParquetStorage;
 
 import io.tileverse.stac.JsonStacReader;
+import io.tileverse.stac.StacCatalogReader;
 
 /**
  * Opens a read-only GeoTools {@link DataStore} over a STAC catalog. Each STAC collection becomes one feature type: the
@@ -84,15 +88,24 @@ public final class StacDataStoreFactory implements DataStoreFactorySpi {
         String namespace = (String) NAMESPACE.lookUp(params);
 
         URI container = catalogUri.resolve(".");
-        Storage storage = StorageFactory.open(container);
+        Properties storageProps = StorageParams.toProperties(params);
+        Storage storage = ParquetStorage.open(container, storageProps);
+        StacCatalogReader reader = readerFor(catalogUri);
         StacDatasetCatalog catalog =
-                StacDatasetCatalog.open(catalogUri, storage, new JsonStacReader(), StacCatalogOptions.defaults());
+                StacDatasetCatalog.open(catalogUri, storage, reader, StacCatalogOptions.defaults());
 
         StacDataStore store = new StacDataStore(catalog);
         if (namespace != null) {
             store.setNamespaceURI(namespace);
         }
         return store;
+    }
+
+    /** A {@code .parquet} URI is a stac-geoparquet item-table; anything else is a JSON catalog document. */
+    private static StacCatalogReader readerFor(URI catalogUri) {
+        String path = catalogUri.getPath();
+        boolean itemTable = path != null && path.toLowerCase(Locale.ROOT).endsWith(".parquet");
+        return itemTable ? new GeoParquetStacReader() : new JsonStacReader();
     }
 
     @Override
