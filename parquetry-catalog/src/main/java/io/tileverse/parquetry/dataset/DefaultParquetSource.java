@@ -48,6 +48,7 @@ import io.tileverse.parquetry.filter.SpatialReadProbe.Decision;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.prune.FileStats;
 import io.tileverse.parquetry.format.BoundingBox;
+import io.tileverse.parquetry.internal.filter.spatial.BoundsAccumulator;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -62,8 +63,10 @@ import io.tileverse.parquetry.schema.ParquetSchema;
  * overloads transport whole batches across the fan-out and flatten them to rows on the consuming thread, keeping each
  * row's flyweight view on one thread. {@code rowGroups()} aggregates all row groups and re-assigns sequential indices
  * across readers. {@code count} over more than one file fans the per-file counts out across virtual threads, bounded by
- * the shared fetch and decode budgets in {@link ReadOptions}. {@code explain} and {@code explainAnalyze} remain
- * single-reader only and throw {@link UnsupportedOperationException} when more than one reader is present.
+ * the shared fetch and decode budgets in {@link ReadOptions}. {@code bounds} fans out the same way, folding each file's
+ * bounds into one shared accumulator and skipping any file whose footer box the accumulated bounds already cover.
+ * {@code explain} and {@code explainAnalyze} remain single-reader only and throw {@link UnsupportedOperationException}
+ * when more than one reader is present.
  *
  * <p>Schema check happens in the constructor: every reader must agree on {@link ParquetSchema} by equality.
  */
@@ -433,6 +436,64 @@ final class DefaultParquetSource implements ParquetSource {
             throw error;
         }
         return new IllegalStateException("Counting a dataset file failed", cause);
+    }
+
+    @Override
+    public Optional<BoundingBox> bounds(Predicate predicate, ReadOptions options) {
+        if (readers.size() == 1) {
+            return readers.get(0).bounds(predicate, options);
+        }
+        return boundsConcurrently(predicate, options);
+    }
+
+    /**
+     * Computes each file's bounds on its own virtual thread, folding every result into one shared accumulator. Before a
+     * file runs the engine, its footer geometry box is tested against the bounds accumulated so far, and a file whose
+     * box those bounds already cover is skipped: a box already enclosed extends the extent by nothing. The accumulator
+     * only ever grows, and a stale read of it can only under-report coverage, costing an extra file visit at worst but
+     * never skipping a file whose rows would widen the extent. A file whose footer records no geometry box always runs
+     * the engine. A failure in any file cancels the rest.
+     */
+    private Optional<BoundingBox> boundsConcurrently(Predicate predicate, ReadOptions options) {
+        BoundsAccumulator accumulator = new BoundsAccumulator();
+        try (StructuredTaskScope<Void, Void> scope = StructuredTaskScope.open()) {
+            for (ParquetFileReader reader : readers) {
+                scope.fork(() -> foldFileBounds(reader, predicate, options, accumulator));
+            }
+            scope.join();
+            return accumulator.snapshot();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            InterruptedIOException interrupted = new InterruptedIOException("Interrupted while bounding dataset rows");
+            interrupted.initCause(e);
+            throw new UncheckedIOException(interrupted);
+        } catch (StructuredTaskScope.FailedException e) {
+            throw asUnchecked(e.getCause());
+        }
+    }
+
+    /**
+     * Folds one file's matching-row bounds into the shared accumulator, unless the accumulated bounds already cover the
+     * file's footer geometry box. Runs on a fan-out virtual thread.
+     */
+    private static Void foldFileBounds(
+            ParquetFileReader reader, Predicate predicate, ReadOptions options, BoundsAccumulator accumulator) {
+        if (!accumulatedBoundsCover(reader, accumulator)) {
+            reader.bounds(predicate, options).ifPresent(accumulator::union);
+        }
+        return null;
+    }
+
+    /**
+     * Whether the accumulated bounds already cover this file's footer geometry box. A file whose footer records no
+     * geometry box is never reported as covered: an unknown extent might reach past the accumulated bounds, and
+     * skipping it could lose rows. The footer box is the file's primary geometry extent, the first geometry entry of
+     * {@link FileStats#geometryBounds()}, matching how the single-file reader picks its primary geometry.
+     */
+    private static boolean accumulatedBoundsCover(ParquetFileReader reader, BoundsAccumulator accumulator) {
+        Optional<BoundingBox> footerBox =
+                reader.fileStats().geometryBounds().values().stream().findFirst();
+        return footerBox.isPresent() && accumulator.covers(footerBox.orElseThrow());
     }
 
     private void ensureSingleReader(String operation) {
