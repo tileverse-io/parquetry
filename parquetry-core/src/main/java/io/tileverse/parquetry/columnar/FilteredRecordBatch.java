@@ -157,6 +157,74 @@ public final class FilteredRecordBatch implements ParquetRecordBatch {
         return rowColumns;
     }
 
+    /**
+     * A dense form of this view: every column rebuilt to hold exactly the selected rows, in selection order. The
+     * identity-selection case ({@code selection == ALL}, a projection-only narrowing) returns {@code this} - its
+     * columns are the unselected base vectors and already read dense. Otherwise the survivor indices are materialized
+     * once and every base column is gathered through {@link Compaction}, producing a {@link DefaultParquetRecordBatch}.
+     *
+     * <p>A shredded Variant column (top-level or nested in a struct) is unshredded first, the same form the Arrow
+     * export preparation produces for a dense shredded column; the gather then works on the resulting
+     * {@link VariantVector}.
+     *
+     * <p>Contract: the returned batch may alias this view's source memory (gathered binary values are windows into the
+     * source backing) - consume it while the source batch is open. A result other than {@code this} owns a token arena
+     * and must be closed; closing it closes neither this view nor its source.
+     */
+    public ParquetRecordBatch compacted() {
+        if (selection == Selection.ALL) {
+            return this;
+        }
+        int[] keptIndices = keptIndices();
+        Map<ColumnPath, ColumnVector> dense = LinkedHashMap.newLinkedHashMap(baseColumns.size());
+        for (Map.Entry<ColumnPath, ColumnVector> column : baseColumns.entrySet()) {
+            ColumnVector unshredded = unshredForGather(column.getValue());
+            dense.put(column.getKey(), Compaction.compact(unshredded, keptIndices));
+        }
+        return DefaultParquetRecordBatch.ofHeap(outputSchema, dense, keptIndices.length);
+    }
+
+    /** The physical row index of every selected row, in logical order. */
+    private int[] keptIndices() {
+        int length = selection.length();
+        int[] kept = new int[length];
+        for (int logical = 0; logical < length; logical++) {
+            kept[logical] = selection.physical(logical);
+        }
+        return kept;
+    }
+
+    /**
+     * Rewrites a shredded Variant to its unshredded form ahead of the gather: {@link Compaction} deliberately rejects
+     * the shredded vector (in assembly, reaching one means the unsupported shredded-under-list/map shape), while a
+     * top-level or struct-nested shredded column is a legal batch column here. Struct children are rewritten
+     * recursively; every other vector passes through untouched.
+     */
+    private static ColumnVector unshredForGather(ColumnVector vector) {
+        return switch (vector) {
+            case ShreddedVariantVector shredded -> shredded.toUnshredded();
+            case StructVector struct -> unshredStructChildren(struct);
+            default -> vector;
+        };
+    }
+
+    private static ColumnVector unshredStructChildren(StructVector struct) {
+        Map<ColumnPath, ColumnVector> rewritten = null;
+        for (Map.Entry<ColumnPath, ColumnVector> child : struct.children().entrySet()) {
+            ColumnVector unshredded = unshredForGather(child.getValue());
+            if (unshredded != child.getValue() && rewritten == null) {
+                rewritten = new LinkedHashMap<>(struct.children());
+            }
+            if (rewritten != null) {
+                rewritten.put(child.getKey(), unshredded);
+            }
+        }
+        if (rewritten == null) {
+            return struct;
+        }
+        return new StructVector(rewritten, struct.validity(), struct.size());
+    }
+
     @Override
     public ParquetRecordBatch slice(int from, int count) {
         Selection windowed = selection == Selection.ALL ? Selection.range(from, count) : selection.sub(from, count);
