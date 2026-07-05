@@ -21,6 +21,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
+import java.nio.charset.StandardCharsets;
 import java.util.BitSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -31,12 +33,15 @@ import java.util.stream.Stream;
 
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.BigIntVector;
+import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.ipc.ArrowStreamReader;
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.columnar.BinaryVector;
 import io.tileverse.parquetry.columnar.ColumnVector;
 import io.tileverse.parquetry.columnar.DefaultParquetRecordBatch;
+import io.tileverse.parquetry.columnar.FilteredRecordBatch;
 import io.tileverse.parquetry.columnar.LongVector;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.columnar.Validity;
@@ -100,5 +105,79 @@ class ArrowIpcWriterTest {
                 .isInstanceOf(UnsupportedFeatureException.class)
                 .hasMessageContaining("DECIMAL");
         assertThat(out.size()).isZero();
+    }
+
+    @Test
+    void densifiesAFilteredBatchBeforeEncoding() throws Exception {
+        SchemaNode.Primitive id = new SchemaNode.Primitive(
+                "id", Repetition.OPTIONAL, PrimitiveKind.INT64, OptionalInt.empty(), Optional.empty(), 0);
+        SchemaNode.Primitive name = new SchemaNode.Primitive(
+                "name",
+                Repetition.OPTIONAL,
+                PrimitiveKind.BYTE_ARRAY,
+                OptionalInt.empty(),
+                Optional.of(new LogicalType.StringType()),
+                1);
+        ParquetSchema schema = schema(id, name);
+        Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
+        columns.put(ColumnPath.of("id"), LongVector.materialized(new long[] {7, 8, 9}, Validity.allValid(3)));
+        columns.put(
+                ColumnPath.of("name"),
+                BinaryVector.materialized(utf8Segments("alpha", "beta", "gamma"), Validity.allValid(3)));
+        ParquetRecordBatch source = new DefaultParquetRecordBatch(schema, columns, 3, Arena.ofShared());
+        BitSet keep = new BitSet();
+        keep.set(0);
+        keep.set(2);
+        ParquetRecordBatch filtered = FilteredRecordBatch.filtered(source, keep, schema);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ArrowIpcWriter.write(schema, Optional.empty(), Stream.of(filtered), out);
+
+        try (RootAllocator allocator = new RootAllocator();
+                ArrowStreamReader reader =
+                        new ArrowStreamReader(new ByteArrayInputStream(out.toByteArray()), allocator)) {
+            assertThat(reader.loadNextBatch()).isTrue();
+            VectorSchemaRoot root = reader.getVectorSchemaRoot();
+            assertThat(root.getRowCount()).isEqualTo(2);
+            BigIntVector ids = (BigIntVector) root.getVector("id");
+            VarCharVector names = (VarCharVector) root.getVector("name");
+            assertThat(ids.get(0)).isEqualTo(7L);
+            assertThat(ids.get(1)).isEqualTo(9L);
+            assertThat(new String(names.get(0), StandardCharsets.UTF_8)).isEqualTo("alpha");
+            assertThat(new String(names.get(1), StandardCharsets.UTF_8)).isEqualTo("gamma");
+            assertThat(reader.loadNextBatch()).isFalse();
+        }
+    }
+
+    @Test
+    void skipsEmptyBatches() throws Exception {
+        SchemaNode.Primitive id = new SchemaNode.Primitive(
+                "id", Repetition.OPTIONAL, PrimitiveKind.INT64, OptionalInt.empty(), Optional.empty(), 0);
+        ParquetSchema schema = schema(id);
+        Map<ColumnPath, ColumnVector> noRows = new LinkedHashMap<>();
+        noRows.put(ColumnPath.of("id"), LongVector.materialized(new long[0], Validity.allValid(0)));
+        ParquetRecordBatch empty = new DefaultParquetRecordBatch(schema, noRows, 0, Arena.ofShared());
+        Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
+        columns.put(ColumnPath.of("id"), LongVector.materialized(new long[] {7, 8, 9}, Validity.allValid(3)));
+        ParquetRecordBatch data = new DefaultParquetRecordBatch(schema, columns, 3, Arena.ofShared());
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ArrowIpcWriter.write(schema, Optional.empty(), Stream.of(empty, data), out);
+
+        try (RootAllocator allocator = new RootAllocator();
+                ArrowStreamReader reader =
+                        new ArrowStreamReader(new ByteArrayInputStream(out.toByteArray()), allocator)) {
+            assertThat(reader.loadNextBatch()).isTrue();
+            assertThat(reader.getVectorSchemaRoot().getRowCount()).isEqualTo(3);
+            assertThat(reader.loadNextBatch()).isFalse();
+        }
+    }
+
+    private static MemorySegment[] utf8Segments(String... values) {
+        MemorySegment[] result = new MemorySegment[values.length];
+        for (int i = 0; i < values.length; i++) {
+            result[i] = MemorySegment.ofArray(values[i].getBytes(StandardCharsets.UTF_8));
+        }
+        return result;
     }
 }

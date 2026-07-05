@@ -36,6 +36,7 @@ import io.tileverse.parquetry.arrow.columnar.EncodedBuffer;
 import io.tileverse.parquetry.arrow.columnar.EncodedNode;
 import io.tileverse.parquetry.arrow.ipc.LogicalColumns.LogicalColumn;
 import io.tileverse.parquetry.columnar.ColumnVector;
+import io.tileverse.parquetry.columnar.FilteredRecordBatch;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -59,17 +60,29 @@ final class ArrowBatchEncoder {
         return encode(batch, LogicalColumns.of(schema, GeoArrowFields.resolve(schema, Optional.empty())));
     }
 
-    /** Encodes {@code batch} against {@code columns} already resolved from the projected schema. */
+    /**
+     * Encodes {@code batch} against {@code columns} already resolved from the projected schema. A
+     * {@link FilteredRecordBatch} is densified first ({@link FilteredRecordBatch#compacted()}), one dense batch per
+     * input batch; a dense batch passes through untouched.
+     */
     static Encoded encode(ParquetRecordBatch batch, List<LogicalColumn> columns) {
-        Map<ColumnPath, ColumnVector> vectors = batch.columns();
-        BodyWriter writer = new BodyWriter();
-        for (LogicalColumn column : columns) {
-            ColumnVector vector = requireColumn(vectors, column.path());
-            ColumnVector prepared = ArrowExportPrep.prepareForExport(vector, column.field());
-            writer.append(ArrowBufferCodec.encode(prepared));
+        ParquetRecordBatch dense = batch instanceof FilteredRecordBatch filtered ? filtered.compacted() : batch;
+        try {
+            Map<ColumnPath, ColumnVector> vectors = dense.columns();
+            BodyWriter writer = new BodyWriter();
+            for (LogicalColumn column : columns) {
+                ColumnVector vector = requireColumn(vectors, column.path());
+                ColumnVector prepared = ArrowExportPrep.prepareForExport(vector, column.field());
+                writer.append(ArrowBufferCodec.encode(prepared));
+            }
+            ByteBuffer metadata = buildMessage(dense.rowCount(), writer.nodes, writer.ranges, writer.offset);
+            return new Encoded(metadata, writer.body);
+        } finally {
+            // The encoded body holds heap copies; the transient dense batch can release here.
+            if (dense != batch) {
+                dense.close();
+            }
         }
-        ByteBuffer metadata = buildMessage(batch.rowCount(), writer.nodes, writer.ranges, writer.offset);
-        return new Encoded(metadata, writer.body);
     }
 
     private static ColumnVector requireColumn(Map<ColumnPath, ColumnVector> vectors, ColumnPath path) {
