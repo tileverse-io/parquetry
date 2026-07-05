@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.internal.read;
+package io.tileverse.parquetry.columnar;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -24,14 +24,9 @@ import java.util.OptionalInt;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.columnar.BinaryVector;
-import io.tileverse.parquetry.columnar.LongVector;
-import io.tileverse.parquetry.columnar.ShreddedVariantVector;
 import io.tileverse.parquetry.columnar.ShreddedVariantVector.ScalarInput;
 import io.tileverse.parquetry.columnar.ShreddedVariantVector.VariantInput;
-import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.format.ParquetFormatException;
-import io.tileverse.parquetry.internal.read.DremelAssembler.Compaction;
 import io.tileverse.parquetry.internal.variant.VariantEncoder;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
