@@ -22,16 +22,15 @@ feature cap, and counting down into the parquetry read path.
 
 `GeoParquetDataStoreFactory` (display name **GeoParquet**) exposes:
 
-| Param       | Required | Meaning |
-|-------------|----------|---------|
-| `filetype`  | yes      | Must be `geoparquet` |
-| `uri`       | yes      | URI of a GeoParquet file (local path, `s3://`, `gs://`, `https://`, ... per the tileverse storage backends) |
-| `namespace` | no       | Feature type namespace |
+| Param        | Required | Meaning |
+|--------------|----------|---------|
+| `geoparquet` | yes      | URI of a GeoParquet file (local path, `s3://`, `gs://`, `https://`, ... per the tileverse storage backends). Its presence is what selects this factory. |
+| `namespace`  | no       | Feature type namespace |
 | `fid`       | no       | Column to use as the feature id (see [Feature ids](#feature-ids)) |
 | `layer-grouping` | no  | For a directory URI: `merged` (default) reads all files as one layer (files must share a schema); `file` publishes each top-level `.parquet` file as its own layer |
 
 ```java
-Map<String, Object> params = Map.of("filetype", "geoparquet", "uri", "s3://bucket/roads.parquet");
+Map<String, Object> params = Map.of("geoparquet", "s3://bucket/roads.parquet");
 DataStore store = DataStoreFinder.getDataStore(params);
 SimpleFeatureSource roads = store.getFeatureSource(store.getTypeNames()[0]);
 ```
@@ -68,8 +67,7 @@ Reading from S3, Azure, GCS, or HTTP is configured through the tileverse
 
 ```java
 Map<String, Object> params = Map.of(
-        "filetype", "geoparquet",
-        "uri", "s3://bucket/roads.parquet",
+        "geoparquet", "s3://bucket/roads.parquet",
         "storage.s3.region", "eu-central-1");
 DataStore store = DataStoreFinder.getDataStore(params);
 ```

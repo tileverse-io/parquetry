@@ -89,8 +89,7 @@ class GeoParquetFactoryHiveIT {
     }
 
     private static DataStore openFactoryStore(Path root) throws IOException {
-        Map<String, Object> params =
-                Map.of("filetype", "geoparquet", "uri", root.toUri().toString());
+        Map<String, Object> params = Map.of("geoparquet", root.toUri().toString());
         return new GeoParquetDataStoreFactory().createDataStore(params);
     }
 

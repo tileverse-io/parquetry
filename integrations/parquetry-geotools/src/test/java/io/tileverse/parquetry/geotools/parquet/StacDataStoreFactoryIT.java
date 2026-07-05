@@ -34,6 +34,18 @@ class StacDataStoreFactoryIT {
         assertThat(availableFactories()).hasAtLeastOneElementOfType(StacDataStoreFactory.class);
     }
 
+    @Test
+    void canProcessRequiresOwnUriKey() {
+        StacDataStoreFactory factory = new StacDataStoreFactory();
+        assertThat(factory.canProcess(Map.of("geoparquet-stac", "file:///tmp/catalog.json")))
+                .isTrue();
+        assertThat(factory.canProcess(Map.of("uri", "file:///tmp/catalog.json")))
+                .isFalse();
+        assertThat(factory.canProcess(Map.of("geoparquet", "file:///tmp/x.parquet")))
+                .isFalse();
+        assertThat(factory.canProcess(Map.of("iceberg", "file:///tmp/wh"))).isFalse();
+    }
+
     private static Iterable<DataStoreFactorySpi> availableFactories() {
         Iterator<DataStoreFactorySpi> factories = DataStoreFinder.getAvailableDataStores();
         return () -> factories;
@@ -44,11 +56,8 @@ class StacDataStoreFactoryIT {
         Path catalogJson = StacFixtures.writeOvertureMini(tempDir);
 
         StacDataStoreFactory factory = new StacDataStoreFactory();
-        Map<String, Object> params = Map.of(
-                StacDataStoreFactory.FILETYPE.key,
-                "stac",
-                StacDataStoreFactory.URIP.key,
-                catalogJson.toUri().toString());
+        Map<String, Object> params =
+                Map.of(StacDataStoreFactory.STAC_URI.key, catalogJson.toUri().toString());
 
         assertThat(factory.canProcess(params)).isTrue();
 

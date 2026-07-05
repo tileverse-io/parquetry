@@ -71,8 +71,7 @@ credentials). A store points at a single `.parquet` file, or at a directory of f
 
 | key | meaning |
 |---|---|
-| `filetype` | always `geoparquet` |
-| `uri` | the dataset URI: `file:///path/to/file.parquet` or `s3://bucket/key.parquet` |
+| `geoparquet` | the dataset URI: `file:///path/to/file.parquet` or `s3://bucket/key.parquet` |
 | `storage.provider` | `s3`, `azure`, `gcs`, `http`, or `file` (auto-detected from the URI when unset) |
 | `storage.s3.region` | AWS region (required for S3, including S3-compatible services) |
 | `storage.s3.endpoint` | only for S3-compatible services (MinIO, Cloudflare R2, the bundled s3proxy) |
@@ -98,8 +97,7 @@ curl -u admin:geoserver -XPOST -H "Content-Type: application/xml" \
   http://localhost:8080/geoserver/rest/workspaces/mydata/datastores \
   -d '<dataStore><name>places</name><type>GeoParquet</type>
         <connectionParameters>
-          <entry key="filetype">geoparquet</entry>
-          <entry key="uri">file:///data/places.parquet</entry>
+          <entry key="geoparquet">file:///data/places.parquet</entry>
         </connectionParameters>
       </dataStore>'
 ```
@@ -114,8 +112,7 @@ curl -u admin:geoserver -XPOST -H "Content-Type: application/xml" \
   http://localhost:8080/geoserver/rest/workspaces/mydata/datastores \
   -d '<dataStore><name>places</name><type>GeoParquet</type>
         <connectionParameters>
-          <entry key="filetype">geoparquet</entry>
-          <entry key="uri">s3://my-bucket/path/places.parquet</entry>
+          <entry key="geoparquet">s3://my-bucket/path/places.parquet</entry>
           <entry key="storage.provider">s3</entry>
           <entry key="storage.s3.region">us-east-1</entry>
         </connectionParameters>

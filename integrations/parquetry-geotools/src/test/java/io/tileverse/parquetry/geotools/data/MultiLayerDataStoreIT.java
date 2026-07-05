@@ -119,8 +119,7 @@ class MultiLayerDataStoreIT {
 
     private static Map<String, Object> storeParams(Path dir, String layerGrouping) {
         Map<String, Object> params = new HashMap<>();
-        params.put("filetype", "geoparquet");
-        params.put("uri", dir.toUri().toString());
+        params.put("geoparquet", dir.toUri().toString());
         if (layerGrouping != null) {
             params.put("layer-grouping", layerGrouping);
         }

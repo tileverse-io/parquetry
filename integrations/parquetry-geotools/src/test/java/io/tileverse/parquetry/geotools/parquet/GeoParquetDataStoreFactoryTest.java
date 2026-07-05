@@ -48,8 +48,7 @@ class GeoParquetDataStoreFactoryTest {
         Path file = TestCorpus.extractFile("geoparquet/examples/example.parquet", dir);
 
         Map<String, Object> params = new HashMap<>();
-        params.put("filetype", "geoparquet");
-        params.put("uri", file.toUri().toString());
+        params.put("geoparquet", file.toUri().toString());
 
         GeoParquetDataStoreFactory factory = new GeoParquetDataStoreFactory();
         assertThat(factory.canProcess(params)).isTrue();
@@ -61,6 +60,17 @@ class GeoParquetDataStoreFactoryTest {
         } finally {
             store.dispose();
         }
+    }
+
+    @Test
+    void canProcessRequiresOwnUriKey() {
+        GeoParquetDataStoreFactory factory = new GeoParquetDataStoreFactory();
+        assertThat(factory.canProcess(Map.of("geoparquet", "file:///tmp/x.parquet")))
+                .isTrue();
+        assertThat(factory.canProcess(Map.of("uri", "file:///tmp/x.parquet"))).isFalse();
+        assertThat(factory.canProcess(Map.of("geoparquet-stac", "file:///tmp/catalog.json")))
+                .isFalse();
+        assertThat(factory.canProcess(Map.of("iceberg", "file:///tmp/wh"))).isFalse();
     }
 
     @Test
@@ -112,8 +122,7 @@ class GeoParquetDataStoreFactoryTest {
     @Test
     void rejectsUnknownLayerGroupingValue(@TempDir Path dir) {
         Map<String, Object> params = new HashMap<>();
-        params.put("filetype", "geoparquet");
-        params.put("uri", dir.toUri().toString());
+        params.put("geoparquet", dir.toUri().toString());
         params.put("layer-grouping", "both");
 
         GeoParquetDataStoreFactory factory = new GeoParquetDataStoreFactory();
@@ -148,8 +157,7 @@ class GeoParquetDataStoreFactoryTest {
         Path storeDir = twoFileStoreDir(dir);
 
         Map<String, Object> params = new HashMap<>();
-        params.put("filetype", "geoparquet");
-        params.put("uri", storeDir.toUri().toString());
+        params.put("geoparquet", storeDir.toUri().toString());
         params.put("layer-grouping", "file");
 
         DataStore store = new GeoParquetDataStoreFactory().createDataStore(params);
@@ -167,8 +175,7 @@ class GeoParquetDataStoreFactoryTest {
         Path storeDir = twoFileStoreDir(dir);
 
         Map<String, Object> params = new HashMap<>();
-        params.put("filetype", "geoparquet");
-        params.put("uri", storeDir.toUri().toString());
+        params.put("geoparquet", storeDir.toUri().toString());
 
         DataStore store = new GeoParquetDataStoreFactory().createDataStore(params);
         try {
@@ -185,8 +192,7 @@ class GeoParquetDataStoreFactoryTest {
         Path file = TestCorpus.extractFile("geoparquet/examples/example.parquet", dir);
 
         Map<String, Object> params = new HashMap<>();
-        params.put("filetype", "geoparquet");
-        params.put("uri", file.toUri().toString());
+        params.put("geoparquet", file.toUri().toString());
         params.put("layer-grouping", "file");
 
         DataStore store = new GeoParquetDataStoreFactory().createDataStore(params);

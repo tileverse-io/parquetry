@@ -120,8 +120,7 @@ class StorageParamsTest {
 
     @Test
     void toPropertiesCopiesStorageKeysOnly() {
-        Map<String, Object> params =
-                Map.of("filetype", "geoparquet", "uri", "s3://b/x.parquet", "storage.s3.region", "us-west-2");
+        Map<String, Object> params = Map.of("geoparquet", "s3://b/x.parquet", "storage.s3.region", "us-west-2");
         Properties props = StorageParams.toProperties(params);
         assertThat(props.getProperty("storage.s3.region")).isEqualTo("us-west-2");
         assertThat(props.stringPropertyNames()).containsExactly("storage.s3.region");

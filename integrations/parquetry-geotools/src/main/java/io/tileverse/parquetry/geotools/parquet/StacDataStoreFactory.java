@@ -22,7 +22,6 @@ import java.util.Map;
 import org.geotools.api.data.DataAccessFactory.Param;
 import org.geotools.api.data.DataStore;
 import org.geotools.api.data.DataStoreFactorySpi;
-import org.geotools.api.data.Parameter;
 
 import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
@@ -40,11 +39,13 @@ import io.tileverse.stac.JsonStacReader;
  */
 public final class StacDataStoreFactory implements DataStoreFactorySpi {
 
-    // LEVEL "program" hides this fixed discriminator from the GeoServer store UI, mirroring how the GeoParquet store
-    // hides its "filetype". The value is supplied from the default and never edited by the user.
-    public static final Param FILETYPE =
-            new Param("filetype", String.class, "Must be 'stac'", true, "stac", Map.of(Parameter.LEVEL, "program"));
-    public static final Param URIP = new Param("uri", String.class, "URI of a STAC catalog.json", true);
+    // A required URI key named after the store type. Its presence is what tells DataStoreFinder this factory, and no
+    // other, can open the parameters - no separate discriminator param is needed.
+    public static final Param STAC_URI = new Param(
+            "geoparquet-stac",
+            String.class,
+            "URI of a STAC catalog.json or a stac-geoparquet item-table (*.parquet)",
+            true);
     public static final Param NAMESPACE = new Param("namespace", String.class, "Feature type namespace", false);
 
     @Override
@@ -59,13 +60,13 @@ public final class StacDataStoreFactory implements DataStoreFactorySpi {
 
     @Override
     public Param[] getParametersInfo() {
-        return StorageParams.withStorageParams(FILETYPE, URIP, NAMESPACE);
+        return StorageParams.withStorageParams(STAC_URI, NAMESPACE);
     }
 
     @Override
     public boolean canProcess(Map<String, ?> params) {
         try {
-            return "stac".equals(FILETYPE.lookUp(params)) && URIP.lookUp(params) != null;
+            return STAC_URI.lookUp(params) != null;
         } catch (IOException cannotRead) {
             return false;
         }
@@ -78,7 +79,7 @@ public final class StacDataStoreFactory implements DataStoreFactorySpi {
 
     @Override
     public DataStore createDataStore(Map<String, ?> params) throws IOException {
-        String uriText = (String) URIP.lookUp(params);
+        String uriText = (String) STAC_URI.lookUp(params);
         URI catalogUri = URI.create(uriText);
         String namespace = (String) NAMESPACE.lookUp(params);
 

@@ -37,11 +37,10 @@ import io.tileverse.parquetry.tileverse.ParquetFileSources;
 /** Opens a read-only GeoParquet {@link DataStore} from a dataset URI. */
 public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
 
-    // LEVEL "program" hides this fixed discriminator from the GeoServer store UI, mirroring how JDBC stores hide
-    // their "dbtype". The value is supplied from the default and never edited by the user.
-    public static final Param FILETYPE = new Param(
-            "filetype", String.class, "Must be 'geoparquet'", true, "geoparquet", Map.of(Parameter.LEVEL, "program"));
-    public static final Param URIP = new Param("uri", String.class, "URI of a GeoParquet file (or directory)", true);
+    // A required URI key named after the store type. Its presence is what tells DataStoreFinder this factory, and no
+    // other, can open the parameters - no separate discriminator param is needed.
+    public static final Param GEOPARQUET_URI =
+            new Param("geoparquet", String.class, "URI of a GeoParquet file (or directory)", true);
     public static final Param NAMESPACE = new Param("namespace", String.class, "Feature type namespace", false);
     public static final Param FID = new Param(
             "fid",
@@ -72,13 +71,13 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
 
     @Override
     public Param[] getParametersInfo() {
-        return StorageParams.withStorageParams(FILETYPE, URIP, NAMESPACE, FID, LAYER_GROUPING);
+        return StorageParams.withStorageParams(GEOPARQUET_URI, NAMESPACE, FID, LAYER_GROUPING);
     }
 
     @Override
     public boolean canProcess(Map<String, ?> params) {
         try {
-            return "geoparquet".equals(FILETYPE.lookUp(params)) && URIP.lookUp(params) != null;
+            return GEOPARQUET_URI.lookUp(params) != null;
         } catch (IOException e) {
             return false;
         }
@@ -91,7 +90,7 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
 
     @Override
     public DataStore createDataStore(Map<String, ?> params) throws IOException {
-        String uriText = (String) URIP.lookUp(params);
+        String uriText = (String) GEOPARQUET_URI.lookUp(params);
         URI datasetUri = URI.create(uriText);
         String namespace = (String) NAMESPACE.lookUp(params);
         String fidColumn = (String) FID.lookUp(params);
