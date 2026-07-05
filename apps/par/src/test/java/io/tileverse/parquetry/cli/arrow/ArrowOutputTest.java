@@ -57,8 +57,7 @@ class ArrowOutputTest {
         try (FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
             ParquetSource source = ParquetSource.open(channel);
             ParquetSchema schema = source.schema();
-            ArrowOutputRequest request =
-                    new ArrowOutputRequest(Predicate.ALWAYS_TRUE, Projection.ALL, false, Long.MAX_VALUE);
+            ArrowOutputRequest request = new ArrowOutputRequest(Predicate.ALWAYS_TRUE, Projection.ALL, Long.MAX_VALUE);
             ArrowOutput.write(source, schema, Optional.empty(), request, out);
         }
 
@@ -97,7 +96,7 @@ class ArrowOutputTest {
             ParquetSchema schema = source.schema();
             Set<ColumnPath> geometryColumns = GeometryColumns.resolve(schema, source.keyValueMetadata());
             Predicate predicate = FilterParser.parse("pop > 1300000", schema, geometryColumns);
-            ArrowOutputRequest request = new ArrowOutputRequest(predicate, Projection.ALL, true, Long.MAX_VALUE);
+            ArrowOutputRequest request = new ArrowOutputRequest(predicate, Projection.ALL, Long.MAX_VALUE);
             ArrowOutput.write(source, schema, Optional.empty(), request, out);
         }
 
@@ -113,11 +112,59 @@ class ArrowOutputTest {
         try (FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
             ParquetSource source = ParquetSource.open(channel);
             ParquetSchema schema = source.schema();
-            ArrowOutputRequest request = new ArrowOutputRequest(Predicate.ALWAYS_TRUE, Projection.ALL, false, 2);
+            ArrowOutputRequest request = new ArrowOutputRequest(Predicate.ALWAYS_TRUE, Projection.ALL, 2);
             ArrowOutput.write(source, schema, Optional.empty(), request, out);
         }
 
         assertThat(rowCount(out.toByteArray())).isEqualTo(2);
+    }
+
+    @Test
+    void filteredWithLimitCapsExactly(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("cities.parquet");
+        Fixtures.writeCities(file);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
+            ParquetSource source = ParquetSource.open(channel);
+            ParquetSchema schema = source.schema();
+            Set<ColumnPath> geometryColumns = GeometryColumns.resolve(schema, source.keyValueMetadata());
+            Predicate predicate = FilterParser.parse("pop > 1300000", schema, geometryColumns);
+            ArrowOutputRequest request = new ArrowOutputRequest(predicate, Projection.ALL, 1);
+            ArrowOutput.write(source, schema, Optional.empty(), request, out);
+        }
+
+        assertThat(rowCount(out.toByteArray())).isEqualTo(1);
+    }
+
+    @Test
+    void limitAtTheBatchBoundaryPassesTheWholeBatch(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("cities.parquet");
+        Fixtures.writeCities(file);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
+            ParquetSource source = ParquetSource.open(channel);
+            ArrowOutputRequest request = new ArrowOutputRequest(Predicate.ALWAYS_TRUE, Projection.ALL, 4);
+            ArrowOutput.write(source, source.schema(), Optional.empty(), request, out);
+        }
+
+        assertThat(rowCount(out.toByteArray())).isEqualTo(4);
+    }
+
+    @Test
+    void limitAboveTheTotalReturnsEverything(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("cities.parquet");
+        Fixtures.writeCities(file);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
+            ParquetSource source = ParquetSource.open(channel);
+            ArrowOutputRequest request = new ArrowOutputRequest(Predicate.ALWAYS_TRUE, Projection.ALL, 99);
+            ArrowOutput.write(source, source.schema(), Optional.empty(), request, out);
+        }
+
+        assertThat(rowCount(out.toByteArray())).isEqualTo(4);
     }
 
     @Test
@@ -132,7 +179,7 @@ class ArrowOutputTest {
             Projections.Resolved resolved = Projections.resolve(List.of("id", "name"), schema);
             ParquetSchema projectedSchema = schema.project(Set.copyOf(resolved.keptLeaves()));
             ArrowOutputRequest request =
-                    new ArrowOutputRequest(Predicate.ALWAYS_TRUE, resolved.projection(), false, Long.MAX_VALUE);
+                    new ArrowOutputRequest(Predicate.ALWAYS_TRUE, resolved.projection(), Long.MAX_VALUE);
             ArrowOutput.write(source, projectedSchema, Optional.empty(), request, out);
         }
 
@@ -157,8 +204,7 @@ class ArrowOutputTest {
             ParquetSource source = ParquetSource.open(channel);
             ParquetSchema schema = source.schema();
             Optional<GeoParquetMetadata> geo = geoMetadata(source);
-            ArrowOutputRequest request =
-                    new ArrowOutputRequest(Predicate.ALWAYS_TRUE, Projection.ALL, false, Long.MAX_VALUE);
+            ArrowOutputRequest request = new ArrowOutputRequest(Predicate.ALWAYS_TRUE, Projection.ALL, Long.MAX_VALUE);
             ArrowOutput.write(source, schema, geo, request, out);
         }
 

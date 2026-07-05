@@ -17,30 +17,25 @@ package io.tileverse.parquetry.cli.arrow;
 
 import java.io.OutputStream;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Stream;
 
 import io.tileverse.parquetry.arrow.ipc.ArrowIpcWriter;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.ParquetReader;
-import io.tileverse.parquetry.filter.Predicate;
-import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 /**
- * Streams the rows of a dataset to an Arrow IPC stream, choosing between the columnar fast path and the record path.
- *
- * <p>When neither a row filter nor a limit is in play, the columnar batches the reader already produces flow straight
- * into the encoder. Any filter or limit forces the record path, which decodes rows, applies the limit, then repacks
- * them into batches; this keeps record-level filtering exact and lets {@code limit} short-circuit the read.
+ * Streams the rows of a dataset to an Arrow IPC stream through the columnar read path. The reader's batches flow
+ * straight into the encoder, which densifies any filtered batch at the export boundary; {@code limit} is applied here
+ * as a batch-level cap that passes whole batches through and slices the one batch straddling the limit.
  *
  * <p>{@link ArrowIpcWriter#write} validates {@code projectedSchema} before draining any batch, hence an unsupported
- * column (nested, INT96, DECIMAL) throws before a single row is read; no pre-validation is needed here.
+ * column throws before a single row is read; no pre-validation is needed here.
  */
 public final class ArrowOutput {
-
-    private static final int TARGET_BATCH_ROWS = 8192;
 
     private ArrowOutput() {}
 
@@ -50,32 +45,38 @@ public final class ArrowOutput {
             Optional<GeoParquetMetadata> geo,
             ArrowOutputRequest request,
             OutputStream out) {
-        if (canFastPath(request)) {
-            try (Stream<ParquetRecordBatch> batches =
-                    dataset.readBatches(Predicate.ALWAYS_TRUE, request.projection(), ReadOptions.DEFAULTS)) {
-                ArrowIpcWriter.write(projectedSchema, geo, batches, out);
-            }
-            return;
-        }
-        try (Stream<ParquetRecord> records =
-                dataset.read(request.predicate(), request.projection(), ReadOptions.DEFAULTS)) {
-            writeRecordPath(records, projectedSchema, geo, request, out);
+        try (Stream<ParquetRecordBatch> batches =
+                dataset.readBatches(request.predicate(), request.projection(), ReadOptions.DEFAULTS)) {
+            ArrowIpcWriter.write(projectedSchema, geo, cappedAt(batches, request.limit()), out);
         }
     }
 
-    private static boolean canFastPath(ArrowOutputRequest request) {
-        return !request.hasFilter() && request.limit() == Long.MAX_VALUE;
-    }
-
-    private static void writeRecordPath(
-            Stream<ParquetRecord> records,
-            ParquetSchema projectedSchema,
-            Optional<GeoParquetMetadata> geo,
-            ArrowOutputRequest request,
-            OutputStream out) {
-        long limit = request.limit();
-        Stream<ParquetRecord> limited = (limit == Long.MAX_VALUE) ? records : records.limit(limit);
-        Stream<ParquetRecordBatch> batches = RecordBatchPacker.pack(limited, projectedSchema, TARGET_BATCH_ROWS);
-        ArrowIpcWriter.write(projectedSchema, geo, batches, out);
+    /**
+     * Caps {@code batches} at {@code limit} total rows: whole batches pass through until the limit, the batch
+     * straddling it is sliced to the remainder, and the pull stops there, short-circuiting the read the way the text
+     * path's {@code takeWhile} does. A batch pulled past the cap is closed before the stream ends; an emitted slice
+     * owns its source batch, and closing the slice downstream releases both.
+     */
+    private static Stream<ParquetRecordBatch> cappedAt(Stream<ParquetRecordBatch> batches, long limit) {
+        if (limit == Long.MAX_VALUE) {
+            return batches;
+        }
+        AtomicLong remaining = new AtomicLong(limit);
+        return batches.takeWhile(batch -> {
+                    if (remaining.get() > 0) {
+                        return true;
+                    }
+                    batch.close();
+                    return false;
+                })
+                .map(batch -> {
+                    long rest = remaining.get();
+                    if (batch.rowCount() <= rest) {
+                        remaining.addAndGet(-batch.rowCount());
+                        return batch;
+                    }
+                    remaining.set(0);
+                    return batch.slice(0, (int) rest);
+                });
     }
 }
