@@ -47,10 +47,14 @@ final class StacPointParquet {
     private StacPointParquet() {}
 
     static Path writePoints(Path file, String column, double[][] points) throws Exception {
+        return writePoints(file, column, GeoParquetMetadataMode.DUAL_V1_1_AND_V2_0, points);
+    }
+
+    static Path writePoints(Path file, String column, GeoParquetMetadataMode mode, double[][] points) throws Exception {
         ParquetSchema schema = flatGeometrySchema(column);
         WriteOptions options = WriteOptions.builder()
                 .tempDir(file.getParent())
-                .geoParquetMetadata(GeoParquetMetadataMode.DUAL_V1_1_AND_V2_0)
+                .geoParquetMetadata(mode)
                 .crsEpsg(column, 4326)
                 .build();
         try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {

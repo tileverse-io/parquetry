@@ -15,12 +15,16 @@
  */
 package io.tileverse.parquetry.stac;
 
+import java.io.InterruptedIOException;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.StructuredTaskScope;
 import java.util.stream.Stream;
 
 import com.google.errorprone.annotations.MustBeClosed;
@@ -48,6 +52,7 @@ import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.filter.prune.FilePruner;
 import io.tileverse.parquetry.filter.prune.FileStats;
 import io.tileverse.parquetry.format.BoundingBox;
+import io.tileverse.parquetry.internal.filter.spatial.BoundsAccumulator;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -148,16 +153,111 @@ public final class StacDataset implements GeoParquetDataset {
                 .fileStats(FileStatsSource.STAC_ITEM)
                 .fileSpatialBounds(FileSpatialBounds.NATIVE_GEO)
                 .cheapCount(false)
-                .cheapBounds(false)
+                .cheapBounds(geoMetadata().isPresent())
                 .build();
     }
 
     @Override
     public Optional<BoundingBox> bounds(Predicate predicate, ReadOptions options) {
         if (isUnfiltered(predicate)) {
-            return geoMetadata().flatMap(StacDataset::primaryBbox);
+            Optional<BoundingBox> metadataBox = geoMetadata().flatMap(StacDataset::primaryBbox);
+            if (metadataBox.isPresent()) {
+                return metadataBox;
+            }
         }
-        return Optional.empty();
+        return boundsOfSurvivors(survivorsByDescendingItemArea(prune(predicate)), predicate, options);
+    }
+
+    /**
+     * The exact bounds of the {@code predicate}-matching rows across the survivor parts, each part visited on its own
+     * virtual thread and folded into one shared accumulator. Before a part opens, its cheap item box is tested against
+     * the bounds accumulated so far, and a part those bounds already cover is skipped: a box already enclosed extends
+     * the extent by nothing. A part with no item box always runs the engine. A failure in any part cancels the rest.
+     */
+    private Optional<BoundingBox> boundsOfSurvivors(List<Integer> survivors, Predicate predicate, ReadOptions options) {
+        if (survivors.isEmpty()) {
+            return Optional.empty();
+        }
+        BoundsAccumulator accumulator = new BoundsAccumulator();
+        try (StructuredTaskScope<Void, Void> scope = StructuredTaskScope.open()) {
+            for (int index : survivors) {
+                scope.fork(() -> foldOnePartBounds(index, predicate, options, accumulator));
+            }
+            scope.join();
+            return accumulator.snapshot();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            InterruptedIOException interrupted =
+                    new InterruptedIOException("Interrupted while bounding collection rows");
+            interrupted.initCause(e);
+            throw new UncheckedIOException(interrupted);
+        } catch (StructuredTaskScope.FailedException e) {
+            throw asUnchecked(e.getCause());
+        }
+    }
+
+    /**
+     * Folds one survivor part's matching-row bounds into the shared accumulator. STAC folds no per-part predicate: the
+     * original predicate visits each part unchanged. A part whose cheap pre-open item box the accumulated bounds
+     * already cover is skipped before the part opens. Runs on a fan-out virtual thread.
+     */
+    private Void foldOnePartBounds(int index, Predicate predicate, ReadOptions options, BoundsAccumulator accumulator) {
+        if (itemBoxCovered(index, accumulator)) {
+            return null;
+        }
+        perFile(index).bounds(predicate, options).ifPresent(accumulator::union);
+        return null;
+    }
+
+    /**
+     * Whether the accumulated bounds already cover this part's item box. The item box is a conservative pre-open box
+     * (the STAC item bbox, no narrower than the part's true extent). Covering that box implies covering the part. A
+     * part with no item box is never reported as covered: an unknown extent might reach past the accumulated bounds.
+     */
+    private boolean itemBoxCovered(int index, BoundsAccumulator accumulator) {
+        Optional<BoundingBox> itemBox = itemBox(index);
+        return itemBox.isPresent() && accumulator.covers(itemBox.orElseThrow());
+    }
+
+    /**
+     * Orders survivors by descending item-box area. Item boxes are free before any part opens. Visiting the widest
+     * first seeds the shared accumulator fast, giving the containment skip the best chance to drop a narrower part a
+     * wider one already encloses. A part with no item box sorts last and always visits.
+     */
+    private List<Integer> survivorsByDescendingItemArea(List<Integer> survivors) {
+        List<Integer> ordered = new ArrayList<>(survivors);
+        ordered.sort(Comparator.comparingDouble(this::itemBoxArea).reversed());
+        return ordered;
+    }
+
+    private double itemBoxArea(int index) {
+        Optional<BoundingBox> itemBox = itemBox(index);
+        if (itemBox.isEmpty()) {
+            return Double.NEGATIVE_INFINITY;
+        }
+        BoundingBox box = itemBox.orElseThrow();
+        double width = box.xmax() - box.xmin();
+        double height = box.ymax() - box.ymin();
+        return width * height;
+    }
+
+    private Optional<BoundingBox> itemBox(int index) {
+        return fileStats.get(index).geometryBounds().values().stream().findFirst();
+    }
+
+    /**
+     * Rethrows a per-part bounds failure with the type a sequential visit would have thrown. The engine's per-part
+     * bounds declares no checked exception: the cause is a {@link RuntimeException} or an {@link Error}, with anything
+     * else falling back to {@link IllegalStateException}.
+     */
+    private static RuntimeException asUnchecked(Throwable cause) {
+        if (cause instanceof RuntimeException runtime) {
+            return runtime;
+        }
+        if (cause instanceof Error error) {
+            throw error;
+        }
+        return new IllegalStateException("Bounding a collection part failed", cause);
     }
 
     @Override

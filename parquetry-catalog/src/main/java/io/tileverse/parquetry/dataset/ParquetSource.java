@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.stream.Stream;
 
@@ -36,6 +37,7 @@ import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Query;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.prune.FileStats;
+import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.internal.filter.PredicateColumns;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.materializer.Materializer;
@@ -298,6 +300,19 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
      */
     default long count(Query query, ReadOptions options) {
         return count(lowerToPhysicalColumns(query), options);
+    }
+
+    /**
+     * The bounds of the rows matching {@code query}, lowering its predicate from output names to physical names the
+     * same way {@link #readBatches(Query, ReadOptions)} does.
+     *
+     * <p>The output shape never changes which rows match: it only renames, reorders, or injects columns over the rows
+     * the predicate already selects. Only the predicate namespace needs lowering, after which this delegates to
+     * {@link #bounds(Predicate, ReadOptions)}. The {@code offset}/{@code limit} window is ignored: bounding is
+     * predicate-only, not read-shaping.
+     */
+    default Optional<BoundingBox> bounds(Query query, ReadOptions options) {
+        return bounds(lowerToPhysicalColumns(query), options);
     }
 
     /**
