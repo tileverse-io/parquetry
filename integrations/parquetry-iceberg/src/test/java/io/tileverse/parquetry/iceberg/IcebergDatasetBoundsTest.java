@@ -110,7 +110,9 @@ class IcebergDatasetBoundsTest {
     @Disabled(
             "no merge-on-read delete fixture with a geometry column exists in the corpus yet; add one and assert deleted rows stay out of the box")
     @SuppressWarnings("java:S2699") // placeholder documenting a missing corpus fixture; no assertion until it exists
-    void deletedRowsDoNotContribute() {}
+    void deletedRowsDoNotContribute() {
+        // Empty until the corpus gains a merge-on-read delete fixture with a geometry column.
+    }
 
     // --- assertions ---
 
