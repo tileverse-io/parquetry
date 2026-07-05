@@ -105,10 +105,11 @@ class IcebergDataStoreIT {
         try {
             SimpleFeatureSource source = store.getFeatureSource("v3_geometry");
             ReferencedEnvelope insideCalifornia = window(source, -123, 34, -119, 38);
-            long bruteForce = countGeometriesWithin(source, insideCalifornia);
+            long bruteForce = countGeometriesIntersecting(source, insideCalifornia);
             int pushed = source.getFeatures(bboxQuery(source, insideCalifornia)).size();
             assertThat(pushed).isEqualTo((int) bruteForce);
-            // The window is strictly inside the california file's bbox; the corpus is byte-reproducible.
+            // The window is strictly inside the california file's bbox and the corpus is byte-reproducible, making 156
+            // external ground truth that also catches a whole-store systematic under-read depressing both counts alike.
             assertThat(pushed).isEqualTo(156);
             assertThat(pushed).isLessThan(1000);
         } finally {
@@ -164,25 +165,26 @@ class IcebergDataStoreIT {
     }
 
     private static Query bboxQuery(SimpleFeatureSource source, ReferencedEnvelope window) {
-        String geomName = source.getSchema().getGeometryDescriptor().getLocalName();
-        return new Query("v3_geometry", FF.bbox(FF.property(geomName), window));
+        SimpleFeatureType schema = source.getSchema();
+        String geomName = schema.getGeometryDescriptor().getLocalName();
+        return new Query(schema.getTypeName(), FF.bbox(FF.property(geomName), window));
     }
 
     /**
-     * Brute-force oracle: reads every feature unfiltered and counts geometries the query window contains, independent
-     * of the pushdown path being tested.
+     * Brute-force oracle: reads every feature unfiltered and counts geometries whose envelope intersects the query
+     * window, mirroring the pushed-down BboxIntersects intent independent of the pushdown path being tested.
      */
-    private static long countGeometriesWithin(SimpleFeatureSource source, ReferencedEnvelope window)
+    private static long countGeometriesIntersecting(SimpleFeatureSource source, ReferencedEnvelope window)
             throws IOException {
-        long inside = 0;
+        long matches = 0;
         try (SimpleFeatureIterator features = source.getFeatures(Query.ALL).features()) {
             while (features.hasNext()) {
                 Geometry geometry = (Geometry) features.next().getDefaultGeometry();
-                if (geometry != null && window.contains(geometry.getEnvelopeInternal())) {
-                    inside++;
+                if (geometry != null && window.intersects(geometry.getEnvelopeInternal())) {
+                    matches++;
                 }
             }
         }
-        return inside;
+        return matches;
     }
 }
