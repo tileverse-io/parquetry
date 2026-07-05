@@ -102,6 +102,30 @@ class RoundTripNestedTest {
     }
 
     @Test
+    void roundTripsStructWhoseFieldsAreDeclaredNonAlphabetically() throws Exception {
+        SchemaNode.Group struct = structGroup(
+                "s",
+                leaf("z", PrimitiveKind.INT64, Optional.empty()),
+                leaf("b", PrimitiveKind.INT64, Optional.empty()));
+        ParquetSchema schema = schema(struct);
+        Map<ColumnPath, ColumnVector> fields = new LinkedHashMap<>();
+        fields.put(ColumnPath.of("z"), LongVector.materialized(new long[] {11, 22}, Validity.allValid(2)));
+        fields.put(ColumnPath.of("b"), LongVector.materialized(new long[] {33, 44}, Validity.allValid(2)));
+        ColumnVector column = new StructVector(fields, Validity.allValid(2), 2);
+
+        roundTrip(schema, "s", column, 2, root -> {
+            org.apache.arrow.vector.complex.StructVector vector =
+                    (org.apache.arrow.vector.complex.StructVector) root.getVector("s");
+            org.apache.arrow.vector.BigIntVector z = (org.apache.arrow.vector.BigIntVector) vector.getChild("z");
+            org.apache.arrow.vector.BigIntVector b = (org.apache.arrow.vector.BigIntVector) vector.getChild("b");
+            assertThat(z.get(0)).isEqualTo(11L);
+            assertThat(z.get(1)).isEqualTo(22L);
+            assertThat(b.get(0)).isEqualTo(33L);
+            assertThat(b.get(1)).isEqualTo(44L);
+        });
+    }
+
+    @Test
     void roundTripsMapOfUtf8ToInt64() throws Exception {
         SchemaNode.Group map = mapGroup(
                 "props",

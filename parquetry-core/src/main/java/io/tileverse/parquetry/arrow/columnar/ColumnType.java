@@ -40,8 +40,8 @@ public sealed interface ColumnType
 
     /**
      * A struct column with an ordered set of named fields. The field order is the iteration order of {@code fields} and
-     * must match the order the encoder emitted child nodes; the decoder pairs fields to children by key, never by
-     * position.
+     * must match the order the encoder walked the struct's children; the decoder pairs the i-th field with the i-th
+     * child node. Both are the struct's declared field order.
      */
     record StructType(SequencedMap<ColumnPath, ColumnType> fields) implements ColumnType {}
 
