@@ -4,7 +4,7 @@
   "location": "file:///warehouse/ne/populated_places",
   "last-sequence-number": 1,
   "last-updated-ms": 1750000004000,
-  "last-column-id": 33,
+  "last-column-id": 34,
   "current-schema-id": 0,
   "schemas": [
     {
@@ -43,7 +43,7 @@
         },
         {
           "id": 6,
-          "name": "name",
+          "name": "place_name",
           "required": false,
           "type": "string"
         },
@@ -208,6 +208,12 @@
           "name": "geom",
           "required": false,
           "type": "geometry"
+        },
+        {
+          "id": 34,
+          "name": "local_note",
+          "required": false,
+          "type": "string"
         }
       ]
     }
