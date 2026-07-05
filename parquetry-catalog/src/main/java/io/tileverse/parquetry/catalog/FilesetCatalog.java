@@ -33,6 +33,7 @@ import io.tileverse.parquetry.dataset.FilesetReader;
 import io.tileverse.parquetry.dataset.GeoMetadataAggregator;
 import io.tileverse.parquetry.dataset.HivePartitionResolver;
 import io.tileverse.parquetry.dataset.HivePartitioning;
+import io.tileverse.parquetry.dataset.OpenOptions;
 import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.filter.prune.FileStats;
@@ -211,7 +212,8 @@ public final class FilesetCatalog implements DatasetCatalog {
         List<String> locations = files.stream().map(FileEntry::relativePath).toList();
         FilesetDataset.PartitionContext partitions =
                 new FilesetDataset.PartitionContext(augmentedSchema, partitioning, perFilePartitions, stats);
-        return new FilesetDataset(name, allFiles, partitions, opened, locations, caps, aggregatedGeo);
+        return new FilesetDataset(
+                name, allFiles, partitions, opened, locations, caps, aggregatedGeo, OpenOptions.DEFAULTS);
     }
 
     /**

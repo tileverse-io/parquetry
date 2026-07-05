@@ -141,6 +141,19 @@ class ParquetRuntimeTest {
     }
 
     @Test
+    void maxConcurrentFilesDefaultsToEightAndValidates() {
+        ParquetRuntime runtime = ParquetRuntime.builder().build();
+        assertThat(runtime.maxConcurrentFiles()).isEqualTo(8);
+
+        ParquetRuntime tuned = ParquetRuntime.builder().maxConcurrentFiles(16).build();
+        assertThat(tuned.maxConcurrentFiles()).isEqualTo(16);
+        assertThat(tuned.withMaxConcurrentFiles(2).maxConcurrentFiles()).isEqualTo(2);
+
+        assertThatThrownBy(() -> ParquetRuntime.builder().maxConcurrentFiles(0))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void builderRejectsInvalidScalars() {
         ParquetRuntime.Builder builder = ParquetRuntime.builder().prefetchDepth(-1);
         assertThatThrownBy(builder::build).isInstanceOf(IllegalArgumentException.class);

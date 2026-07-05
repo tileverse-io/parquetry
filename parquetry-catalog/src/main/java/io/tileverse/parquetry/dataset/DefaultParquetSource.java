@@ -27,8 +27,10 @@ import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.Spliterator;
 import java.util.Spliterators;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.StructuredTaskScope;
 import java.util.concurrent.StructuredTaskScope.Subtask;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
@@ -46,31 +48,38 @@ import io.tileverse.parquetry.filter.SpatialReadProbe.Decision;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.prune.FileStats;
 import io.tileverse.parquetry.format.BoundingBox;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
  * Default {@link ParquetSource} implementation: a collection of 1..N {@link ParquetFileReader} instances over files
- * that share the same schema. The read overloads concatenate per-reader streams lazily, opening one reader's stream at
- * a time and closing it before the next one opens, which keeps the working set bounded by a single file's pipeline
- * rather than letting a buffering stream stage hold every file's decoded batches at once. {@code rowGroups()}
- * aggregates all row groups and re-assigns sequential indices across readers. {@code count} over more than one file
- * fans the per-file counts out across virtual threads, bounded by the shared fetch and decode budgets in
- * {@link ReadOptions}. {@code explain} and {@code explainAnalyze} remain single-reader only and throw
- * {@link UnsupportedOperationException} when more than one reader is present.
+ * that share the same schema. A multi-reader read with no spatial probe fans its files out, draining up to
+ * {@code maxConcurrentFiles} of them at once on virtual threads and merging their elements in arrival order (survivor
+ * order when a windowed read needs a deterministic slice); a single-file read, or one bearing a spatial probe, keeps
+ * the sequential path that opens one reader's stream at a time and closes it before the next opens. The record
+ * overloads transport whole batches across the fan-out and flatten them to rows on the consuming thread, keeping each
+ * row's flyweight view on one thread. {@code rowGroups()} aggregates all row groups and re-assigns sequential indices
+ * across readers. {@code count} over more than one file fans the per-file counts out across virtual threads, bounded by
+ * the shared fetch and decode budgets in {@link ReadOptions}. {@code explain} and {@code explainAnalyze} remain
+ * single-reader only and throw {@link UnsupportedOperationException} when more than one reader is present.
  *
  * <p>Schema check happens in the constructor: every reader must agree on {@link ParquetSchema} by equality.
  */
 final class DefaultParquetSource implements ParquetSource {
 
     private final List<ParquetFileReader> readers;
+    private final int maxConcurrentFiles;
     private final ParquetSchema schema;
     private final List<RowGroupSummary> rowGroups;
 
-    DefaultParquetSource(List<ParquetFileReader> readers) {
+    DefaultParquetSource(List<ParquetFileReader> readers, int maxConcurrentFiles) {
         if (readers == null || readers.isEmpty()) {
             throw new IllegalArgumentException("readers must contain at least one ParquetReader");
+        }
+        if (maxConcurrentFiles <= 0) {
+            throw new IllegalArgumentException("maxConcurrentFiles must be > 0, got " + maxConcurrentFiles);
         }
         ParquetSchema first = readers.get(0).schema();
         for (int i = 1; i < readers.size(); i++) {
@@ -80,6 +89,7 @@ final class DefaultParquetSource implements ParquetSource {
             }
         }
         this.readers = List.copyOf(readers);
+        this.maxConcurrentFiles = maxConcurrentFiles;
         this.schema = first;
         this.rowGroups = buildRowGroups(this.readers);
     }
@@ -94,6 +104,56 @@ final class DefaultParquetSource implements ParquetSource {
             }
         }
         return List.copyOf(aggregated);
+    }
+
+    /**
+     * Opens one reader per source, overlapping the footer reads of up to {@code maxConcurrentFiles} files on virtual
+     * threads. An open is a handful of positional reads; against remote storage those round-trips dominate a sequential
+     * loop over many files. The returned readers keep {@code sources}' index order. The sources stay borrowed: a
+     * failure propagates without closing them, and the caller owns their lifecycle. Lives on the implementation class,
+     * not the {@link ParquetSource} interface, keeping the interface's class file free of preview API references for
+     * consumers compiled without preview features.
+     */
+    static List<ParquetFileReader> openReaders(List<ByteRangeSource> sources, OpenOptions options) {
+        if (sources.size() == 1) {
+            ParquetFileReader single =
+                    ParquetFileReader.open(sources.get(0), options.runtime(), options.decryptionKeyRetriever());
+            return List.of(single);
+        }
+        Semaphore openSlots = new Semaphore(options.runtime().maxConcurrentFiles());
+        try (StructuredTaskScope<ParquetFileReader, Void> scope = StructuredTaskScope.open()) {
+            List<Subtask<ParquetFileReader>> opens = new ArrayList<>(sources.size());
+            for (ByteRangeSource source : sources) {
+                opens.add(scope.fork(() -> openOneReader(source, options, openSlots)));
+            }
+            scope.join();
+            return collectInOrder(opens);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            InterruptedIOException interrupted = new InterruptedIOException("Interrupted while opening dataset files");
+            interrupted.initCause(e);
+            throw new UncheckedIOException(interrupted);
+        } catch (StructuredTaskScope.FailedException e) {
+            throw asUnchecked(e.getCause());
+        }
+    }
+
+    private static ParquetFileReader openOneReader(ByteRangeSource source, OpenOptions options, Semaphore openSlots)
+            throws InterruptedException {
+        openSlots.acquire();
+        try {
+            return ParquetFileReader.open(source, options.runtime(), options.decryptionKeyRetriever());
+        } finally {
+            openSlots.release();
+        }
+    }
+
+    private static List<ParquetFileReader> collectInOrder(List<Subtask<ParquetFileReader>> opens) {
+        List<ParquetFileReader> readers = new ArrayList<>(opens.size());
+        for (Subtask<ParquetFileReader> open : opens) {
+            readers.add(open.get());
+        }
+        return readers;
     }
 
     @Override
@@ -119,24 +179,99 @@ final class DefaultParquetSource implements ParquetSource {
 
     @Override
     public Stream<ParquetRecord> read(Predicate predicate, Projection projection, ReadOptions options) {
-        return concatLazily(options, reader -> reader.read(predicate, projection, options));
+        return read(predicate, projection, Materializer.defaultRecord(), options);
     }
 
     @Override
     public <T> Stream<T> read(
             Predicate predicate, Projection projection, Materializer<T> materializer, ReadOptions options) {
-        return concatLazily(options, reader -> reader.read(predicate, projection, materializer, options));
+        return read(predicate, projection, materializer, options, ConcurrentFileMerge.Emission.UNORDERED);
+    }
+
+    /**
+     * The materializer read with a caller-chosen fan-out emission order. The windowed entry points pass
+     * {@link ConcurrentFileMerge.Emission#SURVIVOR_ORDER}; a following offset/limit then slices a deterministic row
+     * sequence. Every other caller keeps {@link ConcurrentFileMerge.Emission#UNORDERED}, the maximum-overlap default.
+     */
+    <T> Stream<T> read(
+            Predicate predicate,
+            Projection projection,
+            Materializer<T> materializer,
+            ReadOptions options,
+            ConcurrentFileMerge.Emission emission) {
+        if (mustReadSequentially(options)) {
+            return concatSequentially(options, reader -> reader.read(predicate, projection, materializer, options));
+        }
+        Stream<ParquetRecordBatch> batches = mergeConcurrently(
+                reader -> reader.readBatches(predicate, projection, options), ParquetRecordBatch::close, emission);
+        return batches.flatMap(batch -> BatchRows.flatten(batch, materializer));
     }
 
     @Override
     public Stream<ParquetRecordBatch> readBatches(Predicate predicate, Projection projection, ReadOptions options) {
-        return concatLazily(options, reader -> reader.readBatches(predicate, projection, options));
+        return readBatches(predicate, projection, options, ConcurrentFileMerge.Emission.UNORDERED);
     }
 
+    /**
+     * The columnar read with a caller-chosen fan-out emission order, the batch analogue of {@link #read(Predicate,
+     * Projection, Materializer, ReadOptions, ConcurrentFileMerge.Emission)}.
+     */
+    Stream<ParquetRecordBatch> readBatches(
+            Predicate predicate, Projection projection, ReadOptions options, ConcurrentFileMerge.Emission emission) {
+        return concatLazily(
+                options,
+                reader -> reader.readBatches(predicate, projection, options),
+                ParquetRecordBatch::close,
+                emission);
+    }
+
+    /**
+     * Kept sequential: a {@link BatchMaterializer}'s output ownership is materializer-specific and outside the
+     * fan-out's element-owns-its-data transfer contract.
+     */
     @Override
     public <T> Stream<T> readBatches(
             Predicate predicate, Projection projection, BatchMaterializer<T> materializer, ReadOptions options) {
-        return concatLazily(options, reader -> reader.readBatches(predicate, projection, materializer, options));
+        return concatSequentially(options, reader -> reader.readBatches(predicate, projection, materializer, options));
+    }
+
+    /**
+     * Combines the per-reader streams for one read: a fan-out when it is safe, sequential otherwise. Only elements that
+     * own their data may combine concurrently; {@code discardElement} releases an element the consumer never receives
+     * when the fan-out is cancelled early. The {@code emission} order shapes a fan-out's interleave; a sequential
+     * combine ignores it, being ordered already.
+     */
+    private <R> Stream<R> concatLazily(
+            ReadOptions options,
+            Function<ParquetFileReader, Stream<R>> open,
+            Consumer<R> discardElement,
+            ConcurrentFileMerge.Emission emission) {
+        if (mustReadSequentially(options)) {
+            return concatSequentially(options, open);
+        }
+        return mergeConcurrently(open, discardElement, emission);
+    }
+
+    /**
+     * Whether this read must combine its readers sequentially. A single reader has nothing to overlap. A spatial probe
+     * pins the visit order and accumulates its paint in that order on a single thread. Fanning the files out would
+     * break both, which is why a probe read stays sequential.
+     */
+    private boolean mustReadSequentially(ReadOptions options) {
+        return readers.size() == 1 || options.spatialReadProbe().isPresent();
+    }
+
+    /**
+     * Drains up to {@link #maxConcurrentFiles} readers at once, each on its own virtual thread, and merges their
+     * elements into one pull-based stream in the given {@code emission} order. Closing the returned stream cancels the
+     * producers and releases every undelivered element through {@code discardElement}.
+     */
+    private <R> Stream<R> mergeConcurrently(
+            Function<ParquetFileReader, Stream<R>> open,
+            Consumer<R> discardElement,
+            ConcurrentFileMerge.Emission emission) {
+        return ConcurrentFileMerge.stream(
+                readers.size(), index -> open.apply(readers.get(index)), discardElement, maxConcurrentFiles, emission);
     }
 
     /**
@@ -149,7 +284,7 @@ final class DefaultParquetSource implements ParquetSource {
      * visited in spatial order and each is consulted through the probe before its stream opens. Without a probe the
      * readers keep their relative-path order and no file is skipped, leaving the no-probe read unchanged.
      */
-    private <R> Stream<R> concatLazily(ReadOptions options, Function<ParquetFileReader, Stream<R>> open) {
+    private <R> Stream<R> concatSequentially(ReadOptions options, Function<ParquetFileReader, Stream<R>> open) {
         SpatialReadPlan plan = spatialReadPlanFor(options);
         ReaderStreamIterator<R> iterator = new ReaderStreamIterator<>(plan.visitOrder(), plan.fileGate(), open);
         Spliterator<R> spliterator =
@@ -285,9 +420,10 @@ final class DefaultParquetSource implements ParquetSource {
     }
 
     /**
-     * Rethrows a per-file count failure with the type the sequential path would have thrown.
-     * {@link ParquetFileReader#count} declares no checked exceptions. The cause is therefore always a
-     * {@link RuntimeException} or an {@link Error}.
+     * Rethrows a per-file open or count failure with the type the sequential path would have thrown. The scope reports
+     * the first failed subtask's exception, and neither {@link ParquetFileReader#open} nor
+     * {@link ParquetFileReader#count} declares checked exceptions: the cause is a {@link RuntimeException} or an
+     * {@link Error}, with anything else falling back to {@link IllegalStateException}.
      */
     private static RuntimeException asUnchecked(Throwable cause) {
         if (cause instanceof RuntimeException runtime) {

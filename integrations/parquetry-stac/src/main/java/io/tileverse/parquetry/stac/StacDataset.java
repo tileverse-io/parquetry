@@ -28,11 +28,13 @@ import com.google.errorprone.annotations.MustBeClosed;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.CatalogSnapshot;
+import io.tileverse.parquetry.dataset.ConcurrentSurvivorReads;
 import io.tileverse.parquetry.dataset.DatasetCapabilities;
 import io.tileverse.parquetry.dataset.DatasetCapabilities.FileSpatialBounds;
 import io.tileverse.parquetry.dataset.DatasetCapabilities.FileStatsSource;
 import io.tileverse.parquetry.dataset.FilesetReader;
 import io.tileverse.parquetry.dataset.GeoParquetDataset;
+import io.tileverse.parquetry.dataset.OpenOptions;
 import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.dataset.explain.DatasetExplainPlan;
 import io.tileverse.parquetry.dataset.explain.FileExplain;
@@ -71,6 +73,7 @@ public final class StacDataset implements GeoParquetDataset {
     private final List<StacItemRef> items;
     private final List<FileStats> fileStats;
     private final List<ByteRangeSource> sources;
+    private final OpenOptions openOptions;
     private final ConcurrentHashMap<Integer, ParquetSource> perFileDatasets = new ConcurrentHashMap<>();
 
     private volatile ParquetSchema schema;
@@ -81,11 +84,13 @@ public final class StacDataset implements GeoParquetDataset {
             String geometryColumn,
             List<StacItemRef> items,
             List<double[]> itemBboxes,
-            List<ByteRangeSource> sources) {
+            List<ByteRangeSource> sources,
+            OpenOptions openOptions) {
         this.name = Objects.requireNonNull(name, "name");
         Objects.requireNonNull(geometryColumn, "geometryColumn");
         this.items = List.copyOf(items);
         this.sources = List.copyOf(sources);
+        this.openOptions = Objects.requireNonNull(openOptions, "openOptions");
         this.fileStats = buildStats(this.items, itemBboxes, geometryColumn);
         if (this.items.isEmpty()) {
             throw new IllegalArgumentException("collection '" + name + "' has no GeoParquet data parts");
@@ -158,22 +163,38 @@ public final class StacDataset implements GeoParquetDataset {
     @Override
     @MustBeClosed
     public Stream<ParquetRecord> read(Predicate predicate, Projection projection, ReadOptions options) {
-        List<Integer> survivors = prune(predicate);
-        if (survivors.isEmpty()) {
-            return Stream.empty();
-        }
-        return survivors.stream().flatMap(index -> perFile(index).read(predicate, projection, options));
+        return readSurvivors(predicate, projection, Materializer.defaultRecord(), options);
     }
 
     @Override
     @MustBeClosed
     public <T> Stream<T> read(
             Predicate predicate, Projection projection, Materializer<T> materializer, ReadOptions options) {
+        return readSurvivors(predicate, projection, materializer, options);
+    }
+
+    /**
+     * Reads the survivor parts' rows, draining them concurrently. A spatial-decimation probe pins the per-part visit
+     * order onto a single thread, which the fan-out would break; a probe read therefore keeps the sequential per-part
+     * composition. Otherwise each survivor's rows ride its columnar batches across the fan-out and flatten to rows on
+     * the consuming thread.
+     */
+    @MustBeClosed
+    private <T> Stream<T> readSurvivors(
+            Predicate predicate, Projection projection, Materializer<T> materializer, ReadOptions options) {
         List<Integer> survivors = prune(predicate);
         if (survivors.isEmpty()) {
             return Stream.empty();
         }
-        return survivors.stream().flatMap(index -> perFile(index).read(predicate, projection, materializer, options));
+        if (options.spatialReadProbe().isPresent()) {
+            return survivors.stream()
+                    .flatMap(index -> perFile(index).read(predicate, projection, materializer, options));
+        }
+        return ConcurrentSurvivorReads.records(
+                survivors.size(),
+                dense -> perFile(survivors.get(dense)).readBatches(predicate, projection, options),
+                materializer,
+                maxConcurrentFiles());
     }
 
     @Override
@@ -183,7 +204,13 @@ public final class StacDataset implements GeoParquetDataset {
         if (survivors.isEmpty()) {
             return Stream.empty();
         }
-        return survivors.stream().flatMap(index -> perFile(index).readBatches(predicate, projection, options));
+        if (options.spatialReadProbe().isPresent()) {
+            return survivors.stream().flatMap(index -> perFile(index).readBatches(predicate, projection, options));
+        }
+        return ConcurrentSurvivorReads.batches(
+                survivors.size(),
+                dense -> perFile(survivors.get(dense)).readBatches(predicate, projection, options),
+                maxConcurrentFiles());
     }
 
     @Override
@@ -252,7 +279,11 @@ public final class StacDataset implements GeoParquetDataset {
      */
     private ParquetSource perFile(int index) {
         return perFileDatasets.computeIfAbsent(
-                index, i -> ParquetSource.open(new SurvivorFileset(sources, List.of(i))));
+                index, i -> ParquetSource.open(new SurvivorFileset(sources, List.of(i)), openOptions));
+    }
+
+    private int maxConcurrentFiles() {
+        return openOptions.runtime().maxConcurrentFiles();
     }
 
     private Optional<GeoParquetMetadata> parseGeo(ParquetSource representative) {

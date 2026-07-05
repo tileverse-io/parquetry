@@ -172,7 +172,8 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
     @MustBeClosed
     default Stream<ParquetRecordBatch> readBatches(Query query, ReadOptions options) {
         Predicate pushed = lowerToPhysicalColumns(query);
-        Stream<ParquetRecordBatch> produced = readBatches(pushed, query.projection(), options);
+        Stream<ParquetRecordBatch> produced =
+                asDefaultSource().readBatches(pushed, query.projection(), options, emissionFor(query));
         Stream<ParquetRecordBatch> windowed = applyWindow(produced, query.offset(), query.limit());
         if (query.outputColumns().isEmpty()) {
             return windowed;
@@ -238,7 +239,13 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
     @MustBeClosed
     default Stream<ParquetRecord> read(Query query, ReadOptions options) {
         if (query.outputColumns().isEmpty()) {
-            Stream<ParquetRecord> rows = read(lowerToPhysicalColumns(query), query.projection(), options);
+            Stream<ParquetRecord> rows = asDefaultSource()
+                    .read(
+                            lowerToPhysicalColumns(query),
+                            query.projection(),
+                            Materializer.defaultRecord(),
+                            options,
+                            emissionFor(query));
             return applyRowWindow(rows, query.offset(), query.limit());
         }
         return readBatches(query, options).flatMap(ConstantColumnBatches::rows);
@@ -257,6 +264,27 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
         }
         Stream<ParquetRecord> windowed = offset == 0 ? rows : rows.skip(offset);
         return limit.isPresent() ? windowed.limit(limit.getAsLong()) : windowed;
+    }
+
+    /**
+     * The fan-out emission order {@code query} requires. A query with an offset or a limit reads a definite prefix of
+     * the matching rows, meaningful only over a deterministic order; its multi-file merge therefore emits in survivor
+     * (file) order, matching the sequence a single-file-at-a-time read would produce. A windowless query keeps the
+     * maximum-overlap unordered emission.
+     */
+    private static ConcurrentFileMerge.Emission emissionFor(Query query) {
+        boolean windowed = query.offset() != 0 || query.limit().isPresent();
+        return windowed ? ConcurrentFileMerge.Emission.SURVIVOR_ORDER : ConcurrentFileMerge.Emission.UNORDERED;
+    }
+
+    /**
+     * Narrows this source to its sole implementation. {@code ParquetSource} is sealed to permit
+     * {@link DefaultParquetSource} alone, which makes the cast total. It reaches the package-private, emission-aware
+     * read overloads the public interface does not expose, letting the windowed entry points ask for survivor-order
+     * emission.
+     */
+    private DefaultParquetSource asDefaultSource() {
+        return (DefaultParquetSource) this;
     }
 
     /**
@@ -351,7 +379,7 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
     static ParquetSource open(ByteRangeSource source, OpenOptions options) {
         ParquetFileReader fileReader =
                 ParquetFileReader.open(source, options.runtime(), options.decryptionKeyRetriever());
-        return new DefaultParquetSource(List.of(fileReader));
+        return new DefaultParquetSource(List.of(fileReader), options.runtime().maxConcurrentFiles());
     }
 
     /**
@@ -369,7 +397,8 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
 
     /**
      * Opens a dataset over every file in {@code fileset}, in index order. Each file is opened immediately (its footer
-     * is read), and all files must agree on {@link ParquetSchema} by equality. The byte sources returned by
+     * is read), with the footer reads of up to {@link ParquetRuntime#maxConcurrentFiles()} files overlapped on virtual
+     * threads; all files must agree on {@link ParquetSchema} by equality. The byte sources returned by
      * {@link FilesetReader#openFile(int)} are borrowed; the caller owns and closes them.
      *
      * @throws IllegalArgumentException if {@code fileset} reports zero files
@@ -386,11 +415,11 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
         if (fileCount <= 0) {
             throw new IllegalArgumentException("fileset must contain at least one file");
         }
-        List<ParquetFileReader> readers = new ArrayList<>(fileCount);
+        List<ByteRangeSource> sources = new ArrayList<>(fileCount);
         for (int index = 0; index < fileCount; index++) {
-            readers.add(ParquetFileReader.open(
-                    fileset.openFile(index), options.runtime(), options.decryptionKeyRetriever()));
+            sources.add(fileset.openFile(index));
         }
-        return new DefaultParquetSource(readers);
+        List<ParquetFileReader> readers = DefaultParquetSource.openReaders(sources, options);
+        return new DefaultParquetSource(readers, options.runtime().maxConcurrentFiles());
     }
 }

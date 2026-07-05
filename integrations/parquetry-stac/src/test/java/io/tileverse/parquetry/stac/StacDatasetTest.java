@@ -28,6 +28,7 @@ import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
 
 import io.tileverse.parquetry.data.ReadOptions;
+import io.tileverse.parquetry.dataset.OpenOptions;
 import io.tileverse.parquetry.dataset.explain.DatasetExplainPlan;
 import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.Predicate;
@@ -54,7 +55,7 @@ class StacDatasetTest {
             List<double[]> bboxes =
                     List.of(new double[] {0, 0, 5, 5}, new double[] {50, 0, 55, 5}, new double[] {100, 0, 105, 5});
 
-            StacDataset dataset = new StacDataset("building", "geometry", refs, bboxes, sources);
+            StacDataset dataset = new StacDataset("building", "geometry", refs, bboxes, sources, OpenOptions.DEFAULTS);
 
             Predicate eastOnly =
                     new Predicate.Spatial.BboxIntersects(ColumnPath.of("geometry"), Bbox.of2d(95, -5, 115, 15));

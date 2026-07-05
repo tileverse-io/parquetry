@@ -29,6 +29,7 @@ import io.tileverse.storage.Storage;
 import io.tileverse.parquetry.catalog.CatalogCapabilities;
 import io.tileverse.parquetry.catalog.CatalogCapabilities.SchemaSource;
 import io.tileverse.parquetry.catalog.DatasetCatalog;
+import io.tileverse.parquetry.dataset.OpenOptions;
 import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.tileverse.ByteRangeSources;
@@ -147,7 +148,12 @@ public final class StacDatasetCatalog implements DatasetCatalog {
             return Optional.empty();
         }
         StacDataset dataset = new StacDataset(
-                collection.id(), options.geometryColumn(), refs, bboxes, List.copyOf(collectionSources));
+                collection.id(),
+                options.geometryColumn(),
+                refs,
+                bboxes,
+                List.copyOf(collectionSources),
+                OpenOptions.DEFAULTS);
         return Optional.of(dataset);
     }
 

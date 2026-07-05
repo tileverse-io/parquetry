@@ -215,7 +215,7 @@ class MultiFileSpatialDecimationTest {
         }
 
         @Test
-        void noProbeKeepsConstructionOrder() throws Exception {
+        void noProbeReturnsEveryRowInAnyOrder() throws Exception {
             List<ByteRangeSource> sources = openSources();
             try {
                 DefaultParquetSource dataset = datasetOver(sources, ParquetRuntime.defaultRuntime());
@@ -223,8 +223,8 @@ class MultiFileSpatialDecimationTest {
                 List<Integer> rowCells = readIntegerXCells(dataset, ReadOptions.DEFAULTS);
 
                 assertThat(rowCells)
-                        .as("without a probe the rows come back in construction (path) order")
-                        .containsExactly(2, 0, 1);
+                        .as("without a probe the files fan out; every row returns, in no guaranteed order")
+                        .containsExactlyInAnyOrder(0, 1, 2);
             } finally {
                 closeAll(sources);
             }
@@ -274,7 +274,7 @@ class MultiFileSpatialDecimationTest {
         for (ByteRangeSource source : sources) {
             readers.add(ParquetFileReader.open(source, runtime, Optional.empty()));
         }
-        return new DefaultParquetSource(readers);
+        return new DefaultParquetSource(readers, runtime.maxConcurrentFiles());
     }
 
     private static long rowCount(DefaultParquetSource dataset, ReadOptions options) {

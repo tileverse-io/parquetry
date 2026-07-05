@@ -43,7 +43,7 @@ class MultiReaderDatasetTest {
             long single =
                     ra.rowGroups().stream().mapToLong(RowGroupSummary::rowCount).sum();
 
-            DefaultParquetSource ds = new DefaultParquetSource(List.of(ra, rb));
+            DefaultParquetSource ds = new DefaultParquetSource(List.of(ra, rb), 8);
 
             // same file twice means identical schemas; construction succeeds
             assertThat(ds.schema()).isEqualTo(ra.schema());
