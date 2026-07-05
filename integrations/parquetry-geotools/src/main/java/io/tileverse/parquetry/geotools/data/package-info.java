@@ -14,12 +14,15 @@
  * limitations under the License.
  */
 /**
- * GeoTools DataStore for GeoParquet datasets.
+ * Shared catalog-backed store core for the GeoTools DataStore family.
  *
- * <p>This DataStore reads a single GeoParquet dataset as one feature type: a single file, or a directory/glob of
- * same-schema files merged into one layer. Hive {@code key=value} path segments are a physical-column pruning aid, not
- * a feature-type discriminator. Multiple feature types come from catalog-backed DataStores (Iceberg, STAC) that reuse
- * this package's feature plumbing through the {@code DatasetCatalog} SPI. This differs from GeoTools' DuckDB-based
- * GeoParquet community module, which uses Hive partitions as feature-type discriminators.
+ * <p>{@link io.tileverse.parquetry.geotools.data.CatalogDataStore} maps each dataset in a parquetry
+ * {@code DatasetCatalog} to one feature type and delegates schema, count, bounds, and record reading to
+ * {@link io.tileverse.parquetry.geotools.data.CatalogFeatureSource}. The base store validates nothing; per-backend
+ * stores (GeoParquet, STAC, and future catalog-backed stores such as Iceberg) subclass it and add their own dataset
+ * checks. A single dataset reads as one feature type - a single file, or a directory/glob of same-schema files merged
+ * into one layer; Hive {@code key=value} path segments are a physical-column pruning aid, not a feature-type
+ * discriminator. This differs from GeoTools' DuckDB-based GeoParquet community module, which uses Hive partitions as
+ * feature-type discriminators.
  */
 package io.tileverse.parquetry.geotools.data;

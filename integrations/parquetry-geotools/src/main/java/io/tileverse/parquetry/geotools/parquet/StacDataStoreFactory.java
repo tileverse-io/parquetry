@@ -27,7 +27,6 @@ import org.geotools.api.data.Parameter;
 import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
 
-import io.tileverse.parquetry.geotools.data.CatalogDataStore;
 import io.tileverse.parquetry.geotools.data.StorageParams;
 import io.tileverse.parquetry.stac.StacCatalogOptions;
 import io.tileverse.parquetry.stac.StacDatasetCatalog;
@@ -36,8 +35,8 @@ import io.tileverse.stac.JsonStacReader;
 
 /**
  * Opens a read-only GeoTools {@link DataStore} over a STAC catalog. Each STAC collection becomes one feature type: the
- * factory builds a {@link StacDatasetCatalog} over the catalog URI and hands it to the existing
- * {@link CatalogDataStore}, whose {@code createTypeNames()} maps every dataset to a type.
+ * factory builds a {@link StacDatasetCatalog} over the catalog URI and hands it to a {@link StacDataStore}, whose
+ * {@code createTypeNames()} maps every dataset to a type.
  */
 public final class StacDataStoreFactory implements DataStoreFactorySpi {
 
@@ -88,7 +87,7 @@ public final class StacDataStoreFactory implements DataStoreFactorySpi {
         StacDatasetCatalog catalog =
                 StacDatasetCatalog.open(catalogUri, storage, new JsonStacReader(), StacCatalogOptions.defaults());
 
-        CatalogDataStore store = new CatalogDataStore(catalog);
+        StacDataStore store = new StacDataStore(catalog);
         if (namespace != null) {
             store.setNamespaceURI(namespace);
         }

@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.geotools.data;
+package io.tileverse.parquetry.geotools.parquet;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -42,7 +42,7 @@ class GeoParquetDataStoreNonGeoCatalogTest {
     @Test
     void rejectsCatalogWithNonGeoDataset() {
         DatasetCatalog nonGeoCatalog = new NonGeoCatalog("plain");
-        assertThatThrownBy(() -> new CatalogDataStore(nonGeoCatalog))
+        assertThatThrownBy(() -> new GeoParquetDataStore(nonGeoCatalog))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("plain")
                 .hasMessageContaining("GeoParquet");

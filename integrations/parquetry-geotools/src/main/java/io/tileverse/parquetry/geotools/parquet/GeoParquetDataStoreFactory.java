@@ -30,7 +30,6 @@ import org.geotools.api.data.Parameter;
 import io.tileverse.parquetry.catalog.CatalogOptions;
 import io.tileverse.parquetry.catalog.DatasetCatalog;
 import io.tileverse.parquetry.catalog.FilesetCatalog;
-import io.tileverse.parquetry.geotools.data.CatalogDataStore;
 import io.tileverse.parquetry.geotools.data.StorageParams;
 import io.tileverse.parquetry.io.FileSource;
 import io.tileverse.parquetry.tileverse.ParquetFileSources;
@@ -101,7 +100,7 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
         Properties storageProps = StorageParams.toProperties(params);
         DatasetCatalog catalog = openCatalog(datasetUri, layers, storageProps);
 
-        CatalogDataStore store = new CatalogDataStore(catalog);
+        GeoParquetDataStore store = new GeoParquetDataStore(catalog);
         if (namespace != null) {
             store.setNamespaceURI(namespace);
         }

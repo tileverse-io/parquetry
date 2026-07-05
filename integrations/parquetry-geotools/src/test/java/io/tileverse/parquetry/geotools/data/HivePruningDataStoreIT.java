@@ -36,6 +36,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.catalog.CatalogOptions;
 import io.tileverse.parquetry.catalog.FilesetCatalog;
+import io.tileverse.parquetry.geotools.parquet.GeoParquetDataStore;
 import io.tileverse.parquetry.io.LocalFileSource;
 
 /**
@@ -60,7 +61,7 @@ class HivePruningDataStoreIT {
 
         try (FilesetCatalog catalog =
                         FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults());
-                CatalogDataStore store = new CatalogDataStore(catalog)) {
+                CatalogDataStore store = new GeoParquetDataStore(catalog)) {
 
             assertThat(store.getTypeNames()).hasSize(1);
             String typeName = store.getTypeNames()[0];
@@ -80,7 +81,7 @@ class HivePruningDataStoreIT {
 
         try (FilesetCatalog catalog =
                         FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults());
-                CatalogDataStore store = new CatalogDataStore(catalog)) {
+                CatalogDataStore store = new GeoParquetDataStore(catalog)) {
 
             String typeName = store.getTypeNames()[0];
             SimpleFeatureType schema = store.getSchema(typeName);

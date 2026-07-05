@@ -32,6 +32,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.catalog.CatalogOptions;
 import io.tileverse.parquetry.catalog.FilesetCatalog;
+import io.tileverse.parquetry.geotools.parquet.GeoParquetDataStore;
 import io.tileverse.parquetry.io.LocalFileSource;
 
 /**
@@ -56,7 +57,7 @@ class MultiFileDataStoreIT {
         try (FilesetCatalog catalog = FilesetCatalog.open(
                         LocalFileSource.directory(dir, "*.parquet"),
                         CatalogOptions.builder().datasetName("places").build());
-                CatalogDataStore store = new CatalogDataStore(catalog)) {
+                CatalogDataStore store = new GeoParquetDataStore(catalog)) {
 
             assertThat(store.getTypeNames()).containsExactly("places");
 
@@ -77,7 +78,7 @@ class MultiFileDataStoreIT {
         try (FilesetCatalog catalog = FilesetCatalog.open(
                         LocalFileSource.file(file),
                         CatalogOptions.builder().datasetName("attributes").build());
-                CatalogDataStore store = new CatalogDataStore(catalog)) {
+                CatalogDataStore store = new GeoParquetDataStore(catalog)) {
 
             SimpleFeatureType schema = store.getSchema("attributes");
             assertThat(schema.getGeometryDescriptor()).isNull();

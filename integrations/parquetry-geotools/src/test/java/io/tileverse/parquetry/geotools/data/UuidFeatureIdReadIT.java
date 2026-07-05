@@ -38,6 +38,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.catalog.CatalogOptions;
 import io.tileverse.parquetry.catalog.FilesetCatalog;
+import io.tileverse.parquetry.geotools.parquet.GeoParquetDataStore;
 import io.tileverse.parquetry.io.LocalFileSource;
 
 /**
@@ -66,7 +67,7 @@ class UuidFeatureIdReadIT {
         FilesetCatalog catalog = FilesetCatalog.open(
                 LocalFileSource.file(file),
                 CatalogOptions.builder().datasetName("uuid").build());
-        try (CatalogDataStore store = new CatalogDataStore(catalog)) {
+        try (CatalogDataStore store = new GeoParquetDataStore(catalog)) {
             CatalogFeatureSource fs = (CatalogFeatureSource) store.getFeatureSource("uuid");
             try (FeatureReader<SimpleFeatureType, SimpleFeature> reader = fs.getReader(Query.ALL)) {
                 assertThat(reader.hasNext()).isTrue();
@@ -141,7 +142,7 @@ class UuidFeatureIdReadIT {
         FilesetCatalog catalog = FilesetCatalog.open(
                 LocalFileSource.file(file),
                 CatalogOptions.builder().datasetName("uuid").build());
-        return new CatalogDataStore(catalog);
+        return new GeoParquetDataStore(catalog);
     }
 
     private static Path writeMultiRowUuidGeoParquet(Path target) throws Exception {

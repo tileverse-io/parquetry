@@ -26,44 +26,28 @@ import org.geotools.data.store.ContentFeatureSource;
 import org.geotools.feature.NameImpl;
 
 import io.tileverse.parquetry.catalog.DatasetCatalog;
-import io.tileverse.parquetry.dataset.GeoParquetDataset;
-import io.tileverse.parquetry.dataset.ParquetDataset;
 
 /**
- * Read-only GeoTools DataStore over a parquetry {@link DatasetCatalog}.
+ * Read-only GeoTools DataStore over a parquetry {@link DatasetCatalog}; subclasses decide dataset validation.
  *
  * <p>Each dataset name in the catalog appears as a type name. The store delegates schema, count, and bounds resolution
- * to {@link CatalogFeatureSource}; actual record reading is not implemented in this increment.
+ * to {@link CatalogFeatureSource}, which reads GeoParquet metadata only when the dataset provides it. The base store
+ * accepts any {@link io.tileverse.parquetry.dataset.ParquetDataset}; a per-backend subclass adds whatever eager
+ * validation it needs in its constructor.
  *
  * <p>Implements {@link AutoCloseable} so callers can use try-with-resources; {@link #close()} delegates to
  * {@link #dispose()}, which also closes the underlying catalog.
  */
-public final class CatalogDataStore extends ContentDataStore implements AutoCloseable {
+public abstract class CatalogDataStore extends ContentDataStore implements AutoCloseable {
 
     private final DatasetCatalog catalog;
 
     /** Name of the column to use as the feature id, or null to auto-detect a column named {@code "id"}. */
     private volatile String fidColumn;
 
-    /**
-     * Creates a store backed by the given catalog. The store takes ownership of the catalog.
-     *
-     * @throws IllegalArgumentException if any dataset in the catalog is not a {@link GeoParquetDataset}; this store is
-     *     GeoParquet-specific and rejects a non-geo catalog at construction rather than at first query
-     */
-    public CatalogDataStore(DatasetCatalog catalog) {
+    /** Creates a store backed by the given catalog. The store takes ownership of the catalog. */
+    protected CatalogDataStore(DatasetCatalog catalog) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
-        requireGeoParquetDatasets(catalog);
-    }
-
-    private static void requireGeoParquetDatasets(DatasetCatalog catalog) {
-        for (String name : catalog.datasets()) {
-            ParquetDataset dataset = catalog.dataset(name);
-            if (!(dataset instanceof GeoParquetDataset)) {
-                throw new IllegalArgumentException(
-                        "dataset '" + name + "' is not a GeoParquet dataset; this store requires GeoParquet datasets");
-            }
-        }
     }
 
     /** Sets the column to use as the feature id; null restores auto-detection of a column named {@code "id"}. */

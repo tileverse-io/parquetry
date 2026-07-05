@@ -44,6 +44,7 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.GeoParquetDataset;
 import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.format.BoundingBox;
+import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 /**
  * Read-only feature source over a single dataset from a {@link DatasetCatalog}.
@@ -73,31 +74,26 @@ final class CatalogFeatureSource extends ContentFeatureSource {
         this.catalog = catalog;
     }
 
-    private GeoParquetDataset dataset() {
-        ParquetDataset ds = catalog.dataset(getEntry().getTypeName());
-        if (ds instanceof GeoParquetDataset geo) {
-            return geo;
-        }
-        throw new IllegalStateException("dataset '" + ds.name() + "' is not a GeoParquetDataset");
+    private ParquetDataset dataset() {
+        return catalog.dataset(getEntry().getTypeName());
     }
 
     /**
      * Returns the schema mapping, building it on the first call.
      *
-     * <p>Synchronized to prevent duplicate builds under concurrent access - the first caller wins and subsequent
+     * <p>Reads GeoParquet metadata only when the dataset provides it; a plain dataset yields an attribute-only feature
+     * type. Synchronized to prevent duplicate builds under concurrent access - the first caller wins and subsequent
      * callers reuse the result.
      */
     synchronized FeatureTypeMapper.Mapping mapping() throws IOException {
         if (mapping == null) {
-            GeoParquetDataset ds = dataset();
+            ParquetDataset ds = dataset();
+            Optional<GeoParquetMetadata> geo =
+                    ds instanceof GeoParquetDataset geoDataset ? geoDataset.geoMetadata() : Optional.empty();
             String fidColumn = ((CatalogDataStore) getDataStore()).fidColumn();
             try {
                 mapping = FeatureTypeMapper.map(
-                        getEntry().getTypeName(),
-                        getDataStore().getNamespaceURI(),
-                        ds.schema(),
-                        ds.geoMetadata(),
-                        fidColumn);
+                        getEntry().getTypeName(), getDataStore().getNamespaceURI(), ds.schema(), geo, fidColumn);
             } catch (IllegalArgumentException badConfiguration) {
                 throw new IOException(badConfiguration.getMessage(), badConfiguration);
             }
