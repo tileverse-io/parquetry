@@ -3,8 +3,10 @@
 
 Turns the five Natural Earth GeoParquet layers under
 `integrations/parquetry-geoserver/demo/data/ne/` into a small STAC catalog
-committed under `.../demo/data/stac/`, in the two shapes the STAC DataStore
-factory auto-detects by URI extension.
+committed under `.../demo/data/`, in the two shapes the STAC DataStore factory
+auto-detects by URI extension. The catalog entry points sit at the data root
+(`catalog.json`, `items.parquet`) beside `ne/`, the common container the store
+reads every asset relative to; the collections live under `stac/`.
 
 Each NE layer is its own STAC collection (collection id = layer name) holding a
 single item. The five layers have wildly different attribute schemas, and one
@@ -13,8 +15,9 @@ heterogeneous-schema files would resolve one representative schema and corrupt
 the read of every other part.
 
   - The JSON catalog: `catalog.json` links five child collections, one per layer
-    (`<layer>/collection.json`), each linking its one item
-    (`<layer>/items/<layer>.json`). This is the shape `JsonStacReader` parses:
+    (`stac/<layer>/collection.json`), each linking its one item
+    (`items/<layer>.json`, relative to its collection). This is the shape
+    `JsonStacReader` parses:
     a catalog with child links to collections, each with item links, and each
     item document holding a bbox and a single GeoParquet data asset.
   - The stac-geoparquet item-table `items.parquet`: one row per layer with the
@@ -60,8 +63,12 @@ import pyarrow.parquet as pq
 HERE = Path(__file__).resolve().parent
 # ne-warehouse -> fixtures-gen -> parquetry-testkit -> internal -> repo root.
 REPO_ROOT = HERE.parents[3]
-NE_DIR = REPO_ROOT / "integrations" / "parquetry-geoserver" / "demo" / "data" / "ne"
-STAC_DIR = REPO_ROOT / "integrations" / "parquetry-geoserver" / "demo" / "data" / "stac"
+DATA_DIR = REPO_ROOT / "integrations" / "parquetry-geoserver" / "demo" / "data"
+NE_DIR = DATA_DIR / "ne"
+# The catalog entry points (catalog.json, items.parquet) sit at the output root,
+# beside the NE parts' parent - the common container the STAC store reads every
+# asset relative to. Collections and item documents live under this subdirectory.
+STAC_SUBDIR = "stac"
 
 # The five NE layers, in a stable order. This order fixes the catalog child
 # links and the item-table row order. Each layer is one STAC collection.
@@ -97,7 +104,7 @@ def main() -> int:
         print(f"NE source layers not found under {NE_DIR}", file=sys.stderr)
         return 1
 
-    out_dir = Path(args.out).resolve() if args.out else STAC_DIR
+    out_dir = Path(args.out).resolve() if args.out else DATA_DIR
     href_base = args.href_base.rstrip("/")
 
     bboxes = {layer: read_layer_bbox(layer) for layer in LAYERS}
@@ -112,7 +119,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--out",
         default=None,
-        help="output directory (default: the committed demo/data/stac)",
+        help="output root directory (default: the committed demo/data)",
     )
     parser.add_argument(
         "--href-base",
@@ -135,7 +142,7 @@ def write_json_catalog(out_dir: Path, bboxes: dict[str, list[float]], href_base:
     item document, in the layout JsonStacReader navigates by relative link."""
     write_json(out_dir / "catalog.json", catalog_document())
     for layer in LAYERS:
-        collection_dir = out_dir / layer
+        collection_dir = out_dir / STAC_SUBDIR / layer
         items_dir = collection_dir / "items"
         items_dir.mkdir(parents=True, exist_ok=True)
         write_json(collection_dir / "collection.json", collection_document(layer, bboxes[layer]))
@@ -144,7 +151,7 @@ def write_json_catalog(out_dir: Path, bboxes: dict[str, list[float]], href_base:
 
 def catalog_document() -> dict:
     """The root catalog: a self link and one child link per layer collection."""
-    child_links = [{"rel": "child", "href": f"{layer}/collection.json"} for layer in LAYERS]
+    child_links = [{"rel": "child", "href": f"{STAC_SUBDIR}/{layer}/collection.json"} for layer in LAYERS]
     return {
         "type": "Catalog",
         "stac_version": STAC_VERSION,
@@ -246,19 +253,19 @@ def verify(out_dir: Path, bboxes: dict[str, list[float]]) -> None:
 def verify_json_catalog(out_dir: Path, bboxes: dict[str, list[float]]) -> None:
     catalog = load_json(out_dir / "catalog.json")
     child_hrefs = [link["href"] for link in catalog["links"] if link["rel"] == "child"]
-    expected = [f"{layer}/collection.json" for layer in LAYERS]
+    expected = [f"{STAC_SUBDIR}/{layer}/collection.json" for layer in LAYERS]
     if child_hrefs != expected:
         raise SystemExit(f"catalog child links {child_hrefs} do not match the layers")
 
     for layer in LAYERS:
-        collection = load_json(out_dir / layer / "collection.json")
+        collection = load_json(out_dir / STAC_SUBDIR / layer / "collection.json")
         if collection["type"] != "Collection" or collection["id"] != layer:
             raise SystemExit(f"{layer}/collection.json is not a Collection with id {layer!r}")
         item_hrefs = [link["href"] for link in collection["links"] if link["rel"] == "item"]
         if item_hrefs != [f"items/{layer}.json"]:
             raise SystemExit(f"collection {layer} item links {item_hrefs} unexpected")
 
-        item = load_json(out_dir / layer / "items" / f"{layer}.json")
+        item = load_json(out_dir / STAC_SUBDIR / layer / "items" / f"{layer}.json")
         if item["id"] != layer:
             raise SystemExit(f"item {layer}.json has id {item['id']!r}")
         if item["bbox"] != bboxes[layer]:

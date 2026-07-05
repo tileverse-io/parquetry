@@ -81,15 +81,18 @@ versions without regenerating.
 ## STAC demo data
 
 `build_stac_demo.py` builds a small STAC catalog over the same five NE layers,
-committed under `integrations/parquetry-geoserver/demo/data/stac/` in the two
-shapes the STAC DataStore factory auto-detects by URI extension. Each layer is
-its own STAC collection (collection id = layer name) with a single item, because
-the five layers have wildly different attribute schemas and one feature type per
-file is the only correct mapping:
+committed under `integrations/parquetry-geoserver/demo/data/` in the two shapes
+the STAC DataStore factory auto-detects by URI extension. The catalog entry
+points (`catalog.json`, `items.parquet`) sit at the data root beside `ne/`, the
+common container the store reads every asset relative to; the collections live
+under `stac/`. Each layer is its own STAC collection (collection id = layer
+name) with a single item, because the five layers have wildly different
+attribute schemas and one feature type per file is the only correct mapping:
 
 - a static JSON catalog: `catalog.json` links five child collections, one per
-  layer (`<layer>/collection.json`), each linking its one item
-  (`<layer>/items/<layer>.json`); the shape `JsonStacReader` parses;
+  layer (`stac/<layer>/collection.json`), each linking its one item
+  (`items/<layer>.json`, relative to its collection); the shape `JsonStacReader`
+  parses;
 - a stac-geoparquet item-table `items.parquet`, one row per layer with the
   columns `item_id`, `collection`, `bbox_xmin`, `bbox_ymin`, `bbox_xmax`,
   `bbox_ymax`, `asset_href` and `collection` = the layer name; the shape
@@ -103,7 +106,7 @@ GeoParquet footer metadata, never hardcoded.
 The committed data points every asset at `http://web/<layer>.parquet`'s base
 `http://web/ne`, the compose-internal nginx hostname the demo image serves the
 NE parts from. `--href-base` overrides that base; `--out` overrides the output
-directory.
+root, where `catalog.json`, `items.parquet` and the `stac/` subtree are written.
 
 ```bash
 cd internal/parquetry-testkit/fixtures-gen
