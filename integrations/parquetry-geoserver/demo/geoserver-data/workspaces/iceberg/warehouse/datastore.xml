@@ -1,0 +1,16 @@
+<dataStore>
+  <id>DataStoreInfoImpl--1b718b8f:19f311dfce5:-7fdb</id>
+  <name>warehouse</name>
+  <type>Apache Iceberg</type>
+  <enabled>true</enabled>
+  <workspace>
+    <id>WorkspaceInfoImpl--1b718b8f:19f311dfce5:-7fe3</id>
+  </workspace>
+  <connectionParameters>
+    <entry key="iceberg">file:///data/iceberg-warehouse/</entry>
+    <entry key="namespace">http://iceberg</entry>
+  </connectionParameters>
+  <__default>false</__default>
+  <dateCreated>2026-07-05 07:13:36.940 UTC</dateCreated>
+  <disableOnConnFailure>false</disableOnConnFailure>
+</dataStore>

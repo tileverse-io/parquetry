@@ -1,7 +1,9 @@
-# GeoParquet in GeoServer - demo
+# Parquet in GeoServer - demo
 
 GeoServer 3.0 serving [Natural Earth](https://www.naturalearthdata.com/) as live WMS/WFS layers,
-reading [GeoParquet](https://geoparquet.org/) files through the parquetry plugin.
+read through the parquetry plugin from three sources - [GeoParquet](https://geoparquet.org/) files,
+an [Apache Iceberg](https://iceberg.apache.org/) warehouse, and a [STAC](https://stacspec.org/)
+catalog - each served both from local disk and over S3/HTTP.
 
 ## Run it
 
@@ -21,13 +23,20 @@ Stop it with `Ctrl-C`, or `docker compose down` to remove the container.
 
 ## What you get
 
-Two workspaces serving the same five GeoParquet layers (and a `world` layer group), one from
-local files and one from S3:
+Six workspaces, each reading Natural Earth through the parquetry plugin from a different source:
 
-| workspace | reads from |
-|---|---|
-| `parquetry` | local GeoParquet files baked into the image |
-| `parquetry-s3` | the same data over S3, served by the bundled s3proxy emulator |
+| workspace | reads from | shows off |
+|---|---|---|
+| `parquetry` | local GeoParquet files baked into the image | the GeoParquet read path with bbox pruning |
+| `parquetry-s3` | the same GeoParquet over S3 (bundled s3proxy) | GeoParquet on cloud object storage |
+| `iceberg` | a local Apache Iceberg warehouse | Iceberg reads: schema evolution, merge-on-read deletes, deletion vectors, row lineage |
+| `iceberg-s3` | the same warehouse over S3 (bundled s3proxy) | an Iceberg warehouse on cloud object storage |
+| `stac-json` | a static STAC catalog (JSON) over HTTP | finding GeoParquet assets through a STAC catalog |
+| `stac-geoparquet` | a STAC items table (GeoParquet) over HTTP | the stac-geoparquet items-table flavor |
+
+### GeoParquet layers (`parquetry`, `parquetry-s3`)
+
+Five Natural Earth layers (plus a `world` layer group):
 
 | layer | geometry | features |
 |---|---|---|
@@ -37,15 +46,46 @@ local files and one from S3:
 | `disputed_areas` | polygons | 28 |
 | `populated_places` | points | 1251 |
 
+### Iceberg layers (`iceberg`, `iceberg-s3`)
+
+One Iceberg warehouse read as a single catalog, exposing eight tables across two namespaces. The
+`ne.*` tables are the five Natural Earth layers; the `bonus.*` tables highlight Iceberg read
+features:
+
+| layer | shows off |
+|---|---|
+| `ne.countries`, `ne.coastlines`, `ne.boundary_lines_land` | plain Iceberg table reads |
+| `ne.disputed_areas` | serves 23 rows through merge-on-read deletes |
+| `ne.populated_places` | an evolved schema (attributes added after the table was created) |
+| `bonus.deletion_vectors` | attribute-only; deletion vectors (WFS only) |
+| `bonus.equality` | attribute-only; equality deletes (WFS only) |
+| `bonus.geometry_lineage` | synthetic points exercising Iceberg row lineage |
+
+The two attribute-only tables have no geometry column and are published for WFS only.
+
+### STAC layers (`stac-json`, `stac-geoparquet`)
+
+Both workspaces publish the five Natural Earth layers as STAC collections, their GeoParquet assets
+fetched over HTTP from the bundled `web` service. `stac-json` reads a static JSON catalog
+(`catalog.json`, per-collection `collection.json`, and item documents); `stac-geoparquet` reads a
+single stac-geoparquet items table (`items.parquet`). Each item's `data` asset resolves to a
+GeoParquet file under `ne/`, read in place. The catalog entry points (`catalog.json`,
+`items.parquet`) sit at the served root beside `ne/`, the common parent the plugin reads assets
+relative to.
+
 ### Reading from S3 the way you would in production
 
 The `parquetry-s3` store has **no credentials**. GeoServer obtains them from the AWS
 default credential chain - here, `secrets/aws/credentials` mounted as `~/.aws` - exactly as it
 would use an instance role or environment credentials on real AWS. The bundled `s3proxy`
 emulator is configured to accept those same demo keys and serves `data/ne` directly as the
-bucket `naturalearth` (a bind mount, no upload). To point at real AWS instead, drop the
-`s3proxy` service, set your own `secrets/aws/credentials` (or environment credentials), and edit
-the `storage.s3.*` parameters of the `parquetry-s3` store.
+bucket `naturalearth` and `data/iceberg-warehouse` as the bucket `warehouse` (bind mounts, no
+upload); the `iceberg-s3` store reads that `warehouse` bucket the same credential-free way. To
+point at real AWS instead, drop the `s3proxy` service, set your own `secrets/aws/credentials` (or
+environment credentials), and edit the `storage.s3.*` parameters of the S3 stores.
+
+The two STAC stores read over HTTP instead: the bundled `web` (nginx) service serves the `data`
+directory, and the STAC catalogs and their GeoParquet assets are fetched from `http://web/`.
 
 Example requests:
 

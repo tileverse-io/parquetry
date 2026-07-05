@@ -51,6 +51,8 @@ dist: plugin ## Build a self-contained customer zip (unzip -> `docker compose up
 	cp $(DEMO)/build/plugin.zip $(DIST)/build/plugin.zip
 	cp -r $(DEMO)/geoserver-data $(DIST)/geoserver-data
 	cp -r $(DEMO)/data/ne $(DIST)/data/ne
+	cp -r $(DEMO)/data/iceberg-warehouse $(DIST)/data/iceberg-warehouse
+	cp -r $(DEMO)/data/stac $(DIST)/data/stac
 	cp -r $(DEMO)/secrets $(DIST)/secrets
 	cd target && zip -rq parquetry-geoserver-demo.zip parquetry-geoserver-demo
 	@echo "distributable: $(CURDIR)/$(DIST).zip"

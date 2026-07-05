@@ -1,0 +1,44 @@
+<featureType>
+  <id>FeatureTypeInfoImpl--1b718b8f:19f311dfce5:-7fb9</id>
+  <name>bonus.geometry_lineage</name>
+  <nativeName>bonus.geometry_lineage</nativeName>
+  <namespace>
+    <id>NamespaceInfoImpl--1b718b8f:19f311dfce5:-7fe0</id>
+  </namespace>
+  <title>bonus.geometry_lineage</title>
+  <keywords>
+    <string>features</string>
+    <string>bonus.geometry_lineage</string>
+  </keywords>
+  <srs>EPSG:4326</srs>
+  <nativeBoundingBox>
+    <minx>-179.9745</minx>
+    <maxx>151.9927</maxx>
+    <miny>-34.9991</miny>
+    <maxy>55.986</maxy>
+    <crs>EPSG:4326</crs>
+  </nativeBoundingBox>
+  <latLonBoundingBox>
+    <minx>-179.9745</minx>
+    <maxx>151.9927</maxx>
+    <miny>-34.9991</miny>
+    <maxy>55.986</maxy>
+    <crs>EPSG:4326</crs>
+  </latLonBoundingBox>
+  <projectionPolicy>FORCE_DECLARED</projectionPolicy>
+  <enabled>true</enabled>
+  <advertised>true</advertised>
+  <store class="dataStore">
+    <id>DataStoreInfoImpl--1b718b8f:19f311dfce5:-7fda</id>
+  </store>
+  <serviceConfiguration>false</serviceConfiguration>
+  <simpleConversionEnabled>false</simpleConversionEnabled>
+  <maxFeatures>0</maxFeatures>
+  <numDecimals>0</numDecimals>
+  <padWithZeros>false</padWithZeros>
+  <forcedDecimal>false</forcedDecimal>
+  <overridingServiceSRS>false</overridingServiceSRS>
+  <skipNumberMatched>false</skipNumberMatched>
+  <circularArcPresent>false</circularArcPresent>
+  <encodeMeasures>false</encodeMeasures>
+</featureType>

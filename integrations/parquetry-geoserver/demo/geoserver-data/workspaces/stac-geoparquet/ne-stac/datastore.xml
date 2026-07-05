@@ -1,0 +1,16 @@
+<dataStore>
+  <id>DataStoreInfoImpl--1b718b8f:19f311dfce5:-7fae</id>
+  <name>ne-stac</name>
+  <type>STAC GeoParquet</type>
+  <enabled>true</enabled>
+  <workspace>
+    <id>WorkspaceInfoImpl--1b718b8f:19f311dfce5:-7fdd</id>
+  </workspace>
+  <connectionParameters>
+    <entry key="namespace">http://stac-geoparquet</entry>
+    <entry key="geoparquet-stac">http://web/items.parquet</entry>
+  </connectionParameters>
+  <__default>false</__default>
+  <dateCreated>2026-07-05 07:34:46.388 UTC</dateCreated>
+  <disableOnConnFailure>false</disableOnConnFailure>
+</dataStore>
