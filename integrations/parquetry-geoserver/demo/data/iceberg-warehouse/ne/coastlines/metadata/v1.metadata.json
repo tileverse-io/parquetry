@@ -1,0 +1,107 @@
+{
+  "format-version": 3,
+  "table-uuid": "be640407-f3ba-17f1-5a82-54635bcf9811",
+  "location": "file:///warehouse/ne/coastlines",
+  "last-sequence-number": 1,
+  "last-updated-ms": 1750000001000,
+  "last-column-id": 5,
+  "current-schema-id": 0,
+  "schemas": [
+    {
+      "schema-id": 0,
+      "type": "struct",
+      "fields": [
+        {
+          "id": 1,
+          "name": "fid",
+          "required": true,
+          "type": "long"
+        },
+        {
+          "id": 2,
+          "name": "scalerank",
+          "required": false,
+          "type": "long"
+        },
+        {
+          "id": 3,
+          "name": "featurecla",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 4,
+          "name": "min_zoom",
+          "required": false,
+          "type": "double"
+        },
+        {
+          "id": 5,
+          "name": "geom",
+          "required": false,
+          "type": "geometry"
+        }
+      ]
+    }
+  ],
+  "default-spec-id": 0,
+  "partition-specs": [
+    {
+      "spec-id": 0,
+      "fields": []
+    }
+  ],
+  "last-partition-id": 999,
+  "default-sort-order-id": 0,
+  "sort-orders": [
+    {
+      "order-id": 0,
+      "fields": []
+    }
+  ],
+  "properties": {
+    "schema.name-mapping.default": "[{\"field-id\": 1, \"names\": [\"fid\"]}, {\"field-id\": 2, \"names\": [\"scalerank\"]}, {\"field-id\": 3, \"names\": [\"featurecla\"]}, {\"field-id\": 4, \"names\": [\"min_zoom\"]}, {\"field-id\": 5, \"names\": [\"geom\"]}]"
+  },
+  "current-snapshot-id": 1750000001000,
+  "refs": {
+    "main": {
+      "snapshot-id": 1750000001000,
+      "type": "branch"
+    }
+  },
+  "snapshots": [
+    {
+      "snapshot-id": 1750000001000,
+      "sequence-number": 1,
+      "timestamp-ms": 1750000001000,
+      "manifest-list": "file:///warehouse/ne/coastlines/metadata/snap-1750000001000-manifest-list.avro",
+      "schema-id": 0,
+      "summary": {
+        "operation": "append",
+        "added-data-files": "1",
+        "added-records": "1428",
+        "added-files-size": "571760",
+        "total-data-files": "1",
+        "total-records": "1428",
+        "total-files-size": "571760",
+        "total-delete-files": "0",
+        "total-equality-deletes": "0",
+        "total-position-deletes": "0",
+        "changed-partition-count": "1"
+      },
+      "first-row-id": 0,
+      "added-rows": 1428
+    }
+  ],
+  "snapshot-log": [
+    {
+      "snapshot-id": 1750000001000,
+      "timestamp-ms": 1750000001000
+    }
+  ],
+  "metadata-log": [],
+  "next-row-id": 1428,
+  "statistics": [],
+  "partition-statistics": [],
+  "row-lineage": false
+}
