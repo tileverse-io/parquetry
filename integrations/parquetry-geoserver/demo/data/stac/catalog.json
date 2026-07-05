@@ -1,0 +1,16 @@
+{
+  "type": "Catalog",
+  "stac_version": "1.0.0",
+  "id": "natural-earth",
+  "description": "Natural Earth demo STAC catalog",
+  "links": [
+    {
+      "rel": "self",
+      "href": "catalog.json"
+    },
+    {
+      "rel": "child",
+      "href": "ne/collection.json"
+    }
+  ]
+}

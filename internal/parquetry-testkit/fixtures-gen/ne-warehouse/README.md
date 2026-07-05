@@ -1,4 +1,15 @@
-# NE Iceberg warehouse generator
+# NE demo-data generators
+
+Two generators turn the five Natural Earth GeoParquet layers under
+`integrations/parquetry-geoserver/demo/data/ne/` into committed demo data. Both
+share the venv below.
+
+- `build_ne_warehouse.py` builds the static Iceberg warehouse (this file's main
+  subject).
+- `build_stac_demo.py` builds the STAC catalog in the two flavors the STAC
+  DataStore opens; see [STAC demo data](#stac-demo-data).
+
+## NE Iceberg warehouse generator
 
 `build_ne_warehouse.py` turns the five Natural Earth GeoParquet layers in
 `integrations/parquetry-geoserver/demo/data/ne/` into a static Apache Iceberg
@@ -66,3 +77,56 @@ diff -r /tmp/wh-run1 "$WH" && echo BYTE-IDENTICAL
 Byte-identity also depends on the pinned toolchain in `requirements.txt`
 (pyarrow stamps its version into each Parquet footer); do not bump those
 versions without regenerating.
+
+## STAC demo data
+
+`build_stac_demo.py` builds a small STAC catalog over the same five NE layers,
+committed under `integrations/parquetry-geoserver/demo/data/stac/` in the two
+shapes the STAC DataStore factory auto-detects by URI extension:
+
+- a static JSON catalog: `catalog.json` -> `ne/collection.json` ->
+  `ne/items/<layer>.json` (one item document per layer), the shape
+  `JsonStacReader` parses;
+- a stac-geoparquet item-table `items.parquet`, one row per layer with the
+  columns `item_id`, `collection`, `bbox_xmin`, `bbox_ymin`, `bbox_xmax`,
+  `bbox_ymax`, `asset_href`, the shape `GeoParquetStacReader` reads.
+
+Both flavors describe the same five items in the collection `ne` and point each
+item's data asset at the same external GeoParquet part. Per-layer bboxes come
+from each NE file's GeoParquet footer metadata, never hardcoded.
+
+The committed data points every asset at `http://web/<layer>.parquet`'s base
+`http://web/ne`, the compose-internal nginx hostname the demo image serves the
+NE parts from. `--href-base` overrides that base; `--out` overrides the output
+directory.
+
+```bash
+cd internal/parquetry-testkit/fixtures-gen
+source /tmp/ne-warehouse-venv/bin/activate
+python ne-warehouse/build_stac_demo.py
+```
+
+### Determinism
+
+Two runs produce byte-identical output. The JSON documents are built as
+fixed-order dicts and written with `json.dumps(indent=2)` (no `sort_keys`;
+Python preserves insertion order), and `items.parquet` is written with the same
+pinned zstd toolchain the warehouse uses. There are no wall-clock or entropy
+inputs.
+
+### Open both flavors locally
+
+The factory roots file storage at the catalog's container and rejects asset keys
+that escape it. A local open therefore needs the NE parts reachable under that
+container. Generate into a scratch directory that holds a copy of the parts, and
+point `--href-base` at that copy:
+
+```bash
+SCRATCH=$(mktemp -d)
+mkdir "$SCRATCH/parts"
+cp ../../../integrations/parquetry-geoserver/demo/data/ne/*.parquet "$SCRATCH/parts/"
+python ne-warehouse/build_stac_demo.py --out "$SCRATCH" \
+    --href-base "file://$SCRATCH/parts"
+# geoparquet-stac=file://$SCRATCH/catalog.json   opens the JSON flavor
+# geoparquet-stac=file://$SCRATCH/items.parquet  opens the item-table flavor
+```

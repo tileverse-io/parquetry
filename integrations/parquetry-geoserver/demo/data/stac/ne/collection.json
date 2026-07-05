@@ -1,0 +1,54 @@
+{
+  "type": "Collection",
+  "stac_version": "1.0.0",
+  "id": "ne",
+  "title": "Natural Earth",
+  "description": "Natural Earth vector layers published as GeoParquet",
+  "license": "public-domain",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -180.0,
+          -89.9999998,
+          180.0,
+          83.599609375
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          "2024-01-01T00:00:00Z",
+          null
+        ]
+      ]
+    }
+  },
+  "links": [
+    {
+      "rel": "self",
+      "href": "collection.json"
+    },
+    {
+      "rel": "item",
+      "href": "items/boundary_lines_land.json"
+    },
+    {
+      "rel": "item",
+      "href": "items/coastlines.json"
+    },
+    {
+      "rel": "item",
+      "href": "items/countries.json"
+    },
+    {
+      "rel": "item",
+      "href": "items/disputed_areas.json"
+    },
+    {
+      "rel": "item",
+      "href": "items/populated_places.json"
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "type": "Feature",
+  "stac_version": "1.0.0",
+  "id": "populated_places",
+  "bbox": [
+    -175.2205645,
+    -89.9999998,
+    179.2166471,
+    78.22097104117844
+  ],
+  "properties": {
+    "datetime": "2024-01-01T00:00:00Z"
+  },
+  "geometry": null,
+  "links": [],
+  "assets": {
+    "data": {
+      "href": "http://web/ne/populated_places.parquet",
+      "type": "application/vnd.apache.parquet",
+      "title": "Populated places",
+      "roles": [
+        "data"
+      ]
+    }
+  }
+}
