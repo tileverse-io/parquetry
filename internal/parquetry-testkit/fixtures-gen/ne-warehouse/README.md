@@ -23,15 +23,15 @@ The warehouse publishes one dotted dataset name per layer:
 | --- | --- | --- |
 | `ne.boundary_lines_land` | 1 | 390 |
 | `ne.coastlines` | 1 | 1428 |
-| `ne.countries` | 8 (one per continent) | 242 |
+| `ne.countries` | 7 (one per continent; Antarctica folded into South America) | 242 |
 | `ne.disputed_areas` | 1 | 28 |
 | `ne.populated_places` | 1 | 1251 |
 
 Every table is Iceberg format-version 3 with a native `geometry` column
 (CRS84, WKB in Parquet's native Geometry logical type). `countries` is split
-into one data file per `CONTINENT` value, each with its own geometry bounds
-(`packed_xy_le`) recorded in the manifest, which lets a bbox query prune whole
-continent files.
+into one data file per `CONTINENT` value (Antarctica folded into the South
+America file, for 7 files), each with its own geometry bounds (`packed_xy_le`)
+recorded in the manifest, which lets a bbox query prune whole continent files.
 
 The generator reuses the pinned `iceberg-geo-testbed` submodule's static-catalog
 writer (`testbed._static_catalog.write_static_catalog`), imported the same way
@@ -103,8 +103,8 @@ item's data asset at the same external GeoParquet part. The type names a store
 lists are the five layer names. Per-layer bboxes come from each NE file's
 GeoParquet footer metadata, never hardcoded.
 
-The committed data points every asset at `http://web/<layer>.parquet`'s base
-`http://web/ne`, the compose-internal nginx hostname the demo image serves the
+The committed data points every asset at `http://web/ne/<layer>.parquet` (base
+`http://web/ne`), the compose-internal nginx hostname the demo image serves the
 NE parts from. `--href-base` overrides that base; `--out` overrides the output
 root, where `catalog.json`, `items.parquet` and the `stac/` subtree are written.
 

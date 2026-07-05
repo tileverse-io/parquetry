@@ -5,6 +5,21 @@ catalog. It serves a GeoParquet file (local, S3, Azure, GCS, or HTTP) as GeoTool
 `SimpleFeature`s, pushing spatial and attribute filtering, column projection, a
 feature cap, and counting down into the parquetry read path.
 
+## Store family
+
+This module registers three read-only DataStore factories, each selected by its
+own required URI parameter:
+
+| Store | Param key | Opens |
+|-------|-----------|-------|
+| **GeoParquet** | `geoparquet` | a GeoParquet file or a directory of them |
+| **STAC GeoParquet** | `geoparquet-stac` | a STAC `catalog.json` or a stac-geoparquet item table (`*.parquet`), auto-detected by extension |
+| **Apache Iceberg** | `iceberg` | a single Iceberg table directory or a whole warehouse root, auto-detected |
+
+The rest of this document covers the **GeoParquet** store; the other two share
+its query pushdown, cloud-storage and feature-id behavior over their own catalog
+source.
+
 ## What it does
 
 - Registers a `DataStoreFactorySpi` (`GeoParquetDataStoreFactory`,

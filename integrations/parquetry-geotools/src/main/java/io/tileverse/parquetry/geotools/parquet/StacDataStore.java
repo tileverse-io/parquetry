@@ -16,8 +16,6 @@
 package io.tileverse.parquetry.geotools.parquet;
 
 import io.tileverse.parquetry.catalog.DatasetCatalog;
-import io.tileverse.parquetry.dataset.GeoParquetDataset;
-import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.geotools.data.CatalogDataStore;
 
 /**
@@ -29,16 +27,6 @@ public final class StacDataStore extends CatalogDataStore {
 
     public StacDataStore(DatasetCatalog catalog) {
         super(catalog);
-        requireGeoParquetDatasets(catalog);
-    }
-
-    private static void requireGeoParquetDatasets(DatasetCatalog catalog) {
-        for (String name : catalog.datasets()) {
-            ParquetDataset dataset = catalog.dataset(name);
-            if (!(dataset instanceof GeoParquetDataset)) {
-                throw new IllegalArgumentException(
-                        "dataset '" + name + "' is not a GeoParquet dataset; this store requires GeoParquet datasets");
-            }
-        }
+        ParquetDatasets.requireGeoParquet(catalog);
     }
 }
