@@ -130,8 +130,9 @@ public final class BatchArrowLayout {
 
         /**
          * Resolves a struct's fields, keyed by the single-segment {@link ColumnPath} the read path uses for a
-         * {@code StructVector}'s children. The codec sorts these keys by {@link ColumnPath#dot()} on both encode and
-         * decode; this resolver only needs the right key set and per-field type, not a particular order.
+         * {@code StructVector}'s children. The fields are inserted in the group's declared child order, which is the
+         * order the codec walks a struct's children on both encode and decode; keeping that order pairs each decoded
+         * child node with its own field.
          */
         private static ColumnType resolveStruct(SchemaNode.Group group) {
             SequencedMap<ColumnPath, ColumnType> fields = new LinkedHashMap<>();

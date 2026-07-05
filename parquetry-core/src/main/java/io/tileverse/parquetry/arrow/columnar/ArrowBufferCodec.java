@@ -18,11 +18,10 @@ package io.tileverse.parquetry.arrow.columnar;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.SequencedMap;
-import java.util.Set;
 
 import io.tileverse.parquetry.arrow.columnar.EncodedBuffer.BufferRole;
 import io.tileverse.parquetry.columnar.BinaryVector;
@@ -59,10 +58,10 @@ import io.tileverse.parquetry.schema.ColumnPath;
  * materializing low-cardinality columns to their full consolidated form.
  *
  * <p>Nested kinds encode recursively. A list holds {@code [validity][int32 offsets]} and one child node for its element
- * vector; a struct holds {@code [validity]} and one child node per field ordered by field path; a map follows Arrow's
- * {@code List<Struct<key, value>>} shape; a Variant holds {@code [validity]} and the metadata and value binary
- * children. Decoding a nested node needs the recursive {@link ColumnType} descriptor rather than a flat leaf type,
- * because the child shape is not recoverable from the buffers alone.
+ * vector; a struct holds {@code [validity]} and one child node per field in the struct's declared field order; a map
+ * follows Arrow's {@code List<Struct<key, value>>} shape; a Variant holds {@code [validity]} and the metadata and value
+ * binary children. Decoding a nested node needs the recursive {@link ColumnType} descriptor rather than a flat leaf
+ * type, because the child shape is not recoverable from the buffers alone.
  *
  * <p>The per-type buffer layouts (validity bitmap, offsets, fixed-size binary, dictionary encoding, and the nested
  * list/struct/map shapes) follow the Apache Arrow columnar format specification.
@@ -252,18 +251,19 @@ public final class ArrowBufferCodec {
     }
 
     /**
-     * Encodes a struct as Arrow Struct: a {@code [validity]} buffer and one child node per field.
-     * {@link StructVector}'s children map does not preserve insertion order, and the encoded node has no field names,
-     * so encode and decode both order the fields by their {@link ColumnPath}. Sorting on both sides pins the child node
-     * positions to the same sequence the decoder walks, which keeps each field paired with its own node.
+     * Encodes a struct as Arrow Struct: a {@code [validity]} buffer and one child node per field. The
+     * {@link StructVector} children map preserves the struct's declared field order (the read-path assembler inserts
+     * fields in schema order). Encode walks that order and {@link #decodeStruct} walks the matching {@link ColumnType}
+     * field order, which pairs each child node with its own field. That is the same order the Arrow schema writers list
+     * a struct's fields in (IPC {@code Field} children, C Data {@code ArrowSchema} children), keeping the exported
+     * child arrays aligned with the exported schema.
      */
     private static EncodedNode encodeStruct(StructVector vector) {
         Validity validity = vector.validity();
         EncodedBuffer validityBuffer = new EncodedBuffer(BufferRole.VALIDITY, ArrowBuffers.encodeValidity(validity));
-        List<ColumnPath> orderedFields = sortedFieldKeys(vector.children().keySet());
-        List<EncodedNode> children = new ArrayList<>(orderedFields.size());
-        for (ColumnPath field : orderedFields) {
-            children.add(encode(vector.children().get(field)));
+        List<EncodedNode> children = new ArrayList<>(vector.children().size());
+        for (ColumnVector child : vector.children().values()) {
+            children.add(encode(child));
         }
         return new EncodedNode(
                 vector.size(),
@@ -271,13 +271,6 @@ public final class ArrowBufferCodec {
                 List.of(validityBuffer),
                 List.copyOf(children),
                 new NodeEncoding.Plain());
-    }
-
-    /** Returns the field keys in a stable order that encode and decode both follow to pin child node positions. */
-    private static List<ColumnPath> sortedFieldKeys(Set<ColumnPath> keys) {
-        List<ColumnPath> ordered = new ArrayList<>(keys);
-        ordered.sort(Comparator.comparing(ColumnPath::dot));
-        return ordered;
     }
 
     /**
@@ -350,12 +343,12 @@ public final class ArrowBufferCodec {
     private static StructVector decodeStruct(EncodedNode node, SequencedMap<ColumnPath, ColumnType> fields) {
         Validity validity = decodeValidity(node);
         int size = node.length();
-        List<ColumnPath> orderedFields = sortedFieldKeys(fields.keySet());
         SequencedMap<ColumnPath, ColumnVector> children = new LinkedHashMap<>();
-        for (int childIndex = 0; childIndex < orderedFields.size(); childIndex++) {
-            ColumnPath field = orderedFields.get(childIndex);
-            ColumnVector child = decode(node.children().get(childIndex), fields.get(field));
-            children.put(field, child);
+        int childIndex = 0;
+        for (Map.Entry<ColumnPath, ColumnType> field : fields.entrySet()) {
+            EncodedNode childNode = node.children().get(childIndex);
+            children.put(field.getKey(), decode(childNode, field.getValue()));
+            childIndex++;
         }
         return new StructVector(children, validity, size);
     }
