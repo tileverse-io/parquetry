@@ -82,18 +82,23 @@ versions without regenerating.
 
 `build_stac_demo.py` builds a small STAC catalog over the same five NE layers,
 committed under `integrations/parquetry-geoserver/demo/data/stac/` in the two
-shapes the STAC DataStore factory auto-detects by URI extension:
+shapes the STAC DataStore factory auto-detects by URI extension. Each layer is
+its own STAC collection (collection id = layer name) with a single item, because
+the five layers have wildly different attribute schemas and one feature type per
+file is the only correct mapping:
 
-- a static JSON catalog: `catalog.json` -> `ne/collection.json` ->
-  `ne/items/<layer>.json` (one item document per layer), the shape
-  `JsonStacReader` parses;
+- a static JSON catalog: `catalog.json` links five child collections, one per
+  layer (`<layer>/collection.json`), each linking its one item
+  (`<layer>/items/<layer>.json`); the shape `JsonStacReader` parses;
 - a stac-geoparquet item-table `items.parquet`, one row per layer with the
   columns `item_id`, `collection`, `bbox_xmin`, `bbox_ymin`, `bbox_xmax`,
-  `bbox_ymax`, `asset_href`, the shape `GeoParquetStacReader` reads.
+  `bbox_ymax`, `asset_href` and `collection` = the layer name; the shape
+  `GeoParquetStacReader` reads (it groups rows by `collection`).
 
-Both flavors describe the same five items in the collection `ne` and point each
-item's data asset at the same external GeoParquet part. Per-layer bboxes come
-from each NE file's GeoParquet footer metadata, never hardcoded.
+Both flavors publish the same five collections named by layer and point each
+item's data asset at the same external GeoParquet part. The type names a store
+lists are the five layer names. Per-layer bboxes come from each NE file's
+GeoParquet footer metadata, never hardcoded.
 
 The committed data points every asset at `http://web/<layer>.parquet`'s base
 `http://web/ne`, the compose-internal nginx hostname the demo image serves the

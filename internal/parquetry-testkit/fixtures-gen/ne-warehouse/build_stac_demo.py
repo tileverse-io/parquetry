@@ -4,26 +4,33 @@
 Turns the five Natural Earth GeoParquet layers under
 `integrations/parquetry-geoserver/demo/data/ne/` into a small STAC catalog
 committed under `.../demo/data/stac/`, in the two shapes the STAC DataStore
-factory auto-detects by URI extension:
+factory auto-detects by URI extension.
 
-  - A static JSON catalog (`catalog.json` -> `ne/collection.json` ->
-    `ne/items/<layer>.json`), the shape `JsonStacReader` parses: a catalog with
-    a child link to one collection, the collection with one item link per layer,
-    and each item document holding a bbox and a single GeoParquet data asset.
-  - A stac-geoparquet item-table (`items.parquet`), the shape
-    `GeoParquetStacReader` reads: one row per layer with the columns `item_id`,
-    `collection`, `bbox_xmin`, `bbox_ymin`, `bbox_xmax`, `bbox_ymax`, and
-    `asset_href`.
+Each NE layer is its own STAC collection (collection id = layer name) holding a
+single item. The five layers have wildly different attribute schemas, and one
+feature type per file is the only correct mapping: a merged collection over
+heterogeneous-schema files would resolve one representative schema and corrupt
+the read of every other part.
 
-Both flavors describe the same five items in the collection `ne`, and both point
+  - The JSON catalog: `catalog.json` links five child collections, one per layer
+    (`<layer>/collection.json`), each linking its one item
+    (`<layer>/items/<layer>.json`). This is the shape `JsonStacReader` parses:
+    a catalog with child links to collections, each with item links, and each
+    item document holding a bbox and a single GeoParquet data asset.
+  - The stac-geoparquet item-table `items.parquet`: one row per layer with the
+    columns `item_id`, `collection`, `bbox_xmin`, `bbox_ymin`, `bbox_xmax`,
+    `bbox_ymax`, `asset_href`, and `collection` set to the layer name. This is
+    the shape `GeoParquetStacReader` reads; it groups rows by `collection`, one
+    collection per layer.
+
+Both flavors publish the same five collections named by layer, and both point
 each item's data asset at the same external GeoParquet part. The default asset
 base is `http://web/ne`, the compose-internal nginx hostname the demo image
 serves the NE parts from; `--href-base` overrides it (a local smoke test points
 it at a directory of the NE parquet files reachable through file storage).
 
 Per-layer bboxes are read from each NE file's GeoParquet footer metadata
-(`geo.columns[primary_column].bbox`), never hardcoded. The collection's spatial
-extent is the union of the five layer bboxes.
+(`geo.columns[primary_column].bbox`), never hardcoded.
 
 Determinism: two runs produce byte-identical output. The JSON documents are
 built as fixed-order dicts and written with `json.dumps(indent=2)` (no
@@ -56,14 +63,11 @@ REPO_ROOT = HERE.parents[3]
 NE_DIR = REPO_ROOT / "integrations" / "parquetry-geoserver" / "demo" / "data" / "ne"
 STAC_DIR = REPO_ROOT / "integrations" / "parquetry-geoserver" / "demo" / "data" / "stac"
 
-# The five NE layers, in a stable order. This order fixes the item links in the
-# collection, the item-table row order, and the collection extent union.
+# The five NE layers, in a stable order. This order fixes the catalog child
+# links and the item-table row order. Each layer is one STAC collection.
 LAYERS = ["boundary_lines_land", "coastlines", "countries", "disputed_areas", "populated_places"]
 
 CATALOG_ID = "natural-earth"
-COLLECTION_ID = "ne"
-COLLECTION_TITLE = "Natural Earth"
-COLLECTION_DESCRIPTION = "Natural Earth vector layers published as GeoParquet"
 CATALOG_DESCRIPTION = "Natural Earth demo STAC catalog"
 LICENSE = "public-domain"
 STAC_VERSION = "1.0.0"
@@ -127,20 +131,20 @@ def read_layer_bbox(layer: str) -> list[float]:
 
 
 def write_json_catalog(out_dir: Path, bboxes: dict[str, list[float]], href_base: str) -> None:
-    """Write the JSON flavor: the catalog, its one collection, and one item
-    document per layer, in the layout JsonStacReader navigates by relative link."""
-    collection_dir = out_dir / COLLECTION_ID
-    items_dir = collection_dir / "items"
-    items_dir.mkdir(parents=True, exist_ok=True)
-
+    """Write the JSON flavor: the catalog and, per layer, its collection and one
+    item document, in the layout JsonStacReader navigates by relative link."""
     write_json(out_dir / "catalog.json", catalog_document())
-    write_json(collection_dir / "collection.json", collection_document(bboxes))
     for layer in LAYERS:
+        collection_dir = out_dir / layer
+        items_dir = collection_dir / "items"
+        items_dir.mkdir(parents=True, exist_ok=True)
+        write_json(collection_dir / "collection.json", collection_document(layer, bboxes[layer]))
         write_json(items_dir / f"{layer}.json", item_document(layer, bboxes[layer], href_base))
 
 
 def catalog_document() -> dict:
-    """The root catalog: a self link and one child link to the collection."""
+    """The root catalog: a self link and one child link per layer collection."""
+    child_links = [{"rel": "child", "href": f"{layer}/collection.json"} for layer in LAYERS]
     return {
         "type": "Catalog",
         "stac_version": STAC_VERSION,
@@ -148,29 +152,28 @@ def catalog_document() -> dict:
         "description": CATALOG_DESCRIPTION,
         "links": [
             {"rel": "self", "href": "catalog.json"},
-            {"rel": "child", "href": f"{COLLECTION_ID}/collection.json"},
+            *child_links,
         ],
     }
 
 
-def collection_document(bboxes: dict[str, list[float]]) -> dict:
-    """The collection: the union spatial extent and one item link per layer, each
-    href relative to the collection document."""
-    item_links = [{"rel": "item", "href": f"items/{layer}.json"} for layer in LAYERS]
+def collection_document(layer: str, bbox: list[float]) -> dict:
+    """One layer's collection: its own spatial extent and its single item link,
+    the href relative to the collection document."""
     return {
         "type": "Collection",
         "stac_version": STAC_VERSION,
-        "id": COLLECTION_ID,
-        "title": COLLECTION_TITLE,
-        "description": COLLECTION_DESCRIPTION,
+        "id": layer,
+        "title": layer_title(layer),
+        "description": f"Natural Earth {layer_title(layer).lower()} as GeoParquet",
         "license": LICENSE,
         "extent": {
-            "spatial": {"bbox": [union_bbox(bboxes)]},
+            "spatial": {"bbox": [bbox]},
             "temporal": {"interval": [[DATETIME, None]]},
         },
         "links": [
             {"rel": "self", "href": "collection.json"},
-            *item_links,
+            {"rel": "item", "href": f"items/{layer}.json"},
         ],
     }
 
@@ -197,7 +200,8 @@ def item_document(layer: str, bbox: list[float], href_base: str) -> dict:
 
 
 def write_item_table(out_dir: Path, bboxes: dict[str, list[float]], href_base: str) -> None:
-    """Write the stac-geoparquet flavor: one item-table row per layer."""
+    """Write the stac-geoparquet flavor: one item-table row per layer, each row's
+    collection set to the layer name."""
     rows = [item_row(layer, bboxes[layer], href_base) for layer in LAYERS]
     table = pa.Table.from_pylist(rows, schema=ITEM_TABLE_SCHEMA)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -205,11 +209,11 @@ def write_item_table(out_dir: Path, bboxes: dict[str, list[float]], href_base: s
 
 
 def item_row(layer: str, bbox: list[float], href_base: str) -> dict:
-    """One item-table row: the item id, its collection, its flat bbox, and the
-    href of its GeoParquet data part."""
+    """One item-table row: the item id, its collection (the layer name), its flat
+    bbox, and the href of its GeoParquet data part."""
     return {
         "item_id": layer,
-        "collection": COLLECTION_ID,
+        "collection": layer,
         "bbox_xmin": bbox[0],
         "bbox_ymin": bbox[1],
         "bbox_xmax": bbox[2],
@@ -218,19 +222,8 @@ def item_row(layer: str, bbox: list[float], href_base: str) -> dict:
     }
 
 
-def union_bbox(bboxes: dict[str, list[float]]) -> list[float]:
-    """The bounding box enclosing every layer bbox."""
-    values = list(bboxes.values())
-    return [
-        min(box[0] for box in values),
-        min(box[1] for box in values),
-        max(box[2] for box in values),
-        max(box[3] for box in values),
-    ]
-
-
 def layer_title(layer: str) -> str:
-    """A readable asset title from a layer slug, e.g. 'boundary_lines_land' ->
+    """A readable title from a layer slug, e.g. 'boundary_lines_land' ->
     'Boundary lines land'."""
     return layer.replace("_", " ").capitalize()
 
@@ -242,37 +235,37 @@ def write_json(path: Path, document: dict) -> None:
 
 
 def verify(out_dir: Path, bboxes: dict[str, list[float]]) -> None:
-    """Self-checks over the written outputs: the JSON catalog links a collection
-    with one item per layer, each item document has a bbox and a GeoParquet data
-    asset, and the item-table has the required columns with one row per layer."""
+    """Self-checks over the written outputs: the catalog links one collection per
+    layer, each collection has its single item with a bbox and a GeoParquet data
+    asset, and the item-table has one row per layer with collection = layer."""
     verify_json_catalog(out_dir, bboxes)
     verify_item_table(out_dir, bboxes)
-    print(f"\ndone: JSON catalog + item-table for {len(LAYERS)} NE layers under {out_dir}")
+    print(f"\ndone: JSON catalog + item-table, one collection per NE layer ({len(LAYERS)}), under {out_dir}")
 
 
 def verify_json_catalog(out_dir: Path, bboxes: dict[str, list[float]]) -> None:
     catalog = load_json(out_dir / "catalog.json")
-    child = link_href(catalog, "child")
-    if child != f"{COLLECTION_ID}/collection.json":
-        raise SystemExit(f"catalog child link is {child!r}, expected the collection")
+    child_hrefs = [link["href"] for link in catalog["links"] if link["rel"] == "child"]
+    expected = [f"{layer}/collection.json" for layer in LAYERS]
+    if child_hrefs != expected:
+        raise SystemExit(f"catalog child links {child_hrefs} do not match the layers")
 
-    collection = load_json(out_dir / child)
-    if collection["type"] != "Collection":
-        raise SystemExit(f"{child} is not a Collection document")
-    item_hrefs = [link["href"] for link in collection["links"] if link["rel"] == "item"]
-    if len(item_hrefs) != len(LAYERS):
-        raise SystemExit(f"collection has {len(item_hrefs)} item links, expected {len(LAYERS)}")
-
-    collection_dir = (out_dir / child).parent
     for layer in LAYERS:
-        item = load_json(collection_dir / "items" / f"{layer}.json")
+        collection = load_json(out_dir / layer / "collection.json")
+        if collection["type"] != "Collection" or collection["id"] != layer:
+            raise SystemExit(f"{layer}/collection.json is not a Collection with id {layer!r}")
+        item_hrefs = [link["href"] for link in collection["links"] if link["rel"] == "item"]
+        if item_hrefs != [f"items/{layer}.json"]:
+            raise SystemExit(f"collection {layer} item links {item_hrefs} unexpected")
+
+        item = load_json(out_dir / layer / "items" / f"{layer}.json")
         if item["id"] != layer:
             raise SystemExit(f"item {layer}.json has id {item['id']!r}")
         if item["bbox"] != bboxes[layer]:
             raise SystemExit(f"item {layer} bbox {item['bbox']} does not match the footer bbox")
         if "data" not in item["assets"] or item["assets"]["data"]["type"] != PARQUET_MEDIA_TYPE:
             raise SystemExit(f"item {layer} has no GeoParquet data asset")
-    print(f"ok  JSON catalog {CATALOG_ID!r} -> collection {COLLECTION_ID!r} with {len(LAYERS)} items")
+    print(f"ok  JSON catalog {CATALOG_ID!r} -> {len(LAYERS)} per-layer collections {LAYERS}")
 
 
 def verify_item_table(out_dir: Path, bboxes: dict[str, list[float]]) -> None:
@@ -285,16 +278,9 @@ def verify_item_table(out_dir: Path, bboxes: dict[str, list[float]]) -> None:
     for row, layer in zip(rows, LAYERS):
         expected = bboxes[layer]
         actual = [row["bbox_xmin"], row["bbox_ymin"], row["bbox_xmax"], row["bbox_ymax"]]
-        if row["item_id"] != layer or row["collection"] != COLLECTION_ID or actual != expected:
+        if row["item_id"] != layer or row["collection"] != layer or actual != expected:
             raise SystemExit(f"item-table row for {layer} does not match its item document")
-    print(f"ok  item-table items.parquet with {len(rows)} rows in collection {COLLECTION_ID!r}")
-
-
-def link_href(document: dict, rel: str) -> str | None:
-    for link in document["links"]:
-        if link["rel"] == rel:
-            return link["href"]
-    return None
+    print(f"ok  item-table items.parquet with {len(rows)} rows, one collection per layer")
 
 
 def load_json(path: Path) -> dict:

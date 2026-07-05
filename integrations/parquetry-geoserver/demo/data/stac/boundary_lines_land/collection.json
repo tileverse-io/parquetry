@@ -1,0 +1,38 @@
+{
+  "type": "Collection",
+  "stac_version": "1.0.0",
+  "id": "boundary_lines_land",
+  "title": "Boundary lines land",
+  "description": "Natural Earth boundary lines land as GeoParquet",
+  "license": "public-domain",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -141.00213640665194,
+          -55.11400074012312,
+          145.9401672711012,
+          70.06481924099897
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          "2024-01-01T00:00:00Z",
+          null
+        ]
+      ]
+    }
+  },
+  "links": [
+    {
+      "rel": "self",
+      "href": "collection.json"
+    },
+    {
+      "rel": "item",
+      "href": "items/boundary_lines_land.json"
+    }
+  ]
+}

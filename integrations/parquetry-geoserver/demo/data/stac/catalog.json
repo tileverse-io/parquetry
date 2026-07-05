@@ -10,7 +10,23 @@
     },
     {
       "rel": "child",
-      "href": "ne/collection.json"
+      "href": "boundary_lines_land/collection.json"
+    },
+    {
+      "rel": "child",
+      "href": "coastlines/collection.json"
+    },
+    {
+      "rel": "child",
+      "href": "countries/collection.json"
+    },
+    {
+      "rel": "child",
+      "href": "disputed_areas/collection.json"
+    },
+    {
+      "rel": "child",
+      "href": "populated_places/collection.json"
     }
   ]
 }

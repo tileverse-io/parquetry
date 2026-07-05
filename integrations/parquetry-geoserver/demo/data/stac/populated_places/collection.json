@@ -1,0 +1,38 @@
+{
+  "type": "Collection",
+  "stac_version": "1.0.0",
+  "id": "populated_places",
+  "title": "Populated places",
+  "description": "Natural Earth populated places as GeoParquet",
+  "license": "public-domain",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -175.2205645,
+          -89.9999998,
+          179.2166471,
+          78.22097104117844
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          "2024-01-01T00:00:00Z",
+          null
+        ]
+      ]
+    }
+  },
+  "links": [
+    {
+      "rel": "self",
+      "href": "collection.json"
+    },
+    {
+      "rel": "item",
+      "href": "items/populated_places.json"
+    }
+  ]
+}
