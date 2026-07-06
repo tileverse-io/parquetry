@@ -31,15 +31,20 @@ import org.geotools.api.feature.simple.SimpleFeatureType;
 import org.geotools.api.filter.Filter;
 import org.geotools.api.filter.FilterFactory;
 import org.geotools.factory.CommonFactoryFinder;
+import org.geotools.geometry.jts.ReferencedEnvelope;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.locationtech.jts.geom.Coordinate;
+import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.Polygon;
 
 import io.tileverse.parquetry.catalog.CatalogOptions;
 import io.tileverse.parquetry.catalog.FilesetCatalog;
+import io.tileverse.parquetry.dataset.GeoParquetDataset;
+import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.io.LocalFileSource;
+import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
 class GeoParquetPushdownIT {
@@ -77,6 +82,27 @@ class GeoParquetPushdownIT {
         return n;
     }
 
+    /** The envelope of a query's features, built by expanding each feature's geometry envelope while iterating. */
+    private static ReferencedEnvelope iteratedBounds(GeoParquetFeatureSource fs, Query query) throws Exception {
+        ReferencedEnvelope envelope = new ReferencedEnvelope(fs.getSchema().getCoordinateReferenceSystem());
+        try (FeatureReader<SimpleFeatureType, SimpleFeature> reader = fs.getReader(query)) {
+            while (reader.hasNext()) {
+                SimpleFeature feature = reader.next();
+                Geometry geometry = (Geometry) feature.getDefaultGeometry();
+                envelope.expandToInclude(geometry.getEnvelopeInternal());
+            }
+        }
+        return envelope;
+    }
+
+    private static void assertSameEnvelope(ReferencedEnvelope actual, ReferencedEnvelope expected) {
+        assertThat(actual).isNotNull();
+        assertThat(actual.getMinX()).isEqualTo(expected.getMinX());
+        assertThat(actual.getMaxX()).isEqualTo(expected.getMaxX());
+        assertThat(actual.getMinY()).isEqualTo(expected.getMinY());
+        assertThat(actual.getMaxY()).isEqualTo(expected.getMaxY());
+    }
+
     @Test
     void attributeFilterMatchesBruteForceCount(@TempDir Path dir) throws Exception {
         try (GeoParquetDataStore store = store(dir)) {
@@ -95,6 +121,64 @@ class GeoParquetPushdownIT {
             int counted = fs.getCount(q);
             int read = count(fs.getReader(q));
             assertThat(counted).isEqualTo(read).isPositive();
+        }
+    }
+
+    @Test
+    void boundsForPushableFilterEqualIteratedEnvelope(@TempDir Path dir) throws Exception {
+        try (GeoParquetDataStore store = store(dir)) {
+            GeoParquetFeatureSource fs = (GeoParquetFeatureSource) store.getFeatureSource("example");
+            Query q = new Query("example", FF.equals(FF.property("continent"), FF.literal("Africa")));
+            ReferencedEnvelope expected = iteratedBounds(fs, q);
+            assertThat(expected.isNull()).isFalse();
+
+            ReferencedEnvelope bounds = fs.getBoundsInternal(q);
+
+            assertSameEnvelope(bounds, expected);
+            assertThat(bounds.getCoordinateReferenceSystem())
+                    .isEqualTo(fs.getSchema().getCoordinateReferenceSystem());
+        }
+    }
+
+    @Test
+    void unfilteredBoundsEqualFullExtent(@TempDir Path dir) throws Exception {
+        Path file = TestCorpus.extractFile("geoparquet/examples/example.parquet", dir);
+        FilesetCatalog catalog = FilesetCatalog.open(
+                LocalFileSource.file(file),
+                CatalogOptions.builder().datasetName("example").build());
+        try (GeoParquetDataStore store = new GeoParquetDataStore(catalog)) {
+            BoundingBox declared = declaredPrimaryColumnBbox(catalog);
+
+            GeoParquetFeatureSource fs = (GeoParquetFeatureSource) store.getFeatureSource("example");
+            ReferencedEnvelope bounds = fs.getBoundsInternal(new Query("example"));
+
+            // Under the trust rule the unfiltered answer is the file's declared extent, not the exact geometry union
+            // (this file's metadata bbox is rounded). The expected side must come from an independent reader of that
+            // box - the GeoParquet "geo" metadata document - because fs.getBounds() routes through the same
+            // getBoundsInternal under test and comparing against it would only prove determinism.
+            assertThat(bounds).isNotNull();
+            assertThat(bounds.getMinX()).isEqualTo(declared.xmin());
+            assertThat(bounds.getMaxX()).isEqualTo(declared.xmax());
+            assertThat(bounds.getMinY()).isEqualTo(declared.ymin());
+            assertThat(bounds.getMaxY()).isEqualTo(declared.ymax());
+        }
+    }
+
+    /** The fixture's declared extent, read straight from the GeoParquet metadata's primary-column bbox. */
+    private static BoundingBox declaredPrimaryColumnBbox(FilesetCatalog catalog) {
+        GeoParquetDataset dataset = (GeoParquetDataset) catalog.dataset("example");
+        GeoParquetMetadata geo = dataset.geoMetadata().orElseThrow();
+        return geo.columns().get(geo.primaryColumn()).bbox().orElseThrow();
+    }
+
+    @Test
+    void boundsForResidualFilterAreUnknown(@TempDir Path dir) throws Exception {
+        try (GeoParquetDataStore store = store(dir)) {
+            GeoParquetFeatureSource fs = (GeoParquetFeatureSource) store.getFeatureSource("example");
+            // PropertyIsLike never pushes down; the residual means the pushed predicate over-approximates the query,
+            // an exact bounds cannot be promised, and the caller must compute it by iterating.
+            Query q = new Query("example", FF.like(FF.property("name"), "*a*"));
+            assertThat(fs.getBoundsInternal(q)).isNull();
         }
     }
 

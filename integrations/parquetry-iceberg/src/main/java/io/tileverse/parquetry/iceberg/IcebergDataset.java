@@ -15,6 +15,8 @@
  */
 package io.tileverse.parquetry.iceberg;
 
+import java.io.InterruptedIOException;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -27,6 +29,7 @@ import java.util.OptionalLong;
 import java.util.SequencedSet;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.StructuredTaskScope;
 import java.util.stream.Stream;
 
 import com.google.errorprone.annotations.MustBeClosed;
@@ -55,7 +58,9 @@ import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.filter.prune.FilePruner;
 import io.tileverse.parquetry.filter.prune.FileStats;
+import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.iceberg.IcebergReconciliation.Reconciliation;
+import io.tileverse.parquetry.internal.filter.spatial.BoundsAccumulator;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -290,6 +295,94 @@ final class IcebergDataset implements ParquetDataset {
             }
         }
         return total;
+    }
+
+    /**
+     * The exact bounds of the {@code predicate}-matching rows over the primary geometry column. No cheap geometry
+     * aggregate exists: the manifest records only conservative per-file boxes. Every call, unfiltered or not, visits
+     * the survivor files. Each file is bounded on its own virtual thread and folded into one shared accumulator.
+     */
+    @Override
+    public Optional<BoundingBox> bounds(Predicate predicate, ReadOptions options) {
+        return boundsOfSurvivors(prune(predicate).survivorIndices(), predicate, options);
+    }
+
+    /**
+     * Folds each survivor's exact per-file bounds into one shared accumulator across a fan-out. Before a file runs the
+     * engine, its footer geometry box is tested against the bounds accumulated so far, and a file those bounds already
+     * cover is skipped: a box already enclosed extends the extent by nothing. A file whose footer records no geometry
+     * box always runs the engine. A failure in any file cancels the rest.
+     */
+    private Optional<BoundingBox> boundsOfSurvivors(List<Integer> survivors, Predicate predicate, ReadOptions options) {
+        if (survivors.isEmpty()) {
+            return Optional.empty();
+        }
+        BoundsAccumulator accumulator = new BoundsAccumulator();
+        try (StructuredTaskScope<Void, Void> scope = StructuredTaskScope.open()) {
+            for (int index : survivors) {
+                scope.fork(() -> foldOneFileBounds(index, predicate, options, accumulator));
+            }
+            scope.join();
+            return accumulator.snapshot();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            InterruptedIOException interrupted = new InterruptedIOException("Interrupted while bounding dataset rows");
+            interrupted.initCause(e);
+            throw new UncheckedIOException(interrupted);
+        } catch (StructuredTaskScope.FailedException e) {
+            throw asUnchecked(e.getCause());
+        }
+    }
+
+    /**
+     * Folds one survivor data file's matching-row bounds into the shared accumulator. The predicate folds through the
+     * same {@link #oneFileQuery} the reads use: field-id reconciliation, partition constants, and delete predicates
+     * ANDed in. A merge-on-read deleted row therefore never contributes, and a file whose folded query is always false
+     * contributes nothing. A file whose footer geometry box the accumulated bounds already cover is skipped before the
+     * engine runs. Runs on a fan-out virtual thread.
+     */
+    private Void foldOneFileBounds(int index, Predicate predicate, ReadOptions options, BoundsAccumulator accumulator) {
+        Query query = oneFileQuery(index, predicate, Projection.ALL);
+        if (query == null) {
+            return null;
+        }
+        if (accumulatedBoundsCoverFooter(index, accumulator)) {
+            return null;
+        }
+        perFile(index).bounds(query, options).ifPresent(accumulator::union);
+        return null;
+    }
+
+    /**
+     * Whether the accumulated bounds already cover this file's footer geometry box, read from the opened data file. The
+     * skip fires only when {@link FileStats#geometryBounds()} records exactly one entry: with several geometry columns
+     * the declared primary the engine bounds may differ from an arbitrary map entry, and a skip keyed to the wrong
+     * column could under-report; with a single entry the engine's fallback resolution lands on that same entry whenever
+     * the declared primary has statistics at all. A file with no footer geometry box is never reported as covered
+     * either: an unknown extent might reach past the accumulated bounds.
+     */
+    private boolean accumulatedBoundsCoverFooter(int index, BoundsAccumulator accumulator) {
+        Map<ColumnPath, BoundingBox> footerBounds = perFile(index).fileStats().geometryBounds();
+        if (footerBounds.size() != 1) {
+            return false;
+        }
+        BoundingBox footerBox = footerBounds.values().iterator().next();
+        return accumulator.covers(footerBox);
+    }
+
+    /**
+     * Rethrows a per-file bounds failure with the type a sequential visit would have thrown. The engine's per-file
+     * bounds declares no checked exception: the cause is a {@link RuntimeException} or an {@link Error}, with anything
+     * else falling back to {@link IllegalStateException}.
+     */
+    private static RuntimeException asUnchecked(Throwable cause) {
+        if (cause instanceof RuntimeException runtime) {
+            return runtime;
+        }
+        if (cause instanceof Error error) {
+            throw error;
+        }
+        return new IllegalStateException("Bounding a dataset file failed", cause);
     }
 
     @Override

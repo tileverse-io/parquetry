@@ -15,6 +15,8 @@
  */
 package io.tileverse.parquetry.dataset;
 
+import java.io.InterruptedIOException;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -25,6 +27,7 @@ import java.util.OptionalLong;
 import java.util.SequencedSet;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.StructuredTaskScope;
 import java.util.stream.Stream;
 
 import com.google.errorprone.annotations.MustBeClosed;
@@ -46,6 +49,7 @@ import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.filter.prune.FilePruner;
 import io.tileverse.parquetry.filter.prune.FileStats;
 import io.tileverse.parquetry.format.BoundingBox;
+import io.tileverse.parquetry.internal.filter.spatial.BoundsAccumulator;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -152,7 +156,106 @@ public final class FilesetDataset implements GeoParquetDataset {
         if (isUnfiltered(predicate)) {
             return aggregatedBounds;
         }
-        return Optional.empty();
+        return boundsOfSurvivors(pruneSurvivors(predicate), predicate, options);
+    }
+
+    /**
+     * The exact bounds of the {@code predicate}-matching rows across the survivor files, each file visited on its own
+     * virtual thread and folded into one shared accumulator. Before a file runs the engine, its footer geometry box is
+     * tested against the bounds accumulated so far, and a file those bounds already cover is skipped: a box already
+     * enclosed extends the extent by nothing. A file whose footer records no geometry box always runs the engine. A
+     * failure in any file cancels the rest.
+     */
+    private Optional<BoundingBox> boundsOfSurvivors(List<Integer> survivors, Predicate predicate, ReadOptions options) {
+        if (survivors.isEmpty()) {
+            return Optional.empty();
+        }
+        BoundsAccumulator accumulator = new BoundsAccumulator();
+        try (StructuredTaskScope<Void, Void> scope = StructuredTaskScope.open()) {
+            for (int index : survivors) {
+                scope.fork(() -> foldOneFileBounds(index, predicate, options, accumulator));
+            }
+            scope.join();
+            return accumulator.snapshot();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            InterruptedIOException interrupted = new InterruptedIOException("Interrupted while bounding dataset rows");
+            interrupted.initCause(e);
+            throw new UncheckedIOException(interrupted);
+        } catch (StructuredTaskScope.FailedException e) {
+            throw asUnchecked(e.getCause());
+        }
+    }
+
+    /**
+     * Folds one survivor file's matching-row bounds into the shared accumulator. The predicate folds against the file's
+     * synthetic partition constants exactly as its reads fold it, through the same {@link #oneFileQuery} the reads use;
+     * a file whose folded query is always false contributes nothing. A file whose footer geometry box the accumulated
+     * bounds already cover is skipped before the engine runs. Runs on a fan-out virtual thread.
+     */
+    private Void foldOneFileBounds(int index, Predicate predicate, ReadOptions options, BoundsAccumulator accumulator) {
+        Query query = oneFileQuery(index, predicate, Projection.ALL);
+        if (query == null) {
+            return null;
+        }
+        if (accumulatedBoundsCoverFooter(index, accumulator)) {
+            return null;
+        }
+        perFile(index).bounds(query, options).ifPresent(accumulator::union);
+        return null;
+    }
+
+    /**
+     * Whether the accumulated bounds already cover this file's footer geometry box. Partition statistics record no
+     * geometry box. The box is read from the opened file's footer, resolved to the same geometry column the engine
+     * bounds. A file whose footer records no box for that column is never reported as covered: an unknown extent might
+     * reach past the accumulated bounds, and skipping it could lose rows.
+     */
+    private boolean accumulatedBoundsCoverFooter(int index, BoundsAccumulator accumulator) {
+        Optional<BoundingBox> footerBox = footerSkipBox(index);
+        return footerBox.isPresent() && accumulator.covers(footerBox.orElseThrow());
+    }
+
+    /**
+     * The footer geometry box the containment skip tests, resolved to the column the engine bounds: the declared
+     * primary geometry column when the fileset's {@code "geo"} metadata names one, otherwise the first entry of the
+     * per-file {@link FileStats#geometryBounds()}. A declared primary the file records no box for yields no box,
+     * keeping the file in the scan. The fallback reads the first entry of the one map instance this method obtains;
+     * that matches the engine's own no-metadata fallback, which reads the first key of an equivalent immutable
+     * geometry-bounds map whose iteration order, though unspecified, is fixed for the run.
+     */
+    private Optional<BoundingBox> footerSkipBox(int index) {
+        Map<ColumnPath, BoundingBox> footerBounds = perFile(index).fileStats().geometryBounds();
+        Optional<ColumnPath> primary = declaredPrimaryColumn();
+        if (primary.isPresent()) {
+            return Optional.ofNullable(footerBounds.get(primary.orElseThrow()));
+        }
+        return footerBounds.values().stream().findFirst();
+    }
+
+    /**
+     * The fileset's declared primary geometry column, as the engine resolves it, or empty when the metadata names none.
+     */
+    private Optional<ColumnPath> declaredPrimaryColumn() {
+        return geoMetadata
+                .map(GeoParquetMetadata::primaryColumn)
+                .filter(primary -> !primary.isBlank())
+                .map(primary -> ColumnPath.of(primary.split("\\.")));
+    }
+
+    /**
+     * Rethrows a per-file bounds failure with the type a sequential visit would have thrown. The engine's per-file
+     * bounds declares no checked exception: the cause is a {@link RuntimeException} or an {@link Error}, with anything
+     * else falling back to {@link IllegalStateException}.
+     */
+    private static RuntimeException asUnchecked(Throwable cause) {
+        if (cause instanceof RuntimeException runtime) {
+            return runtime;
+        }
+        if (cause instanceof Error error) {
+            throw error;
+        }
+        return new IllegalStateException("Bounding a dataset file failed", cause);
     }
 
     @Override

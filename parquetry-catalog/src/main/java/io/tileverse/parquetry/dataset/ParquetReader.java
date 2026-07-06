@@ -15,6 +15,7 @@
  */
 package io.tileverse.parquetry.dataset;
 
+import java.util.Optional;
 import java.util.stream.Stream;
 
 import com.google.errorprone.annotations.MustBeClosed;
@@ -23,6 +24,7 @@ import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -60,4 +62,15 @@ public interface ParquetReader {
 
     /** Counts the matching rows without assembling any record. */
     long count(Predicate predicate, ReadOptions options);
+
+    /**
+     * The exact bounding box of the rows matching {@code predicate}, over the primary geometry column. Computed like
+     * {@link #count}: metadata answers what it can, and only the remainder reads the geometry column. Empty when there
+     * is no geometry column or no row matches. Cost is count-like, not constant. The box is exact relative to the
+     * file's declared geometry statistics, which are trusted as tight; a writer that declared rounded boxes widens the
+     * answer accordingly.
+     */
+    default Optional<BoundingBox> bounds(Predicate predicate, ReadOptions options) {
+        return Optional.empty();
+    }
 }
