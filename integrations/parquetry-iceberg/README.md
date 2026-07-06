@@ -43,7 +43,7 @@ clear message rather than returning wrong rows. The `Spec` column notes the Iceb
 | Type promotion `decimal` precision widening | v1+ | Planned | `int`->`long` and `float`->`double` work; decimal widening does not yet |
 | Added column of `binary` / `geometry` / `geography` | v1+/v3 | Planned | added scalar columns read as null; these fail fast |
 | Column default values | v3 | Full | an added column's `initial-default` reads back for files written before the column existed (primitive types: `int`/`long`/`float`/`double`/`boolean`/`date`/`string`); a non-primitive default fails fast |
-| Name mapping for id-less files | v1+ | Partial | best-effort name fallback, not the spec's `name-mapping` document |
+| Name mapping for id-less files | v1+ | Full | `schema.name-mapping.default` honored; implicit current-schema mapping when the property is absent |
 
 ### Reads and pruning
 

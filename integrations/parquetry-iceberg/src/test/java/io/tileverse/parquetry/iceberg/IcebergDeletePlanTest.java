@@ -61,7 +61,8 @@ class IcebergDeletePlanTest {
     @Test
     void resolvesEveryDeletedPositionForTheReferencedDataFile() throws Exception {
         Fixture fixture = openPositional();
-        IcebergDeletePlan plan = IcebergDeletePlan.of(fixture.snapshot().deleteFiles(), fixture.io(), null);
+        IcebergDeletePlan plan =
+                IcebergDeletePlan.of(fixture.snapshot().deleteFiles(), fixture.io(), null, IcebergNameMapping.empty());
 
         RowPositionSet deleted =
                 plan.positionsFor(fixture.snapshot().dataFiles().get(0)).orElseThrow();
@@ -79,7 +80,8 @@ class IcebergDeletePlanTest {
         DataFileRef original = fixture.snapshot().dataFiles().get(0);
         long deleteSequence = fixture.snapshot().deleteFiles().get(0).dataSequenceNumber();
         DataFileRef sameSequence = withSequenceNumber(original, deleteSequence);
-        IcebergDeletePlan plan = IcebergDeletePlan.of(fixture.snapshot().deleteFiles(), fixture.io(), null);
+        IcebergDeletePlan plan =
+                IcebergDeletePlan.of(fixture.snapshot().deleteFiles(), fixture.io(), null, IcebergNameMapping.empty());
 
         assertThat(plan.positionsFor(sameSequence).orElseThrow().cardinality()).isEqualTo(110L);
     }
@@ -90,7 +92,8 @@ class IcebergDeletePlanTest {
         DataFileRef original = fixture.snapshot().dataFiles().get(0);
         long afterTheDelete = fixture.snapshot().deleteFiles().get(0).dataSequenceNumber() + 1;
         DataFileRef newer = withSequenceNumber(original, afterTheDelete);
-        IcebergDeletePlan plan = IcebergDeletePlan.of(fixture.snapshot().deleteFiles(), fixture.io(), null);
+        IcebergDeletePlan plan =
+                IcebergDeletePlan.of(fixture.snapshot().deleteFiles(), fixture.io(), null, IcebergNameMapping.empty());
 
         assertThat(plan.positionsFor(newer)).isEmpty();
     }
@@ -100,7 +103,8 @@ class IcebergDeletePlanTest {
         Fixture fixture = openPositional();
         DataFileRef original = fixture.snapshot().dataFiles().get(0);
         DataFileRef unreferenced = withLocation(original, "file:///iceberg-deletes/positional/data/other.parquet");
-        IcebergDeletePlan plan = IcebergDeletePlan.of(fixture.snapshot().deleteFiles(), fixture.io(), null);
+        IcebergDeletePlan plan =
+                IcebergDeletePlan.of(fixture.snapshot().deleteFiles(), fixture.io(), null, IcebergNameMapping.empty());
 
         assertThat(plan.positionsFor(unreferenced)).isEmpty();
     }
@@ -108,7 +112,7 @@ class IcebergDeletePlanTest {
     @Test
     void theEmptyPlanAppliesNoDeletes() {
         DataFileRef anyDataFile = new DataFileRef("x", 0L, 0L, null, Map.of(), Map.of(), Map.of(), Map.of());
-        IcebergDeletePlan plan = IcebergDeletePlan.of(List.of(), null, null);
+        IcebergDeletePlan plan = IcebergDeletePlan.of(List.of(), null, null, IcebergNameMapping.empty());
 
         assertThat(plan.isEmpty()).isTrue();
         assertThat(plan.positionsFor(anyDataFile)).isEmpty();
@@ -118,7 +122,7 @@ class IcebergDeletePlanTest {
     void anEqualityDeleteDoesNotApplyToADataFileAtItsOwnSequence() {
         DeleteFileRef equalityDelete = equalityDeleteAtSequence(2L);
         DataFileRef sameSequence = dataFileAtSequence(2L);
-        IcebergDeletePlan plan = IcebergDeletePlan.of(List.of(equalityDelete), null, null);
+        IcebergDeletePlan plan = IcebergDeletePlan.of(List.of(equalityDelete), null, null, IcebergNameMapping.empty());
 
         assertThat(plan.equalityDeletesFor(sameSequence)).isEmpty();
     }
@@ -127,7 +131,7 @@ class IcebergDeletePlanTest {
     void anEqualityDeleteDoesNotApplyToADataFileNewerThanTheDelete() {
         DeleteFileRef equalityDelete = equalityDeleteAtSequence(2L);
         DataFileRef newer = dataFileAtSequence(3L);
-        IcebergDeletePlan plan = IcebergDeletePlan.of(List.of(equalityDelete), null, null);
+        IcebergDeletePlan plan = IcebergDeletePlan.of(List.of(equalityDelete), null, null, IcebergNameMapping.empty());
 
         assertThat(plan.equalityDeletesFor(newer)).isEmpty();
     }
@@ -136,7 +140,7 @@ class IcebergDeletePlanTest {
     void anEqualityDeleteDoesNotApplyAcrossAPartitionMismatch() {
         DeleteFileRef equalityDelete = equalityDeleteAtSequence(2L, Map.of(1000, "a"));
         DataFileRef otherPartition = dataFileAtSequence(1L, Map.of(1000, "b"));
-        IcebergDeletePlan plan = IcebergDeletePlan.of(List.of(equalityDelete), null, null);
+        IcebergDeletePlan plan = IcebergDeletePlan.of(List.of(equalityDelete), null, null, IcebergNameMapping.empty());
 
         assertThat(plan.equalityDeletesFor(otherPartition)).isEmpty();
     }
@@ -176,7 +180,8 @@ class IcebergDeletePlanTest {
         Fixture fixture = openEquality();
         DataFileRef dataFile = fixture.snapshot().dataFiles().get(0);
         DeleteFileRef equalityDelete = fixture.snapshot().deleteFiles().get(0);
-        IcebergDeletePlan plan = IcebergDeletePlan.of(fixture.snapshot().deleteFiles(), fixture.io(), fixture.schema());
+        IcebergDeletePlan plan = IcebergDeletePlan.of(
+                fixture.snapshot().deleteFiles(), fixture.io(), fixture.schema(), IcebergNameMapping.empty());
 
         assertThat(dataFile.dataSequenceNumber()).isLessThan(equalityDelete.dataSequenceNumber());
         Optional<Predicate> keep = plan.equalityDeletesFor(dataFile);
@@ -188,7 +193,8 @@ class IcebergDeletePlanTest {
         Fixture fixture = openDeletionVectors();
         DeleteFileRef deletionVector = onlyDeletionVector(fixture.snapshot());
         DataFileRef referenced = referencedDataFile(deletionVector, deletionVector.dataSequenceNumber() - 1);
-        IcebergDeletePlan plan = IcebergDeletePlan.of(fixture.snapshot().deleteFiles(), fixture.io(), null);
+        IcebergDeletePlan plan =
+                IcebergDeletePlan.of(fixture.snapshot().deleteFiles(), fixture.io(), null, IcebergNameMapping.empty());
 
         RowPositionSet deleted = plan.positionsFor(referenced).orElseThrow();
 
@@ -203,7 +209,8 @@ class IcebergDeletePlanTest {
         Fixture fixture = openDeletionVectors();
         DeleteFileRef deletionVector = onlyDeletionVector(fixture.snapshot());
         DataFileRef newer = referencedDataFile(deletionVector, deletionVector.dataSequenceNumber() + 1);
-        IcebergDeletePlan plan = IcebergDeletePlan.of(fixture.snapshot().deleteFiles(), fixture.io(), null);
+        IcebergDeletePlan plan =
+                IcebergDeletePlan.of(fixture.snapshot().deleteFiles(), fixture.io(), null, IcebergNameMapping.empty());
 
         assertThat(plan.positionsFor(newer)).isEmpty();
     }
@@ -214,7 +221,8 @@ class IcebergDeletePlanTest {
         DeleteFileRef deletionVector = onlyDeletionVector(fixture.snapshot());
         DataFileRef otherFile = dataFileLocatedAt(
                 "file:///iceberg-deletes/deletion-vectors/data/other.parquet", deletionVector.dataSequenceNumber() - 1);
-        IcebergDeletePlan plan = IcebergDeletePlan.of(fixture.snapshot().deleteFiles(), fixture.io(), null);
+        IcebergDeletePlan plan =
+                IcebergDeletePlan.of(fixture.snapshot().deleteFiles(), fixture.io(), null, IcebergNameMapping.empty());
 
         assertThat(plan.positionsFor(otherFile)).isEmpty();
     }
@@ -226,8 +234,8 @@ class IcebergDeletePlanTest {
         DataFileRef referenced = referencedDataFile(deletionVector, deletionVector.dataSequenceNumber() - 1);
         DeleteFileRef unreadablePositional =
                 positionalDeleteFor(referenced.location(), deletionVector.dataSequenceNumber());
-        IcebergDeletePlan plan =
-                IcebergDeletePlan.of(List.of(deletionVector, unreadablePositional), fixture.io(), null);
+        IcebergDeletePlan plan = IcebergDeletePlan.of(
+                List.of(deletionVector, unreadablePositional), fixture.io(), null, IcebergNameMapping.empty());
 
         RowPositionSet deleted = plan.positionsFor(referenced).orElseThrow();
 

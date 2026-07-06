@@ -50,13 +50,39 @@ class IcebergReconciliationTest {
     }
 
     @Test
-    void passesThroughWhenFileIsIdLess() {
+    void reconcilesAnUnresolvedIdlessFileToAbsentFields() {
         IcebergSchema table = tableOf(field(1, "id", "long"));
         ParquetSchema file = fileSchema(leaf("id", PrimitiveKind.INT64, -1));
 
         Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file), Map.of());
 
+        assertThat(result.passThrough()).isFalse();
+        assertThat(result.columns())
+                .containsExactly(new Projection.Column.Null(ColumnPath.of("id"), new Value.LongVal(0L)));
+    }
+
+    @Test
+    void passesThroughAnIdlessFileResolvedByTheImplicitMapping() {
+        IcebergSchema table = tableOf(field(1, "id", "long"));
+        ParquetSchema file = fileSchema(leaf("id", PrimitiveKind.INT64, -1));
+        IcebergNameMapping mapping = IcebergNameMapping.fromSchema(List.of(field(1, "id", "long")));
+
+        Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file, mapping), Map.of());
+
         assertThat(result.passThrough()).isTrue();
+    }
+
+    @Test
+    void reconcilesAnIdlessRenameThroughAMappingAlias() {
+        IcebergSchema table = tableOf(field(2, "count", "long"));
+        ParquetSchema file = fileSchema(leaf("n", PrimitiveKind.INT64, -1));
+        IcebergNameMapping mapping = IcebergNameMapping.fromJson("[{\"field-id\": 2, \"names\": [\"n\", \"count\"]}]");
+
+        Reconciliation result = IcebergReconciliation.reconcile(table, IcebergFileSchema.of(file, mapping), Map.of());
+
+        assertThat(result.passThrough()).isFalse();
+        assertThat(result.columns())
+                .containsExactly(new Projection.Column.Physical(ColumnPath.of("count"), ColumnPath.of("n")));
     }
 
     @Test

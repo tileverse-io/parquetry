@@ -103,6 +103,7 @@ final class IcebergDataset implements ParquetDataset {
     private final List<ByteRangeSource> sources;
     private final IcebergDeletePlan deletePlan;
     private final int formatVersion;
+    private final IcebergNameMapping nameMapping;
     private final OpenOptions openOptions;
     private final Map<Integer, ParquetSource> perFileDatasets = new ConcurrentHashMap<>();
 
@@ -119,6 +120,7 @@ final class IcebergDataset implements ParquetDataset {
             List<ByteRangeSource> sources,
             IcebergDeletePlan deletePlan,
             int formatVersion,
+            IcebergNameMapping nameMapping,
             OpenOptions openOptions) {
         this.name = Objects.requireNonNull(name, "name");
         this.snapshot = Objects.requireNonNull(snapshot, "snapshot");
@@ -129,6 +131,7 @@ final class IcebergDataset implements ParquetDataset {
         this.sources = List.copyOf(sources);
         this.deletePlan = Objects.requireNonNull(deletePlan, "deletePlan");
         this.formatVersion = formatVersion;
+        this.nameMapping = Objects.requireNonNull(nameMapping, "nameMapping");
         this.openOptions = Objects.requireNonNull(openOptions, "openOptions");
     }
 
@@ -354,9 +357,9 @@ final class IcebergDataset implements ParquetDataset {
      * The one-file {@link Query} for the data file at {@code index}, reconciled against the table's current schema by
      * field id.
      *
-     * <p>A file that matches the table by name (or has no field ids) is read untouched by name through the identity
-     * {@link Query#of}, which preserves nested and lineage columns the table schema does not model and keeps the corpus
-     * fast path free of any output shaping.
+     * <p>A file that matches the table by name (including an id-less file whose mapped columns match) is read untouched
+     * by name through the identity {@link Query#of}, which preserves nested and lineage columns the table schema does
+     * not model and keeps the corpus fast path free of any output shaping.
      *
      * <p>An evolved file is read through a reconciled output shape. The predicate (already ANDed with any equality
      * anti-predicate) is folded against the columns the table adds (which are null in this file) and against the
@@ -379,7 +382,7 @@ final class IcebergDataset implements ParquetDataset {
         Map<Integer, Value> partitionConstants =
                 IcebergPartitionValues.constantsFor(partitionSpec, ref.partitionValues());
         ParquetSchema fileSchema = perFile(index).schema();
-        IcebergFileSchema file = IcebergFileSchema.of(fileSchema);
+        IcebergFileSchema file = IcebergFileSchema.of(fileSchema, nameMapping);
         Reconciliation recon = IcebergReconciliation.reconcile(icebergSchema, file, partitionConstants);
         Predicate withEquality = andEqualityDeletes(predicate, equalityDeletes);
         if (recon.passThrough()) {
@@ -452,10 +455,10 @@ final class IcebergDataset implements ParquetDataset {
     }
 
     /**
-     * The file's materialized reserved lineage column, located by reserved field id. A file written without Iceberg
-     * field ids cannot be matched by id; per the {@link IcebergFileSchema} contract the lookup then falls back to the
-     * reserved name, keeping the SELECT-* exclusion and the projection rewrite consistent for such files. A file that
-     * has field ids never falls back: a column merely named like a reserved one is user data there.
+     * The file's materialized reserved lineage column, located by reserved field id. Only a file where nothing resolves
+     * by field id (no embedded ids and no mapping match) falls back to the reserved name, keeping the SELECT-*
+     * exclusion and the projection rewrite consistent for such files. A file whose id index resolved anything never
+     * falls back: a column merely named like a reserved one is user data there.
      */
     static Optional<IcebergFileSchema.FileColumn> materializedLineageColumn(
             IcebergFileSchema file, int reservedFieldId, ColumnPath reservedName) {

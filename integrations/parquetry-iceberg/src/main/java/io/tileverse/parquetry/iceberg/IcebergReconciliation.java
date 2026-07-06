@@ -75,9 +75,6 @@ final class IcebergReconciliation {
     }
 
     private static boolean canPassThrough(IcebergSchema table, IcebergFileSchema file) {
-        if (!file.hasFieldIds()) {
-            return true;
-        }
         for (IcebergField field : table.fields()) {
             if (!isSatisfiedAsIs(field, file)) {
                 return false;

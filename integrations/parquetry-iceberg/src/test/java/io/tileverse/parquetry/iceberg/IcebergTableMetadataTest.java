@@ -259,6 +259,51 @@ class IcebergTableMetadataTest {
                 .hasMessageContaining("born");
     }
 
+    @Test
+    void parsesTheNameMappingProperty() {
+        String json = metadataWithProperties(
+                "{\"schema.name-mapping.default\": \"[{\\\"field-id\\\": 1, \\\"names\\\": [\\\"id\\\"]}]\"}");
+
+        IcebergTableMetadata metadata = IcebergTableMetadata.read(json);
+
+        assertThat(metadata.nameMapping()).isPresent();
+        assertThat(metadata.nameMapping().orElseThrow().idFor("id")).hasValue(1);
+    }
+
+    @Test
+    void hasNoNameMappingWhenThePropertyIsAbsent() {
+        String json = metadataWithFields("""
+                {"id": 1, "name": "id", "type": "long", "required": true}
+                """);
+
+        assertThat(IcebergTableMetadata.read(json).nameMapping()).isEmpty();
+    }
+
+    @Test
+    void hasNoNameMappingWhenThePropertyIsNull() {
+        String json = metadataWithProperties("{\"schema.name-mapping.default\": null}");
+
+        assertThat(IcebergTableMetadata.read(json).nameMapping()).isEmpty();
+    }
+
+    @Test
+    void rejectsAMalformedNameMappingAtOpen() {
+        String json = metadataWithProperties("{\"schema.name-mapping.default\": \"{ not json\"}");
+
+        assertThatThrownBy(() -> IcebergTableMetadata.read(json))
+                .isInstanceOf(IcebergFormatException.class)
+                .hasMessageContaining("schema.name-mapping.default");
+    }
+
+    @Test
+    void rejectsANonStringNameMappingProperty() {
+        String json = metadataWithProperties("{\"schema.name-mapping.default\": 42}");
+
+        assertThatThrownBy(() -> IcebergTableMetadata.read(json))
+                .isInstanceOf(IcebergFormatException.class)
+                .hasMessageContaining("schema.name-mapping.default");
+    }
+
     private static String metadataWithFields(String fields) {
         return """
                 {
@@ -279,6 +324,29 @@ class IcebergTableMetadataTest {
                   ]
                 }
                 """.formatted(fields);
+    }
+
+    private static String metadataWithProperties(String properties) {
+        return """
+                {
+                  "format-version": 2,
+                  "location": "file:///t",
+                  "current-snapshot-id": 1,
+                  "properties": %s,
+                  "snapshots": [
+                    {"snapshot-id": 1, "timestamp-ms": 10, "manifest-list": "file:///t/m.avro"}
+                  ],
+                  "current-schema-id": 0,
+                  "schemas": [
+                    {
+                      "schema-id": 0,
+                      "fields": [
+                        {"id": 1, "name": "id", "type": "long", "required": true}
+                      ]
+                    }
+                  ]
+                }
+                """.formatted(properties);
     }
 
     @Test
