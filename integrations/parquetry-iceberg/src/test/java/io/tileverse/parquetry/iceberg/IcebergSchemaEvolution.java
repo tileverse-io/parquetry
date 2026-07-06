@@ -67,6 +67,25 @@ final class IcebergSchemaEvolution {
         return evolve(tableDir, evolved, root -> putNameMapping(root, nameMappingJson));
     }
 
+    /**
+     * Writes {@code v2.metadata.json} evolving the current schema to the given raw field nodes, letting a caller supply
+     * nested {@code type} objects the flat {@link IcebergField} model cannot express. Data files stay byte-identical;
+     * the evolved nested ids can deliberately disagree with the unchanged footer.
+     */
+    static Path evolveCurrentSchemaRaw(Path tableDir, List<ObjectNode> rawFields) {
+        return evolve(tableDir, List.of(), root -> replaceEvolvedFields(root, rawFields));
+    }
+
+    private static void replaceEvolvedFields(ObjectNode root, List<ObjectNode> rawFields) {
+        ArrayNode schemas = (ArrayNode) root.get("schemas");
+        ObjectNode evolvedSchema = (ObjectNode) schemas.get(schemas.size() - 1);
+        ArrayNode fields = JsonMapper.shared().createArrayNode();
+        for (ObjectNode field : rawFields) {
+            fields.add(field);
+        }
+        evolvedSchema.set("fields", fields);
+    }
+
     private static Path evolve(Path tableDir, List<IcebergField> evolved, Consumer<ObjectNode> metadataEdit) {
         Path metadataDir = tableDir.resolve("metadata");
         ObjectNode root = readMetadata(metadataDir.resolve("v1.metadata.json"));

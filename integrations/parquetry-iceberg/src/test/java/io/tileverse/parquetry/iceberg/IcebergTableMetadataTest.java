@@ -112,6 +112,33 @@ class IcebergTableMetadataTest {
     }
 
     @Test
+    void nestedSchemaCapturesAStructColumn() {
+        String json = metadataWithFields("""
+                {"id": 1, "name": "id", "type": "string", "required": false},
+                {"id": 2, "name": "bbox", "required": false,
+                 "type": {"type": "struct", "fields": [
+                   {"id": 5, "name": "xmin", "required": false, "type": "double"},
+                   {"id": 6, "name": "ymin", "required": false, "type": "double"}
+                 ]}}
+                """);
+
+        IcebergNestedSchema nested = IcebergTableMetadata.read(json).nestedSchema();
+
+        assertThat(nested.isEmpty()).isFalse();
+        assertThat(nested.path(5)).isEqualTo("bbox.xmin");
+        assertThat(nested.idAt(2, "ymin")).isEqualTo(6);
+    }
+
+    @Test
+    void nestedSchemaIsEmptyForAFlatTable() {
+        String json = metadataWithFields("""
+                {"id": 1, "name": "id", "type": "long", "required": true}
+                """);
+
+        assertThat(IcebergTableMetadata.read(json).nestedSchema().isEmpty()).isTrue();
+    }
+
+    @Test
     void readsRequiredNullability() {
         String json = """
                 {

@@ -260,6 +260,7 @@ class IcebergDatasetTest {
                 deletePlan,
                 metadata.formatVersion(),
                 IcebergNameMapping.empty(),
+                IcebergNestedSchema.of(null),
                 OpenOptions.DEFAULTS);
     }
 

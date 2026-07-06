@@ -172,6 +172,7 @@ public final class IcebergTableCatalog implements DatasetCatalog {
                     deletePlan,
                     metadata.formatVersion(),
                     nameMapping,
+                    metadata.nestedSchema(),
                     OpenOptions.DEFAULTS);
             return new IcebergTableCatalog(tableName, dataset, opened, io);
         } catch (RuntimeException failure) {

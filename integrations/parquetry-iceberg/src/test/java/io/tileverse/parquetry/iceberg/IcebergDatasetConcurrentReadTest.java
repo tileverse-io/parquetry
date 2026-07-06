@@ -194,6 +194,7 @@ class IcebergDatasetConcurrentReadTest {
                 deletePlan,
                 metadata.formatVersion(),
                 IcebergNameMapping.empty(),
+                IcebergNestedSchema.of(null),
                 openOptions);
     }
 

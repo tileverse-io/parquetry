@@ -109,8 +109,10 @@ final class IcebergDataset implements ParquetDataset {
     private final IcebergDeletePlan deletePlan;
     private final int formatVersion;
     private final IcebergNameMapping nameMapping;
+    private final IcebergNestedSchema nestedSchema;
     private final OpenOptions openOptions;
     private final Map<Integer, ParquetSource> perFileDatasets = new ConcurrentHashMap<>();
+    private final Set<Integer> nestedValidated = ConcurrentHashMap.newKeySet();
 
     // The catalog hands the dataset its fully resolved snapshot state in one place; these are cohesive fields, not a
     // long argument list worth bundling into a parameter object.
@@ -126,6 +128,7 @@ final class IcebergDataset implements ParquetDataset {
             IcebergDeletePlan deletePlan,
             int formatVersion,
             IcebergNameMapping nameMapping,
+            IcebergNestedSchema nestedSchema,
             OpenOptions openOptions) {
         this.name = Objects.requireNonNull(name, "name");
         this.snapshot = Objects.requireNonNull(snapshot, "snapshot");
@@ -137,6 +140,7 @@ final class IcebergDataset implements ParquetDataset {
         this.deletePlan = Objects.requireNonNull(deletePlan, "deletePlan");
         this.formatVersion = formatVersion;
         this.nameMapping = Objects.requireNonNull(nameMapping, "nameMapping");
+        this.nestedSchema = Objects.requireNonNull(nestedSchema, "nestedSchema");
         this.openOptions = Objects.requireNonNull(openOptions, "openOptions");
     }
 
@@ -476,6 +480,7 @@ final class IcebergDataset implements ParquetDataset {
         Map<Integer, Value> partitionConstants =
                 IcebergPartitionValues.constantsFor(partitionSpec, ref.partitionValues());
         ParquetSchema fileSchema = perFile(index).schema();
+        validateNested(index, fileSchema);
         IcebergFileSchema file = IcebergFileSchema.of(fileSchema, nameMapping);
         Reconciliation recon = IcebergReconciliation.reconcile(icebergSchema, file, partitionConstants);
         Predicate withEquality = andEqualityDeletes(predicate, equalityDeletes);
@@ -719,6 +724,18 @@ final class IcebergDataset implements ParquetDataset {
      */
     Query oneFileQueryForTest(int index, Predicate predicate, Projection projection) {
         return oneFileQuery(index, predicate, projection);
+    }
+
+    /**
+     * Fails loud when a data file's nested field ids disagree with the table schema. Runs before the file is read and
+     * is validated at most once after it passes: a passing file is memoized, an offending file throws on every read.
+     */
+    private void validateNested(int index, ParquetSchema fileSchema) {
+        if (nestedSchema.isEmpty() || nestedValidated.contains(index)) {
+            return;
+        }
+        IcebergNestedGuard.validate(nestedSchema, fileSchema);
+        nestedValidated.add(index);
     }
 
     /**

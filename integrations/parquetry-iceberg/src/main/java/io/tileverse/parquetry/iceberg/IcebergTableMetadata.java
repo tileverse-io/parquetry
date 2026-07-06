@@ -32,7 +32,7 @@ import tools.jackson.databind.json.JsonMapper;
  * snapshot id, its manifest-list location, the table's partition model, the primitive fields of the current schema
  * (used to map a manifest bound's field id to a column name and type), and the name-mapping table property that
  * resolves id-less data files. Complex types (struct/list/map) are not pruned in this cut and are omitted from
- * {@link #fields()}.
+ * {@link #fields()}; their nested topology is retained separately in {@link #nestedSchema()} for a fail-loud check.
  */
 final class IcebergTableMetadata {
 
@@ -47,6 +47,7 @@ final class IcebergTableMetadata {
     private final IcebergPartitionSpec partitionSpec;
     private final List<IcebergField> fields;
     private final Optional<IcebergNameMapping> nameMapping;
+    private final IcebergNestedSchema nestedSchema;
 
     // The parsed metadata document hands the reader its cohesive per-table state in one place; these are
     // one-per-concern final fields, not a long argument list worth bundling into a parameter object.
@@ -59,7 +60,8 @@ final class IcebergTableMetadata {
             String manifestListLocation,
             IcebergPartitionSpec partitionSpec,
             List<IcebergField> fields,
-            Optional<IcebergNameMapping> nameMapping) {
+            Optional<IcebergNameMapping> nameMapping,
+            IcebergNestedSchema nestedSchema) {
         this.formatVersion = formatVersion;
         this.tableLocation = tableLocation;
         this.currentSnapshotId = currentSnapshotId;
@@ -68,6 +70,7 @@ final class IcebergTableMetadata {
         this.partitionSpec = partitionSpec;
         this.fields = List.copyOf(fields);
         this.nameMapping = nameMapping;
+        this.nestedSchema = nestedSchema;
     }
 
     public int formatVersion() {
@@ -109,6 +112,11 @@ final class IcebergTableMetadata {
         return nameMapping;
     }
 
+    /** The nested (struct/list/map) topology of the current schema, empty when the table is flat. */
+    public IcebergNestedSchema nestedSchema() {
+        return nestedSchema;
+    }
+
     /** Parses {@code metadata.json} content, pinning the current snapshot. */
     public static IcebergTableMetadata read(String json) {
         return read(json, IcebergOptions.defaults());
@@ -129,6 +137,7 @@ final class IcebergTableMetadata {
         long timestampMs = requiredLong(snapshot, "timestamp-ms");
         String manifestList = requiredString(snapshot, "manifest-list");
         List<IcebergField> fields = currentSchemaFields(root);
+        IcebergNestedSchema nestedSchema = IcebergNestedSchema.of(currentSchemaFieldNodes(root));
         IcebergPartitionSpec partitionSpec = IcebergPartitionSpec.of(partitionFields(root), fields);
         Optional<IcebergNameMapping> nameMapping = parseNameMapping(root);
         return new IcebergTableMetadata(
@@ -139,15 +148,12 @@ final class IcebergTableMetadata {
                 manifestList,
                 partitionSpec,
                 fields,
-                nameMapping);
+                nameMapping,
+                nestedSchema);
     }
 
     private static List<IcebergField> currentSchemaFields(JsonNode root) {
-        JsonNode schema = currentSchemaNode(root);
-        if (schema == null) {
-            return List.of();
-        }
-        JsonNode fieldNodes = schema.get("fields");
+        JsonNode fieldNodes = currentSchemaFieldNodes(root);
         if (fieldNodes == null || !fieldNodes.isArray()) {
             return List.of();
         }
@@ -156,6 +162,14 @@ final class IcebergTableMetadata {
             primitiveField(fieldNode).ifPresent(fields::add);
         }
         return fields;
+    }
+
+    private static JsonNode currentSchemaFieldNodes(JsonNode root) {
+        JsonNode schema = currentSchemaNode(root);
+        if (schema == null) {
+            return null;
+        }
+        return schema.get("fields");
     }
 
     private static JsonNode currentSchemaNode(JsonNode root) {
