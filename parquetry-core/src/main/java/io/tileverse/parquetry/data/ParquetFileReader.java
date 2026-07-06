@@ -27,10 +27,10 @@ import java.util.SequencedSet;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongConsumer;
-import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 import io.tileverse.parquetry.columnar.BatchMaterializer;
+import io.tileverse.parquetry.columnar.BatchRows;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -238,14 +238,7 @@ public final class ParquetFileReader {
             Predicate rawPredicate, Projection projection, Materializer<T> materializer, ReadObservation observation) {
         Stream<ParquetRecordBatch> produced =
                 readBatchesLowered(rawPredicate, projection, BatchMaterializer.defaultBatch(), observation);
-        return produced.flatMap(batch -> flattenRows(batch, materializer));
-    }
-
-    private static <T> Stream<T> flattenRows(ParquetRecordBatch batch, Materializer<T> materializer) {
-        ParquetSchema producedSchema = batch.projectedSchema();
-        return IntStream.range(0, batch.rowCount())
-                .mapToObj(row -> materializer.materialize(producedSchema, batch.materialize(row)))
-                .onClose(batch::close);
+        return BatchRows.rows(produced, materializer);
     }
 
     /**

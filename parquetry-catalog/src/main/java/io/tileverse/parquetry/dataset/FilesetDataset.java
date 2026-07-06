@@ -358,7 +358,8 @@ public final class FilesetDataset implements GeoParquetDataset {
             return Stream.empty();
         }
         if (options.spatialReadProbe().isPresent()) {
-            return survivors.stream().flatMap(index -> readOneFile(index, predicate, projection, options));
+            return ConcurrentSurvivorReads.sequential(
+                    survivors.size(), dense -> readOneFile(survivors.get(dense), predicate, projection, options));
         }
         return ConcurrentSurvivorReads.records(
                 survivors.size(),

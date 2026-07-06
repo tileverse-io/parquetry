@@ -20,6 +20,7 @@ import java.util.stream.Stream;
 
 import com.google.errorprone.annotations.MustBeClosed;
 
+import io.tileverse.parquetry.columnar.BatchRows;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -33,16 +34,17 @@ import io.tileverse.parquetry.record.ParquetRecord;
  *
  * <p>The transported element is always a whole {@link ParquetRecordBatch}, which owns its data across the
  * producer-to-consumer hand-off; the row views a batch holds are batch-lifetime flyweights and never cross a thread
- * boundary. The record overload therefore fans the batches out and flattens each to rows through {@link BatchRows} once
- * it reaches the consumer. Emission is unordered, the maximum-overlap default: these datasets present no windowed
+ * boundary. The record overload therefore fans the batches out and flattens each to rows through
+ * {@link BatchRows#rows}, which materializes row by row on the consuming thread and closes a batch only when the stream
+ * advances past it. Emission is unordered, the maximum-overlap default: these datasets present no windowed
  * (offset/limit) read, and no caller depends on a file-ordered sequence. A read that must preserve a deterministic
- * visit order (a spatial-decimation probe) keeps its own sequential composition and does not reach this fan-out.
+ * visit order (a spatial-decimation probe) composes {@link #sequential} instead and does not reach the fan-out.
  *
  * <p>{@code openFile} receives a dense index in {@code [0, fileCount)}; a dataset maps it to the survivor it drains.
  * Returning {@link Stream#empty()} for a file the dataset skips after pruning is normal and merges as an empty file.
  *
- * <p>Public because the STAC and Iceberg datasets live in their own modules; it keeps {@link ConcurrentFileMerge} and
- * {@link BatchRows} package-private while giving those datasets the one fan-out entry point they need.
+ * <p>Public because the STAC and Iceberg datasets live in their own modules; it keeps {@link ConcurrentFileMerge}
+ * package-private while giving those datasets the fan-out entry points they need.
  */
 public final class ConcurrentSurvivorReads {
 
@@ -60,7 +62,7 @@ public final class ConcurrentSurvivorReads {
             Materializer<T> materializer,
             int maxConcurrentFiles) {
         Stream<ParquetRecordBatch> batches = batches(fileCount, openFile, maxConcurrentFiles);
-        return batches.flatMap(batch -> BatchRows.flatten(batch, materializer));
+        return BatchRows.rows(batches, materializer);
     }
 
     /**
@@ -83,5 +85,19 @@ public final class ConcurrentSurvivorReads {
     public static Stream<ParquetRecord> records(
             int fileCount, IntFunction<Stream<ParquetRecordBatch>> openFile, int maxConcurrentFiles) {
         return records(fileCount, openFile, Materializer.defaultRecord(), maxConcurrentFiles);
+    }
+
+    /**
+     * Concatenates the files' element streams one at a time in index order, opening a file's stream lazily and closing
+     * it only when advancing to the next file (or when the returned stream closes). The sequential companion to the
+     * fan-out for reads that must pin the per-file visit order onto one thread (a spatial-decimation probe).
+     *
+     * <p>{@code Stream.flatMap} is not a substitute: pulled through {@code Stream.iterator()} it drains a whole
+     * per-file stream into a buffer and closes it - releasing the batches backing that file's flyweight rows - before
+     * the buffered rows are read.
+     */
+    @MustBeClosed
+    public static <T> Stream<T> sequential(int fileCount, IntFunction<Stream<T>> openFile) {
+        return SequentialFileConcat.stream(fileCount, openFile);
     }
 }
