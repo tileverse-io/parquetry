@@ -1,0 +1,44 @@
+<featureType>
+  <id>FeatureTypeInfoImpl--1b718b8f:19f311dfce5:-7fd1</id>
+  <name>ne.populated_places</name>
+  <nativeName>ne.populated_places</nativeName>
+  <namespace>
+    <id>NamespaceInfoImpl--1b718b8f:19f311dfce5:-7fe2</id>
+  </namespace>
+  <title>ne.populated_places</title>
+  <keywords>
+    <string>features</string>
+    <string>ne.populated_places</string>
+  </keywords>
+  <srs>EPSG:4326</srs>
+  <nativeBoundingBox>
+    <minx>-175.2205645</minx>
+    <maxx>179.2166471</maxx>
+    <miny>-89.9999998</miny>
+    <maxy>78.22097104117844</maxy>
+    <crs>EPSG:4326</crs>
+  </nativeBoundingBox>
+  <latLonBoundingBox>
+    <minx>-175.2205645</minx>
+    <maxx>179.2166471</maxx>
+    <miny>-89.9999998</miny>
+    <maxy>78.22097104117844</maxy>
+    <crs>EPSG:4326</crs>
+  </latLonBoundingBox>
+  <projectionPolicy>FORCE_DECLARED</projectionPolicy>
+  <enabled>true</enabled>
+  <advertised>true</advertised>
+  <store class="dataStore">
+    <id>DataStoreInfoImpl--1b718b8f:19f311dfce5:-7fdb</id>
+  </store>
+  <serviceConfiguration>false</serviceConfiguration>
+  <simpleConversionEnabled>false</simpleConversionEnabled>
+  <maxFeatures>0</maxFeatures>
+  <numDecimals>0</numDecimals>
+  <padWithZeros>false</padWithZeros>
+  <forcedDecimal>false</forcedDecimal>
+  <overridingServiceSRS>false</overridingServiceSRS>
+  <skipNumberMatched>false</skipNumberMatched>
+  <circularArcPresent>false</circularArcPresent>
+  <encodeMeasures>false</encodeMeasures>
+</featureType>

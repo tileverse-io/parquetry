@@ -24,7 +24,7 @@
   -->
   <bean id="geoParquetDataStorePanel" class="org.geoserver.web.data.resource.DataStorePanelInfo">
     <property name="id" value="geoparquet"/>
-    <property name="factoryClass" value="io.tileverse.parquetry.geotools.GeoParquetDataStoreFactory"/>
+    <property name="factoryClass" value="io.tileverse.parquetry.geotools.parquet.GeoParquetDataStoreFactory"/>
     <property name="componentClass" value="io.tileverse.parquetry.geoserver.web.GeoParquetDataStoreEditPanel"/>
     <property name="icon" value="gs-icon-page-white-vector"/>
   </bean>

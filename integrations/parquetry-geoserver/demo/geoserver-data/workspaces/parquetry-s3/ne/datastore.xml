@@ -7,12 +7,11 @@
     <id>WorkspaceInfoImpl-1428db6f:19ea58c4651:-7fe3</id>
   </workspace>
   <connectionParameters>
-    <entry key="filetype">geoparquet</entry>
     <entry key="storage.s3.region">us-east-1</entry>
     <entry key="storage.provider">s3</entry>
     <entry key="namespace">http://parquetry-s3</entry>
     <entry key="storage.s3.force-path-style">true</entry>
-    <entry key="uri">s3://naturalearth/</entry>
+    <entry key="geoparquet">s3://naturalearth/</entry>
     <entry key="storage.s3.endpoint">http://s3proxy:80</entry>
     <entry key="layer-grouping">file</entry>
   </connectionParameters>

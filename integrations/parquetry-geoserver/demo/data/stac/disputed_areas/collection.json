@@ -1,0 +1,38 @@
+{
+  "type": "Collection",
+  "stac_version": "1.0.0",
+  "id": "disputed_areas",
+  "title": "Disputed areas",
+  "description": "Natural Earth disputed areas as GeoParquet",
+  "license": "public-domain",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -58.42730668804971,
+          1.475362453615233,
+          148.83714806538353,
+          48.70561341257377
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          "2024-01-01T00:00:00Z",
+          null
+        ]
+      ]
+    }
+  },
+  "links": [
+    {
+      "rel": "self",
+      "href": "collection.json"
+    },
+    {
+      "rel": "item",
+      "href": "items/disputed_areas.json"
+    }
+  ]
+}

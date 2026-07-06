@@ -1,0 +1,38 @@
+{
+  "type": "Collection",
+  "stac_version": "1.0.0",
+  "id": "coastlines",
+  "title": "Coastlines",
+  "description": "Natural Earth coastlines as GeoParquet",
+  "license": "public-domain",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -180.0,
+          -85.19218750000002,
+          180.0,
+          83.599609375
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          "2024-01-01T00:00:00Z",
+          null
+        ]
+      ]
+    }
+  },
+  "links": [
+    {
+      "rel": "self",
+      "href": "collection.json"
+    },
+    {
+      "rel": "item",
+      "href": "items/coastlines.json"
+    }
+  ]
+}

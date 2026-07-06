@@ -1,0 +1,1101 @@
+{
+  "format-version": 3,
+  "table-uuid": "ad4d6b1d-7b04-109a-5489-8b6d4968db55",
+  "location": "file:///warehouse/ne/disputed_areas",
+  "last-sequence-number": 1,
+  "last-updated-ms": 1750000003000,
+  "last-column-id": 170,
+  "current-schema-id": 0,
+  "schemas": [
+    {
+      "schema-id": 0,
+      "type": "struct",
+      "fields": [
+        {
+          "id": 1,
+          "name": "fid",
+          "required": true,
+          "type": "long"
+        },
+        {
+          "id": 2,
+          "name": "featurecla",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 3,
+          "name": "scalerank",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 4,
+          "name": "LABELRANK",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 5,
+          "name": "SOVEREIGNT",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 6,
+          "name": "SOV_A3",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 7,
+          "name": "ADM0_DIF",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 8,
+          "name": "LEVEL",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 9,
+          "name": "TYPE",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 10,
+          "name": "TLC",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 11,
+          "name": "ADMIN",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 12,
+          "name": "ADM0_A3",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 13,
+          "name": "GEOU_DIF",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 14,
+          "name": "GEOUNIT",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 15,
+          "name": "GU_A3",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 16,
+          "name": "SU_DIF",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 17,
+          "name": "SUBUNIT",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 18,
+          "name": "SU_A3",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 19,
+          "name": "BRK_DIFF",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 20,
+          "name": "NAME",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 21,
+          "name": "NAME_LONG",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 22,
+          "name": "BRK_A3",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 23,
+          "name": "BRK_NAME",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 24,
+          "name": "BRK_GROUP",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 25,
+          "name": "ABBREV",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 26,
+          "name": "POSTAL",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 27,
+          "name": "FORMAL_EN",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 28,
+          "name": "FORMAL_FR",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 29,
+          "name": "NAME_CIAWF",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 30,
+          "name": "NOTE_ADM0",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 31,
+          "name": "NOTE_BRK",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 32,
+          "name": "NAME_SORT",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 33,
+          "name": "NAME_ALT",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 34,
+          "name": "MAPCOLOR7",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 35,
+          "name": "MAPCOLOR8",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 36,
+          "name": "MAPCOLOR9",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 37,
+          "name": "MAPCOLOR13",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 38,
+          "name": "POP_EST",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 39,
+          "name": "POP_RANK",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 40,
+          "name": "POP_YEAR",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 41,
+          "name": "GDP_MD",
+          "required": false,
+          "type": "double"
+        },
+        {
+          "id": 42,
+          "name": "GDP_YEAR",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 43,
+          "name": "ECONOMY",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 44,
+          "name": "INCOME_GRP",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 45,
+          "name": "FIPS_10",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 46,
+          "name": "ISO_A2",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 47,
+          "name": "ISO_A2_EH",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 48,
+          "name": "ISO_A3",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 49,
+          "name": "ISO_A3_EH",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 50,
+          "name": "ISO_N3",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 51,
+          "name": "ISO_N3_EH",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 52,
+          "name": "UN_A3",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 53,
+          "name": "WB_A2",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 54,
+          "name": "WB_A3",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 55,
+          "name": "WOE_ID",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 56,
+          "name": "WOE_ID_EH",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 57,
+          "name": "WOE_NOTE",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 58,
+          "name": "ADM0_ISO",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 59,
+          "name": "ADM0_DIFF",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 60,
+          "name": "ADM0_TLC",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 61,
+          "name": "ADM0_A3_US",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 62,
+          "name": "ADM0_A3_FR",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 63,
+          "name": "ADM0_A3_RU",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 64,
+          "name": "ADM0_A3_ES",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 65,
+          "name": "ADM0_A3_CN",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 66,
+          "name": "ADM0_A3_TW",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 67,
+          "name": "ADM0_A3_IN",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 68,
+          "name": "ADM0_A3_NP",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 69,
+          "name": "ADM0_A3_PK",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 70,
+          "name": "ADM0_A3_DE",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 71,
+          "name": "ADM0_A3_GB",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 72,
+          "name": "ADM0_A3_BR",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 73,
+          "name": "ADM0_A3_IL",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 74,
+          "name": "ADM0_A3_PS",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 75,
+          "name": "ADM0_A3_SA",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 76,
+          "name": "ADM0_A3_EG",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 77,
+          "name": "ADM0_A3_MA",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 78,
+          "name": "ADM0_A3_PT",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 79,
+          "name": "ADM0_A3_AR",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 80,
+          "name": "ADM0_A3_JP",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 81,
+          "name": "ADM0_A3_KO",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 82,
+          "name": "ADM0_A3_VN",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 83,
+          "name": "ADM0_A3_TR",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 84,
+          "name": "ADM0_A3_ID",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 85,
+          "name": "ADM0_A3_PL",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 86,
+          "name": "ADM0_A3_GR",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 87,
+          "name": "ADM0_A3_IT",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 88,
+          "name": "ADM0_A3_NL",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 89,
+          "name": "ADM0_A3_SE",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 90,
+          "name": "ADM0_A3_BD",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 91,
+          "name": "ADM0_A3_UA",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 92,
+          "name": "ADM0_A3_UN",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 93,
+          "name": "ADM0_A3_WB",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 94,
+          "name": "CONTINENT",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 95,
+          "name": "REGION_UN",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 96,
+          "name": "SUBREGION",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 97,
+          "name": "REGION_WB",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 98,
+          "name": "NAME_LEN",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 99,
+          "name": "LONG_LEN",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 100,
+          "name": "ABBREV_LEN",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 101,
+          "name": "TINY",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 102,
+          "name": "HOMEPART",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 103,
+          "name": "MIN_ZOOM",
+          "required": false,
+          "type": "double"
+        },
+        {
+          "id": 104,
+          "name": "MIN_LABEL",
+          "required": false,
+          "type": "double"
+        },
+        {
+          "id": 105,
+          "name": "MAX_LABEL",
+          "required": false,
+          "type": "double"
+        },
+        {
+          "id": 106,
+          "name": "LABEL_X",
+          "required": false,
+          "type": "double"
+        },
+        {
+          "id": 107,
+          "name": "LABEL_Y",
+          "required": false,
+          "type": "double"
+        },
+        {
+          "id": 108,
+          "name": "NE_ID",
+          "required": false,
+          "type": "long"
+        },
+        {
+          "id": 109,
+          "name": "WIKIDATAID",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 110,
+          "name": "NAME_AR",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 111,
+          "name": "NAME_BN",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 112,
+          "name": "NAME_DE",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 113,
+          "name": "NAME_EN",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 114,
+          "name": "NAME_ES",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 115,
+          "name": "NAME_FA",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 116,
+          "name": "NAME_FR",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 117,
+          "name": "NAME_EL",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 118,
+          "name": "NAME_HE",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 119,
+          "name": "NAME_HI",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 120,
+          "name": "NAME_HU",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 121,
+          "name": "NAME_ID",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 122,
+          "name": "NAME_IT",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 123,
+          "name": "NAME_JA",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 124,
+          "name": "NAME_KO",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 125,
+          "name": "NAME_NL",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 126,
+          "name": "NAME_PL",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 127,
+          "name": "NAME_PT",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 128,
+          "name": "NAME_RU",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 129,
+          "name": "NAME_SV",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 130,
+          "name": "NAME_TR",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 131,
+          "name": "NAME_UK",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 132,
+          "name": "NAME_UR",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 133,
+          "name": "NAME_VI",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 134,
+          "name": "NAME_ZH",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 135,
+          "name": "NAME_ZHT",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 136,
+          "name": "FCLASS_ISO",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 137,
+          "name": "TLC_DIFF",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 138,
+          "name": "FCLASS_TLC",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 139,
+          "name": "FCLASS_US",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 140,
+          "name": "FCLASS_FR",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 141,
+          "name": "FCLASS_RU",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 142,
+          "name": "FCLASS_ES",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 143,
+          "name": "FCLASS_CN",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 144,
+          "name": "FCLASS_TW",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 145,
+          "name": "FCLASS_IN",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 146,
+          "name": "FCLASS_NP",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 147,
+          "name": "FCLASS_PK",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 148,
+          "name": "FCLASS_DE",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 149,
+          "name": "FCLASS_GB",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 150,
+          "name": "FCLASS_BR",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 151,
+          "name": "FCLASS_IL",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 152,
+          "name": "FCLASS_PS",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 153,
+          "name": "FCLASS_SA",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 154,
+          "name": "FCLASS_EG",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 155,
+          "name": "FCLASS_MA",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 156,
+          "name": "FCLASS_PT",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 157,
+          "name": "FCLASS_AR",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 158,
+          "name": "FCLASS_JP",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 159,
+          "name": "FCLASS_KO",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 160,
+          "name": "FCLASS_VN",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 161,
+          "name": "FCLASS_TR",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 162,
+          "name": "FCLASS_ID",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 163,
+          "name": "FCLASS_PL",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 164,
+          "name": "FCLASS_GR",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 165,
+          "name": "FCLASS_IT",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 166,
+          "name": "FCLASS_NL",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 167,
+          "name": "FCLASS_SE",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 168,
+          "name": "FCLASS_BD",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 169,
+          "name": "FCLASS_UA",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 170,
+          "name": "geom",
+          "required": false,
+          "type": "geometry"
+        }
+      ]
+    }
+  ],
+  "default-spec-id": 0,
+  "partition-specs": [
+    {
+      "spec-id": 0,
+      "fields": []
+    }
+  ],
+  "last-partition-id": 999,
+  "default-sort-order-id": 0,
+  "sort-orders": [
+    {
+      "order-id": 0,
+      "fields": []
+    }
+  ],
+  "properties": {
+    "schema.name-mapping.default": "[{\"field-id\": 1, \"names\": [\"fid\"]}, {\"field-id\": 2, \"names\": [\"featurecla\"]}, {\"field-id\": 3, \"names\": [\"scalerank\"]}, {\"field-id\": 4, \"names\": [\"LABELRANK\"]}, {\"field-id\": 5, \"names\": [\"SOVEREIGNT\"]}, {\"field-id\": 6, \"names\": [\"SOV_A3\"]}, {\"field-id\": 7, \"names\": [\"ADM0_DIF\"]}, {\"field-id\": 8, \"names\": [\"LEVEL\"]}, {\"field-id\": 9, \"names\": [\"TYPE\"]}, {\"field-id\": 10, \"names\": [\"TLC\"]}, {\"field-id\": 11, \"names\": [\"ADMIN\"]}, {\"field-id\": 12, \"names\": [\"ADM0_A3\"]}, {\"field-id\": 13, \"names\": [\"GEOU_DIF\"]}, {\"field-id\": 14, \"names\": [\"GEOUNIT\"]}, {\"field-id\": 15, \"names\": [\"GU_A3\"]}, {\"field-id\": 16, \"names\": [\"SU_DIF\"]}, {\"field-id\": 17, \"names\": [\"SUBUNIT\"]}, {\"field-id\": 18, \"names\": [\"SU_A3\"]}, {\"field-id\": 19, \"names\": [\"BRK_DIFF\"]}, {\"field-id\": 20, \"names\": [\"NAME\"]}, {\"field-id\": 21, \"names\": [\"NAME_LONG\"]}, {\"field-id\": 22, \"names\": [\"BRK_A3\"]}, {\"field-id\": 23, \"names\": [\"BRK_NAME\"]}, {\"field-id\": 24, \"names\": [\"BRK_GROUP\"]}, {\"field-id\": 25, \"names\": [\"ABBREV\"]}, {\"field-id\": 26, \"names\": [\"POSTAL\"]}, {\"field-id\": 27, \"names\": [\"FORMAL_EN\"]}, {\"field-id\": 28, \"names\": [\"FORMAL_FR\"]}, {\"field-id\": 29, \"names\": [\"NAME_CIAWF\"]}, {\"field-id\": 30, \"names\": [\"NOTE_ADM0\"]}, {\"field-id\": 31, \"names\": [\"NOTE_BRK\"]}, {\"field-id\": 32, \"names\": [\"NAME_SORT\"]}, {\"field-id\": 33, \"names\": [\"NAME_ALT\"]}, {\"field-id\": 34, \"names\": [\"MAPCOLOR7\"]}, {\"field-id\": 35, \"names\": [\"MAPCOLOR8\"]}, {\"field-id\": 36, \"names\": [\"MAPCOLOR9\"]}, {\"field-id\": 37, \"names\": [\"MAPCOLOR13\"]}, {\"field-id\": 38, \"names\": [\"POP_EST\"]}, {\"field-id\": 39, \"names\": [\"POP_RANK\"]}, {\"field-id\": 40, \"names\": [\"POP_YEAR\"]}, {\"field-id\": 41, \"names\": [\"GDP_MD\"]}, {\"field-id\": 42, \"names\": [\"GDP_YEAR\"]}, {\"field-id\": 43, \"names\": [\"ECONOMY\"]}, {\"field-id\": 44, \"names\": [\"INCOME_GRP\"]}, {\"field-id\": 45, \"names\": [\"FIPS_10\"]}, {\"field-id\": 46, \"names\": [\"ISO_A2\"]}, {\"field-id\": 47, \"names\": [\"ISO_A2_EH\"]}, {\"field-id\": 48, \"names\": [\"ISO_A3\"]}, {\"field-id\": 49, \"names\": [\"ISO_A3_EH\"]}, {\"field-id\": 50, \"names\": [\"ISO_N3\"]}, {\"field-id\": 51, \"names\": [\"ISO_N3_EH\"]}, {\"field-id\": 52, \"names\": [\"UN_A3\"]}, {\"field-id\": 53, \"names\": [\"WB_A2\"]}, {\"field-id\": 54, \"names\": [\"WB_A3\"]}, {\"field-id\": 55, \"names\": [\"WOE_ID\"]}, {\"field-id\": 56, \"names\": [\"WOE_ID_EH\"]}, {\"field-id\": 57, \"names\": [\"WOE_NOTE\"]}, {\"field-id\": 58, \"names\": [\"ADM0_ISO\"]}, {\"field-id\": 59, \"names\": [\"ADM0_DIFF\"]}, {\"field-id\": 60, \"names\": [\"ADM0_TLC\"]}, {\"field-id\": 61, \"names\": [\"ADM0_A3_US\"]}, {\"field-id\": 62, \"names\": [\"ADM0_A3_FR\"]}, {\"field-id\": 63, \"names\": [\"ADM0_A3_RU\"]}, {\"field-id\": 64, \"names\": [\"ADM0_A3_ES\"]}, {\"field-id\": 65, \"names\": [\"ADM0_A3_CN\"]}, {\"field-id\": 66, \"names\": [\"ADM0_A3_TW\"]}, {\"field-id\": 67, \"names\": [\"ADM0_A3_IN\"]}, {\"field-id\": 68, \"names\": [\"ADM0_A3_NP\"]}, {\"field-id\": 69, \"names\": [\"ADM0_A3_PK\"]}, {\"field-id\": 70, \"names\": [\"ADM0_A3_DE\"]}, {\"field-id\": 71, \"names\": [\"ADM0_A3_GB\"]}, {\"field-id\": 72, \"names\": [\"ADM0_A3_BR\"]}, {\"field-id\": 73, \"names\": [\"ADM0_A3_IL\"]}, {\"field-id\": 74, \"names\": [\"ADM0_A3_PS\"]}, {\"field-id\": 75, \"names\": [\"ADM0_A3_SA\"]}, {\"field-id\": 76, \"names\": [\"ADM0_A3_EG\"]}, {\"field-id\": 77, \"names\": [\"ADM0_A3_MA\"]}, {\"field-id\": 78, \"names\": [\"ADM0_A3_PT\"]}, {\"field-id\": 79, \"names\": [\"ADM0_A3_AR\"]}, {\"field-id\": 80, \"names\": [\"ADM0_A3_JP\"]}, {\"field-id\": 81, \"names\": [\"ADM0_A3_KO\"]}, {\"field-id\": 82, \"names\": [\"ADM0_A3_VN\"]}, {\"field-id\": 83, \"names\": [\"ADM0_A3_TR\"]}, {\"field-id\": 84, \"names\": [\"ADM0_A3_ID\"]}, {\"field-id\": 85, \"names\": [\"ADM0_A3_PL\"]}, {\"field-id\": 86, \"names\": [\"ADM0_A3_GR\"]}, {\"field-id\": 87, \"names\": [\"ADM0_A3_IT\"]}, {\"field-id\": 88, \"names\": [\"ADM0_A3_NL\"]}, {\"field-id\": 89, \"names\": [\"ADM0_A3_SE\"]}, {\"field-id\": 90, \"names\": [\"ADM0_A3_BD\"]}, {\"field-id\": 91, \"names\": [\"ADM0_A3_UA\"]}, {\"field-id\": 92, \"names\": [\"ADM0_A3_UN\"]}, {\"field-id\": 93, \"names\": [\"ADM0_A3_WB\"]}, {\"field-id\": 94, \"names\": [\"CONTINENT\"]}, {\"field-id\": 95, \"names\": [\"REGION_UN\"]}, {\"field-id\": 96, \"names\": [\"SUBREGION\"]}, {\"field-id\": 97, \"names\": [\"REGION_WB\"]}, {\"field-id\": 98, \"names\": [\"NAME_LEN\"]}, {\"field-id\": 99, \"names\": [\"LONG_LEN\"]}, {\"field-id\": 100, \"names\": [\"ABBREV_LEN\"]}, {\"field-id\": 101, \"names\": [\"TINY\"]}, {\"field-id\": 102, \"names\": [\"HOMEPART\"]}, {\"field-id\": 103, \"names\": [\"MIN_ZOOM\"]}, {\"field-id\": 104, \"names\": [\"MIN_LABEL\"]}, {\"field-id\": 105, \"names\": [\"MAX_LABEL\"]}, {\"field-id\": 106, \"names\": [\"LABEL_X\"]}, {\"field-id\": 107, \"names\": [\"LABEL_Y\"]}, {\"field-id\": 108, \"names\": [\"NE_ID\"]}, {\"field-id\": 109, \"names\": [\"WIKIDATAID\"]}, {\"field-id\": 110, \"names\": [\"NAME_AR\"]}, {\"field-id\": 111, \"names\": [\"NAME_BN\"]}, {\"field-id\": 112, \"names\": [\"NAME_DE\"]}, {\"field-id\": 113, \"names\": [\"NAME_EN\"]}, {\"field-id\": 114, \"names\": [\"NAME_ES\"]}, {\"field-id\": 115, \"names\": [\"NAME_FA\"]}, {\"field-id\": 116, \"names\": [\"NAME_FR\"]}, {\"field-id\": 117, \"names\": [\"NAME_EL\"]}, {\"field-id\": 118, \"names\": [\"NAME_HE\"]}, {\"field-id\": 119, \"names\": [\"NAME_HI\"]}, {\"field-id\": 120, \"names\": [\"NAME_HU\"]}, {\"field-id\": 121, \"names\": [\"NAME_ID\"]}, {\"field-id\": 122, \"names\": [\"NAME_IT\"]}, {\"field-id\": 123, \"names\": [\"NAME_JA\"]}, {\"field-id\": 124, \"names\": [\"NAME_KO\"]}, {\"field-id\": 125, \"names\": [\"NAME_NL\"]}, {\"field-id\": 126, \"names\": [\"NAME_PL\"]}, {\"field-id\": 127, \"names\": [\"NAME_PT\"]}, {\"field-id\": 128, \"names\": [\"NAME_RU\"]}, {\"field-id\": 129, \"names\": [\"NAME_SV\"]}, {\"field-id\": 130, \"names\": [\"NAME_TR\"]}, {\"field-id\": 131, \"names\": [\"NAME_UK\"]}, {\"field-id\": 132, \"names\": [\"NAME_UR\"]}, {\"field-id\": 133, \"names\": [\"NAME_VI\"]}, {\"field-id\": 134, \"names\": [\"NAME_ZH\"]}, {\"field-id\": 135, \"names\": [\"NAME_ZHT\"]}, {\"field-id\": 136, \"names\": [\"FCLASS_ISO\"]}, {\"field-id\": 137, \"names\": [\"TLC_DIFF\"]}, {\"field-id\": 138, \"names\": [\"FCLASS_TLC\"]}, {\"field-id\": 139, \"names\": [\"FCLASS_US\"]}, {\"field-id\": 140, \"names\": [\"FCLASS_FR\"]}, {\"field-id\": 141, \"names\": [\"FCLASS_RU\"]}, {\"field-id\": 142, \"names\": [\"FCLASS_ES\"]}, {\"field-id\": 143, \"names\": [\"FCLASS_CN\"]}, {\"field-id\": 144, \"names\": [\"FCLASS_TW\"]}, {\"field-id\": 145, \"names\": [\"FCLASS_IN\"]}, {\"field-id\": 146, \"names\": [\"FCLASS_NP\"]}, {\"field-id\": 147, \"names\": [\"FCLASS_PK\"]}, {\"field-id\": 148, \"names\": [\"FCLASS_DE\"]}, {\"field-id\": 149, \"names\": [\"FCLASS_GB\"]}, {\"field-id\": 150, \"names\": [\"FCLASS_BR\"]}, {\"field-id\": 151, \"names\": [\"FCLASS_IL\"]}, {\"field-id\": 152, \"names\": [\"FCLASS_PS\"]}, {\"field-id\": 153, \"names\": [\"FCLASS_SA\"]}, {\"field-id\": 154, \"names\": [\"FCLASS_EG\"]}, {\"field-id\": 155, \"names\": [\"FCLASS_MA\"]}, {\"field-id\": 156, \"names\": [\"FCLASS_PT\"]}, {\"field-id\": 157, \"names\": [\"FCLASS_AR\"]}, {\"field-id\": 158, \"names\": [\"FCLASS_JP\"]}, {\"field-id\": 159, \"names\": [\"FCLASS_KO\"]}, {\"field-id\": 160, \"names\": [\"FCLASS_VN\"]}, {\"field-id\": 161, \"names\": [\"FCLASS_TR\"]}, {\"field-id\": 162, \"names\": [\"FCLASS_ID\"]}, {\"field-id\": 163, \"names\": [\"FCLASS_PL\"]}, {\"field-id\": 164, \"names\": [\"FCLASS_GR\"]}, {\"field-id\": 165, \"names\": [\"FCLASS_IT\"]}, {\"field-id\": 166, \"names\": [\"FCLASS_NL\"]}, {\"field-id\": 167, \"names\": [\"FCLASS_SE\"]}, {\"field-id\": 168, \"names\": [\"FCLASS_BD\"]}, {\"field-id\": 169, \"names\": [\"FCLASS_UA\"]}, {\"field-id\": 170, \"names\": [\"geom\"]}]"
+  },
+  "current-snapshot-id": 1750000003000,
+  "refs": {
+    "main": {
+      "snapshot-id": 1750000003000,
+      "type": "branch"
+    }
+  },
+  "snapshots": [
+    {
+      "snapshot-id": 1750000003000,
+      "sequence-number": 1,
+      "timestamp-ms": 1750000003000,
+      "manifest-list": "file:///warehouse/ne/disputed_areas/metadata/snap-1750000003000-manifest-list.avro",
+      "schema-id": 0,
+      "summary": {
+        "operation": "overwrite",
+        "added-data-files": "1",
+        "added-records": "28",
+        "added-files-size": "109626",
+        "added-delete-files": "1",
+        "added-position-delete-files": "1",
+        "added-position-deletes": "5",
+        "added-delete-files-size": "1250",
+        "total-data-files": "1",
+        "total-records": "28",
+        "total-files-size": "109626",
+        "total-delete-files": "1",
+        "total-equality-deletes": "0",
+        "total-position-deletes": "5",
+        "changed-partition-count": "1"
+      },
+      "first-row-id": 0,
+      "added-rows": 28
+    }
+  ],
+  "snapshot-log": [
+    {
+      "snapshot-id": 1750000003000,
+      "timestamp-ms": 1750000003000
+    }
+  ],
+  "metadata-log": [],
+  "next-row-id": 28,
+  "statistics": [],
+  "partition-statistics": [],
+  "row-lineage": false
+}

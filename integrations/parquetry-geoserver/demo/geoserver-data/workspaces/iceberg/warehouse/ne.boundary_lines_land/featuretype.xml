@@ -1,0 +1,44 @@
+<featureType>
+  <id>FeatureTypeInfoImpl--1b718b8f:19f311dfce5:-7fd3</id>
+  <name>ne.boundary_lines_land</name>
+  <nativeName>ne.boundary_lines_land</nativeName>
+  <namespace>
+    <id>NamespaceInfoImpl--1b718b8f:19f311dfce5:-7fe2</id>
+  </namespace>
+  <title>ne.boundary_lines_land</title>
+  <keywords>
+    <string>ne.boundary_lines_land</string>
+    <string>features</string>
+  </keywords>
+  <srs>EPSG:4326</srs>
+  <nativeBoundingBox>
+    <minx>-141.00213640665194</minx>
+    <maxx>145.9401672711012</maxx>
+    <miny>-55.11400074012312</miny>
+    <maxy>70.06481924099897</maxy>
+    <crs>EPSG:4326</crs>
+  </nativeBoundingBox>
+  <latLonBoundingBox>
+    <minx>-141.00213640665194</minx>
+    <maxx>145.9401672711012</maxx>
+    <miny>-55.11400074012312</miny>
+    <maxy>70.06481924099897</maxy>
+    <crs>EPSG:4326</crs>
+  </latLonBoundingBox>
+  <projectionPolicy>FORCE_DECLARED</projectionPolicy>
+  <enabled>true</enabled>
+  <advertised>true</advertised>
+  <store class="dataStore">
+    <id>DataStoreInfoImpl--1b718b8f:19f311dfce5:-7fdb</id>
+  </store>
+  <serviceConfiguration>false</serviceConfiguration>
+  <simpleConversionEnabled>false</simpleConversionEnabled>
+  <maxFeatures>0</maxFeatures>
+  <numDecimals>0</numDecimals>
+  <padWithZeros>false</padWithZeros>
+  <forcedDecimal>false</forcedDecimal>
+  <overridingServiceSRS>false</overridingServiceSRS>
+  <skipNumberMatched>false</skipNumberMatched>
+  <circularArcPresent>false</circularArcPresent>
+  <encodeMeasures>false</encodeMeasures>
+</featureType>

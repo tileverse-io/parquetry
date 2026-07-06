@@ -1,0 +1,19 @@
+<layer>
+  <name>coastlines</name>
+  <id>LayerInfoImpl--1b718b8f:19f311dfce5:-7fac</id>
+  <type>VECTOR</type>
+  <defaultStyle>
+    <id>StyleInfoImpl--2fb5fd2d:19ea55565ed:-7fe0</id>
+  </defaultStyle>
+  <resource class="featureType">
+    <id>FeatureTypeInfoImpl--1b718b8f:19f311dfce5:-7fad</id>
+  </resource>
+  <queryable>true</queryable>
+  <opaque>false</opaque>
+  <attribution>
+    <logoWidth>0</logoWidth>
+    <logoHeight>0</logoHeight>
+  </attribution>
+  <dateCreated>2026-07-05 07:35:34.227 UTC</dateCreated>
+  <dateModified>2026-07-05 07:36:49.541 UTC</dateModified>
+</layer>

@@ -1,0 +1,19 @@
+<layer>
+  <name>bonus.geometry_lineage</name>
+  <id>LayerInfoImpl--1b718b8f:19f311dfce5:-7fc8</id>
+  <type>VECTOR</type>
+  <defaultStyle>
+    <id>StyleInfoImpl--1b718b8f:19f311dfce5:-8000</id>
+  </defaultStyle>
+  <resource class="featureType">
+    <id>FeatureTypeInfoImpl--1b718b8f:19f311dfce5:-7fc9</id>
+  </resource>
+  <queryable>true</queryable>
+  <opaque>false</opaque>
+  <attribution>
+    <logoWidth>0</logoWidth>
+    <logoHeight>0</logoHeight>
+  </attribution>
+  <dateCreated>2026-07-05 07:19:54.562 UTC</dateCreated>
+  <dateModified>2026-07-05 07:20:37.696 UTC</dateModified>
+</layer>

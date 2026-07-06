@@ -1,0 +1,20 @@
+<dataStore>
+  <id>DataStoreInfoImpl--1b718b8f:19f311dfce5:-7fda</id>
+  <name>warehouse</name>
+  <type>Apache Iceberg</type>
+  <enabled>true</enabled>
+  <workspace>
+    <id>WorkspaceInfoImpl--1b718b8f:19f311dfce5:-7fe1</id>
+  </workspace>
+  <connectionParameters>
+    <entry key="storage.s3.region">us-east-1</entry>
+    <entry key="storage.provider">s3</entry>
+    <entry key="iceberg">s3://warehouse/</entry>
+    <entry key="namespace">http://iceberg-s3</entry>
+    <entry key="storage.s3.force-path-style">true</entry>
+    <entry key="storage.s3.endpoint">http://s3proxy:80</entry>
+  </connectionParameters>
+  <__default>false</__default>
+  <dateCreated>2026-07-05 07:13:36.964 UTC</dateCreated>
+  <disableOnConnFailure>false</disableOnConnFailure>
+</dataStore>

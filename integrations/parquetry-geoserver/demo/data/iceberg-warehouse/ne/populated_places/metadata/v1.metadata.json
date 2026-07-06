@@ -1,0 +1,281 @@
+{
+  "format-version": 3,
+  "table-uuid": "a2a23013-1929-95ed-1d8f-e8354556d420",
+  "location": "file:///warehouse/ne/populated_places",
+  "last-sequence-number": 1,
+  "last-updated-ms": 1750000004000,
+  "last-column-id": 34,
+  "current-schema-id": 0,
+  "schemas": [
+    {
+      "schema-id": 0,
+      "type": "struct",
+      "fields": [
+        {
+          "id": 1,
+          "name": "fid",
+          "required": true,
+          "type": "long"
+        },
+        {
+          "id": 2,
+          "name": "scalerank",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 3,
+          "name": "natscale",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 4,
+          "name": "labelrank",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 5,
+          "name": "featurecla",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 6,
+          "name": "place_name",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 7,
+          "name": "namepar",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 8,
+          "name": "namealt",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 9,
+          "name": "nameascii",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 10,
+          "name": "adm0cap",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 11,
+          "name": "capalt",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 12,
+          "name": "capin",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 13,
+          "name": "worldcity",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 14,
+          "name": "megacity",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 15,
+          "name": "sov0name",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 16,
+          "name": "sov_a3",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 17,
+          "name": "adm0name",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 18,
+          "name": "adm0_a3",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 19,
+          "name": "adm1name",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 20,
+          "name": "iso_a2",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 21,
+          "name": "note",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 22,
+          "name": "latitude",
+          "required": false,
+          "type": "double"
+        },
+        {
+          "id": 23,
+          "name": "longitude",
+          "required": false,
+          "type": "double"
+        },
+        {
+          "id": 24,
+          "name": "pop_max",
+          "required": false,
+          "type": "long"
+        },
+        {
+          "id": 25,
+          "name": "pop_min",
+          "required": false,
+          "type": "long"
+        },
+        {
+          "id": 26,
+          "name": "pop_other",
+          "required": false,
+          "type": "long"
+        },
+        {
+          "id": 27,
+          "name": "rank_max",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 28,
+          "name": "rank_min",
+          "required": false,
+          "type": "int"
+        },
+        {
+          "id": 29,
+          "name": "meganame",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 30,
+          "name": "ls_name",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "id": 31,
+          "name": "min_zoom",
+          "required": false,
+          "type": "double"
+        },
+        {
+          "id": 32,
+          "name": "ne_id",
+          "required": false,
+          "type": "long"
+        },
+        {
+          "id": 33,
+          "name": "geom",
+          "required": false,
+          "type": "geometry"
+        },
+        {
+          "id": 34,
+          "name": "local_note",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    }
+  ],
+  "default-spec-id": 0,
+  "partition-specs": [
+    {
+      "spec-id": 0,
+      "fields": []
+    }
+  ],
+  "last-partition-id": 999,
+  "default-sort-order-id": 0,
+  "sort-orders": [
+    {
+      "order-id": 0,
+      "fields": []
+    }
+  ],
+  "properties": {
+    "schema.name-mapping.default": "[{\"field-id\": 1, \"names\": [\"fid\"]}, {\"field-id\": 2, \"names\": [\"scalerank\"]}, {\"field-id\": 3, \"names\": [\"natscale\"]}, {\"field-id\": 4, \"names\": [\"labelrank\"]}, {\"field-id\": 5, \"names\": [\"featurecla\"]}, {\"field-id\": 6, \"names\": [\"name\"]}, {\"field-id\": 7, \"names\": [\"namepar\"]}, {\"field-id\": 8, \"names\": [\"namealt\"]}, {\"field-id\": 9, \"names\": [\"nameascii\"]}, {\"field-id\": 10, \"names\": [\"adm0cap\"]}, {\"field-id\": 11, \"names\": [\"capalt\"]}, {\"field-id\": 12, \"names\": [\"capin\"]}, {\"field-id\": 13, \"names\": [\"worldcity\"]}, {\"field-id\": 14, \"names\": [\"megacity\"]}, {\"field-id\": 15, \"names\": [\"sov0name\"]}, {\"field-id\": 16, \"names\": [\"sov_a3\"]}, {\"field-id\": 17, \"names\": [\"adm0name\"]}, {\"field-id\": 18, \"names\": [\"adm0_a3\"]}, {\"field-id\": 19, \"names\": [\"adm1name\"]}, {\"field-id\": 20, \"names\": [\"iso_a2\"]}, {\"field-id\": 21, \"names\": [\"note\"]}, {\"field-id\": 22, \"names\": [\"latitude\"]}, {\"field-id\": 23, \"names\": [\"longitude\"]}, {\"field-id\": 24, \"names\": [\"pop_max\"]}, {\"field-id\": 25, \"names\": [\"pop_min\"]}, {\"field-id\": 26, \"names\": [\"pop_other\"]}, {\"field-id\": 27, \"names\": [\"rank_max\"]}, {\"field-id\": 28, \"names\": [\"rank_min\"]}, {\"field-id\": 29, \"names\": [\"meganame\"]}, {\"field-id\": 30, \"names\": [\"ls_name\"]}, {\"field-id\": 31, \"names\": [\"min_zoom\"]}, {\"field-id\": 32, \"names\": [\"ne_id\"]}, {\"field-id\": 33, \"names\": [\"geom\"]}]"
+  },
+  "current-snapshot-id": 1750000004000,
+  "refs": {
+    "main": {
+      "snapshot-id": 1750000004000,
+      "type": "branch"
+    }
+  },
+  "snapshots": [
+    {
+      "snapshot-id": 1750000004000,
+      "sequence-number": 1,
+      "timestamp-ms": 1750000004000,
+      "manifest-list": "file:///warehouse/ne/populated_places/metadata/snap-1750000004000-manifest-list.avro",
+      "schema-id": 0,
+      "summary": {
+        "operation": "append",
+        "added-data-files": "1",
+        "added-records": "1251",
+        "added-files-size": "136414",
+        "total-data-files": "1",
+        "total-records": "1251",
+        "total-files-size": "136414",
+        "total-delete-files": "0",
+        "total-equality-deletes": "0",
+        "total-position-deletes": "0",
+        "changed-partition-count": "1"
+      },
+      "first-row-id": 0,
+      "added-rows": 1251
+    }
+  ],
+  "snapshot-log": [
+    {
+      "snapshot-id": 1750000004000,
+      "timestamp-ms": 1750000004000
+    }
+  ],
+  "metadata-log": [],
+  "next-row-id": 1251,
+  "statistics": [],
+  "partition-statistics": [],
+  "row-lineage": false
+}

@@ -7,9 +7,8 @@
     <id>WorkspaceInfoImpl--2fb5fd2d:19ea55565ed:-7fe3</id>
   </workspace>
   <connectionParameters>
-    <entry key="filetype">geoparquet</entry>
     <entry key="namespace">http://parquetry</entry>
-    <entry key="uri">file:///data/ne/</entry>
+    <entry key="geoparquet">file:///data/ne/</entry>
     <entry key="layer-grouping">file</entry>
   </connectionParameters>
   <__default>false</__default>

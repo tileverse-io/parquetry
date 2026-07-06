@@ -18,7 +18,7 @@ import org.geoserver.web.data.store.ParamInfo;
 import org.geotools.api.data.DataAccessFactory.Param;
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.geotools.GeoParquetDataStoreFactory;
+import io.tileverse.parquetry.geotools.parquet.GeoParquetDataStoreFactory;
 
 /**
  * GeoServer's store pages wrap every connection parameter in a {@link ParamInfo}, whose constructor sorts an options

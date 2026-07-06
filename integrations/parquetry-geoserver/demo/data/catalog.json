@@ -1,0 +1,32 @@
+{
+  "type": "Catalog",
+  "stac_version": "1.0.0",
+  "id": "natural-earth",
+  "description": "Natural Earth demo STAC catalog",
+  "links": [
+    {
+      "rel": "self",
+      "href": "catalog.json"
+    },
+    {
+      "rel": "child",
+      "href": "stac/boundary_lines_land/collection.json"
+    },
+    {
+      "rel": "child",
+      "href": "stac/coastlines/collection.json"
+    },
+    {
+      "rel": "child",
+      "href": "stac/countries/collection.json"
+    },
+    {
+      "rel": "child",
+      "href": "stac/disputed_areas/collection.json"
+    },
+    {
+      "rel": "child",
+      "href": "stac/populated_places/collection.json"
+    }
+  ]
+}
