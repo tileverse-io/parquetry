@@ -16,9 +16,13 @@
 package io.tileverse.parquetry.cli.arrow;
 
 import java.io.OutputStream;
+import java.util.Iterator;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.Spliterator;
+import java.util.Spliterators;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 import io.tileverse.parquetry.arrow.ipc.ArrowIpcWriter;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
@@ -52,31 +56,46 @@ public final class ArrowOutput {
     }
 
     /**
-     * Caps {@code batches} at {@code limit} total rows: whole batches pass through until the limit, the batch
-     * straddling it is sliced to the remainder, and the pull stops there, short-circuiting the read the way the text
-     * path's {@code takeWhile} does. A batch pulled past the cap is closed before the stream ends; an emitted slice
-     * owns its source batch, and closing the slice downstream releases both.
+     * Caps {@code batches} at {@code limit} total rows: whole batches pass through until the limit and the batch
+     * straddling it is sliced to the remainder. The cap is checked before each pull, hence the straddling batch is the
+     * last one decoded - no batch is read past the limit and, on a multi-file dataset, the next file is never opened.
+     * An emitted slice owns its source batch, and closing the slice downstream releases both.
      */
     private static Stream<ParquetRecordBatch> cappedAt(Stream<ParquetRecordBatch> batches, long limit) {
         if (limit == Long.MAX_VALUE) {
             return batches;
         }
-        AtomicLong remaining = new AtomicLong(limit);
-        return batches.takeWhile(batch -> {
-                    if (remaining.get() > 0) {
-                        return true;
-                    }
-                    batch.close();
-                    return false;
-                })
-                .map(batch -> {
-                    long rest = remaining.get();
-                    if (batch.rowCount() <= rest) {
-                        remaining.addAndGet(-batch.rowCount());
-                        return batch;
-                    }
-                    remaining.set(0);
-                    return batch.slice(0, (int) rest);
-                });
+        Stream<ParquetRecordBatch> capped = StreamSupport.stream(new CappedBatches(batches.iterator(), limit), false);
+        return capped.onClose(batches::close);
+    }
+
+    /** Pulls from {@code source} only while rows remain under the cap; the straddling batch is sliced and final. */
+    private static final class CappedBatches extends Spliterators.AbstractSpliterator<ParquetRecordBatch> {
+
+        private final Iterator<ParquetRecordBatch> source;
+        private long remaining;
+
+        private CappedBatches(Iterator<ParquetRecordBatch> source, long remaining) {
+            super(Long.MAX_VALUE, Spliterator.ORDERED);
+            this.source = source;
+            this.remaining = remaining;
+        }
+
+        @Override
+        public boolean tryAdvance(Consumer<? super ParquetRecordBatch> action) {
+            if (remaining <= 0 || !source.hasNext()) {
+                return false;
+            }
+            ParquetRecordBatch batch = source.next();
+            if (batch.rowCount() <= remaining) {
+                remaining -= batch.rowCount();
+                action.accept(batch);
+                return true;
+            }
+            ParquetRecordBatch slice = batch.slice(0, (int) remaining);
+            remaining = 0;
+            action.accept(slice);
+            return true;
+        }
     }
 }

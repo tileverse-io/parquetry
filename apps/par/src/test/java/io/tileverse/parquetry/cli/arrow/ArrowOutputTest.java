@@ -25,6 +25,7 @@ import java.nio.file.StandardOpenOption;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Stream;
 
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.BigIntVector;
@@ -34,6 +35,9 @@ import org.apache.arrow.vector.ipc.ArrowStreamReader;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.cli.expr.FilterParser;
 import io.tileverse.parquetry.cli.render.Projections;
@@ -103,20 +107,25 @@ class ArrowOutputTest {
         assertThat(rowCount(out.toByteArray())).isEqualTo(2);
     }
 
-    @Test
-    void limitTrims(@TempDir Path dir) throws Exception {
+    /** The cities fixture holds 4 rows in one batch; the vectors cover zero, mid-batch, boundary, and beyond. */
+    @ParameterizedTest(name = "limit {0} emits {1} rows")
+    @MethodSource("limitCases")
+    void limitCapsEmittedRows(long limit, int expectedRows, @TempDir Path dir) throws Exception {
         Path file = dir.resolve("cities.parquet");
         Fixtures.writeCities(file);
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try (FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
             ParquetSource source = ParquetSource.open(channel);
-            ParquetSchema schema = source.schema();
-            ArrowOutputRequest request = new ArrowOutputRequest(Predicate.ALWAYS_TRUE, Projection.ALL, 2);
-            ArrowOutput.write(source, schema, Optional.empty(), request, out);
+            ArrowOutputRequest request = new ArrowOutputRequest(Predicate.ALWAYS_TRUE, Projection.ALL, limit);
+            ArrowOutput.write(source, source.schema(), Optional.empty(), request, out);
         }
 
-        assertThat(rowCount(out.toByteArray())).isEqualTo(2);
+        assertThat(rowCount(out.toByteArray())).isEqualTo(expectedRows);
+    }
+
+    static Stream<Arguments> limitCases() {
+        return Stream.of(Arguments.of(0L, 0), Arguments.of(2L, 2), Arguments.of(4L, 4), Arguments.of(99L, 4));
     }
 
     @Test
@@ -135,36 +144,6 @@ class ArrowOutputTest {
         }
 
         assertThat(rowCount(out.toByteArray())).isEqualTo(1);
-    }
-
-    @Test
-    void limitAtTheBatchBoundaryPassesTheWholeBatch(@TempDir Path dir) throws Exception {
-        Path file = dir.resolve("cities.parquet");
-        Fixtures.writeCities(file);
-
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        try (FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
-            ParquetSource source = ParquetSource.open(channel);
-            ArrowOutputRequest request = new ArrowOutputRequest(Predicate.ALWAYS_TRUE, Projection.ALL, 4);
-            ArrowOutput.write(source, source.schema(), Optional.empty(), request, out);
-        }
-
-        assertThat(rowCount(out.toByteArray())).isEqualTo(4);
-    }
-
-    @Test
-    void limitAboveTheTotalReturnsEverything(@TempDir Path dir) throws Exception {
-        Path file = dir.resolve("cities.parquet");
-        Fixtures.writeCities(file);
-
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        try (FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
-            ParquetSource source = ParquetSource.open(channel);
-            ArrowOutputRequest request = new ArrowOutputRequest(Predicate.ALWAYS_TRUE, Projection.ALL, 99);
-            ArrowOutput.write(source, source.schema(), Optional.empty(), request, out);
-        }
-
-        assertThat(rowCount(out.toByteArray())).isEqualTo(4);
     }
 
     @Test
