@@ -84,7 +84,7 @@ class GeoParquetPushdownIT {
     }
 
     /** The envelope of a query's features, built by expanding each feature's geometry envelope while iterating. */
-    private static ReferencedEnvelope iteratedBounds(GeoParquetFeatureSource fs, Query query) throws Exception {
+    private static ReferencedEnvelope iteratedBounds(CatalogFeatureSource fs, Query query) throws Exception {
         ReferencedEnvelope envelope = new ReferencedEnvelope(fs.getSchema().getCoordinateReferenceSystem());
         try (FeatureReader<SimpleFeatureType, SimpleFeature> reader = fs.getReader(query)) {
             while (reader.hasNext()) {
@@ -127,8 +127,8 @@ class GeoParquetPushdownIT {
 
     @Test
     void boundsForPushableFilterEqualIteratedEnvelope(@TempDir Path dir) throws Exception {
-        try (GeoParquetDataStore store = store(dir)) {
-            GeoParquetFeatureSource fs = (GeoParquetFeatureSource) store.getFeatureSource("example");
+        try (CatalogDataStore store = store(dir)) {
+            CatalogFeatureSource fs = (CatalogFeatureSource) store.getFeatureSource("example");
             Query q = new Query("example", FF.equals(FF.property("continent"), FF.literal("Africa")));
             ReferencedEnvelope expected = iteratedBounds(fs, q);
             assertThat(expected.isNull()).isFalse();
@@ -150,7 +150,7 @@ class GeoParquetPushdownIT {
         try (GeoParquetDataStore store = new GeoParquetDataStore(catalog)) {
             BoundingBox declared = declaredPrimaryColumnBbox(catalog);
 
-            GeoParquetFeatureSource fs = (GeoParquetFeatureSource) store.getFeatureSource("example");
+            CatalogFeatureSource fs = (CatalogFeatureSource) store.getFeatureSource("example");
             ReferencedEnvelope bounds = fs.getBoundsInternal(new Query("example"));
 
             // Under the trust rule the unfiltered answer is the file's declared extent, not the exact geometry union
@@ -174,8 +174,8 @@ class GeoParquetPushdownIT {
 
     @Test
     void boundsForResidualFilterAreUnknown(@TempDir Path dir) throws Exception {
-        try (GeoParquetDataStore store = store(dir)) {
-            GeoParquetFeatureSource fs = (GeoParquetFeatureSource) store.getFeatureSource("example");
+        try (CatalogDataStore store = store(dir)) {
+            CatalogFeatureSource fs = (CatalogFeatureSource) store.getFeatureSource("example");
             // PropertyIsLike never pushes down; the residual means the pushed predicate over-approximates the query,
             // an exact bounds cannot be promised, and the caller must compute it by iterating.
             Query q = new Query("example", FF.like(FF.property("name"), "*a*"));
