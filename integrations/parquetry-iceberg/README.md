@@ -37,7 +37,7 @@ clear message rather than returning wrong rows. The `Spec` column notes the Iceb
 | Primitive types | v1+ | Full | boolean, int, long, float, double, date, string, uuid, binary, ... |
 | Native geometry / geography | v3 | Full | Parquet `Geometry` logical type, WKB |
 | Variant | v3 | Partial | decoded by the core engine; no Iceberg-specific fixture yet |
-| Nested struct / list / map | v1+ | Partial | read by name; field-id reconciliation within nesting is Planned (the main conformance gap) |
+| Nested struct / list / map | v1+ | Partial | read by name; a data file whose nested field ids disagree with the table (a nested rename or id reassignment) now fails loud instead of misreading; full field-id reconciliation within nesting is Planned (the main conformance gap) |
 | Field-id reconciliation, top-level | v1+ | Full | rename, add (reads as null), drop, reorder |
 | Type promotion `int`->`long`, `float`->`double` | v1+ | Full | filters correctly on a promoted column |
 | Type promotion `decimal` precision widening | v1+ | Planned | `int`->`long` and `float`->`double` work; decimal widening does not yet |

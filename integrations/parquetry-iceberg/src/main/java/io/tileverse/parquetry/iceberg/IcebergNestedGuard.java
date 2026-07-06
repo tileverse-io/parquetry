@@ -75,10 +75,11 @@ final class IcebergNestedGuard {
         for (SchemaNode child : group.children()) {
             switch (child) {
                 case SchemaNode.Group childGroup -> collectNested(childGroup, childParentId, fileById);
-                case SchemaNode.Primitive leaf -> {
-                    if (leaf.fieldId() != NO_FIELD_ID) {
-                        fileById.put(leaf.fieldId(), new FileNode(childParentId, leaf.name()));
-                    }
+                case SchemaNode.Primitive leaf
+                when leaf.fieldId() != NO_FIELD_ID ->
+                    fileById.put(leaf.fieldId(), new FileNode(childParentId, leaf.name()));
+                default -> {
+                    // An id-less leaf cannot be matched by field id and is skipped.
                 }
             }
         }

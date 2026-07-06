@@ -48,12 +48,12 @@ final class IcebergNestedSchema {
 
     private IcebergNestedSchema(Map<Integer, NestedNode> byId) {
         this.byId = Map.copyOf(byId);
-        Map<Slot, Integer> idBySlot = new HashMap<>();
+        Map<Slot, Integer> bySlot = new HashMap<>();
         for (Map.Entry<Integer, NestedNode> entry : byId.entrySet()) {
             NestedNode node = entry.getValue();
-            idBySlot.put(new Slot(node.parentId(), node.localName()), entry.getKey());
+            bySlot.put(new Slot(node.parentId(), node.localName()), entry.getKey());
         }
-        this.idBySlot = Map.copyOf(idBySlot);
+        this.idBySlot = Map.copyOf(bySlot);
     }
 
     /** Parses the current schema's {@code fields} array, recording only nested nodes. */
