@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.internal.read;
+package io.tileverse.parquetry.columnar;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -24,14 +24,9 @@ import java.util.OptionalInt;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.columnar.BinaryVector;
-import io.tileverse.parquetry.columnar.LongVector;
-import io.tileverse.parquetry.columnar.ShreddedVariantVector;
 import io.tileverse.parquetry.columnar.ShreddedVariantVector.ScalarInput;
 import io.tileverse.parquetry.columnar.ShreddedVariantVector.VariantInput;
-import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.format.ParquetFormatException;
-import io.tileverse.parquetry.internal.read.DremelAssembler.Compaction;
 import io.tileverse.parquetry.internal.variant.VariantEncoder;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
@@ -40,7 +35,9 @@ import io.tileverse.parquetry.variant.ShreddedVariant;
 
 /**
  * Pins the eager-path rejection of a shredded Variant nested under a list or map. The lazy streaming path rejects the
- * same shape with the same exception type and message; this keeps the eager {@link Compaction} arm aligned with it.
+ * same shape with the same exception type and the same list-or-map core in its message; this keeps the eager
+ * {@link Compaction} arm aligned with it. The eager message additionally names the rule for the public entry point: a
+ * shredded Variant vector must be unshredded before compaction.
  */
 class ShreddedVariantCompactionTest {
 

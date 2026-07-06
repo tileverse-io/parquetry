@@ -79,6 +79,9 @@ public final class ArrowIpcWriter {
             Stream<ParquetRecordBatch> batches, List<LogicalColumn> columns, WritableByteChannel channel) {
         batches.forEach(batch -> {
             try (batch) {
+                if (batch.rowCount() == 0) {
+                    return;
+                }
                 ArrowBatchEncoder.Encoded encoded = ArrowBatchEncoder.encode(batch, columns);
                 IpcFraming.writeMessage(channel, encoded.metadata(), encoded.body());
             } catch (IOException e) {

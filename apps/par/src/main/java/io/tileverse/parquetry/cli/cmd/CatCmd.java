@@ -99,8 +99,7 @@ public class CatCmd implements Callable<Integer> {
             long limit) {
         ParquetSchema projectedSchema = projectedSchema(schema, projection);
         Optional<GeoParquetMetadata> geo = DatasetResolver.geoMetadataOf(dataset);
-        ArrowOutputRequest request =
-                new ArrowOutputRequest(predicate, projection.projection(), options.filter != null, limit);
+        ArrowOutputRequest request = new ArrowOutputRequest(predicate, projection.projection(), limit);
         ArrowOutput.write(dataset, projectedSchema, geo, request, System.out);
     }
 

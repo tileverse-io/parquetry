@@ -15,26 +15,16 @@
  */
 package io.tileverse.parquetry.internal.read;
 
-import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.IntFunction;
 
 import io.tileverse.parquetry.columnar.BinaryVector;
-import io.tileverse.parquetry.columnar.BooleanVector;
 import io.tileverse.parquetry.columnar.ColumnVector;
-import io.tileverse.parquetry.columnar.DoubleVector;
-import io.tileverse.parquetry.columnar.FixedLenBinaryVector;
-import io.tileverse.parquetry.columnar.FloatVector;
-import io.tileverse.parquetry.columnar.Int96Vector;
-import io.tileverse.parquetry.columnar.IntVector;
-import io.tileverse.parquetry.columnar.LevelListVector;
-import io.tileverse.parquetry.columnar.LevelMapVector;
+import io.tileverse.parquetry.columnar.Compaction;
 import io.tileverse.parquetry.columnar.ListVector;
-import io.tileverse.parquetry.columnar.LongVector;
 import io.tileverse.parquetry.columnar.MapVector;
 import io.tileverse.parquetry.columnar.ShreddedVariantVector;
 import io.tileverse.parquetry.columnar.ShreddedVariantVector.ArrayInput;
@@ -381,7 +371,7 @@ final class DremelAssembler {
         private TypedInput compactTyped(TypedInput typed, int[] keptIndices) {
             return switch (typed) {
                 case null -> null;
-                case ScalarInput scalar -> new ScalarInput(Compaction.compact(scalar.vector(), keptIndices));
+                case ScalarInput(ColumnVector vector) -> new ScalarInput(Compaction.compact(vector, keptIndices));
                 case ObjectInput object -> compactObject(object, keptIndices);
                 case ArrayInput array -> compactArray(array, keptIndices);
             };
@@ -626,218 +616,5 @@ final class DremelAssembler {
         result.addAll(prefix);
         result.add(segment);
         return result;
-    }
-
-    /**
-     * Drops phantom elements from an assembled child, keeping only the elements an enclosing container retains. A pure
-     * transform over vectors and index arrays: it reads no leaf or level state, recursing into nested
-     * {@link ListVector} / {@link MapVector} / {@link StructVector} / {@link VariantVector} children by gathering their
-     * per-row state at the kept indices.
-     */
-    static final class Compaction {
-
-        private Compaction() {}
-
-        static ColumnVector compact(ColumnVector child, int[] keptIndices) {
-            if (child == null) {
-                return null;
-            }
-            if (keptIndices.length == child.size()) {
-                return child;
-            }
-            return switch (child) {
-                case IntVector v -> {
-                    int[] ints = gatherInts(v, keptIndices);
-                    Validity validity = gatherValidity(v, keptIndices);
-                    yield IntVector.materialized(ints, validity);
-                }
-                case LongVector v -> {
-                    long[] longs = gatherLongs(v, keptIndices);
-                    Validity validity = gatherValidity(v, keptIndices);
-                    yield LongVector.materialized(longs, validity);
-                }
-                case FloatVector v -> {
-                    float[] floats = gatherFloats(v, keptIndices);
-                    Validity validity = gatherValidity(v, keptIndices);
-                    yield FloatVector.materialized(floats, validity);
-                }
-                case DoubleVector v -> {
-                    double[] doubles = gatherDoubles(v, keptIndices);
-                    Validity validity = gatherValidity(v, keptIndices);
-                    yield DoubleVector.materialized(doubles, validity);
-                }
-                case BooleanVector v -> {
-                    boolean[] booleans = gatherBooleans(v, keptIndices);
-                    Validity validity = gatherValidity(v, keptIndices);
-                    yield BooleanVector.materialized(booleans, validity);
-                }
-                case BinaryVector v -> {
-                    MemorySegment[] segments = gatherSegments(v::get, keptIndices);
-                    Validity validity = gatherValidity(v, keptIndices);
-                    yield BinaryVector.materialized(segments, validity);
-                }
-                case FixedLenBinaryVector v -> {
-                    MemorySegment[] segments = gatherSegments(v::get, keptIndices);
-                    int byteWidth = v.byteWidth();
-                    Validity validity = gatherValidity(v, keptIndices);
-                    yield FixedLenBinaryVector.materialized(segments, byteWidth, validity);
-                }
-                case Int96Vector v -> {
-                    MemorySegment[] segments = gatherSegments(v::get, keptIndices);
-                    Validity validity = gatherValidity(v, keptIndices);
-                    yield Int96Vector.materialized(segments, validity);
-                }
-                case ListVector v -> compactList(v, keptIndices);
-                case MapVector v -> compactMap(v, keptIndices);
-                case StructVector v -> compactStruct(v, keptIndices);
-                case VariantVector v -> compactVariant(v, keptIndices);
-                case ShreddedVariantVector _ ->
-                    throw new ParquetFormatException(
-                            "reading a shredded Variant nested under a list or map is not supported");
-                case LevelListVector _, LevelMapVector _ ->
-                    throw new IllegalStateException("level-backed vectors are never assembly children");
-            };
-        }
-
-        private static VariantVector compactVariant(VariantVector v, int[] keptIndices) {
-            BinaryVector metadata = (BinaryVector) compact(v.metadataColumn(), keptIndices);
-            BinaryVector value = (BinaryVector) compact(v.valueColumn(), keptIndices);
-            return new VariantVector(metadata, value, gatherValidity(v, keptIndices), keptIndices.length);
-        }
-
-        private static ListVector compactList(ListVector v, int[] keptIndices) {
-            ChildGather gather = gatherNestedRows(v::rowOffsetStart, v::rowOffsetEnd, keptIndices);
-            ColumnVector compactedChild = compact(v.child(), gather.childIndices());
-            return new ListVector(gather.offsets(), compactedChild, gatherValidity(v, keptIndices), keptIndices.length);
-        }
-
-        private static MapVector compactMap(MapVector v, int[] keptIndices) {
-            ChildGather gather = gatherNestedRows(v::rowOffsetStart, v::rowOffsetEnd, keptIndices);
-            ColumnVector compactedKeys = compact(v.keys(), gather.childIndices());
-            ColumnVector compactedValues = compact(v.values(), gather.childIndices());
-            return new MapVector(
-                    gather.offsets(),
-                    compactedKeys,
-                    compactedValues,
-                    gatherValidity(v, keptIndices),
-                    keptIndices.length);
-        }
-
-        private static StructVector compactStruct(StructVector v, int[] keptIndices) {
-            Map<ColumnPath, ColumnVector> children = new LinkedHashMap<>();
-            for (Map.Entry<ColumnPath, ColumnVector> entry : v.children().entrySet()) {
-                children.put(entry.getKey(), compact(entry.getValue(), keptIndices));
-            }
-            return new StructVector(children, gatherValidity(v, keptIndices), keptIndices.length);
-        }
-
-        /**
-         * Reindexes a nested container's offsets to the kept parent rows, collecting the child-element indices each
-         * kept row points at into a flat, contiguous index list.
-         */
-        private static ChildGather gatherNestedRows(
-                java.util.function.IntUnaryOperator startOf,
-                java.util.function.IntUnaryOperator endOf,
-                int[] keptIndices) {
-            int[] offsets = new int[keptIndices.length + 1];
-            List<Integer> childIndices = new ArrayList<>();
-            int running = 0;
-            for (int i = 0; i < keptIndices.length; i++) {
-                offsets[i] = running;
-                int start = startOf.applyAsInt(keptIndices[i]);
-                int end = endOf.applyAsInt(keptIndices[i]);
-                for (int e = start; e < end; e++) {
-                    childIndices.add(e);
-                }
-                running += end - start;
-            }
-            offsets[keptIndices.length] = running;
-            int[] childIndexArray = new int[childIndices.size()];
-            for (int i = 0; i < childIndexArray.length; i++) {
-                childIndexArray[i] = childIndices.get(i);
-            }
-            return new ChildGather(offsets, childIndexArray);
-        }
-
-        @SuppressWarnings("java:S6218") // internal gather carrier, never compared by value
-        private record ChildGather(int[] offsets, int[] childIndices) {}
-
-        /**
-         * Re-indexes a flat offsets array ({@code length = rows + 1}) to the kept rows, collecting the element indices
-         * each kept row spans into a contiguous list. The companion to {@link #gatherNestedRows} for inputs that hold
-         * their per-row ranges as a plain offsets array rather than a vector.
-         */
-        static OffsetGather gatherOffsets(int[] offsets, int[] keptIndices) {
-            ChildGather gather = gatherNestedRows(row -> offsets[row], row -> offsets[row + 1], keptIndices);
-            return new OffsetGather(gather.offsets(), gather.childIndices());
-        }
-
-        @SuppressWarnings("java:S6218") // internal gather carrier, never compared by value
-        record OffsetGather(int[] offsets, int[] childIndices) {}
-
-        // Compaction keeps a value for every kept index, null rows included; the gathered validity preserves the
-        // null mask. Read the backing directly via valueAt to keep the parked value for kept null rows instead of
-        // failing fast.
-        private static int[] gatherInts(IntVector v, int[] keptIndices) {
-            int[] out = new int[keptIndices.length];
-            for (int i = 0; i < keptIndices.length; i++) {
-                out[i] = v.valueAt(keptIndices[i]);
-            }
-            return out;
-        }
-
-        private static long[] gatherLongs(LongVector v, int[] keptIndices) {
-            long[] out = new long[keptIndices.length];
-            for (int i = 0; i < keptIndices.length; i++) {
-                out[i] = v.valueAt(keptIndices[i]);
-            }
-            return out;
-        }
-
-        private static float[] gatherFloats(FloatVector v, int[] keptIndices) {
-            float[] out = new float[keptIndices.length];
-            for (int i = 0; i < keptIndices.length; i++) {
-                out[i] = v.valueAt(keptIndices[i]);
-            }
-            return out;
-        }
-
-        private static double[] gatherDoubles(DoubleVector v, int[] keptIndices) {
-            double[] out = new double[keptIndices.length];
-            for (int i = 0; i < keptIndices.length; i++) {
-                out[i] = v.valueAt(keptIndices[i]);
-            }
-            return out;
-        }
-
-        private static boolean[] gatherBooleans(BooleanVector v, int[] keptIndices) {
-            boolean[] out = new boolean[keptIndices.length];
-            for (int i = 0; i < keptIndices.length; i++) {
-                out[i] = v.valueAt(keptIndices[i]);
-            }
-            return out;
-        }
-
-        private static MemorySegment[] gatherSegments(IntFunction<MemorySegment> getter, int[] keptIndices) {
-            MemorySegment[] out = new MemorySegment[keptIndices.length];
-            for (int i = 0; i < keptIndices.length; i++) {
-                out[i] = getter.apply(keptIndices[i]);
-            }
-            return out;
-        }
-
-        private static Validity gatherValidity(ColumnVector v, int[] keptIndices) {
-            return gatherValidity(v.validity(), keptIndices);
-        }
-
-        static Validity gatherValidity(Validity source, int[] keptIndices) {
-            BitSet out = new BitSet(keptIndices.length);
-            for (int i = 0; i < keptIndices.length; i++) {
-                if (source.isValid(keptIndices[i])) {
-                    out.set(i);
-                }
-            }
-            return Validity.of(out, keptIndices.length);
-        }
     }
 }

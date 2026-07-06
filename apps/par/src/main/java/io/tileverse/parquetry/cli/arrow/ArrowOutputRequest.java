@@ -19,17 +19,14 @@ import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 
 /**
- * The read parameters {@link ArrowOutput#write} applies to a dataset: which rows ({@code predicate}, plus whether a row
- * filter is actually in play), which columns ({@code projection}), and how many rows ({@code limit}). Grouping these
- * keeps the write signature small and the fast-path/record-path choice readable.
+ * The read parameters {@link ArrowOutput#write} applies to a dataset: which rows ({@code predicate}), which columns
+ * ({@code projection}), and how many rows ({@code limit}).
  *
- * @param predicate row filter to apply on the record path; ignored on the fast path
+ * @param predicate row filter; {@link Predicate#ALWAYS_TRUE} when the caller supplied none
  * @param projection columns to read
- * @param hasFilter whether the caller supplied a row filter; when {@code false} and {@code limit} is unbounded the
- *     columnar fast path is taken
  * @param limit maximum number of rows to emit; {@link Long#MAX_VALUE} means unbounded
  */
-public record ArrowOutputRequest(Predicate predicate, Projection projection, boolean hasFilter, long limit) {
+public record ArrowOutputRequest(Predicate predicate, Projection projection, long limit) {
 
     public ArrowOutputRequest {
         if (limit < 0) {

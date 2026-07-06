@@ -29,6 +29,7 @@ import io.tileverse.parquetry.arrow.columnar.EncodedNode;
 import io.tileverse.parquetry.arrow.ipc.ArrowExportPrep;
 import io.tileverse.parquetry.arrow.ipc.ArrowField;
 import io.tileverse.parquetry.columnar.ColumnVector;
+import io.tileverse.parquetry.columnar.FilteredRecordBatch;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.columnar.StructVector;
 import io.tileverse.parquetry.columnar.Validity;
@@ -81,22 +82,44 @@ final class StreamState {
     }
 
     /**
-     * Pulls the next batch into {@code outArray}, or marks {@code outArray} released (the C end-of-stream signal) when
-     * the source is drained. Serialized by the pull lock; the live batch is closed after its buffers are copied out.
+     * Pulls the next non-empty batch into {@code outArray}, or marks {@code outArray} released (the C end-of-stream
+     * signal) when the source is drained. A filtered batch is densified first; a zero-row batch is closed and skipped,
+     * keeping the consumer from ever holding a zero-length array next to the end-of-stream signal. Serialized by the
+     * pull lock; the live batch is closed after its buffers are copied out.
      */
     void next(MemorySegment outArray) {
         synchronized (pullLock) {
-            if (closed || !batches.hasNext()) {
+            ParquetRecordBatch pulled = pullNonEmpty();
+            if (pulled == null) {
                 CDataLayouts.arraySetLength(outArray, 0L);
                 CDataLayouts.arraySetRelease(outArray, MemorySegment.NULL);
                 return;
             }
-            try (ParquetRecordBatch batch = batches.next()) {
-                ColumnVector prepared = ArrowExportPrep.prepareForExport(rootStruct(batch), rootField);
-                EncodedNode node = ArrowBufferCodec.encode(prepared);
-                ArrowArrayExporter.export(node, pool, outArray);
+            try (ParquetRecordBatch batch = pulled) {
+                ParquetRecordBatch dense = batch instanceof FilteredRecordBatch filtered ? filtered.compacted() : batch;
+                try {
+                    ColumnVector prepared = ArrowExportPrep.prepareForExport(rootStruct(dense), rootField);
+                    EncodedNode node = ArrowBufferCodec.encode(prepared);
+                    ArrowArrayExporter.export(node, pool, outArray);
+                } finally {
+                    if (dense != batch) {
+                        dense.close();
+                    }
+                }
             }
         }
+    }
+
+    /** The next batch with at least one row, closing empties on the way; null when closed or drained. */
+    private ParquetRecordBatch pullNonEmpty() {
+        while (!closed && batches.hasNext()) {
+            ParquetRecordBatch batch = batches.next();
+            if (batch.rowCount() > 0) {
+                return batch;
+            }
+            batch.close();
+        }
+        return null;
     }
 
     /** Records the error message for a failed pull and returns the error code the upcall reports to the consumer. */
