@@ -287,8 +287,9 @@ public final class StacDataset implements GeoParquetDataset {
             return Stream.empty();
         }
         if (options.spatialReadProbe().isPresent()) {
-            return survivors.stream()
-                    .flatMap(index -> perFile(index).read(predicate, projection, materializer, options));
+            return ConcurrentSurvivorReads.sequential(
+                    survivors.size(),
+                    dense -> perFile(survivors.get(dense)).read(predicate, projection, materializer, options));
         }
         return ConcurrentSurvivorReads.records(
                 survivors.size(),

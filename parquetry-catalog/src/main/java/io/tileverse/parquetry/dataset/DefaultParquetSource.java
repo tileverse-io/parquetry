@@ -36,6 +36,7 @@ import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
 import io.tileverse.parquetry.columnar.BatchMaterializer;
+import io.tileverse.parquetry.columnar.BatchRows;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ReadOptions;
@@ -208,7 +209,7 @@ final class DefaultParquetSource implements ParquetSource {
         }
         Stream<ParquetRecordBatch> batches = mergeConcurrently(
                 reader -> reader.readBatches(predicate, projection, options), ParquetRecordBatch::close, emission);
-        return batches.flatMap(batch -> BatchRows.flatten(batch, materializer));
+        return BatchRows.rows(batches, materializer);
     }
 
     @Override

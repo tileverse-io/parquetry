@@ -245,11 +245,69 @@ class DefaultParquetSourceConcurrentReadTest {
         }
     }
 
+    /**
+     * Rows handed out by {@code Stream.iterator()} are flyweight views valid until the next pull; each must read its
+     * own file's values at delivery. Single-row files sharpen the check: their batches close almost immediately after
+     * production, and a flatten that released a batch before its rows were delivered would hand the iterator views over
+     * recycled memory. The key comparison against the sequential reference catches that as wrong content even when the
+     * recycled bytes happen to decode without an exception.
+     */
+    @Test
+    void iteratorPulledRowsMatchTheSequentialReference(@TempDir Path tmp) throws IOException {
+        List<Path> files = writeDistinctFiles(tmp, new int[] {1_500, 1, 900, 1});
+        List<String> sequential = sequentialReferenceKeys(files);
+
+        List<ByteRangeSource> sources = openSources(files);
+        try {
+            ParquetSource source = ParquetSource.open(TestFilesets.of(sources), fanOutOptions(4));
+            List<String> delivered = new ArrayList<>();
+            try (Stream<ParquetRecord> stream =
+                    source.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
+                Iterator<ParquetRecord> it = stream.iterator();
+                while (it.hasNext()) {
+                    delivered.add(rowKey(it.next()));
+                }
+            }
+            assertThat(delivered).hasSize(sequential.size());
+            assertThat(sorted(delivered)).isEqualTo(sorted(sequential));
+        } finally {
+            closeAll(sources);
+        }
+    }
+
+    /** The probe-pinned sequential path must give iterator pulls the same one-pull row validity as the fan-out. */
+    @Test
+    void probePathIteratorPullMatchesTheFileOrderedReference(@TempDir Path tmp) throws IOException {
+        List<Path> files = writeDistinctFiles(tmp, new int[] {700, 1, 400});
+        List<String> fileOrdered = sequentialReferenceKeys(files);
+
+        List<ByteRangeSource> sources = openSources(files);
+        try {
+            ParquetSource source = ParquetSource.open(TestFilesets.of(sources), fanOutOptions(4));
+            ReadOptions probing =
+                    ReadOptions.builder().spatialReadProbe(KEEP_EVERYTHING).build();
+            List<String> delivered = new ArrayList<>();
+            try (Stream<ParquetRecord> stream = source.read(Predicate.ALWAYS_TRUE, Projection.ALL, probing)) {
+                Iterator<ParquetRecord> it = stream.iterator();
+                while (it.hasNext()) {
+                    delivered.add(rowKey(it.next()));
+                }
+            }
+            assertThat(delivered).containsExactlyElementsOf(fileOrdered);
+        } finally {
+            closeAll(sources);
+        }
+    }
+
     private static List<Path> writeDistinctFiles(Path tmp) throws IOException {
-        List<Path> files = new ArrayList<>(ROW_COUNTS.length);
-        for (int i = 0; i < ROW_COUNTS.length; i++) {
+        return writeDistinctFiles(tmp, ROW_COUNTS);
+    }
+
+    private static List<Path> writeDistinctFiles(Path tmp, int[] rowCounts) throws IOException {
+        List<Path> files = new ArrayList<>(rowCounts.length);
+        for (int i = 0; i < rowCounts.length; i++) {
             Path dir = Files.createDirectories(tmp.resolve("file-" + i));
-            files.add(TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(dir, ROW_COUNTS[i]));
+            files.add(TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(dir, rowCounts[i]));
         }
         return files;
     }
