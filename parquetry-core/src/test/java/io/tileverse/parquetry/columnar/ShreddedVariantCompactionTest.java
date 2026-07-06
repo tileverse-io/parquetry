@@ -35,7 +35,9 @@ import io.tileverse.parquetry.variant.ShreddedVariant;
 
 /**
  * Pins the eager-path rejection of a shredded Variant nested under a list or map. The lazy streaming path rejects the
- * same shape with the same exception type and message; this keeps the eager {@link Compaction} arm aligned with it.
+ * same shape with the same exception type and the same list-or-map core in its message; this keeps the eager
+ * {@link Compaction} arm aligned with it. The eager message additionally names the rule for the public entry point: a
+ * shredded Variant vector must be unshredded before compaction.
  */
 class ShreddedVariantCompactionTest {
 

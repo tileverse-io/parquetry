@@ -100,8 +100,8 @@ public final class Compaction {
             case StructVector v -> compactStruct(v, keptIndices);
             case VariantVector v -> compactVariant(v, keptIndices);
             case ShreddedVariantVector _ ->
-                throw new ParquetFormatException(
-                        "reading a shredded Variant nested under a list or map is not supported");
+                throw new ParquetFormatException("a shredded Variant vector must be unshredded before compaction; "
+                        + "reading a shredded Variant nested under a list or map is not supported");
             case LevelListVector _, LevelMapVector _ ->
                 throw new IllegalStateException("level-backed vectors are never assembly children");
         };
