@@ -137,6 +137,19 @@ class IcebergDatasetTest {
         assertThat(found).isEmpty();
     }
 
+    @Test
+    void aMappedUserColumnNamedLikeALineageColumnStaysUserData() {
+        IcebergNameMapping mapping = IcebergNameMapping.fromJson("[{\"field-id\": 7, \"names\": [\"_row_id\"]}]");
+        SchemaNode.Group root =
+                new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(leaf("_row_id", -1)), Optional.empty(), -1);
+        IcebergFileSchema file = IcebergFileSchema.of(new ParquetSchema(root), mapping);
+
+        Optional<IcebergFileSchema.FileColumn> found =
+                IcebergDataset.materializedLineageColumn(file, Integer.MAX_VALUE - 107, ColumnPath.of("_row_id"));
+
+        assertThat(found).isEmpty();
+    }
+
     private static IcebergFileSchema fileSchemaOf(SchemaNode... leaves) {
         SchemaNode.Group root =
                 new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(leaves), Optional.empty(), -1);
@@ -235,7 +248,7 @@ class IcebergDatasetTest {
         CatalogSnapshot snapshot =
                 new CatalogSnapshot(metadata.currentSnapshotId(), metadata.currentSnapshotTimestampMs());
         IcebergPartitionSpec partitionSpec = IcebergPartitionSpec.of(List.of(), List.of());
-        IcebergDeletePlan deletePlan = IcebergDeletePlan.of(List.of(), io, null);
+        IcebergDeletePlan deletePlan = IcebergDeletePlan.of(List.of(), io, null, IcebergNameMapping.empty());
         return new IcebergDataset(
                 TABLE,
                 snapshot,
@@ -246,6 +259,7 @@ class IcebergDatasetTest {
                 sources,
                 deletePlan,
                 metadata.formatVersion(),
+                IcebergNameMapping.empty(),
                 OpenOptions.DEFAULTS);
     }
 

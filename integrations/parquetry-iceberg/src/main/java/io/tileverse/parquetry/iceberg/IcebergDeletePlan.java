@@ -50,13 +50,15 @@ import io.tileverse.parquetry.iceberg.IcebergManifests.DeleteFileRef;
  */
 final class IcebergDeletePlan {
 
-    private static final IcebergDeletePlan EMPTY = new IcebergDeletePlan(List.of(), List.of(), List.of(), null, null);
+    private static final IcebergDeletePlan EMPTY =
+            new IcebergDeletePlan(List.of(), List.of(), List.of(), null, null, null);
 
     private final List<DeleteFileRef> positionDeletes;
     private final List<DeleteFileRef> deletionVectors;
     private final List<DeleteFileRef> equalityDeletes;
     private final IcebergFileIO io;
     private final IcebergSchema schema;
+    private final IcebergNameMapping nameMapping;
     private final Map<String, Map<String, long[]>> parsedPositionsByFile = new ConcurrentHashMap<>();
     private final Map<String, RowPositionSet> parsedVectorsByFile = new ConcurrentHashMap<>();
     private final Map<String, Tuples> parsedTuplesByFile = new ConcurrentHashMap<>();
@@ -67,19 +69,23 @@ final class IcebergDeletePlan {
             List<DeleteFileRef> deletionVectors,
             List<DeleteFileRef> equalityDeletes,
             IcebergFileIO io,
-            IcebergSchema schema) {
+            IcebergSchema schema,
+            IcebergNameMapping nameMapping) {
         this.positionDeletes = List.copyOf(positionDeletes);
         this.deletionVectors = List.copyOf(deletionVectors);
         this.equalityDeletes = List.copyOf(equalityDeletes);
         this.io = io;
         this.schema = schema;
+        this.nameMapping = nameMapping;
     }
 
     /**
      * A plan over {@code deleteFiles}, reading them through {@code io} and resolving equality fields against
-     * {@code schema}; an empty list yields the no-deletes plan.
+     * {@code schema}, with an id-less delete file's columns resolved through {@code nameMapping}; an empty list yields
+     * the no-deletes plan.
      */
-    static IcebergDeletePlan of(List<DeleteFileRef> deleteFiles, IcebergFileIO io, IcebergSchema schema) {
+    static IcebergDeletePlan of(
+            List<DeleteFileRef> deleteFiles, IcebergFileIO io, IcebergSchema schema, IcebergNameMapping nameMapping) {
         if (deleteFiles.isEmpty()) {
             return EMPTY;
         }
@@ -89,7 +95,7 @@ final class IcebergDeletePlan {
         for (DeleteFileRef delete : deleteFiles) {
             classify(delete, positionDeletes, deletionVectors, equalityDeletes);
         }
-        return new IcebergDeletePlan(positionDeletes, deletionVectors, equalityDeletes, io, schema);
+        return new IcebergDeletePlan(positionDeletes, deletionVectors, equalityDeletes, io, schema, nameMapping);
     }
 
     private static void classify(
@@ -301,7 +307,7 @@ final class IcebergDeletePlan {
 
     private Tuples tuples(DeleteFileRef delete) {
         return parsedTuplesByFile.computeIfAbsent(
-                equalityCacheKey(delete), unusedKey -> IcebergEqualityDeletes.read(io, delete, schema));
+                equalityCacheKey(delete), unusedKey -> IcebergEqualityDeletes.read(io, delete, schema, nameMapping));
     }
 
     private static long[] concat(List<long[]> arrays) {

@@ -21,6 +21,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.function.Consumer;
 
 import io.tileverse.parquetry.filter.Value;
 
@@ -37,9 +38,10 @@ import tools.jackson.databind.node.ObjectNode;
  * table's current schema renames, adds, drops, reorders, or promotes columns by field id. This helper reads the
  * original {@code v1.metadata.json}, appends an evolved schema with a fresh schema id, repoints
  * {@code current-schema-id} at it, and writes the result as {@code v<version>.metadata.json}. Everything else,
- * including {@code current-snapshot-id}, the snapshots array, and the manifest-list location, stays byte-identical,
- * hence the evolved table reads over the original data files. The metadata resolver then picks the highest version,
- * presenting the evolved schema to {@link IcebergTableCatalog#openLocal}.
+ * including {@code current-snapshot-id}, the snapshots array, and the manifest-list location, stays byte-identical
+ * (apart from the optional {@code schema.name-mapping.default} property rewrite the 3-arg overload performs), hence the
+ * evolved table reads over the original data files. The metadata resolver then picks the highest version, presenting
+ * the evolved schema to {@link IcebergTableCatalog#openLocal}.
  */
 final class IcebergSchemaEvolution {
 
@@ -53,12 +55,36 @@ final class IcebergSchemaEvolution {
      * Returns {@code tableDir} for chaining into {@link IcebergTableCatalog#openLocal}.
      */
     static Path evolveCurrentSchema(Path tableDir, List<IcebergField> evolved) {
+        return evolve(tableDir, evolved, root -> {});
+    }
+
+    /**
+     * Evolves the current schema and rewrites the {@code schema.name-mapping.default} property in the same metadata
+     * version, mirroring how Iceberg maintains the mapping on schema commits. A null {@code nameMappingJson} removes
+     * the property, exercising the implicit schema-derived mapping.
+     */
+    static Path evolveCurrentSchema(Path tableDir, List<IcebergField> evolved, String nameMappingJson) {
+        return evolve(tableDir, evolved, root -> putNameMapping(root, nameMappingJson));
+    }
+
+    private static Path evolve(Path tableDir, List<IcebergField> evolved, Consumer<ObjectNode> metadataEdit) {
         Path metadataDir = tableDir.resolve("metadata");
         ObjectNode root = readMetadata(metadataDir.resolve("v1.metadata.json"));
         appendEvolvedSchema(root, evolved);
         root.put("current-schema-id", EVOLVED_SCHEMA_ID);
+        metadataEdit.accept(root);
         writeMetadata(metadataDir.resolve("v" + EVOLVED_METADATA_VERSION + ".metadata.json"), root);
         return tableDir;
+    }
+
+    private static void putNameMapping(ObjectNode root, String nameMappingJson) {
+        JsonNode existing = root.get("properties");
+        ObjectNode properties = existing instanceof ObjectNode node ? node : root.putObject("properties");
+        if (nameMappingJson == null) {
+            properties.remove("schema.name-mapping.default");
+        } else {
+            properties.put("schema.name-mapping.default", nameMappingJson);
+        }
     }
 
     private static void appendEvolvedSchema(ObjectNode root, List<IcebergField> evolved) {

@@ -55,18 +55,57 @@ class IcebergFileSchemaTest {
     }
 
     @Test
-    void reportsIdLessWhenAnyTopLevelLeafHasNoFieldId() {
+    void mixedIdFileKeepsEmbeddedIdsAndIgnoresTheMapping() {
         ParquetSchema schema = schemaOf(
                 primitive("id", PrimitiveKind.INT64, Optional.empty(), 1),
                 primitive("legacy", PrimitiveKind.INT32, Optional.empty(), -1));
+        IcebergNameMapping mapping = IcebergNameMapping.fromJson("[{\"field-id\": 9, \"names\": [\"legacy\"]}]");
+
+        IcebergFileSchema fileSchema = IcebergFileSchema.of(schema, mapping);
+
+        assertThat(fileSchema.hasFieldIds()).isTrue();
+        assertThat(fileSchema.byFieldId(1)).isPresent();
+        assertThat(fileSchema.byFieldId(9)).isEmpty();
+        assertThat(fileSchema.byName("legacy")).isPresent();
+    }
+
+    @Test
+    void synthesizesIdsForAnIdlessFileThroughTheMapping() {
+        ParquetSchema schema = schemaOf(
+                primitive("id", PrimitiveKind.INT64, Optional.empty(), -1),
+                primitive("n", PrimitiveKind.INT32, Optional.empty(), -1));
+        IcebergNameMapping mapping = IcebergNameMapping.fromJson(
+                "[{\"field-id\": 1, \"names\": [\"id\"]}, {\"field-id\": 2, \"names\": [\"legacy_n\", \"n\"]}]");
+
+        IcebergFileSchema fileSchema = IcebergFileSchema.of(schema, mapping);
+
+        assertThat(fileSchema.hasFieldIds()).isTrue();
+        assertThat(fileSchema.byFieldId(1).orElseThrow().path()).isEqualTo(ColumnPath.of("id"));
+        assertThat(fileSchema.byFieldId(2).orElseThrow().path()).isEqualTo(ColumnPath.of("n"));
+    }
+
+    @Test
+    void anUnresolvedIdlessLeafStaysOutOfTheIdIndex() {
+        ParquetSchema schema = schemaOf(
+                primitive("id", PrimitiveKind.INT64, Optional.empty(), -1),
+                primitive("extra", PrimitiveKind.INT32, Optional.empty(), -1));
+        IcebergNameMapping mapping = IcebergNameMapping.fromJson("[{\"field-id\": 1, \"names\": [\"id\"]}]");
+
+        IcebergFileSchema fileSchema = IcebergFileSchema.of(schema, mapping);
+
+        assertThat(fileSchema.hasFieldIds()).isTrue();
+        assertThat(fileSchema.byFieldId().values()).extracting(FileColumn::path).containsExactly(ColumnPath.of("id"));
+        assertThat(fileSchema.byName("extra")).isPresent();
+    }
+
+    @Test
+    void reportsIdLessWhenNothingResolves() {
+        ParquetSchema schema = schemaOf(primitive("id", PrimitiveKind.INT64, Optional.empty(), -1));
 
         IcebergFileSchema fileSchema = IcebergFileSchema.of(schema);
 
         assertThat(fileSchema.hasFieldIds()).isFalse();
-        assertThat(fileSchema.byFieldId(-1)).isEmpty();
-        assertThat(fileSchema.byFieldId(1)).isPresent();
-        assertThat(fileSchema.byName("legacy")).isPresent();
-        assertThat(fileSchema.byName("legacy").orElseThrow().kind()).isEqualTo(PrimitiveKind.INT32);
+        assertThat(fileSchema.byName("id")).isPresent();
     }
 
     @Test

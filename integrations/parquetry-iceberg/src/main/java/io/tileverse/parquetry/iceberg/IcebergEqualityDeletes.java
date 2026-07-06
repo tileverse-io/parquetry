@@ -34,9 +34,9 @@ import io.tileverse.parquetry.schema.ColumnPath;
 /**
  * Reads an Iceberg equality-delete file with parquetry's own reader. An equality-delete file is a Parquet file whose
  * columns are the equality-id fields; each row is a tuple of values to delete. This reads those columns by their
- * physical path in the delete file, located by field id, and decodes each cell into a {@link Value} by the equality
- * field's Iceberg type, preserving a null cell as a null tuple element so the anti-predicate can apply null-safe
- * matching.
+ * physical path in the delete file, located by field id (id-less delete files resolve through the table's name
+ * mapping), and decodes each cell into a {@link Value} by the equality field's Iceberg type, preserving a null cell as
+ * a null tuple element so the anti-predicate can apply null-safe matching.
  */
 final class IcebergEqualityDeletes {
 
@@ -57,10 +57,11 @@ final class IcebergEqualityDeletes {
      * Reads {@code delete} into its delete tuples, resolving each equality field id to its table column and physical
      * delete-file column through {@code schema}.
      */
-    static Tuples read(IcebergFileIO io, DeleteFileRef delete, IcebergSchema schema) {
+    static Tuples read(IcebergFileIO io, DeleteFileRef delete, IcebergSchema schema, IcebergNameMapping nameMapping) {
         try (ByteRangeSource source = io.open(delete.location())) {
             ParquetSource deletes = ParquetSource.open(source);
-            List<EqualityColumn> columns = resolveColumns(delete, schema, IcebergFileSchema.of(deletes.schema()));
+            List<EqualityColumn> columns =
+                    resolveColumns(delete, schema, IcebergFileSchema.of(deletes.schema(), nameMapping));
             return new Tuples(tableColumns(columns), collectTuples(deletes, columns));
         }
     }

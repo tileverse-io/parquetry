@@ -57,6 +57,7 @@
           <include>parquetry/**</include>
           <include>avro-reference/**</include>
           <include>iceberg-geo-testbed/**</include>
+          <include>iceberg-name-mapping/**</include>
           <include>iceberg-partitioned/by_category/**</include>
           <include>iceberg-partitioned/by_category_omitted/**</include>
           <include>iceberg-deletes/positional/**</include>

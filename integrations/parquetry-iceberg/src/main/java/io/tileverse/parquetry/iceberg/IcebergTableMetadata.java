@@ -29,13 +29,15 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * The parsed subset of an Iceberg {@code metadata.json} this reader needs: format version, table location, the pinned
- * snapshot id, its manifest-list location, the table's partition model, and the primitive fields of the current schema
- * (used to map a manifest bound's field id to a column name and type). Complex types (struct/list/map) are not pruned
- * in this cut and are omitted from {@link #fields()}.
+ * snapshot id, its manifest-list location, the table's partition model, the primitive fields of the current schema
+ * (used to map a manifest bound's field id to a column name and type), and the name-mapping table property that
+ * resolves id-less data files. Complex types (struct/list/map) are not pruned in this cut and are omitted from
+ * {@link #fields()}.
  */
 final class IcebergTableMetadata {
 
     private static final int PARTITION_FIELD_ID_BASE = 1000;
+    private static final String NAME_MAPPING_PROPERTY = "schema.name-mapping.default";
 
     private final int formatVersion;
     private final String tableLocation;
@@ -44,7 +46,11 @@ final class IcebergTableMetadata {
     private final String manifestListLocation;
     private final IcebergPartitionSpec partitionSpec;
     private final List<IcebergField> fields;
+    private final Optional<IcebergNameMapping> nameMapping;
 
+    // The parsed metadata document hands the reader its cohesive per-table state in one place; these are
+    // one-per-concern final fields, not a long argument list worth bundling into a parameter object.
+    @SuppressWarnings("java:S107")
     private IcebergTableMetadata(
             int formatVersion,
             String tableLocation,
@@ -52,7 +58,8 @@ final class IcebergTableMetadata {
             long currentSnapshotTimestampMs,
             String manifestListLocation,
             IcebergPartitionSpec partitionSpec,
-            List<IcebergField> fields) {
+            List<IcebergField> fields,
+            Optional<IcebergNameMapping> nameMapping) {
         this.formatVersion = formatVersion;
         this.tableLocation = tableLocation;
         this.currentSnapshotId = currentSnapshotId;
@@ -60,6 +67,7 @@ final class IcebergTableMetadata {
         this.manifestListLocation = manifestListLocation;
         this.partitionSpec = partitionSpec;
         this.fields = List.copyOf(fields);
+        this.nameMapping = nameMapping;
     }
 
     public int formatVersion() {
@@ -96,6 +104,11 @@ final class IcebergTableMetadata {
         return fields;
     }
 
+    /** The table's name-mapping document for id-less data files, when the metadata declares one. */
+    public Optional<IcebergNameMapping> nameMapping() {
+        return nameMapping;
+    }
+
     /** Parses {@code metadata.json} content, pinning the current snapshot. */
     public static IcebergTableMetadata read(String json) {
         return read(json, IcebergOptions.defaults());
@@ -117,8 +130,16 @@ final class IcebergTableMetadata {
         String manifestList = requiredString(snapshot, "manifest-list");
         List<IcebergField> fields = currentSchemaFields(root);
         IcebergPartitionSpec partitionSpec = IcebergPartitionSpec.of(partitionFields(root), fields);
+        Optional<IcebergNameMapping> nameMapping = parseNameMapping(root);
         return new IcebergTableMetadata(
-                formatVersion, tableLocation, snapshotId, timestampMs, manifestList, partitionSpec, fields);
+                formatVersion,
+                tableLocation,
+                snapshotId,
+                timestampMs,
+                manifestList,
+                partitionSpec,
+                fields,
+                nameMapping);
     }
 
     private static List<IcebergField> currentSchemaFields(JsonNode root) {
@@ -225,6 +246,21 @@ final class IcebergTableMetadata {
             return false;
         }
         return value.booleanValue();
+    }
+
+    private static Optional<IcebergNameMapping> parseNameMapping(JsonNode root) {
+        JsonNode properties = root.get("properties");
+        if (properties == null || !properties.isObject()) {
+            return Optional.empty();
+        }
+        JsonNode mapping = properties.get(NAME_MAPPING_PROPERTY);
+        if (mapping == null || mapping.isNull()) {
+            return Optional.empty();
+        }
+        if (!mapping.isString()) {
+            throw new IcebergFormatException("table property " + NAME_MAPPING_PROPERTY + " is not a string");
+        }
+        return Optional.of(IcebergNameMapping.fromJson(mapping.stringValue()));
     }
 
     private static JsonNode snapshotNode(JsonNode root, long snapshotId) {

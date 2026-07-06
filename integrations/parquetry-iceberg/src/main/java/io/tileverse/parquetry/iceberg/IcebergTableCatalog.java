@@ -155,9 +155,12 @@ public final class IcebergTableCatalog implements DatasetCatalog {
                 opened.add(io.open(ref.location()));
             }
             IcebergSchema icebergSchema = IcebergSchema.of(fields);
+            IcebergNameMapping nameMapping =
+                    metadata.nameMapping().orElseGet(() -> IcebergNameMapping.fromSchema(fields));
             CatalogSnapshot snapshot =
                     new CatalogSnapshot(metadata.currentSnapshotId(), metadata.currentSnapshotTimestampMs());
-            IcebergDeletePlan deletePlan = IcebergDeletePlan.of(manifestFiles.deleteFiles(), io, icebergSchema);
+            IcebergDeletePlan deletePlan =
+                    IcebergDeletePlan.of(manifestFiles.deleteFiles(), io, icebergSchema, nameMapping);
             IcebergDataset dataset = new IcebergDataset(
                     tableName,
                     snapshot,
@@ -168,6 +171,7 @@ public final class IcebergTableCatalog implements DatasetCatalog {
                     opened,
                     deletePlan,
                     metadata.formatVersion(),
+                    nameMapping,
                     OpenOptions.DEFAULTS);
             return new IcebergTableCatalog(tableName, dataset, opened, io);
         } catch (RuntimeException failure) {

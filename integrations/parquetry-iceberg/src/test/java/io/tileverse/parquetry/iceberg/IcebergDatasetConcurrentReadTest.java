@@ -182,7 +182,7 @@ class IcebergDatasetConcurrentReadTest {
         CatalogSnapshot snapshot =
                 new CatalogSnapshot(metadata.currentSnapshotId(), metadata.currentSnapshotTimestampMs());
         IcebergPartitionSpec partitionSpec = IcebergPartitionSpec.of(List.of(), List.of());
-        IcebergDeletePlan deletePlan = IcebergDeletePlan.of(List.of(), io, null);
+        IcebergDeletePlan deletePlan = IcebergDeletePlan.of(List.of(), io, null, IcebergNameMapping.empty());
         return new IcebergDataset(
                 TABLE,
                 snapshot,
@@ -193,6 +193,7 @@ class IcebergDatasetConcurrentReadTest {
                 sources,
                 deletePlan,
                 metadata.formatVersion(),
+                IcebergNameMapping.empty(),
                 openOptions);
     }
 
