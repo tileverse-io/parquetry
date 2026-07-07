@@ -27,6 +27,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.filter.Value;
+import io.tileverse.parquetry.format.EdgeInterpolationAlgorithm;
+import io.tileverse.parquetry.schema.geo.ParquetCrs;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
 class IcebergTableMetadataTest {
@@ -56,11 +58,40 @@ class IcebergTableMetadataTest {
         Path json = root.resolve("v3_geometry/metadata/v1.metadata.json");
         IcebergTableMetadata metadata = IcebergTableMetadata.read(Files.readString(json));
 
+        Optional<ParquetCrs> crs84 = ParquetCrs.reference("OGC:CRS84");
         assertThat(metadata.fields())
                 .containsExactly(
-                        new IcebergField(1, "id", "string", false), new IcebergField(2, "geom", "geometry", false));
+                        new IcebergField(1, "id", "string", false),
+                        new IcebergField(2, "geom", "geometry", false, Optional.empty(), crs84, Optional.empty()));
         assertThat(metadata.fields().get(1).isGeometry()).isTrue();
         assertThat(metadata.fields().get(1).isGeography()).isFalse();
+    }
+
+    @Test
+    void parsesGeographyTokenWithAlgorithm() {
+        String json = metadataWithFields("""
+                {"id": 1, "name": "shape", "required": false, "type": "geography(OGC:CRS84, karney)"}
+                """);
+
+        IcebergTableMetadata metadata = IcebergTableMetadata.read(json);
+
+        IcebergField shape = metadata.fields().get(0);
+        assertThat(shape.type()).isEqualTo("geography");
+        assertThat(shape.isGeography()).isTrue();
+        assertThat(shape.crs()).isEqualTo(ParquetCrs.reference("OGC:CRS84"));
+        assertThat(shape.geographyAlgorithm()).isEqualTo(Optional.of(EdgeInterpolationAlgorithm.KARNEY));
+    }
+
+    @Test
+    void readsGeometryInitialDefaultAgainstTheBareKind() {
+        String json = metadataWithFields("""
+                {"id": 1, "name": "g", "required": false, "type": "geometry(EPSG:3857)", "initial-default": "x"}
+                """);
+
+        assertThatThrownBy(() -> IcebergTableMetadata.read(json))
+                .isInstanceOf(IcebergFormatException.class)
+                .hasMessageContaining("geometry")
+                .hasMessageNotContaining("EPSG:3857");
     }
 
     @Test

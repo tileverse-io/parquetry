@@ -18,6 +18,7 @@ package io.tileverse.parquetry.geotools.iceberg;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 
@@ -26,6 +27,7 @@ import org.geotools.api.data.Query;
 import org.geotools.api.data.SimpleFeatureSource;
 import org.geotools.api.feature.simple.SimpleFeatureType;
 import org.geotools.api.filter.FilterFactory;
+import org.geotools.api.referencing.FactoryException;
 import org.geotools.api.referencing.crs.CoordinateReferenceSystem;
 import org.geotools.data.simple.SimpleFeatureCollection;
 import org.geotools.data.simple.SimpleFeatureIterator;
@@ -38,6 +40,10 @@ import org.junit.jupiter.api.io.TempDir;
 import org.locationtech.jts.geom.Geometry;
 
 import io.tileverse.parquetry.testkit.TestCorpus;
+
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * Reads the vendored Iceberg geo testbed through the {@link IcebergDataStore} to exercise the full read path: geometry
@@ -59,6 +65,29 @@ class IcebergDataStoreIT {
                         Map.of("iceberg", root.resolve("v3_geometry").toUri().toString()));
     }
 
+    private static void retypeGeometryColumn(Path table, String newType) throws IOException {
+        Path metadataJson = table.resolve("metadata/v1.metadata.json");
+        ObjectNode root = (ObjectNode) JsonMapper.shared().readTree(Files.readString(metadataJson));
+        int currentSchemaId = root.get("current-schema-id").intValue();
+        boolean rewritten = false;
+        for (JsonNode schemaNode : root.get("schemas")) {
+            ObjectNode schema = (ObjectNode) schemaNode;
+            if (schema.get("schema-id").intValue() == currentSchemaId) {
+                for (JsonNode fieldNode : schema.get("fields")) {
+                    ObjectNode field = (ObjectNode) fieldNode;
+                    if ("geom".equals(field.get("name").stringValue())) {
+                        field.put("type", newType);
+                        rewritten = true;
+                    }
+                }
+            }
+        }
+        if (!rewritten) {
+            throw new IllegalStateException("no geom field found to retype in " + metadataJson);
+        }
+        Files.writeString(metadataJson, JsonMapper.shared().writeValueAsString(root));
+    }
+
     @Test
     void schemaHasGeometryAttributeWithWgs84() throws IOException {
         DataStore store = openV3Geometry();
@@ -69,6 +98,23 @@ class IcebergDataStoreIT {
             CoordinateReferenceSystem crs = schema.getCoordinateReferenceSystem();
             assertThat(CRS.equalsIgnoreMetadata(crs, DefaultGeographicCRS.WGS84))
                     .isTrue();
+        } finally {
+            store.dispose();
+        }
+    }
+
+    @Test
+    void projectedCrsTokenIsServedThroughTheStore() throws IOException, FactoryException {
+        Path root = TestCorpus.extractDirectory("iceberg-geo-testbed", tempDir.resolve("corpus"));
+        Path table = root.resolve("v3_geometry");
+        retypeGeometryColumn(table, "geometry(EPSG:3857)");
+        DataStore store = new IcebergDataStoreFactory()
+                .createDataStore(Map.of("iceberg", table.toUri().toString()));
+        try {
+            SimpleFeatureType schema = store.getSchema("v3_geometry");
+            CoordinateReferenceSystem crs = schema.getCoordinateReferenceSystem();
+            CoordinateReferenceSystem expected = CRS.decode("EPSG:3857", true);
+            assertThat(CRS.equalsIgnoreMetadata(crs, expected)).isTrue();
         } finally {
             store.dispose();
         }
