@@ -213,6 +213,13 @@ final class IcebergTableMetadata {
         String name = requiredString(fieldNode, "name");
         boolean required = optionalBoolean(fieldNode, "required");
         String typeName = type.stringValue();
+        if (IcebergGeometryType.isGeometryToken(typeName)) {
+            IcebergGeometryType geometryType = IcebergGeometryType.parse(typeName);
+            String baseKind = geometryType.baseKind();
+            Optional<Value> geoInitialDefault = initialDefault(fieldNode, baseKind, name);
+            return Optional.of(new IcebergField(
+                    id, name, baseKind, required, geoInitialDefault, geometryType.crs(), geometryType.algorithm()));
+        }
         Optional<Value> initialDefault = initialDefault(fieldNode, typeName, name);
         return Optional.of(new IcebergField(id, name, typeName, required, initialDefault));
     }

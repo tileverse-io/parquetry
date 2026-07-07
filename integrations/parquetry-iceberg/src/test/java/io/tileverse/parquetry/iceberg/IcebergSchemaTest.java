@@ -23,11 +23,13 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.format.EdgeInterpolationAlgorithm;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.geo.ParquetCrs;
 
 class IcebergSchemaTest {
 
@@ -94,6 +96,27 @@ class IcebergSchemaTest {
 
         assertThat(logicalOf(children, 8)).contains(new LogicalType.Geometry(Optional.empty()));
         assertThat(logicalOf(children, 9)).contains(new LogicalType.Geography(Optional.empty(), Optional.empty()));
+    }
+
+    @Test
+    void presentsGeometryAndGeographyCrsFromFieldComponents() {
+        Optional<ParquetCrs> crs84 = ParquetCrs.reference("OGC:CRS84");
+        assertThat(crs84).isPresent();
+        IcebergSchema schema = IcebergSchema.of(List.of(
+                new IcebergField(1, "g", "geometry", false, Optional.empty(), crs84, Optional.empty()),
+                new IcebergField(
+                        2,
+                        "h",
+                        "geography",
+                        false,
+                        Optional.empty(),
+                        crs84,
+                        Optional.of(EdgeInterpolationAlgorithm.KARNEY))));
+
+        List<SchemaNode> children = schema.parquetSchema().root().children();
+        assertThat(logicalOf(children, 0)).contains(new LogicalType.Geometry(crs84));
+        assertThat(logicalOf(children, 1))
+                .contains(new LogicalType.Geography(crs84, Optional.of(EdgeInterpolationAlgorithm.KARNEY)));
     }
 
     @Test

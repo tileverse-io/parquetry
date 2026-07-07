@@ -103,8 +103,17 @@ final class IcebergSchema {
     private static SchemaNode.Primitive leafOf(IcebergField field) {
         PrimitiveMapping mapping = mappingFor(field.type());
         Repetition repetition = field.required() ? Repetition.REQUIRED : Repetition.OPTIONAL;
+        Optional<LogicalType> logicalType = geoLogicalType(field).or(mapping::logicalType);
         return new SchemaNode.Primitive(
-                field.name(), repetition, mapping.kind(), OptionalInt.empty(), mapping.logicalType(), field.fieldId());
+                field.name(), repetition, mapping.kind(), OptionalInt.empty(), logicalType, field.fieldId());
+    }
+
+    private static Optional<LogicalType> geoLogicalType(IcebergField field) {
+        return switch (field.type()) {
+            case "geometry" -> Optional.of(new LogicalType.Geometry(field.crs()));
+            case "geography" -> Optional.of(new LogicalType.Geography(field.crs(), field.geographyAlgorithm()));
+            default -> Optional.empty();
+        };
     }
 
     private static PrimitiveMapping mappingFor(String icebergType) {
@@ -117,12 +126,7 @@ final class IcebergSchema {
             case "date" -> new PrimitiveMapping(PrimitiveKind.INT32, Optional.of(new LogicalType.DateType()));
             case "string" -> new PrimitiveMapping(PrimitiveKind.BYTE_ARRAY, Optional.of(new LogicalType.StringType()));
             case "binary" -> new PrimitiveMapping(PrimitiveKind.BYTE_ARRAY, Optional.empty());
-            case "geometry" ->
-                new PrimitiveMapping(PrimitiveKind.BYTE_ARRAY, Optional.of(new LogicalType.Geometry(Optional.empty())));
-            case "geography" ->
-                new PrimitiveMapping(
-                        PrimitiveKind.BYTE_ARRAY,
-                        Optional.of(new LogicalType.Geography(Optional.empty(), Optional.empty())));
+            case "geometry", "geography" -> new PrimitiveMapping(PrimitiveKind.BYTE_ARRAY, Optional.empty());
             default -> throw new IcebergFormatException("unsupported Iceberg field type: " + icebergType);
         };
     }
