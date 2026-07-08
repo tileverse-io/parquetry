@@ -24,8 +24,6 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.LocalDate;
-import java.time.ZoneOffset;
-import java.util.Date;
 
 import org.geotools.api.data.Query;
 import org.geotools.api.data.SimpleFeatureSource;
@@ -97,26 +95,22 @@ class PathOnlyPartitionDataStoreIT {
 
             SimpleFeatureType schema = store.getSchema(typeName);
             assertThat(schema.getDescriptor("dt")).isNotNull();
-            assertThat(schema.getDescriptor("dt").getType().getBinding()).isEqualTo(Date.class);
+            assertThat(schema.getDescriptor("dt").getType().getBinding()).isEqualTo(LocalDate.class);
 
             SimpleFeatureSource fs = store.getFeatureSource(typeName);
-            Filter onlyJan = FF.equals(FF.property("dt"), FF.literal(dateAtUtcMidnight("2024-01-01")));
+            Filter onlyJan = FF.equals(FF.property("dt"), FF.literal(LocalDate.parse("2024-01-01")));
             Query query = new Query(typeName, onlyJan);
 
             int seen = 0;
             try (FeatureIterator<SimpleFeature> features = fs.getFeatures(query).features()) {
                 while (features.hasNext()) {
                     SimpleFeature feature = features.next();
-                    assertThat(feature.getAttribute("dt")).isEqualTo(dateAtUtcMidnight("2024-01-01"));
+                    assertThat(feature.getAttribute("dt")).isEqualTo(LocalDate.parse("2024-01-01"));
                     seen++;
                 }
             }
             assertThat(seen).isEqualTo(ROWS_JAN);
         }
-    }
-
-    private static Date dateAtUtcMidnight(String isoDate) {
-        return Date.from(LocalDate.parse(isoDate).atStartOfDay(ZoneOffset.UTC).toInstant());
     }
 
     private static void writeDatePartitionedTree(Path root) throws SQLException {

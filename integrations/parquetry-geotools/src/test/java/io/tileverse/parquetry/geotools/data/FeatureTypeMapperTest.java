@@ -19,6 +19,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -42,6 +45,7 @@ import io.tileverse.parquetry.catalog.FilesetCatalog;
 import io.tileverse.parquetry.dataset.GeoParquetDataset;
 import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.format.LogicalType;
+import io.tileverse.parquetry.format.LogicalType.TimeUnit;
 import io.tileverse.parquetry.geotools.data.FeatureTypeMapper.AttributeMapping;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -117,6 +121,33 @@ class FeatureTypeMapperTest {
         Optional<Class<?>> binding =
                 FeatureTypeMapper.resolveBinding(PrimitiveKind.FIXED_LEN_BYTE_ARRAY, Optional.empty());
         assertThat(binding).hasValue(byte[].class);
+    }
+
+    @Test
+    void bindsDateToLocalDate() {
+        Optional<Class<?>> binding =
+                FeatureTypeMapper.resolveBinding(PrimitiveKind.INT32, Optional.of(new LogicalType.DateType()));
+        assertThat(binding).hasValue(LocalDate.class);
+    }
+
+    @Test
+    void bindsUtcTimestampToInstant() {
+        Optional<Class<?>> binding = FeatureTypeMapper.resolveBinding(
+                PrimitiveKind.INT64, Optional.of(new LogicalType.Timestamp(true, TimeUnit.MICROS)));
+        assertThat(binding).hasValue(Instant.class);
+    }
+
+    @Test
+    void bindsLocalTimestampToLocalDateTime() {
+        Optional<Class<?>> binding = FeatureTypeMapper.resolveBinding(
+                PrimitiveKind.INT64, Optional.of(new LogicalType.Timestamp(false, TimeUnit.NANOS)));
+        assertThat(binding).hasValue(LocalDateTime.class);
+    }
+
+    @Test
+    void bindsPlainInt64ToLong() {
+        Optional<Class<?>> binding = FeatureTypeMapper.resolveBinding(PrimitiveKind.INT64, Optional.empty());
+        assertThat(binding).hasValue(Long.class);
     }
 
     @Test

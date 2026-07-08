@@ -15,8 +15,10 @@
  */
 package io.tileverse.parquetry.geotools.data;
 
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -66,14 +68,26 @@ final class FeatureTypeMapper {
 
     /**
      * One mapped attribute: its feature-type local name, the parquet path it reads from, whether it is a geometry
-     * attribute, the Java binding class, and - for {@code STRUCT}/{@code LIST}/{@code MAP} attributes - the nested
-     * value-object shape ({@code null} for scalar and geometry attributes).
+     * attribute, the Java binding class, - for {@code STRUCT}/{@code LIST}/{@code MAP} attributes - the nested
+     * value-object shape ({@code null} for scalar and geometry attributes), and - for a temporal attribute - the source
+     * Parquet logical type the reader consults to pick the time unit ({@link Optional#empty()} otherwise).
      */
-    record AttributeMapping(String name, ColumnPath path, boolean geometry, Class<?> binding, NestedType nestedType) {
+    record AttributeMapping(
+            String name,
+            ColumnPath path,
+            boolean geometry,
+            Class<?> binding,
+            NestedType nestedType,
+            Optional<LogicalType> logicalType) {
 
-        /** Convenience for a scalar or geometry attribute, which has no nested type. */
+        /** Convenience for a scalar or geometry attribute, which has no nested type and no temporal logical type. */
         AttributeMapping(String name, ColumnPath path, boolean geometry, Class<?> binding) {
-            this(name, path, geometry, binding, null);
+            this(name, path, geometry, binding, null, Optional.empty());
+        }
+
+        /** Convenience for a nested attribute, which has no temporal logical type. */
+        AttributeMapping(String name, ColumnPath path, boolean geometry, Class<?> binding, NestedType nestedType) {
+            this(name, path, geometry, binding, nestedType, Optional.empty());
         }
     }
 
@@ -215,7 +229,7 @@ final class FeatureTypeMapper {
         }
         String attrName = path.dot();
         ftb.add(attrName, binding.get());
-        return Optional.of(new AttributeMapping(attrName, path, false, binding.get()));
+        return Optional.of(new AttributeMapping(attrName, path, false, binding.get(), null, logical));
     }
 
     /**
@@ -408,10 +422,11 @@ final class FeatureTypeMapper {
         boolean isString = logical.map(FeatureTypeMapper::isStringLogicalType).orElse(false);
         boolean isUuid = logical.map(lt -> lt instanceof LogicalType.UuidType).orElse(false);
         boolean isDate = logical.map(lt -> lt instanceof LogicalType.DateType).orElse(false);
+        Optional<Class<?>> timestampBinding = logical.flatMap(FeatureTypeMapper::timestampBinding);
         return switch (kind) {
             case BOOLEAN -> Optional.of(Boolean.class);
-            case INT32 -> Optional.of(isDate ? Date.class : Integer.class);
-            case INT64 -> Optional.of(Long.class);
+            case INT32 -> Optional.of(isDate ? LocalDate.class : Integer.class);
+            case INT64 -> timestampBinding.or(() -> Optional.of(Long.class));
             case FLOAT -> Optional.of(Float.class);
             case DOUBLE -> Optional.of(Double.class);
             case BYTE_ARRAY -> Optional.of(isString ? String.class : byte[].class);
@@ -419,6 +434,17 @@ final class FeatureTypeMapper {
             // INT96 is a deprecated Impala timestamp with no standard Java binding; skip it.
             case INT96 -> Optional.empty();
         };
+    }
+
+    /**
+     * The java.time binding for a TIMESTAMP logical type: a UTC-adjusted timestamp is an {@link Instant}; a zone-less
+     * timestamp is a {@link LocalDateTime}. Empty for any non-timestamp logical type.
+     */
+    private static Optional<Class<?>> timestampBinding(LogicalType lt) {
+        if (lt instanceof LogicalType.Timestamp timestamp) {
+            return Optional.of(timestamp.isAdjustedToUTC() ? Instant.class : LocalDateTime.class);
+        }
+        return Optional.empty();
     }
 
     /** Returns true when the logical type annotation indicates the physical bytes encode a UTF-8 string. */

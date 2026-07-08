@@ -25,6 +25,7 @@ import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.format.EdgeInterpolationAlgorithm;
 import io.tileverse.parquetry.format.LogicalType;
+import io.tileverse.parquetry.format.LogicalType.TimeUnit;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
@@ -96,6 +97,40 @@ class IcebergSchemaTest {
 
         assertThat(logicalOf(children, 8)).contains(new LogicalType.Geometry(Optional.empty()));
         assertThat(logicalOf(children, 9)).contains(new LogicalType.Geography(Optional.empty(), Optional.empty()));
+    }
+
+    @Test
+    void mapsUuidToFixedLenByteArray16WithUuidLogicalType() {
+        IcebergSchema schema = IcebergSchema.of(List.of(new IcebergField(1, "u", "uuid", false)));
+        SchemaNode.Primitive leaf =
+                (SchemaNode.Primitive) schema.parquetSchema().root().children().get(0);
+        assertThat(leaf.kind()).isEqualTo(PrimitiveKind.FIXED_LEN_BYTE_ARRAY);
+        assertThat(leaf.typeLength()).hasValue(16);
+        assertThat(leaf.logicalType()).contains(new LogicalType.UuidType());
+    }
+
+    @Test
+    void mapsTheFourTimestampsToInt64WithTheRightAdjustmentAndUnit() {
+        IcebergSchema schema = IcebergSchema.of(List.of(
+                new IcebergField(1, "ts", "timestamp", false),
+                new IcebergField(2, "tstz", "timestamptz", false),
+                new IcebergField(3, "ts_ns", "timestamp_ns", false),
+                new IcebergField(4, "tstz_ns", "timestamptz_ns", false)));
+        List<SchemaNode> children = schema.parquetSchema().root().children();
+        assertThat(kindOf(children, 0)).isEqualTo(PrimitiveKind.INT64);
+        assertThat(logicalOf(children, 0)).contains(new LogicalType.Timestamp(false, TimeUnit.MICROS));
+        assertThat(logicalOf(children, 1)).contains(new LogicalType.Timestamp(true, TimeUnit.MICROS));
+        assertThat(logicalOf(children, 2)).contains(new LogicalType.Timestamp(false, TimeUnit.NANOS));
+        assertThat(logicalOf(children, 3)).contains(new LogicalType.Timestamp(true, TimeUnit.NANOS));
+    }
+
+    @Test
+    void mapsUnknownToInt32WithUnknownLogicalType() {
+        IcebergSchema schema = IcebergSchema.of(List.of(new IcebergField(1, "x", "unknown", false)));
+        SchemaNode.Primitive leaf =
+                (SchemaNode.Primitive) schema.parquetSchema().root().children().get(0);
+        assertThat(leaf.kind()).isEqualTo(PrimitiveKind.INT32);
+        assertThat(leaf.logicalType()).contains(new LogicalType.UnknownType());
     }
 
     @Test

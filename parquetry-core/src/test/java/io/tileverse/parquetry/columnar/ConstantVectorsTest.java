@@ -18,6 +18,7 @@ package io.tileverse.parquetry.columnar;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.LocalDate;
+import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
@@ -67,6 +68,15 @@ class ConstantVectorsTest {
     @Test
     void nullValueFillsAllNull() {
         ColumnVector vector = ConstantVectors.ofNull(new Value.IntVal(0), 3);
+        assertThat(vector.size()).isEqualTo(3);
+        assertThat(vector.isNull(0)).isTrue();
+        assertThat(vector.isNull(2)).isTrue();
+    }
+
+    @Test
+    void nullUuidFillsAllNullBinary() {
+        ColumnVector vector = ConstantVectors.ofNull(new Value.UuidVal(new UUID(0L, 0L)), 3);
+        assertThat(vector).isInstanceOf(BinaryVector.class);
         assertThat(vector.size()).isEqualTo(3);
         assertThat(vector.isNull(0)).isTrue();
         assertThat(vector.isNull(2)).isTrue();

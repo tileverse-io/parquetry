@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.time.LocalDate;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
@@ -74,6 +75,13 @@ class ConstantLeavesTest {
     void stringValMapsToByteArrayWithStringLogicalType() {
         assertKindAndLogicalType(
                 new Value.StringVal("x"), PrimitiveKind.BYTE_ARRAY, Optional.of(new LogicalType.StringType()));
+    }
+
+    @Test
+    void mapsUuidToFixedLenByteArrayWithUuidLogicalType() {
+        ConstantLeaves.LeafType leafType = ConstantLeaves.kindAndLogicalType(new Value.UuidVal(new UUID(0L, 0L)));
+        assertThat(leafType.kind()).isEqualTo(PrimitiveKind.FIXED_LEN_BYTE_ARRAY);
+        assertThat(leafType.logicalType()).contains(new LogicalType.UuidType());
     }
 
     @Test
