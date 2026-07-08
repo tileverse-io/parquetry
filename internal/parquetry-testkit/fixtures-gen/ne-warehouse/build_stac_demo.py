@@ -4,9 +4,12 @@
 Turns the five Natural Earth GeoParquet layers under
 `integrations/parquetry-geoserver/demo/data/ne/` into a small STAC catalog
 committed under `.../demo/data/`, in the two shapes the STAC DataStore factory
-auto-detects by URI extension. The catalog entry points sit at the data root
-(`catalog.json`, `items.parquet`) beside `ne/`, the common container the store
-reads every asset relative to; the collections live under `stac/`.
+auto-detects by URI extension. The JSON catalog entry point (`catalog.json`)
+sits at the data root and is served over HTTP; the item-table (`items.parquet`)
+sits under `ne/index/`, inside the same object-store bucket as the data parts.
+Each item's data asset points at an absolute `s3://naturalearth/<layer>.parquet`
+URI the store resolves per asset, not relative to the catalog; the collections
+live under `stac/`.
 
 Each NE layer is its own STAC collection (collection id = layer name) holding a
 single item. The five layers have wildly different attribute schemas, and one
@@ -28,9 +31,9 @@ the read of every other part.
 
 Both flavors publish the same five collections named by layer, and both point
 each item's data asset at the same external GeoParquet part. The default asset
-base is `http://web/ne`, the compose-internal nginx hostname the demo image
-serves the NE parts from; `--href-base` overrides it (a local smoke test points
-it at a directory of the NE parquet files reachable through file storage).
+base is `s3://naturalearth`, the s3proxy bucket the demo serves the NE parts
+from; `--href-base` overrides it (a local smoke test points it at a directory of
+the NE parquet files reachable through file storage).
 
 Per-layer bboxes are read from each NE file's GeoParquet footer metadata
 (`geo.columns[primary_column].bbox`), never hardcoded.
@@ -80,7 +83,7 @@ LICENSE = "public-domain"
 STAC_VERSION = "1.0.0"
 DATETIME = "2024-01-01T00:00:00Z"
 PARQUET_MEDIA_TYPE = "application/vnd.apache.parquet"
-DEFAULT_HREF_BASE = "http://web/ne"
+DEFAULT_HREF_BASE = "s3://naturalearth"
 
 # The item-table columns GeoParquetStacReader requires. The bbox columns are
 # typed float64 to keep an integer-valued bbox value a double the reader reads
@@ -211,8 +214,18 @@ def write_item_table(out_dir: Path, bboxes: dict[str, list[float]], href_base: s
     collection set to the layer name."""
     rows = [item_row(layer, bboxes[layer], href_base) for layer in LAYERS]
     table = pa.Table.from_pylist(rows, schema=ITEM_TABLE_SCHEMA)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    pq.write_table(table, out_dir / "items.parquet", compression="zstd")
+    item_table = item_table_path(out_dir)
+    item_table.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(table, item_table, compression="zstd")
+
+
+def item_table_path(out_dir: Path) -> Path:
+    """The stac-geoparquet item-table location: a subdirectory of the NE bucket. It
+    sits under a subdirectory, not at the bucket root, because the GeoParquet
+    directory store lists top-level `*.parquet` in the same bucket as layers and
+    would reject the item-table as a non-GeoParquet layer. The stac-geoparquet store
+    reads it from `s3://naturalearth/index/items.parquet`."""
+    return out_dir / "ne" / "index" / "items.parquet"
 
 
 def item_row(layer: str, bbox: list[float], href_base: str) -> dict:
@@ -276,7 +289,7 @@ def verify_json_catalog(out_dir: Path, bboxes: dict[str, list[float]]) -> None:
 
 
 def verify_item_table(out_dir: Path, bboxes: dict[str, list[float]]) -> None:
-    table = pq.read_table(out_dir / "items.parquet")
+    table = pq.read_table(item_table_path(out_dir))
     if table.column_names != ITEM_TABLE_SCHEMA.names:
         raise SystemExit(f"item-table columns {table.column_names} do not match the reader contract")
     rows = table.to_pylist()

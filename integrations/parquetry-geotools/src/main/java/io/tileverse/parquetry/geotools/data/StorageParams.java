@@ -59,6 +59,22 @@ public final class StorageParams {
         return all.toArray(Param[]::new);
     }
 
+    /**
+     * Returns the given core parameters followed by the storage parameters, minus the provider selector. A STAC store
+     * auto-detects each container's backend from its own URI - a public HTTP catalog and its private object-store
+     * assets open side by side - and a single forced provider would misroute one of them. The provider selector is
+     * therefore omitted from the STAC store's form; the backend connection parameters are still offered.
+     */
+    public static Param[] withStorageParamsNoProvider(Param... core) {
+        List<Param> all = new ArrayList<>(Arrays.asList(core));
+        for (Param param : PROVIDER_PARAMS) {
+            if (!param.key.equals(StorageConfig.PROVIDER_ID_KEY)) {
+                all.add(param);
+            }
+        }
+        return all.toArray(Param[]::new);
+    }
+
     /** Copies every set {@code storage.*} connection parameter into a Properties for the storage backend. */
     public static Properties toProperties(Map<String, ?> params) {
         Properties props = new Properties();

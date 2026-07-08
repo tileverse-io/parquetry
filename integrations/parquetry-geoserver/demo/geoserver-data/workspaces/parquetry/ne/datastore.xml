@@ -1,6 +1,7 @@
 <dataStore>
   <id>DataStoreInfoImpl--2fb5fd2d:19ea55565ed:-7fdb</id>
   <name>ne</name>
+  <description>GeoParquet over the local filesystem; one layer per file (layer-grouping=file).</description>
   <type>GeoParquet</type>
   <enabled>true</enabled>
   <workspace>

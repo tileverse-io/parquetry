@@ -23,7 +23,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
-import io.tileverse.storage.RangeReader;
 import io.tileverse.storage.Storage;
 
 import io.tileverse.parquetry.catalog.CatalogCapabilities;
@@ -31,8 +30,6 @@ import io.tileverse.parquetry.catalog.CatalogCapabilities.SchemaSource;
 import io.tileverse.parquetry.catalog.DatasetCatalog;
 import io.tileverse.parquetry.dataset.OpenOptions;
 import io.tileverse.parquetry.dataset.ParquetDataset;
-import io.tileverse.parquetry.io.ByteRangeSource;
-import io.tileverse.parquetry.tileverse.ByteRangeSources;
 
 import io.tileverse.stac.StacAsset;
 import io.tileverse.stac.StacCatalog;
@@ -43,46 +40,38 @@ import io.tileverse.stac.StacItem;
 /**
  * A {@link DatasetCatalog} over a STAC catalog: it enumerates the catalog's collections and exposes one
  * {@link StacDataset} per collection, named by the collection id verbatim. Each collection's items resolve to
- * GeoParquet parts (one part per item); the catalog opens each part's byte source once and owns it for its lifetime. A
- * per-query dataset borrows the survivor subset and never closes the shared sources. {@link #close()} releases every
- * source, every underlying reader, and the Storage.
+ * GeoParquet parts (one part per item), but the catalog opens no part at registration: enumerating a collection reads
+ * STAC metadata alone, and a part's byte reader opens on the dataset's first read. Each asset is resolved through a
+ * per-container {@link ContainerStorages Storage} keyed on the asset's own absolute URI, which lets assets sit on a
+ * different host than the catalog. {@link #close()} releases each dataset's opened readers, then the Storage registry.
  */
 public final class StacDatasetCatalog implements DatasetCatalog {
 
     private final Map<String, StacDataset> datasets;
-    private final List<ByteRangeSource> openSources;
-    private final List<RangeReader> openReaders;
-    private final Storage storage;
+    private final ContainerStorages storages;
 
-    private StacDatasetCatalog(
-            Map<String, StacDataset> datasets,
-            List<ByteRangeSource> openSources,
-            List<RangeReader> openReaders,
-            Storage storage) {
+    private StacDatasetCatalog(Map<String, StacDataset> datasets, ContainerStorages storages) {
         this.datasets = datasets;
-        this.openSources = openSources;
-        this.openReaders = openReaders;
-        this.storage = storage;
+        this.storages = storages;
     }
 
-    /** Opens a STAC catalog through {@code reader}, taking ownership of {@code storage}. */
+    /** Opens a STAC catalog through {@code reader}, taking ownership of {@code storages}. */
     public static StacDatasetCatalog open(
-            URI catalogRoot, Storage storage, StacCatalogReader reader, StacCatalogOptions options) {
+            URI catalogRoot, ContainerStorages storages, StacCatalogReader reader, StacCatalogOptions options) {
         Objects.requireNonNull(catalogRoot, "catalogRoot");
-        Objects.requireNonNull(storage, "storage");
+        Objects.requireNonNull(storages, "storages");
         Objects.requireNonNull(reader, "reader");
         Objects.requireNonNull(options, "options");
 
-        List<ByteRangeSource> openedSources = new ArrayList<>();
-        List<RangeReader> openedReaders = new ArrayList<>();
+        Map<String, StacDataset> built = new LinkedHashMap<>();
         try {
-            StacCatalog root = reader.open(catalogRoot, storage);
+            Storage catalogStorage = storages.storageFor(catalogRoot.resolve("."));
+            StacCatalog root = reader.open(catalogRoot, catalogStorage);
             List<StacCollection> collections = allCollections(root);
-            Map<String, StacDataset> built =
-                    buildDatasets(catalogRoot, collections, storage, options, openedSources, openedReaders);
-            return new StacDatasetCatalog(built, openedSources, openedReaders, storage);
+            buildDatasets(built, collections, storages, options);
+            return new StacDatasetCatalog(built, storages);
         } catch (RuntimeException failure) {
-            RuntimeException cleanup = closeAll(openedSources, openedReaders, storage);
+            RuntimeException cleanup = closeAll(built, storages);
             if (cleanup != null) {
                 failure.addSuppressed(cleanup);
             }
@@ -98,62 +87,40 @@ public final class StacDatasetCatalog implements DatasetCatalog {
         return collections;
     }
 
-    private static Map<String, StacDataset> buildDatasets(
-            URI catalogRoot,
+    private static void buildDatasets(
+            Map<String, StacDataset> into,
             List<StacCollection> collections,
-            Storage storage,
-            StacCatalogOptions options,
-            List<ByteRangeSource> openedSources,
-            List<RangeReader> openedReaders) {
-        Map<String, StacDataset> built = new LinkedHashMap<>();
+            ContainerStorages storages,
+            StacCatalogOptions options) {
         for (StacCollection collection : collections) {
-            Optional<StacDataset> dataset =
-                    buildDataset(catalogRoot, collection, storage, options, openedSources, openedReaders);
-            dataset.ifPresent(present -> built.put(collection.id(), present));
+            Optional<StacDataset> dataset = buildDataset(collection, storages, options);
+            dataset.ifPresent(present -> into.put(collection.id(), present));
         }
-        return built;
     }
 
     /**
      * Builds the dataset for one collection, or {@link Optional#empty()} when the collection resolves to no GeoParquet
      * data parts (its items hold only non-parquet assets, such as PMTiles or COGs, or it has no items). Such a
-     * collection is simply not exposed as a dataset; it opens zero sources and never reaches {@link StacDataset}'s
-     * empty-parts guard.
+     * collection is simply not exposed as a dataset; it never reaches {@link StacDataset}'s empty-parts guard. No part
+     * is opened here: the dataset resolves each item's href to a byte reader lazily on first read.
      */
     private static Optional<StacDataset> buildDataset(
-            URI catalogRoot,
-            StacCollection collection,
-            Storage storage,
-            StacCatalogOptions options,
-            List<ByteRangeSource> openedSources,
-            List<RangeReader> openedReaders) {
+            StacCollection collection, ContainerStorages storages, StacCatalogOptions options) {
         List<StacItemRef> refs = new ArrayList<>();
         List<double[]> bboxes = new ArrayList<>();
-        List<ByteRangeSource> collectionSources = new ArrayList<>();
         for (StacItem item : collection.items()) {
             StacAsset data = parquetAsset(item, options);
             if (data == null) {
                 continue;
             }
-            String key = storageKey(catalogRoot, data.href());
-            RangeReader reader = storage.openRangeReader(key);
-            openedReaders.add(reader);
-            ByteRangeSource source = ByteRangeSources.from(reader);
-            openedSources.add(source);
-            collectionSources.add(source);
             refs.add(new StacItemRef(item.id(), data.href()));
             bboxes.add(item.bbox());
         }
-        if (collectionSources.isEmpty()) {
+        if (refs.isEmpty()) {
             return Optional.empty();
         }
         StacDataset dataset = new StacDataset(
-                collection.id(),
-                options.geometryColumn(),
-                refs,
-                bboxes,
-                List.copyOf(collectionSources),
-                OpenOptions.DEFAULTS);
+                collection.id(), options.geometryColumn(), refs, bboxes, storages, OpenOptions.DEFAULTS);
         return Optional.of(dataset);
     }
 
@@ -164,14 +131,6 @@ public final class StacDatasetCatalog implements DatasetCatalog {
             }
         }
         return null;
-    }
-
-    /** The storage key for an absolute asset URI: its path relative to the catalog root's container. */
-    private static String storageKey(URI catalogRoot, String href) {
-        URI container = catalogRoot.resolve(".");
-        URI hrefUri = URI.create(href);
-        String relative = container.relativize(hrefUri).getPath();
-        return relative.startsWith("/") ? relative.substring(1) : relative;
     }
 
     @Override
@@ -199,22 +158,18 @@ public final class StacDatasetCatalog implements DatasetCatalog {
 
     @Override
     public void close() {
-        RuntimeException failure = closeAll(openSources, openReaders, storage);
+        RuntimeException failure = closeAll(datasets, storages);
         if (failure != null) {
             throw failure;
         }
     }
 
-    private static RuntimeException closeAll(
-            List<ByteRangeSource> sources, List<RangeReader> readers, Storage storage) {
+    private static RuntimeException closeAll(Map<String, StacDataset> datasets, ContainerStorages storages) {
         RuntimeException failure = null;
-        for (ByteRangeSource source : sources) {
-            failure = closeChaining(source, failure);
+        for (StacDataset dataset : datasets.values()) {
+            failure = closeChaining(dataset::closeResources, failure);
         }
-        for (RangeReader reader : readers) {
-            failure = closeChaining(reader, failure);
-        }
-        return closeChaining(storage, failure);
+        return closeChaining(storages, failure);
     }
 
     private static RuntimeException closeChaining(AutoCloseable closeable, RuntimeException accumulated) {

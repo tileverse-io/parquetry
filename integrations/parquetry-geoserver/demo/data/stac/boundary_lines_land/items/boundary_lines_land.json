@@ -15,7 +15,7 @@
   "links": [],
   "assets": {
     "data": {
-      "href": "http://web/ne/boundary_lines_land.parquet",
+      "href": "s3://naturalearth/boundary_lines_land.parquet",
       "type": "application/vnd.apache.parquet",
       "title": "Boundary lines land",
       "roles": [

@@ -13,9 +13,9 @@
 package io.tileverse.parquetry.geoserver.web;
 
 import java.io.Serializable;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.wicket.ajax.AjaxRequestTarget;
 import org.apache.wicket.ajax.form.AjaxFormChoiceComponentUpdatingBehavior;
@@ -30,31 +30,21 @@ import org.apache.wicket.model.IModel;
 import org.apache.wicket.model.ResourceModel;
 import org.apache.wicket.request.resource.PackageResourceReference;
 import org.geoserver.catalog.DataStoreInfo;
-import org.geoserver.catalog.NamespaceInfo;
-import org.geoserver.catalog.StoreInfo;
-import org.geoserver.catalog.WorkspaceInfo;
-import org.geoserver.web.GeoServerApplication;
-import org.geoserver.web.data.store.DefaultDataStoreEditPanel;
 import org.geoserver.web.data.store.ParamInfo;
 import org.geoserver.web.util.MapModel;
 
 /**
  * A store edit panel for the GeoParquet DataStore that shows only the selected storage provider's parameters. The
- * provider is chosen with a segmented radio toggle; changing it broadcasts a {@link ProviderChanged} event that toggles
- * the visibility of every cached parameter panel through {@link StorageParamVisibility}.
+ * single backend is chosen with a segmented radio toggle; changing it broadcasts a {@link ProviderChanged} event that
+ * maps the new provider to its backend groups and re-applies field visibility through the base panel.
  *
  * <p>Adapted from GeoServer's {@code PMTilesDataStoreEditPanel} (c) Open Source Geospatial Foundation, GPL-2.0.
  */
 // S110: the GeoServer/Wicket panel hierarchy (DefaultDataStoreEditPanel) exceeds Sonar's parent-count limit.
 @SuppressWarnings({"serial", "java:S110"})
-public class GeoParquetDataStoreEditPanel extends DefaultDataStoreEditPanel {
+public class GeoParquetDataStoreEditPanel extends StorageAwareDataStoreEditPanel {
 
     private static final String PROVIDER_KEY = "storage.provider";
-    private static final String S3_REGION_KEY = "storage.s3.region";
-    private static final String NAMESPACE_KEY = "namespace";
-
-    // keyed by param name; repopulated 1:1 with the parameters ListView, hence it neither grows nor leaks
-    private final Map<String, Panel> panelsByKey = new HashMap<>();
 
     public GeoParquetDataStoreEditPanel(String componentId, Form<DataStoreInfo> storeEditForm) {
         super(componentId, storeEditForm);
@@ -68,44 +58,19 @@ public class GeoParquetDataStoreEditPanel extends DefaultDataStoreEditPanel {
     }
 
     @Override
-    protected Panel getInputComponent(
-            String componentId, IModel<Map<String, Serializable>> paramsModel, ParamInfo paramMetadata) {
-        String paramName = paramMetadata.getName();
-        Panel panel = inputPanel(componentId, paramsModel, paramMetadata, paramName);
-        panel.setOutputMarkupId(true);
-        // Only the provider-dependent parameters take part in the show/hide toggle. The always-visible core
-        // parameters are left to the base panel and never cached or re-rendered here; in particular this keeps
-        // the namespace field under GeoServer's own namespace-follows-workspace synchronization.
-        if (!StorageParamVisibility.isAlwaysVisible(paramName)) {
-            panel.setOutputMarkupPlaceholderTag(true);
-            panelsByKey.put(paramName, panel);
-        }
-        return panel;
-    }
-
-    private Panel inputPanel(
-            String componentId,
-            IModel<Map<String, Serializable>> paramsModel,
-            ParamInfo paramMetadata,
-            String paramName) {
-        if (PROVIDER_KEY.equals(paramName)) {
-            return providerSelector(componentId, paramsModel, paramMetadata);
-        }
-        if (S3_REGION_KEY.equals(paramName)) {
-            return s3Region(componentId, paramsModel, paramMetadata);
-        }
-        return super.getInputComponent(componentId, paramsModel, paramMetadata);
+    protected Set<String> selectedGroups() {
+        DataStoreInfo storeInfo = (DataStoreInfo) storeEditForm.getModelObject();
+        String providerId = (String) storeInfo.getConnectionParameters().get(PROVIDER_KEY);
+        return StorageParamVisibility.groupsForProvider(providerId);
     }
 
     @Override
-    protected void applyParamDefault(ParamInfo paramInfo, StoreInfo info) {
-        super.applyParamDefault(paramInfo, info);
-        List<Serializable> options = paramInfo.getOptions();
-        if (options != null && !options.isEmpty()) {
-            // An options-bearing parameter must not be pre-filled with its first option. Leave it empty until the
-            // user picks one.
-            info.getConnectionParameters().remove(paramInfo.getName());
+    protected Panel buildInputPanel(
+            String componentId, IModel<Map<String, Serializable>> paramsModel, ParamInfo paramMetadata) {
+        if (PROVIDER_KEY.equals(paramMetadata.getName())) {
+            return providerSelector(componentId, paramsModel, paramMetadata);
         }
+        return super.buildInputPanel(componentId, paramsModel, paramMetadata);
     }
 
     private RadioGroupParamPanel<String> providerSelector(
@@ -126,17 +91,6 @@ public class GeoParquetDataStoreEditPanel extends DefaultDataStoreEditPanel {
         return paramPanel;
     }
 
-    private Select2ChoiceParamPanel<String> s3Region(
-            String componentId, IModel<Map<String, Serializable>> paramsModel, ParamInfo paramInfo) {
-        IModel<String> label = new ResourceModel(paramInfo.getName(), paramInfo.getName());
-        IModel<String> model = new MapModel<>(paramsModel, paramInfo.getName());
-        List<String> options =
-                paramInfo.getOptions().stream().map(String::valueOf).sorted().toList();
-        return Select2ChoiceParamPanel.ofStrings(componentId, label, model, options)
-                .allowCustomValues(true)
-                .setPlaceHolder("us-east-1");
-    }
-
     private IModel<String> providerLabel(String providerId) {
         return new ResourceModel(PROVIDER_KEY + "." + providerId, providerId);
     }
@@ -144,46 +98,9 @@ public class GeoParquetDataStoreEditPanel extends DefaultDataStoreEditPanel {
     @Override
     public void onEvent(IEvent<?> event) {
         if (event.getPayload() instanceof ProviderChanged providerChanged) {
-            applyVisibility(providerChanged);
+            Set<String> groups = StorageParamVisibility.groupsForProvider(providerChanged.providerId());
+            applyVisibility(groups, providerChanged.target());
         }
-    }
-
-    @Override
-    protected void onBeforeRender() {
-        super.onBeforeRender();
-        DataStoreInfo storeInfo = (DataStoreInfo) storeEditForm.getModelObject();
-        alignNamespaceWithWorkspace(storeInfo);
-        String providerId = (String) storeInfo.getConnectionParameters().get(PROVIDER_KEY);
-        sendEvent(new ProviderChanged(providerId, null));
-    }
-
-    /**
-     * Forces the namespace connection parameter to the store's workspace namespace. GeoServer keeps the namespace in
-     * step with the workspace only when the workspace dropdown is changed; on the workspace-scoped "Add new store" flow
-     * the workspace is pre-selected and never fires that change, leaving the namespace seeded from the default
-     * workspace. A store saved that way reads over WMS but fails WFS GetFeature, whose catalog lookup is keyed by the
-     * namespace. Re-deriving the namespace from the workspace on every render keeps a parquetry store correct
-     * regardless, and matches GeoServer's own intent that the namespace follows the workspace.
-     */
-    private void alignNamespaceWithWorkspace(DataStoreInfo storeInfo) {
-        WorkspaceInfo workspace = storeInfo.getWorkspace();
-        if (workspace == null) {
-            return;
-        }
-        NamespaceInfo namespace = GeoServerApplication.get().getCatalog().getNamespaceByPrefix(workspace.getName());
-        if (namespace == null) {
-            return;
-        }
-        storeInfo.getConnectionParameters().put(NAMESPACE_KEY, namespace.getURI());
-    }
-
-    private void applyVisibility(ProviderChanged event) {
-        panelsByKey.forEach((key, panel) -> {
-            panel.setVisible(StorageParamVisibility.isVisible(key, event.providerId()));
-            if (event.target() != null) {
-                event.target().add(panel);
-            }
-        });
     }
 
     private <T> void sendEvent(T payload) {

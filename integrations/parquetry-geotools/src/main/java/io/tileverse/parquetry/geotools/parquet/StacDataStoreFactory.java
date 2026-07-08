@@ -25,13 +25,11 @@ import org.geotools.api.data.DataAccessFactory.Param;
 import org.geotools.api.data.DataStore;
 import org.geotools.api.data.DataStoreFactorySpi;
 
-import io.tileverse.storage.Storage;
-
 import io.tileverse.parquetry.geotools.data.StorageParams;
+import io.tileverse.parquetry.stac.ContainerStorages;
 import io.tileverse.parquetry.stac.GeoParquetStacReader;
 import io.tileverse.parquetry.stac.StacCatalogOptions;
 import io.tileverse.parquetry.stac.StacDatasetCatalog;
-import io.tileverse.parquetry.tileverse.ParquetStorage;
 
 import io.tileverse.stac.JsonStacReader;
 import io.tileverse.stac.StacCatalogReader;
@@ -64,7 +62,7 @@ public final class StacDataStoreFactory implements DataStoreFactorySpi {
 
     @Override
     public Param[] getParametersInfo() {
-        return StorageParams.withStorageParams(STAC_URI, NAMESPACE);
+        return StorageParams.withStorageParamsNoProvider(STAC_URI, NAMESPACE);
     }
 
     @Override
@@ -84,21 +82,43 @@ public final class StacDataStoreFactory implements DataStoreFactorySpi {
     @Override
     public DataStore createDataStore(Map<String, ?> params) throws IOException {
         String uriText = (String) STAC_URI.lookUp(params);
-        URI catalogUri = URI.create(uriText);
+        URI catalogUri = catalogDocumentUri(parseCatalogUri(uriText));
         String namespace = (String) NAMESPACE.lookUp(params);
 
-        URI container = catalogUri.resolve(".");
         Properties storageProps = StorageParams.toProperties(params);
-        Storage storage = ParquetStorage.open(container, storageProps);
+        ContainerStorages storages = new ContainerStorages(storageProps);
         StacCatalogReader reader = readerFor(catalogUri);
         StacDatasetCatalog catalog =
-                StacDatasetCatalog.open(catalogUri, storage, reader, StacCatalogOptions.defaults());
+                StacDatasetCatalog.open(catalogUri, storages, reader, StacCatalogOptions.defaults());
 
         StacDataStore store = new StacDataStore(catalog);
         if (namespace != null) {
             store.setNamespaceURI(namespace);
         }
         return store;
+    }
+
+    /**
+     * Parses the store's URI parameter, reporting a malformed value as the {@link IOException} a store factory owes
+     * GeoServer.
+     */
+    private static URI parseCatalogUri(String uriText) throws IOException {
+        try {
+            return URI.create(uriText);
+        } catch (IllegalArgumentException malformed) {
+            throw new IOException("invalid geoparquet-stac URI: " + uriText, malformed);
+        }
+    }
+
+    /**
+     * A container URL (empty path or a path ending in {@code /}) points at the catalog directory, not a document;
+     * appending {@code catalog.json} resolves {@code https://host/} to {@code https://host/catalog.json}. A path that
+     * already names a document (a {@code .json} or {@code .parquet} leaf) is returned unchanged.
+     */
+    private static URI catalogDocumentUri(URI uri) {
+        String path = uri.getPath();
+        boolean container = path == null || path.isEmpty() || path.endsWith("/");
+        return container ? uri.resolve("catalog.json") : uri;
     }
 
     /** A {@code .parquet} URI is a stac-geoparquet item-table; anything else is a JSON catalog document. */

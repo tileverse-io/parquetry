@@ -15,7 +15,7 @@
   "links": [],
   "assets": {
     "data": {
-      "href": "http://web/ne/coastlines.parquet",
+      "href": "s3://naturalearth/coastlines.parquet",
       "type": "application/vnd.apache.parquet",
       "title": "Coastlines",
       "roles": [

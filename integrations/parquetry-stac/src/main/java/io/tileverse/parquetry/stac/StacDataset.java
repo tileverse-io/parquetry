@@ -17,6 +17,7 @@ package io.tileverse.parquetry.stac;
 
 import java.io.InterruptedIOException;
 import java.io.UncheckedIOException;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -24,10 +25,14 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.StructuredTaskScope;
 import java.util.stream.Stream;
 
 import com.google.errorprone.annotations.MustBeClosed;
+
+import io.tileverse.storage.RangeReader;
+import io.tileverse.storage.Storage;
 
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ReadOptions;
@@ -36,7 +41,6 @@ import io.tileverse.parquetry.dataset.ConcurrentSurvivorReads;
 import io.tileverse.parquetry.dataset.DatasetCapabilities;
 import io.tileverse.parquetry.dataset.DatasetCapabilities.FileSpatialBounds;
 import io.tileverse.parquetry.dataset.DatasetCapabilities.FileStatsSource;
-import io.tileverse.parquetry.dataset.FilesetReader;
 import io.tileverse.parquetry.dataset.GeoParquetDataset;
 import io.tileverse.parquetry.dataset.OpenOptions;
 import io.tileverse.parquetry.dataset.ParquetSource;
@@ -59,7 +63,9 @@ import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
+import io.tileverse.parquetry.tileverse.ByteRangeSources;
 
+import io.tileverse.stac.StacFormatException;
 import io.tileverse.stac.StacItem;
 
 /**
@@ -69,17 +75,20 @@ import io.tileverse.stac.StacItem;
  * survivors. Pruning is pure work-avoidance; the result is identical to scanning every part. Schema and geo metadata
  * are read once from a representative part.
  *
- * <p>The byte sources are pre-opened and owned by the catalog that builds the dataset; the per-part
- * {@link ParquetSource} borrows the survivor subset and never closes them.
+ * <p>No part is opened at construction: the dataset holds the item references and a shared {@link ContainerStorages},
+ * and opens each part's byte reader on first access, memoizing one {@link ParquetSource} per part. The dataset owns the
+ * readers it opens and releases them through {@link #closeResources()}, which the catalog calls before closing the
+ * Storage registry.
  */
 public final class StacDataset implements GeoParquetDataset {
 
     private final String name;
     private final List<StacItemRef> items;
     private final List<FileStats> fileStats;
-    private final List<ByteRangeSource> sources;
+    private final ContainerStorages storages;
     private final OpenOptions openOptions;
     private final ConcurrentHashMap<Integer, ParquetSource> perFileDatasets = new ConcurrentHashMap<>();
+    private final ConcurrentLinkedQueue<RangeReader> openedReaders = new ConcurrentLinkedQueue<>();
 
     private volatile ParquetSchema schema;
     private volatile Optional<GeoParquetMetadata> geoMetadata;
@@ -89,12 +98,12 @@ public final class StacDataset implements GeoParquetDataset {
             String geometryColumn,
             List<StacItemRef> items,
             List<double[]> itemBboxes,
-            List<ByteRangeSource> sources,
+            ContainerStorages storages,
             OpenOptions openOptions) {
         this.name = Objects.requireNonNull(name, "name");
         Objects.requireNonNull(geometryColumn, "geometryColumn");
         this.items = List.copyOf(items);
-        this.sources = List.copyOf(sources);
+        this.storages = Objects.requireNonNull(storages, "storages");
         this.openOptions = Objects.requireNonNull(openOptions, "openOptions");
         this.fileStats = buildStats(this.items, itemBboxes, geometryColumn);
         if (this.items.isEmpty()) {
@@ -178,10 +187,11 @@ public final class StacDataset implements GeoParquetDataset {
         if (survivors.isEmpty()) {
             return Optional.empty();
         }
+        ParquetSchema representative = schema();
         BoundsAccumulator accumulator = new BoundsAccumulator();
         try (StructuredTaskScope<Void, Void> scope = StructuredTaskScope.open()) {
             for (int index : survivors) {
-                scope.fork(() -> foldOnePartBounds(index, predicate, options, accumulator));
+                scope.fork(() -> foldOnePartBounds(index, predicate, options, accumulator, representative));
             }
             scope.join();
             return accumulator.snapshot();
@@ -201,11 +211,16 @@ public final class StacDataset implements GeoParquetDataset {
      * original predicate visits each part unchanged. A part whose cheap pre-open item box the accumulated bounds
      * already cover is skipped before the part opens. Runs on a fan-out virtual thread.
      */
-    private Void foldOnePartBounds(int index, Predicate predicate, ReadOptions options, BoundsAccumulator accumulator) {
+    private Void foldOnePartBounds(
+            int index,
+            Predicate predicate,
+            ReadOptions options,
+            BoundsAccumulator accumulator,
+            ParquetSchema representative) {
         if (itemBoxCovered(index, accumulator)) {
             return null;
         }
-        perFile(index).bounds(predicate, options).ifPresent(accumulator::union);
+        perFileChecked(index, representative).bounds(predicate, options).ifPresent(accumulator::union);
         return null;
     }
 
@@ -286,14 +301,17 @@ public final class StacDataset implements GeoParquetDataset {
         if (survivors.isEmpty()) {
             return Stream.empty();
         }
+        ParquetSchema representative = schema();
         if (options.spatialReadProbe().isPresent()) {
             return ConcurrentSurvivorReads.sequential(
                     survivors.size(),
-                    dense -> perFile(survivors.get(dense)).read(predicate, projection, materializer, options));
+                    dense -> perFileChecked(survivors.get(dense), representative)
+                            .read(predicate, projection, materializer, options));
         }
         return ConcurrentSurvivorReads.records(
                 survivors.size(),
-                dense -> perFile(survivors.get(dense)).readBatches(predicate, projection, options),
+                dense -> perFileChecked(survivors.get(dense), representative)
+                        .readBatches(predicate, projection, options),
                 materializer,
                 maxConcurrentFiles());
     }
@@ -305,20 +323,29 @@ public final class StacDataset implements GeoParquetDataset {
         if (survivors.isEmpty()) {
             return Stream.empty();
         }
+        ParquetSchema representative = schema();
         if (options.spatialReadProbe().isPresent()) {
-            return survivors.stream().flatMap(index -> perFile(index).readBatches(predicate, projection, options));
+            return survivors.stream()
+                    .flatMap(
+                            index -> perFileChecked(index, representative).readBatches(predicate, projection, options));
         }
         return ConcurrentSurvivorReads.batches(
                 survivors.size(),
-                dense -> perFile(survivors.get(dense)).readBatches(predicate, projection, options),
+                dense -> perFileChecked(survivors.get(dense), representative)
+                        .readBatches(predicate, projection, options),
                 maxConcurrentFiles());
     }
 
     @Override
     public long count(Predicate predicate, ReadOptions options) {
+        List<Integer> survivors = prune(predicate);
+        if (survivors.isEmpty()) {
+            return 0L;
+        }
+        ParquetSchema representative = schema();
         long total = 0L;
-        for (int index : prune(predicate)) {
-            total += perFile(index).count(predicate, options);
+        for (int index : survivors) {
+            total += perFileChecked(index, representative).count(predicate, options);
         }
         return total;
     }
@@ -374,13 +401,77 @@ public final class StacDataset implements GeoParquetDataset {
     }
 
     /**
-     * The single-part {@link ParquetSource} over the source at {@code index}, parsed once and reused across queries and
-     * threads. {@code computeIfAbsent} gives one footer parse per index even under concurrent reads; the dataset
-     * borrows the catalog's shared source, which the catalog owns and closes.
+     * The {@link ParquetSource} for survivor {@code index}, its schema validated against the collection's
+     * {@code representative} schema before the part is read. STAC reads each part as its own single-file source and
+     * concatenates the rows, which bypasses the engine's multi-file schema check; a part whose columns differ from the
+     * representative would otherwise yield wrong rows. The check runs as each part is opened for reading, not up front,
+     * and a {@code limit(1)} read therefore does not open every survivor's footer. A mismatch throws
+     * {@link StacFormatException} before the part's rows are emitted, naming the item.
+     *
+     * <p>Equality is exact: a part with extra or missing columns is rejected, not read as a superset. That is
+     * deliberate - reading parts with drifting schemas as if homogeneous silently corrupts rows, and a loud failure is
+     * safer than a silent wrong answer.
+     */
+    private ParquetSource perFileChecked(int index, ParquetSchema representative) {
+        ParquetSource part = perFile(index);
+        if (!representative.equals(part.schema())) {
+            StacItemRef ref = items.get(index);
+            throw new StacFormatException("collection '" + name + "' has parts with differing schemas; item '"
+                    + ref.itemId() + "' (" + ref.href() + ") does not match the collection schema");
+        }
+        return part;
+    }
+
+    /**
+     * The single-part {@link ParquetSource} over the part at {@code index}, parsed once and reused across queries and
+     * threads. {@code computeIfAbsent} opens the part at most once per index even under concurrent reads: the first
+     * caller opens its byte reader and parses the footer; later callers reuse the memoized source.
      */
     private ParquetSource perFile(int index) {
-        return perFileDatasets.computeIfAbsent(
-                index, i -> ParquetSource.open(new SurvivorFileset(sources, List.of(i)), openOptions));
+        return perFileDatasets.computeIfAbsent(index, this::openPerFile);
+    }
+
+    /**
+     * Opens the part at {@code index}: resolves the asset href to its container Storage, opens a byte reader the
+     * dataset owns, and parses the footer. The reader is tracked for {@link #closeResources()} only after the footer
+     * parses; a parse failure closes the reader instead of tracking it, and a repeatedly failing part therefore never
+     * accumulates open readers. The {@link ByteRangeSource} wrapping the reader borrows it and never closes it.
+     *
+     * <p>{@link StacItemRef#href()} must be an absolute URI. The in-tree catalog readers absolutize every asset href
+     * before building the item references; a custom {@link io.tileverse.stac.StacCatalogReader} must do the same.
+     */
+    private ParquetSource openPerFile(int index) {
+        URI assetUri = URI.create(items.get(index).href());
+        Storage storage = storages.storageFor(assetUri.resolve("."));
+        RangeReader reader = storage.openRangeReader(assetUri);
+        try {
+            ByteRangeSource source = ByteRangeSources.from(reader);
+            ParquetSource opened = ParquetSource.open(source, openOptions);
+            openedReaders.add(reader);
+            return opened;
+        } catch (RuntimeException openFailure) {
+            closeOnFailure(reader, openFailure);
+            throw openFailure;
+        }
+    }
+
+    /**
+     * Closes a reader whose part failed to open, folding any close error into the failure that triggered the cleanup.
+     */
+    private static void closeOnFailure(AutoCloseable closeable, RuntimeException primary) {
+        try {
+            closeable.close();
+        } catch (Exception closeError) {
+            primary.addSuppressed(closeError);
+        }
+    }
+
+    /**
+     * The number of part readers this dataset currently holds open. Package-private for tests that assert lazy opening
+     * and the absence of a reader leak on a failing part.
+     */
+    int openReaderCount() {
+        return openedReaders.size();
     }
 
     private int maxConcurrentFiles() {
@@ -409,21 +500,36 @@ public final class StacDataset implements GeoParquetDataset {
     }
 
     /**
-     * A {@link FilesetReader} over a dense slice of the catalog's pre-opened sources. Dense index {@code i} maps to the
-     * shared source at {@code survivorIndices.get(i)}. The sources are borrowed; closing the per-query dataset's
-     * streams never closes them.
+     * Closes the byte readers this dataset opened lazily. Borrowed by the catalog, which calls this before closing the
+     * Storage registry. A failure closing one reader still closes the rest; the first is rethrown with the others
+     * suppressed.
      */
-    private record SurvivorFileset(List<ByteRangeSource> sources, List<Integer> survivorIndices)
-            implements FilesetReader {
-
-        @Override
-        public ByteRangeSource openFile(int index) {
-            return sources.get(survivorIndices.get(index));
+    void closeResources() {
+        RuntimeException failure = null;
+        for (RangeReader reader : openedReaders) {
+            failure = closeChaining(reader, failure);
         }
-
-        @Override
-        public int fileCount() {
-            return survivorIndices.size();
+        openedReaders.clear();
+        perFileDatasets.clear();
+        if (failure != null) {
+            throw failure;
         }
+    }
+
+    private static RuntimeException closeChaining(AutoCloseable closeable, RuntimeException accumulated) {
+        try {
+            closeable.close();
+            return accumulated;
+        } catch (RuntimeException alreadyUnchecked) {
+            return accumulated == null ? alreadyUnchecked : addSuppressed(accumulated, alreadyUnchecked);
+        } catch (Exception checked) {
+            IllegalStateException wrapped = new IllegalStateException("closing " + closeable, checked);
+            return accumulated == null ? wrapped : addSuppressed(accumulated, wrapped);
+        }
+    }
+
+    private static RuntimeException addSuppressed(RuntimeException accumulated, RuntimeException next) {
+        accumulated.addSuppressed(next);
+        return accumulated;
     }
 }

@@ -1,0 +1,41 @@
+<layerGroup>
+  <id>LayerGroupInfoImpl-world-stac-json</id>
+  <name>world</name>
+  <mode>NAMED</mode>
+  <title>World Map (STAC JSON)</title>
+  <workspace>
+    <id>WorkspaceInfoImpl--1b718b8f:19f311dfce5:-7fdf</id>
+  </workspace>
+  <publishables>
+    <published type="layer">
+      <id>LayerInfoImpl--1b718b8f:19f311dfce5:-7faf</id>
+    </published>
+    <published type="layer">
+      <id>LayerInfoImpl--1b718b8f:19f311dfce5:-7fa8</id>
+    </published>
+    <published type="layer">
+      <id>LayerInfoImpl--1b718b8f:19f311dfce5:-7fac</id>
+    </published>
+    <published type="layer">
+      <id>LayerInfoImpl--1b718b8f:19f311dfce5:-7faa</id>
+    </published>
+    <published type="layer">
+      <id>LayerInfoImpl--1b718b8f:19f311dfce5:-7fa6</id>
+    </published>
+  </publishables>
+  <styles>
+    <style/>
+    <style/>
+    <style/>
+    <style/>
+    <style/>
+  </styles>
+  <bounds>
+    <minx>-180.0</minx>
+    <maxx>180.0</maxx>
+    <miny>-90.0</miny>
+    <maxy>90.0</maxy>
+    <crs>EPSG:4326</crs>
+  </bounds>
+  <dateCreated>2026-07-05 07:40:00.0 UTC</dateCreated>
+</layerGroup>

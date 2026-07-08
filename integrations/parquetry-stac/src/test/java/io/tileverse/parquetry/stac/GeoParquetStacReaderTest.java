@@ -16,7 +16,9 @@
 package io.tileverse.parquetry.stac;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.net.URI;
 import java.nio.file.Path;
 import java.util.List;
 
@@ -28,6 +30,7 @@ import io.tileverse.storage.StorageFactory;
 
 import io.tileverse.stac.StacCatalog;
 import io.tileverse.stac.StacCollection;
+import io.tileverse.stac.StacFormatException;
 import io.tileverse.stac.StacItem;
 
 class GeoParquetStacReaderTest {
@@ -55,6 +58,21 @@ class GeoParquetStacReaderTest {
                     .orElseThrow();
             assertThat(west.bbox()).containsExactly(0, 0, 10, 10);
             assertThat(west.assets()).anyMatch(a -> a.href().endsWith("west.parquet"));
+        }
+    }
+
+    @Test
+    void aMalformedAssetHrefFailsLoudNamingTheItem(@TempDir Path dir) throws Exception {
+        Path itemTable = StacItemTableParquet.write(
+                dir.resolve("items.parquet"),
+                List.of(new StacItemTableParquet.Row("broken", "building", 0, 0, 10, 10, "parts/a b.parquet")));
+
+        try (Storage storage = StorageFactory.open(dir.toUri())) {
+            GeoParquetStacReader reader = new GeoParquetStacReader();
+            URI table = itemTable.toUri();
+            assertThatThrownBy(() -> reader.open(table, storage))
+                    .isInstanceOf(StacFormatException.class)
+                    .hasMessageContaining("broken");
         }
     }
 }

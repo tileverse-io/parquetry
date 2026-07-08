@@ -23,6 +23,7 @@ import java.util.Collections;
 import java.util.HexFormat;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Properties;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -65,15 +66,14 @@ class StacDatasetConcurrentReadTest {
         writeParts(dir);
         List<String> reference = singleFileReferenceKeys(dir);
 
-        try (Storage storage = StorageFactory.open(dir.toUri())) {
-            List<ByteRangeSource> sources = openAll(storage, partKeys());
+        try (ContainerStorages storages = new ContainerStorages(new Properties())) {
+            StacDataset dataset = dataset(dir, storages, fanOutOptions(4));
             try {
-                StacDataset dataset = dataset(sources, fanOutOptions(4));
                 List<String> concurrent = readRowKeys(dataset);
                 assertThat(concurrent).hasSameSizeAs(reference);
                 assertThat(sorted(concurrent)).isEqualTo(sorted(reference));
             } finally {
-                closeAll(sources);
+                dataset.closeResources();
             }
         }
     }
@@ -83,10 +83,9 @@ class StacDatasetConcurrentReadTest {
         writeParts(dir);
         List<String> reference = singleFileReferenceKeys(dir);
 
-        try (Storage storage = StorageFactory.open(dir.toUri())) {
-            List<ByteRangeSource> sources = openAll(storage, partKeys());
+        try (ContainerStorages storages = new ContainerStorages(new Properties())) {
+            StacDataset dataset = dataset(dir, storages, fanOutOptions(4));
             try {
-                StacDataset dataset = dataset(sources, fanOutOptions(4));
                 List<String> keys = new ArrayList<>();
                 try (Stream<ParquetRecordBatch> batches =
                         dataset.readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
@@ -95,7 +94,7 @@ class StacDatasetConcurrentReadTest {
                 assertThat(keys).hasSameSizeAs(reference);
                 assertThat(sorted(keys)).isEqualTo(sorted(reference));
             } finally {
-                closeAll(sources);
+                dataset.closeResources();
             }
         }
     }
@@ -107,23 +106,20 @@ class StacDatasetConcurrentReadTest {
         FetchBudget budget = FetchBudget.ofMaxMemoryFraction(0.1);
         long capacityBefore = budget.available();
 
-        try (Storage storage = StorageFactory.open(dir.toUri())) {
-            List<ByteRangeSource> sources = openAll(storage, partKeys());
-            try {
-                OpenOptions openOptions = OpenOptions.builder()
-                        .runtime(ParquetRuntime.builder()
-                                .segmentPool(pool)
-                                .fetchBudget(budget)
-                                .maxConcurrentFiles(4)
-                                .build())
-                        .build();
-                StacDataset dataset = dataset(sources, openOptions);
-                try (Stream<ParquetRecord> stream =
-                        dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
-                    stepInto(stream, 1);
-                }
+        try (ContainerStorages storages = new ContainerStorages(new Properties())) {
+            OpenOptions openOptions = OpenOptions.builder()
+                    .runtime(ParquetRuntime.builder()
+                            .segmentPool(pool)
+                            .fetchBudget(budget)
+                            .maxConcurrentFiles(4)
+                            .build())
+                    .build();
+            StacDataset dataset = dataset(dir, storages, openOptions);
+            try (Stream<ParquetRecord> stream =
+                    dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
+                stepInto(stream, 1);
             } finally {
-                closeAll(sources);
+                dataset.closeResources();
             }
         }
 
@@ -186,14 +182,15 @@ class StacDatasetConcurrentReadTest {
         return copy;
     }
 
-    private static StacDataset dataset(List<ByteRangeSource> sources, OpenOptions openOptions) {
-        List<StacItemRef> refs = new ArrayList<>(sources.size());
-        List<double[]> bboxes = new ArrayList<>(sources.size());
+    private static StacDataset dataset(Path dir, ContainerStorages storages, OpenOptions openOptions) {
+        List<StacItemRef> refs = new ArrayList<>(POINT_COUNTS.length);
+        List<double[]> bboxes = new ArrayList<>(POINT_COUNTS.length);
         for (int i = 0; i < POINT_COUNTS.length; i++) {
-            refs.add(new StacItemRef("part-" + i, partName(i)));
+            refs.add(new StacItemRef(
+                    "part-" + i, dir.resolve(partName(i)).toUri().toString()));
             bboxes.add(partBbox(i));
         }
-        return new StacDataset("points", GEOMETRY, refs, bboxes, sources, openOptions);
+        return new StacDataset("points", GEOMETRY, refs, bboxes, storages, openOptions);
     }
 
     private static void writeParts(Path dir) throws Exception {
@@ -218,14 +215,6 @@ class StacDatasetConcurrentReadTest {
         return new double[] {min, min, max, max};
     }
 
-    private static String[] partKeys() {
-        String[] keys = new String[POINT_COUNTS.length];
-        for (int i = 0; i < POINT_COUNTS.length; i++) {
-            keys[i] = partName(i);
-        }
-        return keys;
-    }
-
     private static String partName(int part) {
         return "part-" + part + ".parquet";
     }
@@ -236,19 +225,5 @@ class StacDatasetConcurrentReadTest {
                         .maxConcurrentFiles(maxConcurrentFiles)
                         .build())
                 .build();
-    }
-
-    private static List<ByteRangeSource> openAll(Storage storage, String[] keys) {
-        List<ByteRangeSource> sources = new ArrayList<>(keys.length);
-        for (String key : keys) {
-            sources.add(ByteRangeSources.from(storage.openRangeReader(key)));
-        }
-        return sources;
-    }
-
-    private static void closeAll(List<ByteRangeSource> sources) {
-        for (ByteRangeSource source : sources) {
-            source.close();
-        }
     }
 }

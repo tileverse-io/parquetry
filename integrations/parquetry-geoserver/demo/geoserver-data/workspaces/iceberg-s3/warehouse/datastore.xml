@@ -1,6 +1,7 @@
 <dataStore>
   <id>DataStoreInfoImpl--1b718b8f:19f311dfce5:-7fda</id>
   <name>warehouse</name>
+  <description>Apache Iceberg warehouse over S3 (the s3proxy endpoint).</description>
   <type>Apache Iceberg</type>
   <enabled>true</enabled>
   <workspace>
