@@ -22,8 +22,10 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Properties;
 import java.util.stream.Stream;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -38,7 +40,6 @@ import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.internal.filter.spatial.BoundsAccumulator;
 import io.tileverse.parquetry.internal.filter.spatial.WkbEnvelope;
-import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.runtime.ParquetRuntime;
 import io.tileverse.parquetry.schema.ColumnPath;
 
@@ -73,6 +74,17 @@ class StacDatasetBoundsTest {
 
     @TempDir
     Path tempDir;
+
+    private final ContainerStorages storages = new ContainerStorages(new Properties());
+    private final List<StacDataset> openedDatasets = new ArrayList<>();
+
+    @AfterEach
+    void closeResources() {
+        for (StacDataset dataset : openedDatasets) {
+            dataset.closeResources();
+        }
+        storages.close();
+    }
 
     @Test
     void unfilteredEqualsBruteForce() throws Exception {
@@ -201,15 +213,15 @@ class StacDatasetBoundsTest {
     private StacDataset dataset(GeoParquetMetadataMode mode) throws Exception {
         List<StacItemRef> refs = new ArrayList<>(POINTS_PER_PART.length);
         List<double[]> bboxes = new ArrayList<>(POINTS_PER_PART.length);
-        List<ByteRangeSource> sources = new ArrayList<>(POINTS_PER_PART.length);
         for (int part = 0; part < POINTS_PER_PART.length; part++) {
             Path file = tempDir.resolve(mode.name() + "-part-" + part + ".parquet");
             StacPointParquet.writePoints(file, GEOMETRY, mode, POINTS_PER_PART[part]);
-            refs.add(new StacItemRef("part-" + part, file.getFileName().toString()));
+            refs.add(new StacItemRef("part-" + part, file.toUri().toString()));
             bboxes.add(ITEM_BBOXES[part].clone());
-            sources.add(ByteRangeSource.ofFile(file));
         }
-        return new StacDataset("points", GEOMETRY, refs, bboxes, sources, fanOutOptions());
+        StacDataset dataset = new StacDataset("points", GEOMETRY, refs, bboxes, storages, fanOutOptions());
+        openedDatasets.add(dataset);
+        return dataset;
     }
 
     private static OpenOptions fanOutOptions() {

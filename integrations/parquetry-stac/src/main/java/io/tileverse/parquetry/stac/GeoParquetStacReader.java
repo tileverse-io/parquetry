@@ -41,6 +41,7 @@ import io.tileverse.stac.StacAsset;
 import io.tileverse.stac.StacCatalog;
 import io.tileverse.stac.StacCatalogReader;
 import io.tileverse.stac.StacCollection;
+import io.tileverse.stac.StacFormatException;
 import io.tileverse.stac.StacItem;
 
 /**
@@ -68,19 +69,20 @@ public final class GeoParquetStacReader implements StacCatalogReader {
         Objects.requireNonNull(itemTableUri, "itemTableUri");
         Objects.requireNonNull(storage, "storage");
         String key = storageKey(itemTableUri);
-        Map<String, List<StacItem>> byCollection = readItems(storage, key);
+        URI container = itemTableUri.resolve(".");
+        Map<String, List<StacItem>> byCollection = readItems(storage, key, container);
         List<StacCollection> collections = toCollections(byCollection);
         return new StacCatalog("stac-geoparquet", null, List.of(), () -> collections, List::of);
     }
 
     @SuppressWarnings("MustBeClosedChecker") // the dataset borrows the RangeReader closed by the try-with-resources
-    private Map<String, List<StacItem>> readItems(Storage storage, String key) {
+    private Map<String, List<StacItem>> readItems(Storage storage, String key, URI container) {
         Map<String, List<StacItem>> byCollection = new LinkedHashMap<>();
         try (RangeReader reader = storage.openRangeReader(key)) {
             ParquetSource source = ParquetSource.open(ByteRangeSources.from(reader));
             try (Stream<ParquetRecord> rows =
                     source.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
-                rows.forEach(row -> addItem(byCollection, row));
+                rows.forEach(row -> addItem(byCollection, row, container));
             }
         } catch (IOException failure) {
             throw new UncheckedIOException("reading STAC item-table " + key, failure);
@@ -88,16 +90,33 @@ public final class GeoParquetStacReader implements StacCatalogReader {
         return byCollection;
     }
 
-    private void addItem(Map<String, List<StacItem>> byCollection, ParquetRecord row) {
+    private void addItem(Map<String, List<StacItem>> byCollection, ParquetRecord row, URI container) {
         String id = row.getString(ITEM_ID);
         String collection = row.getString(COLLECTION);
         double[] bbox = {
             row.getDouble(BBOX_XMIN), row.getDouble(BBOX_YMIN), row.getDouble(BBOX_XMAX), row.getDouble(BBOX_YMAX)
         };
-        String href = row.getString(ASSET_HREF);
+        String href = resolveAssetHref(container, id, row.getString(ASSET_HREF));
         StacAsset asset = new StacAsset(href, "application/vnd.apache.parquet", "data", List.of("data"));
         StacItem item = new StacItem(id, bbox, Optional.empty(), List.of(asset), List.of());
         byCollection.computeIfAbsent(collection, key -> new ArrayList<>()).add(item);
+    }
+
+    /**
+     * Resolves an item-table row's asset href against the catalog container. The href is a required item-table value; a
+     * missing or malformed one is a corrupt index, not a recoverable row, and fails loud naming the item rather than
+     * aborting the whole catalog open with an opaque error.
+     */
+    private static String resolveAssetHref(URI container, String itemId, String assetHref) {
+        if (assetHref == null || assetHref.isBlank()) {
+            throw new StacFormatException("STAC item '" + itemId + "' has no asset_href in the item-table");
+        }
+        try {
+            return container.resolve(assetHref).toString();
+        } catch (IllegalArgumentException malformed) {
+            throw new StacFormatException(
+                    "STAC item '" + itemId + "' has a malformed asset_href '" + assetHref + "'", malformed);
+        }
     }
 
     private List<StacCollection> toCollections(Map<String, List<StacItem>> byCollection) {
