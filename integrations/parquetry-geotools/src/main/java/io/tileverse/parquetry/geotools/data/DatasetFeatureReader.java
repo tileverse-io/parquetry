@@ -15,9 +15,9 @@
  */
 package io.tileverse.parquetry.geotools.data;
 
+import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneOffset;
-import java.util.Date;
+import java.time.LocalDateTime;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -36,6 +36,7 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.geo.MemorySegmentWkbReader;
 import io.tileverse.parquetry.geotools.data.FeatureTypeMapper.AttributeMapping;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -127,19 +128,26 @@ final class DatasetFeatureReader implements FeatureReader<SimpleFeatureType, Sim
         if (binding == byte[].class) {
             return row.getBinary(path);
         }
-        if (binding == Date.class) {
-            return epochDayToDate(row.getInt(path));
+        if (binding == LocalDate.class) {
+            return TemporalValues.toLocalDate(row.getInt(path));
+        }
+        if (binding == Instant.class) {
+            return TemporalValues.toInstant(row.getLong(path), timeUnit(attr));
+        }
+        if (binding == LocalDateTime.class) {
+            return TemporalValues.toLocalDateTime(row.getLong(path), timeUnit(attr));
         }
         return row.get(path);
     }
 
-    /**
-     * Converts a Parquet DATE value (days since the Unix epoch) to a {@link Date} at UTC midnight, the GeoTools binding
-     * for a date-only attribute.
-     */
-    private static Date epochDayToDate(int epochDay) {
-        return Date.from(
-                LocalDate.ofEpochDay(epochDay).atStartOfDay(ZoneOffset.UTC).toInstant());
+    /** The time unit of a timestamp attribute, read from the leaf's TIMESTAMP logical type. */
+    private static LogicalType.TimeUnit timeUnit(AttributeMapping attr) {
+        LogicalType logical = attr.logicalType()
+                .orElseThrow(() -> new IllegalStateException("temporal attribute has no logical type: " + attr.name()));
+        if (logical instanceof LogicalType.Timestamp timestamp) {
+            return timestamp.unit();
+        }
+        throw new IllegalStateException("temporal attribute is not a timestamp: " + attr.name());
     }
 
     /** Decodes the geometry column in place from the record's WKB and stamps the column's EPSG SRID when resolved. */
