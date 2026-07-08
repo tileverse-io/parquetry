@@ -54,6 +54,8 @@ public final class ConstantLeaves {
             case Value.DateVal ignored -> new LeafType(PrimitiveKind.INT32, Optional.of(new LogicalType.DateType()));
             case Value.StringVal ignored ->
                 new LeafType(PrimitiveKind.BYTE_ARRAY, Optional.of(new LogicalType.StringType()));
+            case Value.UuidVal ignored ->
+                new LeafType(PrimitiveKind.FIXED_LEN_BYTE_ARRAY, Optional.of(new LogicalType.UuidType()));
             default -> throw new IllegalArgumentException("unsupported constant column value " + value);
         };
     }

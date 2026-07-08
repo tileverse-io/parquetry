@@ -64,6 +64,7 @@ public final class ConstantVectors {
             case Value.BoolVal _ -> BooleanVector.materialized(new boolean[rowCount], allNull);
             case Value.DateVal _ -> IntVector.materialized(new int[rowCount], allNull);
             case Value.StringVal _ -> binary(new byte[0], rowCount, allNull);
+            case Value.UuidVal _ -> binary(new byte[0], rowCount, allNull);
             default -> throw new IllegalArgumentException("constant column unsupported for value " + typeOf);
         };
     }
