@@ -18,6 +18,7 @@ package io.tileverse.parquetry.geotools.data;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -124,5 +125,24 @@ class StorageParamsTest {
         Properties props = StorageParams.toProperties(params);
         assertThat(props.getProperty("storage.s3.region")).isEqualTo("us-west-2");
         assertThat(props.stringPropertyNames()).containsExactly("storage.s3.region");
+    }
+
+    @Test
+    void withStorageParamsNoProviderHidesOnlyTheProviderSelector() {
+        Param core = new Param("core", String.class, "core", true);
+        List<String> withProvider = keysOf(StorageParams.withStorageParams(core));
+        List<String> withoutProvider = keysOf(StorageParams.withStorageParamsNoProvider(core));
+
+        assertThat(withProvider).contains("storage.provider");
+        assertThat(withoutProvider).doesNotContain("storage.provider");
+        assertThat(withoutProvider).contains("core");
+        assertThat(withoutProvider)
+                .containsAll(withProvider.stream()
+                        .filter(key -> !key.equals("storage.provider"))
+                        .toList());
+    }
+
+    private static List<String> keysOf(Param[] params) {
+        return Arrays.stream(params).map(param -> param.key).toList();
     }
 }

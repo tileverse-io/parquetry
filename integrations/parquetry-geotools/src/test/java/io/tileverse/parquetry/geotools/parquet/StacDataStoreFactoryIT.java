@@ -71,6 +71,23 @@ class StacDataStoreFactoryIT {
     }
 
     @Test
+    void appendsCatalogJsonToAContainerUrl(@TempDir Path tempDir) throws Exception {
+        StacFixtures.writeOvertureMini(tempDir);
+
+        StacDataStoreFactory factory = new StacDataStoreFactory();
+        // A directory URI ends in '/'; the factory must append catalog.json to reach the document.
+        Map<String, Object> params =
+                Map.of(StacDataStoreFactory.STAC_URI.key, tempDir.toUri().toString());
+
+        DataStore store = factory.createDataStore(params);
+        try {
+            assertThat(store.getTypeNames()).contains("building");
+        } finally {
+            store.dispose();
+        }
+    }
+
+    @Test
     void parquetUriOpensTheStacGeoParquetReader(@TempDir Path tempDir) throws Exception {
         Path itemTable = StacFixtures.writeItemTable(tempDir);
 
