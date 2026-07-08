@@ -14,16 +14,19 @@ package io.tileverse.parquetry.geoserver.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.Map;
+import java.util.Set;
+
 import org.junit.jupiter.api.Test;
 
 class StorageParamVisibilityTest {
 
     @Test
-    void coreParamsAlwaysVisible() {
-        for (String key : new String[] {"geoparquet", "namespace", "fid", "layer-grouping", "storage.provider"}) {
-            assertThat(StorageParamVisibility.isVisible(key, "")).as(key).isTrue();
-            assertThat(StorageParamVisibility.isVisible(key, "s3")).as(key).isTrue();
-        }
+    void groupOfExtractsTheBackendTokenFromTheKeyShape() {
+        assertThat(StorageParamVisibility.groupOf("storage.s3.region")).isEqualTo("s3");
+        assertThat(StorageParamVisibility.groupOf("storage.provider")).isEqualTo("provider");
+        assertThat(StorageParamVisibility.groupOf("storage.caching.enabled")).isEqualTo("caching");
+        assertThat(StorageParamVisibility.groupOf("namespace")).isEmpty();
     }
 
     @Test
@@ -37,36 +40,75 @@ class StorageParamVisibilityTest {
     }
 
     @Test
-    void backendParamsVisibleOnlyForTheirProvider() {
-        assertThat(StorageParamVisibility.isVisible("storage.s3.region", "s3")).isTrue();
-        assertThat(StorageParamVisibility.isVisible("storage.s3.region", "azure"))
+    void showsOnlySelectedGroupsAndAlwaysCore() {
+        Set<String> s3 = Set.of("s3");
+        assertThat(StorageParamVisibility.isVisible("storage.s3.region", s3)).isTrue();
+        assertThat(StorageParamVisibility.isVisible("storage.azure.account-key", s3))
                 .isFalse();
-        assertThat(StorageParamVisibility.isVisible("storage.azure.sas-token", "azure"))
+        assertThat(StorageParamVisibility.isVisible("storage.azure.account-key", Set.of("azure")))
                 .isTrue();
-        assertThat(StorageParamVisibility.isVisible("storage.gcs.project-id", "gcs"))
+        assertThat(StorageParamVisibility.isVisible("namespace", Set.of())).isTrue();
+        assertThat(StorageParamVisibility.isVisible("storage.provider", Set.of()))
                 .isTrue();
-        assertThat(StorageParamVisibility.isVisible("storage.http.bearer-token", "http"))
+        assertThat(StorageParamVisibility.isVisible("storage.caching.enabled", s3))
                 .isTrue();
+        assertThat(StorageParamVisibility.isVisible("storage.caching.enabled", Set.of()))
+                .isFalse();
+    }
+
+    @Test
+    void derivesSelectedGroupsFromPresentParameters() {
+        Map<String, String> params = Map.of(
+                "geoparquet-stac", "s3://x/i.parquet",
+                "storage.s3.region", "us-east-1",
+                "storage.caching.enabled", "true");
+        assertThat(StorageParamVisibility.selectedGroupsFromParameters(params)).containsExactly("s3");
+    }
+
+    @Test
+    void coreParamsAlwaysVisibleForTheSelectedProvider() {
+        for (String key : new String[] {"geoparquet", "namespace", "fid", "layer-grouping", "storage.provider"}) {
+            assertThat(visibleForProvider(key, "")).as(key).isTrue();
+            assertThat(visibleForProvider(key, "s3")).as(key).isTrue();
+        }
+    }
+
+    @Test
+    void backendParamsVisibleOnlyForTheirProvider() {
+        assertThat(visibleForProvider("storage.s3.region", "s3")).isTrue();
+        assertThat(visibleForProvider("storage.s3.region", "azure")).isFalse();
+        assertThat(visibleForProvider("storage.azure.sas-token", "azure")).isTrue();
+        assertThat(visibleForProvider("storage.gcs.project-id", "gcs")).isTrue();
+        assertThat(visibleForProvider("storage.http.bearer-token", "http")).isTrue();
+    }
+
+    @Test
+    void azureDataLakeShowsTheSharedAzureParams() {
+        assertThat(visibleForProvider("storage.azure.account-key", "azure-datalake"))
+                .isTrue();
+        assertThat(visibleForProvider("storage.s3.region", "azure-datalake")).isFalse();
     }
 
     @Test
     void cachingVisibleForCloudProvidersOnly() {
-        assertThat(StorageParamVisibility.isVisible("storage.caching.enabled", "s3"))
-                .isTrue();
-        assertThat(StorageParamVisibility.isVisible("storage.caching.enabled", "http"))
-                .isTrue();
-        assertThat(StorageParamVisibility.isVisible("storage.caching.enabled", "file"))
-                .isFalse();
-        assertThat(StorageParamVisibility.isVisible("storage.caching.enabled", ""))
-                .isFalse();
+        assertThat(visibleForProvider("storage.caching.enabled", "s3")).isTrue();
+        assertThat(visibleForProvider("storage.caching.enabled", "http")).isTrue();
+        assertThat(visibleForProvider("storage.caching.enabled", "file")).isFalse();
+        assertThat(visibleForProvider("storage.caching.enabled", "")).isFalse();
     }
 
     @Test
     void noBackendParamsWhenProviderBlankOrFile() {
-        assertThat(StorageParamVisibility.isVisible("storage.s3.region", "")).isFalse();
-        assertThat(StorageParamVisibility.isVisible("storage.s3.region", "file"))
-                .isFalse();
-        assertThat(StorageParamVisibility.isVisible("storage.azure.account-key", null))
-                .isFalse();
+        assertThat(visibleForProvider("storage.s3.region", "")).isFalse();
+        assertThat(visibleForProvider("storage.s3.region", "file")).isFalse();
+        assertThat(visibleForProvider("storage.azure.account-key", null)).isFalse();
+    }
+
+    /**
+     * Resolves a single provider id to its backend groups and asks the group-based visibility rule, matching how a
+     * single-backend store edit panel decides a field's visibility.
+     */
+    private static boolean visibleForProvider(String paramKey, String providerId) {
+        return StorageParamVisibility.isVisible(paramKey, StorageParamVisibility.groupsForProvider(providerId));
     }
 }

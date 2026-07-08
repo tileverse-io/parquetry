@@ -15,7 +15,7 @@
   "links": [],
   "assets": {
     "data": {
-      "href": "http://web/ne/countries.parquet",
+      "href": "s3://naturalearth/countries.parquet",
       "type": "application/vnd.apache.parquet",
       "title": "Countries",
       "roles": [

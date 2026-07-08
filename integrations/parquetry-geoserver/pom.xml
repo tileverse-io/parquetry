@@ -105,6 +105,13 @@
       <artifactId>assertj-core</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- WicketTester renders an isolated GroupedParamPanel to check its markup and header show/hide. -->
+    <dependency>
+      <groupId>org.apache.wicket</groupId>
+      <artifactId>wicket-tester</artifactId>
+      <version>10.9.1</version>
+      <scope>test</scope>
+    </dependency>
 
     <!--
       Test-scope only: the embedded GeoServer launcher (Start) runs the full GeoServer web app with this plugin on the

@@ -15,7 +15,7 @@
   "links": [],
   "assets": {
     "data": {
-      "href": "http://web/ne/disputed_areas.parquet",
+      "href": "s3://naturalearth/disputed_areas.parquet",
       "type": "application/vnd.apache.parquet",
       "title": "Disputed areas",
       "roles": [

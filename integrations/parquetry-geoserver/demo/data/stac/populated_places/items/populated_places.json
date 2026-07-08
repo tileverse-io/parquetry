@@ -15,7 +15,7 @@
   "links": [],
   "assets": {
     "data": {
-      "href": "http://web/ne/populated_places.parquet",
+      "href": "s3://naturalearth/populated_places.parquet",
       "type": "application/vnd.apache.parquet",
       "title": "Populated places",
       "roles": [

@@ -1,6 +1,7 @@
 <dataStore>
   <id>DataStoreInfoImpl--1b718b8f:19f311dfce5:-7fdb</id>
   <name>warehouse</name>
+  <description>Apache Iceberg warehouse over the local filesystem.</description>
   <type>Apache Iceberg</type>
   <enabled>true</enabled>
   <workspace>

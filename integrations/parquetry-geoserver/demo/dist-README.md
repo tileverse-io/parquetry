@@ -31,8 +31,8 @@ Six workspaces, each reading Natural Earth through the parquetry plugin from a d
 | `parquetry-s3` | the same GeoParquet over S3 (bundled s3proxy) | GeoParquet on cloud object storage |
 | `iceberg` | a local Apache Iceberg warehouse | Iceberg reads: schema evolution, merge-on-read deletes, deletion vectors, row lineage |
 | `iceberg-s3` | the same warehouse over S3 (bundled s3proxy) | an Iceberg warehouse on cloud object storage |
-| `stac-json` | a static STAC catalog (JSON) over HTTP | finding GeoParquet assets through a STAC catalog |
-| `stac-geoparquet` | a STAC items table (GeoParquet) over HTTP | the stac-geoparquet items-table flavor |
+| `stac-json` | a static STAC catalog (JSON) over HTTP, assets on S3 | a public catalog with data on a credentialed object store |
+| `stac-geoparquet` | a STAC items table (GeoParquet) on S3, assets on S3 | an item-table catalog colocated with its data |
 
 ### GeoParquet layers (`parquetry`, `parquetry-s3`)
 
@@ -65,13 +65,26 @@ The two attribute-only tables have no geometry column and are published for WFS 
 
 ### STAC layers (`stac-json`, `stac-geoparquet`)
 
-Both workspaces publish the five Natural Earth layers as STAC collections, their GeoParquet assets
-fetched over HTTP from the bundled `web` service. `stac-json` reads a static JSON catalog
-(`catalog.json`, per-collection `collection.json`, and item documents); `stac-geoparquet` reads a
-single stac-geoparquet items table (`items.parquet`). Each item's `data` asset resolves to a
-GeoParquet file under `ne/`, read in place. The catalog entry points (`catalog.json`,
-`items.parquet`) sit at the served root beside `ne/`, the common parent the plugin reads assets
-relative to.
+Both workspaces publish the five Natural Earth layers as STAC collections. Each item's asset href
+is an absolute `s3://naturalearth/<layer>.parquet` URI, and the store resolves each asset through a
+Storage keyed on the asset's own container URI, with the backend auto-detected per URI - not
+relative to the catalog. The two workspaces demonstrate two auth patterns:
+
+- `stac-json` reads a static JSON catalog over HTTP from the bundled `web` (nginx) service
+  (`catalog.json`, per-collection `collection.json`, and item documents), while its GeoParquet
+  assets live on the bundled `s3proxy` under `s3://naturalearth/`. This is a public HTTP catalog
+  with its data on a credentialed object store.
+- `stac-geoparquet` reads a stac-geoparquet items table (`s3://naturalearth/index/items.parquet`)
+  and its assets both from `s3://naturalearth/` on `s3proxy` - an item-table catalog colocated with
+  its data on the object store, covered by one credential set. The items table sits under `index/`
+  rather than the bucket root because the GeoParquet directory store lists top-level `*.parquet` in
+  that bucket as layers and a bare item table is not a feature file.
+
+The store takes a single `storage.*` credential set. The catalog and its data must therefore be
+reachable with one set: a public HTTP catalog plus private object-store data (`stac-json`), or an
+item-table catalog colocated with the data on the object store (`stac-geoparquet`). A catalog on
+one authenticated backend plus data on a different authenticated backend (two distinct credential
+sets) is not supported.
 
 ### Reading from S3 the way you would in production
 
@@ -84,8 +97,10 @@ upload); the `iceberg-s3` store reads that `warehouse` bucket the same credentia
 point at real AWS instead, drop the `s3proxy` service, set your own `secrets/aws/credentials` (or
 environment credentials), and edit the `storage.s3.*` parameters of the S3 stores.
 
-The two STAC stores read over HTTP instead: the bundled `web` (nginx) service serves the `data`
-directory, and the STAC catalogs and their GeoParquet assets are fetched from `http://web/`.
+Only `stac-json` reads its catalog over HTTP: the bundled `web` (nginx) service serves the STAC
+JSON documents at `http://web/`. Its GeoParquet assets, and both the catalog and assets of
+`stac-geoparquet`, are read from the `naturalearth` bucket on `s3proxy` the same credential-free
+way as the `parquetry-s3` and `iceberg-s3` stores.
 
 Example requests:
 

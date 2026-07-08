@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<html xmlns:wicket="http://wicket.apache.org/">
+  <body>
+    <wicket:panel>
+      <div class="gs-panel-CheckGroupParamPanel gs-form">
+        <div class="gs-form-group">
+          <label>
+            <span wicket:id="paramName">bar</span>
+          </label>
+          <div wicket:id="group" class="check-group-param">
+            <div class="gs-unordered-list-class">
+              <div class="gs-list-item-class" wicket:id="choices">
+                <input type="checkbox" wicket:id="paramValue"/>
+                <label wicket:for="paramValue">
+                  <span wicket:id="label">paramValue</span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </wicket:panel>
+  </body>
+</html>

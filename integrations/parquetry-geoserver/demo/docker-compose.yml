@@ -8,16 +8,16 @@
 #   parquetry-s3     - the same GeoParquet layers over S3, via the bundled s3proxy emulator
 #   iceberg          - an Iceberg warehouse of tables read from local disk
 #   iceberg-s3       - the same Iceberg warehouse over S3, via s3proxy (bucket "warehouse")
-#   stac-json        - a static STAC catalog (JSON) whose items are GeoParquet assets over HTTP
-#   stac-geoparquet  - a STAC items table (GeoParquet), each item a GeoParquet asset over HTTP
+#   stac-json        - a static STAC catalog (JSON) on nginx; its GeoParquet assets on s3proxy
+#   stac-geoparquet  - a STAC items table (GeoParquet) and its assets, both on s3proxy
 #
 # A future iceberg-rest workspace would pair with a catalog service here (an Iceberg REST
 # catalog reading the same warehouse through a running catalog endpoint).
 #
 # Two helper services back the cloud-pattern and HTTP stores: s3proxy emulates S3 (serving the
 # ne GeoParquet directory as bucket "naturalearth" and the Iceberg warehouse as bucket
-# "warehouse"), and web (nginx) serves the demo data over HTTP for the STAC catalogs and their
-# item assets.
+# "warehouse"), and web (nginx) serves the stac-json catalog documents (catalog/collection/item
+# JSON) over HTTP. The GeoParquet assets and the stac-geoparquet items table live on s3proxy.
 #
 # The s3 workspaces demonstrate the real cloud pattern: the datastores hold NO credentials;
 # GeoServer reads them from the AWS default credential chain (secrets/aws mounted as ~/.aws),
@@ -44,8 +44,9 @@ services:
       - ./data/iceberg-warehouse:/data/warehouse:ro
 
   web:
-    # Serves the demo data over HTTP for the STAC stores: catalog/collection JSON, the STAC
-    # geoparquet items table, and the per-layer GeoParquet assets referenced by the item hrefs.
+    # Serves the stac-json catalog documents over HTTP: catalog.json, per-collection
+    # collection.json, and the per-item JSON. The GeoParquet assets and the stac-geoparquet
+    # items table live on s3proxy, not here.
     image: nginx:alpine
     container_name: parquetry-demo-web
     volumes:

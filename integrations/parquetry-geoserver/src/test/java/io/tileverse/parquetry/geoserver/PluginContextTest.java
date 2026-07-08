@@ -23,11 +23,14 @@ import org.junit.jupiter.api.Test;
 import org.springframework.context.support.ClassPathXmlApplicationContext;
 
 import io.tileverse.parquetry.geoserver.web.GeoParquetDataStoreEditPanel;
+import io.tileverse.parquetry.geoserver.web.StacDataStoreEditPanel;
+import io.tileverse.parquetry.geotools.iceberg.IcebergDataStoreFactory;
 import io.tileverse.parquetry.geotools.parquet.GeoParquetDataStoreFactory;
+import io.tileverse.parquetry.geotools.parquet.StacDataStoreFactory;
 
 /**
  * Loads the plugin's {@code applicationContext.xml} the same way GeoServer does (Spring bean definitions at the jar
- * root) and asserts the store panel and module-status beans are wired to the GeoParquet factory.
+ * root) and asserts the store-panel and module-status beans are wired to the GeoParquet, Iceberg, and STAC factories.
  */
 class PluginContextTest {
 
@@ -51,6 +54,24 @@ class PluginContextTest {
 
         assertThat(panel.getFactoryClass()).isEqualTo(GeoParquetDataStoreFactory.class);
         assertThat(panel.getComponentClass()).isEqualTo(GeoParquetDataStoreEditPanel.class);
+        assertThat(panel.getIcon()).isEqualTo("gs-icon-page-white-vector");
+    }
+
+    @Test
+    void dataStorePanelBindsTheIcebergFactory() {
+        DataStorePanelInfo panel = context.getBean("icebergDataStorePanel", DataStorePanelInfo.class);
+
+        assertThat(panel.getFactoryClass()).isEqualTo(IcebergDataStoreFactory.class);
+        assertThat(panel.getComponentClass()).isEqualTo(GeoParquetDataStoreEditPanel.class);
+        assertThat(panel.getIcon()).isEqualTo("gs-icon-page-white-vector");
+    }
+
+    @Test
+    void dataStorePanelBindsTheStacFactory() {
+        DataStorePanelInfo panel = context.getBean("stacDataStorePanel", DataStorePanelInfo.class);
+
+        assertThat(panel.getFactoryClass()).isEqualTo(StacDataStoreFactory.class);
+        assertThat(panel.getComponentClass()).isEqualTo(StacDataStoreEditPanel.class);
         assertThat(panel.getIcon()).isEqualTo("gs-icon-page-white-vector");
     }
 
