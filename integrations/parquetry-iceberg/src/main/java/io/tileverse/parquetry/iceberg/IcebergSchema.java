@@ -105,7 +105,7 @@ final class IcebergSchema {
         Repetition repetition = field.required() ? Repetition.REQUIRED : Repetition.OPTIONAL;
         Optional<LogicalType> logicalType = geoLogicalType(field).or(mapping::logicalType);
         return new SchemaNode.Primitive(
-                field.name(), repetition, mapping.kind(), OptionalInt.empty(), logicalType, field.fieldId());
+                field.name(), repetition, mapping.kind(), mapping.typeLength(), logicalType, field.fieldId());
     }
 
     private static Optional<LogicalType> geoLogicalType(IcebergField field) {
@@ -118,18 +118,50 @@ final class IcebergSchema {
 
     private static PrimitiveMapping mappingFor(String icebergType) {
         return switch (icebergType) {
-            case "int" -> new PrimitiveMapping(PrimitiveKind.INT32, Optional.empty());
-            case "long" -> new PrimitiveMapping(PrimitiveKind.INT64, Optional.empty());
-            case "float" -> new PrimitiveMapping(PrimitiveKind.FLOAT, Optional.empty());
-            case "double" -> new PrimitiveMapping(PrimitiveKind.DOUBLE, Optional.empty());
-            case "boolean" -> new PrimitiveMapping(PrimitiveKind.BOOLEAN, Optional.empty());
-            case "date" -> new PrimitiveMapping(PrimitiveKind.INT32, Optional.of(new LogicalType.DateType()));
-            case "string" -> new PrimitiveMapping(PrimitiveKind.BYTE_ARRAY, Optional.of(new LogicalType.StringType()));
-            case "binary" -> new PrimitiveMapping(PrimitiveKind.BYTE_ARRAY, Optional.empty());
-            case "geometry", "geography" -> new PrimitiveMapping(PrimitiveKind.BYTE_ARRAY, Optional.empty());
+            case "int" -> new PrimitiveMapping(PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty());
+            case "long" -> new PrimitiveMapping(PrimitiveKind.INT64, OptionalInt.empty(), Optional.empty());
+            case "float" -> new PrimitiveMapping(PrimitiveKind.FLOAT, OptionalInt.empty(), Optional.empty());
+            case "double" -> new PrimitiveMapping(PrimitiveKind.DOUBLE, OptionalInt.empty(), Optional.empty());
+            case "boolean" -> new PrimitiveMapping(PrimitiveKind.BOOLEAN, OptionalInt.empty(), Optional.empty());
+            case "date" ->
+                new PrimitiveMapping(PrimitiveKind.INT32, OptionalInt.empty(), Optional.of(new LogicalType.DateType()));
+            case "string" ->
+                new PrimitiveMapping(
+                        PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.of(new LogicalType.StringType()));
+            case "binary" -> new PrimitiveMapping(PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty());
+            case "geometry", "geography" ->
+                new PrimitiveMapping(PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty());
+            case "uuid" ->
+                new PrimitiveMapping(
+                        PrimitiveKind.FIXED_LEN_BYTE_ARRAY,
+                        OptionalInt.of(16),
+                        Optional.of(new LogicalType.UuidType()));
+            case "timestamp" ->
+                new PrimitiveMapping(
+                        PrimitiveKind.INT64,
+                        OptionalInt.empty(),
+                        Optional.of(new LogicalType.Timestamp(false, LogicalType.TimeUnit.MICROS)));
+            case "timestamptz" ->
+                new PrimitiveMapping(
+                        PrimitiveKind.INT64,
+                        OptionalInt.empty(),
+                        Optional.of(new LogicalType.Timestamp(true, LogicalType.TimeUnit.MICROS)));
+            case "timestamp_ns" ->
+                new PrimitiveMapping(
+                        PrimitiveKind.INT64,
+                        OptionalInt.empty(),
+                        Optional.of(new LogicalType.Timestamp(false, LogicalType.TimeUnit.NANOS)));
+            case "timestamptz_ns" ->
+                new PrimitiveMapping(
+                        PrimitiveKind.INT64,
+                        OptionalInt.empty(),
+                        Optional.of(new LogicalType.Timestamp(true, LogicalType.TimeUnit.NANOS)));
+            case "unknown" ->
+                new PrimitiveMapping(
+                        PrimitiveKind.INT32, OptionalInt.empty(), Optional.of(new LogicalType.UnknownType()));
             default -> throw new IcebergFormatException("unsupported Iceberg field type: " + icebergType);
         };
     }
 
-    private record PrimitiveMapping(PrimitiveKind kind, Optional<LogicalType> logicalType) {}
+    private record PrimitiveMapping(PrimitiveKind kind, OptionalInt typeLength, Optional<LogicalType> logicalType) {}
 }

@@ -20,6 +20,7 @@ import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Optional;
 import java.util.SequencedSet;
+import java.util.UUID;
 
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Value;
@@ -157,6 +158,10 @@ final class IcebergReconciliation {
             case "boolean" -> new Value.BoolVal(false);
             case "date" -> new Value.DateVal(LocalDate.EPOCH);
             case "string" -> new Value.StringVal("");
+            // The value is ignored; only its kind selects the all-null vector.
+            case "uuid" -> new Value.UuidVal(new UUID(0L, 0L));
+            case "timestamp", "timestamptz", "timestamp_ns", "timestamptz_ns" -> new Value.LongVal(0L);
+            case "unknown" -> new Value.IntVal(0);
             default ->
                 throw new IcebergFormatException("cannot inject a null column for added field %s of unsupported type %s"
                         .formatted(field.name(), field.type()));

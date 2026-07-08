@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
@@ -241,6 +242,22 @@ class IcebergReconciliationTest {
         assertThatThrownBy(() -> IcebergReconciliation.reconcile(table, file, NO_PARTITIONS))
                 .isInstanceOf(IcebergFormatException.class)
                 .hasMessageContaining("x");
+    }
+
+    @Test
+    void injectsNullForAnAddedUuidTimestampAndUnknownColumn() {
+        IcebergSchema table = tableOf(
+                field(1, "id", "long"), field(2, "u", "uuid"), field(3, "ts", "timestamp"), field(4, "x", "unknown"));
+        IcebergFileSchema file = IcebergFileSchema.of(fileSchema(leaf("id", PrimitiveKind.INT64, 1)));
+
+        Reconciliation result = IcebergReconciliation.reconcile(table, file, NO_PARTITIONS);
+
+        assertThat(result.columns())
+                .containsExactly(
+                        new Projection.Column.Physical(ColumnPath.of("id"), ColumnPath.of("id")),
+                        new Projection.Column.Null(ColumnPath.of("u"), new Value.UuidVal(new UUID(0L, 0L))),
+                        new Projection.Column.Null(ColumnPath.of("ts"), new Value.LongVal(0L)),
+                        new Projection.Column.Null(ColumnPath.of("x"), new Value.IntVal(0)));
     }
 
     @Test
