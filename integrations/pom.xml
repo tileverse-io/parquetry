@@ -19,7 +19,6 @@
     <module>parquetry-jackson</module>
     <module>parquetry-tileverse-storage</module>
     <module>parquetry-geotools</module>
-    <module>parquetry-geoserver</module>
     <module>parquetry-iceberg</module>
     <module>parquetry-stac</module>
   </modules>
