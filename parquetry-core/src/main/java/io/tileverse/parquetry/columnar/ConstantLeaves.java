@@ -15,6 +15,7 @@
  */
 package io.tileverse.parquetry.columnar;
 
+import java.math.BigDecimal;
 import java.util.Optional;
 import java.util.OptionalInt;
 
@@ -56,6 +57,13 @@ public final class ConstantLeaves {
                 new LeafType(PrimitiveKind.BYTE_ARRAY, Optional.of(new LogicalType.StringType()));
             case Value.UuidVal ignored ->
                 new LeafType(PrimitiveKind.FIXED_LEN_BYTE_ARRAY, Optional.of(new LogicalType.UuidType()));
+            case Value.DecimalVal(BigDecimal v) ->
+                new LeafType(
+                        PrimitiveKind.FIXED_LEN_BYTE_ARRAY,
+                        Optional.of(new LogicalType.Decimal(v.scale(), Math.max(1, v.precision()))));
+            case Value.TimeVal _ ->
+                new LeafType(
+                        PrimitiveKind.INT64, Optional.of(new LogicalType.Time(false, LogicalType.TimeUnit.MICROS)));
             default -> throw new IllegalArgumentException("unsupported constant column value " + value);
         };
     }
