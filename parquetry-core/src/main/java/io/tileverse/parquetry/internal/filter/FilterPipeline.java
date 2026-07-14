@@ -30,6 +30,7 @@ import io.tileverse.parquetry.filter.explain.RowGroupPlan;
 import io.tileverse.parquetry.filter.explain.Tier;
 import io.tileverse.parquetry.filter.explain.TierReasons;
 import io.tileverse.parquetry.format.ColumnIndex;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.Statistics;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
@@ -108,21 +109,41 @@ public final class FilterPipeline {
 
     /**
      * Per-column input to the statistics-tier filter evaluator: the column's primitive kind (so the evaluator knows how
-     * to decode the raw min/max bytes) plus its {@link Statistics} record from {@code ColumnMetaData}.
+     * to decode the raw min/max bytes), its {@link Statistics} record from {@code ColumnMetaData}, and an optional
+     * logical type annotation (present when the file schema annotates the column, absent for plain physical columns).
+     * The logical type drives typed decoding of min/max bounds (e.g. INT64+Timestamp decodes to
+     * {@link io.tileverse.parquetry.filter.Value.TimestampVal} rather than a raw {@code LongVal}).
      */
-    public record ColumnStats(PrimitiveKind kind, Statistics statistics) {}
+    public record ColumnStats(PrimitiveKind kind, Statistics statistics, Optional<LogicalType> logicalType) {
+        /** Back-compat constructor for call sites that do not pass a logical type. */
+        public ColumnStats(PrimitiveKind kind, Statistics statistics) {
+            this(kind, statistics, Optional.empty());
+        }
+    }
 
     /**
      * Per-column input to the COLUMN_INDEX-tier evaluator: the column's primitive kind plus its loaded
-     * {@link ColumnIndex} (page min/max + null markers) and {@link OffsetIndex} (page row offsets).
+     * {@link ColumnIndex} (page min/max + null markers), {@link OffsetIndex} (page row offsets), and an optional
+     * logical type annotation used for typed decoding of per-page min/max bounds.
      */
-    public record ColumnPageStats(PrimitiveKind kind, ColumnIndex columnIndex, OffsetIndex offsetIndex) {}
+    public record ColumnPageStats(
+            PrimitiveKind kind, ColumnIndex columnIndex, OffsetIndex offsetIndex, Optional<LogicalType> logicalType) {
+        /** Back-compat constructor for call sites that do not pass a logical type. */
+        public ColumnPageStats(PrimitiveKind kind, ColumnIndex columnIndex, OffsetIndex offsetIndex) {
+            this(kind, columnIndex, offsetIndex, Optional.empty());
+        }
+    }
 
     /**
      * Per-column input to the BLOOM_FILTER-tier evaluator: the column's primitive kind (drives the Parquet
      * plain-encoding hash) plus its loaded {@link SplitBlockBloomFilter}.
      */
-    public record ColumnBloom(PrimitiveKind kind, SplitBlockBloomFilter bloom) {}
+    public record ColumnBloom(PrimitiveKind kind, SplitBlockBloomFilter bloom, Optional<LogicalType> logicalType) {
+        /** Back-compat constructor for call sites that do not pass a logical type. */
+        public ColumnBloom(PrimitiveKind kind, SplitBlockBloomFilter bloom) {
+            this(kind, bloom, Optional.empty());
+        }
+    }
 
     /**
      * Resolves {@link ColumnStats} for a given column path within a row group. The filter pipeline implements this on

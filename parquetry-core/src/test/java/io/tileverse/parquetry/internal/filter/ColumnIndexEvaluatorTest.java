@@ -17,9 +17,12 @@ package io.tileverse.parquetry.internal.filter;
 
 import static io.tileverse.parquetry.filter.Pred.col;
 import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
+import static io.tileverse.parquetry.format.ParquetLayouts.INT64;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.lang.foreign.MemorySegment;
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,9 +33,11 @@ import org.junit.jupiter.api.Test;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.filter.RowRanges.Range;
+import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.format.BoundaryOrder;
 import io.tileverse.parquetry.format.ColumnIndex;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.PageLocation;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -147,6 +152,55 @@ class ColumnIndexEvaluatorTest {
         assertThat(r.ranges()).containsExactly(new Range(0, 99));
     }
 
+    // --- typed-bound tests: verify that INT64 Timestamp and FLBA Decimal page bounds decode to typed Values ---
+
+    @Test
+    void int64TimestampEqNarrowsToMiddlePage() {
+        // 3 pages of 100 rows each; page boundaries are UTC timestamps stored as epoch-micros INT64
+        LocalDateTime t0 = LocalDateTime.of(2020, 1, 1, 0, 0, 0);
+        LocalDateTime t1 = LocalDateTime.of(2020, 6, 30, 0, 0, 0);
+        LocalDateTime t2 = LocalDateTime.of(2021, 1, 1, 0, 0, 0);
+        LocalDateTime t3 = LocalDateTime.of(2021, 6, 30, 0, 0, 0);
+        LocalDateTime t4 = LocalDateTime.of(2022, 1, 1, 0, 0, 0);
+        LocalDateTime t5 = LocalDateTime.of(2022, 6, 30, 0, 0, 0);
+        FilterPipeline.ColumnPageStatsLookup cols = singleColumn(
+                "ts",
+                PrimitiveKind.INT64,
+                List.of(false, false, false),
+                List.of(encodeTimestampMicros(t0), encodeTimestampMicros(t2), encodeTimestampMicros(t4)),
+                List.of(encodeTimestampMicros(t1), encodeTimestampMicros(t3), encodeTimestampMicros(t5)),
+                List.of(0L, 100L, 200L),
+                new LogicalType.Timestamp(true, LogicalType.TimeUnit.MICROS));
+        // 2021-03-15 is within [t2, t3] (page 1) only.
+        LocalDateTime query = LocalDateTime.of(2021, 3, 15, 0, 0, 0);
+        Predicate p = new Predicate.Eq(ColumnPath.of("ts"), new Value.TimestampVal(query, true));
+        PruningDecision d = ColumnIndexEvaluator.evaluate(p, cols, ROW_GROUP_ROWS);
+        assertThat(d).isInstanceOf(PruningDecision.NarrowedTo.class);
+        RowRanges r = ((PruningDecision.NarrowedTo) d).ranges();
+        assertThat(r.ranges()).containsExactly(new Range(100, 199));
+    }
+
+    @Test
+    void flbaDecimalEqNarrowsToMiddlePage() {
+        // 3 pages of 100 rows; scale=2, page ranges: [-3.00,-1.00], [0.00,2.00], [3.00,5.00]
+        FilterPipeline.ColumnPageStatsLookup cols = singleColumn(
+                "amount",
+                PrimitiveKind.FIXED_LEN_BYTE_ARRAY,
+                List.of(false, false, false),
+                List.of(encodeSignedFlba(-300), encodeSignedFlba(0), encodeSignedFlba(300)),
+                List.of(encodeSignedFlba(-100), encodeSignedFlba(200), encodeSignedFlba(500)),
+                List.of(0L, 100L, 200L),
+                new LogicalType.Decimal(2, 9));
+        // 1.00 (unscaled 100) is within [0.00, 2.00] (page 1) only.
+        Predicate p = new Predicate.Eq(ColumnPath.of("amount"), new Value.DecimalVal(BigDecimal.valueOf(100, 2)));
+        PruningDecision d = ColumnIndexEvaluator.evaluate(p, cols, ROW_GROUP_ROWS);
+        assertThat(d).isInstanceOf(PruningDecision.NarrowedTo.class);
+        RowRanges r = ((PruningDecision.NarrowedTo) d).ranges();
+        assertThat(r.ranges()).containsExactly(new Range(100, 199));
+    }
+
+    // --- helpers ---
+
     private static FilterPipeline.ColumnPageStatsLookup year3Pages() {
         return singleColumn(
                 "year",
@@ -164,6 +218,17 @@ class ColumnIndexEvaluatorTest {
             List<MemorySegment> minValues,
             List<MemorySegment> maxValues,
             List<Long> pageFirstRowIndices) {
+        return singleColumn(name, kind, nullPages, minValues, maxValues, pageFirstRowIndices, null);
+    }
+
+    private static FilterPipeline.ColumnPageStatsLookup singleColumn(
+            String name,
+            PrimitiveKind kind,
+            List<Boolean> nullPages,
+            List<MemorySegment> minValues,
+            List<MemorySegment> maxValues,
+            List<Long> pageFirstRowIndices,
+            LogicalType logicalType) {
         ColumnIndex idx = new ColumnIndex(
                 nullPages,
                 minValues,
@@ -177,7 +242,10 @@ class ColumnIndexEvaluatorTest {
                 .toList();
         OffsetIndex off = new OffsetIndex(pages, Optional.empty());
         Map<ColumnPath, FilterPipeline.ColumnPageStats> map = new HashMap<>();
-        map.put(ColumnPath.of(name), new FilterPipeline.ColumnPageStats(kind, idx, off));
+        FilterPipeline.ColumnPageStats stats = (logicalType == null)
+                ? new FilterPipeline.ColumnPageStats(kind, idx, off)
+                : new FilterPipeline.ColumnPageStats(kind, idx, off, Optional.of(logicalType));
+        map.put(ColumnPath.of(name), stats);
         return path -> Optional.ofNullable(map.get(path));
     }
 
@@ -189,5 +257,26 @@ class ColumnIndexEvaluatorTest {
         MemorySegment segment = MemorySegment.ofArray(new byte[4]);
         segment.set(INT32, 0, v);
         return segment.asReadOnly();
+    }
+
+    private static MemorySegment encodeLong(long v) {
+        MemorySegment segment = MemorySegment.ofArray(new byte[8]);
+        segment.set(INT64, 0, v);
+        return segment.asReadOnly();
+    }
+
+    private static MemorySegment encodeTimestampMicros(LocalDateTime dt) {
+        long micros = TemporalValues.toEpochUnit(dt, LogicalType.TimeUnit.MICROS);
+        return encodeLong(micros);
+    }
+
+    /** Encodes an unscaled decimal integer as a 4-byte signed big-endian two's-complement segment. */
+    private static MemorySegment encodeSignedFlba(int unscaled) {
+        byte[] bytes = new byte[4];
+        bytes[0] = (byte) ((unscaled >>> 24) & 0xFF);
+        bytes[1] = (byte) ((unscaled >>> 16) & 0xFF);
+        bytes[2] = (byte) ((unscaled >>> 8) & 0xFF);
+        bytes[3] = (byte) (unscaled & 0xFF);
+        return MemorySegment.ofArray(bytes).asReadOnly();
     }
 }

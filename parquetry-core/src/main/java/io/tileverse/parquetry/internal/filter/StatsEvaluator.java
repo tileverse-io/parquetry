@@ -15,12 +15,6 @@
  */
 package io.tileverse.parquetry.internal.filter;
 
-import static io.tileverse.parquetry.format.ParquetLayouts.DOUBLE;
-import static io.tileverse.parquetry.format.ParquetLayouts.FLOAT;
-import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
-import static io.tileverse.parquetry.format.ParquetLayouts.INT64;
-import static java.lang.foreign.ValueLayout.JAVA_BYTE;
-
 import java.lang.foreign.MemorySegment;
 import java.util.List;
 import java.util.Objects;
@@ -141,8 +135,12 @@ public final class StatsEvaluator {
                 preferLatest(cs.statistics().minValue(), cs.statistics().min());
         MemorySegment maxBytes =
                 preferLatest(cs.statistics().maxValue(), cs.statistics().max());
-        Optional<Value> min = minBytes == MemorySegment.NULL ? Optional.empty() : decode(kind, minBytes);
-        Optional<Value> max = maxBytes == MemorySegment.NULL ? Optional.empty() : decode(kind, maxBytes);
+        Optional<Value> min = minBytes == MemorySegment.NULL
+                ? Optional.empty()
+                : StatisticsValueDecoder.decode(kind, cs.logicalType(), minBytes);
+        Optional<Value> max = maxBytes == MemorySegment.NULL
+                ? Optional.empty()
+                : StatisticsValueDecoder.decode(kind, cs.logicalType(), maxBytes);
         return new ColumnSummary(kind, min, max, cs.statistics().nullCount());
     }
 
@@ -382,20 +380,6 @@ public final class StatsEvaluator {
     /** Newer writers populate minValue/maxValue; older writers populate min/max. */
     private static MemorySegment preferLatest(MemorySegment latest, MemorySegment legacy) {
         return latest != MemorySegment.NULL ? latest : legacy;
-    }
-
-    /** Decodes a Statistics min/max byte payload into a {@link Value} matching the column's primitive kind. */
-    private static Optional<Value> decode(PrimitiveKind kind, MemorySegment raw) {
-        long size = raw.byteSize();
-        return switch (kind) {
-            case BOOLEAN -> size >= 1 ? Optional.of(new Value.BoolVal(raw.get(JAVA_BYTE, 0) != 0)) : Optional.empty();
-            case INT32 -> size >= 4 ? Optional.of(new Value.IntVal(raw.get(INT32, 0))) : Optional.empty();
-            case INT64 -> size >= 8 ? Optional.of(new Value.LongVal(raw.get(INT64, 0))) : Optional.empty();
-            case FLOAT -> size >= 4 ? Optional.of(new Value.FloatVal(raw.get(FLOAT, 0))) : Optional.empty();
-            case DOUBLE -> size >= 8 ? Optional.of(new Value.DoubleVal(raw.get(DOUBLE, 0))) : Optional.empty();
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> Optional.of(new Value.BinaryVal(raw));
-            case INT96 -> Optional.empty(); // legacy nanosecond timestamps; not handled at stats tier yet
-        };
     }
 
     /** Aggregate of a column's decoded min/max plus its null count (or {@code -1} if absent). */
