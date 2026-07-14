@@ -58,6 +58,15 @@ public final class TemporalValues {
         return value.toNanoOfDay() / nanosPerUnit(unit);
     }
 
+    /**
+     * True when {@code nanos} has no finer resolution than {@code unit}: the sub-unit remainder is zero. A predicate
+     * value finer than the column unit is truncated by record-level evaluation while STATS and COLUMN_INDEX compare it
+     * at full precision; the tiers would then disagree and prune incorrectly.
+     */
+    public static boolean fitsUnit(long nanos, TimeUnit unit) {
+        return nanos % nanosPerUnit(unit) == 0;
+    }
+
     private static long perSecond(TimeUnit unit) {
         return switch (unit) {
             case MILLIS -> 1_000L;

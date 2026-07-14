@@ -19,6 +19,9 @@ import static io.tileverse.parquetry.filter.Pred.col;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -265,6 +268,93 @@ class PredicateNormalizerTest {
         PredicateNormalizer.validate(col("year").eq(2020).and(deletes), schema);
     }
 
+    // --- logical-type validation for temporal and decimal values ---
+
+    @Test
+    void validateRejectsTimestampValOnPlainInt64() {
+        // An INT64 column with no logical type is a plain long, not a timestamp.
+        ParquetSchema schema = singleColumn("ts", PrimitiveKind.INT64);
+        Predicate p =
+                new Predicate.Gt(ColumnPath.of("ts"), new Value.TimestampVal(LocalDateTime.of(2024, 1, 1, 0, 0), true));
+        assertThatThrownBy(() -> PredicateNormalizer.validate(p, schema))
+                .isInstanceOf(ParquetSchemaException.class)
+                .hasMessageContaining("ts");
+    }
+
+    @Test
+    void validateRejectsTimestampValOnTimeColumn() {
+        // TimestampVal against a Time column is a different temporal family - must be rejected.
+        ParquetSchema schema = singleColumnWithLogicalType(
+                "ts", PrimitiveKind.INT64, new LogicalType.Time(true, LogicalType.TimeUnit.MICROS));
+        Predicate p = new Predicate.Gt(
+                ColumnPath.of("ts"), new Value.TimestampVal(LocalDateTime.of(2024, 1, 1, 12, 0), true));
+        assertThatThrownBy(() -> PredicateNormalizer.validate(p, schema))
+                .isInstanceOf(ParquetSchemaException.class)
+                .hasMessageContaining("ts");
+    }
+
+    @Test
+    void validateRejectsTimeValOnTimestampColumn() {
+        // TimeVal against a Timestamp column is a different temporal family - must be rejected.
+        ParquetSchema schema = singleColumnWithLogicalType(
+                "t", PrimitiveKind.INT64, new LogicalType.Timestamp(true, LogicalType.TimeUnit.MICROS));
+        Predicate p = new Predicate.Gt(ColumnPath.of("t"), new Value.TimeVal(LocalTime.of(12, 0, 0)));
+        assertThatThrownBy(() -> PredicateNormalizer.validate(p, schema))
+                .isInstanceOf(ParquetSchemaException.class)
+                .hasMessageContaining("t");
+    }
+
+    @Test
+    void validateRejectsDecimalValOnUuidFlbaColumn() {
+        // A FLBA column annotated UuidType holds raw UUID bytes, not a decimal - must be rejected.
+        ParquetSchema schema = flbaColumnWithLogicalType("id", 16, new LogicalType.UuidType());
+        Predicate p = new Predicate.Eq(ColumnPath.of("id"), new Value.DecimalVal(BigDecimal.valueOf(42, 2)));
+        assertThatThrownBy(() -> PredicateNormalizer.validate(p, schema))
+                .isInstanceOf(ParquetSchemaException.class)
+                .hasMessageContaining("id");
+    }
+
+    @Test
+    void validateRejectsTimeValFinerThanMillisColumn() {
+        // 500_000 ns = 500 us, which is finer than millisecond resolution. Comparing at STATS or
+        // COLUMN_INDEX tier would see a zero remainder after truncation and wrongly match a different
+        // row; rejecting loudly at validation prevents the silent mis-evaluation.
+        ParquetSchema schema = singleColumnWithLogicalType(
+                "t", PrimitiveKind.INT64, new LogicalType.Time(false, LogicalType.TimeUnit.MILLIS));
+        LocalTime finerThanMillis = LocalTime.of(12, 0, 0, 500_000);
+        Predicate p = new Predicate.Gt(ColumnPath.of("t"), new Value.TimeVal(finerThanMillis));
+        assertThatThrownBy(() -> PredicateNormalizer.validate(p, schema))
+                .isInstanceOf(ParquetSchemaException.class)
+                .hasMessageContaining("t");
+    }
+
+    @Test
+    void validateAcceptsTimestampValOnTimestampColumn() {
+        ParquetSchema schema = singleColumnWithLogicalType(
+                "ts", PrimitiveKind.INT64, new LogicalType.Timestamp(true, LogicalType.TimeUnit.MICROS));
+        Predicate p = new Predicate.Gt(
+                ColumnPath.of("ts"), new Value.TimestampVal(LocalDateTime.of(2024, 1, 1, 0, 0, 0), true));
+        PredicateNormalizer.validate(p, schema);
+    }
+
+    @Test
+    void validateAcceptsTimeValMatchingMicrosColumn() {
+        // 500_000 ns = 500 us fits exactly in a MICROS column (sub-unit remainder is zero).
+        ParquetSchema schema = singleColumnWithLogicalType(
+                "t", PrimitiveKind.INT64, new LogicalType.Time(false, LogicalType.TimeUnit.MICROS));
+        LocalTime microsTime = LocalTime.of(12, 0, 0, 500_000);
+        Predicate p = new Predicate.Gt(ColumnPath.of("t"), new Value.TimeVal(microsTime));
+        PredicateNormalizer.validate(p, schema);
+    }
+
+    @Test
+    void validateAcceptsDecimalValOnDecimalColumn() {
+        // typeLength 4 holds up to 9 decimal digits; the Decimal logical type makes the column a decimal.
+        ParquetSchema schema = flbaColumnWithLogicalType("amount", 4, new LogicalType.Decimal(2, 9));
+        Predicate p = new Predicate.Eq(ColumnPath.of("amount"), new Value.DecimalVal(new BigDecimal("12.34")));
+        PredicateNormalizer.validate(p, schema);
+    }
+
     @ParameterizedTest(name = "{0}")
     @MethodSource("barePredicatesOverRepeatedLeaf")
     void validateRejectsBarePredicateOnListDescendantLeaf(String label, Predicate bare) {
@@ -410,5 +500,27 @@ class PredicateNormalizerTest {
 
     private static SchemaNode.Primitive primitive(String name, PrimitiveKind kind) {
         return new SchemaNode.Primitive(name, Repetition.OPTIONAL, kind, OptionalInt.empty(), Optional.empty(), -1);
+    }
+
+    private static ParquetSchema singleColumnWithLogicalType(String name, PrimitiveKind kind, LogicalType logicalType) {
+        SchemaNode.Primitive col = new SchemaNode.Primitive(
+                name, Repetition.OPTIONAL, kind, OptionalInt.empty(), Optional.of(logicalType), -1);
+        return schemaOf(col);
+    }
+
+    private static ParquetSchema flbaColumnWithLogicalType(String name, int typeLength, LogicalType logicalType) {
+        SchemaNode.Primitive col = new SchemaNode.Primitive(
+                name,
+                Repetition.OPTIONAL,
+                PrimitiveKind.FIXED_LEN_BYTE_ARRAY,
+                OptionalInt.of(typeLength),
+                Optional.of(logicalType),
+                -1);
+        return schemaOf(col);
+    }
+
+    private static ParquetSchema schemaOf(SchemaNode.Primitive col) {
+        SchemaNode.Group root = new SchemaNode.Group("root", Repetition.REQUIRED, List.of(col), Optional.empty(), -1);
+        return new ParquetSchema(root);
     }
 }
