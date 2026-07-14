@@ -145,8 +145,8 @@ final class DictionaryEvaluator {
     /**
      * Returns true when the value type can be compared against a dictionary entry without knowing the column's logical
      * type. Timestamp, time, and decimal values encode their java.time / BigDecimal form as a unit-dependent INT64 or
-     * FIXED_LEN_BYTE_ARRAY; the column unit and scale are not available here - a naive comparison would produce a
-     * wrong result and could falsely eliminate the row group.
+     * FIXED_LEN_BYTE_ARRAY; the column unit and scale are not available here - a naive comparison would produce a wrong
+     * result and could falsely eliminate the row group.
      */
     private static boolean dictComparable(Value v) {
         return !(v instanceof Value.TimestampVal || v instanceof Value.TimeVal || v instanceof Value.DecimalVal);
