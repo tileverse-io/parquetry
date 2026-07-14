@@ -18,10 +18,11 @@ package io.tileverse.parquetry.internal.filter;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 import java.lang.foreign.MemorySegment;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.ZoneOffset;
+import java.time.LocalTime;
 import java.util.UUID;
 
 import io.tileverse.parquetry.filter.Value;
@@ -75,6 +76,8 @@ public final class ValueComparison {
             when actual instanceof Integer av -> Integer.compare(av, (int) bv.toEpochDay());
             case Value.TimestampVal(LocalDateTime bv, boolean _)
             when actual instanceof LocalDateTime av -> av.compareTo(bv);
+            case Value.DecimalVal(BigDecimal bv) when actual instanceof BigDecimal av -> av.compareTo(bv);
+            case Value.TimeVal(LocalTime bv) when actual instanceof LocalTime av -> av.compareTo(bv);
             case Value.UuidVal(UUID bv) when actual instanceof MemorySegment av -> compareSegmentToUuidValue(av, bv);
             default -> 0;
         };
@@ -117,8 +120,11 @@ public final class ValueComparison {
             case Value.DateVal(LocalDate qv)
             when bound instanceof Value.IntVal(int bv) -> Integer.compare((int) qv.toEpochDay(), bv);
             case Value.DateVal(LocalDate qv) when bound instanceof Value.DateVal(LocalDate bv) -> qv.compareTo(bv);
+            case Value.DecimalVal(BigDecimal qv)
+            when bound instanceof Value.DecimalVal(BigDecimal bv) -> qv.compareTo(bv);
+            case Value.TimeVal(LocalTime qv) when bound instanceof Value.TimeVal(LocalTime bv) -> qv.compareTo(bv);
             case Value.TimestampVal(LocalDateTime qv, boolean _)
-            when bound instanceof Value.LongVal(long bv) -> Long.compare(qv.toEpochSecond(ZoneOffset.UTC) * 1000L, bv);
+            when bound instanceof Value.TimestampVal(LocalDateTime bv, boolean _) -> qv.compareTo(bv);
             case Value.UuidVal(UUID qv)
             when bound instanceof Value.BinaryVal(MemorySegment bv) -> -compareSegmentToUuidValue(bv, qv);
             case Value.UuidVal(UUID qv)

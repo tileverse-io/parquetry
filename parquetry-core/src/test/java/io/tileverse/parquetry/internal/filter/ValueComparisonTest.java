@@ -18,10 +18,11 @@ package io.tileverse.parquetry.internal.filter;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.lang.foreign.MemorySegment;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.ZoneOffset;
+import java.time.LocalTime;
 import java.util.UUID;
 import java.util.stream.Stream;
 
@@ -206,17 +207,44 @@ class ValueComparisonTest {
     static Stream<Arguments> valueCoercionCases() {
         LocalDate date = LocalDate.of(2020, 1, 2);
         int epochDay = (int) date.toEpochDay();
-        LocalDateTime ts = LocalDateTime.of(2020, 1, 2, 3, 4, 5);
-        long epochMillis = ts.toEpochSecond(ZoneOffset.UTC) * 1000L;
         return Stream.of(
                 // DateVal query vs IntVal bound (epoch-day coercion)
                 Arguments.of(new Value.DateVal(date), new Value.IntVal(epochDay), 0),
                 Arguments.of(new Value.DateVal(date), new Value.IntVal(epochDay - 1), 1),
                 Arguments.of(new Value.DateVal(date), new Value.IntVal(epochDay + 1), -1),
-                // TimestampVal query vs LongVal bound (epoch-millis coercion)
-                Arguments.of(new Value.TimestampVal(ts, true), new Value.LongVal(epochMillis), 0),
-                Arguments.of(new Value.TimestampVal(ts, true), new Value.LongVal(epochMillis - 1), 1),
                 // genuine type mismatch falls through to 0
                 Arguments.of(new Value.IntVal(7), new Value.BoolVal(true), 0));
+    }
+
+    @Test
+    void decimalReflexiveIsScaleIndependent() {
+        Value.DecimalVal a = new Value.DecimalVal(new BigDecimal("1.0"));
+        Value.DecimalVal b = new Value.DecimalVal(new BigDecimal("1.00"));
+        assertThat(ValueComparison.compareValues(a, b)).isZero();
+    }
+
+    @Test
+    void timestampReflexiveDoesNotCoerceToMillis() {
+        // The two instants share the same millisecond (123 ms) but differ in the sub-millisecond part. A
+        // millis-truncating comparison would read them as equal; comparing the full LocalDateTime must not.
+        LocalDateTime sameMillis = LocalDateTime.of(2020, 1, 2, 3, 4, 5, 123_000_000);
+        LocalDateTime laterMicros = LocalDateTime.of(2020, 1, 2, 3, 4, 5, 123_456_000);
+        Value.TimestampVal q = new Value.TimestampVal(sameMillis, true);
+        Value.TimestampVal bound = new Value.TimestampVal(laterMicros, true);
+        assertThat(ValueComparison.compareValues(q, bound)).isNegative();
+    }
+
+    @Test
+    void timeReflexiveComparesByTimeOfDay() {
+        Value.TimeVal early = new Value.TimeVal(LocalTime.of(1, 0));
+        Value.TimeVal late = new Value.TimeVal(LocalTime.of(2, 0));
+        assertThat(ValueComparison.compareValues(early, late)).isNegative();
+    }
+
+    @Test
+    void missingArmMustNotReadAsEqual() {
+        Value.DecimalVal small = new Value.DecimalVal(new BigDecimal("1.00"));
+        Value.DecimalVal big = new Value.DecimalVal(new BigDecimal("9.00"));
+        assertThat(ValueComparison.compareValues(small, big)).isNegative();
     }
 }
