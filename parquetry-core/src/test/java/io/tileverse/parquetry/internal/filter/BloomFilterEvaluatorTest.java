@@ -29,7 +29,9 @@ import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -323,15 +325,53 @@ class BloomFilterEvaluatorTest {
     }
 
     @Test
-    void timestampValueAgainstInt64ColumnIsHashed() {
+    void timestampMillisColumnPresentInBloomIsInconclusive() {
+        // A MILLIS-typed timestamp column stores raw INT64 values in milliseconds. The bloom probe
+        // must use the same unit; providing the logical type lets the evaluator hash correctly.
         java.time.LocalDateTime ts = java.time.LocalDateTime.of(2020, 1, 1, 0, 0);
         long epochMillis = ts.toEpochSecond(java.time.ZoneOffset.UTC) * 1000L;
-        FilterPipeline.BloomFilterLookup blooms =
-                single("ts", PrimitiveKind.INT64, bloomOver(SplitBlockBloomFilter.hashInt64(epochMillis)));
+        FilterPipeline.BloomFilterLookup blooms = singleTyped(
+                "ts",
+                PrimitiveKind.INT64,
+                bloomOver(SplitBlockBloomFilter.hashInt64(epochMillis)),
+                new LogicalType.Timestamp(true, LogicalType.TimeUnit.MILLIS));
         assertThat(BloomFilterEvaluator.evaluate(Pred.col("ts").eq(ts, true), blooms))
                 .isInstanceOf(PruningDecision.Inconclusive.class);
         assertThat(BloomFilterEvaluator.evaluate(Pred.col("ts").eq(ts.plusDays(1), true), blooms))
                 .isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void timestampMicrosColumnPresentInBloomIsInconclusive() {
+        // A MICROS-typed timestamp column stores raw INT64 values in microseconds. The bloom probe must
+        // use the same unit; a MILLIS-hashed probe against a MICROS-built bloom never matches,
+        // which would falsely eliminate the row group and drop matching rows.
+        java.time.LocalDateTime ts = java.time.LocalDateTime.of(2023, 6, 15, 12, 0);
+        long epochMicros = TemporalValues.toEpochUnit(ts, LogicalType.TimeUnit.MICROS);
+        FilterPipeline.BloomFilterLookup blooms = singleTyped(
+                "ts",
+                PrimitiveKind.INT64,
+                bloomOver(SplitBlockBloomFilter.hashInt64(epochMicros)),
+                new LogicalType.Timestamp(true, LogicalType.TimeUnit.MICROS));
+        // The value is in the bloom; must be Inconclusive (not falsely Eliminated).
+        assertThat(BloomFilterEvaluator.evaluate(Pred.col("ts").eq(ts, true), blooms))
+                .isInstanceOf(PruningDecision.Inconclusive.class);
+        // A different value is absent; must be Eliminated.
+        assertThat(BloomFilterEvaluator.evaluate(Pred.col("ts").eq(ts.plusDays(1), true), blooms))
+                .isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void decimalValueAgainstFlbaColumnIsNotApplied() {
+        // Decimal values have no Parquet bloom-hash definition in this evaluator; the evaluator
+        // must degrade to NotApplied rather than attempting a comparison with an incorrect hash.
+        FilterPipeline.BloomFilterLookup blooms =
+                single("amount", PrimitiveKind.FIXED_LEN_BYTE_ARRAY, bloomOver(SplitBlockBloomFilter.hashInt64(42L)));
+        assertThat(BloomFilterEvaluator.evaluate(
+                        new Predicate.Eq(
+                                ColumnPath.of("amount"), new Value.DecimalVal(new java.math.BigDecimal("1.50"))),
+                        blooms))
+                .isInstanceOf(PruningDecision.NotApplied.class);
     }
 
     // --- helpers ---
@@ -343,6 +383,13 @@ class BloomFilterEvaluatorTest {
     private static FilterPipeline.BloomFilterLookup single(String name, PrimitiveKind kind, SplitBlockBloomFilter bf) {
         Map<ColumnPath, FilterPipeline.ColumnBloom> map = new HashMap<>();
         map.put(ColumnPath.of(name), new FilterPipeline.ColumnBloom(kind, bf));
+        return path -> Optional.ofNullable(map.get(path));
+    }
+
+    private static FilterPipeline.BloomFilterLookup singleTyped(
+            String name, PrimitiveKind kind, SplitBlockBloomFilter bf, LogicalType logicalType) {
+        Map<ColumnPath, FilterPipeline.ColumnBloom> map = new HashMap<>();
+        map.put(ColumnPath.of(name), new FilterPipeline.ColumnBloom(kind, bf, Optional.of(logicalType)));
         return path -> Optional.ofNullable(map.get(path));
     }
 
