@@ -292,6 +292,8 @@ public final class PredicateNormalizer {
             case Value.TimestampVal _ -> kind == PrimitiveKind.INT64 || kind == PrimitiveKind.INT96;
             case Value.UuidVal _ ->
                 kind == PrimitiveKind.FIXED_LEN_BYTE_ARRAY && prim.typeLength().orElse(-1) == UuidConverter.BYTES;
+            case Value.DecimalVal _ -> kind == PrimitiveKind.FIXED_LEN_BYTE_ARRAY;
+            case Value.TimeVal _ -> kind == PrimitiveKind.INT64;
         };
     }
 
