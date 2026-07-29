@@ -79,7 +79,7 @@
     <maven.compiler.target>25</maven.compiler.target>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
-    <tileverse-storage.version>2.0.0</tileverse-storage.version>
+    <tileverse.version>2.0.2</tileverse.version>
     <jackson.version>3.1.2</jackson.version>
     <opentelemetry.version>1.46.0</opentelemetry.version>
     <aircompressor.version>3.6</aircompressor.version>
@@ -116,6 +116,21 @@
          jacoco-owned @{argLine} or the preview flags, e.g. -DextraArgLine="-Xmx2g". Empty by default. -->
     <extraArgLine/>
   </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <!-- Manages the tileverse-storage module versions and converges their transitive deps (Jackson 2, JNA, etc.)
+           for every module here. Downstream consumers get the same management by importing parquetry-dependencies:
+           a BOM import includes the dependencyManagement the imported POM inherits from its parents. -->
+      <dependency>
+        <groupId>io.tileverse</groupId>
+        <artifactId>tileverse-bom</artifactId>
+        <version>${tileverse.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
 
   <repositories>
     <repository>
