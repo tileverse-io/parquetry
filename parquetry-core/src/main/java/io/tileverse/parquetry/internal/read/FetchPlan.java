@@ -24,10 +24,10 @@ import lombok.NonNull;
 
 /**
  * The output of {@link CoalescingFetchPlanner}: the minimal set of byte ranges to read for one row group, plus a map
- * from each projected column to the slice of a range that holds its compressed chunk.
+ * from each projected column to the slices of those ranges that hold its compressed bytes.
  */
 public record FetchPlan(
-        @NonNull List<CoalescedRange> ranges, @NonNull Map<ColumnPath, ColumnSlice> slices) {
+        @NonNull List<CoalescedRange> ranges, @NonNull Map<ColumnPath, ColumnSlices> slices) {
 
     public FetchPlan {
         ranges = List.copyOf(ranges);

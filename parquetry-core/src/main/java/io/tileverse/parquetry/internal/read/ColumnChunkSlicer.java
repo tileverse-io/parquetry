@@ -18,6 +18,7 @@ package io.tileverse.parquetry.internal.read;
 import java.io.IOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -42,12 +43,46 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
- * Slices one column chunk out of a coalesced range segment and decodes its dictionary, producing a
- * {@link FetchedColumnChunk} view whose single data-page run covers just the data-page region.
+ * Slices one column chunk's fetched bytes out of coalesced range segments and decodes its dictionary, producing a
+ * {@link FetchedColumnChunk} view whose runs cover just the data-page region.
  */
 final class ColumnChunkSlicer {
 
     private ColumnChunkSlicer() {}
+
+    /**
+     * Builds the chunk view from the fetched pieces of one column chunk.
+     *
+     * <p>The dictionary comes from {@code dictionaryPrefix} when the fetch planned the chunk's leading bytes as their
+     * own range; the prefix holds the chunk's true first bytes (the dictionary page, plus any writer padding around
+     * it), which keeps the first-page-header sniffing intact. Bytes left in the prefix after the dictionary page are
+     * ignored. With no prefix, the head of the first run is sniffed instead, which is the whole-chunk shape: one run
+     * starting at the chunk's first byte.
+     *
+     * @param dictionaryPrefix view of the chunk's bytes up to its first data page, when fetched separately
+     * @param runs views of the fetched stretches of the chunk's pages, in file order
+     */
+    static FetchedColumnChunk slice(
+            Optional<MemorySegment> dictionaryPrefix,
+            List<DataPageRun> runs,
+            ColumnMetaData meta,
+            ColumnPath path,
+            ParquetSchema fileSchema)
+            throws IOException {
+        if (dictionaryPrefix.isPresent()) {
+            DictionaryAndOffset dict = maybeDecodeDictionary(dictionaryPrefix.orElseThrow(), meta, path, fileSchema);
+            return chunkOf(path, meta, fileSchema, runs, dict.dictionary());
+        }
+        if (runs.isEmpty()) {
+            return chunkOf(path, meta, fileSchema, runs, Optional.empty());
+        }
+        MemorySegment head = runs.get(0).segment();
+        DictionaryAndOffset dict = maybeDecodeDictionary(head, meta, path, fileSchema);
+        if (dict.dataPageOffset() == 0) {
+            return chunkOf(path, meta, fileSchema, runs, dict.dictionary());
+        }
+        return chunkOf(path, meta, fileSchema, stripDictionaryPage(runs, dict.dataPageOffset()), dict.dictionary());
+    }
 
     /**
      * @param chunkSegment a read-only view of the full compressed column chunk (dictionary page if present + all data
@@ -56,18 +91,40 @@ final class ColumnChunkSlicer {
     static FetchedColumnChunk slice(
             MemorySegment chunkSegment, ColumnMetaData meta, ColumnPath path, ParquetSchema fileSchema)
             throws IOException {
-        DictionaryAndOffset dict = maybeDecodeDictionary(chunkSegment, meta, path, fileSchema);
-        MemorySegment dataPages = chunkSegment
-                .asSlice(dict.dataPageOffset(), chunkSegment.byteSize() - dict.dataPageOffset())
-                .asReadOnly();
+        return slice(Optional.empty(), List.of(new DataPageRun(chunkSegment, 0)), meta, path, fileSchema);
+    }
+
+    /** Drops the leading {@code dataPageOffset} bytes the dictionary page occupies at the head of the first run. */
+    private static List<DataPageRun> stripDictionaryPage(List<DataPageRun> runs, int dataPageOffset) {
+        MemorySegment head = runs.get(0).segment();
+        MemorySegment dataPages = head.asSlice(dataPageOffset, head.byteSize() - dataPageOffset);
+        List<DataPageRun> stripped = new ArrayList<>(runs.size());
+        stripped.add(new DataPageRun(dataPages, runs.get(0).firstPageOrdinal()));
+        stripped.addAll(runs.subList(1, runs.size()));
+        return stripped;
+    }
+
+    private static FetchedColumnChunk chunkOf(
+            ColumnPath path,
+            ColumnMetaData meta,
+            ParquetSchema fileSchema,
+            List<DataPageRun> runs,
+            Optional<Dictionary<?>> dictionary) {
         LevelMaxima maxima = fileSchema.maxLevels(path);
         return new FetchedColumnChunk(
-                path,
-                meta,
-                maxima.maxRepetitionLevel(),
-                maxima.maxDefinitionLevel(),
-                List.of(new DataPageRun(dataPages, 0)),
-                dict.dictionary());
+                path, meta, maxima.maxRepetitionLevel(), maxima.maxDefinitionLevel(), readOnly(runs), dictionary);
+    }
+
+    /**
+     * A fetched chunk must not be able to write through to the pooled range buffer it views, and callers hand over
+     * plain slices of that buffer.
+     */
+    private static List<DataPageRun> readOnly(List<DataPageRun> runs) {
+        List<DataPageRun> views = new ArrayList<>(runs.size());
+        for (DataPageRun run : runs) {
+            views.add(new DataPageRun(run.segment().asReadOnly(), run.firstPageOrdinal()));
+        }
+        return views;
     }
 
     /** The decoded dictionary (if any) plus the offset of the first data page within the chunk segment. */

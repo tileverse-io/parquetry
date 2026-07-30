@@ -28,45 +28,53 @@ class CoalescingFetchPlannerTest {
     private static final int GAP = 1_000;
     private static final int SPAN = 10_000;
 
-    private static ColumnRange col(String name, long offset, int length) {
-        return new ColumnRange(ColumnPath.of(name), offset, length);
+    private static ColumnPath path(String name) {
+        return ColumnPath.of(name);
+    }
+
+    private static FetchUnit unit(String name, long offset, int length) {
+        return new FetchUnit(path(name), offset, length, 0, false);
+    }
+
+    private static List<RunSlice> runsOf(FetchPlan plan, String name) {
+        return plan.slices().get(path(name)).runs();
     }
 
     @Test
     void mergesAdjacentChunksWithinGapAndSpan() {
         FetchPlan plan = CoalescingFetchPlanner.plan(
-                List.of(col("a", 0, 100), col("b", 100, 100), col("c", 300, 100)), GAP, SPAN);
+                List.of(unit("a", 0, 100), unit("b", 100, 100), unit("c", 300, 100)), GAP, SPAN);
 
         assertThat(plan.ranges()).containsExactly(new CoalescedRange(0, 400));
-        assertThat(plan.slices()).containsEntry(ColumnPath.of("a"), new ColumnSlice(0, 0, 100));
-        assertThat(plan.slices()).containsEntry(ColumnPath.of("b"), new ColumnSlice(0, 100, 100));
-        assertThat(plan.slices()).containsEntry(ColumnPath.of("c"), new ColumnSlice(0, 300, 100));
+        assertThat(runsOf(plan, "a")).containsExactly(new RunSlice(0, 0, 100, 0));
+        assertThat(runsOf(plan, "b")).containsExactly(new RunSlice(0, 100, 100, 0));
+        assertThat(runsOf(plan, "c")).containsExactly(new RunSlice(0, 300, 100, 0));
         assertThat(plan.totalBytes()).isEqualTo(400);
     }
 
     @Test
     void startsNewRangeWhenGapTooLarge() {
         FetchPlan plan =
-                CoalescingFetchPlanner.plan(List.of(col("a", 0, 100), col("b", 100 + GAP + 1, 100)), GAP, SPAN);
+                CoalescingFetchPlanner.plan(List.of(unit("a", 0, 100), unit("b", 100 + GAP + 1, 100)), GAP, SPAN);
 
         assertThat(plan.ranges()).containsExactly(new CoalescedRange(0, 100), new CoalescedRange(100 + GAP + 1, 100));
-        assertThat(plan.slices()).containsEntry(ColumnPath.of("b"), new ColumnSlice(1, 0, 100));
+        assertThat(runsOf(plan, "b")).containsExactly(new RunSlice(1, 0, 100, 0));
     }
 
     @Test
     void startsNewRangeWhenSpanWouldBeExceeded() {
         FetchPlan plan =
-                CoalescingFetchPlanner.plan(List.of(col("a", 0, SPAN - 10), col("b", SPAN - 10, 100)), GAP, SPAN);
+                CoalescingFetchPlanner.plan(List.of(unit("a", 0, SPAN - 10), unit("b", SPAN - 10, 100)), GAP, SPAN);
 
         assertThat(plan.ranges()).containsExactly(new CoalescedRange(0, SPAN - 10), new CoalescedRange(SPAN - 10, 100));
     }
 
     @Test
     void singleChunkLargerThanSpanBecomesItsOwnRange() {
-        FetchPlan plan = CoalescingFetchPlanner.plan(List.of(col("a", 0, SPAN + 5_000)), GAP, SPAN);
+        FetchPlan plan = CoalescingFetchPlanner.plan(List.of(unit("a", 0, SPAN + 5_000)), GAP, SPAN);
 
         assertThat(plan.ranges()).containsExactly(new CoalescedRange(0, SPAN + 5_000));
-        assertThat(plan.slices()).containsEntry(ColumnPath.of("a"), new ColumnSlice(0, 0, SPAN + 5_000));
+        assertThat(runsOf(plan, "a")).containsExactly(new RunSlice(0, 0, SPAN + 5_000, 0));
     }
 
     @Test
@@ -80,10 +88,56 @@ class CoalescingFetchPlannerTest {
     @Test
     void sortsUnorderedInputByOffsetBeforeCoalescing() {
         FetchPlan plan = CoalescingFetchPlanner.plan(
-                List.of(col("c", 200, 100), col("a", 0, 100), col("b", 100, 100)), GAP, SPAN);
+                List.of(unit("c", 200, 100), unit("a", 0, 100), unit("b", 100, 100)), GAP, SPAN);
 
         assertThat(plan.ranges()).containsExactly(new CoalescedRange(0, 300));
-        assertThat(plan.slices()).containsEntry(ColumnPath.of("a"), new ColumnSlice(0, 0, 100));
-        assertThat(plan.slices()).containsEntry(ColumnPath.of("c"), new ColumnSlice(0, 200, 100));
+        assertThat(runsOf(plan, "a")).containsExactly(new RunSlice(0, 0, 100, 0));
+        assertThat(runsOf(plan, "c")).containsExactly(new RunSlice(0, 200, 100, 0));
+    }
+
+    @Test
+    void multipleUnitsOfOneColumnAppendRunSlicesInOffsetOrder() {
+        FetchPlan plan = CoalescingFetchPlanner.plan(
+                List.of(new FetchUnit(path("a"), 0, 100, 0, false), new FetchUnit(path("a"), 500, 80, 3, false)),
+                GAP,
+                SPAN);
+        ColumnSlices slices = plan.slices().get(path("a"));
+        assertThat(slices.dictionaryPrefix()).isEmpty();
+        assertThat(slices.runs()).hasSize(2);
+        assertThat(slices.runs().get(0).firstPageOrdinal()).isZero();
+        assertThat(slices.runs().get(1).firstPageOrdinal()).isEqualTo(3);
+    }
+
+    @Test
+    void dictionaryPrefixLandsOutsideTheRunList() {
+        FetchPlan plan = CoalescingFetchPlanner.plan(
+                List.of(new FetchUnit(path("a"), 0, 40, 0, true), new FetchUnit(path("a"), 40, 100, 0, false)),
+                GAP,
+                SPAN);
+        ColumnSlices slices = plan.slices().get(path("a"));
+        assertThat(slices.dictionaryPrefix()).isPresent();
+        assertThat(slices.dictionaryPrefix().orElseThrow().length()).isEqualTo(40);
+        assertThat(slices.runs()).hasSize(1);
+    }
+
+    @Test
+    void runIsNeverSplitBySpanCap() {
+        FetchPlan plan =
+                CoalescingFetchPlanner.plan(List.of(new FetchUnit(path("a"), 0, SPAN + 5_000, 0, false)), GAP, SPAN);
+        assertThat(plan.ranges()).containsExactly(new CoalescedRange(0, SPAN + 5_000));
+    }
+
+    @Test
+    void runsOfDifferentColumnsInterleaveByOffset() {
+        FetchPlan plan = CoalescingFetchPlanner.plan(
+                List.of(
+                        new FetchUnit(path("a"), 0, 100, 0, false),
+                        new FetchUnit(path("b"), 100, 100, 0, false),
+                        new FetchUnit(path("a"), 200, 100, 2, false)),
+                GAP,
+                SPAN);
+        assertThat(plan.ranges()).hasSize(1);
+        assertThat(plan.slices().get(path("a")).runs()).hasSize(2);
+        assertThat(plan.slices().get(path("b")).runs()).hasSize(1);
     }
 }

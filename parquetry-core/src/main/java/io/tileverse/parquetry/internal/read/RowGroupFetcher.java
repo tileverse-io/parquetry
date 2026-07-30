@@ -19,11 +19,13 @@ import java.io.IOException;
 import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.internal.read.page.DataPageRun;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.io.SegmentPool.Pooled;
@@ -77,12 +79,12 @@ public final class RowGroupFetcher {
      */
     public FetchPlan planFor(RowGroupSurvivor survivor) {
         RowGroupChunks chunks = survivor.chunks();
-        List<ColumnRange> columns = new ArrayList<>();
+        List<FetchUnit> units = new ArrayList<>();
         for (ColumnPath path : projectedSchema.leafColumns()) {
             ColumnMetaData meta = requireMeta(chunks, path);
-            columns.add(new ColumnRange(path, chunkStart(meta), chunkLength(meta, path)));
+            units.add(new FetchUnit(path, chunkStart(meta), chunkLength(meta, path), 0, false));
         }
-        return CoalescingFetchPlanner.plan(columns, maxCoalesceGap, maxCoalescedSpan);
+        return CoalescingFetchPlanner.plan(units, maxCoalesceGap, maxCoalescedSpan);
     }
 
     /**
@@ -156,13 +158,27 @@ public final class RowGroupFetcher {
             FetchPlan plan, RowGroupChunks chunks, List<MemorySegment> rangeSegments) throws IOException {
         List<FetchedColumnChunk> columns = new ArrayList<>(plan.slices().size());
         for (ColumnPath path : projectedSchema.leafColumns()) {
-            ColumnSlice slice = plan.slices().get(path);
+            ColumnSlices slices = plan.slices().get(path);
             ColumnMetaData meta = requireMeta(chunks, path);
-            MemorySegment chunkSegment =
-                    rangeSegments.get(slice.rangeIndex()).asSlice(slice.offsetWithinRange(), slice.length());
-            columns.add(ColumnChunkSlicer.slice(chunkSegment, meta, path, fileSchema));
+            Optional<MemorySegment> dictionaryPrefix =
+                    slices.dictionaryPrefix().map(slice -> segmentFor(slice, rangeSegments));
+            List<DataPageRun> runs = dataPageRuns(slices, rangeSegments);
+            columns.add(ColumnChunkSlicer.slice(dictionaryPrefix, runs, meta, path, fileSchema));
         }
         return columns;
+    }
+
+    private static List<DataPageRun> dataPageRuns(ColumnSlices slices, List<MemorySegment> rangeSegments) {
+        List<DataPageRun> runs = new ArrayList<>(slices.runs().size());
+        for (RunSlice run : slices.runs()) {
+            MemorySegment segment = rangeSegments.get(run.rangeIndex()).asSlice(run.offsetWithinRange(), run.length());
+            runs.add(new DataPageRun(segment, run.firstPageOrdinal()));
+        }
+        return runs;
+    }
+
+    private static MemorySegment segmentFor(ColumnSlice slice, List<MemorySegment> rangeSegments) {
+        return rangeSegments.get(slice.rangeIndex()).asSlice(slice.offsetWithinRange(), slice.length());
     }
 
     private ColumnMetaData requireMeta(RowGroupChunks chunks, ColumnPath path) {
