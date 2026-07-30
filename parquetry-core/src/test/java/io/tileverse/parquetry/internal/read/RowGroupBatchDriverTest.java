@@ -40,6 +40,7 @@ import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.CompressionCodec;
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.PhysicalType;
+import io.tileverse.parquetry.internal.read.page.DataPageRun;
 import io.tileverse.parquetry.io.SegmentPool.Pooled;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -169,7 +170,8 @@ class RowGroupBatchDriverTest {
                 .dataPageOffset(0L)
                 .build();
 
-        return new FetchedColumnChunk(path, meta, /*maxRep*/ 0, /*maxDef*/ 0, segment, Optional.empty());
+        return new FetchedColumnChunk(
+                path, meta, /*maxRep*/ 0, /*maxDef*/ 0, List.of(new DataPageRun(segment, 0)), Optional.empty());
     }
 
     private static List<String> pathSegments(ColumnPath path) {

@@ -18,6 +18,7 @@ package io.tileverse.parquetry.internal.read;
 import java.io.IOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
+import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
 
@@ -30,6 +31,7 @@ import io.tileverse.parquetry.format.PageType;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.format.PhysicalType;
+import io.tileverse.parquetry.internal.read.page.DataPageRun;
 import io.tileverse.parquetry.internal.read.page.Dictionary;
 import io.tileverse.parquetry.internal.read.page.DictionaryDecoder;
 import io.tileverse.parquetry.internal.read.page.MemorySegmentInputStream;
@@ -41,7 +43,7 @@ import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
  * Slices one column chunk out of a coalesced range segment and decodes its dictionary, producing a
- * {@link FetchedColumnChunk} view whose {@code compressedSegment} covers just the data-page region.
+ * {@link FetchedColumnChunk} view whose single data-page run covers just the data-page region.
  */
 final class ColumnChunkSlicer {
 
@@ -60,7 +62,12 @@ final class ColumnChunkSlicer {
                 .asReadOnly();
         LevelMaxima maxima = fileSchema.maxLevels(path);
         return new FetchedColumnChunk(
-                path, meta, maxima.maxRepetitionLevel(), maxima.maxDefinitionLevel(), dataPages, dict.dictionary());
+                path,
+                meta,
+                maxima.maxRepetitionLevel(),
+                maxima.maxDefinitionLevel(),
+                List.of(new DataPageRun(dataPages, 0)),
+                dict.dictionary());
     }
 
     /** The decoded dictionary (if any) plus the offset of the first data page within the chunk segment. */

@@ -15,10 +15,11 @@
  */
 package io.tileverse.parquetry.internal.read;
 
-import java.lang.foreign.MemorySegment;
+import java.util.List;
 import java.util.Optional;
 
 import io.tileverse.parquetry.format.ColumnMetaData;
+import io.tileverse.parquetry.internal.read.page.DataPageRun;
 import io.tileverse.parquetry.internal.read.page.Dictionary;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -30,18 +31,21 @@ import lombok.NonNull;
  * page by page.
  *
  * <p>This is the unit produced by {@link RowGroupFetcher} and consumed by the per-row-group readers.
- * {@code compressedSegment} covers the chunk's data-page region (after any dictionary page was consumed during the
- * fetch); the data pages remain compressed and are decoded lazily by the column reader, one at a time. The decoded
- * dictionary (small, shared across data pages) is held here directly.
+ * {@code dataPageRuns} covers the chunk's data-page region (after any dictionary page was consumed during the fetch): a
+ * chunk fetched whole is the single run based at ordinal zero, while a page-narrowed fetch is one run per
+ * byte-contiguous stretch of fetched pages. The data pages remain compressed and are decoded lazily by the column
+ * reader, one at a time. The decoded dictionary (small, shared across data pages) is held here directly and is never
+ * part of a run.
  *
- * <p>This view does not own memory. Its segment is valid only while the owning {@link RowGroupFetch} is open; that
+ * <p>This view does not own memory. Its segments are valid only while the owning {@link RowGroupFetch} is open; that
  * fetch returns the pooled segments to the {@link SegmentPool} when it is closed.
  *
  * @param path the leaf column path this chunk belongs to (file schema path)
  * @param metadata the on-disk {@link ColumnMetaData} for the chunk
  * @param maxRepetitionLevel max repetition level computed from the file schema at this leaf
  * @param maxDefinitionLevel max definition level computed from the file schema at this leaf
- * @param compressedSegment read-only view of the chunk's compressed data-page region
+ * @param dataPageRuns read-only views of the fetched stretches of the chunk's compressed data-page region, in file
+ *     order
  * @param dictionary the decoded dictionary page if the column chunk has one; otherwise empty
  */
 record FetchedColumnChunk(
@@ -49,10 +53,11 @@ record FetchedColumnChunk(
         @NonNull ColumnMetaData metadata,
         int maxRepetitionLevel,
         int maxDefinitionLevel,
-        @NonNull MemorySegment compressedSegment,
+        @NonNull List<DataPageRun> dataPageRuns,
         @NonNull Optional<Dictionary<?>> dictionary) {
 
     FetchedColumnChunk {
+        dataPageRuns = List.copyOf(dataPageRuns);
         if (maxRepetitionLevel < 0) {
             throw new IllegalArgumentException("maxRepetitionLevel must be >= 0, got " + maxRepetitionLevel);
         }
