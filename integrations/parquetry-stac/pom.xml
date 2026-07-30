@@ -22,14 +22,6 @@
         <type>pom</type>
         <scope>import</scope>
       </dependency>
-      <!-- Converges the tileverse-storage transitive versions pulled in via parquetry-tileverse-storage. -->
-      <dependency>
-        <groupId>io.tileverse</groupId>
-        <artifactId>tileverse-bom</artifactId>
-        <version>${tileverse-storage.version}</version>
-        <type>pom</type>
-        <scope>import</scope>
-      </dependency>
     </dependencies>
   </dependencyManagement>
 

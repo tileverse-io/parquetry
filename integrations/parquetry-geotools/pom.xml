@@ -12,7 +12,7 @@
   <description>Read-only GeoTools DataStore for GeoParquet, backed by the parquetry dataset catalog.</description>
 
   <properties>
-    <gt.version>35.0</gt.version>
+    <gt.version>36-SNAPSHOT</gt.version>
   </properties>
 
   <dependencyManagement>
@@ -21,14 +21,6 @@
         <groupId>io.tileverse.parquetry</groupId>
         <artifactId>parquetry-dependencies</artifactId>
         <version>${project.version}</version>
-        <type>pom</type>
-        <scope>import</scope>
-      </dependency>
-      <!-- Manages tileverse-storage module versions and converges its transitive deps (Jackson, JNA, etc.). -->
-      <dependency>
-        <groupId>io.tileverse</groupId>
-        <artifactId>tileverse-bom</artifactId>
-        <version>${tileverse-storage.version}</version>
         <type>pom</type>
         <scope>import</scope>
       </dependency>

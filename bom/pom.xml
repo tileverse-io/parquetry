@@ -48,6 +48,36 @@
         <artifactId>parquetry-encryption</artifactId>
         <version>${project.version}</version>
       </dependency>
+      <dependency>
+        <groupId>io.tileverse.parquetry</groupId>
+        <artifactId>parquetry-jackson</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.tileverse.parquetry</groupId>
+        <artifactId>parquetry-arrow</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.tileverse.parquetry</groupId>
+        <artifactId>parquetry-tileverse-storage</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.tileverse.parquetry</groupId>
+        <artifactId>parquetry-stac</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.tileverse.parquetry</groupId>
+        <artifactId>parquetry-iceberg</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.tileverse.parquetry</groupId>
+        <artifactId>parquetry-geotools</artifactId>
+        <version>${project.version}</version>
+      </dependency>
     </dependencies>
   </dependencyManagement>
 </project>
