@@ -1,3 +1,5 @@
+<img src="docs/parquetry_banner.svg" alt="Parquetry" width="100%">
+
 # Parquetry
 
 A modern, streaming Apache Parquet and GeoParquet reader and writer for the JVM, built for bounded-memory cloud-native and containerized servers.
