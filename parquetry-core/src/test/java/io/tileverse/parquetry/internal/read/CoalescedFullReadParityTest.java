@@ -17,12 +17,10 @@ package io.tileverse.parquetry.internal.read;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.lang.foreign.MemorySegment;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -33,6 +31,7 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.RecordingByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.runtime.ParquetRuntime;
@@ -49,36 +48,6 @@ import io.tileverse.parquetry.runtime.ParquetRuntime;
  */
 class CoalescedFullReadParityTest {
 
-    /**
-     * Delegating {@link ByteRangeSource} that counts how many times {@link #read(long, MemorySegment)} is called. Uses
-     * no mocking framework - just a plain wrapper.
-     */
-    private static final class CountingByteRangeSource implements ByteRangeSource {
-
-        private final ByteRangeSource delegate;
-        final AtomicInteger calls = new AtomicInteger();
-
-        CountingByteRangeSource(ByteRangeSource delegate) {
-            this.delegate = delegate;
-        }
-
-        @Override
-        public int read(long offset, MemorySegment dst) {
-            calls.incrementAndGet();
-            return delegate.read(offset, dst);
-        }
-
-        @Override
-        public long size() {
-            return delegate.size();
-        }
-
-        @Override
-        public void close() {
-            delegate.close();
-        }
-    }
-
     @Test
     void fullReadIsCorrectAndCoalescesRangeReads(@TempDir Path tmp) throws Exception {
         int rows = 4_000;
@@ -90,16 +59,16 @@ class CoalescedFullReadParityTest {
         List<ParquetRecord> records = new ArrayList<>();
         int dataReads;
         try (ByteRangeSource base = TestParquetFiles.openRangeReader(file)) {
-            CountingByteRangeSource counting = new CountingByteRangeSource(base);
+            RecordingByteRangeSource recording = new RecordingByteRangeSource(base);
             ParquetRuntime runtime = ParquetRuntime.builder().segmentPool(pool).build();
-            ParquetFileReader dataset = ParquetFileReader.open(counting, runtime, Optional.empty());
+            ParquetFileReader dataset = ParquetFileReader.open(recording, runtime, Optional.empty());
             try (Stream<ParquetRecord> stream =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 // Footer and filter-plan reads have already happened inside read().
                 // Counting from here isolates the coalesced data-page fetches only.
-                int before = counting.calls.get();
+                int before = recording.requestCount();
                 stream.forEach(records::add);
-                dataReads = counting.calls.get() - before;
+                dataReads = recording.requestCount() - before;
             }
         }
 

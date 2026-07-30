@@ -19,15 +19,29 @@ import io.tileverse.parquetry.schema.ColumnPath;
 
 import lombok.NonNull;
 
-/** One projected column chunk's on-disk byte range, the planner's input unit. */
-public record ColumnRange(@NonNull ColumnPath path, long fileOffset, int length) {
+/**
+ * One plannable byte range of a column chunk, the {@link CoalescingFetchPlanner}'s input unit: a whole chunk, one run
+ * of surviving data pages, or the chunk's dictionary prefix. A unit is never split across coalesced ranges.
+ *
+ * @param path the leaf column the range belongs to
+ * @param fileOffset absolute offset of the range's first byte in the file
+ * @param length the range's byte length
+ * @param firstPageOrdinal offset-index ordinal of the range's first data page; meaningful only for a non-prefix unit,
+ *     and zero for a whole chunk
+ * @param dictionaryPrefix whether the range is the chunk's dictionary prefix rather than data pages
+ */
+record FetchUnit(
+        @NonNull ColumnPath path, long fileOffset, int length, int firstPageOrdinal, boolean dictionaryPrefix) {
 
-    public ColumnRange {
+    FetchUnit {
         if (fileOffset < 0) {
             throw new IllegalArgumentException("fileOffset must be >= 0, got " + fileOffset);
         }
         if (length <= 0) {
             throw new IllegalArgumentException("length must be > 0, got " + length);
+        }
+        if (firstPageOrdinal < 0) {
+            throw new IllegalArgumentException("firstPageOrdinal must be >= 0, got " + firstPageOrdinal);
         }
     }
 }

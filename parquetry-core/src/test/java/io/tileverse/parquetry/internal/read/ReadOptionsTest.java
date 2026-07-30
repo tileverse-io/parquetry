@@ -103,6 +103,14 @@ class ReadOptionsTest {
     }
 
     @Test
+    void pageNarrowedFetchDefaultsOnAndRoundTripsThroughToBuilder() {
+        assertThat(ReadOptions.DEFAULTS.usePageNarrowedFetch()).isTrue();
+        ReadOptions off = ReadOptions.builder().usePageNarrowedFetch(false).build();
+        assertThat(off.usePageNarrowedFetch()).isFalse();
+        assertThat(off.toBuilder().build().usePageNarrowedFetch()).isFalse();
+    }
+
+    @Test
     void defaultsHoldNoSpatialReadProbe() {
         assertThat(ReadOptions.DEFAULTS.spatialReadProbe()).isEmpty();
     }

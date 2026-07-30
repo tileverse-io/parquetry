@@ -37,6 +37,8 @@ final class TestFetchers {
 
     private static final long AMPLE_FETCH_BUDGET = 1L << 30;
     private static final long AMPLE_DISK_BUDGET = 1L << 30;
+    private static final int DEFAULT_MAX_COALESCE_GAP = 1 << 20;
+    private static final int DEFAULT_MAX_COALESCED_SPAN = 8 << 20;
 
     private TestFetchers() {}
 
@@ -51,11 +53,36 @@ final class TestFetchers {
             ParquetSchema projectedSchema,
             SegmentPool pool,
             FetchAccumulator accumulator) {
+        return over(
+                source,
+                fileSchema,
+                projectedSchema,
+                pool,
+                accumulator,
+                DEFAULT_MAX_COALESCE_GAP,
+                DEFAULT_MAX_COALESCED_SPAN);
+    }
+
+    /**
+     * Same, with the coalescing bounds under the test's control. A test asserting which byte ranges a plan reads pins
+     * {@code maxCoalesceGap} to zero, which merges only abutting ranges and leaves every planned range boundary
+     * visible.
+     */
+    @SuppressWarnings("java:S107") // test factory: the parameters are the fetcher's own collaborators and bounds
+    static RowGroupFetcher over(
+            ByteRangeSource source,
+            ParquetSchema fileSchema,
+            ParquetSchema projectedSchema,
+            SegmentPool pool,
+            FetchAccumulator accumulator,
+            int maxCoalesceGap,
+            int maxCoalescedSpan) {
         FetchBufferAllocator allocator = new FetchBufferAllocator(
                 pool,
                 FetchBudget.ofBytes(AMPLE_FETCH_BUDGET),
                 new FetchSpillStore(spillDir(), DiskBudget.ofBytes(AMPLE_DISK_BUDGET)));
-        return new RowGroupFetcher(source, fileSchema, projectedSchema, pool, allocator, 1 << 20, 8 << 20, accumulator);
+        return new RowGroupFetcher(
+                source, fileSchema, projectedSchema, pool, allocator, maxCoalesceGap, maxCoalescedSpan, accumulator);
     }
 
     private static Path spillDir() {

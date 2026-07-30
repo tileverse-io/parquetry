@@ -18,7 +18,6 @@ package io.tileverse.parquetry.internal.read;
 import static io.tileverse.parquetry.filter.Pred.col;
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.lang.foreign.MemorySegment;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -26,7 +25,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -46,6 +44,7 @@ import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.RecordingByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -84,13 +83,13 @@ class OffsetIndexSingleReadTest {
                     .isEqualTo(RowGroupOutcome.PARTIAL);
         }
 
-        // Wrap a fresh reader in the counting decorator and drive a full filtered read.
+        // Wrap a fresh reader in the recording decorator and drive a full filtered read.
         try (ByteRangeSource base = ByteRangeSource.ofFile(file)) {
-            CountingByteRangeSource counting = new CountingByteRangeSource(base, idOffsetIndexOffset);
+            RecordingByteRangeSource recording = new RecordingByteRangeSource(base);
             Predicate predicate = col("id").eq(5L);
             long rowsMatched;
             try (Stream<ParquetRecord> rows =
-                    ParquetFileReader.open(counting).read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
+                    ParquetFileReader.open(recording).read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
                 rowsMatched = rows.count();
             }
 
@@ -98,11 +97,22 @@ class OffsetIndexSingleReadTest {
                     .as("predicate matched at least one row (sanity: the filter path ran)")
                     .isGreaterThan(0L);
 
-            assertThat(counting.readsAtWatchedOffset())
+            assertThat(readsStartingAt(recording, idOffsetIndexOffset))
                     .as("the predicate column's offset index is read once: the column-index tier and the"
                             + " decode-mask builder share one read")
-                    .isEqualTo(1);
+                    .isEqualTo(1L);
         }
+    }
+
+    /**
+     * Counts the recorded reads that start exactly at {@code offset}. {@link ParquetFormat} reads each OffsetIndex /
+     * ColumnIndex section starting exactly at its recorded offset; column-data fetches read at the coalesced data-range
+     * offsets and never start at an index-section offset.
+     */
+    private static long readsStartingAt(RecordingByteRangeSource recording, long offset) {
+        return recording.ranges().stream()
+                .filter(range -> range.offset() == offset)
+                .count();
     }
 
     // -------------------------------------------------------------------------
@@ -174,50 +184,5 @@ class OffsetIndexSingleReadTest {
     private static SchemaNode.Primitive requiredDouble(String name) {
         return new SchemaNode.Primitive(
                 name, Repetition.REQUIRED, PrimitiveKind.DOUBLE, OptionalInt.empty(), Optional.empty(), -1);
-    }
-
-    // -------------------------------------------------------------------------
-    // Counting decorator
-    // -------------------------------------------------------------------------
-
-    /**
-     * A {@link ByteRangeSource} decorator that counts how many times {@link #read(long, MemorySegment)} is called with
-     * an offset equal to the watched byte offset. {@link io.tileverse.parquetry.format.ParquetFormat} reads each
-     * OffsetIndex / ColumnIndex section starting exactly at its recorded offset; column-data fetches read at the
-     * coalesced data-range offsets and never start at an index-section offset.
-     */
-    private static final class CountingByteRangeSource implements ByteRangeSource {
-
-        private final ByteRangeSource delegate;
-        private final long watchedOffset;
-        private final AtomicInteger hits = new AtomicInteger();
-
-        CountingByteRangeSource(ByteRangeSource delegate, long watchedOffset) {
-            this.delegate = delegate;
-            this.watchedOffset = watchedOffset;
-        }
-
-        /** Returns how many times {@link #read(long, MemorySegment)} was called at the watched offset. */
-        int readsAtWatchedOffset() {
-            return hits.get();
-        }
-
-        @Override
-        public long size() {
-            return delegate.size();
-        }
-
-        @Override
-        public int read(long offset, MemorySegment dst) {
-            if (offset == watchedOffset) {
-                hits.incrementAndGet();
-            }
-            return delegate.read(offset, dst);
-        }
-
-        @Override
-        public void close() {
-            delegate.close();
-        }
     }
 }

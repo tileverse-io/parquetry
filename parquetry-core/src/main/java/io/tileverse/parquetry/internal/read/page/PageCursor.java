@@ -18,6 +18,7 @@ package io.tileverse.parquetry.internal.read.page;
 import java.io.IOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
+import java.util.List;
 
 import io.tileverse.parquetry.data.Compression;
 import io.tileverse.parquetry.format.MalformedFileException;
@@ -31,34 +32,49 @@ import io.tileverse.parquetry.schema.LevelMaxima;
 /**
  * Walks the chunk's compressed bytes, yielding one decompressed {@link DecodedPage} per call.
  *
- * <p>The cursor tracks a byte offset inside the chunk's {@link MemorySegment} and dispatches header reads through
- * {@link ParquetFormat#readPageHeader}. Non-data pages (e.g. a misplaced dictionary or index page) are skipped
- * silently; {@link #nextDataPage} returns {@code null} when the chunk is exhausted.
+ * <p>The chunk arrives as an ordered list of {@link DataPageRun}s - one run for a chunk fetched whole, several when the
+ * fetch skipped the pages that cannot hold a surviving row. The cursor tracks a byte offset inside the current run's
+ * {@link MemorySegment}, moves on to the next run when the current one is exhausted, and dispatches header reads
+ * through {@link ParquetFormat#readPageHeader}. Non-data pages (e.g. a misplaced dictionary or index page) are skipped
+ * silently; {@link #nextDataPage} returns {@code null} when the last run is exhausted.
  *
  * <p>Shared by every column reader that walks a chunk page by page.
  */
 public final class PageCursor {
 
-    private final MemorySegment chunk;
-    private final long limit;
+    private final List<DataPageRun> runs;
     private final ColumnPath columnPath;
     private final PageSelection selection; // null = no page-skip (decode every data page)
+    private int runIndex = -1;
+    private MemorySegment runBytes;
+    private long runLimit;
     private long position;
     private int dataPageOrdinal;
     private long currentPageFirstRowIndex;
     private int decodedDataPageCount;
     private int skippedDataPageCount;
 
-    public PageCursor(MemorySegment chunk, ColumnPath columnPath) {
-        this(chunk, columnPath, null);
+    /** Walks a chunk fetched whole: one run over {@code chunk}, whose first data page is ordinal zero. */
+    public PageCursor(MemorySegment chunk, ColumnPath columnPath, PageSelection selection) {
+        this(List.of(new DataPageRun(chunk, 0)), columnPath, selection);
     }
 
-    public PageCursor(MemorySegment chunk, ColumnPath columnPath, PageSelection selection) {
-        this.chunk = chunk;
-        this.limit = chunk.byteSize();
+    /**
+     * Walks {@code runs} in order. Each run's first data page takes the run's base ordinal - the offset index ordinal
+     * the fetch planner recorded - which keeps {@link PageSelection#isSurviving(int)} and
+     * {@link PageSelection#firstRowIndex(int)} correct when the pages between runs were never fetched.
+     */
+    public PageCursor(List<DataPageRun> runs, ColumnPath columnPath, PageSelection selection) {
+        // An empty run yields no page, yet hasRemaining() counts any un-walked run as bytes left to decode. Keeping
+        // one would make an all-empty run list look non-empty, breaking the empty-chunk contract
+        // BatchColumnReader.hasMore() depends on.
+        this.runs = runs.stream().filter(run -> run.segment().byteSize() > 0).toList();
         this.columnPath = columnPath;
         this.selection = selection;
-        this.position = 0L;
+        if (this.runs.size() > 1 && selection == null) {
+            throw new IllegalArgumentException("A multi-run walk needs a PageSelection to resolve run base "
+                    + "ordinals to row indexes, column " + columnPath.dot());
+        }
     }
 
     /**
@@ -67,7 +83,7 @@ public final class PageCursor {
      * not overlap the surviving rows are advanced past without decompressing or decoding.
      */
     public DecodedPage nextDataPage(LevelMaxima maxLevels, Compression codec, Arena pageArena) throws IOException {
-        while (position < limit) {
+        while (position < runLimit || advanceRun()) {
             PageHeader header = readNextPageHeader();
             int compressedSize = header.compressedPageSize();
             if (compressedSize < 0) {
@@ -91,6 +107,23 @@ public final class PageCursor {
         return null;
     }
 
+    /**
+     * Installs the next run as the walk's current bytes, restarting the byte position at the run's start and the page
+     * ordinal at the run's base. Returns {@code false} once every run has been walked.
+     */
+    private boolean advanceRun() {
+        if (runIndex + 1 >= runs.size()) {
+            return false;
+        }
+        runIndex++;
+        DataPageRun run = runs.get(runIndex);
+        this.runBytes = run.segment();
+        this.runLimit = runBytes.byteSize();
+        this.position = 0L;
+        this.dataPageOrdinal = run.firstPageOrdinal();
+        return true;
+    }
+
     /** First row index (relative to the row group) of the page most recently returned by {@link #nextDataPage}. */
     public long currentPageFirstRowIndex() {
         return currentPageFirstRowIndex;
@@ -111,16 +144,16 @@ public final class PageCursor {
      * that the next call to {@link #nextDataPage} yields a data page; there may only be non-data pages left.
      */
     public boolean hasRemaining() {
-        return position < limit;
+        return position < runLimit || runIndex + 1 < runs.size();
     }
 
     /**
-     * Reads the next {@link PageHeader} by wrapping the remaining chunk bytes as an {@link java.io.InputStream} and
-     * advancing the cursor by exactly the number of header bytes consumed. Throws {@link ParquetFormatException} on
-     * premature end-of-stream or Thrift decode failure.
+     * Reads the next {@link PageHeader} by wrapping the remaining bytes of the current run as an
+     * {@link java.io.InputStream} and advancing the cursor by exactly the number of header bytes consumed. Throws
+     * {@link ParquetFormatException} on premature end-of-stream or Thrift decode failure.
      */
     private PageHeader readNextPageHeader() {
-        MemorySegmentInputStream stream = new MemorySegmentInputStream(chunk, position, limit);
+        MemorySegmentInputStream stream = new MemorySegmentInputStream(runBytes, position, runLimit);
         try {
             PageHeader header = ParquetFormat.readPageHeader(stream);
             long consumed = stream.position() - position;
@@ -140,11 +173,11 @@ public final class PageCursor {
      * {@link MalformedFileException} when the cursor does not have that many bytes left.
      */
     private MemorySegment sliceAndAdvance(int length) {
-        if (limit - position < length) {
+        if (runLimit - position < length) {
             throw new MalformedFileException("Column " + columnPath.dot() + " page payload of " + length
-                    + " bytes overruns chunk (remaining=" + (limit - position) + ")");
+                    + " bytes overruns data page run " + runIndex + " (remaining=" + (runLimit - position) + ")");
         }
-        MemorySegment slice = chunk.asSlice(position, length).asReadOnly();
+        MemorySegment slice = runBytes.asSlice(position, length).asReadOnly();
         position += length;
         return slice;
     }

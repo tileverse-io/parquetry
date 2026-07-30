@@ -19,11 +19,17 @@ import java.io.IOException;
 import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.MalformedFileException;
+import io.tileverse.parquetry.format.OffsetIndex;
+import io.tileverse.parquetry.format.PageLocation;
 import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.internal.read.page.DataPageRun;
+import io.tileverse.parquetry.internal.read.page.PageRun;
+import io.tileverse.parquetry.internal.read.page.PageSelection;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.io.SegmentPool.Pooled;
@@ -74,15 +80,83 @@ public final class RowGroupFetcher {
 
     /**
      * Builds the coalescing plan for {@code survivor} without performing any I/O (used to size budget reservations).
+     *
+     * <p>The plan's bytes are a superset of every page any reader will touch. Narrowing to the surviving pages happens
+     * exactly when {@code mask} is present - the same mask the row group's column readers receive - and never from a
+     * per-column condition the readers do not see. A reader's page selection is therefore always the mask's surviving
+     * rows or narrower, and a chunk is never narrowed for a reader that would walk it without a selection.
+     *
+     * @param mask the row group's decode-time page-skip mask, or empty to plan whole column chunks
      */
-    public FetchPlan planFor(RowGroupSurvivor survivor) {
+    public FetchPlan planFor(RowGroupSurvivor survivor, Optional<RowMask> mask) {
         RowGroupChunks chunks = survivor.chunks();
-        List<ColumnRange> columns = new ArrayList<>();
+        List<FetchUnit> units = new ArrayList<>();
         for (ColumnPath path : projectedSchema.leafColumns()) {
             ColumnMetaData meta = requireMeta(chunks, path);
-            columns.add(new ColumnRange(path, chunkStart(meta), chunkLength(meta, path)));
+            if (mask.isPresent()) {
+                addUnitsFor(units, path, meta, mask.orElseThrow());
+            } else {
+                units.add(wholeChunkUnit(path, meta));
+            }
         }
-        return CoalescingFetchPlanner.plan(columns, maxCoalesceGap, maxCoalescedSpan);
+        return CoalescingFetchPlanner.plan(units, maxCoalesceGap, maxCoalescedSpan);
+    }
+
+    private FetchUnit wholeChunkUnit(ColumnPath path, ColumnMetaData meta) {
+        return new FetchUnit(path, chunkStart(meta), chunkLength(meta, path), 0, false);
+    }
+
+    /**
+     * Emits the narrowed units for one column: the dictionary prefix {@code [chunkStart, firstDataPage)} when
+     * non-empty, then one unit per surviving-page run. Falls back to the whole chunk when the mask lacks this column's
+     * offset index, when the offset index locates any page outside the chunk's own byte extent, or when every page
+     * survives (the degenerate case where the whole chunk IS the narrowed plan, trailing bytes included).
+     */
+    private void addUnitsFor(List<FetchUnit> units, ColumnPath path, ColumnMetaData meta, RowMask mask) {
+        OffsetIndex offsetIndex = mask.offsetIndexes().get(path);
+        if (offsetIndex == null || offsetIndex.pageLocations().isEmpty()) {
+            units.add(wholeChunkUnit(path, meta));
+            return;
+        }
+        long start = chunkStart(meta);
+        long chunkEnd = start + chunkLength(meta, path);
+        if (locatesPagesOutsideChunk(offsetIndex, start, chunkEnd)) {
+            units.add(wholeChunkUnit(path, meta));
+            return;
+        }
+        PageSelection selection = PageSelection.forColumn(offsetIndex, meta.numValues(), mask.survivingRows());
+        if (selection.survivingPageCount() == 0) {
+            throw new IllegalStateException("No surviving page for column " + path.dot()
+                    + " in a row group with surviving rows; the offset index and the row ranges disagree");
+        }
+        if (selection.survivingPageCount() == selection.pageCount()) {
+            units.add(wholeChunkUnit(path, meta));
+            return;
+        }
+        long firstDataPageOffset = offsetIndex.pageLocations().get(0).offset();
+        long prefixLength = firstDataPageOffset - start;
+        if (prefixLength > 0) {
+            // the bound check above put the first data page inside an int-sized chunk, hence the prefix fits an int
+            units.add(new FetchUnit(path, start, Math.toIntExact(prefixLength), 0, true));
+        }
+        for (PageRun run : PageRun.runsFor(selection, offsetIndex.pageLocations())) {
+            units.add(new FetchUnit(path, run.fileOffset(), run.length(), run.firstPageOrdinal(), false));
+        }
+    }
+
+    /**
+     * Whether {@code offsetIndex} points at any byte outside {@code [chunkStart, chunkEnd)}. Such an index cannot be
+     * trusted to locate this column's pages, and narrowing on it would aim the fetch at bytes the column does not own:
+     * another column's pages parse cleanly and decode to plausible garbage. Widening back to the whole chunk keeps a
+     * corrupt index's blast radius at wrong rows in this column, which is where it was before per-page fetching.
+     */
+    private static boolean locatesPagesOutsideChunk(OffsetIndex offsetIndex, long chunkStart, long chunkEnd) {
+        for (PageLocation page : offsetIndex.pageLocations()) {
+            if (page.offset() < chunkStart || page.offset() + page.compressedPageSize() > chunkEnd) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -156,13 +230,40 @@ public final class RowGroupFetcher {
             FetchPlan plan, RowGroupChunks chunks, List<MemorySegment> rangeSegments) throws IOException {
         List<FetchedColumnChunk> columns = new ArrayList<>(plan.slices().size());
         for (ColumnPath path : projectedSchema.leafColumns()) {
-            ColumnSlice slice = plan.slices().get(path);
+            ColumnSlices slices = requireSlices(plan, path);
             ColumnMetaData meta = requireMeta(chunks, path);
-            MemorySegment chunkSegment =
-                    rangeSegments.get(slice.rangeIndex()).asSlice(slice.offsetWithinRange(), slice.length());
-            columns.add(ColumnChunkSlicer.slice(chunkSegment, meta, path, fileSchema));
+            Optional<MemorySegment> dictionaryPrefix =
+                    slices.dictionaryPrefix().map(slice -> segmentFor(slice, rangeSegments));
+            List<DataPageRun> runs = dataPageRuns(slices, rangeSegments);
+            columns.add(ColumnChunkSlicer.slice(dictionaryPrefix, runs, meta, path, fileSchema));
         }
         return columns;
+    }
+
+    /**
+     * The slices {@code plan} recorded for {@code path}. A projected column absent from the plan means the plan and the
+     * projection disagree, which would otherwise yield a chunk with no bytes and silently wrong rows.
+     */
+    private static ColumnSlices requireSlices(FetchPlan plan, ColumnPath path) {
+        ColumnSlices slices = plan.slices().get(path);
+        if (slices == null) {
+            throw new IllegalStateException(
+                    "Fetch plan has no slices for projected column " + path.dot() + "; plan and projection disagree");
+        }
+        return slices;
+    }
+
+    private static List<DataPageRun> dataPageRuns(ColumnSlices slices, List<MemorySegment> rangeSegments) {
+        List<DataPageRun> runs = new ArrayList<>(slices.runs().size());
+        for (RunSlice run : slices.runs()) {
+            MemorySegment segment = rangeSegments.get(run.rangeIndex()).asSlice(run.offsetWithinRange(), run.length());
+            runs.add(new DataPageRun(segment, run.firstPageOrdinal()));
+        }
+        return runs;
+    }
+
+    private static MemorySegment segmentFor(ColumnSlice slice, List<MemorySegment> rangeSegments) {
+        return rangeSegments.get(slice.rangeIndex()).asSlice(slice.offsetWithinRange(), slice.length());
     }
 
     private ColumnMetaData requireMeta(RowGroupChunks chunks, ColumnPath path) {

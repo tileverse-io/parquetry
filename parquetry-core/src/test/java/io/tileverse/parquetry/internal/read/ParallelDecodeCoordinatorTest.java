@@ -263,6 +263,7 @@ class ParallelDecodeCoordinatorTest {
                     Thread.ofVirtual().name("test-fetch-", 0).factory());
             return new RowGroupPrefetcher(
                     survivors,
+                    Collections.nCopies(survivors.size(), Optional.empty()),
                     fetcher,
                     FetchBudget.defaultBudget(),
                     executor, /*prefetchDepth*/

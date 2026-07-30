@@ -30,6 +30,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.RecordingByteRangeSource;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
 class AvroDataFileReaderTest {
@@ -102,12 +103,12 @@ class AvroDataFileReaderTest {
                 .block(List.of(row(2, "b", 2.0, false)), false);
         byte[] ocf = writer.build();
         long firstBlockEnd = writer.firstBlockEnd();
-        CountingByteRangeSource counting = new CountingByteRangeSource(new InMemoryByteRangeSource(ocf));
-        try (AvroDataFileReader reader = AvroDataFileReader.open(counting)) {
+        RecordingByteRangeSource recording = new RecordingByteRangeSource(new InMemoryByteRangeSource(ocf));
+        try (AvroDataFileReader reader = AvroDataFileReader.open(recording)) {
             AvroRecord first = reader.records().findFirst().orElseThrow();
             assertThat(first.get("id")).isEqualTo(1L);
-            assertThat(counting.maxReadEnd()).isLessThan(ocf.length);
-            assertThat(counting.maxReadEnd()).isLessThanOrEqualTo(firstBlockEnd);
+            assertThat(recording.maxReadEnd()).isLessThan(ocf.length);
+            assertThat(recording.maxReadEnd()).isLessThanOrEqualTo(firstBlockEnd);
         }
     }
 

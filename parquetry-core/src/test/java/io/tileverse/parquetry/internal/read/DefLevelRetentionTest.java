@@ -37,6 +37,7 @@ import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.CompressionCodec;
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.PhysicalType;
+import io.tileverse.parquetry.internal.read.page.DataPageRun;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
@@ -198,7 +199,8 @@ class DefLevelRetentionTest {
                 .dataPageOffset(0L)
                 .build();
 
-        return new FetchedColumnChunk(ELEMENT_PATH, meta, maxRep, maxDef, segment, Optional.empty());
+        return new FetchedColumnChunk(
+                ELEMENT_PATH, meta, maxRep, maxDef, List.of(new DataPageRun(segment, 0)), Optional.empty());
     }
 
     private static SchemaNode.Primitive optionalInt32Element() {

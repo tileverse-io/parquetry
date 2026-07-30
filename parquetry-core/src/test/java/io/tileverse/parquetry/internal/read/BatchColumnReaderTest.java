@@ -52,6 +52,7 @@ import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.CompressionCodec;
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.PhysicalType;
+import io.tileverse.parquetry.internal.read.page.DataPageRun;
 import io.tileverse.parquetry.internal.read.page.Dictionary;
 import io.tileverse.parquetry.internal.read.page.PageCursor;
 import io.tileverse.parquetry.io.SegmentPool;
@@ -1004,7 +1005,8 @@ class BatchColumnReaderTest {
                 .dataPageOffset(0L)
                 .build();
 
-        return new FetchedColumnChunk(PATH, meta, /*maxRep*/ 0, /*maxDef*/ 1, segment, Optional.of(dictionary));
+        return new FetchedColumnChunk(
+                PATH, meta, /*maxRep*/ 0, /*maxDef*/ 1, List.of(new DataPageRun(segment, 0)), Optional.of(dictionary));
     }
 
     private static List<MemorySegment> toSegments(byte[][] values) {
@@ -1224,7 +1226,8 @@ class BatchColumnReaderTest {
                 .dataPageOffset(0L)
                 .build();
 
-        return new FetchedColumnChunk(path, meta, maxRep, maxDef, segment, Optional.empty());
+        return new FetchedColumnChunk(
+                path, meta, maxRep, maxDef, List.of(new DataPageRun(segment, 0)), Optional.empty());
     }
 
     /** Wraps a byte array in a read-only heap {@link MemorySegment} and builds a required DOUBLE column chunk. */
@@ -1247,7 +1250,8 @@ class BatchColumnReaderTest {
                 .dataPageOffset(0L)
                 .build();
 
-        return new FetchedColumnChunk(PATH, meta, /*maxRep*/ 0, maxDef, segment, Optional.empty());
+        return new FetchedColumnChunk(
+                PATH, meta, /*maxRep*/ 0, maxDef, List.of(new DataPageRun(segment, 0)), Optional.empty());
     }
 
     /** Wraps a byte array in a read-only heap {@link MemorySegment} and builds a required INT64 column chunk. */
@@ -1265,7 +1269,8 @@ class BatchColumnReaderTest {
                 .dataPageOffset(0L)
                 .build();
 
-        return new FetchedColumnChunk(PATH, meta, /*maxRep*/ 0, /*maxDef*/ 0, segment, Optional.empty());
+        return new FetchedColumnChunk(
+                PATH, meta, /*maxRep*/ 0, /*maxDef*/ 0, List.of(new DataPageRun(segment, 0)), Optional.empty());
     }
 
     /** Wraps a byte array in a read-only heap {@link MemorySegment} and builds a required FLOAT column chunk. */
@@ -1283,7 +1288,8 @@ class BatchColumnReaderTest {
                 .dataPageOffset(0L)
                 .build();
 
-        return new FetchedColumnChunk(PATH, meta, /*maxRep*/ 0, /*maxDef*/ 0, segment, Optional.empty());
+        return new FetchedColumnChunk(
+                PATH, meta, /*maxRep*/ 0, /*maxDef*/ 0, List.of(new DataPageRun(segment, 0)), Optional.empty());
     }
 
     /**
@@ -1317,7 +1323,8 @@ class BatchColumnReaderTest {
                 .dataPageOffset(0L)
                 .build();
 
-        return new FetchedColumnChunk(PATH, meta, /*maxRep*/ 0, /*maxDef*/ 0, segment, Optional.of(dictionary));
+        return new FetchedColumnChunk(
+                PATH, meta, /*maxRep*/ 0, /*maxDef*/ 0, List.of(new DataPageRun(segment, 0)), Optional.of(dictionary));
     }
 
     /**
@@ -1453,7 +1460,8 @@ class BatchColumnReaderTest {
                 .dataPageOffset(0L)
                 .build();
 
-        return new FetchedColumnChunk(PATH, meta, /*maxRep*/ 0, maxDef, segment, Optional.empty());
+        return new FetchedColumnChunk(
+                PATH, meta, /*maxRep*/ 0, maxDef, List.of(new DataPageRun(segment, 0)), Optional.empty());
     }
 
     private static byte[] encodeInt32sLittleEndian(int[] values) {

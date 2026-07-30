@@ -16,13 +16,12 @@
 package io.tileverse.parquetry.internal.read;
 
 /**
- * Where a column chunk's dictionary prefix - its bytes up to the first data page - lives inside a
- * {@link CoalescedRange}: which range, and the offset/length within it. Data pages are located by {@link RunSlice}
- * instead, one per fetched run.
+ * Where one run of a column's data pages lives inside a {@link CoalescedRange}: which range, the offset and length
+ * within it, and the offset-index ordinal of the run's first data page.
  */
-public record ColumnSlice(int rangeIndex, int offsetWithinRange, int length) {
+record RunSlice(int rangeIndex, int offsetWithinRange, int length, int firstPageOrdinal) {
 
-    public ColumnSlice {
+    RunSlice {
         if (rangeIndex < 0) {
             throw new IllegalArgumentException("rangeIndex must be >= 0, got " + rangeIndex);
         }
@@ -31,6 +30,9 @@ public record ColumnSlice(int rangeIndex, int offsetWithinRange, int length) {
         }
         if (length <= 0) {
             throw new IllegalArgumentException("length must be > 0, got " + length);
+        }
+        if (firstPageOrdinal < 0) {
+            throw new IllegalArgumentException("firstPageOrdinal must be >= 0, got " + firstPageOrdinal);
         }
     }
 }

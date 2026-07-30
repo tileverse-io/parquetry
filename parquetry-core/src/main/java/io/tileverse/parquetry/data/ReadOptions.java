@@ -47,6 +47,11 @@ import lombok.NonNull;
  *     the output columns only for rows that match the predicate (two-phase decode); when off, decode every surviving
  *     row's output columns and drop non-matches at materialization. Honored only when {@code useRecordLevelFilter} is
  *     on and the predicate is non-trivial; otherwise it has no effect.
+ * @param usePageNarrowedFetch when the decode side qualifies a row group for page-skip, fetch only the surviving page
+ *     runs (plus the dictionary prefix) instead of whole column chunks; when off, fetches stay whole-chunk while
+ *     decode-side page skip continues unchanged. A page left out of the fetch is never header-walked either, hence it
+ *     counts toward neither {@code pagesDecoded} nor {@code pagesPruned} in the read stats (see
+ *     {@link io.tileverse.parquetry.observe.RowGroupRead})
  * @param queryObserver receives query and row-group boundary callbacks; never {@code null} (defaults to
  *     {@link QueryObserver#NONE})
  * @param batchSize maximum row count per emitted batch on the {@code readBatches(...)} path; empty means each batch is
@@ -62,6 +67,7 @@ public record ReadOptions(
         boolean useBloomFilter,
         boolean useRecordLevelFilter,
         boolean useLateMaterialization,
+        boolean usePageNarrowedFetch,
         @NonNull QueryObserver queryObserver,
         @NonNull OptionalInt batchSize,
         @NonNull Optional<SpatialReadProbe> spatialReadProbe) {
@@ -91,6 +97,7 @@ public record ReadOptions(
         builder.useBloomFilter = useBloomFilter;
         builder.useRecordLevelFilter = useRecordLevelFilter;
         builder.useLateMaterialization = useLateMaterialization;
+        builder.usePageNarrowedFetch = usePageNarrowedFetch;
         builder.queryObserver = queryObserver;
         builder.batchSize = batchSize;
         builder.spatialReadProbe = spatialReadProbe;
@@ -106,6 +113,7 @@ public record ReadOptions(
         private boolean useBloomFilter = true;
         private boolean useRecordLevelFilter = true;
         private boolean useLateMaterialization = true;
+        private boolean usePageNarrowedFetch = true;
         private QueryObserver queryObserver = QueryObserver.NONE;
         private OptionalInt batchSize = OptionalInt.empty();
         private Optional<SpatialReadProbe> spatialReadProbe = Optional.empty();
@@ -139,6 +147,11 @@ public record ReadOptions(
 
         public Builder useLateMaterialization(boolean v) {
             this.useLateMaterialization = v;
+            return this;
+        }
+
+        public Builder usePageNarrowedFetch(boolean v) {
+            this.usePageNarrowedFetch = v;
             return this;
         }
 
@@ -177,6 +190,7 @@ public record ReadOptions(
                     useBloomFilter,
                     useRecordLevelFilter,
                     useLateMaterialization,
+                    usePageNarrowedFetch,
                     queryObserver,
                     batchSize,
                     spatialReadProbe);

@@ -205,11 +205,11 @@ final class BatchColumnReader {
         this.dictionary = chunk.dictionary();
         if (survivingRows != null && offsetIndex != null) {
             this.survivingRows = survivingRows;
-            PageSelection selection = PageSelection.forRanges(offsetIndex.pageLocations(), totalValues, survivingRows);
-            this.pageCursor = new PageCursor(chunk.compressedSegment(), columnPath, selection);
+            PageSelection selection = PageSelection.forColumn(offsetIndex, totalValues, survivingRows);
+            this.pageCursor = new PageCursor(chunk.dataPageRuns(), columnPath, selection);
         } else {
             this.survivingRows = null;
-            this.pageCursor = new PageCursor(chunk.compressedSegment(), columnPath);
+            this.pageCursor = new PageCursor(chunk.dataPageRuns(), columnPath, null);
         }
     }
 

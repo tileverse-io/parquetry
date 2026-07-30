@@ -20,6 +20,7 @@ import java.io.UncheckedIOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -44,6 +45,7 @@ import lombok.NonNull;
 public final class RowGroupPrefetcher implements AutoCloseable {
 
     private final List<RowGroupSurvivor> survivors;
+    private final List<Optional<RowMask>> masks;
     private final RowGroupFetcher fetcher;
     private final FetchBudget budget;
     private final ExecutorService executor;
@@ -56,28 +58,38 @@ public final class RowGroupPrefetcher implements AutoCloseable {
 
     public RowGroupPrefetcher(
             @NonNull List<RowGroupSurvivor> survivors,
+            @NonNull List<Optional<RowMask>> masks,
             @NonNull RowGroupFetcher fetcher,
             @NonNull FetchBudget budget,
             @NonNull ExecutorService executor,
             int prefetchDepth,
             int maxConcurrentFetchesPerRead) {
-        this(survivors, fetcher, budget, executor, prefetchDepth, maxConcurrentFetchesPerRead, false);
+        this(survivors, masks, fetcher, budget, executor, prefetchDepth, maxConcurrentFetchesPerRead, false);
     }
 
     /**
-     * Same as the six-argument constructor, additionally timing each fetch when {@code wantsTimings} is on: every
+     * Same as the seven-argument constructor, additionally timing each fetch when {@code wantsTimings} is on: every
      * {@link RowGroupFetch} then reports its {@code fetchNanos}. When off (the default), no fetch reads the clock.
+     *
+     * @param masks one fetch-side page-skip mask per survivor, in survivor order; an empty entry fetches that row
+     *     group's chunks whole
      */
     @SuppressWarnings("java:S107") // internal prefetcher wiring: the parameters are cohesive collaborators of one read
     public RowGroupPrefetcher(
             @NonNull List<RowGroupSurvivor> survivors,
+            @NonNull List<Optional<RowMask>> masks,
             @NonNull RowGroupFetcher fetcher,
             @NonNull FetchBudget budget,
             @NonNull ExecutorService executor,
             int prefetchDepth,
             int maxConcurrentFetchesPerRead,
             boolean wantsTimings) {
+        if (masks.size() != survivors.size()) {
+            throw new IllegalArgumentException("Expected one fetch mask per survivor, got " + masks.size()
+                    + " masks for " + survivors.size() + " survivors");
+        }
         this.survivors = List.copyOf(survivors);
+        this.masks = List.copyOf(masks);
         this.fetcher = fetcher;
         this.budget = budget;
         this.executor = executor;
@@ -108,7 +120,7 @@ public final class RowGroupPrefetcher implements AutoCloseable {
     }
 
     private void trySubmit(int index) {
-        FetchPlan plan = fetcher.planFor(survivors.get(index));
+        FetchPlan plan = fetcher.planFor(survivors.get(index), masks.get(index));
         long span = plan.totalBytes();
         if (!budget.tryReserve(span)) {
             return;
@@ -139,7 +151,7 @@ public final class RowGroupPrefetcher implements AutoCloseable {
 
     private RowGroupFetch fetchInline(int index) throws IOException {
         RowGroupSurvivor survivor = survivors.get(index);
-        FetchPlan plan = fetcher.planFor(survivor);
+        FetchPlan plan = fetcher.planFor(survivor, masks.get(index));
         return fetcher.fetch(survivor, plan, BudgetReservation.NONE, wantsTimings);
     }
 

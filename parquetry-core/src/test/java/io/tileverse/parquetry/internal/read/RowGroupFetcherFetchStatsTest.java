@@ -61,7 +61,7 @@ class RowGroupFetcherFetchStatsTest {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             RowGroupSurvivor survivor = survivorFor(source, schema);
             RowGroupFetcher fetcher = TestFetchers.over(source, schema, schema, SegmentPool.getDefault(), accumulator);
-            FetchPlan plan = fetcher.planFor(survivor);
+            FetchPlan plan = fetcher.planFor(survivor, Optional.empty());
 
             try (RowGroupFetch fetch = fetcher.fetch(survivor, plan, BudgetReservation.NONE)) {
                 FetchStats stats = accumulator.snapshot();
@@ -84,7 +84,8 @@ class RowGroupFetcherFetchStatsTest {
             RowGroupFetcher fetcher =
                     TestFetchers.over(source, schema, schema, SegmentPool.getDefault(), FetchAccumulator.NONE);
 
-            try (RowGroupFetch fetch = fetcher.fetch(survivor, fetcher.planFor(survivor), BudgetReservation.NONE)) {
+            try (RowGroupFetch fetch =
+                    fetcher.fetch(survivor, fetcher.planFor(survivor, Optional.empty()), BudgetReservation.NONE)) {
                 assertThat(fetch.columns())
                         .as("the fetch still reads its column chunk")
                         .hasSize(1);

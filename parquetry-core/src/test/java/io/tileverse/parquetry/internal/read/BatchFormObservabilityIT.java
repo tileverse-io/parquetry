@@ -169,6 +169,7 @@ class BatchFormObservabilityIT {
             RowGroupFetcher fetcher = TestFetchers.over(source, schema, schema, SegmentPool.create());
             return new RowGroupPrefetcher(
                     survivors,
+                    Collections.nCopies(survivors.size(), Optional.empty()),
                     fetcher,
                     FetchBudget.defaultBudget(),
                     newFetchExecutor(),

@@ -138,7 +138,8 @@ class SkipDecodeColumnReadTest {
             RowGroupChunks chunks = RowGroupChunks.of(rowGroup, schema, loader);
             RowGroupFetcher fetcher = TestFetchers.over(source, schema, schema, SegmentPool.getDefault());
             RowGroupSurvivor survivor = new RowGroupSurvivor(chunks, Optional.of(mask), true);
-            try (RowGroupFetch fetch = fetcher.fetch(survivor, fetcher.planFor(survivor), BudgetReservation.NONE)) {
+            try (RowGroupFetch fetch =
+                    fetcher.fetch(survivor, fetcher.planFor(survivor, Optional.empty()), BudgetReservation.NONE)) {
                 FetchedColumnChunk chunk = fetch.columns().get(0);
                 BatchColumnReader colReader = new BatchColumnReader(
                         TestDecodeBuffers.ample(), chunk, leaf(schema), mask, offsetIndex, skipDecode);

@@ -28,6 +28,14 @@
       <artifactId>parquetry-io</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- The shared recording ByteRangeSource that read byte assertions build on. -->
+    <dependency>
+      <groupId>io.tileverse.parquetry</groupId>
+      <artifactId>parquetry-io</artifactId>
+      <version>${project.version}</version>
+      <type>test-jar</type>
+      <scope>test</scope>
+    </dependency>
     <dependency>
       <groupId>io.tileverse.parquetry</groupId>
       <artifactId>parquetry-compression</artifactId>
