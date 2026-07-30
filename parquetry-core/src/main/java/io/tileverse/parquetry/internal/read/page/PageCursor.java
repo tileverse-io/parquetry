@@ -54,10 +54,7 @@ public final class PageCursor {
     private int decodedDataPageCount;
     private int skippedDataPageCount;
 
-    public PageCursor(MemorySegment chunk, ColumnPath columnPath) {
-        this(chunk, columnPath, null);
-    }
-
+    /** Walks a chunk fetched whole: one run over {@code chunk}, whose first data page is ordinal zero. */
     public PageCursor(MemorySegment chunk, ColumnPath columnPath, PageSelection selection) {
         this(List.of(new DataPageRun(chunk, 0)), columnPath, selection);
     }
@@ -68,7 +65,9 @@ public final class PageCursor {
      * {@link PageSelection#firstRowIndex(int)} correct when the pages between runs were never fetched.
      */
     public PageCursor(List<DataPageRun> runs, ColumnPath columnPath, PageSelection selection) {
-        // An empty run yields no page and would break the walk's has-more-bytes invariant.
+        // An empty run yields no page, yet hasRemaining() counts any un-walked run as bytes left to decode. Keeping
+        // one would make an all-empty run list look non-empty, breaking the empty-chunk contract
+        // BatchColumnReader.hasMore() depends on.
         this.runs = runs.stream().filter(run -> run.segment().byteSize() > 0).toList();
         this.columnPath = columnPath;
         this.selection = selection;

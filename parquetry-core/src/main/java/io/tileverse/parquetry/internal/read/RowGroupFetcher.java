@@ -109,9 +109,8 @@ public final class RowGroupFetcher {
     /**
      * Emits the narrowed units for one column: the dictionary prefix {@code [chunkStart, firstDataPage)} when
      * non-empty, then one unit per surviving-page run. Falls back to the whole chunk when the mask lacks this column's
-     * offset index, when the offset index locates pages outside the chunk's own byte extent - below its first byte or
-     * past its last - or when every page survives (the degenerate case where the whole chunk IS the narrowed plan,
-     * trailing bytes included).
+     * offset index, when the offset index locates any page outside the chunk's own byte extent, or when every page
+     * survives (the degenerate case where the whole chunk IS the narrowed plan, trailing bytes included).
      */
     private void addUnitsFor(List<FetchUnit> units, ColumnPath path, ColumnMetaData meta, RowMask mask) {
         OffsetIndex offsetIndex = mask.offsetIndexes().get(path);
@@ -152,11 +151,12 @@ public final class RowGroupFetcher {
      * corrupt index's blast radius at wrong rows in this column, which is where it was before per-page fetching.
      */
     private static boolean locatesPagesOutsideChunk(OffsetIndex offsetIndex, long chunkStart, long chunkEnd) {
-        List<PageLocation> pages = offsetIndex.pageLocations();
-        long firstPageOffset = pages.get(0).offset();
-        PageLocation lastPage = pages.get(pages.size() - 1);
-        long lastPageEnd = lastPage.offset() + lastPage.compressedPageSize();
-        return firstPageOffset < chunkStart || firstPageOffset >= chunkEnd || lastPageEnd > chunkEnd;
+        for (PageLocation page : offsetIndex.pageLocations()) {
+            if (page.offset() < chunkStart || page.offset() + page.compressedPageSize() > chunkEnd) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

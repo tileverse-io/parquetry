@@ -24,6 +24,13 @@ import java.util.Optional;
  * <p>{@code rowsDecoded} is the rows actually decoded for the group, not its metadata row count. With a streaming or
  * prefetching reader, an early-terminated stream may have decoded ahead of consumption by up to the hand-off depth: the
  * figure is rows decoded, not rows consumed.
+ *
+ * <p>{@code pagesDecoded} and {@code pagesPruned} both count data pages the decode walk reached: the ones it decoded,
+ * and the ones it stepped over because their rows fall outside the surviving rows. When
+ * {@link io.tileverse.parquetry.data.ReadOptions#usePageNarrowedFetch()} is on - the default - a page the column-index
+ * tier eliminated is never fetched and never header-walked, and appears in neither count; {@code pagesPruned} then
+ * reports only the pages inside a fetched run that the page selection rejects. The pages the fetch left behind are not
+ * counted anywhere yet.
  */
 public record RowGroupRead(
         int rowGroupIndex,

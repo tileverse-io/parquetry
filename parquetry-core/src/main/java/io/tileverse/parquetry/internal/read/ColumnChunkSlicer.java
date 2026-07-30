@@ -86,16 +86,6 @@ final class ColumnChunkSlicer {
         return chunkOf(path, meta, fileSchema, stripDictionaryPage(runs, dict.dataPageOffset()), dict.dictionary());
     }
 
-    /**
-     * @param chunkSegment a read-only view of the full compressed column chunk (dictionary page if present + all data
-     *     pages), sliced out of a coalesced range buffer
-     */
-    static FetchedColumnChunk slice(
-            MemorySegment chunkSegment, ColumnMetaData meta, ColumnPath path, ParquetSchema fileSchema)
-            throws IOException {
-        return slice(Optional.empty(), List.of(new DataPageRun(chunkSegment, 0)), meta, path, fileSchema);
-    }
-
     /** Drops the leading {@code dataPageOffset} bytes the dictionary page occupies at the head of the first run. */
     private static List<DataPageRun> stripDictionaryPage(List<DataPageRun> runs, int dataPageOffset) {
         MemorySegment head = runs.get(0).segment();

@@ -202,6 +202,24 @@ class PageNarrowedPlanTest {
     }
 
     @Test
+    void middlePageOutsideTheChunkFallsBackToWholeChunk() throws IOException {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            Fixture fixture = Fixture.open(source);
+            OffsetIndex middlePagePastTheChunk =
+                    withPageOffset(fixture.offsetIndex(A), DEAD_MIDDLE_PAGE, chunkEndOf(fixture.meta(A)));
+            RowMask mask =
+                    new RowMask(firstAndLastRows(), Map.of(A, middlePagePastTheChunk, B, fixture.offsetIndex(B)));
+
+            FetchPlan plan = fixture.plan(Optional.of(mask));
+
+            assertWholeChunk(plan, fixture.meta(A), A);
+            assertThat(runOrdinals(plan, B))
+                    .as("an out-of-extent page between in-extent extremes must not be narrowed on either")
+                    .containsExactly(0, LAST_PAGE);
+        }
+    }
+
+    @Test
     void firstDataPageAtTheChunkEndFallsBackToWholeChunk() throws IOException {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             Fixture fixture = Fixture.open(source);
@@ -494,9 +512,14 @@ class PageNarrowedPlanTest {
 
     /** The same page locations with the first one moved to {@code offset}, which the chunk cannot contain. */
     private static OffsetIndex withFirstPageOffset(OffsetIndex offsetIndex, long offset) {
+        return withPageOffset(offsetIndex, 0, offset);
+    }
+
+    /** The same page locations with the one at {@code index} moved to {@code offset}, every other left in place. */
+    private static OffsetIndex withPageOffset(OffsetIndex offsetIndex, int index, long offset) {
         List<PageLocation> pages = new ArrayList<>(offsetIndex.pageLocations());
-        PageLocation first = pages.get(0);
-        pages.set(0, new PageLocation(offset, first.compressedPageSize(), first.firstRowIndex()));
+        PageLocation page = pages.get(index);
+        pages.set(index, new PageLocation(offset, page.compressedPageSize(), page.firstRowIndex()));
         return new OffsetIndex(pages, offsetIndex.unencodedByteArrayDataBytes());
     }
 

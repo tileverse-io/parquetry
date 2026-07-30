@@ -15,7 +15,11 @@
  */
 package io.tileverse.parquetry.internal.read;
 
-/** Where a column chunk lives inside a {@link CoalescedRange}: which range, and the offset/length within it. */
+/**
+ * Where a column chunk's dictionary prefix - its bytes up to the first data page - lives inside a
+ * {@link CoalescedRange}: which range, and the offset/length within it. Data pages are located by {@link RunSlice}
+ * instead, one per fetched run.
+ */
 public record ColumnSlice(int rangeIndex, int offsetWithinRange, int length) {
 
     public ColumnSlice {

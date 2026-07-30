@@ -24,6 +24,11 @@ import io.tileverse.parquetry.filter.explain.Tier;
 /**
  * Mergeable summary of one query's execution. {@code wallClockNanos} is real elapsed time and is kept separate from any
  * {@link PhaseTimings} CPU sums, which overlap across row groups.
+ *
+ * <p>{@code pagesDecoded} and {@code pagesPruned} sum the per-row-group page counts described on {@link RowGroupRead}:
+ * both cover only data pages the decode walk reached, and with
+ * {@link io.tileverse.parquetry.data.ReadOptions#usePageNarrowedFetch()} on - the default - the pages the column-index
+ * tier eliminated are never fetched and land in neither count.
  */
 public record QueryStats(
         long wallClockNanos,
