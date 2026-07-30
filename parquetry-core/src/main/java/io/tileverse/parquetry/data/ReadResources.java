@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.data;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
@@ -74,8 +75,10 @@ final class ReadResources {
             DecodeObservation observation,
             List<RowPositionSynthesis> rowPositions,
             Optional<RowGroupGate> rowGroupGate) {
+        List<Optional<RowMask>> fetchMasks =
+                options.usePageNarrowedFetch() ? decodeMasks : Collections.nCopies(survivors.size(), Optional.empty());
         RowGroupPrefetcher prefetcher =
-                newPrefetcher(survivors, projectedSchema, accumulator, observation.wantsTimings());
+                newPrefetcher(survivors, fetchMasks, projectedSchema, accumulator, observation.wantsTimings());
         List<Boolean> recordEvalRequired = recordEvalFlagsFor(survivors);
         DecodeBufferAllocator decodeBufferAllocator = newDecodeBufferAllocator();
         return new ParallelDecodeCoordinator(
@@ -103,9 +106,12 @@ final class ReadResources {
      * Builds the coalescing fetcher and the prefetch pipeline for one read. The prefetcher owns a fresh per-read
      * virtual-thread executor; closing the returned stream cascades to {@link RowGroupPrefetcher#close()}, which shuts
      * the executor down. No executor outlives the read.
+     *
+     * @param masks one fetch-side page-skip mask per survivor, in survivor order
      */
     private RowGroupPrefetcher newPrefetcher(
             List<RowGroupSurvivor> survivors,
+            List<Optional<RowMask>> masks,
             ParquetSchema projectedSchema,
             FetchAccumulator accumulator,
             boolean wantsTimings) {
@@ -126,6 +132,7 @@ final class ReadResources {
         try {
             return new RowGroupPrefetcher(
                     survivors,
+                    masks,
                     fetcher,
                     runtime.fetchBudget(),
                     executor,

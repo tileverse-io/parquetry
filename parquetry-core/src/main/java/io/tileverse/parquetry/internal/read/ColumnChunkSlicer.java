@@ -60,7 +60,7 @@ final class ColumnChunkSlicer {
      * starting at the chunk's first byte.
      *
      * @param dictionaryPrefix view of the chunk's bytes up to its first data page, when fetched separately
-     * @param runs views of the fetched stretches of the chunk's pages, in file order
+     * @param runs views of the fetched stretches of the chunk's pages, in file order; never empty
      */
     static FetchedColumnChunk slice(
             Optional<MemorySegment> dictionaryPrefix,
@@ -69,12 +69,14 @@ final class ColumnChunkSlicer {
             ColumnPath path,
             ParquetSchema fileSchema)
             throws IOException {
-        if (dictionaryPrefix.isPresent()) {
-            DictionaryAndOffset dict = maybeDecodeDictionary(dictionaryPrefix.orElseThrow(), meta, path, fileSchema);
-            return chunkOf(path, meta, fileSchema, runs, dict.dictionary());
-        }
         if (runs.isEmpty()) {
-            return chunkOf(path, meta, fileSchema, runs, Optional.empty());
+            throw new IllegalStateException("No data-page bytes were fetched for column " + path.dot()
+                    + "; every fetched chunk holds at least one run of pages");
+        }
+        if (dictionaryPrefix.isPresent()) {
+            Optional<Dictionary<?>> dictionary =
+                    decodeDictionaryPrefix(dictionaryPrefix.orElseThrow(), meta, path, fileSchema);
+            return chunkOf(path, meta, fileSchema, runs, dictionary);
         }
         MemorySegment head = runs.get(0).segment();
         DictionaryAndOffset dict = maybeDecodeDictionary(head, meta, path, fileSchema);
@@ -131,6 +133,25 @@ final class ColumnChunkSlicer {
     private record DictionaryAndOffset(Optional<Dictionary<?>> dictionary, int dataPageOffset) {}
 
     private static final DictionaryAndOffset NO_DICTIONARY = new DictionaryAndOffset(Optional.empty(), 0);
+
+    /**
+     * Decodes the dictionary page the fetch planned as its own range. That range spans the chunk's bytes up to its
+     * first data page, which can only be a dictionary page (plus any writer padding around it) - a data page there
+     * would mean the planner narrowed a chunk whose pages it had mislocated, and decoding on would drop a dictionary
+     * the data pages reference.
+     */
+    private static Optional<Dictionary<?>> decodeDictionaryPrefix(
+            MemorySegment prefix, ColumnMetaData meta, ColumnPath path, ParquetSchema fileSchema) throws IOException {
+        MemorySegmentInputStream stream = new MemorySegmentInputStream(prefix, 0L, prefix.byteSize());
+        PageHeader header = readPageHeader(stream, path);
+        if (header.type() != PageType.DICTIONARY_PAGE) {
+            throw new MalformedFileException("Column " + path.dot()
+                    + " was fetched with a dictionary prefix but the prefix begins with a page of type "
+                    + header.type());
+        }
+        return decodeDictionaryPage(prefix, stream.position(), header, meta, path, fileSchema)
+                .dictionary();
+    }
 
     /**
      * Decodes the dictionary page when one sits at the front of {@code chunkSegment}, returning the dictionary and the

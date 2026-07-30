@@ -231,7 +231,7 @@ class LateMaterializingRowGroupReaderTest {
             long numRows) {
 
         RowGroupFetch fetch() throws Exception {
-            return fetcher.fetch(survivor, fetcher.planFor(survivor), BudgetReservation.NONE);
+            return fetcher.fetch(survivor, fetcher.planFor(survivor, Optional.empty()), BudgetReservation.NONE);
         }
     }
 
