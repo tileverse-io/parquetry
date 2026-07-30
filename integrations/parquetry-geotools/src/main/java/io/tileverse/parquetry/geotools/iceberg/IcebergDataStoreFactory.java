@@ -24,7 +24,6 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.stream.Stream;
 
-import org.geotools.api.data.DataAccessFactory.Param;
 import org.geotools.api.data.DataStore;
 import org.geotools.api.data.DataStoreFactorySpi;
 
@@ -74,7 +73,7 @@ public final class IcebergDataStoreFactory implements DataStoreFactorySpi {
     public boolean canProcess(Map<String, ?> params) {
         try {
             return ICEBERG_URI.lookUp(params) != null;
-        } catch (IOException e) {
+        } catch (IOException _) {
             return false;
         }
     }

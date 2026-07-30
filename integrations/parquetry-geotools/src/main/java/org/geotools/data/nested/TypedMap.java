@@ -28,6 +28,8 @@ import java.util.Set;
  * read-only contract for free. Presenting as a {@code Map} lets a generic JSON encoder serialize the value as an
  * object.
  */
+// S2160: the Map contract requires equality by entries only; the inherited AbstractMap.equals is correct.
+@SuppressWarnings("java:S2160")
 public final class TypedMap extends AbstractMap<Object, Object> {
 
     private final NestedType keyType;

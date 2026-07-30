@@ -37,6 +37,8 @@ import org.geotools.data.nested.NestedType.StructType;
  * translated to owned, batch-independent forms ({@link Struct}, {@link TypedList}, {@link TypedMap}, or owned scalars),
  * never live {@code ParquetRecord} views.
  */
+// S2160: the Map contract requires equality by entries only; the inherited AbstractMap.equals is correct.
+@SuppressWarnings("java:S2160")
 public final class Struct extends AbstractMap<String, Object> {
 
     private final StructType type;

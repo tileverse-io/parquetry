@@ -27,6 +27,8 @@ import java.util.List;
  * read-only contract for free. Presenting as a {@code List} lets a generic JSON encoder serialize the value as an
  * array.
  */
+// S2160: the List contract requires equality by elements only; the inherited AbstractList.equals is correct.
+@SuppressWarnings("java:S2160")
 public final class TypedList extends AbstractList<Object> {
 
     private final NestedType elementType;

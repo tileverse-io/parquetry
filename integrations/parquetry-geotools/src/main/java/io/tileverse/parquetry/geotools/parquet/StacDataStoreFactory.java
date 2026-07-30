@@ -21,7 +21,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 
-import org.geotools.api.data.DataAccessFactory.Param;
 import org.geotools.api.data.DataStore;
 import org.geotools.api.data.DataStoreFactorySpi;
 
@@ -69,7 +68,7 @@ public final class StacDataStoreFactory implements DataStoreFactorySpi {
     public boolean canProcess(Map<String, ?> params) {
         try {
             return STAC_URI.lookUp(params) != null;
-        } catch (IOException cannotRead) {
+        } catch (IOException _) {
             return false;
         }
     }
