@@ -39,6 +39,15 @@ public final class PageSelection {
     }
 
     /**
+     * The one derivation of a column's page survival, shared by the fetch planner and the column reader with identical
+     * inputs: the column's offset index, its {@code num_values} (the row-span bound for the last page), and the row
+     * group's surviving rows. One call site on each side keeps fetch and decode structurally incapable of drifting.
+     */
+    public static PageSelection forColumn(OffsetIndex offsetIndex, long numValues, RowRanges survivingRows) {
+        return forRanges(offsetIndex.pageLocations(), numValues, survivingRows);
+    }
+
+    /**
      * Computes the selection for one column. A page survives when its row span overlaps any surviving range. The last
      * page's span ends at {@code rowGroupRowCount - 1}; earlier pages end one row before the next page begins.
      */
