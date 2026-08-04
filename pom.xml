@@ -92,7 +92,7 @@
     <jspecify.version>1.0.0</jspecify.version>
     <lombok.version>1.18.46</lombok.version>
 
-    <junit.version>5.11.3</junit.version>
+    <junit.version>6.0.3</junit.version>
     <assertj.version>3.26.3</assertj.version>
     <testcontainers.version>2.0.5</testcontainers.version>
     <jts.version>1.20.0</jts.version>
