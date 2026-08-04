@@ -59,14 +59,18 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
 
     private static final String PARQUET_EXTENSION = ".parquet";
 
+    // Deliberately "Parquet", not "GeoParquet": the store reads any Parquet file (geo is first class but optional),
+    // and GeoServer resolves a saved store's factory by display name, where the deprecated DuckDB-based geoparquet
+    // module already claims "GeoParquet".
     @Override
     public String getDisplayName() {
-        return "GeoParquet";
+        return "Parquet";
     }
 
     @Override
     public String getDescription() {
-        return "Read-only GeoParquet (local, S3, Azure, GCS, HTTP)";
+        return "Read-only Parquet and GeoParquet files and directories on local, S3, Azure, GCS, or HTTP storage"
+                + " (Parquetry engine)";
     }
 
     @Override
