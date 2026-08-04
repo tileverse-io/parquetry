@@ -40,10 +40,12 @@ import io.tileverse.stac.StacCatalogReader;
  */
 public final class StacDataStoreFactory implements DataStoreFactorySpi {
 
+    private static final String DISABLED_SYS_PROP = "parquetry.geotools.stac-geoparquet.disabled";
+
     // A required URI key named after the store type. Its presence is what tells DataStoreFinder this factory, and no
     // other, can open the parameters - no separate discriminator param is needed.
     public static final Param STAC_URI = new Param(
-            "geoparquet-stac",
+            "stac-geoparquet",
             String.class,
             "URI of a STAC catalog.json or a stac-geoparquet item-table (*.parquet)",
             true);
@@ -56,7 +58,7 @@ public final class StacDataStoreFactory implements DataStoreFactorySpi {
 
     @Override
     public String getDescription() {
-        return "Read-only STAC catalog of GeoParquet collections (local, S3, Azure, GCS, HTTP)";
+        return "STAC or STAC-GeoParquet catalog (local, S3, Azure, GCS, HTTP)";
     }
 
     @Override
@@ -75,7 +77,7 @@ public final class StacDataStoreFactory implements DataStoreFactorySpi {
 
     @Override
     public boolean isAvailable() {
-        return true;
+        return !Boolean.getBoolean(DISABLED_SYS_PROP);
     }
 
     @Override
@@ -105,7 +107,7 @@ public final class StacDataStoreFactory implements DataStoreFactorySpi {
         try {
             return URI.create(uriText);
         } catch (IllegalArgumentException malformed) {
-            throw new IOException("invalid geoparquet-stac URI: " + uriText, malformed);
+            throw new IOException("invalid stac-geoparquet URI: " + uriText, malformed);
         }
     }
 

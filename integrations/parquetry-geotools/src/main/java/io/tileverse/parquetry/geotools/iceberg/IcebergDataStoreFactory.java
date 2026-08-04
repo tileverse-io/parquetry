@@ -41,6 +41,8 @@ import io.tileverse.parquetry.tileverse.ParquetStorage;
 /** Opens a read-only {@link DataStore} over an Iceberg table or a warehouse of tables. */
 public final class IcebergDataStoreFactory implements DataStoreFactorySpi {
 
+    private static final String DISABLED_SYS_PROP = "parquetry.geotools.iceberg.disabled";
+
     public static final Param ICEBERG_URI = new Param(
             "iceberg",
             String.class,
@@ -80,7 +82,7 @@ public final class IcebergDataStoreFactory implements DataStoreFactorySpi {
 
     @Override
     public boolean isAvailable() {
-        return true;
+        return !Boolean.getBoolean(DISABLED_SYS_PROP);
     }
 
     @Override

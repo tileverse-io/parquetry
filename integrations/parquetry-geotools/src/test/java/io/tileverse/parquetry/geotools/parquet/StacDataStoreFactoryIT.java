@@ -37,7 +37,7 @@ class StacDataStoreFactoryIT {
     @Test
     void canProcessRequiresOwnUriKey() {
         StacDataStoreFactory factory = new StacDataStoreFactory();
-        assertThat(factory.canProcess(Map.of("geoparquet-stac", "file:///tmp/catalog.json")))
+        assertThat(factory.canProcess(Map.of("stac-geoparquet", "file:///tmp/catalog.json")))
                 .isTrue();
         assertThat(factory.canProcess(Map.of("uri", "file:///tmp/catalog.json")))
                 .isFalse();
