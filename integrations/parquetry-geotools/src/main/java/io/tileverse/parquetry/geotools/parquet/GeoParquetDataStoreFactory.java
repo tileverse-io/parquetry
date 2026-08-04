@@ -22,7 +22,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 
-import org.geotools.api.data.DataAccessFactory.Param;
 import org.geotools.api.data.DataStore;
 import org.geotools.api.data.DataStoreFactorySpi;
 import org.geotools.api.data.Parameter;
@@ -36,6 +35,8 @@ import io.tileverse.parquetry.tileverse.ParquetFileSources;
 
 /** Opens a read-only GeoParquet {@link DataStore} from a dataset URI. */
 public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
+
+    private static final String DISABLED_SYS_PROP = "parquetry.geotools.geoparquet.disabled";
 
     // A required URI key named after the store type. Its presence is what tells DataStoreFinder this factory, and no
     // other, can open the parameters - no separate discriminator param is needed.
@@ -89,7 +90,7 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
 
     @Override
     public boolean isAvailable() {
-        return true;
+        return !Boolean.getBoolean(DISABLED_SYS_PROP);
     }
 
     @Override

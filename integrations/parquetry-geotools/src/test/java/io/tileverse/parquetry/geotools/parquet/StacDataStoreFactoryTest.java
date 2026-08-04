@@ -25,6 +25,7 @@ import java.util.Map;
 
 import org.geotools.api.data.DataAccessFactory.Param;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.util.SetSystemProperty;
 
 class StacDataStoreFactoryTest {
 
@@ -33,7 +34,7 @@ class StacDataStoreFactoryTest {
         Param[] params = new StacDataStoreFactory().getParametersInfo();
         List<String> keys = Arrays.stream(params).map(param -> param.key).toList();
 
-        assertThat(keys).contains("geoparquet-stac", "namespace");
+        assertThat(keys).contains("stac-geoparquet", "namespace");
         assertThat(keys).doesNotContain("storage.provider");
         assertThat(keys).anyMatch(key -> key.startsWith("storage.") && !key.equals("storage.provider"));
     }
@@ -45,6 +46,17 @@ class StacDataStoreFactoryTest {
 
         assertThatThrownBy(() -> factory.createDataStore(params))
                 .isInstanceOf(IOException.class)
-                .hasMessageContaining("geoparquet-stac");
+                .hasMessageContaining("stac-geoparquet");
+    }
+
+    @Test
+    void availableByDefault() {
+        assertThat(new StacDataStoreFactory().isAvailable()).isTrue();
+    }
+
+    @Test
+    @SetSystemProperty(key = "parquetry.geotools.stac-geoparquet.disabled", value = "true")
+    void systemPropertyDisablesTheFactory() {
+        assertThat(new StacDataStoreFactory().isAvailable()).isFalse();
     }
 }

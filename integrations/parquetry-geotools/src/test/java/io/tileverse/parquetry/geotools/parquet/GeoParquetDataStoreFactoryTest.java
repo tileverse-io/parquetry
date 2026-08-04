@@ -34,6 +34,7 @@ import org.geotools.api.data.DataStoreFinder;
 import org.geotools.api.data.Parameter;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.util.SetSystemProperty;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -68,9 +69,20 @@ class GeoParquetDataStoreFactoryTest {
         assertThat(factory.canProcess(Map.of("geoparquet", "file:///tmp/x.parquet")))
                 .isTrue();
         assertThat(factory.canProcess(Map.of("uri", "file:///tmp/x.parquet"))).isFalse();
-        assertThat(factory.canProcess(Map.of("geoparquet-stac", "file:///tmp/catalog.json")))
+        assertThat(factory.canProcess(Map.of("stac-geoparquet", "file:///tmp/catalog.json")))
                 .isFalse();
         assertThat(factory.canProcess(Map.of("iceberg", "file:///tmp/wh"))).isFalse();
+    }
+
+    @Test
+    void availableByDefault() {
+        assertThat(new GeoParquetDataStoreFactory().isAvailable()).isTrue();
+    }
+
+    @Test
+    @SetSystemProperty(key = "parquetry.geotools.geoparquet.disabled", value = "true")
+    void systemPropertyDisablesTheFactory() {
+        assertThat(new GeoParquetDataStoreFactory().isAvailable()).isFalse();
     }
 
     @Test

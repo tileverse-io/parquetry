@@ -28,6 +28,7 @@ import java.util.stream.Stream;
 import org.geotools.api.data.DataStore;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.util.SetSystemProperty;
 
 import io.tileverse.parquetry.geotools.data.CatalogDataStore;
 import io.tileverse.parquetry.testkit.TestCorpus;
@@ -43,6 +44,17 @@ class IcebergDataStoreFactoryTest {
         assertThat(factory.canProcess(Map.of("iceberg", "file:///tmp/wh"))).isTrue();
         assertThat(factory.canProcess(Map.of("geoparquet", "file:///tmp/x.parquet")))
                 .isFalse();
+    }
+
+    @Test
+    void availableByDefault() {
+        assertThat(new IcebergDataStoreFactory().isAvailable()).isTrue();
+    }
+
+    @Test
+    @SetSystemProperty(key = "parquetry.geotools.iceberg.disabled", value = "true")
+    void systemPropertyDisablesTheFactory() {
+        assertThat(new IcebergDataStoreFactory().isAvailable()).isFalse();
     }
 
     @Test
