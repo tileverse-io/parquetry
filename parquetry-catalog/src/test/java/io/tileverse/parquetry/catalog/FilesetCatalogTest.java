@@ -50,6 +50,7 @@ import io.tileverse.parquetry.io.FileEntry;
 import io.tileverse.parquetry.io.FileSource;
 import io.tileverse.parquetry.io.LocalFileSource;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.ParquetSchemaException;
 import io.tileverse.parquetry.testsupport.CorpusFixtures;
 
 class FilesetCatalogTest {
@@ -123,7 +124,7 @@ class FilesetCatalogTest {
     }
 
     @Test
-    void schemaMismatchFailsAtFirstDatasetAccess(@TempDir Path dir) throws Exception {
+    void schemaMismatchFailsAtFirstDatasetAccessNamingBothFiles(@TempDir Path dir) throws Exception {
         Files.copy(FILE, dir.resolve("a.parquet"));
         writeNoYearFile(dir.resolve("b.parquet"), 1);
 
@@ -131,8 +132,10 @@ class FilesetCatalogTest {
                 FilesetCatalog.open(LocalFileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
             String name = catalog.datasets().get(0);
             assertThatThrownBy(() -> catalog.dataset(name))
-                    .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("do not share a schema");
+                    .isInstanceOf(ParquetSchemaException.class)
+                    .hasMessageContaining("do not share a schema")
+                    .hasMessageContaining("a.parquet")
+                    .hasMessageContaining("b.parquet");
         }
     }
 

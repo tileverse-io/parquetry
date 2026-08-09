@@ -43,6 +43,7 @@ import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.FileEntry;
 import io.tileverse.parquetry.io.FileSource;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.ParquetSchemaException;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 /**
@@ -213,7 +214,8 @@ public final class FilesetCatalog implements DatasetCatalog {
             if (unifiedSchema == null) {
                 unifiedSchema = schema;
             } else if (!unifiedSchema.equals(schema)) {
-                throw new IllegalStateException("files do not share a schema by equality");
+                throw new ParquetSchemaException("files '" + files.get(0).relativePath() + "' and '"
+                        + files.get(index).relativePath() + "' do not share a schema by equality");
             }
             parseGeoMetadata(fileDataset, files.get(index)).ifPresent(perFileGeo::add);
             Map<String, String> partitions =

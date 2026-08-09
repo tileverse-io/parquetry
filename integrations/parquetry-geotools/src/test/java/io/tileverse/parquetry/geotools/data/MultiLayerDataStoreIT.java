@@ -82,11 +82,16 @@ class MultiLayerDataStoreIT {
         Map<String, Object> params = storeParams(dir, null);
         GeoParquetDataStoreFactory factory = new GeoParquetDataStoreFactory();
         // The merged catalog resolves its dataset lazily: the store opens on the listing alone and the
-        // schema mismatch reports on the first layer access.
+        // schema mismatch reports on the first layer access, naming the files and the parameter that
+        // publishes each file as its own layer.
         DataStore store = factory.createDataStore(params);
         try {
             String typeName = store.getTypeNames()[0];
-            assertThatThrownBy(() -> store.getSchema(typeName)).hasStackTraceContaining("do not share a schema");
+            assertThatThrownBy(() -> store.getSchema(typeName))
+                    .hasStackTraceContaining("do not share a schema")
+                    .hasStackTraceContaining("ne_cities.parquet")
+                    .hasStackTraceContaining("ne_rivers.parquet")
+                    .hasStackTraceContaining("layer-grouping");
         } finally {
             store.dispose();
         }
