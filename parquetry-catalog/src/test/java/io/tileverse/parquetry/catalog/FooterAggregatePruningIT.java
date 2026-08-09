@@ -91,17 +91,15 @@ class FooterAggregatePruningIT {
     }
 
     /**
-     * Pins the current behavior of the GeoParquet 1.1-only encoding: it does NOT prune files spatially because the
-     * parquetry writer omits the file-level bbox in that mode. In {@code V1_1_ONLY} the writer leaves the geometry
-     * column without a {@code LogicalType.Geometry} (to avoid misleading a v1-only reader into reading the file as v2
-     * native), which means no per-chunk geospatial statistics are accumulated and the {@code "geo"} JSON {@code bbox}
-     * stays absent. {@code GeoJsonFileBoundsSource} then has no bounds to read and {@code FilePruner} cannot eliminate
-     * the disjoint file. The query result is still correct (record-level evaluation matches the east points only); only
-     * the whole-file skip is unavailable. Native (GeoParquet 2.0) statistics, exercised by
-     * {@link #bboxPredicateSkipsSpatiallyDisjointFilesNative}, are the encoding that drives file-level spatial pruning.
+     * A GeoParquet 1.1-only file prunes spatially through its bbox covering. Under {@code V1_1_ONLY} the writer emits
+     * no native GeoParquet 2.0 geospatial statistics, but it does derive a {@code bbox} covering by default: four
+     * regular numeric columns holding each row's bounding box. Those columns have ordinary min/max footer statistics,
+     * which the spatial predicate lowers onto, letting {@code FilePruner} eliminate the disjoint west file without
+     * opening it. The covering path reaches the same whole-file skip that native (GeoParquet 2.0) statistics give in
+     * {@link #bboxPredicateSkipsSpatiallyDisjointFilesNative}, and the record-level result stays exact either way.
      */
     @Test
-    void bboxOverGeoParquet11DoesNotPruneButStillMatches(@TempDir Path dir) throws Exception {
+    void bboxOverGeoParquet11PrunesViaCovering(@TempDir Path dir) throws Exception {
         PointParquet.writePoints(
                 dir.resolve("west.parquet"), "geometry", V1_1_ONLY, new double[][] {{0, 0}, {5, 5}, {10, 10}});
         PointParquet.writePoints(
@@ -113,7 +111,7 @@ class FooterAggregatePruningIT {
             Predicate eastOnly = new Predicate.Spatial.BboxIntersects(ColumnPath.of("geometry"), EAST_QUERY);
 
             DatasetExplainPlan plan = dataset.explain(eastOnly, Projection.ALL, ReadOptions.DEFAULTS);
-            assertThat(skipCount(plan)).isZero();
+            assertThat(skipCount(plan)).isEqualTo(1);
             assertThat(dataset.count(eastOnly, ReadOptions.DEFAULTS)).isEqualTo(3);
         }
     }

@@ -26,6 +26,7 @@ import java.util.OptionalInt;
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.data.WriteOptions;
+import io.tileverse.parquetry.data.WriteOptions.CoveringMode;
 import io.tileverse.parquetry.data.WriteOptions.GeoParquetMetadataMode;
 import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.format.LogicalType;
@@ -34,6 +35,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.geo.geoparquet.BboxCovering;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
@@ -183,6 +185,45 @@ class GeoMetadataWriterTest {
                 parsed.columns().get("geometry").crs().orElseThrow();
         assertThat(reparsed).isInstanceOf(GeographicCRS.class);
         assertThat(reparsed.id().orElseThrow().epsgCode()).hasValue(4326);
+    }
+
+    @Test
+    void activeCoveringPlanDeclaresTheBboxSidecarColumns() {
+        WriteOptions options = WriteOptions.builder()
+                .geoParquetMetadata(GeoParquetMetadataMode.V1_1_ONLY)
+                .crsEpsg("geometry", 4326)
+                .bboxCovering(CoveringMode.AUTO)
+                .build();
+        ParquetSchema schema = flatSchema(requiredBinary("geometry"));
+        GeoMetadataWriter writer = new GeoMetadataWriter(options);
+        ParquetSchema logical = writer.applyV2LogicalTypes(schema);
+        BboxCoveringPlan plan = BboxCoveringPlan.resolve(options, logical, writer);
+
+        Optional<String> json =
+                writer.v1JsonPayload(plan.writtenSchema(), summaries("geometry", polygonSummary()), Optional.of(plan));
+
+        GeoParquetMetadata parsed = GeoParquetMetadata.parse(json.orElseThrow());
+        BboxCovering covering =
+                parsed.columns().get("geometry").covering().orElseThrow().bbox();
+        assertThat(covering.xmin()).isEqualTo(ColumnPath.of("bbox", "xmin"));
+        assertThat(covering.ymin()).isEqualTo(ColumnPath.of("bbox", "ymin"));
+        assertThat(covering.xmax()).isEqualTo(ColumnPath.of("bbox", "xmax"));
+        assertThat(covering.ymax()).isEqualTo(ColumnPath.of("bbox", "ymax"));
+    }
+
+    @Test
+    void emptyCoveringOmitsTheDeclaration() {
+        WriteOptions options = WriteOptions.builder()
+                .geoParquetMetadata(GeoParquetMetadataMode.V1_1_ONLY)
+                .crsEpsg("geometry", 4326)
+                .build();
+        ParquetSchema schema = flatSchema(requiredBinary("geometry"));
+        GeoMetadataWriter writer = new GeoMetadataWriter(options);
+
+        Optional<String> json = writer.v1JsonPayload(schema, summaries("geometry", polygonSummary()), Optional.empty());
+
+        GeoParquetMetadata parsed = GeoParquetMetadata.parse(json.orElseThrow());
+        assertThat(parsed.columns().get("geometry").covering()).isEmpty();
     }
 
     // --- helpers ---
