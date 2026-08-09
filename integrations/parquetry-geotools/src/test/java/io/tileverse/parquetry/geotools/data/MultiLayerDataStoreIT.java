@@ -75,13 +75,21 @@ class MultiLayerDataStoreIT {
     }
 
     @Test
-    void heterogeneousDirectoryWithoutLayersParamStillFails(@TempDir Path dir) throws Exception {
+    void heterogeneousDirectoryWithoutLayersParamFailsOnAccess(@TempDir Path dir) throws Exception {
         writeCities(dir.resolve("ne_cities.parquet"), 3);
         writeRivers(dir.resolve("ne_rivers.parquet"), 4);
 
         Map<String, Object> params = storeParams(dir, null);
         GeoParquetDataStoreFactory factory = new GeoParquetDataStoreFactory();
-        assertThatThrownBy(() -> factory.createDataStore(params)).hasMessageContaining("do not share a schema");
+        // The merged catalog resolves its dataset lazily: the store opens on the listing alone and the
+        // schema mismatch reports on the first layer access.
+        DataStore store = factory.createDataStore(params);
+        try {
+            String typeName = store.getTypeNames()[0];
+            assertThatThrownBy(() -> store.getSchema(typeName)).hasStackTraceContaining("do not share a schema");
+        } finally {
+            store.dispose();
+        }
     }
 
     @Test

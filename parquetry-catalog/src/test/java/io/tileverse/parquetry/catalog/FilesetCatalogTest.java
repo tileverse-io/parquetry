@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
@@ -97,6 +98,41 @@ class FilesetCatalogTest {
                 FilesetCatalog.open(LocalFileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
             assertThat(catalog.datasets()).hasSize(1);
             assertThat(catalog.capabilities().enumeratesDatasets()).isFalse();
+        }
+    }
+
+    @Test
+    void mergedOpenReadsNoFileUntilDatasetAccess(@TempDir Path dir) throws Exception {
+        Files.copy(FILE, dir.resolve("a.parquet"));
+        Files.copy(FILE, dir.resolve("b.parquet"));
+        CountingFileSource source = new CountingFileSource(dir, List.of("a.parquet", "b.parquet"));
+
+        try (FilesetCatalog catalog = FilesetCatalog.open(
+                source, CatalogOptions.builder().datasetName("places").build())) {
+            assertThat(catalog.datasets()).containsExactly("places");
+            assertThat(source.totalOpens()).isZero();
+
+            ParquetDataset first = catalog.dataset("places");
+            assertThat(source.openCount("a.parquet")).isEqualTo(1);
+            assertThat(source.openCount("b.parquet")).isEqualTo(1);
+
+            assertThat(catalog.dataset("places")).isSameAs(first);
+            assertThat(source.totalOpens()).isEqualTo(2);
+        }
+        assertThat(source.allOpenedSourcesClosed()).isTrue();
+    }
+
+    @Test
+    void schemaMismatchFailsAtFirstDatasetAccess(@TempDir Path dir) throws Exception {
+        Files.copy(FILE, dir.resolve("a.parquet"));
+        writeNoYearFile(dir.resolve("b.parquet"), 1);
+
+        try (FilesetCatalog catalog =
+                FilesetCatalog.open(LocalFileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
+            String name = catalog.datasets().get(0);
+            assertThatThrownBy(() -> catalog.dataset(name))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("do not share a schema");
         }
     }
 

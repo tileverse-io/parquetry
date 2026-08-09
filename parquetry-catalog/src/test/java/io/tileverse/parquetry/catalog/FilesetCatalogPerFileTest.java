@@ -20,13 +20,9 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
-import java.lang.foreign.MemorySegment;
 import java.net.URI;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.stream.Stream;
 
 import org.apache.avro.Schema;
@@ -176,93 +172,6 @@ class FilesetCatalogPerFileTest {
                 return ByteRangeSource.ofFile(backing);
             }
         };
-    }
-
-    /** A {@link FileSource} over files in a directory that counts per-file opens and tracks handed-out sources. */
-    private static final class CountingFileSource implements FileSource {
-
-        private final Path dir;
-        private final List<String> names;
-        private final Map<String, Integer> opens = new HashMap<>();
-        private final List<CloseTrackingSource> handedOut = new ArrayList<>();
-        private boolean closed;
-
-        CountingFileSource(Path dir, List<String> names) {
-            this.dir = dir;
-            this.names = names;
-        }
-
-        int openCount(String name) {
-            return opens.getOrDefault(name, 0);
-        }
-
-        boolean allOpenedSourcesClosed() {
-            return handedOut.stream().allMatch(source -> source.closed);
-        }
-
-        @Override
-        public URI root() {
-            return dir.toUri();
-        }
-
-        @Override
-        public Stream<FileEntry> list() {
-            return names.stream().map(this::countingEntry);
-        }
-
-        private FileEntry countingEntry(String name) {
-            return new FileEntry() {
-                @Override
-                public String relativePath() {
-                    return name;
-                }
-
-                @Override
-                public long sizeBytes() {
-                    return -1;
-                }
-
-                @Override
-                public ByteRangeSource open() {
-                    opens.merge(name, 1, Integer::sum);
-                    CloseTrackingSource source = new CloseTrackingSource(ByteRangeSource.ofFile(dir.resolve(name)));
-                    handedOut.add(source);
-                    return source;
-                }
-            };
-        }
-
-        @Override
-        public void close() {
-            closed = true;
-        }
-    }
-
-    /** A {@link ByteRangeSource} delegate that records whether it was closed. */
-    private static final class CloseTrackingSource implements ByteRangeSource {
-
-        private final ByteRangeSource delegate;
-        private volatile boolean closed;
-
-        CloseTrackingSource(ByteRangeSource delegate) {
-            this.delegate = delegate;
-        }
-
-        @Override
-        public long size() {
-            return delegate.size();
-        }
-
-        @Override
-        public int read(long offset, MemorySegment dst) {
-            return delegate.read(offset, dst);
-        }
-
-        @Override
-        public void close() {
-            closed = true;
-            delegate.close();
-        }
     }
 
     /** A {@link FileSource} over fixed entries that records whether it was closed. */
