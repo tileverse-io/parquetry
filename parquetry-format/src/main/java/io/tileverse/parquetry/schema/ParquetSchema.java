@@ -300,6 +300,19 @@ public record ParquetSchema(SchemaNode.Group root) {
     }
 
     /**
+     * A new schema with {@code group} added as an additional top-level struct column after the existing ones. Used to
+     * present a writer-derived struct (the GeoParquet {@code bbox} covering) that the caller's batch does not itself
+     * hold.
+     */
+    public ParquetSchema withAppendedGroup(SchemaNode.Group group) {
+        List<SchemaNode> children = new ArrayList<>(root().children());
+        children.add(group);
+        SchemaNode.Group augmentedRoot = new SchemaNode.Group(
+                root().name(), root().repetition(), children, root().logicalType(), root().fieldId());
+        return new ParquetSchema(augmentedRoot);
+    }
+
+    /**
      * Returns a copy of this schema with the logical-type annotation overridden on each leaf listed in
      * {@code overrides}. Leaves not in {@code overrides} are returned unchanged. Used by the GeoParquet 1.x metadata
      * bridge at {@code ParquetSource.open()} time to synthesize {@code Geometry} / {@code Geography} logical types on

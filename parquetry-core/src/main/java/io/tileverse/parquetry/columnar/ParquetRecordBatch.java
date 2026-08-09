@@ -28,7 +28,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
  * {@link #close()} and their values must not be read afterward.
  */
 public sealed interface ParquetRecordBatch extends AutoCloseable
-        permits DefaultParquetRecordBatch, FilteredRecordBatch {
+        permits DefaultParquetRecordBatch, FilteredRecordBatch, AugmentedRecordBatch {
 
     /** The projected schema this batch's columns correspond to. */
     ParquetSchema projectedSchema();

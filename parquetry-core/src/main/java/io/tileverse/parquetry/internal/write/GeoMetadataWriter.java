@@ -113,6 +113,15 @@ public final class GeoMetadataWriter {
     }
 
     /**
+     * Returns the v1.1 KV JSON payload with no covering declaration. Equivalent to {@link #v1JsonPayload(ParquetSchema,
+     * Map, Optional)} with an empty covering.
+     */
+    public Optional<String> v1JsonPayload(
+            @NonNull ParquetSchema schema, @NonNull Map<ColumnPath, GeoColumnSummary> perColumnSummaries) {
+        return v1JsonPayload(schema, perColumnSummaries, Optional.empty());
+    }
+
+    /**
      * Returns the v1.1 KV JSON payload, or {@link Optional#empty()} when the configured mode is
      * {@link GeoParquetMetadataMode#V2_0_ONLY} or no geometry columns are configured.
      *
@@ -121,9 +130,13 @@ public final class GeoMetadataWriter {
      *     schema order
      * @param perColumnSummaries dataset-level aggregates per configured geometry column; missing entries fall back to
      *     an empty summary (bbox absent, no geometry types observed)
+     * @param covering the active bbox covering plan, present when the write derives a covering for its geometry column;
+     *     empty when no covering is written. The declaration is emitted only on the plan's geometry column.
      */
     public Optional<String> v1JsonPayload(
-            @NonNull ParquetSchema schema, @NonNull Map<ColumnPath, GeoColumnSummary> perColumnSummaries) {
+            @NonNull ParquetSchema schema,
+            @NonNull Map<ColumnPath, GeoColumnSummary> perColumnSummaries,
+            @NonNull Optional<BboxCoveringPlan> covering) {
         if (options.geoParquetMetadata() == GeoParquetMetadataMode.V2_0_ONLY) {
             return Optional.empty();
         }
@@ -131,7 +144,7 @@ public final class GeoMetadataWriter {
         if (geoColumns.isEmpty()) {
             return Optional.empty();
         }
-        return Optional.of(renderJson(geoColumns, perColumnSummaries));
+        return Optional.of(renderJson(geoColumns, perColumnSummaries, covering));
     }
 
     private List<ColumnPath> orderedGeoColumns(ParquetSchema schema) {
@@ -145,7 +158,10 @@ public final class GeoMetadataWriter {
         return ordered;
     }
 
-    private String renderJson(List<ColumnPath> geoColumns, Map<ColumnPath, GeoColumnSummary> summaries) {
+    private String renderJson(
+            List<ColumnPath> geoColumns,
+            Map<ColumnPath, GeoColumnSummary> summaries,
+            Optional<BboxCoveringPlan> covering) {
         StringWriter sink = new StringWriter();
         try (JsonGenerator gen = MAPPER.createGenerator(sink)) {
             gen.writeStartObject();
@@ -156,7 +172,7 @@ public final class GeoMetadataWriter {
             gen.writeStartObject();
             for (ColumnPath column : geoColumns) {
                 gen.writeName(primaryColumnName(column));
-                writeColumnObject(gen, column, summaries.get(column));
+                writeColumnObject(gen, column, summaries.get(column), covering);
             }
             gen.writeEndObject();
 
@@ -165,7 +181,8 @@ public final class GeoMetadataWriter {
         return sink.toString();
     }
 
-    private void writeColumnObject(JsonGenerator gen, ColumnPath column, GeoColumnSummary summary) {
+    private void writeColumnObject(
+            JsonGenerator gen, ColumnPath column, GeoColumnSummary summary, Optional<BboxCoveringPlan> covering) {
         gen.writeStartObject();
         String encoding = summary == null ? "WKB" : summary.encoding();
         gen.writeStringProperty("encoding", encoding);
@@ -190,7 +207,40 @@ public final class GeoMetadataWriter {
         if (bbox.isPresent()) {
             writeBboxArray(gen, bbox.get());
         }
+        if (coveringAppliesTo(covering, column)) {
+            writeCovering(gen, covering.orElseThrow());
+        }
         gen.writeEndObject();
+    }
+
+    private static boolean coveringAppliesTo(Optional<BboxCoveringPlan> covering, ColumnPath column) {
+        return covering.isPresent() && covering.orElseThrow().geometryColumn().equals(column);
+    }
+
+    /**
+     * Declares the derived {@code bbox} covering per GeoParquet 1.1: a {@code covering.bbox} object mapping each of the
+     * four extrema to the two-part path of its sidecar column. The spec order is xmin, ymin, xmax, ymax.
+     */
+    private static void writeCovering(JsonGenerator gen, BboxCoveringPlan plan) {
+        gen.writeName("covering");
+        gen.writeStartObject();
+        gen.writeName("bbox");
+        gen.writeStartObject();
+        writePathArray(gen, "xmin", plan.xmin());
+        writePathArray(gen, "ymin", plan.ymin());
+        writePathArray(gen, "xmax", plan.xmax());
+        writePathArray(gen, "ymax", plan.ymax());
+        gen.writeEndObject();
+        gen.writeEndObject();
+    }
+
+    private static void writePathArray(JsonGenerator gen, String key, ColumnPath path) {
+        gen.writeName(key);
+        gen.writeStartArray();
+        for (int part = 0; part < path.numParts(); part++) {
+            gen.writeString(path.part(part));
+        }
+        gen.writeEndArray();
     }
 
     /**

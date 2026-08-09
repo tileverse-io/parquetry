@@ -63,6 +63,8 @@ import lombok.NonNull;
  * @param tempDir working directory for column-chunk temp files
  * @param writeObserver write-observability callback target; defaults to {@link WriteObserver#NONE}
  * @param writeObserverCadenceRows row cadence between {@link WriteObserver#onRowsWritten(long)} callbacks
+ * @param bboxCovering explicit request for GeoParquet 1.1 {@code bbox} covering columns; empty leaves the choice to the
+ *     metadata mode at open time
  */
 public record WriteOptions(
         @NonNull ParquetVersion parquetVersion,
@@ -81,7 +83,8 @@ public record WriteOptions(
         @NonNull Map<String, String> keyValueMetadata,
         @NonNull Path tempDir,
         @NonNull WriteObserver writeObserver,
-        long writeObserverCadenceRows) {
+        long writeObserverCadenceRows,
+        @NonNull Optional<CoveringMode> bboxCovering) {
 
     private static final String RESERVED_GEO_KEY = "geo";
 
@@ -114,10 +117,18 @@ public record WriteOptions(
             throw new IllegalArgumentException("rowGroupSize bytes threshold " + uncompressedByteThreshold
                     + " exceeds the maximum row-group byte limit " + MAX_ROW_GROUP_BYTES_LIMIT);
         }
-        // V1.1 page format cannot carry the GeoParquet 2.0 native logical types; coerce the metadata mode for
+        // V1.1 page format cannot hold the GeoParquet 2.0 native logical types; coerce the metadata mode for
         // coherence.
         if (parquetVersion == ParquetVersion.V1_1 && geoParquetMetadata != GeoParquetMetadataMode.V1_1_ONLY) {
             geoParquetMetadata = GeoParquetMetadataMode.V1_1_ONLY;
+        }
+        // bbox covering columns are declared in the GeoParquet 1.1 metadata block; a V2.0-only file omits that block
+        // and has nowhere to declare them.
+        if (bboxCovering.isPresent()
+                && bboxCovering.orElseThrow() != CoveringMode.NONE
+                && geoParquetMetadata == GeoParquetMetadataMode.V2_0_ONLY) {
+            throw new IllegalArgumentException(
+                    "bbox covering is declared in GeoParquet 1.1 metadata; V2_0_ONLY emits none - use DUAL or V1_1_ONLY");
         }
         compression = unmodifiableSnapshot(compression);
         encodingPolicies = unmodifiableSnapshot(encodingPolicies);
@@ -172,6 +183,19 @@ public record WriteOptions(
         DUAL_V1_1_AND_V2_0,
         V2_0_ONLY,
         V1_1_ONLY
+    }
+
+    /**
+     * Whether the writer generates GeoParquet 1.1 {@code bbox} covering columns for the primary geometry column, and at
+     * what precision. An unset {@link WriteOptions#bboxCovering()} resolves by metadata mode at open time: AUTO when
+     * the file emits 1.1 metadata (DUAL or V1_1_ONLY), NONE under V2_0_ONLY. AUTO picks FLOAT for a CRS84/EPSG:4326
+     * geometry column and DOUBLE otherwise.
+     */
+    public enum CoveringMode {
+        NONE,
+        AUTO,
+        FLOAT,
+        DOUBLE
     }
 
     /**
@@ -327,6 +351,7 @@ public record WriteOptions(
         private Path tempDir = Path.of(System.getProperty("java.io.tmpdir"));
         private WriteObserver writeObserver = WriteObserver.NONE;
         private long writeObserverCadenceRows = 100_000L;
+        private Optional<CoveringMode> bboxCovering = Optional.empty();
 
         private Builder() {}
 
@@ -465,6 +490,15 @@ public record WriteOptions(
             return this;
         }
 
+        /**
+         * Requests GeoParquet 1.1 {@code bbox} covering columns for the primary geometry column at the given precision.
+         * Leaving this unset lets the metadata mode decide at open time.
+         */
+        public Builder bboxCovering(@NonNull CoveringMode mode) {
+            this.bboxCovering = Optional.of(mode);
+            return this;
+        }
+
         public WriteOptions build() {
             return new WriteOptions(
                     parquetVersion,
@@ -483,7 +517,8 @@ public record WriteOptions(
                     keyValueMetadata,
                     tempDir,
                     writeObserver,
-                    writeObserverCadenceRows);
+                    writeObserverCadenceRows,
+                    bboxCovering);
         }
 
         private static int requirePositive(String name, int value) {

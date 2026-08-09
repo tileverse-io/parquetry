@@ -145,4 +145,17 @@ class SchemaTest {
     void columnPathDotPrintsHumanReadable() {
         assertThat(ColumnPath.of("a", "b", "c").dot()).isEqualTo("a.b.c");
     }
+
+    @Test
+    void withAppendedGroupAddsANestedTopLevelStruct() {
+        SchemaNode.Group bbox = new SchemaNode.Group(
+                "bbox",
+                Repetition.REQUIRED,
+                List.of(new SchemaNode.Primitive(
+                        "xmin", Repetition.OPTIONAL, PrimitiveKind.FLOAT, OptionalInt.empty(), Optional.empty(), -1)),
+                Optional.empty(),
+                -1);
+        ParquetSchema augmented = FLAT.withAppendedGroup(bbox);
+        assertThat(augmented.find(ColumnPath.of("bbox", "xmin"))).isPresent();
+    }
 }

@@ -32,6 +32,8 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.function.Consumer;
 
+import io.tileverse.parquetry.columnar.BinaryVector;
+import io.tileverse.parquetry.columnar.ColumnVector;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.format.BloomFilterHeader;
 import io.tileverse.parquetry.format.ColumnChunk;
@@ -43,6 +45,7 @@ import io.tileverse.parquetry.format.KeyValue;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.format.SchemaElement;
+import io.tileverse.parquetry.internal.write.BboxCoveringPlan;
 import io.tileverse.parquetry.internal.write.GeoColumnSummary;
 import io.tileverse.parquetry.internal.write.GeoMetadataWriter;
 import io.tileverse.parquetry.internal.write.RowGroupFlushResult;
@@ -89,6 +92,8 @@ public final class ParquetFileWriter implements AutoCloseable {
     private final WriteOptions options;
     private final WriteObserver observer;
     private final ParquetSchema schema;
+    private final ParquetSchema appenderSchema;
+    private final BboxCoveringPlan covering;
     private final Path tempDir;
     private final GeoMetadataWriter geoWriter;
     private final long maxRowGroupBytesLimit;
@@ -149,13 +154,24 @@ public final class ParquetFileWriter implements AutoCloseable {
             @NonNull ParquetRuntime runtime,
             long maxRowGroupBytesLimit) {
         GeoMetadataWriter geoWriter = new GeoMetadataWriter(options);
-        ParquetSchema schema = geoWriter.applyV2LogicalTypes(rawSchema);
+        ParquetSchema logicalSchema = geoWriter.applyV2LogicalTypes(rawSchema);
+        BboxCoveringPlan covering = BboxCoveringPlan.resolve(options, logicalSchema, geoWriter);
+        ParquetSchema writtenSchema = covering.writtenSchema();
         Path tempDir = WriterTempDirectory.createTempDir(options);
         writeLeadingMagic(sink, tempDir);
         ComputeExecutor computeExecutor = runtime.computeExecutor();
-        RowGroupWriter first = openRowGroupWriter(options, schema, tempDir, sink.position(), computeExecutor);
+        RowGroupWriter first = openRowGroupWriter(options, writtenSchema, tempDir, sink.position(), computeExecutor);
         return new ParquetFileWriter(
-                sink, options, schema, tempDir, geoWriter, first, maxRowGroupBytesLimit, computeExecutor);
+                sink,
+                options,
+                writtenSchema,
+                logicalSchema,
+                covering,
+                tempDir,
+                geoWriter,
+                first,
+                maxRowGroupBytesLimit,
+                computeExecutor);
     }
 
     /**
@@ -191,7 +207,9 @@ public final class ParquetFileWriter implements AutoCloseable {
     private ParquetFileWriter(
             ByteSink out,
             WriteOptions options,
-            ParquetSchema schema,
+            ParquetSchema writtenSchema,
+            ParquetSchema appenderSchema,
+            BboxCoveringPlan covering,
             Path tempDir,
             GeoMetadataWriter geoWriter,
             RowGroupWriter first,
@@ -200,7 +218,9 @@ public final class ParquetFileWriter implements AutoCloseable {
         this.out = out;
         this.options = options;
         this.observer = options.writeObserver();
-        this.schema = schema;
+        this.schema = writtenSchema;
+        this.appenderSchema = appenderSchema;
+        this.covering = covering;
         this.tempDir = tempDir;
         this.geoWriter = geoWriter;
         this.currentRowGroup = first;
@@ -228,13 +248,46 @@ public final class ParquetFileWriter implements AutoCloseable {
     private void appendBatchToCurrentRowGroup(ParquetRecordBatch batch) {
         try {
             fireWriteStartedOnce();
-            currentRowGroup.appendBatch(batch);
+            currentRowGroup.appendBatch(augmentWithCovering(batch));
             totalRows += batch.rowCount();
             maybeFireProgress();
             maybeFlushRowGroup();
         } catch (RuntimeException e) {
             markFailed();
             throw e;
+        }
+    }
+
+    /**
+     * Adds the derived {@code bbox} covering struct to {@code batch} when a covering is written; returns the batch
+     * unchanged otherwise. Both {@link #writeBatch} and {@link #writeClosingBatch} pass through this single funnel,
+     * which augments every batch exactly once. The caller and the row appender supply only the logical columns; the
+     * writer derives the covering here from the geometry column's WKB.
+     */
+    private ParquetRecordBatch augmentWithCovering(ParquetRecordBatch batch) {
+        requireGeometryColumnForCovering(batch);
+        return covering.augment(batch);
+    }
+
+    /**
+     * When a covering is active, fails loudly if the batch lacks the geometry column the covering is derived from, or
+     * if that column is not binary WKB. A clear message naming the column beats an opaque failure deep inside
+     * derivation.
+     */
+    private void requireGeometryColumnForCovering(ParquetRecordBatch batch) {
+        if (!covering.active()) {
+            return;
+        }
+        ColumnPath geometryColumn = covering.geometryColumn();
+        ColumnVector column = batch.columns().get(geometryColumn);
+        if (column == null) {
+            throw new ParquetWriteException("bbox covering needs the geometry column '" + geometryColumn.dot()
+                    + "' in every batch, but this batch has none");
+        }
+        if (!(column instanceof BinaryVector)) {
+            throw new ParquetWriteException("bbox covering needs the geometry column '" + geometryColumn.dot()
+                    + "' to be binary WKB, but this batch has a "
+                    + column.getClass().getSimpleName());
         }
     }
 
@@ -275,7 +328,8 @@ public final class ParquetFileWriter implements AutoCloseable {
         if (activeAppender != null) {
             activeAppender.flush();
         }
-        ParquetRecordBatchBuilder builder = ParquetRecordBatchBuilder.boundTo(this, schema, batchRows, batchBytes);
+        ParquetRecordBatchBuilder builder =
+                ParquetRecordBatchBuilder.boundTo(this, appenderSchema, batchRows, batchBytes);
         this.activeAppender = builder;
         return builder;
     }
@@ -491,7 +545,8 @@ public final class ParquetFileWriter implements AutoCloseable {
     private List<KeyValue> buildKeyValueMetadata() {
         List<KeyValue> entries = new ArrayList<>();
         options.keyValueMetadata().forEach((key, value) -> entries.add(new KeyValue(key, Optional.of(value))));
-        Optional<String> geoJson = geoWriter.v1JsonPayload(schema, geoSummaries);
+        Optional<BboxCoveringPlan> coveringForMetadata = covering.active() ? Optional.of(covering) : Optional.empty();
+        Optional<String> geoJson = geoWriter.v1JsonPayload(schema, geoSummaries, coveringForMetadata);
         if (geoJson.isPresent()) {
             entries.add(new KeyValue(GEO_KEY, geoJson));
         }
