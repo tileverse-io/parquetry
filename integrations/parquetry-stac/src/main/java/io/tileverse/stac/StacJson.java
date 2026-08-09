@@ -15,6 +15,8 @@
  */
 package io.tileverse.stac;
 
+import java.io.InputStream;
+
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -34,7 +36,7 @@ final class StacJson {
      *
      * @throws StacFormatException if the text is not valid JSON
      */
-    static JsonNode parse(String json) {
+    static JsonNode parse(InputStream json) {
         try {
             return MAPPER.readTree(json);
         } catch (JacksonException malformed) {

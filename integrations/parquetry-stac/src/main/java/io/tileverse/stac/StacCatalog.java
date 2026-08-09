@@ -25,6 +25,8 @@ import java.util.function.Supplier;
  *
  * @param id the catalog id
  * @param title a human-readable title, or null
+ * @param latest the id of the child catalog holding the latest release (the Overture releases-catalog property), or
+ *     null when the document declares none
  * @param links the catalog's links
  * @param collectionSupplier supplies this node's collections on demand
  * @param childCatalogSupplier supplies this node's child catalogs on demand
@@ -32,6 +34,7 @@ import java.util.function.Supplier;
 public record StacCatalog(
         String id,
         String title,
+        String latest,
         List<StacLink> links,
         Supplier<List<StacCollection>> collectionSupplier,
         Supplier<List<StacCatalog>> childCatalogSupplier) {
@@ -41,6 +44,16 @@ public record StacCatalog(
         links = links == null ? List.of() : List.copyOf(links);
         Objects.requireNonNull(collectionSupplier, "collectionSupplier");
         Objects.requireNonNull(childCatalogSupplier, "childCatalogSupplier");
+    }
+
+    /** A catalog declaring no latest child. */
+    public StacCatalog(
+            String id,
+            String title,
+            List<StacLink> links,
+            Supplier<List<StacCollection>> collectionSupplier,
+            Supplier<List<StacCatalog>> childCatalogSupplier) {
+        this(id, title, null, links, collectionSupplier, childCatalogSupplier);
     }
 
     /** Pulls this node's collections on demand. */

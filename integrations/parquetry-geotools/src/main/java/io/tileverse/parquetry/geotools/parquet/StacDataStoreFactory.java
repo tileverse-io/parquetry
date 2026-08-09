@@ -89,8 +89,8 @@ public final class StacDataStoreFactory implements DataStoreFactorySpi {
         Properties storageProps = StorageParams.toProperties(params);
         ContainerStorages storages = new ContainerStorages(storageProps);
         StacCatalogReader reader = readerFor(catalogUri);
-        StacDatasetCatalog catalog =
-                StacDatasetCatalog.open(catalogUri, storages, reader, StacCatalogOptions.defaults());
+        StacCatalogOptions stacCatalogOptions = StacCatalogOptions.defaults();
+        StacDatasetCatalog catalog = StacDatasetCatalog.open(catalogUri, storages, reader, stacCatalogOptions);
 
         StacDataStore store = new StacDataStore(catalog);
         if (namespace != null) {
