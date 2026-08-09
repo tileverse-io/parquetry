@@ -20,9 +20,13 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
+import java.lang.foreign.MemorySegment;
 import java.net.URI;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 
 import org.apache.avro.Schema;
@@ -122,6 +126,39 @@ class FilesetCatalogPerFileTest {
         assertThatCode(catalog::close).doesNotThrowAnyException();
     }
 
+    @Test
+    void opensNoFileUntilItsDatasetIsAccessed(@TempDir Path dir) throws Exception {
+        writeIdNameFile(dir.resolve("a.parquet"), 1);
+        writeValueFile(dir.resolve("b.parquet"), 2);
+        CountingFileSource source = new CountingFileSource(dir, List.of("a.parquet", "b.parquet"));
+
+        try (FilesetCatalog catalog = FilesetCatalog.openPerFile(source)) {
+            assertThat(catalog.datasets()).containsExactly("a", "b");
+            assertThat(source.openCount("a.parquet")).isZero();
+            assertThat(source.openCount("b.parquet")).isZero();
+
+            ParquetDataset first = catalog.dataset("a");
+            assertThat(source.openCount("a.parquet")).isEqualTo(1);
+            assertThat(source.openCount("b.parquet")).isZero();
+
+            assertThat(catalog.dataset("a")).isSameAs(first);
+            assertThat(source.openCount("a.parquet")).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void closeReleasesLazilyOpenedSources(@TempDir Path dir) throws Exception {
+        writeIdNameFile(dir.resolve("a.parquet"), 1);
+        CountingFileSource source = new CountingFileSource(dir, List.of("a.parquet"));
+
+        FilesetCatalog catalog = FilesetCatalog.openPerFile(source);
+        catalog.dataset("a");
+        catalog.close();
+
+        assertThat(source.allOpenedSourcesClosed()).isTrue();
+        assertThat(source.closed).isTrue();
+    }
+
     private static FileEntry entry(String relativePath, Path backing) {
         return new FileEntry() {
             @Override
@@ -139,6 +176,93 @@ class FilesetCatalogPerFileTest {
                 return ByteRangeSource.ofFile(backing);
             }
         };
+    }
+
+    /** A {@link FileSource} over files in a directory that counts per-file opens and tracks handed-out sources. */
+    private static final class CountingFileSource implements FileSource {
+
+        private final Path dir;
+        private final List<String> names;
+        private final Map<String, Integer> opens = new HashMap<>();
+        private final List<CloseTrackingSource> handedOut = new ArrayList<>();
+        private boolean closed;
+
+        CountingFileSource(Path dir, List<String> names) {
+            this.dir = dir;
+            this.names = names;
+        }
+
+        int openCount(String name) {
+            return opens.getOrDefault(name, 0);
+        }
+
+        boolean allOpenedSourcesClosed() {
+            return handedOut.stream().allMatch(source -> source.closed);
+        }
+
+        @Override
+        public URI root() {
+            return dir.toUri();
+        }
+
+        @Override
+        public Stream<FileEntry> list() {
+            return names.stream().map(this::countingEntry);
+        }
+
+        private FileEntry countingEntry(String name) {
+            return new FileEntry() {
+                @Override
+                public String relativePath() {
+                    return name;
+                }
+
+                @Override
+                public long sizeBytes() {
+                    return -1;
+                }
+
+                @Override
+                public ByteRangeSource open() {
+                    opens.merge(name, 1, Integer::sum);
+                    CloseTrackingSource source = new CloseTrackingSource(ByteRangeSource.ofFile(dir.resolve(name)));
+                    handedOut.add(source);
+                    return source;
+                }
+            };
+        }
+
+        @Override
+        public void close() {
+            closed = true;
+        }
+    }
+
+    /** A {@link ByteRangeSource} delegate that records whether it was closed. */
+    private static final class CloseTrackingSource implements ByteRangeSource {
+
+        private final ByteRangeSource delegate;
+        private volatile boolean closed;
+
+        CloseTrackingSource(ByteRangeSource delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public long size() {
+            return delegate.size();
+        }
+
+        @Override
+        public int read(long offset, MemorySegment dst) {
+            return delegate.read(offset, dst);
+        }
+
+        @Override
+        public void close() {
+            closed = true;
+            delegate.close();
+        }
     }
 
     /** A {@link FileSource} over fixed entries that records whether it was closed. */

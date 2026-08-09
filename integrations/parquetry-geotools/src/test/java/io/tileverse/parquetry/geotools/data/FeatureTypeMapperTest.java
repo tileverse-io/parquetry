@@ -157,9 +157,10 @@ class FeatureTypeMapperTest {
     }
 
     @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
     void configuredUuidColumnIsAcceptedAsFeatureId() {
         Optional<AttributeMapping> fid = FeatureTypeMapper.resolveFidAttribute("t", "id", attributesWithUuidId());
-        assertThat(fid).map(AttributeMapping::binding).hasValue(UUID.class);
+        assertThat(fid).map(AttributeMapping::binding).isPresent().hasValue((Class) UUID.class);
     }
 
     private static Optional<LogicalType> uuidLogicalType() {
