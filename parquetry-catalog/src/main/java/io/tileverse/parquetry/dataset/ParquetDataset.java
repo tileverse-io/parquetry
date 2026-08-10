@@ -25,6 +25,7 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.explain.DatasetExplainPlan;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -37,6 +38,20 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 public interface ParquetDataset extends ParquetReader {
 
     String name();
+
+    /**
+     * A fast, conservative estimate of {@link #bounds}: a box guaranteed to contain every row matching
+     * {@code predicate}, answered from dataset-level and file-level statistics alone - declared extents and per-file
+     * boxes - never by reading geometry data. The box may be wider than the exact bounds; a caller that needs the exact
+     * answer uses {@link #bounds}. Empty when the statistics cannot support an estimate (a matching file with no
+     * declared box) or when no file survives the predicate.
+     *
+     * <p>Consumers with a bounds contract that tolerates approximation (a GeoTools {@code getBounds}, a WFS
+     * {@code ows:BoundedBy}) prefer this answer: it costs metadata already resolved, where the exact answer may scan.
+     */
+    default Optional<BoundingBox> estimatedBounds(Predicate predicate) {
+        return Optional.empty();
+    }
 
     /** The unified, field-id-aware schema of the dataset. */
     ParquetSchema schema();

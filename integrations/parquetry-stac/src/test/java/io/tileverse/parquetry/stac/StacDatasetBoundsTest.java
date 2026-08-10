@@ -138,6 +138,24 @@ class StacDatasetBoundsTest {
     }
 
     @Test
+    void estimatedBoundsUnionSurvivingItemBoxes() throws Exception {
+        StacDataset dataset = dataset(GeoParquetMetadataMode.DUAL_V1_1_AND_V2_0);
+
+        // The window intersects only the center part's padded item box [45,45,75,75] and the spanning part's
+        // [-10,-10,130,130]; the estimate is the union of exactly those two boxes, read from no part.
+        Optional<BoundingBox> estimated = dataset.estimatedBounds(window(50.0, 50.0, 70.0, 70.0));
+
+        assertThat(estimated).isPresent();
+        BoundingBox expected = BoundingBox.builder()
+                .xmin(-10.0)
+                .ymin(-10.0)
+                .xmax(130.0)
+                .ymax(130.0)
+                .build();
+        assertSameBox2d(estimated.orElseThrow(), expected);
+    }
+
+    @Test
     void collectionExtentAnswersUnfilteredBounds() throws Exception {
         // The declared extent is deliberately wider than the true geometry union: an answer equal to it proves
         // the declared collection box was returned, with no part scanned.

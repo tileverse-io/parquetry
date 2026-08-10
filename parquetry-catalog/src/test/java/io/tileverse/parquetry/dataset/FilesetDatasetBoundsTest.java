@@ -118,6 +118,33 @@ class FilesetDatasetBoundsTest {
     }
 
     @Test
+    void estimatedBoundsAnswerFromFooterStatisticsAlone() throws Exception {
+        try (FilesetCatalog catalog = openCatalog()) {
+            ParquetDataset dataset = onlyDataset(catalog);
+
+            Optional<BoundingBox> unfiltered = dataset.estimatedBounds(Predicate.ALWAYS_TRUE);
+            assertThat(unfiltered).isPresent();
+
+            // The attribute predicate prunes to the single "east" partition file; the estimate is that file's
+            // footer geometry box, which must cover the exact bounds of its rows.
+            Optional<BoundingBox> estimated =
+                    dataset.estimatedBounds(Pred.col("region").eq("east"));
+            Optional<BoundingBox> exact = dataset.bounds(Pred.col("region").eq("east"), ReadOptions.DEFAULTS);
+
+            assertThat(estimated).isPresent();
+            assertThat(exact).isPresent();
+            assertCovers(estimated.orElseThrow(), exact.orElseThrow());
+        }
+    }
+
+    private static void assertCovers(BoundingBox outer, BoundingBox inner) {
+        assertThat(outer.xmin()).isLessThanOrEqualTo(inner.xmin());
+        assertThat(outer.ymin()).isLessThanOrEqualTo(inner.ymin());
+        assertThat(outer.xmax()).isGreaterThanOrEqualTo(inner.xmax());
+        assertThat(outer.ymax()).isGreaterThanOrEqualTo(inner.ymax());
+    }
+
+    @Test
     void noMatchIsEmpty() throws Exception {
         try (FilesetCatalog catalog = openCatalog()) {
             ParquetDataset dataset = onlyDataset(catalog);

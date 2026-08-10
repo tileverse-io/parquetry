@@ -303,6 +303,31 @@ public final class StacDataset implements GeoParquetDataset {
     }
 
     /**
+     * {@inheritDoc}
+     *
+     * <p>Answered from the declared collection extent for the unfiltered query, else the union of the surviving parts'
+     * item boxes. Item boxes come from the item documents alone; no part footer is read.
+     */
+    @Override
+    public Optional<BoundingBox> estimatedBounds(Predicate predicate) {
+        if (isUnfiltered(predicate)) {
+            Optional<BoundingBox> declared = declaredBounds();
+            if (declared.isPresent()) {
+                return declared;
+            }
+        }
+        BoundsAccumulator union = new BoundsAccumulator();
+        for (int index : prune(predicate)) {
+            Optional<BoundingBox> box = itemBox(index);
+            if (box.isEmpty()) {
+                return Optional.empty();
+            }
+            union.union(box.orElseThrow());
+        }
+        return union.snapshot();
+    }
+
+    /**
      * The dataset-level declared box answering an unfiltered bounds query without a scan: the STAC collection extent
      * when the data CRS is the GeoParquet WGS84 default (a STAC extent is WGS84 by spec, and a dataset in another CRS
      * cannot use it), else a single part's own geo metadata box.

@@ -162,6 +162,42 @@ public final class FilesetDataset implements GeoParquetDataset {
     }
 
     /**
+     * {@inheritDoc}
+     *
+     * <p>Answered from the per-file footer statistics gathered at open: the aggregated metadata box for the unfiltered
+     * query, else the union of the surviving files' geometry boxes. No file is re-read.
+     */
+    @Override
+    public Optional<BoundingBox> estimatedBounds(Predicate predicate) {
+        if (isUnfiltered(predicate) && aggregatedBounds.isPresent()) {
+            return aggregatedBounds;
+        }
+        BoundsAccumulator union = new BoundsAccumulator();
+        for (int index : pruneSurvivors(predicate)) {
+            Optional<BoundingBox> fileBox = footerStatsBox(index);
+            if (fileBox.isEmpty()) {
+                return Optional.empty();
+            }
+            union.union(fileBox.orElseThrow());
+        }
+        return union.snapshot();
+    }
+
+    /**
+     * The file's geometry box from the footer statistics gathered at open, resolved to the declared primary geometry
+     * column when the {@code "geo"} metadata names one, else the first recorded geometry-bounds entry (the same
+     * resolution {@link #footerSkipBox} applies, without opening the file).
+     */
+    private Optional<BoundingBox> footerStatsBox(int index) {
+        Map<ColumnPath, BoundingBox> footerBounds = partitionStats.get(index).geometryBounds();
+        Optional<ColumnPath> primary = declaredPrimaryColumn();
+        if (primary.isPresent()) {
+            return Optional.ofNullable(footerBounds.get(primary.orElseThrow()));
+        }
+        return footerBounds.values().stream().findFirst();
+    }
+
+    /**
      * The exact bounds of the {@code predicate}-matching rows across the survivor files, each file visited on its own
      * virtual thread and folded into one shared accumulator. Before a file runs the engine, its footer geometry box is
      * tested against the bounds accumulated so far, and a file those bounds already cover is skipped: a box already
