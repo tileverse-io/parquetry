@@ -45,9 +45,10 @@ import io.tileverse.stac.StacItem;
 /**
  * A {@link DatasetCatalog} over a STAC catalog: it enumerates the catalog's collections and exposes one
  * {@link StacDataset} per collection, named by the collection id verbatim. Opening walks catalog and collection
- * documents alone, stopping at each collection: a collection's item documents are read, and its dataset built, only
- * when {@link #dataset(String)} first resolves it. A catalog document naming a {@code latest} child (the Overture
- * releases-catalog property) restricts the walk to that child; the other releases are never visited.
+ * documents alone, stopping at each collection. A resolved dataset stays document-lazy too: a schema probe reads the
+ * collection's first item document alone, and the full item enumeration happens on the first query that needs every
+ * part. A catalog document naming a {@code latest} child (the Overture releases-catalog property) restricts the walk to
+ * that child; the other releases are never visited.
  *
  * <p>Each collection's items resolve to GeoParquet parts (one part per item), but the catalog opens no part at
  * resolution: a part's byte reader opens on the dataset's first read. Each asset is resolved through a per-container
@@ -142,12 +143,26 @@ public final class StacDatasetCatalog implements DatasetCatalog {
     }
 
     /**
-     * Builds the dataset for one collection by reading its item documents. Fails when the collection resolves to no
-     * GeoParquet data parts (its items hold only non-parquet assets, such as PMTiles or COGs, or it has no items): this
-     * store serves GeoParquet, and a collection with none has no rows to offer. No part is opened here: the dataset
-     * resolves each item's href to a byte reader lazily on first read.
+     * Builds the dataset for one collection. No item document is read here: the dataset materializes the collection's
+     * data parts on first per-part need, and a schema probe resolves the first item alone. A collection resolving to no
+     * GeoParquet data parts (its items hold only non-parquet assets, such as PMTiles or COGs, or it has no items) fails
+     * at that materialization: this store serves GeoParquet, and a collection with none has no rows to offer.
      */
     private StacDataset buildDataset(StacCollection collection) {
+        Optional<BoundingBox> collectionBounds =
+                collection.extent().flatMap(StacExtent::bbox).flatMap(StacDatasetCatalog::toBoundingBox);
+        return new StacDataset(
+                collection.id(),
+                options.geometryColumn(),
+                () -> materializeParts(collection),
+                () -> firstParquetRef(collection),
+                collectionBounds,
+                storages,
+                OpenOptions.DEFAULTS);
+    }
+
+    /** Reads the collection's item documents and resolves each item's GeoParquet data asset. */
+    private StacDataset.Parts materializeParts(StacCollection collection) {
         List<StacItemRef> refs = new ArrayList<>();
         List<double[]> bboxes = new ArrayList<>();
         for (StacItem item : collection.items()) {
@@ -162,16 +177,18 @@ public final class StacDatasetCatalog implements DatasetCatalog {
             throw new IllegalStateException(
                     "collection '" + collection.id() + "' resolves to no GeoParquet data assets");
         }
-        Optional<BoundingBox> collectionBounds =
-                collection.extent().flatMap(StacExtent::bbox).flatMap(StacDatasetCatalog::toBoundingBox);
-        return new StacDataset(
-                collection.id(),
-                options.geometryColumn(),
-                refs,
-                bboxes,
-                collectionBounds,
-                storages,
-                OpenOptions.DEFAULTS);
+        return new StacDataset.Parts(refs, bboxes);
+    }
+
+    /** The first item's data-part reference when that item has a GeoParquet asset; empty defers to the full list. */
+    private Optional<StacItemRef> firstParquetRef(StacCollection collection) {
+        return collection.firstItem().flatMap(item -> {
+            StacAsset data = parquetAsset(item, options);
+            if (data == null) {
+                return Optional.empty();
+            }
+            return Optional.of(new StacItemRef(item.id(), data.href()));
+        });
     }
 
     /** The collection's declared box as an engine box; a 3D STAC bbox contributes its horizontal coordinates. */

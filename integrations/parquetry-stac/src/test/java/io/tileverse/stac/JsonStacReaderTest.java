@@ -25,6 +25,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 
@@ -85,6 +86,23 @@ class JsonStacReaderTest {
             collections.get(0).items();
             assertThat(reads.get("building/items/item-west.json")).isEqualTo(1);
             assertThat(reads.get("building/items/item-east.json")).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void firstItemReadsOnlyItsDocument(@TempDir Path tempDir) throws Exception {
+        Path root = copyFixtureTree(tempDir);
+        Map<String, Integer> reads = new ConcurrentHashMap<>();
+        try (Storage storage = StorageFactory.open(root.toUri())) {
+            StacCatalog catalog =
+                    new JsonStacReader().open(root.resolve("catalog.json").toUri(), countingStorage(storage, reads));
+            StacCollection building = catalog.collections().get(0);
+
+            Optional<StacItem> first = building.firstItem();
+
+            assertThat(first).map(StacItem::id).hasValue("item-west");
+            assertThat(reads.get("building/items/item-west.json")).isEqualTo(1);
+            assertThat(reads.keySet()).doesNotContain("building/items/item-east.json");
         }
     }
 

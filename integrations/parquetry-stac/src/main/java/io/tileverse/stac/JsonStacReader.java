@@ -139,7 +139,23 @@ public final class JsonStacReader implements StacCatalogReader {
         String title = optionalText(root, TITLE);
         Optional<StacExtent> extent = readExtent(root);
         List<StacLink> links = readLinks(root);
-        return new StacCollection(id, title, extent, links, () -> readItems(collectionUri, links));
+        return new StacCollection(
+                id,
+                title,
+                extent,
+                links,
+                () -> readItems(collectionUri, links),
+                () -> readFirstItem(collectionUri, links));
+    }
+
+    /** Reads the first linked item's document alone; a consumer probing one representative item pays one read. */
+    private Optional<StacItem> readFirstItem(URI base, List<StacLink> links) {
+        for (StacLink link : links) {
+            if ("item".equals(link.rel())) {
+                return Optional.of(readItem(resolve(base, link.href())));
+            }
+        }
+        return Optional.empty();
     }
 
     private List<StacItem> readItems(URI base, List<StacLink> links) {

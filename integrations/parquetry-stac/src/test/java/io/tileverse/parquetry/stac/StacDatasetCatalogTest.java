@@ -48,7 +48,7 @@ import io.tileverse.stac.StacItem;
 class StacDatasetCatalogTest {
 
     @Test
-    void exposesEveryCollectionAndFailsAParquetlessOneAtResolution(@TempDir Path tempDir) throws Exception {
+    void exposesEveryCollectionAndFailsAParquetlessOneAtFirstAccess(@TempDir Path tempDir) throws Exception {
         Path parts = Files.createDirectories(tempDir.resolve("parts"));
         Path parquetPart = parts.resolve("data.parquet");
         StacPointParquet.writePoints(parquetPart, "geometry", new double[][] {{0, 0}, {5, 5}});
@@ -73,7 +73,7 @@ class StacDatasetCatalogTest {
                 assertThat(rows.count()).isEqualTo(2);
             }
 
-            assertThatThrownBy(() -> catalog.dataset("basemap-tiles"))
+            assertThatThrownBy(() -> catalog.dataset("basemap-tiles").schema())
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessageContaining("basemap-tiles")
                     .hasMessageContaining("no GeoParquet");
@@ -81,17 +81,27 @@ class StacDatasetCatalogTest {
     }
 
     @Test
-    void itemEnumerationDeferredToDatasetResolution(@TempDir Path tempDir) throws Exception {
+    void schemaReadsOneItemDocumentAndQueriesEnumerateOnFirstNeed(@TempDir Path tempDir) throws Exception {
         Path parts = Files.createDirectories(tempDir.resolve("parts"));
         Path parquetPart = parts.resolve("data.parquet");
         StacPointParquet.writePoints(parquetPart, "geometry", new double[][] {{0, 0}, {5, 5}});
 
         AtomicInteger itemEnumerations = new AtomicInteger();
+        AtomicInteger firstItemProbes = new AtomicInteger();
         StacItem item = stacItem("b1", new double[] {0, 0, 5, 5}, parquetAsset(parquetPart.toUri()));
-        StacCollection collection = new StacCollection("buildings", null, Optional.empty(), List.of(), () -> {
-            itemEnumerations.incrementAndGet();
-            return List.of(item);
-        });
+        StacCollection collection = new StacCollection(
+                "buildings",
+                null,
+                Optional.empty(),
+                List.of(),
+                () -> {
+                    itemEnumerations.incrementAndGet();
+                    return List.of(item);
+                },
+                () -> {
+                    firstItemProbes.incrementAndGet();
+                    return Optional.of(item);
+                });
 
         URI catalogRoot = tempDir.resolve("catalog.json").toUri();
         try (ContainerStorages storages = new ContainerStorages(new Properties());
@@ -102,13 +112,24 @@ class StacDatasetCatalogTest {
                         StacCatalogOptions.defaults())) {
 
             assertThat(catalog.datasets()).containsExactly("buildings");
+
+            ParquetDataset dataset = catalog.dataset("buildings");
             assertThat(itemEnumerations).hasValue(0);
+            assertThat(firstItemProbes).hasValue(0);
 
-            ParquetDataset first = catalog.dataset("buildings");
+            dataset.schema();
+            assertThat(firstItemProbes).hasValue(1);
+            assertThat(itemEnumerations)
+                    .as("a schema probe reads the first item alone")
+                    .hasValue(0);
+
+            try (Stream<ParquetRecord> rows =
+                    dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
+                assertThat(rows.count()).isEqualTo(2);
+            }
             assertThat(itemEnumerations).hasValue(1);
 
-            assertThat(catalog.dataset("buildings")).isSameAs(first);
-            assertThat(itemEnumerations).hasValue(1);
+            assertThat(catalog.dataset("buildings")).isSameAs(dataset);
         }
     }
 
