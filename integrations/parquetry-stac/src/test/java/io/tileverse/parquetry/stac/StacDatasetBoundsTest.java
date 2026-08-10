@@ -44,12 +44,11 @@ import io.tileverse.parquetry.runtime.ParquetRuntime;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
- * Exercises {@link StacDataset#bounds} over a multi-part collection. The first part spans the whole collection extent
- * and the others nest inside it, which lets the geo-metadata fast path (which reads only the first part) agree with a
- * brute-force scan of every part. Every part records exact native geometry statistics, making a scan of the same
- * predicate an exact oracle for the dataset's answer. Item boxes are deliberately padded wider than their part's true
- * extent. A bounds answer that equals the tight scan therefore proves the conservative item-box union was never
- * returned.
+ * Exercises {@link StacDataset#bounds} over a multi-part collection. Every part records exact native geometry
+ * statistics, making a scan of the same predicate an exact oracle for the dataset's answer. Item boxes are deliberately
+ * padded wider than their part's true extent. A bounds answer that equals the tight scan therefore proves the
+ * conservative item-box union was never returned. A dataset constructed with a declared collection extent answers the
+ * unfiltered query from that extent alone.
  */
 class StacDatasetBoundsTest {
 
@@ -139,12 +138,56 @@ class StacDatasetBoundsTest {
     }
 
     @Test
-    void capabilitiesAdvertiseCheapBoundsOnlyWithGeoMetadata() throws Exception {
-        StacDataset withMetadata = dataset(GeoParquetMetadataMode.DUAL_V1_1_AND_V2_0);
-        StacDataset withoutMetadata = dataset(GeoParquetMetadataMode.V2_0_ONLY);
+    void estimatedBoundsUnionSurvivingItemBoxes() throws Exception {
+        StacDataset dataset = dataset(GeoParquetMetadataMode.DUAL_V1_1_AND_V2_0);
 
-        assertThat(withMetadata.capabilities().cheapBounds()).isTrue();
-        assertThat(withoutMetadata.capabilities().cheapBounds()).isFalse();
+        // The window intersects only the center part's padded item box [45,45,75,75] and the spanning part's
+        // [-10,-10,130,130]; the estimate is the union of exactly those two boxes, read from no part.
+        Optional<BoundingBox> estimated = dataset.estimatedBounds(window(50.0, 50.0, 70.0, 70.0));
+
+        assertThat(estimated).isPresent();
+        BoundingBox expected = BoundingBox.builder()
+                .xmin(-10.0)
+                .ymin(-10.0)
+                .xmax(130.0)
+                .ymax(130.0)
+                .build();
+        assertSameBox2d(estimated.orElseThrow(), expected);
+    }
+
+    @Test
+    void collectionExtentAnswersUnfilteredBounds() throws Exception {
+        // The declared extent is deliberately wider than the true geometry union: an answer equal to it proves
+        // the declared collection box was returned, with no part scanned.
+        BoundingBox declared = BoundingBox.builder()
+                .xmin(-1.0)
+                .ymin(-1.0)
+                .xmax(121.0)
+                .ymax(121.0)
+                .build();
+        StacDataset dataset = dataset(GeoParquetMetadataMode.DUAL_V1_1_AND_V2_0, Optional.of(declared));
+
+        Optional<BoundingBox> bounds = dataset.bounds(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
+
+        assertThat(bounds).isPresent();
+        assertSameBox2d(bounds.orElseThrow(), declared);
+    }
+
+    @Test
+    void capabilitiesAdvertiseCheapBoundsOnlyWithADeclaredCollectionExtent() throws Exception {
+        BoundingBox declared = BoundingBox.builder()
+                .xmin(0.0)
+                .ymin(0.0)
+                .xmax(120.0)
+                .ymax(120.0)
+                .build();
+        StacDataset withExtent = dataset(GeoParquetMetadataMode.DUAL_V1_1_AND_V2_0, Optional.of(declared));
+        // A multi-part collection without a declared extent has no dataset-level box: its first part's geo
+        // metadata box covers that part alone and cannot answer cheaply.
+        StacDataset withoutExtent = dataset(GeoParquetMetadataMode.DUAL_V1_1_AND_V2_0, Optional.empty());
+
+        assertThat(withExtent.capabilities().cheapBounds()).isTrue();
+        assertThat(withoutExtent.capabilities().cheapBounds()).isFalse();
     }
 
     // --- assertions ---
@@ -211,6 +254,10 @@ class StacDatasetBoundsTest {
     // --- dataset construction ---
 
     private StacDataset dataset(GeoParquetMetadataMode mode) throws Exception {
+        return dataset(mode, Optional.empty());
+    }
+
+    private StacDataset dataset(GeoParquetMetadataMode mode, Optional<BoundingBox> collectionBounds) throws Exception {
         List<StacItemRef> refs = new ArrayList<>(POINTS_PER_PART.length);
         List<double[]> bboxes = new ArrayList<>(POINTS_PER_PART.length);
         for (int part = 0; part < POINTS_PER_PART.length; part++) {
@@ -219,7 +266,8 @@ class StacDatasetBoundsTest {
             refs.add(new StacItemRef("part-" + part, file.toUri().toString()));
             bboxes.add(ITEM_BBOXES[part].clone());
         }
-        StacDataset dataset = new StacDataset("points", GEOMETRY, refs, bboxes, storages, fanOutOptions());
+        StacDataset dataset =
+                new StacDataset("points", GEOMETRY, refs, bboxes, collectionBounds, storages, fanOutOptions());
         openedDatasets.add(dataset);
         return dataset;
     }

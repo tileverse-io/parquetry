@@ -224,7 +224,6 @@ class FilesetDatasetConcurrentReadTest {
             FileStats hive = partitioning.fileStats(perFilePartitions.get(i), footer.recordCount());
             stats.add(footer.withOverrides(hive));
         }
-        ParquetSource allFiles = ParquetSource.open(TestFilesets.of(sources), openOptions);
         List<String> locations = regions.stream()
                 .map(region -> "region=" + region + "/f.parquet")
                 .toList();
@@ -235,7 +234,15 @@ class FilesetDatasetConcurrentReadTest {
                 .partitionModel(DatasetCapabilities.PartitionModel.HIVE_PATH)
                 .build();
         return new FilesetDataset(
-                "regions", allFiles, context, sources, locations, capabilities, Optional.empty(), openOptions);
+                "regions",
+                unifiedSchema,
+                Optional.empty(),
+                context,
+                sources,
+                locations,
+                capabilities,
+                Optional.empty(),
+                openOptions);
     }
 
     private static List<ByteRangeSource> openSources(List<Path> files) {

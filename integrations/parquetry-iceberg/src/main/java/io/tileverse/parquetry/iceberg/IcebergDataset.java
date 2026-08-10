@@ -313,6 +313,26 @@ final class IcebergDataset implements ParquetDataset {
     }
 
     /**
+     * {@inheritDoc}
+     *
+     * <p>Answered from the manifest statistics loaded at table open: the union of the surviving files' geometry boxes,
+     * with no file opened. The estimate stays empty when a surviving file records no decodable geometry box or records
+     * more than one geometry column (the same ambiguity rule the covered-file skip applies).
+     */
+    @Override
+    public Optional<BoundingBox> estimatedBounds(Predicate predicate) {
+        BoundsAccumulator union = new BoundsAccumulator();
+        for (int index : prune(predicate).survivorIndices()) {
+            Map<ColumnPath, BoundingBox> boxes = fileStats.get(index).geometryBounds();
+            if (boxes.size() != 1) {
+                return Optional.empty();
+            }
+            union.union(boxes.values().iterator().next());
+        }
+        return union.snapshot();
+    }
+
+    /**
      * Folds each survivor's exact per-file bounds into one shared accumulator across a fan-out. Before a file runs the
      * engine, its footer geometry box is tested against the bounds accumulated so far, and a file those bounds already
      * cover is skipped: a box already enclosed extends the extent by nothing. A file whose footer records no geometry

@@ -43,30 +43,11 @@ import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
- * Proves that a {@link FilesetDataset} parses each survivor file's footer once and reuses it across queries: the
- * memoized single-file {@link ParquetSource} is the same instance on a second query, and two sequential queries over
- * the same dataset return identical results.
+ * Proves that a multi-file {@link FilesetDataset} answers repeated queries identically: each query opens the surviving
+ * files afresh (pinned by FilesetCatalogTest's per-call footer-decode test) and two sequential queries over the same
+ * dataset return the same results.
  */
-class FilesetDatasetFooterReuseTest {
-
-    @Test
-    void secondQueryReusesTheSameMemoizedPerFileDataset(@TempDir Path root) throws Exception {
-        writeYearTree(root, 2023, 5, 2024, 3);
-        try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
-            FilesetDataset dataset =
-                    (FilesetDataset) catalog.dataset(catalog.datasets().get(0));
-            Predicate onSyntheticColumn = Pred.col("year").eq(2024L);
-
-            countMatching(dataset, onSyntheticColumn);
-            ParquetSource afterFirstQuery = dataset.perFileDatasetForTest(1);
-
-            countMatching(dataset, onSyntheticColumn);
-            ParquetSource afterSecondQuery = dataset.perFileDatasetForTest(1);
-
-            assertThat(afterSecondQuery).isSameAs(afterFirstQuery);
-        }
-    }
+class FilesetDatasetRepeatedQueryTest {
 
     @Test
     void twoSequentialQueriesReturnIdenticalResults(@TempDir Path root) throws Exception {

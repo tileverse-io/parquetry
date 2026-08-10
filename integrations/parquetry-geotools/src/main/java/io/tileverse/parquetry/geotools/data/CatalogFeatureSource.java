@@ -150,7 +150,12 @@ final class CatalogFeatureSource extends ContentFeatureSource {
         if (t.postFilter() != Filter.INCLUDE) {
             return null;
         }
-        Optional<BoundingBox> bbox = dataset().bounds(t.predicate(), ReadOptions.DEFAULTS);
+        // The GeoTools bounds contract tolerates a conservative answer (a WFS BoundedBy is explicitly approximate),
+        // and callers use it per request: prefer the statistics-only estimate over an exact answer that may scan.
+        Optional<BoundingBox> bbox = dataset().estimatedBounds(t.predicate());
+        if (bbox.isEmpty()) {
+            bbox = dataset().bounds(t.predicate(), ReadOptions.DEFAULTS);
+        }
         if (bbox.isEmpty()) {
             return null;
         }

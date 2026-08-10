@@ -88,6 +88,33 @@ class IcebergDatasetBoundsTest {
     }
 
     @Test
+    void estimatedBoundsUnionSurvivingManifestBoxes() {
+        withDataset(dataset -> {
+            Optional<BoundingBox> unfiltered = dataset.estimatedBounds(Predicate.ALWAYS_TRUE);
+            Optional<BoundingBox> oracle = scanBounds(dataset, Predicate.ALWAYS_TRUE);
+            assertThat(unfiltered).isPresent();
+            assertCovers(unfiltered.orElseThrow(), oracle.orElseThrow());
+
+            // The window prunes every file but california; the estimate is that file's manifest box, which
+            // must cover the exact bounds of its rows. No file footer is opened for the estimate.
+            Predicate spatial = new Predicate.Spatial.BboxIntersects(GEOM, CALIFORNIA);
+            Optional<BoundingBox> estimated = dataset.estimatedBounds(spatial);
+            Optional<BoundingBox> exact = dataset.bounds(spatial, ReadOptions.DEFAULTS);
+
+            assertThat(estimated).isPresent();
+            assertThat(exact).isPresent();
+            assertCovers(estimated.orElseThrow(), exact.orElseThrow());
+        });
+    }
+
+    private static void assertCovers(BoundingBox outer, BoundingBox inner) {
+        assertThat(outer.xmin()).isLessThanOrEqualTo(inner.xmin());
+        assertThat(outer.ymin()).isLessThanOrEqualTo(inner.ymin());
+        assertThat(outer.xmax()).isGreaterThanOrEqualTo(inner.xmax());
+        assertThat(outer.ymax()).isGreaterThanOrEqualTo(inner.ymax());
+    }
+
+    @Test
     void noMatchIsEmpty() {
         withDataset(dataset -> {
             Predicate disjoint = new Predicate.Spatial.BboxIntersects(GEOM, FAR_OFFSHORE);

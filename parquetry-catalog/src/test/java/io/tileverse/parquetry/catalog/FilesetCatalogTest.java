@@ -20,11 +20,17 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 import java.util.stream.Stream;
 
 import org.apache.avro.Schema;
@@ -44,11 +50,13 @@ import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.FileEntry;
 import io.tileverse.parquetry.io.FileSource;
 import io.tileverse.parquetry.io.LocalFileSource;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.ParquetSchemaException;
 import io.tileverse.parquetry.testsupport.CorpusFixtures;
 
 class FilesetCatalogTest {
@@ -97,6 +105,239 @@ class FilesetCatalogTest {
                 FilesetCatalog.open(LocalFileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
             assertThat(catalog.datasets()).hasSize(1);
             assertThat(catalog.capabilities().enumeratesDatasets()).isFalse();
+        }
+    }
+
+    @Test
+    void mergedOpenReadsNoFileUntilDatasetAccess(@TempDir Path dir) throws Exception {
+        Files.copy(FILE, dir.resolve("a.parquet"));
+        Files.copy(FILE, dir.resolve("b.parquet"));
+        CountingFileSource source = new CountingFileSource(dir, List.of("a.parquet", "b.parquet"));
+
+        try (FilesetCatalog catalog = FilesetCatalog.open(
+                source, CatalogOptions.builder().datasetName("places").build())) {
+            assertThat(catalog.datasets()).containsExactly("places");
+            assertThat(source.totalOpens()).isZero();
+
+            ParquetDataset first = catalog.dataset("places");
+            assertThat(source.openCount("a.parquet")).isEqualTo(1);
+            assertThat(source.openCount("b.parquet")).isEqualTo(1);
+
+            assertThat(catalog.dataset("places")).isSameAs(first);
+            assertThat(source.totalOpens()).isEqualTo(2);
+        }
+        assertThat(source.allOpenedSourcesClosed()).isTrue();
+    }
+
+    @Test
+    void mergedDatasetResolutionReadsFootersConcurrently(@TempDir Path dir) throws Exception {
+        List<String> names = List.of("a.parquet", "b.parquet", "c.parquet");
+        for (String name : names) {
+            Files.copy(FILE, dir.resolve(name));
+        }
+        OverlapRequiringFileSource source =
+                new OverlapRequiringFileSource(dir, names, OverlapRequiringFileSource.Phase.FIRST_READ);
+
+        try (FilesetCatalog catalog = FilesetCatalog.open(
+                source, CatalogOptions.builder().datasetName("places").build())) {
+            ParquetDataset ds = catalog.dataset("places");
+            assertThat(ds.count(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS)).isEqualTo(3 * singleFileRowCount());
+        }
+    }
+
+    @Test
+    void mergedDatasetResolutionOpensByteSourcesConcurrently(@TempDir Path dir) throws Exception {
+        List<String> names = List.of("a.parquet", "b.parquet", "c.parquet");
+        for (String name : names) {
+            Files.copy(FILE, dir.resolve(name));
+        }
+        OverlapRequiringFileSource source =
+                new OverlapRequiringFileSource(dir, names, OverlapRequiringFileSource.Phase.OPEN);
+
+        try (FilesetCatalog catalog = FilesetCatalog.open(
+                source, CatalogOptions.builder().datasetName("places").build())) {
+            ParquetDataset ds = catalog.dataset("places");
+            assertThat(ds.count(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS)).isEqualTo(3 * singleFileRowCount());
+        }
+    }
+
+    @Test
+    void footerFailureAfterSchemaMismatchStillReportsTheMismatch(@TempDir Path dir) throws Exception {
+        Files.copy(FILE, dir.resolve("a.parquet"));
+        writeNoYearFile(dir.resolve("b.parquet"), 2);
+        Files.write(dir.resolve("c.parquet"), new byte[64]);
+
+        try (FilesetCatalog catalog =
+                FilesetCatalog.open(LocalFileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
+            String name = catalog.datasets().get(0);
+            assertThatThrownBy(() -> catalog.dataset(name))
+                    .isInstanceOf(ParquetSchemaException.class)
+                    .hasMessageContaining("a.parquet")
+                    .hasMessageContaining("b.parquet");
+        }
+    }
+
+    @Test
+    void firstCorruptFileInListingOrderIsReported(@TempDir Path dir) throws Exception {
+        Files.copy(FILE, dir.resolve("a.parquet"));
+        Files.write(dir.resolve("b.parquet"), new byte[] {1, 2, 3});
+        Files.write(dir.resolve("c.parquet"), new byte[64]);
+
+        try (FilesetCatalog catalog =
+                FilesetCatalog.open(LocalFileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
+            String name = catalog.datasets().get(0);
+            assertThatThrownBy(() -> catalog.dataset(name))
+                    .isInstanceOf(ParquetFormatException.class)
+                    .hasMessageContaining("too small");
+        }
+    }
+
+    @Test
+    void failedOpenClosesEverySiblingSource(@TempDir Path dir) throws Exception {
+        List<String> names = List.of("a.parquet", "b.parquet", "c.parquet");
+        for (String name : names) {
+            Files.copy(FILE, dir.resolve(name));
+        }
+        FaultInjectingFileSource source = new FaultInjectingFileSource(dir, names, Set.of("b.parquet"), Set.of());
+
+        try (FilesetCatalog catalog = FilesetCatalog.open(
+                source, CatalogOptions.builder().datasetName("places").build())) {
+            assertThatThrownBy(() -> catalog.dataset("places"))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("injected open failure: b.parquet");
+            assertThat(source.allOpenedSourcesClosed()).isTrue();
+        }
+    }
+
+    @Test
+    void firstFailedOpenInListingOrderIsReported(@TempDir Path dir) throws Exception {
+        List<String> names = List.of("a.parquet", "b.parquet", "c.parquet");
+        for (String name : names) {
+            Files.copy(FILE, dir.resolve(name));
+        }
+        FaultInjectingFileSource source =
+                new FaultInjectingFileSource(dir, names, Set.of("b.parquet", "c.parquet"), Set.of());
+
+        try (FilesetCatalog catalog = FilesetCatalog.open(
+                source, CatalogOptions.builder().datasetName("places").build())) {
+            assertThatThrownBy(() -> catalog.dataset("places"))
+                    .hasMessageContaining("injected open failure: b.parquet");
+            assertThat(source.allOpenedSourcesClosed()).isTrue();
+        }
+    }
+
+    @Test
+    void openErrorClosesEverySiblingSource(@TempDir Path dir) throws Exception {
+        List<String> names = List.of("a.parquet", "b.parquet", "c.parquet");
+        for (String name : names) {
+            Files.copy(FILE, dir.resolve(name));
+        }
+        FaultInjectingFileSource source =
+                new FaultInjectingFileSource(dir, names, Set.of(), Set.of("b.parquet"), Set.of());
+
+        try (FilesetCatalog catalog = FilesetCatalog.open(
+                source, CatalogOptions.builder().datasetName("places").build())) {
+            assertThatThrownBy(() -> catalog.dataset("places"))
+                    .isInstanceOf(AssertionError.class)
+                    .hasMessageContaining("injected open error: b.parquet");
+            assertThat(source.allOpenedSourcesClosed()).isTrue();
+        }
+    }
+
+    @Test
+    void interruptedResolutionClosesEveryOpenedSource(@TempDir Path dir) throws Exception {
+        List<String> names = List.of("a.parquet", "b.parquet", "c.parquet");
+        for (String name : names) {
+            Files.copy(FILE, dir.resolve(name));
+        }
+        FaultInjectingFileSource source = new FaultInjectingFileSource(dir, names, Set.of(), Set.of("c.parquet"));
+
+        try (FilesetCatalog catalog = FilesetCatalog.open(
+                source, CatalogOptions.builder().datasetName("places").build())) {
+            AtomicReference<Throwable> thrown = new AtomicReference<>();
+            Thread resolver = Thread.ofPlatform().start(() -> {
+                try {
+                    catalog.dataset("places");
+                } catch (Throwable failure) {
+                    thrown.set(failure);
+                }
+            });
+            waitUntil(() -> source.openedCount() == 2);
+            resolver.interrupt();
+            resolver.join(Duration.ofSeconds(10).toMillis());
+
+            assertThat(resolver.isAlive()).isFalse();
+            assertThat(thrown.get()).isInstanceOf(UncheckedIOException.class);
+            assertThat(source.allOpenedSourcesClosed()).isTrue();
+        } finally {
+            source.releaseBlockedOpens();
+        }
+    }
+
+    private static void waitUntil(BooleanSupplier condition) throws InterruptedException {
+        long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+        while (!condition.getAsBoolean()) {
+            if (System.nanoTime() > deadline) {
+                throw new AssertionError("condition not reached within 10s");
+            }
+            Thread.sleep(10);
+        }
+    }
+
+    @Test
+    void unfilteredCountAnswersFromGatheredStatisticsWithoutReadingFiles(@TempDir Path dir) throws Exception {
+        List<String> names = List.of("a.parquet", "b.parquet", "c.parquet");
+        for (String name : names) {
+            Files.copy(FILE, dir.resolve(name));
+        }
+        FaultInjectingFileSource source = new FaultInjectingFileSource(dir, names, Set.of(), Set.of());
+
+        try (FilesetCatalog catalog = FilesetCatalog.open(
+                source, CatalogOptions.builder().datasetName("places").build())) {
+            ParquetDataset ds = catalog.dataset("places");
+            long readsAfterResolution = source.totalReads();
+
+            assertThat(ds.count(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS)).isEqualTo(3 * singleFileRowCount());
+            assertThat(source.totalReads()).isEqualTo(readsAfterResolution);
+        }
+    }
+
+    @Test
+    void filteredQueriesDecodeSurvivorFootersPerCall(@TempDir Path dir) throws Exception {
+        List<String> names = List.of("a.parquet", "b.parquet", "c.parquet");
+        for (String name : names) {
+            Files.copy(FILE, dir.resolve(name));
+        }
+        FaultInjectingFileSource source = new FaultInjectingFileSource(dir, names, Set.of(), Set.of());
+
+        try (FilesetCatalog catalog = FilesetCatalog.open(
+                source, CatalogOptions.builder().datasetName("places").build())) {
+            ParquetDataset ds = catalog.dataset("places");
+            Predicate filtered = Pred.col("id").gtEq(0);
+
+            long first = ds.count(filtered, ReadOptions.DEFAULTS);
+            long readsAfterFirst = source.totalReads();
+            long second = ds.count(filtered, ReadOptions.DEFAULTS);
+
+            assertThat(second).isEqualTo(first);
+            // The dataset retains no per-file readers: each filtered query re-reads the survivors' footers.
+            assertThat(source.totalReads()).isGreaterThan(readsAfterFirst);
+        }
+    }
+
+    @Test
+    void schemaMismatchFailsAtFirstDatasetAccessNamingBothFiles(@TempDir Path dir) throws Exception {
+        Files.copy(FILE, dir.resolve("a.parquet"));
+        writeNoYearFile(dir.resolve("b.parquet"), 1);
+
+        try (FilesetCatalog catalog =
+                FilesetCatalog.open(LocalFileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
+            String name = catalog.datasets().get(0);
+            assertThatThrownBy(() -> catalog.dataset(name))
+                    .isInstanceOf(ParquetSchemaException.class)
+                    .hasMessageContaining("do not share a schema")
+                    .hasMessageContaining("a.parquet")
+                    .hasMessageContaining("b.parquet");
         }
     }
 

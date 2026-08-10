@@ -19,13 +19,13 @@ import io.tileverse.parquetry.catalog.DatasetCatalog;
 import io.tileverse.parquetry.geotools.data.CatalogDataStore;
 
 /**
- * Read-only DataStore over GeoParquet datasets. Rejects a catalog with a non-GeoParquet dataset at construction rather
- * than at first query; fileset catalogs pre-materialize their datasets, making the check cheap.
+ * Read-only DataStore over Parquet and GeoParquet datasets. Every dataset the fileset catalog resolves is a GeoParquet
+ * dataset by construction; a file with no geo metadata presents as a geometryless layer. Construction reads no file
+ * bytes: the catalog resolves each dataset, and reads its footers, on the first access to that layer.
  */
 public final class GeoParquetDataStore extends CatalogDataStore {
 
     public GeoParquetDataStore(DatasetCatalog catalog) {
         super(catalog);
-        ParquetDatasets.requireGeoParquet(catalog);
     }
 }

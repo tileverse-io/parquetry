@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.stac;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.net.URI;
 import java.nio.file.Files;
@@ -23,6 +24,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -46,7 +48,7 @@ import io.tileverse.stac.StacItem;
 class StacDatasetCatalogTest {
 
     @Test
-    void skipsCollectionsWithNoParquetPartsAndExposesTheRest(@TempDir Path tempDir) throws Exception {
+    void exposesEveryCollectionAndFailsAParquetlessOneAtFirstAccess(@TempDir Path tempDir) throws Exception {
         Path parts = Files.createDirectories(tempDir.resolve("parts"));
         Path parquetPart = parts.resolve("data.parquet");
         StacPointParquet.writePoints(parquetPart, "geometry", new double[][] {{0, 0}, {5, 5}});
@@ -64,12 +66,70 @@ class StacDatasetCatalogTest {
                         (root, store) -> twoCollectionCatalog(withParquet, withoutParquet),
                         StacCatalogOptions.defaults())) {
 
-            assertThat(catalog.datasets()).containsExactly("buildings");
+            assertThat(catalog.datasets()).containsExactly("buildings", "basemap-tiles");
 
             try (Stream<ParquetRecord> rows =
                     catalog.dataset("buildings").read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 assertThat(rows.count()).isEqualTo(2);
             }
+
+            assertThatThrownBy(() -> catalog.dataset("basemap-tiles").schema())
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("basemap-tiles")
+                    .hasMessageContaining("no GeoParquet");
+        }
+    }
+
+    @Test
+    void schemaReadsOneItemDocumentAndQueriesEnumerateOnFirstNeed(@TempDir Path tempDir) throws Exception {
+        Path parts = Files.createDirectories(tempDir.resolve("parts"));
+        Path parquetPart = parts.resolve("data.parquet");
+        StacPointParquet.writePoints(parquetPart, "geometry", new double[][] {{0, 0}, {5, 5}});
+
+        AtomicInteger itemEnumerations = new AtomicInteger();
+        AtomicInteger firstItemProbes = new AtomicInteger();
+        StacItem item = stacItem("b1", new double[] {0, 0, 5, 5}, parquetAsset(parquetPart.toUri()));
+        StacCollection collection = new StacCollection(
+                "buildings",
+                null,
+                Optional.empty(),
+                List.of(),
+                () -> {
+                    itemEnumerations.incrementAndGet();
+                    return List.of(item);
+                },
+                () -> {
+                    firstItemProbes.incrementAndGet();
+                    return Optional.of(item);
+                });
+
+        URI catalogRoot = tempDir.resolve("catalog.json").toUri();
+        try (ContainerStorages storages = new ContainerStorages(new Properties());
+                StacDatasetCatalog catalog = StacDatasetCatalog.open(
+                        catalogRoot,
+                        storages,
+                        (root, store) -> new StacCatalog("root", null, List.of(), () -> List.of(collection), List::of),
+                        StacCatalogOptions.defaults())) {
+
+            assertThat(catalog.datasets()).containsExactly("buildings");
+
+            ParquetDataset dataset = catalog.dataset("buildings");
+            assertThat(itemEnumerations).hasValue(0);
+            assertThat(firstItemProbes).hasValue(0);
+
+            dataset.schema();
+            assertThat(firstItemProbes).hasValue(1);
+            assertThat(itemEnumerations)
+                    .as("a schema probe reads the first item alone")
+                    .hasValue(0);
+
+            try (Stream<ParquetRecord> rows =
+                    dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
+                assertThat(rows.count()).isEqualTo(2);
+            }
+            assertThat(itemEnumerations).hasValue(1);
+
+            assertThat(catalog.dataset("buildings")).isSameAs(dataset);
         }
     }
 
@@ -116,6 +176,44 @@ class StacDatasetCatalogTest {
                         StacCatalogOptions.defaults())) {
 
             assertThat(catalog.datasets()).containsExactly("buildings");
+            try (Stream<ParquetRecord> rows =
+                    catalog.dataset("buildings").read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
+                assertThat(rows.count()).isEqualTo(2);
+            }
+        }
+    }
+
+    @Test
+    void latestPropertyRestrictsTheWalkToThatRelease(@TempDir Path tempDir) throws Exception {
+        Path parts = Files.createDirectories(tempDir.resolve("parts"));
+        Path parquetPart = parts.resolve("data.parquet");
+        StacPointParquet.writePoints(parquetPart, "geometry", new double[][] {{0, 0}, {5, 5}});
+
+        AtomicInteger oldReleaseWalks = new AtomicInteger();
+        StacCollection currentBuildings = collectionWithItem(
+                "buildings", stacItem("b1", new double[] {0, 0, 5, 5}, parquetAsset(parquetPart.toUri())));
+        StacCatalog oldRelease = new StacCatalog(
+                "2026-06-17.0",
+                null,
+                List.of(),
+                () -> {
+                    oldReleaseWalks.incrementAndGet();
+                    return List.of();
+                },
+                List::of);
+        StacCatalog newRelease =
+                new StacCatalog("2026-07-22.0", null, List.of(), () -> List.of(currentBuildings), List::of);
+        StacCatalog root = new StacCatalog(
+                "releases", null, "2026-07-22.0", List.of(), List::of, () -> List.of(oldRelease, newRelease));
+
+        URI catalogRoot = tempDir.resolve("catalog.json").toUri();
+        try (ContainerStorages storages = new ContainerStorages(new Properties());
+                StacDatasetCatalog catalog =
+                        StacDatasetCatalog.open(catalogRoot, storages, (r, s) -> root, StacCatalogOptions.defaults())) {
+
+            assertThat(catalog.datasets()).containsExactly("buildings");
+            assertThat(oldReleaseWalks).hasValue(0);
+
             try (Stream<ParquetRecord> rows =
                     catalog.dataset("buildings").read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 assertThat(rows.count()).isEqualTo(2);

@@ -19,14 +19,12 @@ import io.tileverse.parquetry.catalog.DatasetCatalog;
 import io.tileverse.parquetry.geotools.data.CatalogDataStore;
 
 /**
- * Read-only DataStore over a STAC catalog of GeoParquet collections; the STAC catalog opens item documents eagerly,
- * making the eager check cheap. Rejects a catalog with a non-GeoParquet dataset at construction rather than at first
- * query.
+ * Read-only DataStore over a STAC catalog of GeoParquet collections. Every dataset the STAC catalog resolves is a
+ * GeoParquet dataset by construction; a collection with no geo metadata presents as a geometryless layer.
  */
 public final class StacDataStore extends CatalogDataStore {
 
     public StacDataStore(DatasetCatalog catalog) {
         super(catalog);
-        ParquetDatasets.requireGeoParquet(catalog);
     }
 }

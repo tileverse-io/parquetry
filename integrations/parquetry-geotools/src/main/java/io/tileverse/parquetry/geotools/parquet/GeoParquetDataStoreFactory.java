@@ -18,6 +18,7 @@ package io.tileverse.parquetry.geotools.parquet;
 import java.io.IOException;
 import java.net.URI;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
@@ -26,11 +27,14 @@ import org.geotools.api.data.DataStore;
 import org.geotools.api.data.DataStoreFactorySpi;
 import org.geotools.api.data.Parameter;
 
+import io.tileverse.parquetry.catalog.CatalogCapabilities;
 import io.tileverse.parquetry.catalog.CatalogOptions;
 import io.tileverse.parquetry.catalog.DatasetCatalog;
 import io.tileverse.parquetry.catalog.FilesetCatalog;
+import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.geotools.data.StorageParams;
 import io.tileverse.parquetry.io.FileSource;
+import io.tileverse.parquetry.schema.ParquetSchemaException;
 import io.tileverse.parquetry.tileverse.ParquetFileSources;
 
 /** Opens a read-only GeoParquet {@link DataStore} from a dataset URI. */
@@ -139,23 +143,67 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
     }
 
     /**
-     * Opens the catalog for the store's URI. A single-file URI opens the object directly by key (a GET, with no
-     * directory listing), which lets a remote store work over HTTP and with a GET-only credential; it is one layer by
-     * definition and ignores the layer grouping. A directory or glob URI lists its container: {@code merged} resolves
-     * every matched file (recursively) into one dataset, {@code file} lists the top level only and publishes one
-     * dataset per file.
+     * Opens the catalog for the store's URI.
+     *
+     * <p>A single-file URI opens the object directly by key (a GET, with no directory listing), which lets a remote
+     * store work over HTTP and with a GET-only credential; it is one layer by definition and ignores the layer
+     * grouping. A directory or glob URI lists its container: {@code merged} resolves every matched file (recursively)
+     * into one dataset, {@code file} lists the top level only and publishes one dataset per file.
      */
-    private static DatasetCatalog openCatalog(URI datasetUri, LayerGrouping layers, Properties storageProps) {
+    private static DatasetCatalog openCatalog(URI datasetUri, LayerGrouping layerGrouping, Properties storageProps) {
+        CatalogOptions catalogOptions = CatalogOptions.defaults();
+
+        DatasetCatalog datasetCatalog;
         if (isSingleFileUri(datasetUri)) {
             FileSource object = ParquetFileSources.openObject(datasetUri, storageProps);
-            return FilesetCatalog.open(object, CatalogOptions.defaults());
+            datasetCatalog = FilesetCatalog.open(object, catalogOptions);
+        } else if (layerGrouping == LayerGrouping.FILE) {
+            URI fileModeContainer = fileModeContainer(datasetUri);
+            String filePattern = "*.parquet";
+            FileSource topLevel = ParquetFileSources.open(fileModeContainer, filePattern, storageProps);
+            datasetCatalog = FilesetCatalog.openPerFile(topLevel);
+        } else { // layerGrouping is or defaults to LayerGrouping.MERGED
+            URI baseContainer = baseContainer(datasetUri);
+            String filePattern = filePattern(datasetUri);
+            FileSource merged = ParquetFileSources.open(baseContainer, filePattern, storageProps);
+            datasetCatalog = new MergedGroupingCatalog(FilesetCatalog.open(merged, catalogOptions));
         }
-        if (layers == LayerGrouping.FILE) {
-            FileSource topLevel = ParquetFileSources.open(fileModeContainer(datasetUri), "*.parquet", storageProps);
-            return FilesetCatalog.openPerFile(topLevel);
+        return datasetCatalog;
+    }
+
+    /**
+     * The merged-grouping catalog as the store presents it: a schema mismatch between the merged files is reported with
+     * the store parameter that resolves it. The mismatch reaches the user at first layer access, where nothing else
+     * points back to the {@code layer-grouping} choice; the engine cannot name a GeoTools parameter, the store can.
+     */
+    private record MergedGroupingCatalog(DatasetCatalog delegate) implements DatasetCatalog {
+
+        @Override
+        public CatalogCapabilities capabilities() {
+            return delegate.capabilities();
         }
-        FileSource merged = ParquetFileSources.open(baseContainer(datasetUri), filePattern(datasetUri), storageProps);
-        return FilesetCatalog.open(merged, CatalogOptions.defaults());
+
+        @Override
+        public List<String> datasets() {
+            return delegate.datasets();
+        }
+
+        @Override
+        public ParquetDataset dataset(String name) {
+            try {
+                return delegate.dataset(name);
+            } catch (ParquetSchemaException mismatch) {
+                throw new ParquetSchemaException(
+                        mismatch.getMessage()
+                                + "; to publish each file as its own layer, set the 'layer-grouping' parameter to 'file'",
+                        mismatch);
+            }
+        }
+
+        @Override
+        public void close() {
+            delegate.close();
+        }
     }
 
     /**

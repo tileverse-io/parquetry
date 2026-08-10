@@ -27,6 +27,7 @@ import java.util.OptionalLong;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.StructuredTaskScope;
+import java.util.function.Supplier;
 import java.util.stream.Stream;
 
 import com.google.errorprone.annotations.MustBeClosed;
@@ -63,6 +64,7 @@ import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
+import io.tileverse.parquetry.schema.geo.projjson.Identifier;
 import io.tileverse.parquetry.tileverse.ByteRangeSources;
 
 import io.tileverse.stac.StacFormatException;
@@ -83,8 +85,10 @@ import io.tileverse.stac.StacItem;
 public final class StacDataset implements GeoParquetDataset {
 
     private final String name;
-    private final List<StacItemRef> items;
-    private final List<FileStats> fileStats;
+    private final String geometryColumn;
+    private final Supplier<Parts> partsSupplier;
+    private final Supplier<Optional<StacItemRef>> firstRefSupplier;
+    private final Optional<BoundingBox> collectionBounds;
     private final ContainerStorages storages;
     private final OpenOptions openOptions;
     private final ConcurrentHashMap<Integer, ParquetSource> perFileDatasets = new ConcurrentHashMap<>();
@@ -92,6 +96,24 @@ public final class StacDataset implements GeoParquetDataset {
 
     private volatile ParquetSchema schema;
     private volatile Optional<GeoParquetMetadata> geoMetadata;
+    private volatile Materialized materialized;
+
+    // A null field marks the not-yet-resolved lazy state, distinct from a resolved Optional.empty() (no first part).
+    @SuppressWarnings("java:S2789")
+    private volatile Optional<StacItemRef> firstRef;
+
+    /** The collection's resolved data parts: one GeoParquet part reference and its declared item box per item. */
+    public record Parts(List<StacItemRef> refs, List<double[]> itemBboxes) {
+        public Parts {
+            refs = List.copyOf(refs);
+            itemBboxes = List.copyOf(itemBboxes);
+            if (refs.size() != itemBboxes.size()) {
+                throw new IllegalArgumentException("item and bbox counts differ");
+            }
+        }
+    }
+
+    private record Materialized(List<StacItemRef> refs, List<FileStats> fileStats) {}
 
     public StacDataset(
             String name,
@@ -100,21 +122,101 @@ public final class StacDataset implements GeoParquetDataset {
             List<double[]> itemBboxes,
             ContainerStorages storages,
             OpenOptions openOptions) {
-        this.name = Objects.requireNonNull(name, "name");
-        Objects.requireNonNull(geometryColumn, "geometryColumn");
-        this.items = List.copyOf(items);
-        this.storages = Objects.requireNonNull(storages, "storages");
-        this.openOptions = Objects.requireNonNull(openOptions, "openOptions");
-        this.fileStats = buildStats(this.items, itemBboxes, geometryColumn);
-        if (this.items.isEmpty()) {
+        this(name, geometryColumn, items, itemBboxes, Optional.empty(), storages, openOptions);
+    }
+
+    // The construction inputs are cohesive collection state the catalog resolves in one place.
+    @SuppressWarnings("java:S107")
+    public StacDataset(
+            String name,
+            String geometryColumn,
+            List<StacItemRef> items,
+            List<double[]> itemBboxes,
+            Optional<BoundingBox> collectionBounds,
+            ContainerStorages storages,
+            OpenOptions openOptions) {
+        if (items.isEmpty()) {
             throw new IllegalArgumentException("collection '" + name + "' has no GeoParquet data parts");
         }
+        this(name, geometryColumn, eagerParts(items, itemBboxes), null, collectionBounds, storages, openOptions);
+        materialize();
+    }
+
+    private static Supplier<Parts> eagerParts(List<StacItemRef> items, List<double[]> itemBboxes) {
+        Parts parts = new Parts(items, itemBboxes);
+        return () -> parts;
+    }
+
+    /**
+     * A dataset whose parts resolve lazily: {@code partsSupplier} reads the collection's item documents on first
+     * per-part need, and {@code firstRefSupplier} resolves the first part alone, letting {@link #schema()} and
+     * {@link #geoMetadata()} pay one item document instead of the whole enumeration. The first supplier's ref must be
+     * the first element of the materialized parts (both follow the collection's item link order); a first item with no
+     * data part resolves empty and defers to the full materialization. A null {@code firstRefSupplier} always defers.
+     */
+    @SuppressWarnings("java:S107")
+    public StacDataset(
+            String name,
+            String geometryColumn,
+            Supplier<Parts> partsSupplier,
+            Supplier<Optional<StacItemRef>> firstRefSupplier,
+            Optional<BoundingBox> collectionBounds,
+            ContainerStorages storages,
+            OpenOptions openOptions) {
+        this.name = Objects.requireNonNull(name, "name");
+        this.geometryColumn = Objects.requireNonNull(geometryColumn, "geometryColumn");
+        this.partsSupplier = Objects.requireNonNull(partsSupplier, "partsSupplier");
+        this.firstRefSupplier = firstRefSupplier;
+        this.collectionBounds = Objects.requireNonNull(collectionBounds, "collectionBounds");
+        this.storages = Objects.requireNonNull(storages, "storages");
+        this.openOptions = Objects.requireNonNull(openOptions, "openOptions");
+    }
+
+    /** The materialized parts, resolved from the supplier once and reused across queries and threads. */
+    private synchronized Materialized materialize() {
+        Materialized resolved = materialized;
+        if (resolved != null) {
+            return resolved;
+        }
+        Parts parts = partsSupplier.get();
+        resolved = new Materialized(parts.refs(), buildStats(parts.refs(), parts.itemBboxes(), geometryColumn));
+        materialized = resolved;
+        return resolved;
+    }
+
+    private List<StacItemRef> refs() {
+        return materialize().refs();
+    }
+
+    private List<FileStats> fileStats() {
+        return materialize().fileStats();
+    }
+
+    /**
+     * The part reference at {@code index}. Index zero resolves through the first-ref fast path while the parts are
+     * unmaterialized, letting a schema probe read one item document; any other index, or an empty fast path,
+     * materializes the full list.
+     */
+    @SuppressWarnings("java:S2789")
+    private StacItemRef ref(int index) {
+        Materialized resolved = materialized;
+        if (resolved != null) {
+            return resolved.refs().get(index);
+        }
+        if (index == 0 && firstRefSupplier != null) {
+            Optional<StacItemRef> first = firstRef;
+            if (first == null) {
+                first = firstRefSupplier.get();
+                firstRef = first;
+            }
+            if (first.isPresent()) {
+                return first.orElseThrow();
+            }
+        }
+        return refs().get(index);
     }
 
     private static List<FileStats> buildStats(List<StacItemRef> items, List<double[]> bboxes, String geometryColumn) {
-        if (items.size() != bboxes.size()) {
-            throw new IllegalArgumentException("item and bbox counts differ");
-        }
         List<FileStats> stats = new ArrayList<>(items.size());
         for (int index = 0; index < items.size(); index++) {
             StacItem item =
@@ -162,19 +264,107 @@ public final class StacDataset implements GeoParquetDataset {
                 .fileStats(FileStatsSource.STAC_ITEM)
                 .fileSpatialBounds(FileSpatialBounds.NATIVE_GEO)
                 .cheapCount(false)
-                .cheapBounds(geoMetadata().flatMap(StacDataset::primaryBbox).isPresent())
+                .cheapBounds(hasDeclaredDatasetBounds())
                 .build();
+    }
+
+    /**
+     * Whether a dataset-level declared box exists: a collection extent, or a single part whose own geo metadata box is
+     * the whole dataset's. A multi-part collection's first-part box covers that part alone and never answers cheaply.
+     */
+    private boolean hasDeclaredDatasetBounds() {
+        if (collectionBounds.isPresent()) {
+            return true;
+        }
+        return singlePartMetadataBox().isPresent();
+    }
+
+    /**
+     * A single part's own geo metadata box, which is the whole dataset's. Answered only once the parts are
+     * materialized: counting parts requires them, and a capabilities probe on a still-lazy dataset must stay cheap.
+     */
+    private Optional<BoundingBox> singlePartMetadataBox() {
+        Materialized resolved = materialized;
+        if (resolved == null || resolved.refs().size() != 1) {
+            return Optional.empty();
+        }
+        return geoMetadata().flatMap(StacDataset::primaryBbox);
     }
 
     @Override
     public Optional<BoundingBox> bounds(Predicate predicate, ReadOptions options) {
         if (isUnfiltered(predicate)) {
-            Optional<BoundingBox> metadataBox = geoMetadata().flatMap(StacDataset::primaryBbox);
-            if (metadataBox.isPresent()) {
-                return metadataBox;
+            Optional<BoundingBox> declared = declaredBounds();
+            if (declared.isPresent()) {
+                return declared;
             }
         }
         return boundsOfSurvivors(survivorsByDescendingItemArea(prune(predicate)), predicate, options);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Answered from the declared collection extent for the unfiltered query, else the union of the surviving parts'
+     * item boxes. Item boxes come from the item documents alone; no part footer is read.
+     */
+    @Override
+    public Optional<BoundingBox> estimatedBounds(Predicate predicate) {
+        if (isUnfiltered(predicate)) {
+            Optional<BoundingBox> declared = declaredBounds();
+            if (declared.isPresent()) {
+                return declared;
+            }
+        }
+        BoundsAccumulator union = new BoundsAccumulator();
+        for (int index : prune(predicate)) {
+            Optional<BoundingBox> box = itemBox(index);
+            if (box.isEmpty()) {
+                return Optional.empty();
+            }
+            union.union(box.orElseThrow());
+        }
+        return union.snapshot();
+    }
+
+    /**
+     * The dataset-level declared box answering an unfiltered bounds query without a scan: the STAC collection extent
+     * when the data CRS is the GeoParquet WGS84 default (a STAC extent is WGS84 by spec, and a dataset in another CRS
+     * cannot use it), else a single part's own geo metadata box.
+     */
+    private Optional<BoundingBox> declaredBounds() {
+        if (collectionBounds.isPresent() && crsIsWgs84Default()) {
+            return collectionBounds;
+        }
+        return singlePartMetadataBox();
+    }
+
+    /**
+     * Whether the primary geometry column's CRS is the GeoParquet spec default (OGC:CRS84 - WGS 84). An absent geo
+     * document and an absent {@code crs} field both mean the default applies; an explicit CRS matches through its
+     * identifier, never structurally.
+     */
+    private boolean crsIsWgs84Default() {
+        Optional<GeoParquetMetadata> geo = geoMetadata();
+        if (geo.isEmpty()) {
+            return true;
+        }
+        GeoColumn primary = geo.orElseThrow().columns().get(geo.orElseThrow().primaryColumn());
+        if (primary == null || primary.crs().isEmpty()) {
+            return true;
+        }
+        return primary.crs()
+                .orElseThrow()
+                .id()
+                .map(StacDataset::isWgs84Identifier)
+                .orElse(false);
+    }
+
+    /** OGC:CRS84 and EPSG:4326 both name WGS 84; axis order does not change a 2D extent box. */
+    private static boolean isWgs84Identifier(Identifier id) {
+        boolean ogcCrs84 = "OGC".equalsIgnoreCase(id.authority()) && "CRS84".equalsIgnoreCase(id.code());
+        boolean epsg4326 = "EPSG".equalsIgnoreCase(id.authority()) && "4326".equals(id.code());
+        return ogcCrs84 || epsg4326;
     }
 
     /**
@@ -257,7 +447,7 @@ public final class StacDataset implements GeoParquetDataset {
     }
 
     private Optional<BoundingBox> itemBox(int index) {
-        return fileStats.get(index).geometryBounds().values().stream().findFirst();
+        return fileStats().get(index).geometryBounds().values().stream().findFirst();
     }
 
     /**
@@ -362,9 +552,10 @@ public final class StacDataset implements GeoParquetDataset {
 
     private DatasetExplainPlan buildExplain(
             Predicate predicate, Projection projection, ReadOptions options, boolean analyze) {
-        List<FileExplain> files = new ArrayList<>(items.size());
-        for (int index = 0; index < fileStats.size(); index++) {
-            PruningDecision decision = FilePruner.evaluate(predicate, fileStats.get(index));
+        List<FileStats> stats = fileStats();
+        List<FileExplain> files = new ArrayList<>(stats.size());
+        for (int index = 0; index < stats.size(); index++) {
+            PruningDecision decision = FilePruner.evaluate(predicate, stats.get(index));
             files.add(fileExplain(index, decision, predicate, projection, options, analyze));
         }
         return new DatasetExplainPlan(predicate, files, Totals.from(files));
@@ -377,7 +568,7 @@ public final class StacDataset implements GeoParquetDataset {
             Projection projection,
             ReadOptions options,
             boolean analyze) {
-        String location = items.get(index).href();
+        String location = refs().get(index).href();
         OptionalLong unknownCount = OptionalLong.empty();
         if (decision instanceof PruningDecision.Eliminated ruledOut) {
             return new FileExplain(location, Outcome.SKIP, ruledOut.reason(), unknownCount, Optional.empty());
@@ -390,9 +581,10 @@ public final class StacDataset implements GeoParquetDataset {
 
     private List<Integer> prune(Predicate predicate) {
         Objects.requireNonNull(predicate, "predicate");
+        List<FileStats> stats = fileStats();
         List<Integer> survivors = new ArrayList<>();
-        for (int index = 0; index < fileStats.size(); index++) {
-            PruningDecision decision = FilePruner.evaluate(predicate, fileStats.get(index));
+        for (int index = 0; index < stats.size(); index++) {
+            PruningDecision decision = FilePruner.evaluate(predicate, stats.get(index));
             if (!(decision instanceof PruningDecision.Eliminated)) {
                 survivors.add(index);
             }
@@ -415,7 +607,7 @@ public final class StacDataset implements GeoParquetDataset {
     private ParquetSource perFileChecked(int index, ParquetSchema representative) {
         ParquetSource part = perFile(index);
         if (!representative.equals(part.schema())) {
-            StacItemRef ref = items.get(index);
+            StacItemRef ref = refs().get(index);
             throw new StacFormatException("collection '" + name + "' has parts with differing schemas; item '"
                     + ref.itemId() + "' (" + ref.href() + ") does not match the collection schema");
         }
@@ -441,7 +633,7 @@ public final class StacDataset implements GeoParquetDataset {
      * before building the item references; a custom {@link io.tileverse.stac.StacCatalogReader} must do the same.
      */
     private ParquetSource openPerFile(int index) {
-        URI assetUri = URI.create(items.get(index).href());
+        URI assetUri = URI.create(ref(index).href());
         Storage storage = storages.storageFor(assetUri.resolve("."));
         RangeReader reader = storage.openRangeReader(assetUri);
         try {

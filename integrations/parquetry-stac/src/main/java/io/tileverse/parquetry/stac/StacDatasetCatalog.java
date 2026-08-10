@@ -22,6 +22,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.SequencedMap;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 import io.tileverse.storage.Storage;
 
@@ -30,29 +33,46 @@ import io.tileverse.parquetry.catalog.CatalogCapabilities.SchemaSource;
 import io.tileverse.parquetry.catalog.DatasetCatalog;
 import io.tileverse.parquetry.dataset.OpenOptions;
 import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.format.BoundingBox;
 
 import io.tileverse.stac.StacAsset;
 import io.tileverse.stac.StacCatalog;
 import io.tileverse.stac.StacCatalogReader;
 import io.tileverse.stac.StacCollection;
+import io.tileverse.stac.StacExtent;
 import io.tileverse.stac.StacItem;
 
 /**
  * A {@link DatasetCatalog} over a STAC catalog: it enumerates the catalog's collections and exposes one
- * {@link StacDataset} per collection, named by the collection id verbatim. Each collection's items resolve to
- * GeoParquet parts (one part per item), but the catalog opens no part at registration: enumerating a collection reads
- * STAC metadata alone, and a part's byte reader opens on the dataset's first read. Each asset is resolved through a
- * per-container {@link ContainerStorages Storage} keyed on the asset's own absolute URI, which lets assets sit on a
- * different host than the catalog. {@link #close()} releases each dataset's opened readers, then the Storage registry.
+ * {@link StacDataset} per collection, named by the collection id verbatim. Opening walks catalog and collection
+ * documents alone, stopping at each collection. A resolved dataset stays document-lazy too: a schema probe reads the
+ * collection's first item document alone, and the full item enumeration happens on the first query that needs every
+ * part. A catalog document naming a {@code latest} child (the Overture releases-catalog property) restricts the walk to
+ * that child; the other releases are never visited.
+ *
+ * <p>Each collection's items resolve to GeoParquet parts (one part per item), but the catalog opens no part at
+ * resolution: a part's byte reader opens on the dataset's first read. Each asset is resolved through a per-container
+ * {@link ContainerStorages Storage} keyed on the asset's own absolute URI, which lets assets sit on a different host
+ * than the catalog. {@link #close()} releases each resolved dataset's opened readers, then the Storage registry.
  */
 public final class StacDatasetCatalog implements DatasetCatalog {
 
-    private final Map<String, StacDataset> datasets;
-    private final ContainerStorages storages;
+    private static final System.Logger LOGGER = System.getLogger(StacDatasetCatalog.class.getName());
 
-    private StacDatasetCatalog(Map<String, StacDataset> datasets, ContainerStorages storages) {
-        this.datasets = datasets;
+    private final List<String> datasetNames;
+    private final Map<String, StacCollection> pendingByName;
+    private final ConcurrentMap<String, StacDataset> datasetsByName = new ConcurrentHashMap<>();
+    private final ContainerStorages storages;
+    private final StacCatalogOptions options;
+
+    private StacDatasetCatalog(
+            SequencedMap<String, StacCollection> pendingByName,
+            ContainerStorages storages,
+            StacCatalogOptions options) {
+        this.datasetNames = List.copyOf(pendingByName.keySet());
+        this.pendingByName = Map.copyOf(pendingByName);
         this.storages = storages;
+        this.options = options;
     }
 
     /** Opens a STAC catalog through {@code reader}, taking ownership of {@code storages}. */
@@ -63,15 +83,14 @@ public final class StacDatasetCatalog implements DatasetCatalog {
         Objects.requireNonNull(reader, "reader");
         Objects.requireNonNull(options, "options");
 
-        Map<String, StacDataset> built = new LinkedHashMap<>();
         try {
             Storage catalogStorage = storages.storageFor(catalogRoot.resolve("."));
             StacCatalog root = reader.open(catalogRoot, catalogStorage);
-            List<StacCollection> collections = allCollections(root);
-            buildDatasets(built, collections, storages, options);
-            return new StacDatasetCatalog(built, storages);
+            SequencedMap<String, StacCollection> byId = new LinkedHashMap<>();
+            collectCollections(root, byId);
+            return new StacDatasetCatalog(byId, storages, options);
         } catch (RuntimeException failure) {
-            RuntimeException cleanup = closeAll(built, storages);
+            RuntimeException cleanup = closeAll(Map.of(), storages);
             if (cleanup != null) {
                 failure.addSuppressed(cleanup);
             }
@@ -79,33 +98,71 @@ public final class StacDatasetCatalog implements DatasetCatalog {
         }
     }
 
-    private static List<StacCollection> allCollections(StacCatalog root) {
-        List<StacCollection> collections = new ArrayList<>(root.collections());
-        for (StacCatalog child : root.childCatalogs()) {
-            collections.addAll(allCollections(child));
+    /**
+     * Walks the catalog tree gathering collections by id, first occurrence winning. A duplicate id is logged and
+     * dropped: a releases catalog carries the same collection ids under every release, and without a {@code latest}
+     * restriction the walk would otherwise silently replace one release's dataset with another's.
+     */
+    private static void collectCollections(StacCatalog catalog, SequencedMap<String, StacCollection> into) {
+        for (StacCollection collection : catalog.collections()) {
+            StacCollection existing = into.putIfAbsent(collection.id(), collection);
+            if (existing != null) {
+                LOGGER.log(
+                        System.Logger.Level.WARNING,
+                        "dropping duplicate STAC collection id ''{0}'': the first occurrence in walk order is kept",
+                        collection.id());
+            }
         }
-        return collections;
-    }
-
-    private static void buildDatasets(
-            Map<String, StacDataset> into,
-            List<StacCollection> collections,
-            ContainerStorages storages,
-            StacCatalogOptions options) {
-        for (StacCollection collection : collections) {
-            Optional<StacDataset> dataset = buildDataset(collection, storages, options);
-            dataset.ifPresent(present -> into.put(collection.id(), present));
+        for (StacCatalog child : childrenToWalk(catalog)) {
+            collectCollections(child, into);
         }
     }
 
     /**
-     * Builds the dataset for one collection, or {@link Optional#empty()} when the collection resolves to no GeoParquet
-     * data parts (its items hold only non-parquet assets, such as PMTiles or COGs, or it has no items). Such a
-     * collection is simply not exposed as a dataset; it never reaches {@link StacDataset}'s empty-parts guard. No part
-     * is opened here: the dataset resolves each item's href to a byte reader lazily on first read.
+     * The child catalogs the walk descends into: the one named by the catalog's {@code latest} property when present
+     * and resolvable, every child otherwise. A {@code latest} naming no child is logged and ignored rather than hiding
+     * the whole tree behind a stale pointer.
      */
-    private static Optional<StacDataset> buildDataset(
-            StacCollection collection, ContainerStorages storages, StacCatalogOptions options) {
+    private static List<StacCatalog> childrenToWalk(StacCatalog catalog) {
+        String latest = catalog.latest();
+        List<StacCatalog> children = catalog.childCatalogs();
+        if (latest == null) {
+            return children;
+        }
+        for (StacCatalog child : children) {
+            if (latest.equals(child.id())) {
+                return List.of(child);
+            }
+        }
+        LOGGER.log(
+                System.Logger.Level.WARNING,
+                "catalog ''{0}'' names latest child ''{1}'' but no child catalog has that id; walking every child",
+                catalog.id(),
+                latest);
+        return children;
+    }
+
+    /**
+     * Builds the dataset for one collection. No item document is read here: the dataset materializes the collection's
+     * data parts on first per-part need, and a schema probe resolves the first item alone. A collection resolving to no
+     * GeoParquet data parts (its items hold only non-parquet assets, such as PMTiles or COGs, or it has no items) fails
+     * at that materialization: this store serves GeoParquet, and a collection with none has no rows to offer.
+     */
+    private StacDataset buildDataset(StacCollection collection) {
+        Optional<BoundingBox> collectionBounds =
+                collection.extent().flatMap(StacExtent::bbox).flatMap(StacDatasetCatalog::toBoundingBox);
+        return new StacDataset(
+                collection.id(),
+                options.geometryColumn(),
+                () -> materializeParts(collection),
+                () -> firstParquetRef(collection),
+                collectionBounds,
+                storages,
+                OpenOptions.DEFAULTS);
+    }
+
+    /** Reads the collection's item documents and resolves each item's GeoParquet data asset. */
+    private StacDataset.Parts materializeParts(StacCollection collection) {
         List<StacItemRef> refs = new ArrayList<>();
         List<double[]> bboxes = new ArrayList<>();
         for (StacItem item : collection.items()) {
@@ -117,11 +174,42 @@ public final class StacDatasetCatalog implements DatasetCatalog {
             bboxes.add(item.bbox());
         }
         if (refs.isEmpty()) {
-            return Optional.empty();
+            throw new IllegalStateException(
+                    "collection '" + collection.id() + "' resolves to no GeoParquet data assets");
         }
-        StacDataset dataset = new StacDataset(
-                collection.id(), options.geometryColumn(), refs, bboxes, storages, OpenOptions.DEFAULTS);
-        return Optional.of(dataset);
+        return new StacDataset.Parts(refs, bboxes);
+    }
+
+    /** The first item's data-part reference when that item has a GeoParquet asset; empty defers to the full list. */
+    private Optional<StacItemRef> firstParquetRef(StacCollection collection) {
+        return collection.firstItem().flatMap(item -> {
+            StacAsset data = parquetAsset(item, options);
+            if (data == null) {
+                return Optional.empty();
+            }
+            return Optional.of(new StacItemRef(item.id(), data.href()));
+        });
+    }
+
+    /** The collection's declared box as an engine box; a 3D STAC bbox contributes its horizontal coordinates. */
+    private static Optional<BoundingBox> toBoundingBox(double[] bbox) {
+        if (bbox.length == 4) {
+            return Optional.of(BoundingBox.builder()
+                    .xmin(bbox[0])
+                    .ymin(bbox[1])
+                    .xmax(bbox[2])
+                    .ymax(bbox[3])
+                    .build());
+        }
+        if (bbox.length == 6) {
+            return Optional.of(BoundingBox.builder()
+                    .xmin(bbox[0])
+                    .ymin(bbox[1])
+                    .xmax(bbox[3])
+                    .ymax(bbox[4])
+                    .build());
+        }
+        return Optional.empty();
     }
 
     private static StacAsset parquetAsset(StacItem item, StacCatalogOptions options) {
@@ -144,21 +232,25 @@ public final class StacDatasetCatalog implements DatasetCatalog {
 
     @Override
     public List<String> datasets() {
-        return List.copyOf(datasets.keySet());
+        return datasetNames;
     }
 
     @Override
     public ParquetDataset dataset(String name) {
-        StacDataset dataset = datasets.get(name);
-        if (dataset == null) {
-            throw new IllegalArgumentException("no dataset named '" + name + "' (have " + datasets.keySet() + ")");
+        StacDataset dataset = datasetsByName.get(name);
+        if (dataset != null) {
+            return dataset;
         }
-        return dataset;
+        StacCollection pending = pendingByName.get(name);
+        if (pending == null) {
+            throw new IllegalArgumentException("no dataset named '" + name + "' (have " + datasets() + ")");
+        }
+        return datasetsByName.computeIfAbsent(name, unused -> buildDataset(pending));
     }
 
     @Override
     public void close() {
-        RuntimeException failure = closeAll(datasets, storages);
+        RuntimeException failure = closeAll(datasetsByName, storages);
         if (failure != null) {
             throw failure;
         }

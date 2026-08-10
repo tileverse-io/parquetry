@@ -122,6 +122,39 @@ class FilesetCatalogPerFileTest {
         assertThatCode(catalog::close).doesNotThrowAnyException();
     }
 
+    @Test
+    void opensNoFileUntilItsDatasetIsAccessed(@TempDir Path dir) throws Exception {
+        writeIdNameFile(dir.resolve("a.parquet"), 1);
+        writeValueFile(dir.resolve("b.parquet"), 2);
+        CountingFileSource source = new CountingFileSource(dir, List.of("a.parquet", "b.parquet"));
+
+        try (FilesetCatalog catalog = FilesetCatalog.openPerFile(source)) {
+            assertThat(catalog.datasets()).containsExactly("a", "b");
+            assertThat(source.openCount("a.parquet")).isZero();
+            assertThat(source.openCount("b.parquet")).isZero();
+
+            ParquetDataset first = catalog.dataset("a");
+            assertThat(source.openCount("a.parquet")).isEqualTo(1);
+            assertThat(source.openCount("b.parquet")).isZero();
+
+            assertThat(catalog.dataset("a")).isSameAs(first);
+            assertThat(source.openCount("a.parquet")).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void closeReleasesLazilyOpenedSources(@TempDir Path dir) throws Exception {
+        writeIdNameFile(dir.resolve("a.parquet"), 1);
+        CountingFileSource source = new CountingFileSource(dir, List.of("a.parquet"));
+
+        FilesetCatalog catalog = FilesetCatalog.openPerFile(source);
+        catalog.dataset("a");
+        catalog.close();
+
+        assertThat(source.allOpenedSourcesClosed()).isTrue();
+        assertThat(source.closed).isTrue();
+    }
+
     private static FileEntry entry(String relativePath, Path backing) {
         return new FileEntry() {
             @Override

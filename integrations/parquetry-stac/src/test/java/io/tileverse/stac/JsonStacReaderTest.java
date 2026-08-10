@@ -17,10 +17,16 @@ package io.tileverse.stac;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -48,7 +54,7 @@ class JsonStacReaderTest {
             assertThat(building.links()).anyMatch(link -> link.rel().equals("pmtiles"));
 
             List<StacItem> items = building.items();
-            assertThat(items).extracting(StacItem::id).containsExactlyInAnyOrder("item-west", "item-east");
+            assertThat(items).extracting(StacItem::id).containsExactly("item-west", "item-east");
 
             StacItem west = items.stream()
                     .filter(i -> i.id().equals("item-west"))
@@ -59,6 +65,61 @@ class JsonStacReaderTest {
                     .anyMatch(a ->
                             a.href().endsWith("west.parquet") && a.type().equals("application/vnd.apache.parquet"));
         }
+    }
+
+    @Test
+    void readsEachChildDocumentOnceAndDefersItemDocuments(@TempDir Path tempDir) throws Exception {
+        Path root = copyFixtureTree(tempDir);
+        Map<String, Integer> reads = new ConcurrentHashMap<>();
+        try (Storage storage = StorageFactory.open(root.toUri())) {
+            StacCatalog catalog =
+                    new JsonStacReader().open(root.resolve("catalog.json").toUri(), countingStorage(storage, reads));
+
+            List<StacCollection> collections = catalog.collections();
+            List<StacCatalog> children = catalog.childCatalogs();
+
+            assertThat(collections).hasSize(1);
+            assertThat(children).isEmpty();
+            assertThat(reads.get("building/collection.json")).isEqualTo(1);
+            assertThat(reads.keySet()).noneMatch(key -> key.contains("items/"));
+
+            collections.get(0).items();
+            assertThat(reads.get("building/items/item-west.json")).isEqualTo(1);
+            assertThat(reads.get("building/items/item-east.json")).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void firstItemReadsOnlyItsDocument(@TempDir Path tempDir) throws Exception {
+        Path root = copyFixtureTree(tempDir);
+        Map<String, Integer> reads = new ConcurrentHashMap<>();
+        try (Storage storage = StorageFactory.open(root.toUri())) {
+            StacCatalog catalog =
+                    new JsonStacReader().open(root.resolve("catalog.json").toUri(), countingStorage(storage, reads));
+            StacCollection building = catalog.collections().get(0);
+
+            Optional<StacItem> first = building.firstItem();
+
+            assertThat(first).map(StacItem::id).hasValue("item-west");
+            assertThat(reads.get("building/items/item-west.json")).isEqualTo(1);
+            assertThat(reads.keySet()).doesNotContain("building/items/item-east.json");
+        }
+    }
+
+    /** Wraps {@code delegate} counting every document read by key. */
+    private static Storage countingStorage(Storage delegate, Map<String, Integer> reads) {
+        InvocationHandler countingReads = (proxy, method, args) -> {
+            if ("read".equals(method.getName()) && args != null && args.length >= 1) {
+                reads.merge((String) args[0], 1, Integer::sum);
+            }
+            try {
+                return method.invoke(delegate, args);
+            } catch (InvocationTargetException failure) {
+                throw failure.getCause();
+            }
+        };
+        return (Storage)
+                Proxy.newProxyInstance(Storage.class.getClassLoader(), new Class<?>[] {Storage.class}, countingReads);
     }
 
     private static Path copyFixtureTree(Path tempDir) throws Exception {

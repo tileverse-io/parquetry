@@ -17,6 +17,8 @@ package io.tileverse.stac;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.io.ByteArrayInputStream;
+
 import org.junit.jupiter.api.Test;
 
 import tools.jackson.databind.JsonNode;
@@ -25,7 +27,8 @@ class StacJsonTest {
 
     @Test
     void parsesObjectTree() {
-        JsonNode root = StacJson.parse("{\"type\":\"Collection\",\"id\":\"building\"}");
+        JsonNode root =
+                StacJson.parse(new ByteArrayInputStream("{\"type\":\"Collection\",\"id\":\"building\"}".getBytes()));
         assertThat(root.get("type").stringValue()).isEqualTo("Collection");
         assertThat(root.get("id").stringValue()).isEqualTo("building");
     }

@@ -126,7 +126,7 @@ class GeoParquetPushdownIT {
     }
 
     @Test
-    void boundsForPushableFilterEqualIteratedEnvelope(@TempDir Path dir) throws Exception {
+    void boundsForPushableFilterCoverIteratedEnvelope(@TempDir Path dir) throws Exception {
         try (CatalogDataStore store = store(dir)) {
             CatalogFeatureSource fs = (CatalogFeatureSource) store.getFeatureSource("example");
             Query q = new Query("example", FF.equals(FF.property("continent"), FF.literal("Africa")));
@@ -135,7 +135,12 @@ class GeoParquetPushdownIT {
 
             ReferencedEnvelope bounds = fs.getBoundsInternal(q);
 
-            assertSameEnvelope(bounds, expected);
+            // The GeoTools bounds contract tolerates a conservative answer; the store estimates from file-level
+            // statistics, which must cover, and may exceed, the exact envelope of the matching features.
+            assertThat(bounds).isNotNull();
+            assertThat(bounds.contains((org.locationtech.jts.geom.Envelope) expected))
+                    .as("estimated bounds must cover the iterated envelope")
+                    .isTrue();
             assertThat(bounds.getCoordinateReferenceSystem())
                     .isEqualTo(fs.getSchema().getCoordinateReferenceSystem());
         }
