@@ -95,6 +95,29 @@ class FilesetDatasetBoundsTest {
     }
 
     @Test
+    void unfilteredWithoutMetadataBoxFallsBackToScan() throws Exception {
+        // Files with native statistics but no geo metadata document (the same dataset-level outcome as files
+        // whose 'geo' metadata declares a covering but no bbox): the aggregated metadata box is absent and
+        // the bounds must come from scanning, not report empty.
+        for (int i = 0; i < REGIONS.size(); i++) {
+            Path dir = Files.createDirectories(root.resolve("region=" + REGIONS.get(i)));
+            PointParquet.writePoints(
+                    dir.resolve("points.parquet"), "geometry", GeoParquetMetadataMode.V2_0_ONLY, POINTS_PER_REGION[i]);
+        }
+        try (FilesetCatalog catalog =
+                FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
+            ParquetDataset dataset = onlyDataset(catalog);
+
+            Optional<BoundingBox> bounds = dataset.bounds(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
+            Optional<BoundingBox> oracle = scanBounds(dataset, Predicate.ALWAYS_TRUE);
+
+            assertThat(oracle).as("the dataset holds geometry rows to bound").isPresent();
+            assertThat(bounds).isPresent();
+            assertSameBox2d(bounds.orElseThrow(), oracle.orElseThrow());
+        }
+    }
+
+    @Test
     void noMatchIsEmpty() throws Exception {
         try (FilesetCatalog catalog = openCatalog()) {
             ParquetDataset dataset = onlyDataset(catalog);

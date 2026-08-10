@@ -63,6 +63,7 @@ import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
+import io.tileverse.parquetry.schema.geo.projjson.Identifier;
 import io.tileverse.parquetry.tileverse.ByteRangeSources;
 
 import io.tileverse.stac.StacFormatException;
@@ -85,6 +86,7 @@ public final class StacDataset implements GeoParquetDataset {
     private final String name;
     private final List<StacItemRef> items;
     private final List<FileStats> fileStats;
+    private final Optional<BoundingBox> collectionBounds;
     private final ContainerStorages storages;
     private final OpenOptions openOptions;
     private final ConcurrentHashMap<Integer, ParquetSource> perFileDatasets = new ConcurrentHashMap<>();
@@ -100,9 +102,23 @@ public final class StacDataset implements GeoParquetDataset {
             List<double[]> itemBboxes,
             ContainerStorages storages,
             OpenOptions openOptions) {
+        this(name, geometryColumn, items, itemBboxes, Optional.empty(), storages, openOptions);
+    }
+
+    // The construction inputs are cohesive collection state the catalog resolves in one place.
+    @SuppressWarnings("java:S107")
+    public StacDataset(
+            String name,
+            String geometryColumn,
+            List<StacItemRef> items,
+            List<double[]> itemBboxes,
+            Optional<BoundingBox> collectionBounds,
+            ContainerStorages storages,
+            OpenOptions openOptions) {
         this.name = Objects.requireNonNull(name, "name");
         Objects.requireNonNull(geometryColumn, "geometryColumn");
         this.items = List.copyOf(items);
+        this.collectionBounds = Objects.requireNonNull(collectionBounds, "collectionBounds");
         this.storages = Objects.requireNonNull(storages, "storages");
         this.openOptions = Objects.requireNonNull(openOptions, "openOptions");
         this.fileStats = buildStats(this.items, itemBboxes, geometryColumn);
@@ -162,19 +178,74 @@ public final class StacDataset implements GeoParquetDataset {
                 .fileStats(FileStatsSource.STAC_ITEM)
                 .fileSpatialBounds(FileSpatialBounds.NATIVE_GEO)
                 .cheapCount(false)
-                .cheapBounds(geoMetadata().flatMap(StacDataset::primaryBbox).isPresent())
+                .cheapBounds(hasDeclaredDatasetBounds())
                 .build();
+    }
+
+    /**
+     * Whether a dataset-level declared box exists: a collection extent, or a single part whose own geo metadata box is
+     * the whole dataset's. A multi-part collection's first-part box covers that part alone and never answers cheaply.
+     */
+    private boolean hasDeclaredDatasetBounds() {
+        if (collectionBounds.isPresent()) {
+            return true;
+        }
+        return items.size() == 1
+                && geoMetadata().flatMap(StacDataset::primaryBbox).isPresent();
     }
 
     @Override
     public Optional<BoundingBox> bounds(Predicate predicate, ReadOptions options) {
         if (isUnfiltered(predicate)) {
-            Optional<BoundingBox> metadataBox = geoMetadata().flatMap(StacDataset::primaryBbox);
-            if (metadataBox.isPresent()) {
-                return metadataBox;
+            Optional<BoundingBox> declared = declaredBounds();
+            if (declared.isPresent()) {
+                return declared;
             }
         }
         return boundsOfSurvivors(survivorsByDescendingItemArea(prune(predicate)), predicate, options);
+    }
+
+    /**
+     * The dataset-level declared box answering an unfiltered bounds query without a scan: the STAC collection extent
+     * when the data CRS is the GeoParquet WGS84 default (a STAC extent is WGS84 by spec, and a dataset in another CRS
+     * cannot use it), else a single part's own geo metadata box.
+     */
+    private Optional<BoundingBox> declaredBounds() {
+        if (collectionBounds.isPresent() && crsIsWgs84Default()) {
+            return collectionBounds;
+        }
+        if (items.size() == 1) {
+            return geoMetadata().flatMap(StacDataset::primaryBbox);
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Whether the primary geometry column's CRS is the GeoParquet spec default (OGC:CRS84 - WGS 84). An absent geo
+     * document and an absent {@code crs} field both mean the default applies; an explicit CRS matches through its
+     * identifier, never structurally.
+     */
+    private boolean crsIsWgs84Default() {
+        Optional<GeoParquetMetadata> geo = geoMetadata();
+        if (geo.isEmpty()) {
+            return true;
+        }
+        GeoColumn primary = geo.orElseThrow().columns().get(geo.orElseThrow().primaryColumn());
+        if (primary == null || primary.crs().isEmpty()) {
+            return true;
+        }
+        return primary.crs()
+                .orElseThrow()
+                .id()
+                .map(StacDataset::isWgs84Identifier)
+                .orElse(false);
+    }
+
+    /** OGC:CRS84 and EPSG:4326 both name WGS 84; axis order does not change a 2D extent box. */
+    private static boolean isWgs84Identifier(Identifier id) {
+        boolean ogcCrs84 = "OGC".equalsIgnoreCase(id.authority()) && "CRS84".equalsIgnoreCase(id.code());
+        boolean epsg4326 = "EPSG".equalsIgnoreCase(id.authority()) && "4326".equals(id.code());
+        return ogcCrs84 || epsg4326;
     }
 
     /**

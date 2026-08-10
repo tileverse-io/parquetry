@@ -153,9 +153,11 @@ public final class FilesetDataset implements GeoParquetDataset {
 
     @Override
     public Optional<BoundingBox> bounds(Predicate predicate, ReadOptions options) {
-        if (isUnfiltered(predicate)) {
+        if (isUnfiltered(predicate) && aggregatedBounds.isPresent()) {
             return aggregatedBounds;
         }
+        // No aggregated metadata box exists when the files' geo metadata declares no bbox (or there is no geo
+        // metadata at all); the bounds then come from scanning, never from reporting empty over a non-empty dataset.
         return boundsOfSurvivors(pruneSurvivors(predicate), predicate, options);
     }
 

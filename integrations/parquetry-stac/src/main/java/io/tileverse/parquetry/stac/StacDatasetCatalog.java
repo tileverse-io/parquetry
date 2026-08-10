@@ -21,6 +21,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.SequencedMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -32,11 +33,13 @@ import io.tileverse.parquetry.catalog.CatalogCapabilities.SchemaSource;
 import io.tileverse.parquetry.catalog.DatasetCatalog;
 import io.tileverse.parquetry.dataset.OpenOptions;
 import io.tileverse.parquetry.dataset.ParquetDataset;
+import io.tileverse.parquetry.format.BoundingBox;
 
 import io.tileverse.stac.StacAsset;
 import io.tileverse.stac.StacCatalog;
 import io.tileverse.stac.StacCatalogReader;
 import io.tileverse.stac.StacCollection;
+import io.tileverse.stac.StacExtent;
 import io.tileverse.stac.StacItem;
 
 /**
@@ -159,7 +162,37 @@ public final class StacDatasetCatalog implements DatasetCatalog {
             throw new IllegalStateException(
                     "collection '" + collection.id() + "' resolves to no GeoParquet data assets");
         }
-        return new StacDataset(collection.id(), options.geometryColumn(), refs, bboxes, storages, OpenOptions.DEFAULTS);
+        Optional<BoundingBox> collectionBounds =
+                collection.extent().flatMap(StacExtent::bbox).flatMap(StacDatasetCatalog::toBoundingBox);
+        return new StacDataset(
+                collection.id(),
+                options.geometryColumn(),
+                refs,
+                bboxes,
+                collectionBounds,
+                storages,
+                OpenOptions.DEFAULTS);
+    }
+
+    /** The collection's declared box as an engine box; a 3D STAC bbox contributes its horizontal coordinates. */
+    private static Optional<BoundingBox> toBoundingBox(double[] bbox) {
+        if (bbox.length == 4) {
+            return Optional.of(BoundingBox.builder()
+                    .xmin(bbox[0])
+                    .ymin(bbox[1])
+                    .xmax(bbox[2])
+                    .ymax(bbox[3])
+                    .build());
+        }
+        if (bbox.length == 6) {
+            return Optional.of(BoundingBox.builder()
+                    .xmin(bbox[0])
+                    .ymin(bbox[1])
+                    .xmax(bbox[3])
+                    .ymax(bbox[4])
+                    .build());
+        }
+        return Optional.empty();
     }
 
     private static StacAsset parquetAsset(StacItem item, StacCatalogOptions options) {
