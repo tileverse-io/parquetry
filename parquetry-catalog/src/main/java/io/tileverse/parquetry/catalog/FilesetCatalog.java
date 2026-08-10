@@ -31,7 +31,6 @@ import java.util.stream.Stream;
 
 import io.tileverse.parquetry.dataset.DatasetCapabilities;
 import io.tileverse.parquetry.dataset.FilesetDataset;
-import io.tileverse.parquetry.dataset.FilesetReader;
 import io.tileverse.parquetry.dataset.GeoMetadataAggregator;
 import io.tileverse.parquetry.dataset.HivePartitionResolver;
 import io.tileverse.parquetry.dataset.HivePartitioning;
@@ -54,13 +53,13 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
  * listing (and {@link CatalogOptions#datasetName()}) alone, and a dataset is built, its footers fetched and decoded,
  * only when {@link #dataset(String)} first resolves it.
  *
- * <p>Resolving the merged dataset reads each file's footer in a gather pass (schema, GeoParquet {@code geo} metadata,
- * row count, and Hive partition values) and again when the all-files dataset opens; composing the already-opened
- * single-file readers into the multi-file dataset is a possible follow-up. From the gathered metadata the partition
- * keys are bound ({@link HivePartitioning#bind}: a key matching a physical column prunes that column, a path-only key
- * is synthesized into an appended column), the per-file {@code geo} metadata is unioned
- * ({@link GeoMetadataAggregator#aggregate}), and one {@link FilesetDataset} is built with per-file partition
- * {@link FileStats} for pruning.
+ * <p>Resolving the merged dataset reads each file's footer once in a gather pass (schema, GeoParquet {@code geo}
+ * metadata, row count, and Hive partition values), overlapping the fetches on virtual threads and dropping each decoded
+ * footer after its metadata is extracted: a resolved dataset keeps only the compact per-file planning state, and
+ * queries decode the surviving files' footers per call. From the gathered metadata the partition keys are bound
+ * ({@link HivePartitioning#bind}: a key matching a physical column prunes that column, a path-only key is synthesized
+ * into an appended column), the per-file {@code geo} metadata is unioned ({@link GeoMetadataAggregator#aggregate}), and
+ * one {@link FilesetDataset} is built with per-file partition {@link FileStats} for pruning.
  *
  * <p>Hive {@code key=value} segments are a physical-column pruning aid, never a dataset discriminator: the whole tree
  * is one dataset. The footer reads at merged-dataset resolution are the known scale ceiling, acceptable for moderate
@@ -172,19 +171,20 @@ public final class FilesetCatalog implements DatasetCatalog {
     }
 
     /**
-     * Builds a lazily resolved dataset by opening its files. The byte sources are registered for {@link #close()} only
-     * after the build succeeds; a failed build closes them here and leaves the entry pending, ready for a later retry.
+     * Builds a lazily resolved dataset by gathering its files' footer metadata. The byte sources are registered for
+     * {@link #close()} only after the build succeeds; a failed build closes them here and leaves the entry pending,
+     * ready for a later retry. (A failed gather closes every source it opened before propagating.)
      */
     private ParquetDataset buildLazily(PendingDataset pending) {
-        List<ByteRangeSource> opened = new ArrayList<>(pending.files().size());
+        List<ConcurrentFooterGather.GatheredFile> gathered = ConcurrentFooterGather.gather(pending.files());
+        List<ByteRangeSource> opened = gathered.stream()
+                .map(ConcurrentFooterGather.GatheredFile::source)
+                .toList();
         try {
-            for (FileEntry file : pending.files()) {
-                opened.add(file.open());
-            }
-            ParquetDataset dataset = buildDataset(pending.files(), opened, pending.options(), source.root());
+            ParquetDataset dataset = buildDataset(pending.files(), gathered, pending.options(), source.root());
             openSources.addAll(opened);
             return dataset;
-        } catch (RuntimeException failure) {
+        } catch (RuntimeException | Error failure) {
             RuntimeException cleanup = null;
             for (ByteRangeSource bytes : opened) {
                 cleanup = closeChaining(bytes, cleanup);
@@ -198,30 +198,34 @@ public final class FilesetCatalog implements DatasetCatalog {
 
     @SuppressWarnings("java:S2259") // open() guarantees at least one file; the loop always assigns unifiedSchema
     private static ParquetDataset buildDataset(
-            List<FileEntry> files, List<ByteRangeSource> opened, CatalogOptions options, URI root) {
+            List<FileEntry> files,
+            List<ConcurrentFooterGather.GatheredFile> gathered,
+            CatalogOptions options,
+            URI root) {
 
+        // The schema-equality check runs sequentially over the index-ordered gather results, keeping its failure
+        // message deterministic (first file vs the first offender in listing order).
         List<GeoParquetMetadata> perFileGeo = new ArrayList<>();
         List<Map<String, String>> perFilePartitions = new ArrayList<>(files.size());
         List<FileStats> perFileFooterStats = new ArrayList<>(files.size());
         ParquetSchema unifiedSchema = null;
-        ParquetSource firstFileSource = null;
         for (int index = 0; index < files.size(); index++) {
-            ParquetSource fileDataset = ParquetSource.open(opened.get(index));
-            if (firstFileSource == null) {
-                firstFileSource = fileDataset;
+            ConcurrentFooterGather.GatheredFile file = gathered.get(index);
+            if (file.footerFailure() != null) {
+                throw file.footerFailure();
             }
-            ParquetSchema schema = fileDataset.schema();
+            ParquetSchema schema = file.schema();
             if (unifiedSchema == null) {
                 unifiedSchema = schema;
             } else if (!unifiedSchema.equals(schema)) {
                 throw new ParquetSchemaException("files '" + files.get(0).relativePath() + "' and '"
                         + files.get(index).relativePath() + "' do not share a schema by equality");
             }
-            parseGeoMetadata(fileDataset, files.get(index)).ifPresent(perFileGeo::add);
+            parseGeoMetadata(file.geoJson(), files.get(index)).ifPresent(perFileGeo::add);
             Map<String, String> partitions =
                     HivePartitionResolver.partitionValues(files.get(index).relativePath());
             perFilePartitions.add(partitions);
-            perFileFooterStats.add(fileDataset.fileStats());
+            perFileFooterStats.add(file.fileStats());
         }
 
         HivePartitioning partitioning = HivePartitioning.bind(perFilePartitions, unifiedSchema);
@@ -235,24 +239,36 @@ public final class FilesetCatalog implements DatasetCatalog {
 
         Optional<GeoParquetMetadata> aggregatedGeo = GeoMetadataAggregator.aggregate(perFileGeo);
         // A one-file dataset reuses the gather pass's already-parsed source; reopening would fetch and decode
-        // the footer a second time, which on a large remote file costs a full extra footer round trip.
-        ParquetSource allFiles = files.size() == 1 ? firstFileSource : ParquetSource.open(new PreOpenedFileset(opened));
+        // the footer a second time, which on a large remote file costs a full extra footer round trip. Multi-file
+        // datasets keep no parsed source at all: queries open readers over the surviving files per call.
+        Optional<ParquetSource> singleFile =
+                gathered.size() == 1 ? gathered.get(0).parsed() : Optional.empty();
+        List<ByteRangeSource> opened = gathered.stream()
+                .map(ConcurrentFooterGather.GatheredFile::source)
+                .toList();
         DatasetCapabilities caps = capabilities(partitioning, aggregatedGeo);
         String name = options.datasetName().orElseGet(() -> deriveName(files, root));
         List<String> locations = files.stream().map(FileEntry::relativePath).toList();
         FilesetDataset.PartitionContext partitions =
                 new FilesetDataset.PartitionContext(augmentedSchema, partitioning, perFilePartitions, stats);
         return new FilesetDataset(
-                name, allFiles, partitions, opened, locations, caps, aggregatedGeo, OpenOptions.DEFAULTS);
+                name,
+                unifiedSchema,
+                singleFile,
+                partitions,
+                opened,
+                locations,
+                caps,
+                aggregatedGeo,
+                OpenOptions.DEFAULTS);
     }
 
     /**
-     * Reads one file's GeoParquet {@code geo} key-value metadata. A file with no {@code geo} key, a blank one, or one
-     * whose value cannot be parsed contributes no geo metadata: an unparseable or forward-incompatible {@code geo}
-     * block is logged and skipped rather than aborting the whole catalog open.
+     * Parses one file's gathered GeoParquet {@code geo} key-value entry. A file with no {@code geo} key, a blank one,
+     * or one whose value cannot be parsed contributes no geo metadata: an unparseable or forward-incompatible
+     * {@code geo} block is logged and skipped rather than aborting the whole catalog open.
      */
-    private static Optional<GeoParquetMetadata> parseGeoMetadata(ParquetSource fileDataset, FileEntry file) {
-        String geoJson = fileDataset.keyValueMetadata().get("geo");
+    private static Optional<GeoParquetMetadata> parseGeoMetadata(String geoJson, FileEntry file) {
         if (geoJson == null || geoJson.isBlank()) {
             return Optional.empty();
         }
@@ -389,18 +405,5 @@ public final class FilesetCatalog implements DatasetCatalog {
         }
         accumulated.addSuppressed(next);
         return accumulated;
-    }
-
-    /** A {@link FilesetReader} over byte sources the catalog already opened (and owns). */
-    private record PreOpenedFileset(List<ByteRangeSource> sources) implements FilesetReader {
-        @Override
-        public ByteRangeSource openFile(int index) {
-            return sources.get(index);
-        }
-
-        @Override
-        public int fileCount() {
-            return sources.size();
-        }
     }
 }

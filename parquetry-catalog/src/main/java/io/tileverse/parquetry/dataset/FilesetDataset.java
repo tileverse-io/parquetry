@@ -26,7 +26,6 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.SequencedSet;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.StructuredTaskScope;
 import java.util.stream.Stream;
 
@@ -61,13 +60,17 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 /**
  * A {@link GeoParquetDataset} composed from one or many same-schema Parquet files. Before each query it prunes files
  * whose Hive partition value cannot match the predicate (the same {@link FilePruner} path the Iceberg backend uses, fed
- * from path values as exact statistics) and reads only the survivors. When nothing prunes it reuses one pre-opened
- * {@link ParquetSource} over every file, which keeps the common unpartitioned case reading each footer once.
+ * from path values as exact statistics) and reads only the survivors. The dataset keeps only compact per-file planning
+ * state (schema, partition values, footer-derived {@link FileStats}): each query opens readers over the surviving
+ * files' byte sources and lets their decoded footers go with the query. A one-file dataset is the exception - it keeps
+ * the {@link ParquetSource} the catalog's gather pass already parsed, since re-decoding a single large footer per query
+ * would cost more than it retains.
  */
 public final class FilesetDataset implements GeoParquetDataset {
 
     private final String name;
-    private final ParquetSource allFiles;
+    private final ParquetSchema fileSchema;
+    private final ParquetSource singleFile;
     private final ParquetSchema augmentedSchema;
     private final HivePartitioning partitioning;
     private final List<Map<String, String>> perFilePartitions;
@@ -78,14 +81,14 @@ public final class FilesetDataset implements GeoParquetDataset {
     private final Optional<GeoParquetMetadata> geoMetadata;
     private final Optional<BoundingBox> aggregatedBounds;
     private final OpenOptions openOptions;
-    private final Map<Integer, ParquetSource> perFileDatasets = new ConcurrentHashMap<>();
 
-    // The eight construction inputs are cohesive dataset state the catalog resolves in one place, not a long argument
+    // The construction inputs are cohesive dataset state the catalog resolves in one place, not a long argument
     // list worth bundling into a parameter object.
     @SuppressWarnings("java:S107")
     public FilesetDataset(
             String name,
-            ParquetSource allFiles,
+            ParquetSchema fileSchema,
+            Optional<ParquetSource> singleFile,
             PartitionContext partitions,
             List<ByteRangeSource> sources,
             List<String> locations,
@@ -93,8 +96,14 @@ public final class FilesetDataset implements GeoParquetDataset {
             Optional<GeoParquetMetadata> geoMetadata,
             OpenOptions openOptions) {
         this.name = Objects.requireNonNull(name, "name");
-        this.allFiles = Objects.requireNonNull(allFiles, "allFiles");
+        this.fileSchema = Objects.requireNonNull(fileSchema, "fileSchema");
+        Objects.requireNonNull(singleFile, "singleFile");
         Objects.requireNonNull(partitions, "partitions");
+        if (singleFile.isPresent() != (sources.size() == 1)) {
+            throw new IllegalArgumentException("a parsed source is kept exactly for a one-file dataset, got "
+                    + sources.size() + " sources and singleFile " + (singleFile.isPresent() ? "present" : "absent"));
+        }
+        this.singleFile = singleFile.orElse(null);
         this.augmentedSchema = partitions.augmentedSchema();
         this.partitioning = partitions.partitioning();
         this.perFilePartitions = partitions.perFilePartitions();
@@ -185,8 +194,9 @@ public final class FilesetDataset implements GeoParquetDataset {
 
     /**
      * The file's geometry box from the footer statistics gathered at open, resolved to the declared primary geometry
-     * column when the {@code "geo"} metadata names one, else the first recorded geometry-bounds entry (the same
-     * resolution {@link #footerSkipBox} applies, without opening the file).
+     * column when the {@code "geo"} metadata names one, else the first recorded geometry-bounds entry. The fallback
+     * reads the first entry of one immutable map instance, matching the engine's own no-metadata fallback, whose
+     * iteration order, though unspecified, is fixed for the run. No file is opened.
      */
     private Optional<BoundingBox> footerStatsBox(int index) {
         Map<ColumnPath, BoundingBox> footerBounds = partitionStats.get(index).geometryBounds();
@@ -239,36 +249,19 @@ public final class FilesetDataset implements GeoParquetDataset {
         if (accumulatedBoundsCoverFooter(index, accumulator)) {
             return null;
         }
-        perFile(index).bounds(query, options).ifPresent(accumulator::union);
+        openFile(index).bounds(query, options).ifPresent(accumulator::union);
         return null;
     }
 
     /**
-     * Whether the accumulated bounds already cover this file's footer geometry box. Partition statistics record no
-     * geometry box. The box is read from the opened file's footer, resolved to the same geometry column the engine
-     * bounds. A file whose footer records no box for that column is never reported as covered: an unknown extent might
-     * reach past the accumulated bounds, and skipping it could lose rows.
+     * Whether the accumulated bounds already cover this file's footer geometry box, read from the same footer-derived
+     * statistics the gather pass recorded per file - no file is opened. A file whose statistics record no box for the
+     * bounded column is never reported as covered: an unknown extent might reach past the accumulated bounds, and
+     * skipping it could lose rows.
      */
     private boolean accumulatedBoundsCoverFooter(int index, BoundsAccumulator accumulator) {
-        Optional<BoundingBox> footerBox = footerSkipBox(index);
+        Optional<BoundingBox> footerBox = footerStatsBox(index);
         return footerBox.isPresent() && accumulator.covers(footerBox.orElseThrow());
-    }
-
-    /**
-     * The footer geometry box the containment skip tests, resolved to the column the engine bounds: the declared
-     * primary geometry column when the fileset's {@code "geo"} metadata names one, otherwise the first entry of the
-     * per-file {@link FileStats#geometryBounds()}. A declared primary the file records no box for yields no box,
-     * keeping the file in the scan. The fallback reads the first entry of the one map instance this method obtains;
-     * that matches the engine's own no-metadata fallback, which reads the first key of an equivalent immutable
-     * geometry-bounds map whose iteration order, though unspecified, is fixed for the run.
-     */
-    private Optional<BoundingBox> footerSkipBox(int index) {
-        Map<ColumnPath, BoundingBox> footerBounds = perFile(index).fileStats().geometryBounds();
-        Optional<ColumnPath> primary = declaredPrimaryColumn();
-        if (primary.isPresent()) {
-            return Optional.ofNullable(footerBounds.get(primary.orElseThrow()));
-        }
-        return footerBounds.values().stream().findFirst();
     }
 
     /**
@@ -339,20 +332,69 @@ public final class FilesetDataset implements GeoParquetDataset {
         return query.read(predicate, projection, materializer, options);
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>A file whose folded predicate is always true contributes the record count the gather pass recorded for it - no
+     * file is opened. Only files with a real residual predicate are read.
+     */
     @Override
     public long count(Predicate predicate, ReadOptions options) {
-        if (!referencesSynthetic(predicate, Projection.ALL)) {
-            return countAllFiles(predicate, options);
-        }
         long total = 0L;
+        List<Integer> needRead = new ArrayList<>();
         for (int index : pruneSurvivors(predicate)) {
             Predicate residual = residualFor(index, predicate);
             if (residual.equals(Predicate.ALWAYS_FALSE)) {
                 continue;
             }
-            total += perFile(index).count(residual, options);
+            if (residual.equals(Predicate.ALWAYS_TRUE)) {
+                total += partitionStats.get(index).recordCount();
+                continue;
+            }
+            needRead.add(index);
         }
-        return total;
+        if (needRead.isEmpty()) {
+            return total;
+        }
+        if (referencesSynthetic(predicate, Projection.ALL)) {
+            return total + countSyntheticSurvivors(needRead, predicate, options);
+        }
+        return total + sourceOver(needRead).count(predicate, options);
+    }
+
+    /**
+     * Counts the files whose folded predicate kept a real residual, each on its own virtual thread: a synthetic-column
+     * predicate folds differently per file, keeping the files' counts separate, and the per-file footer decodes overlap
+     * the same way every other survivor fan-out in this class does. A failure in any file cancels the rest.
+     */
+    private long countSyntheticSurvivors(List<Integer> needRead, Predicate predicate, ReadOptions options) {
+        try (StructuredTaskScope<Long, Void> scope = StructuredTaskScope.open()) {
+            List<StructuredTaskScope.Subtask<Long>> counts = new ArrayList<>(needRead.size());
+            for (int index : needRead) {
+                counts.add(scope.fork(() -> openFile(index).count(residualFor(index, predicate), options)));
+            }
+            scope.join();
+            long total = 0L;
+            for (StructuredTaskScope.Subtask<Long> count : counts) {
+                total += count.get();
+            }
+            return total;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            InterruptedIOException interrupted = new InterruptedIOException("Interrupted while counting dataset rows");
+            interrupted.initCause(e);
+            throw new UncheckedIOException(interrupted);
+        } catch (StructuredTaskScope.FailedException e) {
+            throw asUnchecked(e.getCause());
+        }
+    }
+
+    /** A source over the files at {@code indices}: the retained parsed source for a one-file dataset, else fresh. */
+    private ParquetSource sourceOver(List<Integer> indices) {
+        if (singleFile != null) {
+            return singleFile;
+        }
+        return ParquetSource.open(new SurvivorFileset(sources, indices), openOptions);
     }
 
     @MustBeClosed
@@ -372,14 +414,6 @@ public final class FilesetDataset implements GeoParquetDataset {
             return Stream.empty();
         }
         return query.readBatches(Query.of(predicate, projection), options);
-    }
-
-    private long countAllFiles(Predicate predicate, ReadOptions options) {
-        ParquetSource query = surviving(predicate);
-        if (query == null) {
-            return 0L;
-        }
-        return query.count(predicate, options);
     }
 
     /**
@@ -435,7 +469,7 @@ public final class FilesetDataset implements GeoParquetDataset {
         if (query == null) {
             return Stream.empty();
         }
-        return perFile(index).read(query, options);
+        return openFile(index).read(query, options);
     }
 
     @MustBeClosed
@@ -445,7 +479,7 @@ public final class FilesetDataset implements GeoParquetDataset {
         if (query == null) {
             return Stream.empty();
         }
-        return perFile(index).readBatches(query, options);
+        return openFile(index).readBatches(query, options);
     }
 
     /**
@@ -488,7 +522,7 @@ public final class FilesetDataset implements GeoParquetDataset {
 
     /** The physical leaf columns the decoded batch presents for {@code projection}, in the file's depth-first order. */
     private List<ColumnPath> presentedPhysicalColumns(Projection projection) {
-        List<ColumnPath> fileLeaves = allFiles.schema().leafColumns();
+        List<ColumnPath> fileLeaves = fileSchema.leafColumns();
         Optional<Set<ColumnPath>> names = projectedNames(projection);
         if (names.isEmpty()) {
             return fileLeaves;
@@ -542,7 +576,7 @@ public final class FilesetDataset implements GeoParquetDataset {
 
     /** A projection of a single physical leaf, used to drive row enumeration when only synthetic columns are read. */
     private Projection rowEnumerationProjection() {
-        return Projection.ofPhysical(List.of(allFiles.schema().leafColumns().get(0)));
+        return Projection.ofPhysical(List.of(fileSchema.leafColumns().get(0)));
     }
 
     /** The projected synthetic columns of this file as constant output columns. */
@@ -628,7 +662,7 @@ public final class FilesetDataset implements GeoParquetDataset {
             return new FileExplain(location, Outcome.SKIP, "partition value excluded", recordCount, Optional.empty());
         }
         Projection physical = physicalProjection(projection);
-        ParquetSource survivor = perFile(index);
+        ParquetSource survivor = openFile(index);
         ExplainPlan plan = analyze
                 ? survivor.explainAnalyze(residual, physical, options)
                 : survivor.explain(residual, physical, options);
@@ -636,34 +670,29 @@ public final class FilesetDataset implements GeoParquetDataset {
     }
 
     /**
-     * The dataset over the files surviving {@code predicate}: {@code allFiles} when nothing prunes, null when all
-     * prune.
+     * The source over the files surviving {@code predicate}, or null when all prune. A one-file dataset reuses its
+     * retained parsed source; a multi-file dataset opens fresh readers over the survivors, whose decoded footers go
+     * with the query.
      */
     private ParquetSource surviving(Predicate predicate) {
         List<Integer> survivors = pruneSurvivors(predicate);
         if (survivors.isEmpty()) {
             return null;
         }
-        if (survivors.size() == sources.size()) {
-            // Nothing pruned: pruneSurvivors emits [0..n) ascending, identical to allFiles.
-            return allFiles;
-        }
-        return ParquetSource.open(new SurvivorFileset(sources, survivors), openOptions);
+        return sourceOver(survivors);
     }
 
     /**
-     * The single-file {@link ParquetSource} over the source at {@code index}, parsed once and reused across queries and
-     * threads. {@code computeIfAbsent} gives one footer parse per index even under concurrent reads; the dataset
-     * borrows the catalog's shared source, which the catalog owns and closes.
+     * A {@link ParquetSource} over the one file at {@code index}: the retained parsed source for a one-file dataset,
+     * else a fresh open whose decoded footer goes with the caller. The dataset borrows the catalog's shared byte
+     * source, which the catalog owns and closes; repeated opens re-decode the footer, riding whatever byte caching the
+     * source provides.
      */
-    private ParquetSource perFile(int index) {
-        return perFileDatasets.computeIfAbsent(
-                index, i -> ParquetSource.open(new SurvivorFileset(sources, List.of(i)), openOptions));
-    }
-
-    /** Test hook: the memoized single-file dataset for {@code index}, proving footer reuse across queries. */
-    ParquetSource perFileDatasetForTest(int index) {
-        return perFile(index);
+    private ParquetSource openFile(int index) {
+        if (singleFile != null) {
+            return singleFile;
+        }
+        return ParquetSource.open(new SurvivorFileset(sources, List.of(index)), openOptions);
     }
 
     private List<Integer> pruneSurvivors(Predicate predicate) {

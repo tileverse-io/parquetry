@@ -18,23 +18,26 @@ package io.tileverse.parquetry.catalog;
 import java.lang.foreign.MemorySegment;
 import java.net.URI;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Stream;
 
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.FileEntry;
 import io.tileverse.parquetry.io.FileSource;
 
-/** A test {@link FileSource} over files in a directory that counts per-file opens and tracks handed-out sources. */
+/**
+ * A test {@link FileSource} over files in a directory that counts per-file opens and tracks handed-out sources. The
+ * catalog opens files on concurrent virtual threads; the bookkeeping collections are concurrent for that reason.
+ */
 final class CountingFileSource implements FileSource {
 
     private final Path dir;
     private final List<String> names;
-    private final Map<String, Integer> opens = new HashMap<>();
-    private final List<CloseTrackingSource> handedOut = new ArrayList<>();
+    private final ConcurrentMap<String, Integer> opens = new ConcurrentHashMap<>();
+    private final List<CloseTrackingSource> handedOut = new CopyOnWriteArrayList<>();
     boolean closed;
 
     CountingFileSource(Path dir, List<String> names) {
