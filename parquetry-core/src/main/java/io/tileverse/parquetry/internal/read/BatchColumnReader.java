@@ -25,6 +25,7 @@ import java.io.UncheckedIOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.List;
@@ -233,15 +234,30 @@ final class BatchColumnReader {
     }
 
     /**
-     * Logical (top-level) row count remaining in the current page. For flat columns this equals
-     * {@link #rowsRemainingInCurrentPage()}; for repeated columns it counts rep=0 markers ahead of the consume cursor.
+     * Logical (top-level) row count remaining in the current page that is safe to serve from this page alone. For flat
+     * columns this equals {@link #rowsRemainingInCurrentPage()}; for repeated columns it counts rep=0 markers ahead of
+     * the consume cursor, minus the page's last-started row while that row may continue into the next page.
+     *
+     * <p>The subtraction is what keeps a batch from ending mid-row: a row is credited to the page holding its rep=0
+     * start, but a V1 page written without a page index may legally end before the row's last value - whether it does
+     * is undecidable until the next page's first rep level is seen. Deferring the last-started row leaves it to
+     * {@link #readSpanningRow}, which follows the row across pages. Masked readers never defer: a row mask requires an
+     * offset index, and a page index implies row-aligned pages.
      */
     int logicalRowsRemainingInCurrentPage() {
         ensurePageLoaded();
         if (pageRepLevels == null) {
             return pageSize - valuesConsumedInCurrentPage;
         }
-        return pageLogicalRowCount - logicalRowsConsumedInCurrentPage;
+        int remaining = pageLogicalRowCount - logicalRowsConsumedInCurrentPage;
+        if (lastRowMayContinuePastPageEnd()) {
+            remaining--;
+        }
+        return Math.max(0, remaining);
+    }
+
+    private boolean lastRowMayContinuePastPageEnd() {
+        return survivingRows == null && pageCursor.hasRemaining();
     }
 
     /**
@@ -317,6 +333,135 @@ final class BatchColumnReader {
         return vec;
     }
 
+    // ---- page-spanning row read ----
+
+    /**
+     * One logical row read whole, with batch-owned copies of its rep- and def-level windows. {@code repLevels} is null
+     * for a flat column; {@code defLevels} is null when the column has no def-level stream to expose (no optional
+     * ancestor, or the flat origin fast path consumed it into the validity bitmap).
+     */
+    record SpanningRow(ColumnVector vector, Levels repLevels, Levels defLevels) {}
+
+    /**
+     * Reads exactly one logical row, following its values across data-page boundaries when the row's rep=0 start sits
+     * in one page and its remaining values in the following page(s). The driver calls this when some column's current
+     * page holds no complete row ({@link #logicalRowsRemainingInCurrentPage()} deferred its last-started row); every
+     * column then advances one row through this path to stay in lockstep.
+     *
+     * <p>A row confined to the current page comes back as a single {@link #readBatch} slice. A row that reaches the
+     * page end continues part by part - decoding each following page - until a page opens with a rep=0 marker or the
+     * chunk's value stream ends; the parts merge through {@link SpanningRowVectors}. Level windows come back as copies
+     * because following the row decodes the next page, which overwrites the per-page level scratch the normal batch
+     * windows view.
+     */
+    SpanningRow readSpanningRow(List<AutoCloseable> acquiredBuffers) {
+        ensurePageLoaded();
+        skipEmptyPages();
+        if (pageRepLevels == null) {
+            return readSingleRowFlat(acquiredBuffers);
+        }
+        List<ColumnVector> parts = new ArrayList<>(2);
+        List<int[]> repParts = new ArrayList<>(2);
+        List<int[]> defParts = new ArrayList<>(2);
+        consumeRowPart(1, parts, repParts, defParts, acquiredBuffers);
+        while (rowContinuesIntoNextPage()) {
+            consumeRowPart(0, parts, repParts, defParts, acquiredBuffers);
+        }
+        ColumnVector vector = parts.size() == 1
+                ? parts.get(0)
+                : SpanningRowVectors.merge(leaf, parts, decodeBufferAllocator, acquiredBuffers);
+        return new SpanningRow(vector, Levels.of(concatLevels(repParts)), Levels.of(concatLevels(defParts)));
+    }
+
+    /** The one-row read of a flat column: one value, plus a one-entry copy of its def window when the stream exists. */
+    private SpanningRow readSingleRowFlat(List<AutoCloseable> acquiredBuffers) {
+        Levels defWindow = null;
+        if (pageDefLevels != null) {
+            defWindow = Levels.of(new int[] {pageDefLevels.get(valuesConsumedInCurrentPage)});
+        }
+        ColumnVector vector = readBatch(1, acquiredBuffers);
+        return new SpanningRow(vector, null, defWindow);
+    }
+
+    /**
+     * Consumes the current page's values of the row under the cursor - up to the row's next in-page boundary or the
+     * page end - collecting the part's vector and copies of its level windows. {@code rowsToCross} is 1 for the part
+     * holding the row's rep=0 start and 0 for a continuation part that begins mid-row.
+     */
+    private void consumeRowPart(
+            int rowsToCross,
+            List<ColumnVector> parts,
+            List<int[]> repParts,
+            List<int[]> defParts,
+            List<AutoCloseable> acquiredBuffers) {
+        int start = valuesConsumedInCurrentPage;
+        int take = pageRepLevels.valuesForRows(start, rowsToCross);
+        repParts.add(copyLevels(pageRepLevels, start, take));
+        defParts.add(copyLevels(pageDefLevels, start, take));
+        parts.add(readBatch(take, acquiredBuffers));
+    }
+
+    /**
+     * True when the row being followed spills into the next data page. A part that stopped at an in-page rep=0 boundary
+     * left the page loaded with its cursor mid-page: the row is complete. A part that consumed the page to its end
+     * advanced past it; the row continues if a next non-empty page exists and opens mid-row (first rep level above
+     * zero). An exhausted cursor ends the row with the value stream.
+     */
+    private boolean rowContinuesIntoNextPage() {
+        if (pageLoaded) {
+            return false;
+        }
+        if (!loadNextNonEmptyPage()) {
+            return false;
+        }
+        return pageRepLevels.get(0) != 0;
+    }
+
+    /**
+     * Advances past zero-value data pages under the cursor. The one-row read must start on a page with values; a cursor
+     * that exhausts here fails loud through {@link #loadNextPage()}'s malformed-stream error, because the driver only
+     * asks for a row while values remain.
+     */
+    private void skipEmptyPages() {
+        while (pageSize == 0) {
+            advancePastCurrentPage();
+            loadNextPage();
+        }
+    }
+
+    /** Loads pages until one holds values, advancing past empty data pages; false when the cursor is exhausted. */
+    private boolean loadNextNonEmptyPage() {
+        while (tryLoadNextPage()) {
+            if (pageSize > 0) {
+                return true;
+            }
+            advancePastCurrentPage();
+        }
+        return false;
+    }
+
+    private static int[] copyLevels(Levels levels, int from, int count) {
+        int[] out = new int[count];
+        for (int i = 0; i < count; i++) {
+            out[i] = levels.get(from + i);
+        }
+        return out;
+    }
+
+    private static int[] concatLevels(List<int[]> parts) {
+        int total = 0;
+        for (int[] part : parts) {
+            total += part.length;
+        }
+        int[] out = new int[total];
+        int offset = 0;
+        for (int[] part : parts) {
+            System.arraycopy(part, 0, out, offset, part.length);
+            offset += part.length;
+        }
+        return out;
+    }
+
     // ---- page lifecycle ----
 
     private void ensurePageLoaded() {
@@ -326,9 +471,25 @@ final class BatchColumnReader {
     }
 
     private void loadNextPage() {
+        if (!tryLoadNextPage()) {
+            throw new MalformedFileException("Column " + columnPath.dot() + " exhausted page stream after "
+                    + valuesConsumedTotal + " values; expected " + totalValues);
+        }
+    }
+
+    /**
+     * Loads and decodes the next data page, returning {@code false} when the page cursor is exhausted. The
+     * page-spanning row read uses the {@code false} form directly: a row that reaches the end of the value stream ends
+     * there, which is not a malformed file.
+     */
+    private boolean tryLoadNextPage() {
         Arena arena = Arena.ofConfined();
         try {
             DecodedPage page = readNextDataPage(arena);
+            if (page == null) {
+                arena.close();
+                return false;
+            }
             decodePage(page);
         } catch (RuntimeException e) {
             // the origin-validity bitmap, the pooled page-values segment, and the pooled binary-metadata segment may
@@ -345,20 +506,15 @@ final class BatchColumnReader {
         } else {
             arena.close();
         }
+        return true;
     }
 
     private DecodedPage readNextDataPage(Arena arena) {
-        DecodedPage page;
         try {
-            page = pageCursor.nextDataPage(maxLevels, codec, arena);
+            return pageCursor.nextDataPage(maxLevels, codec, arena);
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to read next page for column " + columnPath.dot(), e);
         }
-        if (page == null) {
-            throw new MalformedFileException("Column " + columnPath.dot() + " exhausted page stream after "
-                    + valuesConsumedTotal + " values; expected " + totalValues);
-        }
-        return page;
     }
 
     private void decodePage(DecodedPage page) {

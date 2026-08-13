@@ -235,12 +235,19 @@ public final class BatchRowGroupReader implements AutoCloseable {
         try {
             ensureColumnReadersBuilt();
             int batchRows = computeBatchRows();
+            // Zero rows while hasMore() means a repeated column's page holds no complete row: its last-started
+            // row's values continue in the next page. That row becomes a one-row batch read across the boundary.
+            boolean spanningRow = batchRows == 0 && rowMask.isEmpty();
+            if (spanningRow) {
+                batchRows = 1;
+            }
             long firstRowDenseIndex = rowsProducedTotal;
             rowsProducedTotal += batchRows;
             Map<ColumnPath, LevelSlice> repLevelsByLeaf = new HashMap<>();
             Map<ColumnPath, LevelSlice> defLevelsByLeaf = new HashMap<>();
-            Map<ColumnPath, ColumnVector> leafVectors =
-                    readVectors(batchRows, repLevelsByLeaf, defLevelsByLeaf, acquiredBuffers);
+            Map<ColumnPath, ColumnVector> leafVectors = spanningRow
+                    ? readSpanningVectors(repLevelsByLeaf, defLevelsByLeaf, acquiredBuffers)
+                    : readVectors(batchRows, repLevelsByLeaf, defLevelsByLeaf, acquiredBuffers);
             Map<ColumnPath, ColumnVector> assembled =
                     assembleGroups(leafVectors, repLevelsByLeaf, defLevelsByLeaf, batchRows, acquiredBuffers);
             Map<ColumnPath, ColumnVector> vectors = withRowPosition(assembled, firstRowDenseIndex, batchRows);
@@ -478,7 +485,9 @@ public final class BatchRowGroupReader implements AutoCloseable {
      * Computes the logical row count for the next batch as the minimum of
      * {@link BatchColumnReader#logicalRowsRemainingInCurrentPage()} across all columns, further capped by
      * {@code batchSizeCap} if present. For repeated columns the leaf-value count exceeds the logical-row count by the
-     * number of list / map elements within each row, so the driver reasons in logical rows rather than leaf values.
+     * number of list / map elements within each row; the driver reasons in logical rows rather than leaf values. A zero
+     * result while rows remain means some repeated column deferred its page's last-started row (the row may continue in
+     * the next page); {@link #nextBatch()} then reads that row as a one-row page-spanning batch.
      */
     private int computeBatchRows() {
         int min = Integer.MAX_VALUE;
@@ -519,6 +528,31 @@ public final class BatchRowGroupReader implements AutoCloseable {
             }
             ColumnVector vec = reader.readBatch(valuesThisBatch, acquiredBuffers);
             vectors.put(entry.getKey(), vec);
+        }
+        return vectors;
+    }
+
+    /**
+     * Reads exactly one logical row from every column for the batch that crosses a data-page boundary: at least one
+     * repeated column's remaining page window holds no complete row, and every column advances one row - across pages
+     * where needed - through {@link BatchColumnReader#readSpanningRow} to stay in lockstep. The level windows come back
+     * as reader-owned copies (a cross-page read decodes the next page, overwriting the scratch the normal windows
+     * view), wrapped whole for the assemblers.
+     */
+    private Map<ColumnPath, ColumnVector> readSpanningVectors(
+            Map<ColumnPath, LevelSlice> repLevelsByLeafOut,
+            Map<ColumnPath, LevelSlice> defLevelsByLeafOut,
+            List<AutoCloseable> acquiredBuffers) {
+        Map<ColumnPath, ColumnVector> vectors = new HashMap<>();
+        for (Map.Entry<ColumnPath, BatchColumnReader> entry : columnReaders.entrySet()) {
+            BatchColumnReader.SpanningRow row = entry.getValue().readSpanningRow(acquiredBuffers);
+            if (row.repLevels() != null) {
+                repLevelsByLeafOut.put(entry.getKey(), LevelSlice.ofWhole(row.repLevels()));
+            }
+            if (row.defLevels() != null) {
+                defLevelsByLeafOut.put(entry.getKey(), LevelSlice.ofWhole(row.defLevels()));
+            }
+            vectors.put(entry.getKey(), row.vector());
         }
         return vectors;
     }
