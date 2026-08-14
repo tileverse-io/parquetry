@@ -85,7 +85,7 @@ public final class VectorizedPredicateEvaluator {
     // false.
     private static BitSet rowPositionMask(
             ParquetRecordBatch batch, ColumnPath col, RowPositionSet deleted, int rowCount) {
-        ColumnVector vector = batch.columns().get(col);
+        ColumnVector vector = vectorOf(batch, col);
         if (!(vector instanceof LongVector positions)) {
             throw new IllegalStateException(
                     "row-position column " + col.dot() + " is not present as a long for a RowIndexExcluded predicate");
@@ -212,12 +212,25 @@ public final class VectorizedPredicateEvaluator {
         return flipped;
     }
 
+    /**
+     * The batch's vector for {@code col}. A predicate reaches this evaluator only after the normalizer validated its
+     * columns against the file schema and the scan projection included them, hence an absent vector is a broken
+     * invariant rather than a caller error.
+     */
+    private static ColumnVector vectorOf(ParquetRecordBatch batch, ColumnPath col) {
+        ColumnVector vector = batch.columns().get(col);
+        if (vector == null) {
+            throw new IllegalStateException("the record batch has no column vector for " + col.dot());
+        }
+        return vector;
+    }
+
     private static BitSet validityOf(ParquetRecordBatch batch, ColumnPath col) {
-        return batch.columns().get(col).validity().copy();
+        return vectorOf(batch, col).validity().copy();
     }
 
     private static BitSet nulls(ParquetRecordBatch batch, ColumnPath col, int rowCount) {
-        BitSet nullMask = batch.columns().get(col).validity().copy();
+        BitSet nullMask = vectorOf(batch, col).validity().copy();
         nullMask.flip(0, rowCount);
         return nullMask;
     }
@@ -226,7 +239,7 @@ public final class VectorizedPredicateEvaluator {
     // collapsing them to lower the metric would reintroduce per-row megamorphic dispatch (see the in-body note).
     @SuppressWarnings({"java:S3776", "java:S6541"})
     private static BitSet compareMask(ParquetRecordBatch batch, ColumnPath col, Value v, IntPredicate accept) {
-        ColumnVector vec = batch.columns().get(col);
+        ColumnVector vec = vectorOf(batch, col);
         Validity validity = vec.validity();
         BitSet out = new BitSet(batch.rowCount());
         // The per-vector-type loops below are intentional: this is the hot row-counting path, and monomorphic loops
@@ -311,7 +324,7 @@ public final class VectorizedPredicateEvaluator {
 
     private static BitSet spatialMask(
             ParquetRecordBatch batch, Predicate.Spatial spatial, int rowCount, boolean negated, BitSet restriction) {
-        ColumnVector vec = batch.columns().get(spatial.col());
+        ColumnVector vec = vectorOf(batch, spatial.col());
         BitSet out = new BitSet(rowCount);
         if (vec instanceof BinaryVector wkb) {
             BitSet candidates = candidateRows(vec.validity(), restriction);
@@ -332,7 +345,7 @@ public final class VectorizedPredicateEvaluator {
 
     private static BitSet geometryMask(
             ParquetRecordBatch batch, GeometryFilter<?> filter, int rowCount, boolean negated, BitSet restriction) {
-        ColumnVector vec = batch.columns().get(filter.column());
+        ColumnVector vec = vectorOf(batch, filter.column());
         BitSet out = new BitSet(rowCount);
         if (vec instanceof BinaryVector wkb) {
             BitSet candidates = candidateRows(vec.validity(), restriction);
