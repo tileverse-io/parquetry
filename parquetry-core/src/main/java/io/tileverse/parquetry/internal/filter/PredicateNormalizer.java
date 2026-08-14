@@ -32,7 +32,8 @@ import io.tileverse.parquetry.schema.UuidConverter;
  * Rewrites a {@link Predicate} into a canonical form expected by the filter pipeline. Applies three structural passes -
  * push {@link Predicate.Not} down to the leaves via De Morgan's laws, constant-fold {@link Predicate.Always} nodes, and
  * flatten nested {@link Predicate.And} / {@link Predicate.Or} - and offers a separate schema-validation pass that
- * throws {@link ParquetSchemaException} for unknown columns or value/type mismatches.
+ * throws {@link ParquetSchemaException} for unknown columns, value/type mismatches, and multi-valued columns compared
+ * without a quantifier.
  */
 public final class PredicateNormalizer {
 
@@ -48,36 +49,40 @@ public final class PredicateNormalizer {
     }
 
     /**
-     * Throws {@link ParquetSchemaException} if {@code p} references a column not in {@code schema}, a group column, or
-     * a value type incompatible with the column's primitive kind.
+     * Throws {@link ParquetSchemaException} if {@code p} references a column not in {@code schema}, a group column, a
+     * multi-valued column compared without a quantifier, or a value type incompatible with the column's primitive kind.
      */
+    public static void validate(Predicate p, ParquetSchema schema) {
+        validate(p, schema, LeafPosition.BARE);
+    }
+
     // S7475 (bare _ in nested record patterns) is informational only - palantirJavaFormat 2.90 cannot
     // parse the bare-underscore form Sonar suggests; see memory feedback-palantir-unnamed-pattern.
     @SuppressWarnings("java:S7475")
-    public static void validate(Predicate p, ParquetSchema schema) {
+    private static void validate(Predicate p, ParquetSchema schema, LeafPosition position) {
         switch (p) {
             case Predicate.Always _ -> {
                 /* no columns to check */
             }
-            case Predicate.And(List<Predicate> children) -> children.forEach(c -> validate(c, schema));
-            case Predicate.Or(List<Predicate> children) -> children.forEach(c -> validate(c, schema));
-            case Predicate.Not(Predicate child) -> validate(child, schema);
-            case Predicate.Eq(ColumnPath col, Value v) -> checkLeafColumn(col, schema, v);
-            case Predicate.NotEq(ColumnPath col, Value v) -> checkLeafColumn(col, schema, v);
-            case Predicate.Lt(ColumnPath col, Value v) -> checkLeafColumn(col, schema, v);
-            case Predicate.LtEq(ColumnPath col, Value v) -> checkLeafColumn(col, schema, v);
-            case Predicate.Gt(ColumnPath col, Value v) -> checkLeafColumn(col, schema, v);
-            case Predicate.GtEq(ColumnPath col, Value v) -> checkLeafColumn(col, schema, v);
+            case Predicate.And(List<Predicate> children) -> children.forEach(c -> validate(c, schema, position));
+            case Predicate.Or(List<Predicate> children) -> children.forEach(c -> validate(c, schema, position));
+            case Predicate.Not(Predicate child) -> validate(child, schema, position);
+            case Predicate.Eq(ColumnPath col, Value v) -> checkLeafColumn(col, schema, v, position);
+            case Predicate.NotEq(ColumnPath col, Value v) -> checkLeafColumn(col, schema, v, position);
+            case Predicate.Lt(ColumnPath col, Value v) -> checkLeafColumn(col, schema, v, position);
+            case Predicate.LtEq(ColumnPath col, Value v) -> checkLeafColumn(col, schema, v, position);
+            case Predicate.Gt(ColumnPath col, Value v) -> checkLeafColumn(col, schema, v, position);
+            case Predicate.GtEq(ColumnPath col, Value v) -> checkLeafColumn(col, schema, v, position);
             case Predicate.In(ColumnPath col, List<Value> values) -> {
-                SchemaNode.Primitive prim = requirePrimitive(col, schema);
+                SchemaNode.Primitive prim = requireComparableColumn(col, schema, position);
                 for (Value v : values) {
                     requireCompatible(col, prim, v);
                 }
             }
-            case Predicate.IsNull(ColumnPath col) -> requirePrimitive(col, schema);
-            case Predicate.IsNotNull(ColumnPath col) -> requirePrimitive(col, schema);
+            case Predicate.IsNull(ColumnPath col) -> requireComparableColumn(col, schema, position);
+            case Predicate.IsNotNull(ColumnPath col) -> requireComparableColumn(col, schema, position);
             case Predicate.Spatial s -> {
-                SchemaNode.Primitive prim = requirePrimitive(s.col(), schema);
+                SchemaNode.Primitive prim = requireComparableColumn(s.col(), schema, position);
                 if (prim.kind() != PrimitiveKind.BYTE_ARRAY && prim.kind() != PrimitiveKind.FIXED_LEN_BYTE_ARRAY) {
                     throw new ParquetSchemaException("a spatial predicate requires a binary column; got "
                             + s.col().dot() + " of type " + prim.kind());
@@ -89,7 +94,7 @@ public final class PredicateNormalizer {
             case Predicate.RowIndexExcluded _ -> {
                 /* row-position leaf over a synthesized column; no physical column to validate against the schema */
             }
-            case Predicate.Quantified(MatchAction _, Predicate leaf) -> validate(leaf, schema);
+            case Predicate.Quantified(MatchAction _, Predicate leaf) -> validate(leaf, schema, LeafPosition.QUANTIFIED);
         }
     }
 
@@ -226,9 +231,28 @@ public final class PredicateNormalizer {
         return reduceConnective(flat, isAnd);
     }
 
-    private static void checkLeafColumn(ColumnPath path, ParquetSchema schema, Value v) {
-        SchemaNode.Primitive prim = requirePrimitive(path, schema);
+    private static void checkLeafColumn(ColumnPath path, ParquetSchema schema, Value v, LeafPosition position) {
+        SchemaNode.Primitive prim = requireComparableColumn(path, schema, position);
         requireCompatible(path, prim, v);
+    }
+
+    /** The primitive column at {@code path}, rejecting a multi-valued column outside a quantifier. */
+    private static SchemaNode.Primitive requireComparableColumn(
+            ColumnPath path, ParquetSchema schema, LeafPosition position) {
+        SchemaNode.Primitive prim = requirePrimitive(path, schema);
+        if (position == LeafPosition.BARE) {
+            requireSingleValued(path, schema);
+        }
+        return prim;
+    }
+
+    private static void requireSingleValued(ColumnPath path, ParquetSchema schema) {
+        if (schema.maxLevels(path).maxRepetitionLevel() > 0) {
+            throw new ParquetSchemaException("Column " + path.dot()
+                    + " is multi-valued (repeated, or nested under a repeated group); a bare comparison has no single"
+                    + " truth value over its elements. Wrap it in Predicate.Quantified with a MatchAction (ANY, ALL,"
+                    + " ONE).");
+        }
     }
 
     private static SchemaNode.Primitive requirePrimitive(ColumnPath path, ParquetSchema schema) {
@@ -269,5 +293,15 @@ public final class PredicateNormalizer {
             case Value.UuidVal _ ->
                 kind == PrimitiveKind.FIXED_LEN_BYTE_ARRAY && prim.typeLength().orElse(-1) == UuidConverter.BYTES;
         };
+    }
+
+    /**
+     * Where a scalar comparison sits in the predicate tree. A comparison over a multi-valued column aggregates its
+     * elements through a {@link MatchAction}, which only {@link #QUANTIFIED} supplies; a {@link #BARE} comparison
+     * therefore requires a single-valued column. Connectives pass their own position down to their children.
+     */
+    private enum LeafPosition {
+        BARE,
+        QUANTIFIED
     }
 }
