@@ -90,8 +90,37 @@ public final class LevelMapVector implements ColumnVector, LevelSource {
         Map<ColumnPath, LeafLevels> ownLevels = Map.copyOf(levels);
         requireMatchingKeySets(ownLeaves, ownLevels);
         SchemaNode.Group group = resolveGroup(schema, groupPath);
-        LeafOrder leafOrder = LeafOrder.of(ownLevels);
-        MapMeta meta = MapMeta.of(schema, group, groupPath, ownLeaves.keySet(), leafOrder::ordinalOf);
+        LeafOrdinals leafOrdinals = LeafOrdinals.of(ownLevels.keySet());
+        MapMeta meta = MapMeta.of(schema, group, groupPath, ownLeaves.keySet(), leafOrdinals::ordinalOf);
+        return of(schema, groupPath, ownLeaves, ownLevels, validity, size, meta, leafOrdinals);
+    }
+
+    /**
+     * Builds a level-backed map vector over metadata resolved ahead of the batch: {@code meta} holds this group's level
+     * constants and key/value resolution, and {@code leafOrdinals} the leaf numbering its scalar ordinals refer to.
+     * Both must have been resolved against the leaf paths of {@code leaves}, which is what makes the metadata's
+     * ordinals index the level arrays this vector packs.
+     */
+    // S107: the vector's own inputs plus the two pieces of metadata resolved for it
+    @SuppressWarnings("java:S107")
+    public static LevelMapVector of(
+            ParquetSchema schema,
+            ColumnPath groupPath,
+            Map<ColumnPath, ColumnVector> leaves,
+            Map<ColumnPath, LeafLevels> levels,
+            Validity validity,
+            int size,
+            MapMeta meta,
+            LeafOrdinals leafOrdinals) {
+        Objects.requireNonNull(schema, "schema");
+        Objects.requireNonNull(groupPath, "groupPath");
+        Objects.requireNonNull(validity, "validity");
+        Objects.requireNonNull(meta, "meta");
+        Objects.requireNonNull(leafOrdinals, "leafOrdinals");
+        Map<ColumnPath, ColumnVector> ownLeaves = Map.copyOf(leaves);
+        Map<ColumnPath, LeafLevels> ownLevels = Map.copyOf(levels);
+        requireMatchingKeySets(ownLeaves, ownLevels);
+        LeafOrder leafOrder = LeafOrder.of(leafOrdinals, ownLevels);
         ColumnPath structureLeaf = meta.structureLeaf();
         requireStructureLeafPresent(structureLeaf, ownLeaves, ownLevels);
         requireRowStartsLength(ownLevels, size);

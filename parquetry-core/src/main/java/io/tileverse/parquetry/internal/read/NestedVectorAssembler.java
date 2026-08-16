@@ -206,30 +206,30 @@ public final class NestedVectorAssembler {
         }
         result.put(ColumnPath.of(groupPath), vector);
         switch (GroupKind.of(group)) {
-            case LIST, MAP -> markDescendantLeavesHidden(group, groupPath, leafVectors, hiddenLeaves);
-            case STRUCT, VARIANT -> hideRepeatedDescendantLeaves(group, groupPath, leafVectors, hiddenLeaves);
+            case LIST, MAP -> markDescendantLeavesHidden(group, groupPath, leafVectors.keySet(), hiddenLeaves);
+            case STRUCT, VARIANT -> hideRepeatedDescendantLeaves(group, groupPath, leafVectors.keySet(), hiddenLeaves);
         }
     }
 
     /**
-     * Adds every descendant leaf path of {@code group} present in {@code leafVectors} to {@code hiddenLeaves}. Used for
-     * LIST and MAP wrappers, whose children are sized at element granularity rather than logical-row granularity.
+     * Adds every descendant leaf path of {@code group} that is in {@code presentLeaves} to {@code hiddenLeaves}. Used
+     * for LIST and MAP wrappers, whose children are sized at element granularity rather than logical-row granularity.
      */
     static void markDescendantLeavesHidden(
             SchemaNode.Group group,
             List<String> groupPath,
-            Map<ColumnPath, ColumnVector> leafVectors,
+            Set<ColumnPath> presentLeaves,
             Set<ColumnPath> hiddenLeaves) {
         for (SchemaNode child : group.children()) {
             List<String> childPath = concatPath(groupPath, child.name());
             if (child instanceof SchemaNode.Primitive) {
                 ColumnPath leafPath = ColumnPath.of(childPath);
-                if (leafVectors.containsKey(leafPath)) {
+                if (presentLeaves.contains(leafPath)) {
                     hiddenLeaves.add(leafPath);
                 }
                 continue;
             }
-            markDescendantLeavesHidden((SchemaNode.Group) child, childPath, leafVectors, hiddenLeaves);
+            markDescendantLeavesHidden((SchemaNode.Group) child, childPath, presentLeaves, hiddenLeaves);
         }
     }
 
@@ -241,7 +241,7 @@ public final class NestedVectorAssembler {
     static void hideRepeatedDescendantLeaves(
             SchemaNode.Group group,
             List<String> groupPath,
-            Map<ColumnPath, ColumnVector> leafVectors,
+            Set<ColumnPath> presentLeaves,
             Set<ColumnPath> hiddenLeaves) {
         for (SchemaNode child : group.children()) {
             if (!(child instanceof SchemaNode.Group childGroup)) {
@@ -249,10 +249,10 @@ public final class NestedVectorAssembler {
             }
             List<String> childPath = concatPath(groupPath, child.name());
             if (childGroup.repetition() == Repetition.REPEATED || isListOrMap(childGroup)) {
-                markDescendantLeavesHidden(childGroup, childPath, leafVectors, hiddenLeaves);
+                markDescendantLeavesHidden(childGroup, childPath, presentLeaves, hiddenLeaves);
                 continue;
             }
-            hideRepeatedDescendantLeaves(childGroup, childPath, leafVectors, hiddenLeaves);
+            hideRepeatedDescendantLeaves(childGroup, childPath, presentLeaves, hiddenLeaves);
         }
     }
 

@@ -20,6 +20,7 @@ import java.util.BitSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import io.tileverse.parquetry.columnar.BinaryVector;
 import io.tileverse.parquetry.columnar.ColumnVector;
@@ -431,8 +432,20 @@ final class DremelAssembler {
         if (structDefLevel == 0) {
             return Validity.allValid(numSlots);
         }
-        ColumnPath descendant = firstRowAlignedDescendantLeafPath(group, groupPath);
-        LevelSlice defLevels = descendant == null ? null : defLevelsByLeaf.get(descendant);
+        ColumnPath descendant = firstRowAlignedDescendantLeaf(group, groupPath, leafVectors.keySet());
+        return structValidity(structDefLevel, descendant, numSlots);
+    }
+
+    /**
+     * Per-slot struct validity from an already resolved definition level and row-aligned descendant leaf, the two facts
+     * {@link #structValidity(SchemaNode.Group, List, int)} derives from the schema on every call. A {@code null}
+     * descendant means the struct has no row-aligned leaf to read a level from and stays all present.
+     */
+    Validity structValidity(int structDefLevel, ColumnPath rowAlignedDescendant, int numSlots) {
+        if (structDefLevel == 0) {
+            return Validity.allValid(numSlots);
+        }
+        LevelSlice defLevels = rowAlignedDescendant == null ? null : defLevelsByLeaf.get(rowAlignedDescendant);
         if (defLevels == null) {
             return Validity.allValid(numSlots);
         }
@@ -585,9 +598,14 @@ final class DremelAssembler {
         return null;
     }
 
-    private ColumnPath firstRowAlignedDescendantLeafPath(SchemaNode.Group group, List<String> groupPath) {
+    /**
+     * The leaf whose definition levels report whether {@code group} is present in a slot: the first descendant leaf in
+     * {@code presentLeaves} that shares the group's logical-row granularity. Null when the group has none.
+     */
+    static ColumnPath firstRowAlignedDescendantLeaf(
+            SchemaNode.Group group, List<String> groupPath, Set<ColumnPath> presentLeaves) {
         for (SchemaNode child : group.children()) {
-            ColumnPath found = rowAlignedLeafUnder(child, concat(groupPath, child.name()));
+            ColumnPath found = rowAlignedLeafUnder(child, concat(groupPath, child.name()), presentLeaves);
             if (found != null) {
                 return found;
             }
@@ -597,18 +615,19 @@ final class DremelAssembler {
 
     /**
      * The first row-aligned leaf under {@code child}, or null when {@code child} contributes none: a primitive absent
-     * from {@code leafVectors}, or a repeated group (whose leaves are element-aligned, not row-aligned).
+     * from {@code presentLeaves}, or a repeated group (whose leaves are element-aligned, not row-aligned).
      */
-    private ColumnPath rowAlignedLeafUnder(SchemaNode child, List<String> childPath) {
+    private static ColumnPath rowAlignedLeafUnder(
+            SchemaNode child, List<String> childPath, Set<ColumnPath> presentLeaves) {
         if (child instanceof SchemaNode.Primitive) {
             ColumnPath leafPath = ColumnPath.of(childPath);
-            return leafVectors.containsKey(leafPath) ? leafPath : null;
+            return presentLeaves.contains(leafPath) ? leafPath : null;
         }
         SchemaNode.Group childGroup = (SchemaNode.Group) child;
         if (childGroup.repetition() == Repetition.REPEATED) {
             return null;
         }
-        return firstRowAlignedDescendantLeafPath(childGroup, childPath);
+        return firstRowAlignedDescendantLeaf(childGroup, childPath, presentLeaves);
     }
 
     private static List<String> concat(List<String> prefix, String segment) {

@@ -73,6 +73,7 @@ public final class BatchRowGroupReader implements AutoCloseable {
     private final BatchForm batchForm;
     private final DecodeBufferAllocator decodeBufferAllocator;
     private final Optional<RowPositionSynthesis> rowPosition;
+    private final LevelAssemblyPlans levelAssemblyPlans;
 
     // Lazily built on first nextBatch() call; keyed by column path in declaration order.
     private Map<ColumnPath, BatchColumnReader> columnReaders;
@@ -178,6 +179,7 @@ public final class BatchRowGroupReader implements AutoCloseable {
         this.skipDecode = skipDecode;
         this.batchForm = batchForm;
         this.rowPosition = rowPosition;
+        this.levelAssemblyPlans = new LevelAssemblyPlans(projectedSchema);
         this.batchSchema = rowPosition
                 .map(synthesis -> projectedSchema.withAppendedLeaves(rowPositionLeaves(synthesis.columns())))
                 .orElse(projectedSchema);
@@ -359,7 +361,8 @@ public final class BatchRowGroupReader implements AutoCloseable {
     /**
      * Wraps the row-aligned LIST and MAP groups in the requested {@link BatchForm}: the eager Arrow-shape vectors for
      * {@link BatchForm#ASSEMBLED}, or the lazy level vectors for {@link BatchForm#LEVELS}. The level form acquires a
-     * batch-owned {@link BatchLevels} into {@code acquiredBuffers}, which the batch owns and closes.
+     * batch-owned {@link BatchLevels} into {@code acquiredBuffers}, which the batch owns and closes, and assembles from
+     * the metadata this reader resolved for the batch's leaves.
      */
     private Map<ColumnPath, ColumnVector> assembleGroups(
             Map<ColumnPath, ColumnVector> leafVectors,
@@ -373,6 +376,7 @@ public final class BatchRowGroupReader implements AutoCloseable {
                         projectedSchema, leafVectors, repLevelsByLeaf, defLevelsByLeaf, batchRows);
             case LEVELS ->
                 LevelVectorAssembler.assembleLevelForm(
+                        levelAssemblyPlans.forLeaves(leafVectors.keySet()),
                         projectedSchema,
                         leafVectors,
                         repLevelsByLeaf,

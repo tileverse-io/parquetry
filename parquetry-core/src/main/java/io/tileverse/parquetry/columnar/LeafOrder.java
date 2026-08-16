@@ -15,7 +15,6 @@
  */
 package io.tileverse.parquetry.columnar;
 
-import java.util.HashMap;
 import java.util.Map;
 
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -27,71 +26,61 @@ import io.tileverse.parquetry.schema.ColumnPath;
  * {@code MultiLeafCursor} hold nothing but their own int position arrays.
  *
  * <p>Leaves align by ordinal across the parallel arrays: ordinal {@code i} names the same leaf in {@link #pathAt(int)},
- * {@link #repLevels(int)}, {@link #defLevels(int)}, and {@link #rowStarts(int)}. The order itself is arbitrary but
- * fixed; navigation engines that share one instance agree on it.
+ * {@link #repLevels(int)}, {@link #defLevels(int)}, and {@link #rowStarts(int)}. The order is the {@link LeafOrdinals}
+ * assignment the instance was built from; navigation engines that share one instance agree on it.
  *
  * <p>The level and offset sequences read batch-owned off-heap memory. An instance is valid only while the owning batch
  * is open; reading any sequence after the batch closes is undefined.
  */
 public final class LeafOrder {
 
-    private final ColumnPath[] paths;
-    private final Map<ColumnPath, Integer> ordinalByPath;
+    private final LeafOrdinals ordinals;
     private final Levels[] repLevels;
     private final Levels[] defLevels;
     private final IntSequence[] rowStarts;
 
-    private LeafOrder(
-            ColumnPath[] paths,
-            Map<ColumnPath, Integer> ordinalByPath,
-            Levels[] repLevels,
-            Levels[] defLevels,
-            IntSequence[] rowStarts) {
-        this.paths = paths;
-        this.ordinalByPath = ordinalByPath;
+    private LeafOrder(LeafOrdinals ordinals, Levels[] repLevels, Levels[] defLevels, IntSequence[] rowStarts) {
+        this.ordinals = ordinals;
         this.repLevels = repLevels;
         this.defLevels = defLevels;
         this.rowStarts = rowStarts;
     }
 
     /**
-     * Resolves the leaves of {@code levels} into a fixed order, capturing each leaf's level streams and row-start
-     * boundary once. The iteration order of {@code levels} becomes this order's leaf order.
+     * Captures each leaf's level streams and row-start boundary at the ordinal {@code ordinals} assigns it.
+     * {@code levels} must hold a window for every leaf of the assignment.
      */
-    static LeafOrder of(Map<ColumnPath, LeafLevels> levels) {
-        int count = levels.size();
-        ColumnPath[] paths = new ColumnPath[count];
-        Map<ColumnPath, Integer> ordinalByPath = HashMap.newHashMap(count);
+    static LeafOrder of(LeafOrdinals ordinals, Map<ColumnPath, LeafLevels> levels) {
+        int count = ordinals.leafCount();
         Levels[] repLevels = new Levels[count];
         Levels[] defLevels = new Levels[count];
         IntSequence[] rowStarts = new IntSequence[count];
-        int i = 0;
-        for (Map.Entry<ColumnPath, LeafLevels> entry : levels.entrySet()) {
-            ColumnPath path = entry.getKey();
-            LeafLevels leafLevels = entry.getValue();
-            paths[i] = path;
-            ordinalByPath.put(path, i);
-            repLevels[i] = leafLevels.repLevels();
-            defLevels[i] = leafLevels.defLevels();
-            rowStarts[i] = leafLevels.rowStarts();
-            i++;
+        for (int ordinal = 0; ordinal < count; ordinal++) {
+            ColumnPath path = ordinals.pathAt(ordinal);
+            LeafLevels leafLevels = levels.get(path);
+            if (leafLevels == null) {
+                throw new IllegalArgumentException("no level window for leaf " + path.dot());
+            }
+            repLevels[ordinal] = leafLevels.repLevels();
+            defLevels[ordinal] = leafLevels.defLevels();
+            rowStarts[ordinal] = leafLevels.rowStarts();
         }
-        return new LeafOrder(paths, ordinalByPath, repLevels, defLevels, rowStarts);
+        return new LeafOrder(ordinals, repLevels, defLevels, rowStarts);
     }
 
     /** Number of leaves in this order. */
     public int leafCount() {
-        return paths.length;
+        return ordinals.leafCount();
     }
 
     /** The leaf path at ordinal {@code i}. */
     public ColumnPath pathAt(int i) {
-        return paths[i];
+        return ordinals.pathAt(i);
     }
 
     /** The ordinal of {@code path} in this order; the path must be one of this order's leaves. */
     public int ordinalOf(ColumnPath path) {
-        return ordinalByPath.get(path);
+        return ordinals.ordinalOf(path);
     }
 
     /** The repetition stream of the leaf at ordinal {@code i}. */
