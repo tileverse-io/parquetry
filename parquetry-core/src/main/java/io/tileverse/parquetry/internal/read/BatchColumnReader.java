@@ -398,8 +398,8 @@ final class BatchColumnReader {
             List<AutoCloseable> acquiredBuffers) {
         int start = valuesConsumedInCurrentPage;
         int take = pageRepLevels.valuesForRows(start, rowsToCross);
-        repParts.add(copyLevels(pageRepLevels, start, take));
-        defParts.add(copyLevels(pageDefLevels, start, take));
+        repParts.add(pageRepLevels.toArray(start, take));
+        defParts.add(pageDefLevels.toArray(start, take));
         parts.add(readBatch(take, acquiredBuffers));
     }
 
@@ -440,14 +440,6 @@ final class BatchColumnReader {
             advancePastCurrentPage();
         }
         return false;
-    }
-
-    private static int[] copyLevels(Levels levels, int from, int count) {
-        int[] out = new int[count];
-        for (int i = 0; i < count; i++) {
-            out[i] = levels.get(from + i);
-        }
-        return out;
     }
 
     private static int[] concatLevels(List<int[]> parts) {
