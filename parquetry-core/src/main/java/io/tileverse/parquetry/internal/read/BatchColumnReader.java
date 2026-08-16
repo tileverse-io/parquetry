@@ -162,6 +162,8 @@ final class BatchColumnReader {
     // Chunk-level dictionary entries (shared heap-owned segments), built once from this.dictionary and reused across
     // pages.
     private MemorySegment[] dictEntries;
+    // Total byte size of dictEntries, summed as the entries are built and handed to every vector over them.
+    private long dictEntryBytes;
 
     private int valuesConsumedInCurrentPage;
     private int logicalRowsConsumedInCurrentPage;
@@ -1223,7 +1225,8 @@ final class BatchColumnReader {
 
     /**
      * Builds the chunk-level array of dictionary entries the first time a dictionary binary page is decoded, then
-     * caches it. Each entry is a heap-owned, read-only {@link MemorySegment} the rows index into.
+     * caches it along with its total byte size. Each entry is a heap-owned, read-only {@link MemorySegment} the rows
+     * index into.
      */
     private MemorySegment[] dictionaryEntries() {
         if (dictEntries != null) {
@@ -1233,10 +1236,13 @@ final class BatchColumnReader {
                 "Dictionary-encoded data page requires a loaded Dictionary; none supplied for column "
                         + columnPath.dot()));
         MemorySegment[] entries = new MemorySegment[dict.size()];
+        long entryBytes = 0;
         for (int k = 0; k < entries.length; k++) {
             entries[k] = (MemorySegment) dict.get(k);
+            entryBytes += entries[k].byteSize();
         }
         dictEntries = entries;
+        dictEntryBytes = entryBytes;
         return dictEntries;
     }
 
@@ -1684,7 +1690,7 @@ final class BatchColumnReader {
             int start, int n, Validity sliceValidity, List<AutoCloseable> acquiredBuffers) {
         if (isDictionaryBinaryPage()) {
             IntSequence sliceIndices = sliceDictionaryIndices(start, n, acquiredBuffers);
-            return BinaryVector.dictionary(dictEntries, sliceIndices, sliceValidity);
+            return BinaryVector.dictionary(dictEntries, sliceIndices, sliceValidity, dictEntryBytes);
         }
         return sliceConsolidatedBinary(start, n, sliceValidity, acquiredBuffers);
     }

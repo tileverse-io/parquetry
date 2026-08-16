@@ -65,6 +65,28 @@ class FixedLenBinaryVectorTest {
             assertThat(vec.get(1)).isNull();
             assertThat(vec.get(0).toArray(JAVA_BYTE)).containsExactly(1, 2);
         }
+
+        @Test
+        void approximateHeapBytesCountsIndicesEntriesAndValidity() {
+            MemorySegment[] dict = {seg((byte) 1, (byte) 2), seg((byte) 3, (byte) 4), seg((byte) 5, (byte) 6)};
+            IntSequence indices = IntSequence.of(new int[] {0, 1, 2, 1});
+            Validity validity = Validity.allValid(4);
+
+            FixedLenBinaryVector vec = FixedLenBinaryVector.dictionary(dict, indices, 2, validity);
+
+            assertThat(vec.approximateHeapBytes())
+                    .isEqualTo(indices.heapBytes() + (long) dict.length * 2 + validity.heapBytes());
+        }
+
+        @Test
+        void anEmptyDictionaryContributesNoEntryBytes() {
+            IntSequence indices = IntSequence.of(new int[] {0, 0});
+            Validity allNull = Validity.of(new BitSet(2), 2);
+
+            FixedLenBinaryVector vec = FixedLenBinaryVector.dictionary(new MemorySegment[0], indices, 2, allNull);
+
+            assertThat(vec.approximateHeapBytes()).isEqualTo(indices.heapBytes() + allNull.heapBytes());
+        }
     }
 
     @Test

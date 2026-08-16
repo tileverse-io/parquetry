@@ -41,6 +41,7 @@ public final class BinaryVector implements ColumnVector {
     private final IntSequence offsets;
     private final MemorySegment[] dictEntries;
     private final IntSequence indices;
+    private final long dictionaryEntryBytes;
     private final Validity validity;
     private final Selection selection;
 
@@ -49,23 +50,28 @@ public final class BinaryVector implements ColumnVector {
             IntSequence offsets,
             MemorySegment[] dictEntries,
             IntSequence indices,
+            long dictionaryEntryBytes,
             @NonNull Validity validity,
             @NonNull Selection selection) {
         this.backing = backing;
         this.offsets = offsets;
         this.dictEntries = dictEntries;
         this.indices = indices;
+        this.dictionaryEntryBytes = dictionaryEntryBytes;
         this.validity = validity;
         this.selection = selection;
     }
 
     private BinaryVector(@NonNull MemorySegment backing, @NonNull IntSequence offsets, @NonNull Validity validity) {
-        this(backing, offsets, null, null, validity, Selection.ALL);
+        this(backing, offsets, null, null, 0L, validity, Selection.ALL);
     }
 
     private BinaryVector(
-            @NonNull MemorySegment[] dictEntries, @NonNull IntSequence indices, @NonNull Validity validity) {
-        this(null, null, dictEntries, indices, validity, Selection.ALL);
+            @NonNull MemorySegment[] dictEntries,
+            @NonNull IntSequence indices,
+            @NonNull Validity validity,
+            long dictionaryEntryBytes) {
+        this(null, null, dictEntries, indices, dictionaryEntryBytes, validity, Selection.ALL);
     }
 
     /** Builds a vector over a backing buffer and its row offsets ({@code offsets.size() == values + 1}). */
@@ -118,7 +124,21 @@ public final class BinaryVector implements ColumnVector {
     /** Builds a dictionary-encoded vector: each row indexes a shared dictionary entry. */
     public static BinaryVector dictionary(
             @NonNull MemorySegment[] dictEntries, @NonNull IntSequence indices, @NonNull Validity validity) {
-        return new BinaryVector(dictEntries, indices, validity);
+        return dictionary(dictEntries, indices, validity, sumEntryBytes(dictEntries));
+    }
+
+    /**
+     * Builds a dictionary-encoded vector over a precomputed entry-byte total: each row indexes a shared dictionary
+     * entry, and {@code dictionaryEntryBytes} is the sum of {@link MemorySegment#byteSize()} over {@code dictEntries},
+     * which {@link #approximateHeapBytes()} reports as the entries' share of the heap. A caller that builds many
+     * vectors over one shared entry array computes that total once and hands it to each of them.
+     */
+    public static BinaryVector dictionary(
+            @NonNull MemorySegment[] dictEntries,
+            @NonNull IntSequence indices,
+            @NonNull Validity validity,
+            long dictionaryEntryBytes) {
+        return new BinaryVector(dictEntries, indices, validity, dictionaryEntryBytes);
     }
 
     /**
@@ -265,7 +285,8 @@ public final class BinaryVector implements ColumnVector {
         if (selection == Selection.ALL) {
             return this;
         }
-        return new BinaryVector(backing, offsets, dictEntries, indices, validity.select(selection), selection);
+        return new BinaryVector(
+                backing, offsets, dictEntries, indices, dictionaryEntryBytes, validity.select(selection), selection);
     }
 
     @Override
@@ -300,7 +321,7 @@ public final class BinaryVector implements ColumnVector {
     @Override
     public long approximateHeapBytes() {
         if (indices != null) {
-            return indices.heapBytes() + dictionaryEntryBytes() + validity.heapBytes();
+            return indices.heapBytes() + dictionaryEntryBytes + validity.heapBytes();
         }
         // A native backing lives off-heap and is not counted. A heap backing counts only this vector's window into the
         // shared page backing; sibling slices each count their own window, which keeps the page bytes from being
@@ -317,7 +338,7 @@ public final class BinaryVector implements ColumnVector {
         }
     }
 
-    private long dictionaryEntryBytes() {
+    private static long sumEntryBytes(MemorySegment[] dictEntries) {
         long total = 0;
         for (MemorySegment entry : dictEntries) {
             total += entry.byteSize();
