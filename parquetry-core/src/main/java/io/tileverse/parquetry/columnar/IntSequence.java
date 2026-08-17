@@ -18,6 +18,7 @@ package io.tileverse.parquetry.columnar;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.nio.ByteOrder;
+import java.util.Arrays;
 import java.util.Objects;
 
 /**
@@ -30,8 +31,8 @@ import java.util.Objects;
  * segments make no alignment promise. The segment factory documents a lifetime, not an ownership transfer: the caller
  * retains the segment and must keep it valid (and unchanged) for the lifetime of this instance.
  *
- * <p>{@link #copyInto(MemorySegment, long)} exports the sequence as little-endian i32 bytes for serialization,
- * identically for both backings.
+ * <p>{@link #copyInto(MemorySegment, long)} exports the sequence as little-endian i32 bytes for serialization, and
+ * {@link #toArray()} exports it as an {@code int[]}, identically for both backings.
  */
 public final class IntSequence {
 
@@ -81,6 +82,14 @@ public final class IntSequence {
     /** The heap estimate for vectors' {@code approximateHeapBytes}; an off-heap backing is accounted by its owner. */
     public long heapBytes() {
         return array != null ? (long) size * Integer.BYTES : 0L;
+    }
+
+    /** The sequence's {@code size} entries as a fresh {@code int[]} the sequence does not share. */
+    public int[] toArray() {
+        if (array != null) {
+            return Arrays.copyOf(array, size);
+        }
+        return segment.asSlice(0L, (long) size * Integer.BYTES).toArray(I32);
     }
 
     /** Writes the sequence's {@code size * 4} little-endian bytes into {@code dst} at {@code dstOffset}. */

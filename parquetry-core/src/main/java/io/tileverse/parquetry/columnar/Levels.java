@@ -18,6 +18,7 @@ package io.tileverse.parquetry.columnar;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.util.BitSet;
+import java.util.Objects;
 
 /**
  * Immutable sequence of Parquet repetition or definition levels for one leaf column window. The backing is either a
@@ -30,6 +31,9 @@ import java.util.BitSet;
  *
  * <p>The segment factory documents a lifetime, not an ownership transfer: the caller retains the segment and must keep
  * it valid (and unchanged) for the lifetime of this instance.
+ *
+ * <p>{@link #copyInto(int, int, MemorySegment, long)} and {@link #toArray(int, int)} export a window in bulk,
+ * identically for both backings and with the window bounds checked.
  */
 public final class Levels {
 
@@ -67,6 +71,35 @@ public final class Levels {
             return heapLevels[index];
         }
         return i32.getAtIndex(ValueLayout.JAVA_INT_UNALIGNED, index);
+    }
+
+    /**
+     * Writes the {@code count} entries starting at {@code from} as {@code count * 4} native-order bytes into
+     * {@code dst} at {@code dstOffset}, the order {@link #ofSegment(MemorySegment, int)} reads back. The window
+     * {@code [from, from + count)} must lie within {@code [0, size())}, including for an oversized segment backing.
+     */
+    public void copyInto(int from, int count, MemorySegment dst, long dstOffset) {
+        Objects.checkFromIndexSize(from, count, size);
+        if (heapLevels != null) {
+            MemorySegment.copy(heapLevels, from, dst, ValueLayout.JAVA_INT_UNALIGNED, dstOffset, count);
+        } else {
+            MemorySegment.copy(i32, (long) from * Integer.BYTES, dst, dstOffset, (long) count * Integer.BYTES);
+        }
+    }
+
+    /**
+     * The {@code count} entries starting at {@code from} as a fresh {@code int[]} indexed from zero. The window
+     * {@code [from, from + count)} must lie within {@code [0, size())}, including for an oversized segment backing.
+     */
+    public int[] toArray(int from, int count) {
+        Objects.checkFromIndexSize(from, count, size);
+        int[] window = new int[count];
+        if (heapLevels != null) {
+            System.arraycopy(heapLevels, from, window, 0, count);
+        } else {
+            MemorySegment.copy(i32, ValueLayout.JAVA_INT_UNALIGNED, (long) from * Integer.BYTES, window, 0, count);
+        }
+        return window;
     }
 
     /** Count of entries equal to {@code level}; for a rep-level stream, {@code countOf(0)} is the logical row count. */

@@ -184,6 +184,48 @@ class BinaryVectorTest {
             assertThat(vec.get(1)).isNull();
             assertThat(text(vec.get(0))).isEqualTo("red");
         }
+
+        @Test
+        void approximateHeapBytesCountsIndicesEntriesAndValidity() {
+            MemorySegment[] dict = {seg("red"), seg("green"), seg("blue")};
+            IntSequence indices = IntSequence.of(new int[] {0, 1, 2, 1});
+            Validity validity = Validity.allValid(4);
+            long entryBytes = "red".length() + "green".length() + "blue".length();
+
+            BinaryVector supplied = BinaryVector.dictionary(dict, indices, validity, entryBytes);
+            BinaryVector summedAtConstruction = BinaryVector.dictionary(dict, indices, validity);
+
+            assertThat(supplied.approximateHeapBytes())
+                    .isEqualTo(indices.heapBytes() + entryBytes + validity.heapBytes());
+            assertThat(summedAtConstruction.approximateHeapBytes())
+                    .as("both factories account the same bytes")
+                    .isEqualTo(supplied.approximateHeapBytes());
+        }
+
+        @Test
+        void selectedViewKeepsTheEntryBytesOfTheSharedDictionary() {
+            MemorySegment[] dict = {seg("red"), seg("green"), seg("blue")};
+            IntSequence indices = IntSequence.of(new int[] {0, 1, 2, 1});
+            long entryBytes = "red".length() + "green".length() + "blue".length();
+            BinaryVector vec = BinaryVector.dictionary(dict, indices, Validity.allValid(4), entryBytes);
+
+            BinaryVector selected = (BinaryVector) vec.select(Selection.bits(survivors(0, 2)));
+
+            long selectedEntryBytes = selected.approximateHeapBytes()
+                    - indices.heapBytes()
+                    - selected.validity().heapBytes();
+            assertThat(selectedEntryBytes).isEqualTo(entryBytes);
+        }
+
+        @Test
+        void anEmptyDictionaryContributesNoEntryBytes() {
+            IntSequence indices = IntSequence.of(new int[] {0, 0});
+            Validity allNull = Validity.of(new BitSet(2), 2);
+
+            BinaryVector vec = BinaryVector.dictionary(new MemorySegment[0], indices, allNull);
+
+            assertThat(vec.approximateHeapBytes()).isEqualTo(indices.heapBytes() + allNull.heapBytes());
+        }
     }
 
     @Nested

@@ -15,6 +15,7 @@
  */
 package io.tileverse.parquetry.internal.read;
 
+import java.lang.foreign.MemorySegment;
 import java.util.Objects;
 
 import io.tileverse.parquetry.columnar.Levels;
@@ -46,5 +47,18 @@ record LevelSlice(Levels levels, int from, int length) {
     /** The level value at window position {@code i}. */
     int at(int i) {
         return levels.get(from + i);
+    }
+
+    /**
+     * Writes the window's {@code length * 4} native-order bytes into {@code dst} at {@code dstOffset}, the order
+     * {@link Levels#ofSegment} reads back.
+     */
+    void copyInto(MemorySegment dst, long dstOffset) {
+        levels.copyInto(from, length, dst, dstOffset);
+    }
+
+    /** The window's level values as a fresh {@code int[]} indexed from zero. */
+    int[] toArray() {
+        return levels.toArray(from, length);
     }
 }

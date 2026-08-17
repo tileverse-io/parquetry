@@ -44,6 +44,8 @@ import java.util.Set;
  */
 public record ParquetSchema(SchemaNode.Group root) {
 
+    private static final char PATH_SEPARATOR = '.';
+
     /**
      * Returns all leaf (primitive) column paths in depth-first order.
      *
@@ -90,17 +92,22 @@ public record ParquetSchema(SchemaNode.Group root) {
      * @throws ParquetSchemaException if {@code path} cannot be resolved against this schema
      */
     public LevelMaxima maxLevels(ColumnPath path) {
+        String dot = path.dot();
         int maxRep = 0;
         int maxDef = 0;
         SchemaNode current = root;
-        for (int i = 0; i < path.numParts(); i++) {
-            String part = path.part(i);
+        int segmentStart = 0;
+        while (segmentStart <= dot.length()) {
+            int separator = dot.indexOf(PATH_SEPARATOR, segmentStart);
+            int segmentEnd = separator < 0 ? dot.length() : separator;
             if (!(current instanceof SchemaNode.Group group)) {
-                throw new ParquetSchemaException("Path traversal hit a non-group at " + path.dot());
+                throw new ParquetSchemaException("Path traversal hit a non-group at " + dot);
             }
-            SchemaNode child = findChildByName(group, part)
-                    .orElseThrow(() -> new ParquetSchemaException(
-                            "ParquetSchema missing child '" + part + "' along path " + path.dot()));
+            SchemaNode child = childNamedIn(group, dot, segmentStart, segmentEnd);
+            if (child == null) {
+                throw new ParquetSchemaException("ParquetSchema missing child '"
+                        + dot.substring(segmentStart, segmentEnd) + "' along path " + dot);
+            }
             switch (child.repetition()) {
                 case REQUIRED -> {
                     // No contribution.
@@ -112,17 +119,27 @@ public record ParquetSchema(SchemaNode.Group root) {
                 }
             }
             current = child;
+            segmentStart = segmentEnd + 1;
         }
         return new LevelMaxima(maxRep, maxDef);
     }
 
-    private static Optional<SchemaNode> findChildByName(SchemaNode.Group group, String name) {
-        for (SchemaNode child : group.children()) {
-            if (child.name().equals(name)) {
-                return Optional.of(child);
+    /**
+     * The child of {@code group} whose name is the {@code [segmentStart, segmentEnd)} region of {@code path}, or
+     * {@code null} when no child has exactly that name. The region is compared where it sits in {@code path}, never
+     * copied out of it.
+     */
+    private static SchemaNode childNamedIn(SchemaNode.Group group, String path, int segmentStart, int segmentEnd) {
+        int segmentLength = segmentEnd - segmentStart;
+        List<SchemaNode> children = group.children();
+        for (int i = 0; i < children.size(); i++) {
+            SchemaNode child = children.get(i);
+            String name = child.name();
+            if (name.length() == segmentLength && name.regionMatches(0, path, segmentStart, segmentLength)) {
+                return child;
             }
         }
-        return Optional.empty();
+        return null;
     }
 
     /**

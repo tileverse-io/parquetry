@@ -241,10 +241,6 @@ public final class Int96Vector implements ColumnVector {
     }
 
     private long dictionaryEntryBytes() {
-        long total = 0;
-        for (MemorySegment entry : dictEntries) {
-            total += entry.byteSize();
-        }
-        return total;
+        return (long) dictEntries.length * WIDTH;
     }
 }

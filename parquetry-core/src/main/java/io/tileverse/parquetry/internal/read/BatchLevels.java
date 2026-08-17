@@ -16,7 +16,6 @@
 package io.tileverse.parquetry.internal.read;
 
 import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
 import java.util.BitSet;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -138,17 +137,16 @@ final class BatchLevels implements AutoCloseable {
 
     private static Levels copyLevelsWindow(MemorySegment segment, long offsetInts, LevelSlice slice) {
         long byteOffset = offsetInts * Integer.BYTES;
-        for (int i = 0; i < slice.length(); i++) {
-            segment.setAtIndex(ValueLayout.JAVA_INT_UNALIGNED, offsetInts + i, slice.at(i));
-        }
+        slice.copyInto(segment, byteOffset);
         MemorySegment window = segment.asSlice(byteOffset, (long) slice.length() * Integer.BYTES);
         return Levels.ofSegment(window, slice.length());
     }
 
     private static IntSequence buildRowStarts(MemorySegment segment, long offsetInts, LevelSlice rep, int numRows) {
+        int[] repWindow = rep.toArray();
         int boundaries = 0;
-        for (int i = 0; i < rep.length(); i++) {
-            boolean rowBoundary = rep.at(i) == 0;
+        for (int i = 0; i < repWindow.length; i++) {
+            boolean rowBoundary = repWindow[i] == 0;
             if (rowBoundary) {
                 // A malformed stream can hold more boundaries than the batch's rows; keep counting for the
                 // mismatch check below, but never write past the row-starts window.
@@ -158,8 +156,8 @@ final class BatchLevels implements AutoCloseable {
                 boundaries++;
             }
         }
-        requireExpectedBoundaries(boundaries, numRows, rep);
-        writeRowStart(segment, offsetInts + numRows, rep.length());
+        requireExpectedBoundaries(boundaries, numRows, repWindow);
+        writeRowStart(segment, offsetInts + numRows, repWindow.length);
 
         long byteOffset = offsetInts * Integer.BYTES;
         MemorySegment window = segment.asSlice(byteOffset, (numRows + 1L) * Integer.BYTES);
@@ -170,12 +168,12 @@ final class BatchLevels implements AutoCloseable {
         segment.setAtIndex(ParquetLayouts.INT32, indexInts, position);
     }
 
-    private static void requireExpectedBoundaries(int boundaries, int numRows, LevelSlice rep) {
+    private static void requireExpectedBoundaries(int boundaries, int numRows, int[] repWindow) {
         if (boundaries != numRows) {
             throw new IllegalStateException(
                     "rep window holds " + boundaries + " row boundaries but the batch expects " + numRows);
         }
-        boolean nonEmptyWithoutLeadingBoundary = rep.length() > 0 && rep.at(0) != 0;
+        boolean nonEmptyWithoutLeadingBoundary = repWindow.length > 0 && repWindow[0] != 0;
         if (nonEmptyWithoutLeadingBoundary) {
             throw new IllegalStateException("a non-empty rep window must start with a row boundary (level 0)");
         }
@@ -207,10 +205,10 @@ final class BatchLevels implements AutoCloseable {
             throw new IllegalStateException("no batch-owned levels for structure leaf " + structureLeaf);
         }
         Levels defLevels = leaf.defLevels();
-        IntSequence rowStarts = leaf.rowStarts();
+        int[] rowStarts = leaf.rowStarts().toArray();
         BitSet valid = new BitSet(numRows);
         for (int row = 0; row < numRows; row++) {
-            boolean present = defLevels.get(rowStarts.get(row)) >= groupDefLevel;
+            boolean present = defLevels.get(rowStarts[row]) >= groupDefLevel;
             if (present) {
                 valid.set(row);
             }

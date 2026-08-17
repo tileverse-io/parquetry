@@ -124,6 +124,38 @@ class IntSequenceTest {
     }
 
     @Test
+    void toArrayExportsBothBackingsIdentically() {
+        int[] values = {7, -1, 0, Integer.MAX_VALUE};
+        MemorySegment seg = MemorySegment.ofArray(new byte[values.length * Integer.BYTES]);
+        MemorySegment.copy(values, 0, seg, LE_I32, 0L, values.length);
+
+        assertThat(IntSequence.of(values.clone()).toArray()).containsExactly(values);
+        assertThat(IntSequence.ofSegment(seg, values.length).toArray()).containsExactly(values);
+    }
+
+    @Test
+    void toArrayStopsAtSizeInAnOversizedSegment() {
+        MemorySegment seg = MemorySegment.ofArray(new byte[6 * Integer.BYTES]);
+        for (int i = 0; i < 6; i++) {
+            seg.setAtIndex(LE_I32, i, i + 100);
+        }
+
+        assertThat(IntSequence.ofSegment(seg, 4).toArray()).containsExactly(100, 101, 102, 103);
+        assertThat(IntSequence.ofSegment(seg, 0).toArray()).isEmpty();
+        assertThat(IntSequence.of(new int[0]).toArray()).isEmpty();
+    }
+
+    @Test
+    void toArrayReturnsAnArrayTheSequenceDoesNotShare() {
+        IntSequence seq = IntSequence.of(new int[] {1, 2, 3});
+        int[] exported = seq.toArray();
+
+        exported[0] = 99;
+
+        assertThat(seq.get(0)).isEqualTo(1);
+    }
+
+    @Test
     void copyIntoWritesAtTheGivenByteOffsetForBothBackings() {
         int[] values = {11, 22, 33};
         MemorySegment seg = MemorySegment.ofArray(new byte[values.length * Integer.BYTES]);

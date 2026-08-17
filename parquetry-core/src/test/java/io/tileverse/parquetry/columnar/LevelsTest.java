@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.columnar;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -133,6 +134,112 @@ class LevelsTest {
                 .as("gathering nothing yields an empty sequence")
                 .isZero();
         assertThat(Levels.of(new int[0]).size()).as("empty level array").isZero();
+    }
+
+    @Test
+    void copyIntoWritesTheWindowAsNativeOrderIntsForBothBackings() {
+        long dstOffset = 4L;
+        long trailing = 4L;
+        int from = 2;
+        int count = 4;
+
+        for (Levels levels : bothBackings(SAMPLE)) {
+            MemorySegment dst = MemorySegment.ofArray(new byte[(int) (dstOffset + count * Integer.BYTES + trailing)]);
+            dst.fill((byte) 0x5A);
+
+            levels.copyInto(from, count, dst, dstOffset);
+
+            byte[] beforeOffset = dst.asSlice(0L, dstOffset).toArray(ValueLayout.JAVA_BYTE);
+            assertThat(beforeOffset).containsOnly((byte) 0x5A);
+            int[] landed = dst.asSlice(dstOffset, (long) count * Integer.BYTES).toArray(ValueLayout.JAVA_INT_UNALIGNED);
+            for (int i = 0; i < count; i++) {
+                assertThat(landed[i]).as("copied[%d]", i).isEqualTo(levels.get(from + i));
+            }
+            assertThat(landed).containsExactly(1, 0, 2, 0);
+            byte[] afterWindow = dst.asSlice(dstOffset + count * Integer.BYTES).toArray(ValueLayout.JAVA_BYTE);
+            assertThat(afterWindow).containsOnly((byte) 0x5A);
+        }
+    }
+
+    @Test
+    void copyIntoAnEmptyWindowWritesNothing() {
+        for (Levels levels : bothBackings(SAMPLE)) {
+            MemorySegment dst = MemorySegment.ofArray(new byte[2 * Integer.BYTES]);
+            dst.fill((byte) 0x5A);
+
+            levels.copyInto(3, 0, dst, 0L);
+            levels.copyInto(SAMPLE.length, 0, dst, 0L);
+
+            assertThat(dst.toArray(ValueLayout.JAVA_BYTE)).containsOnly((byte) 0x5A);
+        }
+    }
+
+    @Test
+    void copyIntoRejectsWindowsOutsideTheSequence() {
+        MemorySegment dst = MemorySegment.ofArray(new byte[SAMPLE.length * Integer.BYTES]);
+        for (Levels levels : bothBackings(SAMPLE)) {
+            assertThatThrownBy(() -> levels.copyInto(6, 3, dst, 0L)).isInstanceOf(IndexOutOfBoundsException.class);
+            assertThatThrownBy(() -> levels.copyInto(-1, 2, dst, 0L)).isInstanceOf(IndexOutOfBoundsException.class);
+            assertThatThrownBy(() -> levels.copyInto(0, -1, dst, 0L)).isInstanceOf(IndexOutOfBoundsException.class);
+        }
+    }
+
+    @Test
+    void copyIntoRejectsAWindowReachingPastSizeIntoAnOversizedSegment() {
+        Levels levels = Levels.ofSegment(segmentOf(SAMPLE), SAMPLE.length - 2);
+        MemorySegment dst = MemorySegment.ofArray(new byte[SAMPLE.length * Integer.BYTES]);
+
+        levels.copyInto(4, 2, dst, 0L);
+
+        assertThat(dst.asSlice(0L, 2L * Integer.BYTES).toArray(ValueLayout.JAVA_INT_UNALIGNED))
+                .containsExactly(2, 0);
+        assertThatThrownBy(() -> levels.copyInto(4, 3, dst, 0L)).isInstanceOf(IndexOutOfBoundsException.class);
+    }
+
+    @Test
+    void toArrayCopiesTheWindowForBothBackings() {
+        int from = 3;
+        int count = 4;
+        for (Levels levels : bothBackings(SAMPLE)) {
+            int[] window = levels.toArray(from, count);
+
+            assertThat(window).hasSize(count);
+            for (int i = 0; i < count; i++) {
+                assertThat(window[i]).as("window[%d]", i).isEqualTo(levels.get(from + i));
+            }
+            assertThat(window).containsExactly(0, 2, 0, 2);
+        }
+    }
+
+    @Test
+    void toArrayOfAnEmptyWindowIsEmpty() {
+        for (Levels levels : bothBackings(SAMPLE)) {
+            assertThat(levels.toArray(0, 0)).isEmpty();
+            assertThat(levels.toArray(SAMPLE.length, 0)).isEmpty();
+        }
+    }
+
+    @Test
+    void toArrayReturnsAnArrayTheSequenceDoesNotShare() {
+        Levels levels = Levels.of(SAMPLE.clone());
+        int[] window = levels.toArray(0, SAMPLE.length);
+
+        window[0] = 99;
+
+        assertThat(levels.get(0)).isZero();
+    }
+
+    @Test
+    void toArrayRejectsWindowsOutsideTheSequence() {
+        for (Levels levels : bothBackings(SAMPLE)) {
+            assertThatThrownBy(() -> levels.toArray(6, 3)).isInstanceOf(IndexOutOfBoundsException.class);
+            assertThatThrownBy(() -> levels.toArray(-1, 2)).isInstanceOf(IndexOutOfBoundsException.class);
+            assertThatThrownBy(() -> levels.toArray(0, -1)).isInstanceOf(IndexOutOfBoundsException.class);
+        }
+    }
+
+    private static Levels[] bothBackings(int[] values) {
+        return new Levels[] {Levels.of(values.clone()), Levels.ofSegment(segmentOf(values), values.length)};
     }
 
     private static MemorySegment segmentOf(int[] levels) {

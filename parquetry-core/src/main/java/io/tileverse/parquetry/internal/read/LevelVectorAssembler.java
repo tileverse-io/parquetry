@@ -15,7 +15,6 @@
  */
 package io.tileverse.parquetry.internal.read;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -25,29 +24,40 @@ import java.util.Set;
 
 import io.tileverse.parquetry.columnar.ColumnVector;
 import io.tileverse.parquetry.columnar.LeafLevels;
+import io.tileverse.parquetry.columnar.LeafOrdinals;
 import io.tileverse.parquetry.columnar.LevelListVector;
 import io.tileverse.parquetry.columnar.LevelMapVector;
 import io.tileverse.parquetry.columnar.StructVector;
 import io.tileverse.parquetry.columnar.Validity;
+import io.tileverse.parquetry.internal.read.LevelAssemblyPlan.GroupField;
+import io.tileverse.parquetry.internal.read.LevelAssemblyPlan.GroupPlan;
+import io.tileverse.parquetry.internal.read.LevelAssemblyPlan.LeafField;
+import io.tileverse.parquetry.internal.read.LevelAssemblyPlan.ListPlan;
+import io.tileverse.parquetry.internal.read.LevelAssemblyPlan.MapPlan;
+import io.tileverse.parquetry.internal.read.LevelAssemblyPlan.StructFieldPlan;
+import io.tileverse.parquetry.internal.read.LevelAssemblyPlan.StructPlan;
+import io.tileverse.parquetry.internal.read.LevelAssemblyPlan.VariantPlan;
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.schema.GroupKind;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
- * The levels-form counterpart of {@link NestedVectorAssembler#assembleNestedViews}. It walks the projected schema the
+ * The levels-form counterpart of {@link NestedVectorAssembler#assembleNestedViews}. It covers the projected schema the
  * same way, but a row-aligned LIST or MAP group becomes a {@link LevelListVector} / {@link LevelMapVector} that keeps
  * the dense leaf vectors plus batch-owned level windows and defers the Dremel assembly to a lazy row view, instead of
  * the eager offset-and-child vectors {@link DremelAssembler} builds. A STRUCT or unshredded-Variant group keeps the
  * same eager wrapper, with its LIST and MAP children replaced by level vectors.
  *
+ * <p>Which groups those are, and the metadata each one is built from, is a {@link LevelAssemblyPlan}: everything the
+ * schema and the batch's leaves decide, resolved ahead of the batch. What a batch adds is its own data - the leaf
+ * vectors, the level windows, and the validity read from them.
+ *
  * <p>The per-batch level windows for every repeated leaf are copied once into one pooled segment through
  * {@link BatchLevels}; the returned instance is added to {@code acquiredBuffers}, which the caller's batch owns and
  * closes. When the schema has no repeated leaf the empty {@link BatchLevels} acquires no segment.
  *
- * <p>The leaf-hiding rules match the eager walk and reuse its widened helpers: a LIST or MAP hides every descendant
- * leaf, a STRUCT keeps its row-aligned child leaves addressable and hides only the leaves descending through a repeated
- * child.
+ * <p>The leaf-hiding rules match the eager walk: a LIST or MAP hides every descendant leaf, a STRUCT keeps its
+ * row-aligned child leaves addressable and hides only the leaves descending through a repeated child.
  */
 public final class LevelVectorAssembler {
 
@@ -55,7 +65,9 @@ public final class LevelVectorAssembler {
 
     /**
      * Walks {@code projectedSchema} and produces a column-vector map keyed by full {@link ColumnPath}, the level-form
-     * shape of {@link NestedVectorAssembler#assembleNestedViews}.
+     * shape of {@link NestedVectorAssembler#assembleNestedViews}. Resolves the schema against the batch's leaves on
+     * every call; a caller reading many batches over one row group resolves a {@link LevelAssemblyPlan} once and passes
+     * it instead.
      *
      * @param acquiredBuffers receives the per-batch {@link BatchLevels}; the caller's batch closes it
      */
@@ -68,9 +80,39 @@ public final class LevelVectorAssembler {
             DecodeBufferAllocator allocator,
             List<AutoCloseable> acquiredBuffers) {
 
-        Set<ColumnPath> repeatedLeaves = repeatedDescendantLeaves(projectedSchema, leafVectors);
+        LevelAssemblyPlan plan = LevelAssemblyPlan.of(projectedSchema, leafVectors.keySet());
+        return assembleLevelForm(
+                plan,
+                projectedSchema,
+                leafVectors,
+                repLevelsByLeaf,
+                defLevelsByLeaf,
+                numRows,
+                allocator,
+                acquiredBuffers);
+    }
+
+    /**
+     * The level-form column-vector map for one batch, assembled from the metadata {@code plan} already resolved for the
+     * batch's leaves. The plan must have been resolved against {@code projectedSchema} and the key set of
+     * {@code leafVectors}.
+     *
+     * @param acquiredBuffers receives the per-batch {@link BatchLevels}; the caller's batch closes it
+     */
+    // S107: the batch's decode inputs plus the resolved plan; a parameter object would only relocate the arity
+    @SuppressWarnings("java:S107")
+    static Map<ColumnPath, ColumnVector> assembleLevelForm(
+            LevelAssemblyPlan plan,
+            ParquetSchema projectedSchema,
+            Map<ColumnPath, ColumnVector> leafVectors,
+            Map<ColumnPath, LevelSlice> repLevelsByLeaf,
+            Map<ColumnPath, LevelSlice> defLevelsByLeaf,
+            int numRows,
+            DecodeBufferAllocator allocator,
+            List<AutoCloseable> acquiredBuffers) {
+
         BatchLevels batchLevels =
-                BatchLevels.build(allocator, repLevelsByLeaf, defLevelsByLeaf, repeatedLeaves, numRows);
+                BatchLevels.build(allocator, repLevelsByLeaf, defLevelsByLeaf, plan.repeatedLeaves(), numRows);
         acquiredBuffers.add(batchLevels);
 
         DremelAssembler dremel = new DremelAssembler(projectedSchema, leafVectors, repLevelsByLeaf, defLevelsByLeaf);
@@ -78,60 +120,13 @@ public final class LevelVectorAssembler {
 
         Map<ColumnPath, ColumnVector> result = new HashMap<>(leafVectors);
         Set<ColumnPath> hiddenLeaves = new HashSet<>();
-        for (SchemaNode child : projectedSchema.root().children()) {
-            assembly.walkField(child, new ArrayList<>(), result, hiddenLeaves);
+        for (GroupPlan group : plan.topLevelGroups()) {
+            assembly.placeGroup(group, result, hiddenLeaves);
         }
         for (ColumnPath leaf : hiddenLeaves) {
             result.remove(leaf);
         }
         return result;
-    }
-
-    /** Every descendant leaf of a LIST or MAP group present in {@code leafVectors}: the leaves a level vector reads. */
-    private static Set<ColumnPath> repeatedDescendantLeaves(
-            ParquetSchema schema, Map<ColumnPath, ColumnVector> leafVectors) {
-        Set<ColumnPath> repeated = new HashSet<>();
-        for (SchemaNode child : schema.root().children()) {
-            collectRepeatedLeaves(child, new ArrayList<>(), leafVectors, repeated);
-        }
-        return repeated;
-    }
-
-    private static void collectRepeatedLeaves(
-            SchemaNode node,
-            List<String> nodePath,
-            Map<ColumnPath, ColumnVector> leafVectors,
-            Set<ColumnPath> repeated) {
-        if (!(node instanceof SchemaNode.Group group)) {
-            return;
-        }
-        List<String> groupPath = concat(nodePath, group.name());
-        GroupKind kind = GroupKind.of(group);
-        if (kind == GroupKind.LIST || kind == GroupKind.MAP) {
-            addDescendantLeaves(group, groupPath, leafVectors, repeated);
-            return;
-        }
-        for (SchemaNode child : group.children()) {
-            collectRepeatedLeaves(child, groupPath, leafVectors, repeated);
-        }
-    }
-
-    private static void addDescendantLeaves(
-            SchemaNode.Group group,
-            List<String> groupPath,
-            Map<ColumnPath, ColumnVector> leafVectors,
-            Set<ColumnPath> out) {
-        for (SchemaNode child : group.children()) {
-            List<String> childPath = concat(groupPath, child.name());
-            if (child instanceof SchemaNode.Primitive) {
-                ColumnPath leafPath = ColumnPath.of(childPath);
-                if (leafVectors.containsKey(leafPath)) {
-                    out.add(leafPath);
-                }
-                continue;
-            }
-            addDescendantLeaves((SchemaNode.Group) child, childPath, leafVectors, out);
-        }
     }
 
     /**
@@ -183,14 +178,7 @@ public final class LevelVectorAssembler {
         return List.of(path.dot().split("\\."));
     }
 
-    private static List<String> concat(List<String> prefix, String segment) {
-        List<String> result = new ArrayList<>(prefix.size() + 1);
-        result.addAll(prefix);
-        result.add(segment);
-        return result;
-    }
-
-    /** Holds the shared assembly state for one walk, threading the level windows and the eager assembler. */
+    /** Holds the shared assembly state for one batch, threading the level windows and the eager assembler. */
     private static final class Assembly {
 
         private final ParquetSchema schema;
@@ -212,60 +200,53 @@ public final class LevelVectorAssembler {
             this.numRows = numRows;
         }
 
-        void walkField(
-                SchemaNode field,
-                List<String> prefix,
-                Map<ColumnPath, ColumnVector> result,
-                Set<ColumnPath> hiddenLeaves) {
-            if (!(field instanceof SchemaNode.Group group)) {
-                return;
-            }
-            List<String> groupPath = concat(prefix, group.name());
-            ColumnVector vector = assembleGroup(group, groupPath, numRows);
+        /** Adds one planned group's vector to {@code result}, and the leaves it takes over to {@code hiddenLeaves}. */
+        void placeGroup(GroupPlan group, Map<ColumnPath, ColumnVector> result, Set<ColumnPath> hiddenLeaves) {
+            ColumnVector vector = assembleGroup(group);
             if (vector == null) {
                 return;
             }
-            result.put(ColumnPath.of(groupPath), vector);
-            switch (GroupKind.of(group)) {
-                case LIST, MAP ->
-                    NestedVectorAssembler.markDescendantLeavesHidden(group, groupPath, leafVectors, hiddenLeaves);
-                case STRUCT, VARIANT ->
-                    NestedVectorAssembler.hideRepeatedDescendantLeaves(group, groupPath, leafVectors, hiddenLeaves);
-            }
+            result.put(group.path(), vector);
+            hiddenLeaves.addAll(group.hiddenLeaves());
         }
 
-        /**
-         * The level-form vector for {@code group} over {@code numSlots} row-aligned slots, or null when it is empty.
-         */
-        private ColumnVector assembleGroup(SchemaNode.Group group, List<String> groupPath, int numSlots) {
-            return switch (GroupKind.of(group)) {
-                case LIST -> levelList(group, groupPath, numSlots);
-                case MAP -> levelMap(group, groupPath, numSlots);
-                case STRUCT -> levelStruct(group, groupPath, numSlots);
-                case VARIANT -> dremel.assembleField(group, groupPath, numSlots);
+        /** The level-form vector for one planned group over the batch's rows, or null when it is empty. */
+        private ColumnVector assembleGroup(GroupPlan group) {
+            return switch (group) {
+                case ListPlan list -> levelList(list);
+                case MapPlan map -> levelMap(map);
+                case StructPlan struct -> levelStruct(struct);
+                case VariantPlan variantGroup ->
+                    dremel.assembleField(variantGroup.group(), variantGroup.groupPath(), numRows);
             };
         }
 
-        private ColumnVector levelList(SchemaNode.Group group, List<String> groupPath, int numSlots) {
-            ColumnPath path = ColumnPath.of(groupPath);
-            Map<ColumnPath, ColumnVector> leaves = descendantLeaves(group, groupPath);
-            if (leaves.isEmpty()) {
-                return null;
-            }
-            Map<ColumnPath, LeafLevels> levels = levelsFor(leaves.keySet());
-            Validity validity = groupValidity(group, groupPath, leaves.keySet());
-            return LevelListVector.of(schema, path, leaves, levels, validity, numSlots);
+        private ColumnVector levelList(ListPlan plan) {
+            LeafOrdinals leafOrdinals = plan.leafOrdinals();
+            Validity validity = batchLevels.groupValidity(plan.validityLeaf(), plan.groupDefLevel());
+            return LevelListVector.of(
+                    schema,
+                    plan.path(),
+                    leavesFor(leafOrdinals),
+                    levelsFor(leafOrdinals),
+                    validity,
+                    numRows,
+                    plan.meta(),
+                    leafOrdinals);
         }
 
-        private ColumnVector levelMap(SchemaNode.Group group, List<String> groupPath, int numSlots) {
-            ColumnPath path = ColumnPath.of(groupPath);
-            Map<ColumnPath, ColumnVector> leaves = descendantLeaves(group, groupPath);
-            if (leaves.isEmpty()) {
-                return null;
-            }
-            Map<ColumnPath, LeafLevels> levels = levelsFor(leaves.keySet());
-            Validity validity = groupValidity(group, groupPath, leaves.keySet());
-            return LevelMapVector.of(schema, path, leaves, levels, validity, numSlots);
+        private ColumnVector levelMap(MapPlan plan) {
+            LeafOrdinals leafOrdinals = plan.leafOrdinals();
+            Validity validity = batchLevels.groupValidity(plan.validityLeaf(), plan.groupDefLevel());
+            return LevelMapVector.of(
+                    schema,
+                    plan.path(),
+                    leavesFor(leafOrdinals),
+                    levelsFor(leafOrdinals),
+                    validity,
+                    numRows,
+                    plan.meta(),
+                    leafOrdinals);
         }
 
         /**
@@ -273,67 +254,45 @@ public final class LevelVectorAssembler {
          * struct recurses, and a LIST or MAP child becomes a level vector. The validity is the eager per-slot struct
          * validity.
          */
-        private ColumnVector levelStruct(SchemaNode.Group group, List<String> groupPath, int numSlots) {
-            Map<ColumnPath, ColumnVector> children = new LinkedHashMap<>();
-            for (SchemaNode child : group.children()) {
-                List<String> childPath = concat(groupPath, child.name());
-                ColumnVector childVector = assembleStructChild(child, childPath, numSlots);
+        private ColumnVector levelStruct(StructPlan plan) {
+            Map<ColumnPath, ColumnVector> children =
+                    LinkedHashMap.newLinkedHashMap(plan.fields().size());
+            for (StructFieldPlan field : plan.fields()) {
+                ColumnVector childVector = structFieldVector(field);
                 if (childVector != null) {
-                    children.put(ColumnPath.of(child.name()), childVector);
+                    children.put(field.key(), childVector);
                 }
             }
             if (children.isEmpty()) {
                 return null;
             }
-            Validity validity = dremel.structValidity(group, groupPath, numSlots);
-            return new StructVector(children, validity, numSlots);
+            Validity validity = dremel.structValidity(plan.structDefLevel(), plan.validityLeaf(), numRows);
+            return new StructVector(children, validity, numRows);
         }
 
-        private ColumnVector assembleStructChild(SchemaNode child, List<String> childPath, int numSlots) {
-            if (child instanceof SchemaNode.Primitive) {
-                return leafVectors.get(ColumnPath.of(childPath));
-            }
-            SchemaNode.Group childGroup = (SchemaNode.Group) child;
-            return switch (GroupKind.of(childGroup)) {
-                case LIST -> levelList(childGroup, childPath, numSlots);
-                case MAP -> levelMap(childGroup, childPath, numSlots);
-                case STRUCT -> levelStruct(childGroup, childPath, numSlots);
-                case VARIANT -> dremel.assembleField(childGroup, childPath, numSlots);
+        private ColumnVector structFieldVector(StructFieldPlan field) {
+            return switch (field) {
+                case LeafField leaf -> leafVectors.get(leaf.leafPath());
+                case GroupField nested -> assembleGroup(nested.group());
             };
         }
 
-        private Validity groupValidity(SchemaNode.Group group, List<String> groupPath, Set<ColumnPath> leafPaths) {
-            int groupDefLevel = schema.maxLevels(ColumnPath.of(groupPath)).maxDefinitionLevel();
-            ColumnPath structureLeaf = firstPresentDescendantLeaf(group, groupPath, leafPaths);
-            return batchLevels.groupValidity(structureLeaf, groupDefLevel);
-        }
-
-        private Map<ColumnPath, ColumnVector> descendantLeaves(SchemaNode.Group group, List<String> groupPath) {
-            Map<ColumnPath, ColumnVector> leaves = new LinkedHashMap<>();
-            collectDescendantLeaves(group, groupPath, leaves);
+        private Map<ColumnPath, ColumnVector> leavesFor(LeafOrdinals leafOrdinals) {
+            int leafCount = leafOrdinals.leafCount();
+            Map<ColumnPath, ColumnVector> leaves = HashMap.newHashMap(leafCount);
+            for (int ordinal = 0; ordinal < leafCount; ordinal++) {
+                ColumnPath leafPath = leafOrdinals.pathAt(ordinal);
+                leaves.put(leafPath, leafVectors.get(leafPath));
+            }
             return leaves;
         }
 
-        private void collectDescendantLeaves(
-                SchemaNode.Group group, List<String> groupPath, Map<ColumnPath, ColumnVector> out) {
-            for (SchemaNode child : group.children()) {
-                List<String> childPath = concat(groupPath, child.name());
-                if (child instanceof SchemaNode.Primitive) {
-                    ColumnPath leafPath = ColumnPath.of(childPath);
-                    ColumnVector leaf = leafVectors.get(leafPath);
-                    if (leaf != null) {
-                        out.put(leafPath, leaf);
-                    }
-                    continue;
-                }
-                collectDescendantLeaves((SchemaNode.Group) child, childPath, out);
-            }
-        }
-
-        private Map<ColumnPath, LeafLevels> levelsFor(Set<ColumnPath> leafPaths) {
-            Map<ColumnPath, LeafLevels> levels = HashMap.newHashMap(leafPaths.size());
+        private Map<ColumnPath, LeafLevels> levelsFor(LeafOrdinals leafOrdinals) {
+            int leafCount = leafOrdinals.leafCount();
+            Map<ColumnPath, LeafLevels> levels = HashMap.newHashMap(leafCount);
             Map<ColumnPath, LeafLevels> batchOwned = batchLevels.leafLevels();
-            for (ColumnPath leafPath : leafPaths) {
+            for (int ordinal = 0; ordinal < leafCount; ordinal++) {
+                ColumnPath leafPath = leafOrdinals.pathAt(ordinal);
                 LeafLevels leafLevels = batchOwned.get(leafPath);
                 if (leafLevels == null) {
                     throw new IllegalStateException("no batch-owned levels for repeated leaf " + leafPath.dot());
@@ -341,25 +300,6 @@ public final class LevelVectorAssembler {
                 levels.put(leafPath, leafLevels);
             }
             return levels;
-        }
-
-        private ColumnPath firstPresentDescendantLeaf(
-                SchemaNode.Group group, List<String> groupPath, Set<ColumnPath> leafPaths) {
-            for (SchemaNode child : group.children()) {
-                List<String> childPath = concat(groupPath, child.name());
-                if (child instanceof SchemaNode.Primitive) {
-                    ColumnPath leafPath = ColumnPath.of(childPath);
-                    if (leafPaths.contains(leafPath)) {
-                        return leafPath;
-                    }
-                    continue;
-                }
-                ColumnPath nested = firstPresentDescendantLeaf((SchemaNode.Group) child, childPath, leafPaths);
-                if (nested != null) {
-                    return nested;
-                }
-            }
-            return null;
         }
     }
 }

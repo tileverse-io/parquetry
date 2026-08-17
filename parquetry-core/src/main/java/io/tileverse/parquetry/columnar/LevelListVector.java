@@ -91,8 +91,38 @@ public final class LevelListVector implements ColumnVector, LevelSource {
         requireMatchingKeySets(ownLeaves, ownLevels);
         SchemaNode.Group group = resolveGroup(schema, groupPath);
         requireRowStartsLength(ownLevels, size);
-        LeafOrder leafOrder = LeafOrder.of(ownLevels);
-        ListMeta meta = ListMeta.of(schema, group, groupPath, ownLeaves.keySet(), leafOrder::ordinalOf);
+        LeafOrdinals leafOrdinals = LeafOrdinals.of(ownLevels.keySet());
+        ListMeta meta = ListMeta.of(schema, group, groupPath, ownLeaves.keySet(), leafOrdinals::ordinalOf);
+        return of(schema, groupPath, ownLeaves, ownLevels, validity, size, meta, leafOrdinals);
+    }
+
+    /**
+     * Builds a level-backed list vector over metadata resolved ahead of the batch: {@code meta} holds this group's
+     * level constants and element tree, and {@code leafOrdinals} the leaf numbering its scalar ordinals refer to. Both
+     * must have been resolved against the leaf paths of {@code leaves}, which is what makes the metadata's ordinals
+     * index the level arrays this vector packs.
+     */
+    // S107: the vector's own inputs plus the two pieces of metadata resolved for it
+    @SuppressWarnings("java:S107")
+    public static LevelListVector of(
+            ParquetSchema schema,
+            ColumnPath groupPath,
+            Map<ColumnPath, ColumnVector> leaves,
+            Map<ColumnPath, LeafLevels> levels,
+            Validity validity,
+            int size,
+            ListMeta meta,
+            LeafOrdinals leafOrdinals) {
+        Objects.requireNonNull(schema, "schema");
+        Objects.requireNonNull(groupPath, "groupPath");
+        Objects.requireNonNull(validity, "validity");
+        Objects.requireNonNull(meta, "meta");
+        Objects.requireNonNull(leafOrdinals, "leafOrdinals");
+        Map<ColumnPath, ColumnVector> ownLeaves = Map.copyOf(leaves);
+        Map<ColumnPath, LeafLevels> ownLevels = Map.copyOf(levels);
+        requireMatchingKeySets(ownLeaves, ownLevels);
+        requireRowStartsLength(ownLevels, size);
+        LeafOrder leafOrder = LeafOrder.of(leafOrdinals, ownLevels);
         ColumnPath structureLeaf = meta.structureLeaf();
         requireStructureLeafPresent(structureLeaf, ownLeaves, ownLevels);
         return new LevelListVector(

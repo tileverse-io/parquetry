@@ -67,6 +67,28 @@ class Int96VectorTest {
             assertThat(vec.get(1)).isNull();
             assertThat(vec.get(0).toArray(JAVA_BYTE)[0]).isEqualTo((byte) 7);
         }
+
+        @Test
+        void approximateHeapBytesCountsIndicesEntriesAndValidity() {
+            MemorySegment[] dict = {twelveBytes(7), twelveBytes(9), twelveBytes(11)};
+            IntSequence indices = IntSequence.of(new int[] {0, 1, 2, 1});
+            Validity validity = Validity.allValid(4);
+
+            Int96Vector vec = Int96Vector.dictionary(dict, indices, validity);
+
+            assertThat(vec.approximateHeapBytes())
+                    .isEqualTo(indices.heapBytes() + (long) dict.length * 12 + validity.heapBytes());
+        }
+
+        @Test
+        void anEmptyDictionaryContributesNoEntryBytes() {
+            IntSequence indices = IntSequence.of(new int[] {0, 0});
+            Validity allNull = Validity.of(new BitSet(2), 2);
+
+            Int96Vector vec = Int96Vector.dictionary(new MemorySegment[0], indices, allNull);
+
+            assertThat(vec.approximateHeapBytes()).isEqualTo(indices.heapBytes() + allNull.heapBytes());
+        }
     }
 
     @Test
