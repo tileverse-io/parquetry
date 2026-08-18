@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Build the NE STAC demo data in both flavors the STAC DataStore can open.
 
-Turns the five Natural Earth GeoParquet layers under
-`integrations/parquetry-geoserver/demo/data/ne/` into a small STAC catalog
-committed under `.../demo/data/`, in the two shapes the STAC DataStore factory
-auto-detects by URI extension. The JSON catalog entry point (`catalog.json`)
+Turns the five Natural Earth GeoParquet layers under `<data-dir>/ne/` into a
+small STAC catalog written beside them, in the two shapes the STAC DataStore
+factory auto-detects by URI extension. The demo data lives in the standalone
+parquetry-geoserver repository (its `parquetry-geoserver/demo/data/`
+directory); `--data-dir` names it. The JSON catalog entry point (`catalog.json`)
 sits at the data root and is served over HTTP; the item-table (`items.parquet`)
 sits under `ne/index/`, inside the same object-store bucket as the data parts.
 Each item's data asset points at an absolute `s3://naturalearth/<layer>.parquet`
@@ -51,7 +52,8 @@ Reproduce the committed demo data:
     python3 -m venv /tmp/ne-warehouse-venv
     source /tmp/ne-warehouse-venv/bin/activate
     pip install -r requirements.txt
-    python ne-warehouse/build_stac_demo.py
+    python ne-warehouse/build_stac_demo.py \
+        --data-dir <parquetry-geoserver checkout>/parquetry-geoserver/demo/data
 """
 
 from __future__ import annotations
@@ -65,11 +67,6 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-HERE = Path(__file__).resolve().parent
-# ne-warehouse -> fixtures-gen -> parquetry-testkit -> internal -> repo root.
-REPO_ROOT = HERE.parents[3]
-DATA_DIR = REPO_ROOT / "integrations" / "parquetry-geoserver" / "demo" / "data"
-NE_DIR = DATA_DIR / "ne"
 # The catalog entry points (catalog.json, items.parquet) sit at the output root,
 # beside the NE parts' parent - the common container the STAC store reads every
 # asset relative to. Collections and item documents live under this subdirectory.
@@ -131,14 +128,16 @@ GEO_METADATA = {
 
 def main() -> int:
     args = parse_args()
-    if not NE_DIR.is_dir():
-        print(f"NE source layers not found under {NE_DIR}", file=sys.stderr)
+    data_dir = Path(args.data_dir).resolve()
+    ne_dir = data_dir / "ne"
+    if not ne_dir.is_dir():
+        print(f"NE source layers not found under {ne_dir}", file=sys.stderr)
         return 1
 
-    out_dir = Path(args.out).resolve() if args.out else DATA_DIR
+    out_dir = Path(args.out).resolve() if args.out else data_dir
     href_base = args.href_base.rstrip("/")
 
-    bboxes = {layer: read_layer_bbox(layer) for layer in LAYERS}
+    bboxes = {layer: read_layer_bbox(ne_dir, layer) for layer in LAYERS}
     write_json_catalog(out_dir, bboxes, href_base)
     write_item_table(out_dir, bboxes, href_base)
     verify(out_dir, bboxes)
@@ -148,9 +147,17 @@ def main() -> int:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build the NE STAC demo data (JSON catalog + item-table).")
     parser.add_argument(
+        "--data-dir",
+        required=True,
+        help=(
+            "the demo data directory holding the ne/ layer parquets, e.g. "
+            "<parquetry-geoserver checkout>/parquetry-geoserver/demo/data"
+        ),
+    )
+    parser.add_argument(
         "--out",
         default=None,
-        help="output root directory (default: the committed demo/data)",
+        help="output root directory (default: the --data-dir directory)",
     )
     parser.add_argument(
         "--href-base",
@@ -160,9 +167,9 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def read_layer_bbox(layer: str) -> list[float]:
+def read_layer_bbox(ne_dir: Path, layer: str) -> list[float]:
     """The layer's primary-geometry bbox from its GeoParquet footer metadata."""
-    metadata = pq.ParquetFile(NE_DIR / f"{layer}.parquet").metadata.metadata
+    metadata = pq.ParquetFile(ne_dir / f"{layer}.parquet").metadata.metadata
     geo = json.loads(metadata[b"geo"])
     primary = geo["primary_column"]
     return geo["columns"][primary]["bbox"]
