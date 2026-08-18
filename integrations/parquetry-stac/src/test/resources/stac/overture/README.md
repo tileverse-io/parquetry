@@ -13,3 +13,6 @@
 - License: the file is catalog metadata for collections licensed
   ODbL-1.0, CC-BY-4.0, CC0-1.0, and "other" (see each embedded
   collection's license field on stac.overturemaps.org).
+- Redistribution: the Overture Maps Foundation publishes this file openly
+  at the URL above; it is vendored here unmodified as a test fixture,
+  with attribution: (c) Overture Maps Foundation.
