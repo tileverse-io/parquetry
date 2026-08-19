@@ -31,27 +31,30 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 /**
- * Lowers {@link Predicate.Spatial} bbox relations into equivalent numeric comparisons on a geometry column's GeoParquet
- * 1.1 {@code covering.bbox} sidecar columns.
+ * Adds numeric comparisons on a geometry column's GeoParquet 1.1 {@code covering.bbox} sidecar columns to a spatial
+ * predicate, alongside the relation they were derived from.
  *
- * <p>A covering's four leaves ({@code xmin}, {@code xmax}, {@code ymin}, {@code ymax}) hold each row's exact 2D
- * bounding box per the GeoParquet specification. Each bbox relation is therefore logically equal to a conjunction of
- * comparisons against those leaves:
+ * <p>A covering's four leaves ({@code xmin}, {@code xmax}, {@code ymin}, {@code ymax}) hold a box that encloses each
+ * row's geometry. GeoParquet allows that box to be wider than the geometry's own bounding box, and parquetry's own
+ * FLOAT covering is wider by design: it rounds every bound outward. The lowered comparisons are therefore a necessary
+ * condition of the relation rather than an equivalent of it, and only the relations that stay true when the box grows
+ * keep their own shape:
  *
  * <ul>
- *   <li>intersects: {@code xmin <= q.maxX AND xmax >= q.minX AND ymin <= q.maxY AND ymax >= q.minY}
- *   <li>contains: {@code xmin <= q.minX AND xmax >= q.maxX AND ymin <= q.minY AND ymax >= q.maxY}
- *   <li>coveredBy: {@code xmin >= q.minX AND xmax <= q.maxX AND ymin >= q.minY AND ymax <= q.maxY}
- *   <li>equals: {@code xmin = q.minX AND xmax = q.maxX AND ymin = q.minY AND ymax = q.maxY}
+ *   <li>intersects, coveredBy: the covering overlaps the query box, {@code xmin <= q.maxX AND xmax >= q.minX AND ymin
+ *       <= q.maxY AND ymax >= q.minY}
+ *   <li>contains, equals: the covering encloses the query box, {@code xmin <= q.minX AND xmax >= q.maxX AND ymin <=
+ *       q.minY AND ymax >= q.maxY}
  * </ul>
  *
- * <p>Because the covering leaves are regular numeric columns, the lowered comparisons let the STATS (row-group) and
- * COLUMN_INDEX (page) tiers prune for free, and the record-level evaluation stays exact, all without ever decoding the
- * geometry WKB for filtering. A geometry column with no resolvable covering keeps its spatial leaf untouched: the
- * record-level WKB evaluation still returns correct results, and a later mechanism handles files that have native
- * geospatial statistics instead.
+ * <p>Because the covering leaves are regular numeric columns, those comparisons let the STATS (row-group) and
+ * COLUMN_INDEX (page) tiers prune before any geometry WKB is decoded. The relation itself stays in the predicate and
+ * decides each surviving row from its geometry, which is what keeps the answer exact. A geometry column with no
+ * resolvable covering keeps its spatial leaf alone: record-level WKB evaluation still returns correct results, and
+ * native row-group geospatial statistics prune the files that provide them.
  *
- * <p>This rewrite trusts the covering values exactly as the rest of the reader trusts any column's min/max statistics.
+ * <p>This rewrite trusts the covering values exactly as the rest of the reader trusts any column's min/max statistics:
+ * as bounds on what the row holds.
  */
 public final class SpatialCoveringRewrite {
 
@@ -59,8 +62,8 @@ public final class SpatialCoveringRewrite {
 
     /**
      * Returns {@code predicate} with every {@link Predicate.Spatial} leaf whose geometry column has a resolvable
-     * covering replaced by the equivalent numeric conjunction; all other nodes are preserved. When {@code geo} is empty
-     * the predicate is returned unchanged.
+     * covering conjoined with the numeric comparisons that leaf implies on the covering columns; all other nodes are
+     * preserved. When {@code geo} is empty the predicate is returned unchanged.
      */
     public static Predicate expand(Predicate predicate, ParquetSchema schema, Optional<GeoParquetMetadata> geo) {
         if (geo.isEmpty()) {
@@ -84,12 +87,19 @@ public final class SpatialCoveringRewrite {
         return children.stream().map(child -> rewrite(child, schema, geo)).toList();
     }
 
+    /**
+     * Rewrites a {@link Predicate.Spatial} leaf when its geometry column has a resolvable covering. The covering
+     * comparisons come first as a coarse pre-filter and the relation follows to decide each surviving row from its
+     * geometry: the result is {@code And(coveringComparisons, spatial)}. With no resolvable covering the leaf is
+     * returned unchanged.
+     */
     private static Predicate rewriteSpatial(Predicate.Spatial spatial, ParquetSchema schema, GeoParquetMetadata geo) {
         Optional<BboxCovering> covering = coveringFor(spatial.col(), schema, geo);
         if (covering.isEmpty()) {
             return spatial;
         }
-        return lower(spatial, covering.orElseThrow());
+        Predicate loweredCovering = lower(spatial, covering.orElseThrow());
+        return new Predicate.And(List.of(loweredCovering, spatial));
     }
 
     /**
@@ -114,34 +124,37 @@ public final class SpatialCoveringRewrite {
         return new Predicate.And(List.of(loweredCovering, gfp));
     }
 
+    /**
+     * The strongest comparison on the covering columns that every row satisfying {@code spatial} also satisfies. A row
+     * whose geometry is enclosed by the query box, or whose bounding box equals it, may still have a covering that
+     * reaches outside; those two relations lower to the weaker one they imply, which the wider box cannot falsify.
+     */
     private static Predicate lower(Predicate.Spatial spatial, BboxCovering c) {
         Bbox q = spatial.bbox();
         return switch (spatial) {
-            case Predicate.Spatial.BboxIntersects _ ->
-                new Predicate.And(List.of(
-                        Pred.col(c.xmin()).ltEq(q.maxX()),
-                        Pred.col(c.xmax()).gtEq(q.minX()),
-                        Pred.col(c.ymin()).ltEq(q.maxY()),
-                        Pred.col(c.ymax()).gtEq(q.minY())));
-            case Predicate.Spatial.BboxContains _ ->
-                new Predicate.And(List.of(
-                        Pred.col(c.xmin()).ltEq(q.minX()),
-                        Pred.col(c.xmax()).gtEq(q.maxX()),
-                        Pred.col(c.ymin()).ltEq(q.minY()),
-                        Pred.col(c.ymax()).gtEq(q.maxY())));
-            case Predicate.Spatial.BboxCoveredBy _ ->
-                new Predicate.And(List.of(
-                        Pred.col(c.xmin()).gtEq(q.minX()),
-                        Pred.col(c.xmax()).ltEq(q.maxX()),
-                        Pred.col(c.ymin()).gtEq(q.minY()),
-                        Pred.col(c.ymax()).ltEq(q.maxY())));
-            case Predicate.Spatial.BboxEquals _ ->
-                new Predicate.And(List.of(
-                        Pred.col(c.xmin()).eq(q.minX()),
-                        Pred.col(c.xmax()).eq(q.maxX()),
-                        Pred.col(c.ymin()).eq(q.minY()),
-                        Pred.col(c.ymax()).eq(q.maxY())));
+            case Predicate.Spatial.BboxIntersects _ -> coveringOverlaps(c, q);
+            case Predicate.Spatial.BboxCoveredBy _ -> coveringOverlaps(c, q);
+            case Predicate.Spatial.BboxContains _ -> coveringEncloses(c, q);
+            case Predicate.Spatial.BboxEquals _ -> coveringEncloses(c, q);
         };
+    }
+
+    /** The covering box shares at least one point with the query box, edges inclusive. */
+    private static Predicate coveringOverlaps(BboxCovering c, Bbox q) {
+        return new Predicate.And(List.of(
+                Pred.col(c.xmin()).ltEq(q.maxX()),
+                Pred.col(c.xmax()).gtEq(q.minX()),
+                Pred.col(c.ymin()).ltEq(q.maxY()),
+                Pred.col(c.ymax()).gtEq(q.minY())));
+    }
+
+    /** The covering box holds every point of the query box, edges inclusive. */
+    private static Predicate coveringEncloses(BboxCovering c, Bbox q) {
+        return new Predicate.And(List.of(
+                Pred.col(c.xmin()).ltEq(q.minX()),
+                Pred.col(c.xmax()).gtEq(q.maxX()),
+                Pred.col(c.ymin()).ltEq(q.minY()),
+                Pred.col(c.ymax()).gtEq(q.maxY())));
     }
 
     /**
@@ -166,7 +179,7 @@ public final class SpatialCoveringRewrite {
 
     /**
      * The de-facto bbox covering a file exposes without declaring it: a {@code bbox} struct whose four leaves
-     * {@code xmin}/{@code xmax}/{@code ymin}/{@code ymax} hold each row's bounding box. Resolves only when all four
+     * {@code xmin}/{@code xmax}/{@code ymin}/{@code ymax} enclose each row's geometry. Resolves only when all four
      * exist as primitive columns; the lowered comparisons are then trusted exactly like a declared covering.
      */
     private static Optional<BboxCovering> conventionalBboxCovering(ParquetSchema schema) {

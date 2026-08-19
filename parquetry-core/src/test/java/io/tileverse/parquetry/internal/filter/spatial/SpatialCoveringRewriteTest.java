@@ -27,6 +27,9 @@ import java.util.Set;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.GeometryFilter;
@@ -60,60 +63,31 @@ class SpatialCoveringRewriteTest {
 
     private final Optional<GeoParquetMetadata> geoWithCovering = Optional.of(geoWithCovering());
 
-    @Test
-    void intersectsLowersToConjunction() {
-        Predicate spatial = Pred.col("geometry").bboxIntersects(Bbox.of2d(0, 0, 10, 10));
-
-        Predicate rewritten = SpatialCoveringRewrite.expand(spatial, schema, geoWithCovering);
-
-        Predicate expected = new Predicate.And(List.of(
-                Pred.col(XMIN).ltEq(10.0),
-                Pred.col(XMAX).gtEq(0.0),
-                Pred.col(YMIN).ltEq(10.0),
-                Pred.col(YMAX).gtEq(0.0)));
-        assertThat(rewritten).isEqualTo(expected);
+    /**
+     * The covering encloses each row's geometry and may be wider than its bounding box, hence a relation lowers to the
+     * strongest comparison that every matching row still satisfies once the box grows: overlap for the relations that
+     * only need contact, enclosure for the ones that need the query box inside. Being enclosed BY the query, and
+     * equality, do not survive a wider box and take the weaker relation they imply.
+     */
+    static Stream<Arguments> relationLowerings() {
+        Bbox query = Bbox.of2d(0, 0, 10, 10);
+        return Stream.of(
+                Arguments.of("intersects", Pred.col("geometry").bboxIntersects(query), coveringOverlapsQuery()),
+                Arguments.of("coveredBy", Pred.col("geometry").bboxCoveredBy(query), coveringOverlapsQuery()),
+                Arguments.of("contains", Pred.col("geometry").bboxContains(query), coveringEnclosesQuery()),
+                Arguments.of("equals", Pred.col("geometry").bboxEquals(query), coveringEnclosesQuery()));
     }
 
-    @Test
-    void containsLowersToConjunction() {
-        Predicate spatial = Pred.col("geometry").bboxContains(Bbox.of2d(0, 0, 10, 10));
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("relationLowerings")
+    void relationGainsCoveringComparisonsAndKeepsItsLeaf(
+            String relation, Predicate spatial, Predicate expectedCovering) {
 
         Predicate rewritten = SpatialCoveringRewrite.expand(spatial, schema, geoWithCovering);
 
-        Predicate expected = new Predicate.And(List.of(
-                Pred.col(XMIN).ltEq(0.0),
-                Pred.col(XMAX).gtEq(10.0),
-                Pred.col(YMIN).ltEq(0.0),
-                Pred.col(YMAX).gtEq(10.0)));
-        assertThat(rewritten).isEqualTo(expected);
-    }
-
-    @Test
-    void coveredByLowersToConjunction() {
-        Predicate spatial = Pred.col("geometry").bboxCoveredBy(Bbox.of2d(0, 0, 10, 10));
-
-        Predicate rewritten = SpatialCoveringRewrite.expand(spatial, schema, geoWithCovering);
-
-        Predicate expected = new Predicate.And(List.of(
-                Pred.col(XMIN).gtEq(0.0),
-                Pred.col(XMAX).ltEq(10.0),
-                Pred.col(YMIN).gtEq(0.0),
-                Pred.col(YMAX).ltEq(10.0)));
-        assertThat(rewritten).isEqualTo(expected);
-    }
-
-    @Test
-    void equalsLowersToConjunction() {
-        Predicate spatial = Pred.col("geometry").bboxEquals(Bbox.of2d(0, 0, 10, 10));
-
-        Predicate rewritten = SpatialCoveringRewrite.expand(spatial, schema, geoWithCovering);
-
-        Predicate expected = new Predicate.And(List.of(
-                Pred.col(XMIN).eq(0.0),
-                Pred.col(XMAX).eq(10.0),
-                Pred.col(YMIN).eq(0.0),
-                Pred.col(YMAX).eq(10.0)));
-        assertThat(rewritten).isEqualTo(expected);
+        assertThat(rewritten)
+                .as("%s must prune on the covering columns and still decide each row from its geometry", relation)
+                .isEqualTo(new Predicate.And(List.of(expectedCovering, spatial)));
     }
 
     @Test
@@ -133,12 +107,12 @@ class SpatialCoveringRewriteTest {
 
         Predicate rewritten = SpatialCoveringRewrite.expand(spatial, schemaWithBboxStruct, geoNoCovering);
 
-        Predicate expected = new Predicate.And(List.of(
+        Predicate expectedCovering = new Predicate.And(List.of(
                 Pred.col(ColumnPath.of("bbox", "xmin")).ltEq(10.0),
                 Pred.col(ColumnPath.of("bbox", "xmax")).gtEq(0.0),
                 Pred.col(ColumnPath.of("bbox", "ymin")).ltEq(10.0),
                 Pred.col(ColumnPath.of("bbox", "ymax")).gtEq(0.0)));
-        assertThat(rewritten).isEqualTo(expected);
+        assertThat(rewritten).isEqualTo(new Predicate.And(List.of(expectedCovering, spatial)));
     }
 
     @Test
@@ -162,16 +136,12 @@ class SpatialCoveringRewriteTest {
     @Test
     void nestedAndRewritesOnlyTheSpatialChild() {
         Predicate idEq = Pred.col("id").eq(1);
-        Predicate nested =
-                new Predicate.And(List.of(Pred.col("geometry").bboxIntersects(Bbox.of2d(0, 0, 10, 10)), idEq));
+        Predicate spatial = Pred.col("geometry").bboxIntersects(Bbox.of2d(0, 0, 10, 10));
+        Predicate nested = new Predicate.And(List.of(spatial, idEq));
 
         Predicate rewritten = SpatialCoveringRewrite.expand(nested, schema, geoWithCovering);
 
-        Predicate expectedSpatial = new Predicate.And(List.of(
-                Pred.col(XMIN).ltEq(10.0),
-                Pred.col(XMAX).gtEq(0.0),
-                Pred.col(YMIN).ltEq(10.0),
-                Pred.col(YMAX).gtEq(0.0)));
+        Predicate expectedSpatial = new Predicate.And(List.of(coveringOverlapsQuery(), spatial));
         Predicate expected = new Predicate.And(List.of(expectedSpatial, idEq));
         assertThat(rewritten).isEqualTo(expected);
     }
@@ -266,6 +236,24 @@ class SpatialCoveringRewriteTest {
     }
 
     // --- fixtures ---
+
+    /** The covering shares at least one point with the query box {@code (0, 0, 10, 10)}. */
+    private static Predicate coveringOverlapsQuery() {
+        return new Predicate.And(List.of(
+                Pred.col(XMIN).ltEq(10.0),
+                Pred.col(XMAX).gtEq(0.0),
+                Pred.col(YMIN).ltEq(10.0),
+                Pred.col(YMAX).gtEq(0.0)));
+    }
+
+    /** The covering holds every point of the query box {@code (0, 0, 10, 10)}. */
+    private static Predicate coveringEnclosesQuery() {
+        return new Predicate.And(List.of(
+                Pred.col(XMIN).ltEq(0.0),
+                Pred.col(XMAX).gtEq(10.0),
+                Pred.col(YMIN).ltEq(0.0),
+                Pred.col(YMAX).gtEq(10.0)));
+    }
 
     private static GeoParquetMetadata geoWithCovering() {
         BboxCovering bboxCovering = new BboxCovering(XMIN, XMAX, YMIN, YMAX, Optional.empty(), Optional.empty());
