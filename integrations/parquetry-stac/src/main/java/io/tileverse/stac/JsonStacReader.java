@@ -137,7 +137,7 @@ public final class JsonStacReader implements StacCatalogReader {
     private StacCollection readCollection(URI collectionUri, JsonNode root) {
         String id = requiredText(root, "id");
         String title = optionalText(root, TITLE);
-        Optional<StacExtent> extent = readExtent(root);
+        Optional<StacExtent> extent = StacJson.readExtent(root);
         List<StacLink> links = readLinks(root);
         return new StacCollection(
                 id,
@@ -222,7 +222,7 @@ public final class JsonStacReader implements StacCatalogReader {
     private StacItem readItem(URI itemUri) {
         JsonNode root = parseDocument(itemUri);
         String id = requiredText(root, "id");
-        double[] bbox = readBbox(root.get("bbox"));
+        double[] bbox = StacJson.readBbox(root.get("bbox"));
         Optional<String> datetime = readDatetime(root);
         List<StacAsset> assets = readAssets(root.get("assets"), itemUri);
         List<StacLink> links = readLinks(root);
@@ -259,60 +259,6 @@ public final class JsonStacReader implements StacCatalogReader {
             links.add(new StacLink(rel, href, type, title));
         }
         return links;
-    }
-
-    private Optional<StacExtent> readExtent(JsonNode root) {
-        JsonNode extent = root.get("extent");
-        if (extent == null || !extent.isObject()) {
-            return Optional.empty();
-        }
-        Optional<double[]> bbox = readSpatialBbox(extent.get("spatial"));
-        Optional<String[]> interval = readTemporalInterval(extent.get("temporal"));
-        return Optional.of(new StacExtent(bbox, interval));
-    }
-
-    private Optional<double[]> readSpatialBbox(JsonNode spatial) {
-        if (spatial == null || !spatial.isObject()) {
-            return Optional.empty();
-        }
-        JsonNode bboxes = spatial.get("bbox");
-        if (bboxes == null || !bboxes.isArray() || bboxes.isEmpty()) {
-            return Optional.empty();
-        }
-        return Optional.of(readBbox(bboxes.get(0))).filter(Objects::nonNull);
-    }
-
-    private Optional<String[]> readTemporalInterval(JsonNode temporal) {
-        if (temporal == null || !temporal.isObject()) {
-            return Optional.empty();
-        }
-        JsonNode intervals = temporal.get("interval");
-        if (intervals == null || !intervals.isArray() || intervals.isEmpty()) {
-            return Optional.empty();
-        }
-        JsonNode first = intervals.get(0);
-        if (first == null || !first.isArray()) {
-            return Optional.empty();
-        }
-        String[] interval = new String[first.size()];
-        for (int i = 0; i < first.size(); i++) {
-            JsonNode bound = first.get(i);
-            interval[i] = bound == null || bound.isNull() ? null : bound.stringValue();
-        }
-        return Optional.of(interval);
-    }
-
-    // A null return is the model's signal that the item declared no bbox; an empty array would be read as a real bound.
-    @SuppressWarnings("java:S1168")
-    private double[] readBbox(JsonNode bbox) {
-        if (bbox == null || !bbox.isArray() || bbox.isEmpty()) {
-            return null;
-        }
-        double[] values = new double[bbox.size()];
-        for (int i = 0; i < bbox.size(); i++) {
-            values[i] = bbox.get(i).doubleValue();
-        }
-        return values;
     }
 
     private Optional<String> readDatetime(JsonNode root) {

@@ -1,8 +1,8 @@
 # NE demo-data generators
 
-Two generators turn the five Natural Earth GeoParquet layers under
-`integrations/parquetry-geoserver/demo/data/ne/` into committed demo data. Both
-share the venv below.
+Two generators turn the five Natural Earth GeoParquet layers in the standalone
+`parquetry-geoserver` repository's demo data (`parquetry-geoserver/demo/data/ne/`)
+into committed demo data. Both share the venv below.
 
 - `build_ne_warehouse.py` builds the static Iceberg warehouse (this file's main
   subject).
@@ -81,8 +81,9 @@ versions without regenerating.
 ## STAC demo data
 
 `build_stac_demo.py` builds a small STAC catalog over the same five NE layers,
-committed under `integrations/parquetry-geoserver/demo/data/` in the two shapes
-the STAC DataStore factory auto-detects by URI extension. The catalog entry
+committed under the `parquetry-geoserver` repository's
+`parquetry-geoserver/demo/data/` in the two shapes the STAC DataStore factory
+auto-detects by URI extension. The catalog entry
 points (`catalog.json`, `items.parquet`) sit at the data root beside `ne/`, the
 common container the store reads every asset relative to; the collections live
 under `stac/`. Each layer is its own STAC collection (collection id = layer
@@ -93,10 +94,12 @@ attribute schemas and one feature type per file is the only correct mapping:
   layer (`stac/<layer>/collection.json`), each linking its one item
   (`items/<layer>.json`, relative to its collection); the shape `JsonStacReader`
   parses;
-- a stac-geoparquet item-table `items.parquet`, one row per layer with the
-  columns `item_id`, `collection`, `bbox_xmin`, `bbox_ymin`, `bbox_xmax`,
-  `bbox_ymax`, `asset_href` and `collection` = the layer name; the shape
-  `GeoParquetStacReader` reads (it groups rows by `collection`).
+- a stac-geoparquet item-table `items.parquet`, one row per layer in the shape
+  the stac-geoparquet specification defines: `id`, a WKB `geometry` of the
+  layer's extent, a `bbox` struct of named corners, an `assets` struct keyed by
+  asset name (one `data` key holding `href` and `type`), and `collection` = the
+  layer name, under the `stac-geoparquet` and `geo` footer metadata keys; the
+  shape `GeoParquetStacReader` reads (it groups rows by `collection`).
 
 Both flavors publish the same five collections named by layer and point each
 item's data asset at the same external GeoParquet part. The type names a store
@@ -108,10 +111,16 @@ The committed data points every asset at `http://web/ne/<layer>.parquet` (base
 NE parts from. `--href-base` overrides that base; `--out` overrides the output
 root, where `catalog.json`, `items.parquet` and the `stac/` subtree are written.
 
+Both the NE source layers and the committed output live in the
+`parquetry-geoserver` repository, not this one. `--data-dir` names that demo
+data directory (the one holding `ne/`); the output lands beside it unless
+`--out` overrides:
+
 ```bash
 cd internal/parquetry-testkit/fixtures-gen
 source /tmp/ne-warehouse-venv/bin/activate
-python ne-warehouse/build_stac_demo.py
+python ne-warehouse/build_stac_demo.py \
+    --data-dir <parquetry-geoserver checkout>/parquetry-geoserver/demo/data
 ```
 
 ### Determinism
@@ -130,10 +139,11 @@ container. Generate into a scratch directory that holds a copy of the parts, and
 point `--href-base` at that copy:
 
 ```bash
+NE_DATA=<parquetry-geoserver checkout>/parquetry-geoserver/demo/data
 SCRATCH=$(mktemp -d)
 mkdir "$SCRATCH/parts"
-cp ../../../integrations/parquetry-geoserver/demo/data/ne/*.parquet "$SCRATCH/parts/"
-python ne-warehouse/build_stac_demo.py --out "$SCRATCH" \
+cp "$NE_DATA"/ne/*.parquet "$SCRATCH/parts/"
+python ne-warehouse/build_stac_demo.py --data-dir "$NE_DATA" --out "$SCRATCH" \
     --href-base "file://$SCRATCH/parts"
 # geoparquet-stac=file://$SCRATCH/catalog.json   opens the JSON flavor
 # geoparquet-stac=file://$SCRATCH/items.parquet  opens the item-table flavor

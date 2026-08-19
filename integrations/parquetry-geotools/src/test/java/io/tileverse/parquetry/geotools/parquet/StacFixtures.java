@@ -23,23 +23,21 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.BitSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
-import java.util.function.Function;
-import java.util.function.ToDoubleFunction;
 
 import io.tileverse.parquetry.columnar.BinaryVector;
 import io.tileverse.parquetry.columnar.ColumnVector;
 import io.tileverse.parquetry.columnar.DefaultParquetRecordBatch;
-import io.tileverse.parquetry.columnar.DoubleVector;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.data.ParquetFileWriter;
+import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.GeoParquetMetadataMode;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -144,71 +142,115 @@ final class StacFixtures {
         return buffer.array();
     }
 
-    /** One item-table row: the item id, its collection, a flat bbox, and the href of its GeoParquet data part. */
+    /** One item-table row: the item id, its collection, the item bbox, and the href of its GeoParquet data part. */
     private record ItemRow(
             String id, String collection, double xmin, double ymin, double xmax, double ymax, String assetHref) {}
+
+    private static final String DATA_ASSET_KEY = "data";
+    private static final String PARQUET_MEDIA_TYPE = "application/vnd.apache.parquet";
+
+    private static final ColumnPath ITEM_ID = ColumnPath.of("id");
+    private static final ColumnPath ITEM_GEOMETRY = ColumnPath.of(GEOMETRY_COLUMN);
+    private static final ColumnPath BBOX = ColumnPath.of("bbox");
+    private static final ColumnPath BBOX_XMIN = ColumnPath.of("bbox", "xmin");
+    private static final ColumnPath BBOX_YMIN = ColumnPath.of("bbox", "ymin");
+    private static final ColumnPath BBOX_XMAX = ColumnPath.of("bbox", "xmax");
+    private static final ColumnPath BBOX_YMAX = ColumnPath.of("bbox", "ymax");
+    private static final ColumnPath ASSETS = ColumnPath.of("assets");
+    private static final ColumnPath DATA_ASSET = ColumnPath.of("assets", DATA_ASSET_KEY);
+    private static final ColumnPath DATA_ASSET_HREF = ColumnPath.of("assets", DATA_ASSET_KEY, "href");
+    private static final ColumnPath DATA_ASSET_TYPE = ColumnPath.of("assets", DATA_ASSET_KEY, "type");
+    private static final ColumnPath COLLECTION = ColumnPath.of("collection");
 
     private static void writeItemTableIndex(Path file, List<ItemRow> rows) throws Exception {
         ParquetSchema schema = itemTableSchema();
         WriteOptions options = WriteOptions.builder().tempDir(file.getParent()).build();
-        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options);
-                ParquetRecordBatch batch = itemTableBatch(schema, rows)) {
-            writer.writeBatch(batch);
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
+            ParquetRecordBatchBuilder appender = writer.appender();
+            for (ItemRow row : rows) {
+                writeItemRow(appender, row);
+            }
         }
     }
 
-    private static ParquetRecordBatch itemTableBatch(ParquetSchema schema, List<ItemRow> rows) {
-        int count = rows.size();
-        Validity allValid = Validity.allValid(count);
-        Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
-        columns.put(ColumnPath.of("item_id"), utf8Column(rows, ItemRow::id, allValid));
-        columns.put(ColumnPath.of("asset_href"), utf8Column(rows, ItemRow::assetHref, allValid));
-        columns.put(ColumnPath.of("bbox_xmin"), doubleColumn(rows, ItemRow::xmin, allValid));
-        columns.put(ColumnPath.of("bbox_ymin"), doubleColumn(rows, ItemRow::ymin, allValid));
-        columns.put(ColumnPath.of("bbox_xmax"), doubleColumn(rows, ItemRow::xmax, allValid));
-        columns.put(ColumnPath.of("bbox_ymax"), doubleColumn(rows, ItemRow::ymax, allValid));
-        columns.put(ColumnPath.of("collection"), utf8Column(rows, ItemRow::collection, allValid));
-        return new DefaultParquetRecordBatch(schema, columns, count, Arena.ofShared());
+    private static void writeItemRow(ParquetRecordBatchBuilder appender, ItemRow row) {
+        appender.setString(ITEM_ID, row.id());
+        writeItemGeometry(appender, row);
+        writeItemBbox(appender, row);
+        writeDataAsset(appender, row);
+        appender.setString(COLLECTION, row.collection());
+        appender.endRow();
     }
 
-    private static ColumnVector utf8Column(List<ItemRow> rows, Function<ItemRow, String> field, Validity validity) {
-        MemorySegment[] values = new MemorySegment[rows.size()];
-        for (int i = 0; i < rows.size(); i++) {
-            byte[] utf8 = field.apply(rows.get(i)).getBytes(StandardCharsets.UTF_8);
-            values[i] = MemorySegment.ofArray(utf8);
-        }
-        return BinaryVector.materialized(values, validity);
+    /** The item's own geometry, a point at the center of its bbox: enough to place the item, nothing more. */
+    private static void writeItemGeometry(ParquetRecordBatchBuilder appender, ItemRow row) {
+        double x = (row.xmin() + row.xmax()) / 2;
+        double y = (row.ymin() + row.ymax()) / 2;
+        appender.setBinary(ITEM_GEOMETRY, MemorySegment.ofArray(wkbPoint(x, y)).asReadOnly());
     }
 
-    private static ColumnVector doubleColumn(List<ItemRow> rows, ToDoubleFunction<ItemRow> field, Validity validity) {
-        double[] values = new double[rows.size()];
-        for (int i = 0; i < rows.size(); i++) {
-            values[i] = field.applyAsDouble(rows.get(i));
-        }
-        return DoubleVector.materialized(values, validity);
+    private static void writeItemBbox(ParquetRecordBatchBuilder appender, ItemRow row) {
+        appender.beginStruct(BBOX);
+        appender.setDouble(BBOX_XMIN, row.xmin());
+        appender.setDouble(BBOX_YMIN, row.ymin());
+        appender.setDouble(BBOX_XMAX, row.xmax());
+        appender.setDouble(BBOX_YMAX, row.ymax());
+        appender.endStruct();
     }
 
+    /** The item's asset dictionary: one {@code data} entry per row, pointing at the GeoParquet part it indexes. */
+    private static void writeDataAsset(ParquetRecordBatchBuilder appender, ItemRow row) {
+        appender.beginStruct(ASSETS);
+        appender.beginStruct(DATA_ASSET);
+        appender.setString(DATA_ASSET_HREF, row.assetHref());
+        appender.setString(DATA_ASSET_TYPE, PARQUET_MEDIA_TYPE);
+        appender.endStruct();
+        appender.endStruct();
+    }
+
+    /**
+     * The item-table schema in the shape the stac-geoparquet specification defines: the item id, a WKB geometry, the
+     * bbox as a struct of named corners, the asset dictionary as a struct keyed by asset name, and the collection each
+     * row belongs to.
+     */
     private static ParquetSchema itemTableSchema() {
-        List<SchemaNode> leaves = List.of(
-                utf8Leaf("item_id"),
-                utf8Leaf("asset_href"),
-                doubleLeaf("bbox_xmin"),
-                doubleLeaf("bbox_ymin"),
-                doubleLeaf("bbox_xmax"),
-                doubleLeaf("bbox_ymax"),
-                utf8Leaf("collection"));
-        SchemaNode.Group root = new SchemaNode.Group("schema", Repetition.REQUIRED, leaves, Optional.empty(), -1);
+        List<SchemaNode> fields = List.of(
+                stringLeaf("id"), wkbLeaf(GEOMETRY_COLUMN), bboxGroup(), assetsGroup(), stringLeaf("collection"));
+        SchemaNode.Group root = new SchemaNode.Group("schema", Repetition.REQUIRED, fields, Optional.empty(), -1);
         return new ParquetSchema(root);
     }
 
-    private static SchemaNode.Primitive utf8Leaf(String name) {
+    private static SchemaNode.Group bboxGroup() {
+        List<SchemaNode> corners =
+                List.of(doubleLeaf("xmin"), doubleLeaf("ymin"), doubleLeaf("xmax"), doubleLeaf("ymax"));
+        return new SchemaNode.Group("bbox", Repetition.OPTIONAL, corners, Optional.empty(), -1);
+    }
+
+    private static SchemaNode.Group assetsGroup() {
+        List<SchemaNode> assetFields = List.of(stringLeaf("href"), stringLeaf("type"));
+        SchemaNode.Group data =
+                new SchemaNode.Group(DATA_ASSET_KEY, Repetition.OPTIONAL, assetFields, Optional.empty(), -1);
+        return new SchemaNode.Group("assets", Repetition.OPTIONAL, List.of(data), Optional.empty(), -1);
+    }
+
+    private static SchemaNode.Primitive stringLeaf(String name) {
         return new SchemaNode.Primitive(
-                name, Repetition.REQUIRED, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1);
+                name,
+                Repetition.OPTIONAL,
+                PrimitiveKind.BYTE_ARRAY,
+                OptionalInt.empty(),
+                Optional.of(new LogicalType.StringType()),
+                -1);
+    }
+
+    private static SchemaNode.Primitive wkbLeaf(String name) {
+        return new SchemaNode.Primitive(
+                name, Repetition.OPTIONAL, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1);
     }
 
     private static SchemaNode.Primitive doubleLeaf(String name) {
         return new SchemaNode.Primitive(
-                name, Repetition.REQUIRED, PrimitiveKind.DOUBLE, OptionalInt.empty(), Optional.empty(), -1);
+                name, Repetition.OPTIONAL, PrimitiveKind.DOUBLE, OptionalInt.empty(), Optional.empty(), -1);
     }
 
     private static final String CATALOG_JSON = """

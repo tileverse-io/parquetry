@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Build the NE STAC demo data in both flavors the STAC DataStore can open.
 
-Turns the five Natural Earth GeoParquet layers under
-`integrations/parquetry-geoserver/demo/data/ne/` into a small STAC catalog
-committed under `.../demo/data/`, in the two shapes the STAC DataStore factory
-auto-detects by URI extension. The JSON catalog entry point (`catalog.json`)
+Turns the five Natural Earth GeoParquet layers under `<data-dir>/ne/` into a
+small STAC catalog written beside them, in the two shapes the STAC DataStore
+factory auto-detects by URI extension. The demo data lives in the standalone
+parquetry-geoserver repository (its `parquetry-geoserver/demo/data/`
+directory); `--data-dir` names it. The JSON catalog entry point (`catalog.json`)
 sits at the data root and is served over HTTP; the item-table (`items.parquet`)
 sits under `ne/index/`, inside the same object-store bucket as the data parts.
 Each item's data asset points at an absolute `s3://naturalearth/<layer>.parquet`
@@ -23,11 +24,12 @@ the read of every other part.
     `JsonStacReader` parses:
     a catalog with child links to collections, each with item links, and each
     item document holding a bbox and a single GeoParquet data asset.
-  - The stac-geoparquet item-table `items.parquet`: one row per layer with the
-    columns `item_id`, `collection`, `bbox_xmin`, `bbox_ymin`, `bbox_xmax`,
-    `bbox_ymax`, `asset_href`, and `collection` set to the layer name. This is
-    the shape `GeoParquetStacReader` reads; it groups rows by `collection`, one
-    collection per layer.
+  - The stac-geoparquet item-table `items.parquet`: one row per layer in the
+    shape the stac-geoparquet specification defines - `id`, a WKB `geometry`,
+    the `bbox` struct of named corners, an `assets` struct keyed by asset name,
+    and `collection` set to the layer name - plus the `stac-geoparquet` and
+    `geo` footer metadata keys. This is the shape `GeoParquetStacReader` reads;
+    it groups rows by `collection`, one collection per layer.
 
 Both flavors publish the same five collections named by layer, and both point
 each item's data asset at the same external GeoParquet part. The default asset
@@ -50,24 +52,21 @@ Reproduce the committed demo data:
     python3 -m venv /tmp/ne-warehouse-venv
     source /tmp/ne-warehouse-venv/bin/activate
     pip install -r requirements.txt
-    python ne-warehouse/build_stac_demo.py
+    python ne-warehouse/build_stac_demo.py \
+        --data-dir <parquetry-geoserver checkout>/parquetry-geoserver/demo/data
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import struct
 import sys
 from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-HERE = Path(__file__).resolve().parent
-# ne-warehouse -> fixtures-gen -> parquetry-testkit -> internal -> repo root.
-REPO_ROOT = HERE.parents[3]
-DATA_DIR = REPO_ROOT / "integrations" / "parquetry-geoserver" / "demo" / "data"
-NE_DIR = DATA_DIR / "ne"
 # The catalog entry points (catalog.json, items.parquet) sit at the output root,
 # beside the NE parts' parent - the common container the STAC store reads every
 # asset relative to. Collections and item documents live under this subdirectory.
@@ -85,32 +84,60 @@ DATETIME = "2024-01-01T00:00:00Z"
 PARQUET_MEDIA_TYPE = "application/vnd.apache.parquet"
 DEFAULT_HREF_BASE = "s3://naturalearth"
 
-# The item-table columns GeoParquetStacReader requires. The bbox columns are
-# typed float64 to keep an integer-valued bbox value a double the reader reads
-# with getDouble.
-ITEM_TABLE_SCHEMA = pa.schema(
+GEOMETRY_COLUMN = "geometry"
+DATA_ASSET_KEY = "data"
+
+# The item-table columns in the stac-geoparquet shape. The bbox corners are
+# typed float64 to keep an integer-valued corner a double the reader reads with
+# getDouble; the asset dictionary is a struct keyed by asset name, one key here.
+BBOX_TYPE = pa.struct(
     [
-        ("item_id", pa.string()),
-        ("collection", pa.string()),
-        ("bbox_xmin", pa.float64()),
-        ("bbox_ymin", pa.float64()),
-        ("bbox_xmax", pa.float64()),
-        ("bbox_ymax", pa.float64()),
-        ("asset_href", pa.string()),
+        ("xmin", pa.float64()),
+        ("ymin", pa.float64()),
+        ("xmax", pa.float64()),
+        ("ymax", pa.float64()),
     ]
 )
+ASSETS_TYPE = pa.struct(
+    [
+        (DATA_ASSET_KEY, pa.struct([("href", pa.string()), ("type", pa.string())])),
+    ]
+)
+ITEM_TABLE_SCHEMA = pa.schema(
+    [
+        ("id", pa.string()),
+        (GEOMETRY_COLUMN, pa.binary()),
+        ("bbox", BBOX_TYPE),
+        ("assets", ASSETS_TYPE),
+        ("collection", pa.string()),
+    ]
+)
+
+# The footer metadata an item-table declares: the stac-geoparquet document with
+# no collections member, which leaves each collection's extent to derive from
+# its item bboxes, and the GeoParquet entry naming the primary geometry column.
+STAC_GEOPARQUET_METADATA = {"version": "1.0.0"}
+GEO_METADATA = {
+    "version": "1.1.0",
+    "primary_column": GEOMETRY_COLUMN,
+    "columns": {
+        GEOMETRY_COLUMN: {"encoding": "WKB", "geometry_types": ["Polygon"]},
+    },
+}
 
 
 def main() -> int:
     args = parse_args()
-    if not NE_DIR.is_dir():
-        print(f"NE source layers not found under {NE_DIR}", file=sys.stderr)
+    data_dir = Path(args.data_dir).resolve()
+    ne_dir = data_dir / "ne"
+    if not ne_dir.is_dir():
+        print(f"NE source layers not found under {ne_dir}", file=sys.stderr)
         return 1
 
-    out_dir = Path(args.out).resolve() if args.out else DATA_DIR
+    out_dir = Path(args.out).resolve() if args.out else data_dir
     href_base = args.href_base.rstrip("/")
 
-    bboxes = {layer: read_layer_bbox(layer) for layer in LAYERS}
+    bboxes = {layer: read_layer_bbox(ne_dir, layer) for layer in LAYERS}
     write_json_catalog(out_dir, bboxes, href_base)
     write_item_table(out_dir, bboxes, href_base)
     verify(out_dir, bboxes)
@@ -120,9 +147,17 @@ def main() -> int:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build the NE STAC demo data (JSON catalog + item-table).")
     parser.add_argument(
+        "--data-dir",
+        required=True,
+        help=(
+            "the demo data directory holding the ne/ layer parquets, e.g. "
+            "<parquetry-geoserver checkout>/parquetry-geoserver/demo/data"
+        ),
+    )
+    parser.add_argument(
         "--out",
         default=None,
-        help="output root directory (default: the committed demo/data)",
+        help="output root directory (default: the --data-dir directory)",
     )
     parser.add_argument(
         "--href-base",
@@ -132,9 +167,9 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def read_layer_bbox(layer: str) -> list[float]:
+def read_layer_bbox(ne_dir: Path, layer: str) -> list[float]:
     """The layer's primary-geometry bbox from its GeoParquet footer metadata."""
-    metadata = pq.ParquetFile(NE_DIR / f"{layer}.parquet").metadata.metadata
+    metadata = pq.ParquetFile(ne_dir / f"{layer}.parquet").metadata.metadata
     geo = json.loads(metadata[b"geo"])
     primary = geo["primary_column"]
     return geo["columns"][primary]["bbox"]
@@ -211,12 +246,20 @@ def item_document(layer: str, bbox: list[float], href_base: str) -> dict:
 
 def write_item_table(out_dir: Path, bboxes: dict[str, list[float]], href_base: str) -> None:
     """Write the stac-geoparquet flavor: one item-table row per layer, each row's
-    collection set to the layer name."""
+    collection set to the layer name, under the item-table footer metadata."""
     rows = [item_row(layer, bboxes[layer], href_base) for layer in LAYERS]
-    table = pa.Table.from_pylist(rows, schema=ITEM_TABLE_SCHEMA)
+    table = pa.Table.from_pylist(rows, schema=ITEM_TABLE_SCHEMA.with_metadata(footer_metadata()))
     item_table = item_table_path(out_dir)
     item_table.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(table, item_table, compression="zstd")
+
+
+def footer_metadata() -> dict[bytes, bytes]:
+    """The file-level key-value metadata, as the compact JSON both keys hold."""
+    return {
+        b"stac-geoparquet": json.dumps(STAC_GEOPARQUET_METADATA).encode(),
+        b"geo": json.dumps(GEO_METADATA).encode(),
+    }
 
 
 def item_table_path(out_dir: Path) -> Path:
@@ -229,17 +272,30 @@ def item_table_path(out_dir: Path) -> Path:
 
 
 def item_row(layer: str, bbox: list[float], href_base: str) -> dict:
-    """One item-table row: the item id, its collection (the layer name), its flat
-    bbox, and the href of its GeoParquet data part."""
+    """One item-table row: the item id, the geometry and bbox of the layer's
+    extent, its data asset, and its collection (the layer name)."""
     return {
-        "item_id": layer,
+        "id": layer,
+        GEOMETRY_COLUMN: wkb_polygon(bbox),
+        "bbox": {"xmin": bbox[0], "ymin": bbox[1], "xmax": bbox[2], "ymax": bbox[3]},
+        "assets": {
+            DATA_ASSET_KEY: {
+                "href": f"{href_base}/{layer}.parquet",
+                "type": PARQUET_MEDIA_TYPE,
+            }
+        },
         "collection": layer,
-        "bbox_xmin": bbox[0],
-        "bbox_ymin": bbox[1],
-        "bbox_xmax": bbox[2],
-        "bbox_ymax": bbox[3],
-        "asset_href": f"{href_base}/{layer}.parquet",
     }
+
+
+def wkb_polygon(bbox: list[float]) -> bytes:
+    """The bbox as a closed little-endian WKB polygon: the byte-order flag, the
+    polygon type code, one ring, and its five points (the four corners
+    counter-clockwise, the first repeated to close the ring)."""
+    xmin, ymin, xmax, ymax = bbox
+    ring = [(xmin, ymin), (xmax, ymin), (xmax, ymax), (xmin, ymax), (xmin, ymin)]
+    header = struct.pack("<BIII", 1, 3, 1, len(ring))
+    return header + b"".join(struct.pack("<dd", x, y) for x, y in ring)
 
 
 def layer_title(layer: str) -> str:
@@ -289,18 +345,43 @@ def verify_json_catalog(out_dir: Path, bboxes: dict[str, list[float]]) -> None:
 
 
 def verify_item_table(out_dir: Path, bboxes: dict[str, list[float]]) -> None:
-    table = pq.read_table(item_table_path(out_dir))
+    parquet_file = pq.ParquetFile(item_table_path(out_dir))
+    verify_item_table_metadata(parquet_file)
+    table = parquet_file.read()
     if table.column_names != ITEM_TABLE_SCHEMA.names:
         raise SystemExit(f"item-table columns {table.column_names} do not match the reader contract")
     rows = table.to_pylist()
     if len(rows) != len(LAYERS):
         raise SystemExit(f"item-table has {len(rows)} rows, expected {len(LAYERS)}")
     for row, layer in zip(rows, LAYERS):
-        expected = bboxes[layer]
-        actual = [row["bbox_xmin"], row["bbox_ymin"], row["bbox_xmax"], row["bbox_ymax"]]
-        if row["item_id"] != layer or row["collection"] != layer or actual != expected:
-            raise SystemExit(f"item-table row for {layer} does not match its item document")
+        verify_item_row(row, layer, bboxes[layer], href_of(row))
     print(f"ok  item-table items.parquet with {len(rows)} rows, one collection per layer")
+
+
+def verify_item_table_metadata(parquet_file: pq.ParquetFile) -> None:
+    """The footer holds both keys the readers look for."""
+    footer = parquet_file.metadata.metadata or {}
+    for key in footer_metadata():
+        if key not in footer:
+            raise SystemExit(f"item-table footer has no {key.decode()!r} metadata key")
+
+
+def verify_item_row(row: dict, layer: str, expected_bbox: list[float], href: str) -> None:
+    """One row names its layer, repeats the layer's footer bbox in both the bbox
+    struct and the geometry, and points its data asset at the layer's part."""
+    bbox = row["bbox"]
+    corners = [bbox["xmin"], bbox["ymin"], bbox["xmax"], bbox["ymax"]]
+    if row["id"] != layer or row["collection"] != layer or corners != expected_bbox:
+        raise SystemExit(f"item-table row for {layer} does not match its item document")
+    if row[GEOMETRY_COLUMN] != wkb_polygon(expected_bbox):
+        raise SystemExit(f"item-table row for {layer} has a geometry that is not its bbox polygon")
+    if not href.endswith(f"/{layer}.parquet"):
+        raise SystemExit(f"item-table row for {layer} points its data asset at {href!r}")
+
+
+def href_of(row: dict) -> str:
+    """The row's data-asset href, from the assets struct keyed by asset name."""
+    return row["assets"][DATA_ASSET_KEY]["href"]
 
 
 def load_json(path: Path) -> dict:

@@ -20,7 +20,7 @@ is the Parquet binding: it reads a collection's parts, builds per-item `FileStat
 | Feature | Status | Notes |
 | --- | --- | --- |
 | Static JSON catalog tree | Full | `JsonStacReader` walks catalog -> collection -> item documents, lazily, over tileverse-storage |
-| stac-geoparquet item-table as an index | Partial | `GeoParquetStacReader` maps item-table rows to the same model; flat bbox + `asset_href` columns, the nested bbox struct and assets map are Planned; reachable programmatically, not yet wired into the GeoTools factory |
+| stac-geoparquet item-table as an index | Full | `GeoParquetStacReader` maps item-table rows to the same model, in the shape the specification defines: `id`, the nested `bbox` struct (DOUBLE or FLOAT corners), an `assets` struct keyed by asset name (`href`, `type`, `title`, `roles`), and the optional `collection` and `datetime` columns; the `stac-geoparquet` footer metadata declares the collections (a 1.1.0 `collections` mapping, a 1.0.0 singular `collection`, or none - collection extents then derive from the item bboxes); geometry, links and property columns are never decoded on catalog open; the GeoTools factory opens a `.parquet` URI through it |
 | STAC API (HTTP) reader | Planned | only the static tree and the item-table index ship today |
 | Non-data links retained | Full | every link is kept whatever its rel (for example `pmtiles`); a consumer can walk the tree to a theme-level link |
 
@@ -64,12 +64,12 @@ try (Storage storage = StorageFactory.open(catalog.resolve("."));
 
 `StacCatalogOptions` selects which asset media types count as GeoParquet data (default: the parquet media types plus a
 `.parquet` href fallback) and names the primary geometry column the item bbox is attached to. Through GeoTools, the
-`StacDataStoreFactory` in `parquetry-geotools` opens the catalog as a `DataStore` whose every collection is a feature type.
+`StacDataStoreFactory` in `parquetry-geotools` opens the catalog as a `DataStore` whose every collection is a feature
+type; it picks the reader from the URI, a `.parquet` naming an item-table and anything else a JSON catalog document.
 
 ## Deferred
 
 - An item-table whose rows are feature data, not an index of external parts.
-- Wiring the item-table index reader into the GeoTools factory (a reader-selection parameter).
 - Extraction of `io.tileverse.stac` to its own standalone library (the package wall keeps this open).
 - A shared prunable-fileset dataset base across the Iceberg, Fileset, and STAC bindings.
 - A live-Overture opt-in integration test against a public STAC endpoint (excluded from the default build).
