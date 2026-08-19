@@ -129,6 +129,19 @@ public final class Fixtures {
         return new ParquetSchema(root);
     }
 
+    /**
+     * A GeoParquet schema with an {@code id} INT32 column and an OPTIONAL {@code geometry} BYTE_ARRAY column, used by
+     * the cases that need a row with no geometry at all.
+     */
+    public static ParquetSchema extentCasesSchema() {
+        SchemaNode.Primitive id = primitive("id", Repetition.REQUIRED, PrimitiveKind.INT32, Optional.empty());
+        SchemaNode.Primitive geometry =
+                primitive("geometry", Repetition.OPTIONAL, PrimitiveKind.BYTE_ARRAY, Optional.empty());
+        SchemaNode.Group root =
+                new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(id, geometry), Optional.empty(), -1);
+        return new ParquetSchema(root);
+    }
+
     public static MemorySegment wkbPointSegment(double x, double y) {
         return MemorySegment.ofArray(wkbPoint(x, y));
     }
@@ -154,12 +167,90 @@ public final class Fixtures {
         appender.endRow();
     }
 
+    /**
+     * The vertical line's longitude, and the one coordinate in the fixture that float32 cannot hold exactly. A FLOAT
+     * bbox covering rounds it outward, covering a strip of longitude the geometry does not reach, which is what tells
+     * an answer read off the covering columns apart from one that tests the geometry.
+     */
+    public static final double EXTENT_LINE_X = 2.3816;
+
+    /**
+     * Writes the rows that tell a bounding-box relation apart from an exact one, against the query rectangle {@code (0,
+     * 0, 10, 10)}:
+     *
+     * <ul>
+     *   <li>1: a point well inside the query box
+     *   <li>2: a point exactly on the query box edge, where Within and CoveredBy disagree
+     *   <li>3: a triangle whose bounding box overlaps the query box while the shape itself stays clear of it
+     *   <li>4: a vertical line at {@link #EXTENT_LINE_X}, whose bounding box has zero width and no exact FLOAT covering
+     *   <li>5: a point well outside the query box
+     *   <li>6: no geometry at all
+     * </ul>
+     */
+    public static void writeExtentCases(Path file) throws Exception {
+        ParquetSchema schema = extentCasesSchema();
+        WriteOptions options = WriteOptions.builder()
+                .tempDir(file.toAbsolutePath().getParent())
+                .crsEpsg("geometry", 4326)
+                .build();
+        try (OutputStream out = Files.newOutputStream(file);
+                ParquetFileWriter writer = ParquetFileWriter.create(out, schema, options)) {
+            ParquetRecordBatchBuilder appender = writer.appender();
+            extentCase(appender, 1, wkbPoint(5.0, 5.0));
+            extentCase(appender, 2, wkbPoint(0.0, 5.0));
+            extentCase(appender, 3, wkbTriangle(9.0, 20.0, 20.0, 9.0, 20.0, 20.0));
+            extentCase(appender, 4, wkbLine(EXTENT_LINE_X, 2.0, EXTENT_LINE_X, 8.0));
+            extentCase(appender, 5, wkbPoint(50.0, 50.0));
+            extentCase(appender, 6, null);
+            appender.flush();
+        }
+    }
+
+    private static void extentCase(ParquetRecordBatchBuilder appender, int id, byte[] wkb) {
+        appender.setInt(ID, id);
+        if (wkb == null) {
+            appender.setNull(GEOMETRY);
+        } else {
+            appender.setBinary(GEOMETRY, MemorySegment.ofArray(wkb));
+        }
+        appender.endRow();
+    }
+
     private static byte[] wkbPoint(double x, double y) {
         ByteBuffer bb = ByteBuffer.allocate(21).order(ByteOrder.LITTLE_ENDIAN);
         bb.put((byte) 1);
         bb.putInt(1);
         bb.putDouble(x);
         bb.putDouble(y);
+        return bb.array();
+    }
+
+    private static byte[] wkbLine(double x1, double y1, double x2, double y2) {
+        ByteBuffer bb = ByteBuffer.allocate(9 + 2 * 16).order(ByteOrder.LITTLE_ENDIAN);
+        bb.put((byte) 1);
+        bb.putInt(2);
+        bb.putInt(2);
+        bb.putDouble(x1);
+        bb.putDouble(y1);
+        bb.putDouble(x2);
+        bb.putDouble(y2);
+        return bb.array();
+    }
+
+    private static byte[] wkbTriangle(double x1, double y1, double x2, double y2, double x3, double y3) {
+        ByteBuffer bb = ByteBuffer.allocate(13 + 4 * 16).order(ByteOrder.LITTLE_ENDIAN);
+        bb.put((byte) 1);
+        bb.putInt(3);
+        bb.putInt(1);
+        bb.putInt(4);
+        bb.putDouble(x1);
+        bb.putDouble(y1);
+        bb.putDouble(x2);
+        bb.putDouble(y2);
+        bb.putDouble(x3);
+        bb.putDouble(y3);
+        bb.putDouble(x1);
+        bb.putDouble(y1);
         return bb.array();
     }
 

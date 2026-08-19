@@ -18,10 +18,10 @@ package io.tileverse.parquetry.cli.expr;
 import java.util.List;
 
 /**
- * Renders the human-readable reference of everything {@code --filter} accepts. The spatial function lists come from
- * {@link SpatialFilterTranslator}, which keeps them in step with the relations the translator actually recognizes. The
- * scalar, logical, and set operators are matched by parser token type rather than an enumerable set; this class lists
- * them directly.
+ * Renders the human-readable reference of everything {@code --filter} accepts. The spatial relation, query-constructor
+ * and extent function lists come from {@link SpatialFilterTranslator}, which keeps them in step with the names the
+ * translator actually recognizes. The scalar, logical, and set operators are matched by parser token type rather than
+ * an enumerable set; this class lists them directly.
  */
 public final class FilterSyntax {
 
@@ -35,6 +35,7 @@ public final class FilterSyntax {
     public static String reference() {
         String spatial = String.join(", ", SpatialFilterTranslator.relationFunctionNames());
         String constructors = String.join(", ", SpatialFilterTranslator.queryConstructorNames());
+        String extents = String.join(", ", SpatialFilterTranslator.extentFunctionNames());
         List<String> lines = List.of(
                 "Supported --filter predicates (a SQL WHERE expression):",
                 "  Comparisons : " + COMPARISONS,
@@ -42,6 +43,7 @@ public final class FilterSyntax {
                 "  Sets/ranges : " + SETS_AND_RANGES,
                 "  Spatial     : " + spatial,
                 "  Query geom  : " + constructors,
+                "  Extents     : " + extents,
                 "",
                 "Notes:",
                 "  - The left side of a comparison is a column; the right side is a literal"
@@ -49,10 +51,20 @@ public final class FilterSyntax {
                 "  - Contains/Within and Covers/CoveredBy honor argument order; ST_DWithin takes a trailing distance.",
                 "  - Spatial tests run in the file's native CRS; the query geometry is assumed to be in that CRS"
                         + " (no reprojection).",
+                "  - ST_Extent(<geometry column>) compares bounding boxes instead of exact geometries.",
+                "    ST_Intersects, ST_Covers, ST_CoveredBy, ST_Equals and ST_Disjoint accept it;"
+                        + " the other six are rejected with the reason and what to use instead.",
+                "    The query side must be a rectangle as written: ST_MakeEnvelope(...), ST_Extent(...)"
+                        + " or ST_Envelope(...).",
+                "    Edges are inclusive and Z is ignored.",
+                "  - ST_Envelope is accepted as a synonym of ST_Extent, and is the form that also works in PostGIS,"
+                        + " where ST_Extent aggregates over rows.",
                 "",
-                "Example:",
+                "Examples:",
                 "  par cat data.parquet --filter \"pop > 1000000"
-                        + " AND ST_Intersects(geom, ST_MakeEnvelope(-60, -35, -58, -33))\"");
+                        + " AND ST_Intersects(geom, ST_MakeEnvelope(-60, -35, -58, -33))\"",
+                "  par cat data.parquet --filter"
+                        + " \"ST_Intersects(ST_Extent(geom), ST_MakeEnvelope(-60, -35, -58, -33))\"");
         return String.join(System.lineSeparator(), lines);
     }
 }

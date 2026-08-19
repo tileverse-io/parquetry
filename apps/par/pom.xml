@@ -110,6 +110,12 @@
       <artifactId>arrow-memory-unsafe</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- Second engine for the spatial filter parity tests: the same filter text has to select the same rows here. -->
+    <dependency>
+      <groupId>org.duckdb</groupId>
+      <artifactId>duckdb_jdbc</artifactId>
+      <scope>test</scope>
+    </dependency>
     <dependency>
       <groupId>org.junit.platform</groupId>
       <artifactId>junit-platform-suite</artifactId>
