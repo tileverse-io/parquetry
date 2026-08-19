@@ -56,6 +56,7 @@ import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.format.DataPageHeader;
 import io.tileverse.parquetry.format.DataPageHeaderV2;
 import io.tileverse.parquetry.format.Encoding;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.PageHeader;
 import io.tileverse.parquetry.format.PageType;
 import io.tileverse.parquetry.format.ParquetFormat;
@@ -548,7 +549,93 @@ class ColumnChunkWriterTest {
         }
     }
 
+    @Test
+    void geometryColumnDefaultsToPlainEncoding() throws Exception {
+        SchemaNode.Primitive leaf = requiredGeometry("geometry");
+        WriteOptions options = WriteOptions.builder()
+                .pageValueLimit(256)
+                .pageByteLimit(1 << 20)
+                .build();
+
+        ColumnChunkResult result;
+        try (ColumnChunkWriter writer = new ColumnChunkWriter(options, leaf, tempFile)) {
+            appendLowCardinalityPoints(writer, 3000);
+            result = writer.finishChunk();
+        }
+
+        assertThat(result.dictionaryPageOffset()).isEqualTo(-1L);
+        assertThat(result.encodings()).contains(Encoding.PLAIN);
+        assertThat(result.encodings()).doesNotContain(Encoding.RLE_DICTIONARY, Encoding.PLAIN_DICTIONARY);
+    }
+
+    @Test
+    void explicitAutoRestoresDictionaryOnGeometryColumn() throws Exception {
+        SchemaNode.Primitive leaf = requiredGeometry("geometry");
+        WriteOptions options = WriteOptions.builder()
+                .pageValueLimit(256)
+                .pageByteLimit(1 << 20)
+                .encodingPolicy("geometry", EncodingPolicy.AUTO)
+                .build();
+
+        ColumnChunkResult result;
+        try (ColumnChunkWriter writer = new ColumnChunkWriter(options, leaf, tempFile)) {
+            appendLowCardinalityPoints(writer, 3000);
+            result = writer.finishChunk();
+        }
+
+        assertThat(result.dictionaryPageOffset()).isZero();
+        assertThat(result.encodings()).contains(Encoding.RLE_DICTIONARY);
+    }
+
+    @Test
+    void nonGeometryBinaryColumnStillDefaultsToDictionary() throws Exception {
+        SchemaNode.Primitive leaf = new SchemaNode.Primitive(
+                "name", Repetition.REQUIRED, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1);
+        WriteOptions options = WriteOptions.builder()
+                .pageValueLimit(256)
+                .pageByteLimit(1 << 20)
+                .build();
+
+        ColumnChunkResult result;
+        try (ColumnChunkWriter writer = new ColumnChunkWriter(options, leaf, tempFile)) {
+            for (int i = 0; i < 3000; i++) {
+                byte[] value = ("city-" + (i % 3)).getBytes(StandardCharsets.UTF_8);
+                writer.appendBinary(MemorySegment.ofArray(value), 0, 0);
+            }
+            result = writer.finishChunk();
+        }
+
+        assertThat(result.dictionaryPageOffset()).isZero();
+        assertThat(result.encodings()).contains(Encoding.RLE_DICTIONARY);
+    }
+
     // --- helpers ---
+
+    private static SchemaNode.Primitive requiredGeometry(String name) {
+        return new SchemaNode.Primitive(
+                name,
+                Repetition.REQUIRED,
+                PrimitiveKind.BYTE_ARRAY,
+                OptionalInt.empty(),
+                Optional.of(new LogicalType.Geometry(Optional.empty())),
+                -1);
+    }
+
+    private static void appendLowCardinalityPoints(ColumnChunkWriter writer, int count) {
+        byte[][] points = {wkbPoint(1.0, 2.0), wkbPoint(3.0, 4.0), wkbPoint(5.0, 6.0)};
+        for (int i = 0; i < count; i++) {
+            writer.appendBinary(MemorySegment.ofArray(points[i % points.length]), 0, 0);
+        }
+    }
+
+    private static byte[] wkbPoint(double x, double y) {
+        ByteBuffer buffer = ByteBuffer.allocate(21).order(LITTLE_ENDIAN);
+        buffer.put((byte) 1);
+        buffer.putInt(1);
+        buffer.putDouble(x);
+        buffer.putDouble(y);
+        return buffer.array();
+    }
 
     /**
      * Writes a single required {@code BYTE_ARRAY} column through the full writer under the default {@code AUTO}

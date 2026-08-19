@@ -1130,7 +1130,7 @@ public final class ColumnChunkWriter implements AutoCloseable {
 
     private static DictionaryAttempt createDictionaryAttempt(
             WriteOptions options, SchemaNode.Primitive leaf, PrimitiveKind kind) {
-        EncodingPolicy policy = options.encodingPolicies().getOrDefault(leaf.name(), EncodingPolicy.AUTO);
+        EncodingPolicy policy = resolveEncodingPolicy(options, leaf);
         if (!dictionaryAttemptAllowed(policy, kind)) {
             return null;
         }
@@ -1145,6 +1145,23 @@ public final class ColumnChunkWriter implements AutoCloseable {
             case INT96 -> DictionaryAttempt.BinaryAttempt.createFixedLen(byteLimit, 12);
             case BOOLEAN -> null;
         };
+    }
+
+    /**
+     * Resolves the effective encoding policy for a leaf. An explicit per-column override always wins. Absent one,
+     * geometry and geography columns default to {@link EncodingPolicy#FORCE_PLAIN}: their WKB is effectively unique per
+     * row, where the dictionary attempt overflows and never pays for itself. Every other column defaults to
+     * {@link EncodingPolicy#AUTO}.
+     */
+    private static EncodingPolicy resolveEncodingPolicy(WriteOptions options, SchemaNode.Primitive leaf) {
+        EncodingPolicy explicit = options.encodingPolicies().get(leaf.name());
+        if (explicit != null) {
+            return explicit;
+        }
+        if (isGeometryLike(leaf.logicalType().orElse(null))) {
+            return EncodingPolicy.FORCE_PLAIN;
+        }
+        return EncodingPolicy.AUTO;
     }
 
     private static boolean dictionaryAttemptAllowed(EncodingPolicy policy, PrimitiveKind kind) {
