@@ -16,8 +16,6 @@
 package io.tileverse.parquetry.internal.write.page;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.WritableByteChannel;
 
 import io.tileverse.parquetry.format.Encoding;
 
@@ -34,7 +32,7 @@ import io.tileverse.parquetry.format.Encoding;
 public final class RleDictionaryEncoder implements Encoder<int[]> {
 
     @Override
-    public int encode(int[] values, int n, WritableByteChannel dst) throws IOException {
+    public int encode(int[] values, int n, LittleEndianSink dst) throws IOException {
         int maxIndex = 0;
         for (int i = 0; i < n; i++) {
             if (values[i] > maxIndex) {
@@ -42,10 +40,7 @@ public final class RleDictionaryEncoder implements Encoder<int[]> {
             }
         }
         int bitWidth = (maxIndex == 0) ? 0 : 32 - Integer.numberOfLeadingZeros(maxIndex);
-        ByteBuffer header = ByteBuffer.allocate(1);
-        header.put((byte) bitWidth);
-        header.flip();
-        ChannelWrites.writeFully(dst, header);
+        dst.writeByte(bitWidth);
         int payloadBytes = (bitWidth == 0)
                 ? RleBitPackedHybridWriter.writeZeroWidthRun(n, dst)
                 : RleBitPackedHybridWriter.write(values, n, bitWidth, dst);

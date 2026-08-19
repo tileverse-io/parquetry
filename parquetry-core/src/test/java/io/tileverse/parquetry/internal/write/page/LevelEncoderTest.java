@@ -28,7 +28,6 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.internal.read.page.LevelDecoder;
-import io.tileverse.parquetry.testsupport.ByteArrayWritableChannel;
 
 class LevelEncoderTest {
 
@@ -42,7 +41,7 @@ class LevelEncoderTest {
     @Test
     void bitWidthZeroEmitsNoBytes() throws Exception {
         LevelEncoder encoder = new LevelEncoder(0);
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         int written = encoder.encode(new int[] {0, 0, 0, 0}, 4, out);
         assertThat(written).isZero();
         assertThat(out.size()).isZero();
@@ -97,7 +96,7 @@ class LevelEncoderTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("roundTripCases")
     void roundTripViaLevelDecoder(String label, int maxLevel, int[] levels) throws Exception {
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         new LevelEncoder(maxLevel).encode(levels, levels.length, out);
 
         LevelDecoder decoder = new LevelDecoder(LevelDecoder.computeBitWidth(maxLevel));
@@ -110,7 +109,7 @@ class LevelEncoderTest {
 
     @Test
     void emptyInputEmitsNoBytes() throws Exception {
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         int written = new LevelEncoder(3).encode(new int[0], 0, out);
         assertThat(written).isZero();
     }

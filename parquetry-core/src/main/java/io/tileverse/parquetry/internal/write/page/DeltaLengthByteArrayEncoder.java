@@ -16,8 +16,6 @@
 package io.tileverse.parquetry.internal.write.page;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.WritableByteChannel;
 
 import io.tileverse.parquetry.format.Encoding;
 
@@ -31,14 +29,14 @@ import io.tileverse.parquetry.format.Encoding;
 public final class DeltaLengthByteArrayEncoder implements Encoder<byte[][]> {
 
     @Override
-    public int encode(byte[][] values, int n, WritableByteChannel dst) throws IOException {
+    public int encode(byte[][] values, int n, LittleEndianSink dst) throws IOException {
         long[] lengths = new long[n];
         for (int i = 0; i < n; i++) {
             lengths[i] = values[i].length;
         }
         int written = DeltaBinaryPackedWriter.write(lengths, n, dst);
         for (int i = 0; i < n; i++) {
-            ChannelWrites.writeFully(dst, ByteBuffer.wrap(values[i]));
+            dst.write(values[i]);
             written += values[i].length;
         }
         return written;

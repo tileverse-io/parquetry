@@ -27,7 +27,6 @@ import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.internal.read.page.Dictionary;
 import io.tileverse.parquetry.internal.read.page.PlainInt32Decoder;
 import io.tileverse.parquetry.internal.read.page.RleDictionaryPageDecoder;
-import io.tileverse.parquetry.testsupport.ByteArrayWritableChannel;
 
 class DictionaryAttemptEncoderTest {
 
@@ -39,7 +38,7 @@ class DictionaryAttemptEncoderTest {
         encoder.appendValue(10);
         encoder.appendValue(20);
 
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         PageDictionaryEncoder.PageResult result = encoder.flushPage(out);
 
         assertThat(result.v2Encoding()).isEqualTo(Encoding.RLE_DICTIONARY);
@@ -59,7 +58,7 @@ class DictionaryAttemptEncoderTest {
         encoder.appendValue(1);
         encoder.appendValue(2);
         encoder.appendValue(1);
-        ByteArrayWritableChannel page1 = new ByteArrayWritableChannel();
+        GrowableByteSink page1 = new GrowableByteSink(64);
         PageDictionaryEncoder.PageResult result1 = encoder.flushPage(page1);
         assertThat(result1.v2Encoding()).isEqualTo(Encoding.RLE_DICTIONARY);
         assertThat(result1.valueCount()).isEqualTo(3);
@@ -72,7 +71,7 @@ class DictionaryAttemptEncoderTest {
         encoder.appendValue(3);
         assertThat(encoder.overflowed()).isTrue();
 
-        ByteArrayWritableChannel page2 = new ByteArrayWritableChannel();
+        GrowableByteSink page2 = new GrowableByteSink(64);
         PageDictionaryEncoder.PageResult result2 = encoder.flushPage(page2);
         assertThat(result2.v2Encoding()).isEqualTo(Encoding.PLAIN);
         assertThat(result2.v1Encoding()).isEqualTo(Encoding.PLAIN);
@@ -96,7 +95,7 @@ class DictionaryAttemptEncoderTest {
         assertThat(encoder.overflowed()).isFalse();
         assertThat(encoder.dictionaryValues()).containsExactly(10, 20);
 
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         PageDictionaryEncoder.PageResult result = encoder.flushPage(out);
         assertThat(result.v2Encoding()).isEqualTo(Encoding.RLE_DICTIONARY);
         assertThat(result.valueCount()).isEqualTo(2);
@@ -113,7 +112,7 @@ class DictionaryAttemptEncoderTest {
         encoder.appendValue(20);
         encoder.appendValue(10);
 
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         PageDictionaryEncoder.PageResult result = encoder.flushPage(out);
         assertThat(result.v2Encoding()).isEqualTo(Encoding.PLAIN);
         assertThat(result.valueCount()).isEqualTo(5);

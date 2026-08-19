@@ -15,10 +15,7 @@
  */
 package io.tileverse.parquetry.internal.write.page;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.WritableByteChannel;
 
 /**
  * Shared RLE/bit-packed hybrid writer used by all encoders that emit RLE-Bit-Packed streams: level streams, dictionary
@@ -47,7 +44,7 @@ public final class RleBitPackedHybridWriter {
     private RleBitPackedHybridWriter() {}
 
     /** Encode {@code n} values of width {@code bitWidth} from {@code values} into {@code dst}. */
-    public static int write(int[] values, int n, int bitWidth, WritableByteChannel dst) throws IOException {
+    public static int write(int[] values, int n, int bitWidth, LittleEndianSink dst) throws IOException {
         if (bitWidth < 0 || bitWidth > 32) {
             throw new IllegalArgumentException("bitWidth must be in [0, 32]; got " + bitWidth);
         }
@@ -58,23 +55,21 @@ public final class RleBitPackedHybridWriter {
             // No bits per value; nothing to emit. Decoder returns zero for any read at this width.
             return 0;
         }
-        ByteArrayOutputStream scratch = new ByteArrayOutputStream();
+        int start = dst.size();
         int bytesPerRleValue = (bitWidth + 7) / 8;
         int cursor = 0;
         while (cursor < n) {
             int runLength = scanRunLength(values, cursor, n);
             if (runLength >= MIN_RLE_RUN) {
-                writeRleRun(scratch, runLength, values[cursor], bytesPerRleValue);
+                writeRleRun(dst, runLength, values[cursor], bytesPerRleValue);
                 cursor += runLength;
             } else {
                 int bitPackedEnd = scanBitPackedSpan(values, cursor, n);
-                writeBitPackedRun(scratch, values, cursor, bitPackedEnd, bitWidth);
+                writeBitPackedRun(dst, values, cursor, bitPackedEnd, bitWidth);
                 cursor = bitPackedEnd;
             }
         }
-        byte[] payload = scratch.toByteArray();
-        ChannelWrites.writeFully(dst, ByteBuffer.wrap(payload));
-        return payload.length;
+        return dst.size() - start;
     }
 
     /**
@@ -87,15 +82,13 @@ public final class RleBitPackedHybridWriter {
      * makes a strict reader throw "Reading past RLE/BitPacking stream" when it reads the first value, because the run
      * header that declares the value count is missing.
      */
-    public static int writeZeroWidthRun(int n, WritableByteChannel dst) throws IOException {
+    public static int writeZeroWidthRun(int n, LittleEndianSink dst) throws IOException {
         if (n == 0) {
             return 0;
         }
-        ByteArrayOutputStream scratch = new ByteArrayOutputStream();
-        writeRleRun(scratch, n, 0, 0);
-        byte[] payload = scratch.toByteArray();
-        ChannelWrites.writeFully(dst, ByteBuffer.wrap(payload));
-        return payload.length;
+        int start = dst.size();
+        writeRleRun(dst, n, 0, 0);
+        return dst.size() - start;
     }
 
     /** Return the length of the run of equal values starting at {@code start}. */
@@ -127,15 +120,15 @@ public final class RleBitPackedHybridWriter {
         return Math.min(start + padded, n);
     }
 
-    private static void writeRleRun(ByteArrayOutputStream out, int runLength, int value, int bytesPerRleValue) {
+    private static void writeRleRun(LittleEndianSink out, int runLength, int value, int bytesPerRleValue) {
         writeVarint(out, runLength << 1);
         for (int b = 0; b < bytesPerRleValue; b++) {
-            out.write((value >>> (b * 8)) & 0xff);
+            out.writeByte((value >>> (b * 8)) & 0xff);
         }
     }
 
     /** Encode {@code [start, end)} as one or more bit-packed groups; pad the trailing group with zeros if needed. */
-    private static void writeBitPackedRun(ByteArrayOutputStream out, int[] values, int start, int end, int bitWidth) {
+    private static void writeBitPackedRun(LittleEndianSink out, int[] values, int start, int end, int bitWidth) {
         int span = end - start;
         // The decoder reads in multiples of 8; ensure we emit complete groups.
         int paddedSpan = (span + 7) & ~7;
@@ -150,22 +143,22 @@ public final class RleBitPackedHybridWriter {
             buffer |= value << bitsBuffered;
             bitsBuffered += bitWidth;
             while (bitsBuffered >= 8) {
-                out.write((int) (buffer & 0xff));
+                out.writeByte((int) (buffer & 0xff));
                 buffer >>>= 8;
                 bitsBuffered -= 8;
             }
         }
         if (bitsBuffered > 0) {
-            out.write((int) (buffer & 0xff));
+            out.writeByte((int) (buffer & 0xff));
         }
     }
 
-    private static void writeVarint(ByteArrayOutputStream out, int value) {
+    private static void writeVarint(LittleEndianSink out, int value) {
         long v = value & 0xffffffffL;
         while ((v & ~0x7fL) != 0L) {
-            out.write((int) ((v & 0x7f) | 0x80));
+            out.writeByte((int) ((v & 0x7f) | 0x80));
             v >>>= 7;
         }
-        out.write((int) v);
+        out.writeByte((int) v);
     }
 }

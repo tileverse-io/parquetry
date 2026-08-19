@@ -78,6 +78,7 @@ public final class RowGroupWriter implements AutoCloseable {
     private final List<LeafBinding> leaves;
     private final Map<ColumnPath, LeafBinding> leafByPath;
     private final ColumnFanOut fanOut;
+    private final DremelStriper striper;
 
     private long rowCount;
     private long currentFileOffset;
@@ -114,6 +115,7 @@ public final class RowGroupWriter implements AutoCloseable {
         this.tempDir = tempDir;
         this.currentFileOffset = baseFileOffset;
         this.fanOut = new ColumnFanOut(computeExecutor);
+        this.striper = new DremelStriper(schema);
 
         createTempDir(tempDir);
 
@@ -218,16 +220,16 @@ public final class RowGroupWriter implements AutoCloseable {
 
     /**
      * Shreds the leaves the batch supplies only through a top-level nested vector (a struct column) and feeds each
-     * leaf's level stream cell by cell. The striper runs once, serially, on the caller: it is shared work over the
-     * whole batch. Each shredded leaf's feed then runs as one fan-out unit on the shared compute pool, joined before
-     * returning. The striper runs only when at least one leaf is supplied indirectly, which keeps a flat batch from
-     * constructing it.
+     * leaf's level stream cell by cell. The striper is built once per row-group writer and its stripe pass runs once
+     * per batch, serially, on the caller: it is shared work over the whole batch. Each shredded leaf's feed then runs
+     * as one fan-out unit on the shared compute pool, joined before returning. The stripe pass runs only when at least
+     * one leaf is supplied indirectly; a flat batch returns early without shredding.
      */
     private void appendStripedLeaves(ParquetRecordBatch batch, Map<ColumnPath, ColumnVector> columns) {
         if (allLeavesWrittenDirectly(columns)) {
             return;
         }
-        List<StripedLeaf> striped = new DremelStriper(schema).stripe(batch);
+        List<StripedLeaf> striped = striper.stripe(batch);
         List<Runnable> units = new ArrayList<>(striped.size());
         for (StripedLeaf sl : striped) {
             LeafBinding binding = leafByPath.get(sl.leaf());
@@ -262,45 +264,13 @@ public final class RowGroupWriter implements AutoCloseable {
     }
 
     /**
-     * Feeds one shredded leaf to its column chunk writer, cell by cell. Rows whose definition level is below maxDef are
-     * nulls; rows at maxDef contribute a value drawn sequentially from the stripped value vector.
+     * Feeds one shredded leaf to its column chunk writer in bulk. Rows whose definition level is below maxDef are
+     * nulls; rows at maxDef contribute the next present value, read from the leaf's raw value vector at its source
+     * ordinal.
      */
     private void appendStripedLeaf(ColumnChunkWriter writer, StripedLeaf sl) {
-        int maxDef = sl.maxDefLevel();
-        int[] defLevels = sl.defLevels();
-        int[] repLevels = sl.repLevels();
-        int valueIndex = 0;
-        int levelCount = defLevels.length;
-        for (int row = 0; row < levelCount; row++) {
-            int def = defLevels[row];
-            int rep = repLevels[row];
-            if (def == maxDef) {
-                appendValueAt(writer, sl.values(), valueIndex, rep, def);
-                valueIndex++;
-            } else {
-                writer.appendNull(rep, def);
-            }
-        }
-    }
-
-    /** Dispatches one value from {@code values} at {@code valueIndex} to the appropriate typed append on the writer. */
-    private void appendValueAt(ColumnChunkWriter writer, ColumnVector values, int valueIndex, int rep, int def) {
-        switch (values) {
-            case io.tileverse.parquetry.columnar.IntVector iv -> writer.appendInt(iv.valueAt(valueIndex), rep, def);
-            case io.tileverse.parquetry.columnar.LongVector lv -> writer.appendLong(lv.valueAt(valueIndex), rep, def);
-            case io.tileverse.parquetry.columnar.FloatVector fv -> writer.appendFloat(fv.valueAt(valueIndex), rep, def);
-            case io.tileverse.parquetry.columnar.DoubleVector dv ->
-                writer.appendDouble(dv.valueAt(valueIndex), rep, def);
-            case io.tileverse.parquetry.columnar.BooleanVector bv ->
-                writer.appendBoolean(bv.valueAt(valueIndex), rep, def);
-            case io.tileverse.parquetry.columnar.BinaryVector binv ->
-                writer.appendBinary(binv.get(valueIndex), rep, def);
-            case io.tileverse.parquetry.columnar.FixedLenBinaryVector flbv ->
-                writer.appendFixedLenBinary(flbv.get(valueIndex), rep, def);
-            default ->
-                throw new ParquetWriteException("Unsupported value vector type for nested leaf: "
-                        + values.getClass().getSimpleName());
-        }
+        writer.appendStriped(
+                sl.sourceValues(), sl.keptOrdinals(), sl.repLevelsRaw(), sl.defLevelsRaw(), sl.maxDefLevel());
     }
 
     /**

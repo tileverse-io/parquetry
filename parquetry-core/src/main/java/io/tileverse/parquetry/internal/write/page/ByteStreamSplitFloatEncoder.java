@@ -16,8 +16,6 @@
 package io.tileverse.parquetry.internal.write.page;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.WritableByteChannel;
 
 import io.tileverse.parquetry.format.Encoding;
 
@@ -33,7 +31,7 @@ public final class ByteStreamSplitFloatEncoder implements Encoder<float[]> {
     private static final int BYTES_PER_VALUE = Float.BYTES;
 
     @Override
-    public int encode(float[] values, int n, WritableByteChannel dst) throws IOException {
+    public int encode(float[] values, int n, LittleEndianSink dst) throws IOException {
         if (n == 0) {
             return 0;
         }
@@ -44,7 +42,7 @@ public final class ByteStreamSplitFloatEncoder implements Encoder<float[]> {
                 streams[s * n + i] = (byte) ((bits >>> (s * 8)) & 0xff);
             }
         }
-        ChannelWrites.writeFully(dst, ByteBuffer.wrap(streams));
+        dst.write(streams);
         return streams.length;
     }
 

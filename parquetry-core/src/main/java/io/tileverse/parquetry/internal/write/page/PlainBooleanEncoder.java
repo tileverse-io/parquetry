@@ -16,8 +16,6 @@
 package io.tileverse.parquetry.internal.write.page;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.WritableByteChannel;
 
 import io.tileverse.parquetry.format.Encoding;
 
@@ -30,7 +28,7 @@ import io.tileverse.parquetry.format.Encoding;
 public final class PlainBooleanEncoder implements Encoder<boolean[]> {
 
     @Override
-    public int encode(boolean[] values, int n, WritableByteChannel dst) throws IOException {
+    public int encode(boolean[] values, int n, LittleEndianSink dst) throws IOException {
         if (n == 0) {
             return 0;
         }
@@ -41,7 +39,7 @@ public final class PlainBooleanEncoder implements Encoder<boolean[]> {
                 packed[i >>> 3] |= (byte) (1 << (i & 7));
             }
         }
-        ChannelWrites.writeFully(dst, ByteBuffer.wrap(packed));
+        dst.write(packed);
         return byteCount;
     }
 

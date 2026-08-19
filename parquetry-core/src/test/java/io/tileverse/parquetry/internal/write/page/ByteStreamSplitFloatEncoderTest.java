@@ -27,7 +27,6 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.internal.read.page.ByteStreamSplitFloatDecoder;
-import io.tileverse.parquetry.testsupport.ByteArrayWritableChannel;
 
 class ByteStreamSplitFloatEncoderTest {
 
@@ -38,7 +37,7 @@ class ByteStreamSplitFloatEncoderTest {
 
     @Test
     void emptyInputWritesNoBytes() throws Exception {
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         int written = new ByteStreamSplitFloatEncoder().encode(new float[0], 0, out);
         assertThat(written).isZero();
     }
@@ -62,7 +61,7 @@ class ByteStreamSplitFloatEncoderTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("roundTripCases")
     void roundTripViaDecoder(String label, float[] values) throws Exception {
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         new ByteStreamSplitFloatEncoder().encode(values, values.length, out);
 
         ByteStreamSplitFloatDecoder decoder = new ByteStreamSplitFloatDecoder();

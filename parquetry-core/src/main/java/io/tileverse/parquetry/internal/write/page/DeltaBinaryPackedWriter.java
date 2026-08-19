@@ -15,10 +15,7 @@
  */
 package io.tileverse.parquetry.internal.write.page;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.WritableByteChannel;
 
 /**
  * Shared DELTA_BINARY_PACKED encode engine. Works on {@code long} internally; INT32 and INT64 encoders both call into
@@ -53,35 +50,33 @@ final class DeltaBinaryPackedWriter {
      * {@code n} real values) and the DELTA_BYTE_ARRAY / DELTA_LENGTH_BYTE_ARRAY paths (which drain the padding to reach
      * the bytes that follow).
      */
-    static int write(long[] values, int n, WritableByteChannel dst) throws IOException {
-        ByteArrayOutputStream scratch = new ByteArrayOutputStream();
-        writeHeader(scratch, n);
+    static int write(long[] values, int n, LittleEndianSink dst) throws IOException {
+        int start = dst.size();
+        writeHeader(dst, n);
         if (n == 0) {
             // Spec leaves the first-value field present even when totalValueCount is zero.
-            writeZigzagVarint(scratch, 0L);
+            writeZigzagVarint(dst, 0L);
         } else {
-            writeZigzagVarint(scratch, values[0]);
+            writeZigzagVarint(dst, values[0]);
             long previous = values[0];
             int blockStart = 1;
             while (blockStart < n) {
                 int blockEnd = Math.min(blockStart + BLOCK_SIZE, n);
-                previous = writeBlock(scratch, values, blockStart, blockEnd, previous);
+                previous = writeBlock(dst, values, blockStart, blockEnd, previous);
                 blockStart = blockEnd;
             }
         }
-        byte[] payload = scratch.toByteArray();
-        ChannelWrites.writeFully(dst, ByteBuffer.wrap(payload));
-        return payload.length;
+        return dst.size() - start;
     }
 
-    private static void writeHeader(ByteArrayOutputStream scratch, int totalValueCount) {
-        writeUVarint(scratch, BLOCK_SIZE);
-        writeUVarint(scratch, MINIBLOCKS_PER_BLOCK);
-        writeUVarint(scratch, totalValueCount);
+    private static void writeHeader(LittleEndianSink out, int totalValueCount) {
+        writeUVarint(out, BLOCK_SIZE);
+        writeUVarint(out, MINIBLOCKS_PER_BLOCK);
+        writeUVarint(out, totalValueCount);
     }
 
     private static long writeBlock(
-            ByteArrayOutputStream scratch, long[] values, int blockStart, int blockEnd, long previous) {
+            LittleEndianSink scratch, long[] values, int blockStart, int blockEnd, long previous) {
         int valuesInBlock = blockEnd - blockStart;
         long[] deltas = new long[valuesInBlock];
         long minDelta = computeDeltas(values, blockStart, valuesInBlock, previous, deltas);
@@ -91,7 +86,7 @@ final class DeltaBinaryPackedWriter {
 
         writeZigzagVarint(scratch, minDelta);
         for (int mb = 0; mb < MINIBLOCKS_PER_BLOCK; mb++) {
-            scratch.write(widths[mb]);
+            scratch.writeByte(widths[mb]);
         }
         // A miniblock with a non-zero width holds at least one value; write it full-size (trailing slots zero-padded)
         // per the parquet-format rule. Trailing miniblocks with no values have width 0 and contribute no data bytes.
@@ -146,7 +141,7 @@ final class DeltaBinaryPackedWriter {
      * number of slots. The emitted bytes are rounded up to a byte boundary.
      */
     private static void writeMiniblock(
-            ByteArrayOutputStream out, long[] adjusted, int start, int realCount, int valuesToWrite, int width) {
+            LittleEndianSink out, long[] adjusted, int start, int realCount, int valuesToWrite, int width) {
         long buffer = 0L;
         int bitsBuffered = 0;
         long mask = (width == 64) ? -1L : ((1L << width) - 1L);
@@ -156,25 +151,25 @@ final class DeltaBinaryPackedWriter {
             buffer |= value << bitsBuffered;
             bitsBuffered += width;
             while (bitsBuffered >= 8) {
-                out.write((int) (buffer & 0xff));
+                out.writeByte((int) (buffer & 0xff));
                 buffer >>>= 8;
                 bitsBuffered -= 8;
             }
         }
         if (bitsBuffered > 0) {
-            out.write((int) (buffer & 0xff));
+            out.writeByte((int) (buffer & 0xff));
         }
     }
 
-    private static void writeUVarint(ByteArrayOutputStream out, long value) {
+    private static void writeUVarint(LittleEndianSink out, long value) {
         while ((value & ~0x7fL) != 0L) {
-            out.write((int) ((value & 0x7f) | 0x80));
+            out.writeByte((int) ((value & 0x7f) | 0x80));
             value >>>= 7;
         }
-        out.write((int) value);
+        out.writeByte((int) value);
     }
 
-    private static void writeZigzagVarint(ByteArrayOutputStream out, long value) {
+    private static void writeZigzagVarint(LittleEndianSink out, long value) {
         writeUVarint(out, (value << 1) ^ (value >> 63));
     }
 }

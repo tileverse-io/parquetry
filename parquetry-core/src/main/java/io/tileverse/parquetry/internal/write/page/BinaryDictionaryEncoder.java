@@ -17,7 +17,6 @@ package io.tileverse.parquetry.internal.write.page;
 
 import java.io.IOException;
 import java.lang.foreign.MemorySegment;
-import java.nio.channels.WritableByteChannel;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -33,10 +32,10 @@ import io.airlift.compress.v3.xxhash.XxHash64Hasher;
  * are retained, using the {@code byte[]} the caller already materialized for the page payload store - no additional
  * copy per cell.
  *
- * <p>Page contract and fallback semantics match {@link DictionaryAttemptEncoder}: values append to the current page,
- * {@link #flushPage(WritableByteChannel)} closes it; pages encode as {@link Encoding#RLE_DICTIONARY} indices while the
- * dictionary's serialized payload stays within the byte budget, and fall back to {@link Encoding#PLAIN} once it
- * overflows.
+ * <p>Page contract and fallback semantics match the {@link PageDictionaryEncoder} contract: values append to the
+ * current page, {@link #flushPage(LittleEndianSink)} closes it; pages encode as {@link Encoding#RLE_DICTIONARY} indices
+ * while the dictionary's serialized payload stays within the byte budget, and fall back to {@link Encoding#PLAIN} once
+ * it overflows.
  */
 public final class BinaryDictionaryEncoder implements PageDictionaryEncoder {
 
@@ -114,7 +113,7 @@ public final class BinaryDictionaryEncoder implements PageDictionaryEncoder {
     }
 
     @Override
-    public PageResult flushPage(WritableByteChannel dst) throws IOException {
+    public PageResult flushPage(LittleEndianSink dst) throws IOException {
         if (overflowed) {
             return flushPlainFallbackPage(dst);
         }
@@ -211,7 +210,7 @@ public final class BinaryDictionaryEncoder implements PageDictionaryEncoder {
         pageIndices[pageIndexCount++] = index;
     }
 
-    private PageResult flushDictionaryPage(WritableByteChannel dst) throws IOException {
+    private PageResult flushDictionaryPage(LittleEndianSink dst) throws IOException {
         emittedDictionaryPage = true;
         int n = pageIndexCount;
         pageIndexCount = 0;
@@ -220,7 +219,7 @@ public final class BinaryDictionaryEncoder implements PageDictionaryEncoder {
         return new PageResult(Encoding.RLE_DICTIONARY, Encoding.PLAIN_DICTIONARY, n, bytesWritten);
     }
 
-    private PageResult flushPlainFallbackPage(WritableByteChannel dst) throws IOException {
+    private PageResult flushPlainFallbackPage(LittleEndianSink dst) throws IOException {
         int n = pageFallbackValues.size();
         byte[][] carrier = pageFallbackValues.toArray(new byte[0][]);
         pageFallbackValues.clear();

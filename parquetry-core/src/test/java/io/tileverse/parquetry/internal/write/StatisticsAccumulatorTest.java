@@ -65,12 +65,12 @@ class StatisticsAccumulatorTest {
     void int32MinMaxAndNullCountAccumulate() {
         StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
 
-        acc.update(5, false);
-        acc.update(null, true);
-        acc.update(-3, false);
-        acc.update(42, false);
-        acc.update(null, true);
-        acc.update(7, false);
+        acc.updateInt(5);
+        acc.updateNull();
+        acc.updateInt(-3);
+        acc.updateInt(42);
+        acc.updateNull();
+        acc.updateInt(7);
 
         Statistics stats = acc.finishChunk();
         assertThat(decodeInt32(stats.minValue())).as("min").isEqualTo(-3);
@@ -83,9 +83,9 @@ class StatisticsAccumulatorTest {
     @Test
     void legacyMinMaxMirrorTheModernValuesForCompatibility() {
         StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
-        acc.update(5, false);
-        acc.update(-3, false);
-        acc.update(42, false);
+        acc.updateInt(5);
+        acc.updateInt(-3);
+        acc.updateInt(42);
 
         Statistics stats = acc.finishChunk();
         assertThat(decodeInt32(stats.min())).as("legacy min").isEqualTo(-3);
@@ -101,8 +101,8 @@ class StatisticsAccumulatorTest {
     @Test
     void binaryOmitsLegacyMinMax() {
         StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.BYTE_ARRAY, null);
-        acc.update(asSegment(new byte[] {0x7E}), false);
-        acc.update(asSegment(new byte[] {(byte) 0x80}), false);
+        acc.updateBinary(asSegment(new byte[] {0x7E}));
+        acc.updateBinary(asSegment(new byte[] {(byte) 0x80}));
 
         Statistics stats = acc.finishChunk();
         assertThat(stats.minValue()).as("modern minValue present").isNotEqualTo(MemorySegment.NULL);
@@ -114,8 +114,8 @@ class StatisticsAccumulatorTest {
     @Test
     void fixedLenBinaryOmitsLegacyMinMax() {
         StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.FIXED_LEN_BYTE_ARRAY, null);
-        acc.update(asSegment(new byte[] {0x7E}), false);
-        acc.update(asSegment(new byte[] {(byte) 0x80}), false);
+        acc.updateBinary(asSegment(new byte[] {0x7E}));
+        acc.updateBinary(asSegment(new byte[] {(byte) 0x80}));
 
         Statistics stats = acc.finishChunk();
         assertThat(stats.minValue()).as("modern minValue present").isNotEqualTo(MemorySegment.NULL);
@@ -128,9 +128,9 @@ class StatisticsAccumulatorTest {
     void unsignedIntOmitsLegacyMinMax() {
         StatisticsAccumulator acc =
                 StatisticsAccumulator.forKind(PrimitiveKind.INT32, new LogicalType.IntType((byte) 32, false));
-        acc.update(5, false);
-        acc.update(-3, false);
-        acc.update(42, false);
+        acc.updateInt(5);
+        acc.updateInt(-3);
+        acc.updateInt(42);
 
         Statistics stats = acc.finishChunk();
         assertThat(stats.minValue()).as("modern minValue present").isNotEqualTo(MemorySegment.NULL);
@@ -154,7 +154,7 @@ class StatisticsAccumulatorTest {
 
         long[] inputs = {1_000_000L, -50L, 0L, Long.MAX_VALUE, Long.MIN_VALUE, 17L};
         for (long v : inputs) {
-            acc.update(v, false);
+            acc.updateLong(v);
         }
 
         Statistics stats = acc.finishChunk();
@@ -167,10 +167,10 @@ class StatisticsAccumulatorTest {
     void floatMinMaxAndNullCountAccumulate() {
         StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.FLOAT, null);
 
-        acc.update(1.5f, false);
-        acc.update(-2.25f, false);
-        acc.update(null, true);
-        acc.update(3.0f, false);
+        acc.updateFloat(1.5f);
+        acc.updateFloat(-2.25f);
+        acc.updateNull();
+        acc.updateFloat(3.0f);
 
         Statistics stats = acc.finishChunk();
         assertThat(decodeFloat(stats.minValue())).isEqualTo(-2.25f);
@@ -182,8 +182,8 @@ class StatisticsAccumulatorTest {
     void floatNaNIsExcludedFromMinMaxButCountedAsNonNull() {
         StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.FLOAT, null);
 
-        acc.update(Float.NaN, false);
-        acc.update(Float.NaN, false);
+        acc.updateFloat(Float.NaN);
+        acc.updateFloat(Float.NaN);
 
         Statistics stats = acc.finishChunk();
         assertThat(stats.minValue()).isEqualTo(MemorySegment.NULL);
@@ -197,9 +197,9 @@ class StatisticsAccumulatorTest {
 
         double[] inputs = {3.14, -1.5, 2.718, 0.0, 100.5};
         for (double v : inputs) {
-            acc.update(v, false);
+            acc.updateDouble(v);
         }
-        acc.update(null, true);
+        acc.updateNull();
 
         Statistics stats = acc.finishChunk();
         assertThat(decodeDouble(stats.minValue())).isEqualTo(-1.5);
@@ -211,10 +211,10 @@ class StatisticsAccumulatorTest {
     void booleanMinMaxAndNullCountAccumulate() {
         StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.BOOLEAN, null);
 
-        acc.update(true, false);
-        acc.update(true, false);
-        acc.update(false, false);
-        acc.update(null, true);
+        acc.updateBoolean(true);
+        acc.updateBoolean(true);
+        acc.updateBoolean(false);
+        acc.updateNull();
 
         Statistics stats = acc.finishChunk();
         assertThat(stats.minValue().toArray(JAVA_BYTE)).containsExactly(0);
@@ -226,9 +226,9 @@ class StatisticsAccumulatorTest {
     void binaryMinMaxIsUnsignedLexicographic() {
         StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.BYTE_ARRAY, null);
 
-        acc.update(asSegment("banana".getBytes(StandardCharsets.UTF_8)), false);
-        acc.update(asSegment("apple".getBytes(StandardCharsets.UTF_8)), false);
-        acc.update(asSegment("cherry".getBytes(StandardCharsets.UTF_8)), false);
+        acc.updateBinary(asSegment("banana".getBytes(StandardCharsets.UTF_8)));
+        acc.updateBinary(asSegment("apple".getBytes(StandardCharsets.UTF_8)));
+        acc.updateBinary(asSegment("cherry".getBytes(StandardCharsets.UTF_8)));
 
         Statistics stats = acc.finishChunk();
         assertThat(new String(stats.minValue().toArray(JAVA_BYTE), StandardCharsets.UTF_8))
@@ -242,7 +242,7 @@ class StatisticsAccumulatorTest {
         StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.BYTE_ARRAY, null);
         byte[] mutable = {1, 2, 3};
 
-        acc.update(asSegment(mutable), false);
+        acc.updateBinary(asSegment(mutable));
         mutable[0] = 99;
 
         Statistics stats = acc.finishChunk();
@@ -287,20 +287,15 @@ class StatisticsAccumulatorTest {
     }
 
     @Test
-    void objectUpdatePathMatchesUpdateBinary() {
-        StatisticsAccumulator viaObject = StatisticsAccumulator.forKind(PrimitiveKind.BYTE_ARRAY, null);
-        StatisticsAccumulator viaTyped = StatisticsAccumulator.forKind(PrimitiveKind.BYTE_ARRAY, null);
-        viaObject.update(segmentOf("beta"), false);
-        viaObject.update(null, true);
-        viaTyped.updateBinary(segmentOf("beta"));
-        viaTyped.update(null, true);
-        Statistics fromObject = viaObject.finishChunk();
-        Statistics fromTyped = viaTyped.finishChunk();
-        assertThat(fromTyped.nullCount()).isEqualTo(fromObject.nullCount());
-        assertThat(fromTyped.minValue().toArray(JAVA_BYTE))
-                .isEqualTo(fromObject.minValue().toArray(JAVA_BYTE));
-        assertThat(fromTyped.maxValue().toArray(JAVA_BYTE))
-                .isEqualTo(fromObject.maxValue().toArray(JAVA_BYTE));
+    void typedUpdateRejectsWrongKind() {
+        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
+        assertThatThrownBy(() -> acc.updateLong(1L)).isInstanceOf(ParquetWriteException.class);
+    }
+
+    @Test
+    void updateNonNullRejectsMinMaxTrackingKinds() {
+        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
+        assertThatThrownBy(acc::updateNonNull).isInstanceOf(ParquetWriteException.class);
     }
 
     @Test
@@ -321,9 +316,9 @@ class StatisticsAccumulatorTest {
         StatisticsAccumulator acc =
                 StatisticsAccumulator.forKind(PrimitiveKind.BYTE_ARRAY, new LogicalType.Geometry(Optional.empty()));
 
-        acc.update(asSegment(new byte[] {0x01, 0x02, 0x03}), false);
-        acc.update(null, true);
-        acc.update(asSegment(new byte[] {0x04}), false);
+        acc.updateBinary(asSegment(new byte[] {0x01, 0x02, 0x03}));
+        acc.updateNull();
+        acc.updateBinary(asSegment(new byte[] {0x04}));
 
         Statistics stats = acc.finishChunk();
         assertThat(stats.minValue()).as("minValue").isEqualTo(MemorySegment.NULL);
@@ -335,8 +330,8 @@ class StatisticsAccumulatorTest {
     void int96ProducesNoMinMax() {
         StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.INT96, null);
 
-        acc.update(asSegment(new byte[12]), false);
-        acc.update(null, true);
+        acc.updateNonNull();
+        acc.updateNull();
 
         Statistics stats = acc.finishChunk();
         assertThat(stats.minValue()).isEqualTo(MemorySegment.NULL);
@@ -347,17 +342,17 @@ class StatisticsAccumulatorTest {
     @Test
     void mergeProducesSameSnapshotAsDirectAccumulation() {
         StatisticsAccumulator combined = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
-        combined.update(10, false);
-        combined.update(2, false);
-        combined.update(null, true);
-        combined.update(57, false);
+        combined.updateInt(10);
+        combined.updateInt(2);
+        combined.updateNull();
+        combined.updateInt(57);
 
         StatisticsAccumulator left = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
-        left.update(10, false);
-        left.update(2, false);
+        left.updateInt(10);
+        left.updateInt(2);
         StatisticsAccumulator right = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
-        right.update(null, true);
-        right.update(57, false);
+        right.updateNull();
+        right.updateInt(57);
 
         left.merge(right);
 
@@ -367,8 +362,8 @@ class StatisticsAccumulatorTest {
     @Test
     void mergeAbsorbsEmptyAccumulator() {
         StatisticsAccumulator left = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
-        left.update(1, false);
-        left.update(2, false);
+        left.updateInt(1);
+        left.updateInt(2);
         StatisticsAccumulator right = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
 
         left.merge(right);
@@ -383,8 +378,8 @@ class StatisticsAccumulatorTest {
     void mergeIntoEmptyAccumulatorCopiesSource() {
         StatisticsAccumulator left = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
         StatisticsAccumulator right = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
-        right.update(7, false);
-        right.update(-1, false);
+        right.updateInt(7);
+        right.updateInt(-1);
 
         left.merge(right);
 
@@ -406,8 +401,8 @@ class StatisticsAccumulatorTest {
     @Test
     void resetReturnsToInitialState() {
         StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
-        acc.update(42, false);
-        acc.update(null, true);
+        acc.updateInt(42);
+        acc.updateNull();
 
         acc.reset();
 
@@ -420,16 +415,16 @@ class StatisticsAccumulatorTest {
     @Test
     void finishPageDoesNotResetAccumulationSoFinishChunkCarriesFullWindow() {
         StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
-        acc.update(5, false);
-        acc.update(10, false);
+        acc.updateInt(5);
+        acc.updateInt(10);
 
         PageStatistics page1 = acc.finishPage();
         assertThat(decodeInt32(page1.min())).isEqualTo(5);
         assertThat(decodeInt32(page1.max())).isEqualTo(10);
         assertThat(page1.isNullPage()).isFalse();
 
-        acc.update(-3, false);
-        acc.update(20, false);
+        acc.updateInt(-3);
+        acc.updateInt(20);
 
         Statistics chunk = acc.finishChunk();
         assertThat(decodeInt32(chunk.minValue())).isEqualTo(-3);
@@ -440,9 +435,9 @@ class StatisticsAccumulatorTest {
     @Test
     void allNullPageIsFlaggedAsNullPage() {
         StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
-        acc.update(null, true);
-        acc.update(null, true);
-        acc.update(null, true);
+        acc.updateNull();
+        acc.updateNull();
+        acc.updateNull();
 
         PageStatistics page = acc.finishPage();
 

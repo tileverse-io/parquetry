@@ -16,8 +16,6 @@
 package io.tileverse.parquetry.internal.write.page;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.WritableByteChannel;
 
 import io.tileverse.parquetry.format.Encoding;
 
@@ -36,14 +34,14 @@ public record PlainFixedLenBinaryEncoder(int length) implements Encoder<byte[][]
     }
 
     @Override
-    public int encode(byte[][] values, int n, WritableByteChannel dst) throws IOException {
+    public int encode(byte[][] values, int n, LittleEndianSink dst) throws IOException {
         for (int i = 0; i < n; i++) {
             byte[] value = values[i];
             if (value.length != length) {
                 throw new IllegalArgumentException("FIXED_LEN_BYTE_ARRAY value at index " + i + " has length "
                         + value.length + " but encoder is configured for " + length);
             }
-            ChannelWrites.writeFully(dst, ByteBuffer.wrap(value));
+            dst.write(value);
         }
         return n * length;
     }

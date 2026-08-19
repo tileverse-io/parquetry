@@ -42,6 +42,12 @@ import lombok.NonNull;
  * batches in pieces can merge sibling accumulators with {@link #merge(StatisticsAccumulator)} before publishing the
  * chunk snapshot.
  *
+ * <p>Each non-null cell enters through its kind's typed update method ({@link #updateInt}, {@link #updateLong},
+ * {@link #updateFloat}, {@link #updateDouble}, {@link #updateBoolean}, {@link #updateBinary}); {@link #updateNull}
+ * records a null and {@link #updateNonNull} records a non-null observation for the kinds without min/max
+ * ({@code INT96}). Binary retention copies the segment bytes only on the first observation or a strict min/max
+ * improvement, never per cell, and the caller may reuse or release its source segment after the call returns.
+ *
  * <p>Ordering mirrors the read-side stats evaluator: signed numeric comparison for the integer and floating kinds and
  * unsigned lexicographic byte comparison for {@code BYTE_ARRAY} / {@code FIXED_LEN_BYTE_ARRAY}, matching Parquet's
  * default {@code ColumnOrder}. Floating-point {@code NaN} values participate in null-count tracking but are excluded
@@ -124,23 +130,72 @@ public final class StatisticsAccumulator {
         return logicalType instanceof LogicalType.IntType intType && !intType.isSigned();
     }
 
+    /** Adds one non-null INT32 cell: counts the observation and folds it into min/max. */
+    public void updateInt(int value) {
+        requireValueKind(PrimitiveKind.INT32);
+        nonNullCount++;
+        if (tracksMinMax) {
+            updateInt32MinMax(value);
+        }
+    }
+
+    /** Adds one non-null INT64 cell: counts the observation and folds it into min/max. */
+    public void updateLong(long value) {
+        requireValueKind(PrimitiveKind.INT64);
+        nonNullCount++;
+        if (tracksMinMax) {
+            updateInt64MinMax(value);
+        }
+    }
+
+    /** Adds one non-null FLOAT cell: counts the observation and folds it into min/max. */
+    public void updateFloat(float value) {
+        requireValueKind(PrimitiveKind.FLOAT);
+        nonNullCount++;
+        if (tracksMinMax) {
+            updateFloatMinMax(value);
+        }
+    }
+
+    /** Adds one non-null DOUBLE cell: counts the observation and folds it into min/max. */
+    public void updateDouble(double value) {
+        requireValueKind(PrimitiveKind.DOUBLE);
+        nonNullCount++;
+        if (tracksMinMax) {
+            updateDoubleMinMax(value);
+        }
+    }
+
+    /** Adds one non-null BOOLEAN cell: counts the observation and folds it into min/max. */
+    public void updateBoolean(boolean value) {
+        requireValueKind(PrimitiveKind.BOOLEAN);
+        nonNullCount++;
+        if (tracksMinMax) {
+            updateBooleanMinMax(value);
+        }
+    }
+
+    /** Adds one null cell. */
+    public void updateNull() {
+        nullCount++;
+    }
+
     /**
-     * Adds one cell to the accumulation window. {@code value} is the unboxed primitive for numeric / boolean kinds and
-     * a {@link MemorySegment} for binary kinds ({@code BYTE_ARRAY}, {@code FIXED_LEN_BYTE_ARRAY}, {@code INT96}). The
-     * binary path copies the segment bytes only on the first observation or a strict min/max improvement; the caller
-     * may reuse or release the source segment after this call returns because any retained bytes are copies.
-     * {@code value} is only consulted when {@code isNull} is {@code false}.
+     * Adds one non-null cell for a kind that tracks no min/max (INT96). Kinds with min/max tracking must go through
+     * their typed update; that is how the observation reaches the bounds.
      */
-    public void update(Object value, boolean isNull) {
-        if (isNull) {
-            nullCount++;
-            return;
+    public void updateNonNull() {
+        if (tracksMinMax) {
+            throw new ParquetWriteException("updateNonNull is only for kinds without min/max tracking; " + kind
+                    + " must use its typed update method");
         }
         nonNullCount++;
-        if (!tracksMinMax) {
-            return;
+    }
+
+    private void requireValueKind(PrimitiveKind valueKind) {
+        if (kind != valueKind) {
+            throw new ParquetWriteException("Accumulator for " + kind + " received a " + valueKind + " value");
         }
-        updateMinMax(value);
     }
 
     /**
@@ -148,6 +203,7 @@ public final class StatisticsAccumulator {
      * only on the first observation or a strict min/max improvement, never per cell.
      */
     public void updateBinary(@NonNull MemorySegment value) {
+        requireBinaryKind();
         nonNullCount++;
         if (!tracksMinMax) {
             return;
@@ -155,21 +211,13 @@ public final class StatisticsAccumulator {
         updateBinaryMinMax(value);
     }
 
-    private void updateMinMax(Object value) {
-        switch (kind) {
-            case BOOLEAN -> updateBoolean((boolean) value);
-            case INT32 -> updateInt32((int) value);
-            case INT64 -> updateInt64((long) value);
-            case FLOAT -> updateFloat((float) value);
-            case DOUBLE -> updateDouble((double) value);
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> updateBinaryMinMax((MemorySegment) value);
-            case INT96 -> {
-                /* unreachable: tracksMinMax is false for INT96 */
-            }
+    private void requireBinaryKind() {
+        if (kind != PrimitiveKind.BYTE_ARRAY && kind != PrimitiveKind.FIXED_LEN_BYTE_ARRAY) {
+            throw new ParquetWriteException("Accumulator for " + kind + " received a binary value");
         }
     }
 
-    private void updateBoolean(boolean v) {
+    private void updateBooleanMinMax(boolean v) {
         if (!hasMinMax) {
             booleanMin = v;
             booleanMax = v;
@@ -178,13 +226,12 @@ public final class StatisticsAccumulator {
         }
         if (Boolean.compare(v, booleanMin) < 0) {
             booleanMin = v;
-        }
-        if (Boolean.compare(v, booleanMax) > 0) {
+        } else if (Boolean.compare(v, booleanMax) > 0) {
             booleanMax = v;
         }
     }
 
-    private void updateInt32(int v) {
+    private void updateInt32MinMax(int v) {
         if (!hasMinMax) {
             intMin = v;
             intMax = v;
@@ -193,13 +240,12 @@ public final class StatisticsAccumulator {
         }
         if (v < intMin) {
             intMin = v;
-        }
-        if (v > intMax) {
+        } else if (v > intMax) {
             intMax = v;
         }
     }
 
-    private void updateInt64(long v) {
+    private void updateInt64MinMax(long v) {
         if (!hasMinMax) {
             longMin = v;
             longMax = v;
@@ -208,13 +254,12 @@ public final class StatisticsAccumulator {
         }
         if (v < longMin) {
             longMin = v;
-        }
-        if (v > longMax) {
+        } else if (v > longMax) {
             longMax = v;
         }
     }
 
-    private void updateFloat(float v) {
+    private void updateFloatMinMax(float v) {
         // NaN is excluded from min/max but already counted as a non-null observation.
         if (Float.isNaN(v)) {
             return;
@@ -227,13 +272,12 @@ public final class StatisticsAccumulator {
         }
         if (Float.compare(v, floatMin) < 0) {
             floatMin = v;
-        }
-        if (Float.compare(v, floatMax) > 0) {
+        } else if (Float.compare(v, floatMax) > 0) {
             floatMax = v;
         }
     }
 
-    private void updateDouble(double v) {
+    private void updateDoubleMinMax(double v) {
         if (Double.isNaN(v)) {
             return;
         }
@@ -245,8 +289,7 @@ public final class StatisticsAccumulator {
         }
         if (Double.compare(v, doubleMin) < 0) {
             doubleMin = v;
-        }
-        if (Double.compare(v, doubleMax) > 0) {
+        } else if (Double.compare(v, doubleMax) > 0) {
             doubleMax = v;
         }
     }
@@ -259,34 +302,16 @@ public final class StatisticsAccumulator {
             hasMinMax = true;
             return;
         }
-        if (compareUnsignedLex(value, binaryMin) < 0) {
+        if (UnsignedLexOrder.compare(value, binaryMin) < 0) {
             binaryMin = retainCopy(value);
         }
-        if (compareUnsignedLex(value, binaryMax) > 0) {
+        if (UnsignedLexOrder.compare(value, binaryMax) > 0) {
             binaryMax = retainCopy(value);
         }
     }
 
     private static MemorySegment retainCopy(MemorySegment value) {
         return MemorySegment.ofArray(value.toArray(ValueLayout.JAVA_BYTE)).asReadOnly();
-    }
-
-    /**
-     * Unsigned lexicographic order with shorter-is-smaller on prefix equality, matching Parquet's default BYTE_ARRAY /
-     * FIXED_LEN_BYTE_ARRAY column order.
-     */
-    private static int compareUnsignedLex(MemorySegment a, MemorySegment b) {
-        long mismatch = a.mismatch(b);
-        if (mismatch == -1) {
-            return 0;
-        }
-        if (mismatch == a.byteSize()) {
-            return -1;
-        }
-        if (mismatch == b.byteSize()) {
-            return 1;
-        }
-        return Byte.compareUnsigned(a.get(ValueLayout.JAVA_BYTE, mismatch), b.get(ValueLayout.JAVA_BYTE, mismatch));
     }
 
     /**
@@ -374,10 +399,10 @@ public final class StatisticsAccumulator {
     }
 
     private void mergeBinaryMinMax(StatisticsAccumulator other) {
-        if (compareUnsignedLex(other.binaryMin, binaryMin) < 0) {
+        if (UnsignedLexOrder.compare(other.binaryMin, binaryMin) < 0) {
             binaryMin = other.binaryMin;
         }
-        if (compareUnsignedLex(other.binaryMax, binaryMax) > 0) {
+        if (UnsignedLexOrder.compare(other.binaryMax, binaryMax) > 0) {
             binaryMax = other.binaryMax;
         }
     }
@@ -415,7 +440,7 @@ public final class StatisticsAccumulator {
     }
 
     /**
-     * Returns the chunk-level {@link Statistics} for the current accumulation window. Subsequent {@link #update} calls
+     * Returns the chunk-level {@link Statistics} for the current accumulation window. Subsequent typed update calls
      * keep accumulating; {@link #reset()} starts a fresh window.
      */
     public Statistics finishChunk() {

@@ -29,7 +29,6 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.internal.read.page.PlainInt96Decoder;
-import io.tileverse.parquetry.testsupport.ByteArrayWritableChannel;
 
 class PlainInt96EncoderTest {
 
@@ -41,7 +40,7 @@ class PlainInt96EncoderTest {
     @Test
     void rejectsNon12ByteValue() {
         PlainInt96Encoder encoder = new PlainInt96Encoder();
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         byte[][] bad = {new byte[11]};
         assertThatThrownBy(() -> encoder.encode(bad, 1, out))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -72,7 +71,7 @@ class PlainInt96EncoderTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("roundTripCases")
     void roundTripViaDecoder(String label, byte[][] values) throws Exception {
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         new PlainInt96Encoder().encode(values, values.length, out);
 
         PlainInt96Decoder decoder = new PlainInt96Decoder();

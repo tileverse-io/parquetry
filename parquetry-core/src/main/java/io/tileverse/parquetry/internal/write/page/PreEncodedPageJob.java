@@ -27,10 +27,9 @@ import lombok.NonNull;
  * Input bag for a single pre-encoded page emission via {@link PageWriter}.
  *
  * <p>Mirror of {@link PageEncodeJob} for callers that produce the encoded value bytes themselves -- typically a
- * page-level encoder like {@link DictionaryAttemptEncoder} that has already serialized the values.
- * {@link #valuesEncoding()} is placed verbatim on the page header; {@link #encodedValueBytes()} is written after the
- * rep/def level bytes (V2) or concatenated with them before compression (V1). {@link #rowCount()} is ignored by the V1
- * writer.
+ * {@link PageDictionaryEncoder} that has already serialized the values. {@link #valuesEncoding()} is placed verbatim on
+ * the page header; {@link #encodedValueBytes()} is written after the rep/def level bytes (V2) or concatenated with them
+ * before compression (V1). {@link #rowCount()} is ignored by the V1 writer.
  *
  * @param encodedValueBytes already-encoded value bytes for the page
  * @param valuesEncoding encoding marker to place in the page header

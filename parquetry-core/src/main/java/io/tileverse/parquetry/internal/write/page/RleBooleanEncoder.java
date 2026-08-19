@@ -15,13 +15,7 @@
  */
 package io.tileverse.parquetry.internal.write.page;
 
-import static java.nio.ByteOrder.LITTLE_ENDIAN;
-
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.Channels;
-import java.nio.channels.WritableByteChannel;
 
 import io.tileverse.parquetry.format.Encoding;
 
@@ -35,20 +29,16 @@ import io.tileverse.parquetry.format.Encoding;
 public final class RleBooleanEncoder implements Encoder<boolean[]> {
 
     @Override
-    public int encode(boolean[] values, int n, WritableByteChannel dst) throws IOException {
+    public int encode(boolean[] values, int n, LittleEndianSink dst) throws IOException {
         int[] asInts = new int[n];
         for (int i = 0; i < n; i++) {
             asInts[i] = values[i] ? 1 : 0;
         }
-        ByteArrayOutputStream payload = new ByteArrayOutputStream();
-        WritableByteChannel payloadChannel = Channels.newChannel(payload);
-        RleBitPackedHybridWriter.write(asInts, n, 1, payloadChannel);
-        byte[] body = payload.toByteArray();
-        byte[] prefix = new byte[Integer.BYTES];
-        ByteBuffer.wrap(prefix).order(LITTLE_ENDIAN).putInt(body.length);
-        ChannelWrites.writeFully(dst, ByteBuffer.wrap(prefix));
-        ChannelWrites.writeFully(dst, ByteBuffer.wrap(body));
-        return prefix.length + body.length;
+        GrowableByteSink payload = new GrowableByteSink(64);
+        RleBitPackedHybridWriter.write(asInts, n, 1, payload);
+        dst.writeInt(payload.size());
+        payload.writeInto(dst);
+        return Integer.BYTES + payload.size();
     }
 
     @Override

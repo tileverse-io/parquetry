@@ -17,11 +17,9 @@ package io.tileverse.parquetry.internal.write.page;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
-import java.nio.channels.Channels;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -187,17 +185,17 @@ class BinaryDictionaryEncoderTest {
     private static void assertPageFlushIdentical(
             DictionaryAttemptEncoder<ByteBuffer, byte[][]> reference, BinaryDictionaryEncoder tested, String context)
             throws IOException {
-        ByteArrayOutputStream referenceBytes = new ByteArrayOutputStream();
-        PageDictionaryEncoder.PageResult referenceResult = reference.flushPage(Channels.newChannel(referenceBytes));
-        ByteArrayOutputStream testedBytes = new ByteArrayOutputStream();
-        PageDictionaryEncoder.PageResult testedResult = tested.flushPage(Channels.newChannel(testedBytes));
+        GrowableByteSink referenceBytes = new GrowableByteSink(64);
+        PageDictionaryEncoder.PageResult referenceResult = reference.flushPage(referenceBytes);
+        GrowableByteSink testedBytes = new GrowableByteSink(64);
+        PageDictionaryEncoder.PageResult testedResult = tested.flushPage(testedBytes);
         assertThat(testedBytes.toByteArray()).as(context).isEqualTo(referenceBytes.toByteArray());
         assertThat(testedResult).as(context).isEqualTo(referenceResult);
     }
 
     private static byte[] flushToBytes(BinaryDictionaryEncoder encoder) throws IOException {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        encoder.flushPage(Channels.newChannel(out));
+        GrowableByteSink out = new GrowableByteSink(64);
+        encoder.flushPage(out);
         return out.toByteArray();
     }
 

@@ -15,21 +15,13 @@
  */
 package io.tileverse.parquetry.internal.write;
 
-import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
-import java.util.function.IntFunction;
+import java.util.Map;
 
-import io.tileverse.parquetry.columnar.BinaryVector;
-import io.tileverse.parquetry.columnar.BooleanVector;
 import io.tileverse.parquetry.columnar.ColumnVector;
-import io.tileverse.parquetry.columnar.DoubleVector;
-import io.tileverse.parquetry.columnar.FixedLenBinaryVector;
-import io.tileverse.parquetry.columnar.FloatVector;
-import io.tileverse.parquetry.columnar.Int96Vector;
-import io.tileverse.parquetry.columnar.IntVector;
 import io.tileverse.parquetry.columnar.ListVector;
-import io.tileverse.parquetry.columnar.LongVector;
 import io.tileverse.parquetry.columnar.MapVector;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.columnar.ShreddedVariantVector;
@@ -47,7 +39,8 @@ import io.tileverse.parquetry.schema.SchemaNode;
 /**
  * Shreds an eager nested {@link ParquetRecordBatch} into per-leaf {@link StripedLeaf} streams, the write-side inverse
  * of the read-side Dremel assembly. Each {@link ParquetSchema#leafColumns() leaf} becomes one {@code StripedLeaf}
- * holding the leaf's materialized values plus its repetition- and definition-level streams.
+ * holding the leaf's raw value vector and the source ordinals of its present values, plus its repetition- and
+ * definition-level streams.
  *
  * <p>A non-repeated leaf (a flat REQUIRED / OPTIONAL column or one nested only through STRUCT levels) participates in
  * exactly one entry per top-level row and every repetition level is zero. A repeated leaf (a list or map element)
@@ -60,7 +53,7 @@ import io.tileverse.parquetry.schema.SchemaNode;
  * root down to the first absent or empty one. A present OPTIONAL ancestor or a non-empty REPEATED ancestor adds one and
  * the descent continues; the first null OPTIONAL ancestor or empty REPEATED ancestor adds nothing and stops. REQUIRED
  * ancestors add nothing and never stop the descent. The leaf's own OPTIONAL-ness is the last step: a present optional
- * leaf reaches {@code maxDef} and its value is materialized; a null one stops one short.
+ * leaf reaches {@code maxDef} and contributes its value; a null one stops one short.
  *
  * <h2>Repetition-level synthesis</h2>
  *
@@ -73,6 +66,9 @@ import io.tileverse.parquetry.schema.SchemaNode;
 public final class DremelStriper {
 
     private final ParquetSchema schema;
+
+    /** Each repeated leaf's schema-derived step chain, computed once and reused across every batch. */
+    private final Map<ColumnPath, List<Step>> leafChains = new HashMap<>();
 
     public DremelStriper(ParquetSchema schema) {
         this.schema = schema;
@@ -106,7 +102,6 @@ public final class DremelStriper {
         int rowCount = batch.rowCount();
         int maxDef = maxima.maxDefinitionLevel();
         int[] defLevels = new int[rowCount];
-        int[] repLevels = new int[rowCount];
         int[] presentRows = new int[rowCount];
         int valueCount = 0;
         for (int row = 0; row < rowCount; row++) {
@@ -117,8 +112,15 @@ public final class DremelStriper {
                 valueCount++;
             }
         }
-        ColumnVector values = gather(chain.leafValues(), presentRows, valueCount);
-        return new StripedLeaf(leafPath, values, repLevels, defLevels, valueCount, maxima.maxRepetitionLevel(), maxDef);
+        return new StripedLeaf(
+                leafPath,
+                chain.leafValues(),
+                presentRows,
+                null,
+                defLevels,
+                valueCount,
+                maxima.maxRepetitionLevel(),
+                maxDef);
     }
 
     /**
@@ -218,22 +220,23 @@ public final class DremelStriper {
 
     /**
      * Shreds one repeated leaf by walking its schema chain against the eager vectors, emitting the rep / def streams
-     * and gathering the materialized element values. Each top-level row opens one parent slot at repetition level zero;
-     * the recursion descends list / map / struct levels, synthesizing repetition levels per the Dremel rule.
+     * and recording the source ordinals of the present element values. Each top-level row opens one parent slot at
+     * repetition level zero; the recursion descends list / map / struct levels, synthesizing repetition levels per the
+     * Dremel rule.
      */
     private StripedLeaf stripeRepeated(ColumnPath leafPath, LevelMaxima maxima, ParquetRecordBatch batch) {
-        List<Step> chain = leafChain(leafPath);
+        List<Step> chain = leafChains.computeIfAbsent(leafPath, this::leafChain);
         ColumnVector topVector = topVector(leafPath, batch);
         StripeBuilder builder = new StripeBuilder();
         int rowCount = batch.rowCount();
         for (int row = 0; row < rowCount; row++) {
             emit(chain, 0, topVector, row, 0, 0, builder);
         }
-        ColumnVector leafValues = navigateToLeafVector(chain, topVector);
-        ColumnVector values = gather(leafValues, builder.keptOrdinals(), builder.valueCount());
+        ColumnVector sourceValues = navigateToLeafVector(chain, topVector);
         return new StripedLeaf(
                 leafPath,
-                values,
+                sourceValues,
+                builder.keptOrdinals(),
                 builder.repLevels(),
                 builder.defLevels(),
                 builder.valueCount(),
@@ -264,9 +267,9 @@ public final class DremelStriper {
     }
 
     /**
-     * Emits the final leaf entry. A REQUIRED leaf always materializes its value at the definition level inherited from
-     * the enclosing element. An OPTIONAL leaf adds one final definition step when present and materializes its value; a
-     * null OPTIONAL leaf stops one short and materializes nothing.
+     * Emits the final leaf entry. A REQUIRED leaf always keeps its value at the definition level inherited from the
+     * enclosing element. An OPTIONAL leaf adds one final definition step when present and keeps its value; a null
+     * OPTIONAL leaf stops one short and keeps no value.
      */
     private void emitLeaf(
             LeafValueStep step,
@@ -304,7 +307,7 @@ public final class DremelStriper {
             return;
         }
         int childDef = defSoFar + (step.optional() ? 1 : 0);
-        ColumnVector childVector = struct.children().get(ColumnPath.of(step.childName()));
+        ColumnVector childVector = struct.children().get(step.childPath());
         emit(chain, stepIndex + 1, childVector, index, repToEmit, childDef, builder);
     }
 
@@ -392,7 +395,7 @@ public final class DremelStriper {
                     return current;
                 }
                 case StructStep struct ->
-                    current = asStruct(current, struct).children().get(ColumnPath.of(struct.childName()));
+                    current = asStruct(current, struct).children().get(struct.childPath());
                 case RepeatedStep repeated -> current = repeated.childVector(current);
             }
         }
@@ -424,7 +427,8 @@ public final class DremelStriper {
                 return chain;
             }
             String childName = leafPath.part(part);
-            chain.add(new StructStep(ColumnPath.of(path), node.repetition() == Repetition.OPTIONAL, childName));
+            chain.add(new StructStep(
+                    ColumnPath.of(path), node.repetition() == Repetition.OPTIONAL, ColumnPath.of(childName)));
             node = childOf(node, childName);
             path.add(childName);
             part++;
@@ -491,13 +495,14 @@ public final class DremelStriper {
     /** A step that addresses one nested vector level along the leaf's chain. */
     private sealed interface Step permits LeafValueStep, StructStep, RepeatedStep {}
 
-    /** The leaf value level: a present OPTIONAL leaf contributes a final definition step and materializes its value. */
+    /** The leaf value level: a present OPTIONAL leaf contributes a final definition step and keeps its value. */
     private record LeafValueStep(ColumnPath path, boolean optional) implements Step {}
 
     /**
-     * A STRUCT level: a present OPTIONAL struct contributes a definition step; the descent continues into one child.
+     * A STRUCT level: a present OPTIONAL struct contributes a definition step; the descent continues into the child
+     * named by {@code childPath} in the struct's children map.
      */
-    private record StructStep(ColumnPath path, boolean optional, String childName) implements Step {}
+    private record StructStep(ColumnPath path, boolean optional, ColumnPath childPath) implements Step {}
 
     /**
      * A list or map level, collapsing the logical group and its repeated child group. {@code groupOptional} marks the
@@ -535,8 +540,8 @@ public final class DremelStriper {
     }
 
     /**
-     * Accumulates one repeated leaf's rep / def streams and the source ordinals of its materialized values in a single
-     * pass over the eager vectors.
+     * Accumulates one repeated leaf's rep / def streams and the source ordinals of its present values in a single pass
+     * over the eager vectors.
      */
     private static final class StripeBuilder {
 
@@ -586,81 +591,5 @@ public final class DremelStriper {
                 kept = java.util.Arrays.copyOf(kept, kept.length * 2);
             }
         }
-    }
-
-    // --- value gathering: shared by both paths ---
-
-    /**
-     * Gathers the {@code count} values at {@code sourceOrdinals} into a fresh, contiguous vector. This drops null cells
-     * and any value an absent ancestor kept out of the stream, leaving only the values a column-chunk writer emits.
-     */
-    private ColumnVector gather(ColumnVector source, int[] sourceOrdinals, int count) {
-        int[] kept = new int[count];
-        System.arraycopy(sourceOrdinals, 0, kept, 0, count);
-        return switch (source) {
-            case IntVector v -> IntVector.materialized(gatherInts(v, kept), Validity.allValid(count));
-            case LongVector v -> LongVector.materialized(gatherLongs(v, kept), Validity.allValid(count));
-            case FloatVector v -> FloatVector.materialized(gatherFloats(v, kept), Validity.allValid(count));
-            case DoubleVector v -> DoubleVector.materialized(gatherDoubles(v, kept), Validity.allValid(count));
-            case BooleanVector v -> BooleanVector.materialized(gatherBooleans(v, kept), Validity.allValid(count));
-            case BinaryVector v -> BinaryVector.materialized(gatherSegments(v::get, kept), Validity.allValid(count));
-            case FixedLenBinaryVector v ->
-                FixedLenBinaryVector.materialized(
-                        gatherSegments(v::get, kept), v.byteWidth(), Validity.allValid(count));
-            case Int96Vector _ ->
-                throw new UnsupportedOperationException(
-                        "INT96 is not supported for nested leaf striping; use INT64 with a timestamp logical type");
-            default ->
-                throw new UnsupportedOperationException(
-                        "striping a " + source.getClass().getSimpleName() + " leaf is not supported");
-        };
-    }
-
-    private int[] gatherInts(IntVector v, int[] kept) {
-        int[] out = new int[kept.length];
-        for (int i = 0; i < kept.length; i++) {
-            out[i] = v.valueAt(kept[i]);
-        }
-        return out;
-    }
-
-    private long[] gatherLongs(LongVector v, int[] kept) {
-        long[] out = new long[kept.length];
-        for (int i = 0; i < kept.length; i++) {
-            out[i] = v.valueAt(kept[i]);
-        }
-        return out;
-    }
-
-    private float[] gatherFloats(FloatVector v, int[] kept) {
-        float[] out = new float[kept.length];
-        for (int i = 0; i < kept.length; i++) {
-            out[i] = v.valueAt(kept[i]);
-        }
-        return out;
-    }
-
-    private double[] gatherDoubles(DoubleVector v, int[] kept) {
-        double[] out = new double[kept.length];
-        for (int i = 0; i < kept.length; i++) {
-            out[i] = v.valueAt(kept[i]);
-        }
-        return out;
-    }
-
-    private boolean[] gatherBooleans(BooleanVector v, int[] kept) {
-        boolean[] out = new boolean[kept.length];
-        for (int i = 0; i < kept.length; i++) {
-            out[i] = v.valueAt(kept[i]);
-        }
-        return out;
-    }
-
-    private MemorySegment[] gatherSegments(IntFunction<MemorySegment> getter, int[] kept) {
-        MemorySegment[] out = new MemorySegment[kept.length];
-        for (int i = 0; i < kept.length; i++) {
-            out[i] = getter.apply(kept[i]);
-        }
-        return out;
     }
 }

@@ -16,7 +16,6 @@
 package io.tileverse.parquetry.internal.write.page;
 
 import java.io.IOException;
-import java.nio.channels.WritableByteChannel;
 
 import io.tileverse.parquetry.internal.read.page.LevelDecoder;
 
@@ -44,7 +43,7 @@ public final class LevelEncoder {
     }
 
     /** Encode the first {@code n} level values from {@code levels} into {@code dst}. Returns bytes written. */
-    public int encode(int[] levels, int n, WritableByteChannel dst) throws IOException {
+    public int encode(int[] levels, int n, LittleEndianSink dst) throws IOException {
         return RleBitPackedHybridWriter.write(levels, n, bitWidth, dst);
     }
 }

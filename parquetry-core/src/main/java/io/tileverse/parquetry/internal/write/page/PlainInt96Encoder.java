@@ -16,8 +16,6 @@
 package io.tileverse.parquetry.internal.write.page;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.WritableByteChannel;
 
 import io.tileverse.parquetry.format.Encoding;
 
@@ -33,14 +31,14 @@ public final class PlainInt96Encoder implements Encoder<byte[][]> {
     private static final int INT96_BYTES = 12;
 
     @Override
-    public int encode(byte[][] values, int n, WritableByteChannel dst) throws IOException {
+    public int encode(byte[][] values, int n, LittleEndianSink dst) throws IOException {
         for (int i = 0; i < n; i++) {
             byte[] value = values[i];
             if (value.length != INT96_BYTES) {
                 throw new IllegalArgumentException(
                         "INT96 value at index " + i + " has length " + value.length + " but must be " + INT96_BYTES);
             }
-            ChannelWrites.writeFully(dst, ByteBuffer.wrap(value));
+            dst.write(value);
         }
         return n * INT96_BYTES;
     }

@@ -46,7 +46,6 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
-import io.tileverse.parquetry.testsupport.VectorArrays;
 
 /**
  * The striper is the write-side inverse of {@code DremelAssembler}: it walks an eager nested batch and a schema and
@@ -71,6 +70,18 @@ class DremelStriperTest {
         assertThat(leaf.defLevels()).containsExactly(0, 0, 0);
         assertThat(leaf.repLevels()).containsExactly(0, 0, 0);
         assertThat(leaf.valueCount()).isEqualTo(3);
+    }
+
+    @Test
+    void nonRepeatedLeafStoresNoRepStreamButSynthesizesZeros() {
+        ParquetSchema schema = schemaOf(primitive("n", Repetition.REQUIRED));
+        IntVector values = IntVector.materialized(new int[] {1, 2, 3}, Validity.allValid(3));
+        ParquetRecordBatch batch = heapBatch(schema, Map.of(ColumnPath.of("n"), values), 3);
+
+        StripedLeaf leaf = new DremelStriper(schema).stripe(batch).get(0);
+
+        assertThat(leaf.repLevelsRaw()).isNull();
+        assertThat(leaf.repLevels()).containsExactly(0, 0, 0);
     }
 
     @Test
@@ -346,14 +357,21 @@ class DremelStriperTest {
     private record RebuiltLayout(int[] offsets, BitSet validity) {}
 
     private static int[] intValues(StripedLeaf leaf) {
-        return VectorArrays.toArray(((IntVector) leaf.values()));
+        IntVector values = (IntVector) leaf.sourceValues();
+        int[] keptOrdinals = leaf.keptOrdinals();
+        int[] out = new int[leaf.valueCount()];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = values.valueAt(keptOrdinals[i]);
+        }
+        return out;
     }
 
     private static String[] stringValues(StripedLeaf leaf) {
-        BinaryVector vector = (BinaryVector) leaf.values();
+        BinaryVector vector = (BinaryVector) leaf.sourceValues();
+        int[] keptOrdinals = leaf.keptOrdinals();
         String[] out = new String[leaf.valueCount()];
         for (int i = 0; i < out.length; i++) {
-            MemorySegment bytes = vector.get(i);
+            MemorySegment bytes = vector.get(keptOrdinals[i]);
             out[i] = new String(bytes.toArray(java.lang.foreign.ValueLayout.JAVA_BYTE), StandardCharsets.UTF_8);
         }
         return out;

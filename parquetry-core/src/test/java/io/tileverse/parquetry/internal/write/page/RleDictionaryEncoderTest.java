@@ -32,7 +32,6 @@ import org.junit.jupiter.params.provider.MethodSource;
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.internal.read.page.Dictionary;
 import io.tileverse.parquetry.internal.read.page.RleDictionaryPageDecoder;
-import io.tileverse.parquetry.testsupport.ByteArrayWritableChannel;
 
 class RleDictionaryEncoderTest {
 
@@ -94,7 +93,7 @@ class RleDictionaryEncoderTest {
         // (parquet-java) reads the leading bit-width byte and then needs a run header declaring the value count; an
         // empty stream makes it throw "Reading past RLE/BitPacking stream". The encoder must emit the run header.
         int[] indexes = filled(40, 0);
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         new RleDictionaryEncoder().encode(indexes, indexes.length, out);
         byte[] encoded = out.toByteArray();
 
@@ -113,7 +112,7 @@ class RleDictionaryEncoderTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("roundTripCases")
     void roundTripViaDecoder(String label, int[] indexes, int dictSize) throws Exception {
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         new RleDictionaryEncoder().encode(indexes, indexes.length, out);
 
         // Build a synthetic dictionary that maps index i to i*10 so we can verify dereferencing.
