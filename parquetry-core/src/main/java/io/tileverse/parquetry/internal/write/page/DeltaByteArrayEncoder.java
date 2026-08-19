@@ -34,18 +34,19 @@ import io.tileverse.parquetry.format.Encoding;
  * = V[i-1][0..P[i]] + S[i]}. The first prefix length is zero. Inverse of
  * {@link io.tileverse.parquetry.internal.read.page.DeltaByteArrayDecoder}.
  */
-public final class DeltaByteArrayEncoder implements Encoder<byte[][]> {
+public final class DeltaByteArrayEncoder implements Encoder<BinaryPayload> {
 
     @Override
-    public int encode(byte[][] values, int n, LittleEndianSink dst) throws IOException {
+    public int encode(BinaryPayload values, int n, LittleEndianSink dst) throws IOException {
         long[] prefixLengths = new long[n];
         long[] suffixLengths = new long[n];
         byte[] previous = new byte[0];
         for (int i = 0; i < n; i++) {
-            int common = commonPrefix(previous, values[i]);
+            byte[] value = values.valueAt(i);
+            int common = commonPrefix(previous, value);
             prefixLengths[i] = common;
-            suffixLengths[i] = (long) values[i].length - common;
-            previous = values[i];
+            suffixLengths[i] = (long) value.length - common;
+            previous = value;
         }
 
         // The prefix and suffix length streams are DELTA_BINARY_PACKED. DeltaByteArrayDecoder drains the miniblock
@@ -55,8 +56,9 @@ public final class DeltaByteArrayEncoder implements Encoder<byte[][]> {
         written += DeltaBinaryPackedWriter.write(suffixLengths, n, dst);
         for (int i = 0; i < n; i++) {
             int common = (int) prefixLengths[i];
-            int suffixLength = values[i].length - common;
-            dst.write(values[i], common, suffixLength);
+            byte[] value = values.valueAt(i);
+            int suffixLength = value.length - common;
+            dst.write(value, common, suffixLength);
             written += suffixLength;
         }
         return written;

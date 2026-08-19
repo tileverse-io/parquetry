@@ -18,7 +18,6 @@ package io.tileverse.parquetry.internal.write;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
@@ -43,6 +42,7 @@ import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.PageLocation;
 import io.tileverse.parquetry.format.Statistics;
 import io.tileverse.parquetry.internal.write.page.BinaryDictionaryEncoder;
+import io.tileverse.parquetry.internal.write.page.BinaryPayload;
 import io.tileverse.parquetry.internal.write.page.ChannelWrites;
 import io.tileverse.parquetry.internal.write.page.DictionaryAttempt;
 import io.tileverse.parquetry.internal.write.page.EncodedPage;
@@ -108,8 +108,7 @@ public final class ColumnChunkWriter implements AutoCloseable {
     private final BloomFilterBuilder bloomFilter;
 
     private final ValueBuffer valueBuffer;
-    private final LevelBuffer repLevelBuffer;
-    private final LevelBuffer defLevelBuffer;
+    private final WriteLeafLevels levels;
 
     private final LinkedHashSet<Encoding> usedEncodings = new LinkedHashSet<>();
 
@@ -200,8 +199,7 @@ public final class ColumnChunkWriter implements AutoCloseable {
         this.bloomFilter = createBloomFilterIfRequested(options, leaf.name());
 
         this.valueBuffer = ValueBuffer.forKind(kind);
-        this.repLevelBuffer = column.maxRepetitionLevel() > 0 ? new LevelBuffer() : null;
-        this.defLevelBuffer = column.maxDefinitionLevel() > 0 ? new LevelBuffer() : null;
+        this.levels = new WriteLeafLevels(column.maxRepetitionLevel(), column.maxDefinitionLevel());
 
         this.dictionary = createDictionaryAttempt(options, leaf, kind);
         this.bufferedPages = dictionary != null ? new ArrayList<>() : null;
@@ -313,17 +311,17 @@ public final class ColumnChunkWriter implements AutoCloseable {
     }
 
     private void addBinaryCell(MemorySegment value) {
-        byte[] bytes = value.toArray(ValueLayout.JAVA_BYTE);
         if (dictionary == null) {
-            valueBuffer.addBinary(bytes);
+            valueBuffer.addBinary(value, 0, value.byteSize());
+        } else {
+            appendToDictionaryIfActive(value);
         }
         pageStats.updateBinary(value);
         addToBloom(value);
         if (geoStats != null) {
             geoStats.update(value);
         }
-        appendToDictionaryIfActive(value, bytes);
-        pageByteEstimate += Integer.BYTES + (long) bytes.length;
+        pageByteEstimate += Integer.BYTES + value.byteSize();
         pageCellCount++;
         totalCells++;
         maybeFlushPage();
@@ -342,14 +340,14 @@ public final class ColumnChunkWriter implements AutoCloseable {
     }
 
     private void addFixedLenBinaryCell(MemorySegment value) {
-        byte[] bytes = value.toArray(ValueLayout.JAVA_BYTE);
         if (dictionary == null) {
-            valueBuffer.addBinary(bytes);
+            valueBuffer.addBinary(value, 0, value.byteSize());
+        } else {
+            appendToDictionaryIfActive(value);
         }
         pageStats.updateBinary(value);
         addToBloom(value);
-        appendToDictionaryIfActive(value, bytes);
-        pageByteEstimate += bytes.length;
+        pageByteEstimate += value.byteSize();
         pageCellCount++;
         totalCells++;
         maybeFlushPage();
@@ -512,44 +510,54 @@ public final class ColumnChunkWriter implements AutoCloseable {
      * each present value in stream order. Each occurrence whose definition level reaches {@code maxDef} reads the next
      * present value from {@code values} at its source ordinal in {@code keptOrdinals}; every other occurrence is a
      * null. A {@code null} {@code repLevels} means a non-repeated leaf whose repetition stream is uniformly zero; every
-     * occurrence records repetition level zero.
+     * occurrence records repetition level zero. Only {@code [0, entryCount)} of the level arrays is read; both may be
+     * oversized past that prefix.
      */
     public void appendStriped(
-            @NonNull ColumnVector values, int[] keptOrdinals, int[] repLevels, int[] defLevels, int maxDef) {
-        if (repLevels != null && repLevels.length != defLevels.length) {
-            throw new ParquetWriteException("striped rep/def level length mismatch: " + repLevels.length + " vs "
-                    + defLevels.length + " for column " + leaf.name());
+            @NonNull ColumnVector values,
+            int[] keptOrdinals,
+            int[] repLevels,
+            int[] defLevels,
+            int entryCount,
+            int maxDef) {
+        if (entryCount < 0 || entryCount > defLevels.length) {
+            throw new ParquetWriteException("striped entryCount " + entryCount + " out of range for " + defLevels.length
+                    + " definition levels on column " + leaf.name());
         }
-        validateStripedLevels(repLevels, defLevels);
+        if (repLevels != null && repLevels.length < entryCount) {
+            throw new ParquetWriteException(
+                    "striped repetition levels shorter than entryCount " + entryCount + " for column " + leaf.name());
+        }
+        validateStripedLevels(repLevels, defLevels, entryCount);
         switch (values) {
             case io.tileverse.parquetry.columnar.IntVector iv ->
-                appendStripedInts(iv, keptOrdinals, repLevels, defLevels, maxDef);
+                appendStripedInts(iv, keptOrdinals, repLevels, defLevels, entryCount, maxDef);
             case io.tileverse.parquetry.columnar.LongVector lv ->
-                appendStripedLongs(lv, keptOrdinals, repLevels, defLevels, maxDef);
+                appendStripedLongs(lv, keptOrdinals, repLevels, defLevels, entryCount, maxDef);
             case io.tileverse.parquetry.columnar.FloatVector fv ->
-                appendStripedFloats(fv, keptOrdinals, repLevels, defLevels, maxDef);
+                appendStripedFloats(fv, keptOrdinals, repLevels, defLevels, entryCount, maxDef);
             case io.tileverse.parquetry.columnar.DoubleVector dv ->
-                appendStripedDoubles(dv, keptOrdinals, repLevels, defLevels, maxDef);
+                appendStripedDoubles(dv, keptOrdinals, repLevels, defLevels, entryCount, maxDef);
             case io.tileverse.parquetry.columnar.BooleanVector bv ->
-                appendStripedBooleans(bv, keptOrdinals, repLevels, defLevels, maxDef);
+                appendStripedBooleans(bv, keptOrdinals, repLevels, defLevels, entryCount, maxDef);
             case io.tileverse.parquetry.columnar.BinaryVector binv ->
-                appendStripedBinaries(binv, keptOrdinals, repLevels, defLevels, maxDef);
+                appendStripedBinaries(binv, keptOrdinals, repLevels, defLevels, entryCount, maxDef);
             case io.tileverse.parquetry.columnar.FixedLenBinaryVector flbv ->
-                appendStripedFixedLenBinaries(flbv, keptOrdinals, repLevels, defLevels, maxDef);
+                appendStripedFixedLenBinaries(flbv, keptOrdinals, repLevels, defLevels, entryCount, maxDef);
             default ->
                 throw new ParquetWriteException("Unsupported value vector type for nested leaf: "
                         + values.getClass().getSimpleName());
         }
     }
 
-    private void validateStripedLevels(int[] repLevels, int[] defLevels) {
+    private void validateStripedLevels(int[] repLevels, int[] defLevels, int entryCount) {
         if (repLevels == null) {
-            for (int i = 0; i < defLevels.length; i++) {
+            for (int i = 0; i < entryCount; i++) {
                 validateLevel("definition", defLevels[i], column.maxDefinitionLevel());
             }
             return;
         }
-        for (int i = 0; i < repLevels.length; i++) {
+        for (int i = 0; i < entryCount; i++) {
             validateLevels(repLevels[i], defLevels[i]);
         }
     }
@@ -559,10 +567,11 @@ public final class ColumnChunkWriter implements AutoCloseable {
             int[] keptOrdinals,
             int[] repLevels,
             int[] defLevels,
+            int entryCount,
             int maxDef) {
         ensureKind(PrimitiveKind.INT32);
         int valueIndex = 0;
-        for (int i = 0; i < defLevels.length; i++) {
+        for (int i = 0; i < entryCount; i++) {
             int rep = repLevels == null ? 0 : repLevels[i];
             int def = defLevels[i];
             recordLevelsUnchecked(rep, def);
@@ -580,10 +589,11 @@ public final class ColumnChunkWriter implements AutoCloseable {
             int[] keptOrdinals,
             int[] repLevels,
             int[] defLevels,
+            int entryCount,
             int maxDef) {
         ensureKind(PrimitiveKind.INT64);
         int valueIndex = 0;
-        for (int i = 0; i < defLevels.length; i++) {
+        for (int i = 0; i < entryCount; i++) {
             int rep = repLevels == null ? 0 : repLevels[i];
             int def = defLevels[i];
             recordLevelsUnchecked(rep, def);
@@ -601,10 +611,11 @@ public final class ColumnChunkWriter implements AutoCloseable {
             int[] keptOrdinals,
             int[] repLevels,
             int[] defLevels,
+            int entryCount,
             int maxDef) {
         ensureKind(PrimitiveKind.FLOAT);
         int valueIndex = 0;
-        for (int i = 0; i < defLevels.length; i++) {
+        for (int i = 0; i < entryCount; i++) {
             int rep = repLevels == null ? 0 : repLevels[i];
             int def = defLevels[i];
             recordLevelsUnchecked(rep, def);
@@ -622,10 +633,11 @@ public final class ColumnChunkWriter implements AutoCloseable {
             int[] keptOrdinals,
             int[] repLevels,
             int[] defLevels,
+            int entryCount,
             int maxDef) {
         ensureKind(PrimitiveKind.DOUBLE);
         int valueIndex = 0;
-        for (int i = 0; i < defLevels.length; i++) {
+        for (int i = 0; i < entryCount; i++) {
             int rep = repLevels == null ? 0 : repLevels[i];
             int def = defLevels[i];
             recordLevelsUnchecked(rep, def);
@@ -643,10 +655,11 @@ public final class ColumnChunkWriter implements AutoCloseable {
             int[] keptOrdinals,
             int[] repLevels,
             int[] defLevels,
+            int entryCount,
             int maxDef) {
         ensureKind(PrimitiveKind.BOOLEAN);
         int valueIndex = 0;
-        for (int i = 0; i < defLevels.length; i++) {
+        for (int i = 0; i < entryCount; i++) {
             int rep = repLevels == null ? 0 : repLevels[i];
             int def = defLevels[i];
             recordLevelsUnchecked(rep, def);
@@ -664,10 +677,11 @@ public final class ColumnChunkWriter implements AutoCloseable {
             int[] keptOrdinals,
             int[] repLevels,
             int[] defLevels,
+            int entryCount,
             int maxDef) {
         ensureKind(PrimitiveKind.BYTE_ARRAY);
         int valueIndex = 0;
-        for (int i = 0; i < defLevels.length; i++) {
+        for (int i = 0; i < entryCount; i++) {
             int rep = repLevels == null ? 0 : repLevels[i];
             int def = defLevels[i];
             recordLevelsUnchecked(rep, def);
@@ -685,6 +699,7 @@ public final class ColumnChunkWriter implements AutoCloseable {
             int[] keptOrdinals,
             int[] repLevels,
             int[] defLevels,
+            int entryCount,
             int maxDef) {
         ensureKind(PrimitiveKind.FIXED_LEN_BYTE_ARRAY);
         int expected = requireTypeLength(leaf);
@@ -693,7 +708,7 @@ public final class ColumnChunkWriter implements AutoCloseable {
                     + " does not match column type_length " + expected);
         }
         int valueIndex = 0;
-        for (int i = 0; i < defLevels.length; i++) {
+        for (int i = 0; i < entryCount; i++) {
             int rep = repLevels == null ? 0 : repLevels[i];
             int def = defLevels[i];
             recordLevelsUnchecked(rep, def);
@@ -809,8 +824,8 @@ public final class ColumnChunkWriter implements AutoCloseable {
 
     private void flushPage() throws IOException {
         PageStatistics snapshot = pageStats.finishPage();
-        int[] repLevels = repLevelBuffer != null ? repLevelBuffer.snapshot(pageCellCount) : null;
-        int[] defLevels = defLevelBuffer != null ? defLevelBuffer.snapshot(pageCellCount) : null;
+        int[] repLevels = levels.repetitionBacking();
+        int[] defLevels = levels.definitionBacking();
         int rowCount = (int) pageRowCount();
 
         EncodedPage encoded;
@@ -851,12 +866,7 @@ public final class ColumnChunkWriter implements AutoCloseable {
         chunkStats.merge(pageStats);
         pageStats.reset();
         valueBuffer.clear();
-        if (repLevelBuffer != null) {
-            repLevelBuffer.clear();
-        }
-        if (defLevelBuffer != null) {
-            defLevelBuffer.clear();
-        }
+        levels.clear();
         pageCellCount = 0;
         pageNullCount = 0;
         pageByteEstimate = 0L;
@@ -984,12 +994,7 @@ public final class ColumnChunkWriter implements AutoCloseable {
      * this method; level logic added to recordLevels alone would never run on the striped path.
      */
     private void recordLevelsUnchecked(int repLevel, int defLevel) {
-        if (repLevelBuffer != null) {
-            repLevelBuffer.add(repLevel);
-        }
-        if (defLevelBuffer != null) {
-            defLevelBuffer.add(defLevel);
-        }
+        levels.append(repLevel, defLevel);
         if (column.maxRepetitionLevel() > 0 && repLevel == 0) {
             rowsInCurrentPage++;
         }
@@ -1076,10 +1081,10 @@ public final class ColumnChunkWriter implements AutoCloseable {
 
     // S7475: Palantir formatter does not accept the bare `_` unnamed pattern; keep the typed unnamed binding.
     @SuppressWarnings("java:S7475")
-    private void appendToDictionaryIfActive(MemorySegment value, byte[] retainable) {
+    private void appendToDictionaryIfActive(MemorySegment value) {
         if (dictionary
-                instanceof DictionaryAttempt.BinaryAttempt(BinaryDictionaryEncoder encoder, Encoder<byte[][]> _)) {
-            encoder.appendValue(value, retainable);
+                instanceof DictionaryAttempt.BinaryAttempt(BinaryDictionaryEncoder encoder, Encoder<BinaryPayload> _)) {
+            encoder.appendValue(value);
         }
     }
 
@@ -1087,7 +1092,7 @@ public final class ColumnChunkWriter implements AutoCloseable {
     @SuppressWarnings("java:S7475")
     private void appendToDictionaryIfActive(byte[] packed) {
         if (dictionary
-                instanceof DictionaryAttempt.BinaryAttempt(BinaryDictionaryEncoder encoder, Encoder<byte[][]> _)) {
+                instanceof DictionaryAttempt.BinaryAttempt(BinaryDictionaryEncoder encoder, Encoder<BinaryPayload> _)) {
             encoder.appendValue(packed);
         }
     }

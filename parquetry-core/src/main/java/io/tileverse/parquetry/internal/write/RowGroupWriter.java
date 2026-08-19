@@ -54,8 +54,9 @@ import lombok.NonNull;
  * Per-row-group accumulator that fans incoming records out to one {@link ColumnChunkWriter} per leaf column, then
  * consolidates every column's temp file into the caller's output stream at flush time.
  *
- * <p>Flat and struct-nested schemas are both supported. Repeated columns (list / map elements) are rejected at
- * construction. A dataset-level writer layer wires this writer to record sources.
+ * <p>Flat, struct-nested and repeated schemas are all supported; a list or map element is authored through its
+ * enclosing container vector rather than as a flat column. A dataset-level writer layer wires this writer to record
+ * sources.
  *
  * <p>{@link #appendBatch} fans each column's append out as one unit on the shared
  * {@link io.tileverse.parquetry.runtime.ComputeExecutor} (submit-or-inline, joined per batch), keeping encode and
@@ -134,16 +135,17 @@ public final class RowGroupWriter implements AutoCloseable {
     /**
      * Appends one whole batch of rows. Flat leaves (top-level primitives) feed directly to their
      * {@link ColumnChunkWriter} via the per-vector fast path, keeping the flat path byte-identical to the pre-struct
-     * writer. Struct leaves (top-level struct vectors) are shredded once per batch by {@link DremelStriper} and then
-     * fed cell-by-cell through the level-aware {@code appendXxx} / {@code appendNull} API. Both stages fan out per
-     * column on the shared compute pool and join before this method returns; {@code rowCount} advances on the caller
-     * after the join.
+     * writer. Struct leaves (top-level struct vectors) are shredded by {@link DremelStriper} and fed to their writer in
+     * bulk. Both stages fan out per column on the shared compute pool and join before this method returns;
+     * {@code rowCount} advances on the caller after the join.
      */
     public void appendBatch(@NonNull ParquetRecordBatch batch) {
         if (flushed) {
             throw new ParquetWriteException("Cannot appendBatch after flushTo on RowGroupWriter");
         }
         int batchRows = batch.rowCount();
+        // A filtered batch builds its selected-column map lazily into a non-volatile field. Materializing it on the
+        // caller thread is what hands the fan-out threads a safely published map.
         Map<ColumnPath, ColumnVector> columns = batch.columns();
         checkAllLeavesPresent(columns);
         appendDirectLeaves(columns, batchRows);
@@ -219,30 +221,32 @@ public final class RowGroupWriter implements AutoCloseable {
     }
 
     /**
-     * Shreds the leaves the batch supplies only through a top-level nested vector (a struct column) and feeds each
-     * leaf's level stream cell by cell. The striper is built once per row-group writer and its stripe pass runs once
-     * per batch, serially, on the caller: it is shared work over the whole batch. Each shredded leaf's feed then runs
-     * as one fan-out unit on the shared compute pool, joined before returning. The stripe pass runs only when at least
-     * one leaf is supplied indirectly; a flat batch returns early without shredding.
+     * Writes the leaves the batch supplies only through a top-level nested vector (a struct, list or map column). Each
+     * such leaf shreds and appends as one fan-out unit on the shared compute pool, joined before returning; the striper
+     * itself is built once per row-group writer and holds no per-call state. Leaves the direct path already wrote are
+     * skipped, and a batch whose every leaf went down the direct path returns without shredding anything.
      */
     private void appendStripedLeaves(ParquetRecordBatch batch, Map<ColumnPath, ColumnVector> columns) {
         if (allLeavesWrittenDirectly(columns)) {
             return;
         }
-        List<StripedLeaf> striped = striper.stripe(batch);
-        List<Runnable> units = new ArrayList<>(striped.size());
-        for (StripedLeaf sl : striped) {
-            LeafBinding binding = leafByPath.get(sl.leaf());
-            if (binding == null) {
-                continue;
-            }
+        List<Runnable> units = new ArrayList<>(leaves.size());
+        for (LeafBinding binding : leaves) {
             if (writtenDirectly(binding, columns)) {
-                // Already written by the direct-leaf path; skip to avoid double-writing.
                 continue;
             }
-            units.add(() -> appendStripedLeaf(binding.writer, sl));
+            units.add(() -> stripeAndAppend(binding, batch));
         }
         fanOut.run(units);
+    }
+
+    /**
+     * Shreds one leaf and appends it on the same thread. The leaf's workspace is written and read entirely inside this
+     * unit, and {@link ColumnFanOut#run} joins every unit before the next batch begins.
+     */
+    private void stripeAndAppend(LeafBinding binding, ParquetRecordBatch batch) {
+        StripedLeaf striped = striper.stripeLeaf(binding.path(), batch, binding.workspace());
+        appendStripedLeaf(binding.writer(), striped);
     }
 
     private boolean allLeavesWrittenDirectly(Map<ColumnPath, ColumnVector> columns) {
@@ -270,7 +274,12 @@ public final class RowGroupWriter implements AutoCloseable {
      */
     private void appendStripedLeaf(ColumnChunkWriter writer, StripedLeaf sl) {
         writer.appendStriped(
-                sl.sourceValues(), sl.keptOrdinals(), sl.repLevelsRaw(), sl.defLevelsRaw(), sl.maxDefLevel());
+                sl.sourceValues(),
+                sl.keptOrdinals(),
+                sl.repLevelsRaw(),
+                sl.defLevelsRaw(),
+                sl.entryCount(),
+                sl.maxDefLevel());
     }
 
     /**
@@ -479,7 +488,8 @@ public final class RowGroupWriter implements AutoCloseable {
             ColumnChunkWriter writer = openLeafWriter(options, schema, leaf, path, tempFile, nested);
             Compression compression = resolveCompression(options, leaf.name());
             boolean requiresStriping = requiresStriping(schema, path, leaf);
-            return new LeafBinding(path, leaf, writer, tempFile, compression, nested, requiresStriping);
+            return new LeafBinding(
+                    path, leaf, writer, tempFile, compression, nested, requiresStriping, new LeafStripeWorkspace());
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to open column writer for " + path.dot(), e);
         }
@@ -599,6 +609,8 @@ public final class RowGroupWriter implements AutoCloseable {
      * Pairs a leaf column path with its open writer and the temp file the writer accumulates into. Captured up front so
      * flush-time iteration and close-time cleanup share the same state. {@code nested} is true when the leaf is inside
      * a struct group (path depth > 1); nested leaves are fed via the Dremel striper, not the bulk vector path.
+     * {@code workspace} is this leaf's own striping scratch, reused across batches and touched only by the fan-out unit
+     * that shreds this leaf.
      */
     private record LeafBinding(
             ColumnPath path,
@@ -607,5 +619,6 @@ public final class RowGroupWriter implements AutoCloseable {
             Path tempFile,
             Compression compression,
             boolean nested,
-            boolean requiresStriping) {}
+            boolean requiresStriping,
+            LeafStripeWorkspace workspace) {}
 }

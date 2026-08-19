@@ -26,18 +26,18 @@ import io.tileverse.parquetry.format.Encoding;
  * by the concatenated payload bytes. Inverse of
  * {@link io.tileverse.parquetry.internal.read.page.DeltaLengthByteArrayDecoder}.
  */
-public final class DeltaLengthByteArrayEncoder implements Encoder<byte[][]> {
+public final class DeltaLengthByteArrayEncoder implements Encoder<BinaryPayload> {
 
     @Override
-    public int encode(byte[][] values, int n, LittleEndianSink dst) throws IOException {
+    public int encode(BinaryPayload values, int n, LittleEndianSink dst) throws IOException {
         long[] lengths = new long[n];
         for (int i = 0; i < n; i++) {
-            lengths[i] = values[i].length;
+            lengths[i] = values.length(i);
         }
         int written = DeltaBinaryPackedWriter.write(lengths, n, dst);
         for (int i = 0; i < n; i++) {
-            dst.write(values[i]);
-            written += values[i].length;
+            values.writeValueInto(i, dst);
+            written += values.length(i);
         }
         return written;
     }

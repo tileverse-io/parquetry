@@ -77,7 +77,7 @@ class DeltaLengthByteArrayEncoderTest {
     @MethodSource("roundTripCases")
     void roundTripViaDecoder(String label, byte[][] values) throws Exception {
         GrowableByteSink out = new GrowableByteSink(64);
-        new DeltaLengthByteArrayEncoder().encode(values, values.length, out);
+        new DeltaLengthByteArrayEncoder().encode(new ArrayBinaryPayload(values, values.length), values.length, out);
 
         DeltaLengthByteArrayDecoder decoder = new DeltaLengthByteArrayDecoder();
         decoder.load(MemorySegment.ofArray(out.toByteArray()), values.length);

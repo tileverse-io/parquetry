@@ -109,4 +109,51 @@ class GrowableByteSinkTest {
         assertThat(first).containsExactly(1, 2, 3, 4, 5);
         assertThat(second).containsExactly(9, 9); // no trailing bytes from the longer first page
     }
+
+    @Test
+    void writeWholeMemorySegmentMatchesByteArrayWrite() {
+        byte[] payload = {0x0A, 0x0B, 0x0C, 0x0D};
+
+        GrowableByteSink viaArray = new GrowableByteSink(4);
+        viaArray.write(payload);
+
+        GrowableByteSink viaSegment = new GrowableByteSink(4);
+        viaSegment.write(MemorySegment.ofArray(payload));
+
+        assertThat(viaSegment.toByteArray()).isEqualTo(viaArray.toByteArray());
+        assertThat(viaSegment.size()).isEqualTo(payload.length);
+    }
+
+    @Test
+    void writeMemorySegmentSubRangeMatchesByteArrayWrite() {
+        byte[] payload = {0x01, 0x02, 0x03, 0x04, 0x05};
+
+        GrowableByteSink viaArray = new GrowableByteSink(2);
+        viaArray.write(payload, 1, 3); // 0x02, 0x03, 0x04
+
+        GrowableByteSink viaSegment = new GrowableByteSink(2);
+        viaSegment.write(MemorySegment.ofArray(payload), 1L, 3L);
+
+        assertThat(viaSegment.toByteArray()).isEqualTo(viaArray.toByteArray());
+        assertThat(viaSegment.toByteArray()).containsExactly(0x02, 0x03, 0x04);
+    }
+
+    @Test
+    void writeZeroLengthMemorySegmentIsNoOp() {
+        GrowableByteSink sink = new GrowableByteSink(4);
+        sink.writeByte(0x7F);
+        sink.write(MemorySegment.ofArray(new byte[] {1, 2, 3}), 1L, 0L);
+        assertThat(sink.size()).isEqualTo(1);
+        assertThat(sink.toByteArray()).containsExactly(0x7F);
+    }
+
+    @Test
+    void writeMemorySegmentInterleavesWithPrimitiveWrites() {
+        GrowableByteSink sink = new GrowableByteSink(4);
+        sink.writeInt(0x04030201);
+        sink.write(MemorySegment.ofArray(new byte[] {(byte) 0xAA, (byte) 0xBB}));
+        sink.writeByte(0xCC);
+        assertThat(sink.size()).isEqualTo(7);
+        assertThat(sink.toByteArray()).containsExactly(0x01, 0x02, 0x03, 0x04, 0xAA, 0xBB, 0xCC);
+    }
 }

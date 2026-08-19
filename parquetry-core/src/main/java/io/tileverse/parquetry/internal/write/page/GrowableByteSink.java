@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.internal.write.page;
 
 import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.util.Arrays;
 
 /**
@@ -78,6 +79,14 @@ public final class GrowableByteSink implements LittleEndianSink {
         ensureCapacity(len);
         System.arraycopy(src, off, buf, count, len);
         count += len;
+    }
+
+    @Override
+    public void write(MemorySegment src, long off, long len) {
+        int intLen = Math.toIntExact(len);
+        ensureCapacity(intLen);
+        MemorySegment.copy(src, ValueLayout.JAVA_BYTE, off, buf, count, intLen);
+        count += intLen;
     }
 
     @Override

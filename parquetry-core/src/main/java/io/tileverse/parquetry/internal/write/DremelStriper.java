@@ -67,28 +67,53 @@ public final class DremelStriper {
 
     private final ParquetSchema schema;
 
-    /** Each repeated leaf's schema-derived step chain, computed once and reused across every batch. */
-    private final Map<ColumnPath, List<Step>> leafChains = new HashMap<>();
+    /** Each repeated leaf's schema-derived step chain, built once at construction and shared across every batch. */
+    private final Map<ColumnPath, List<Step>> leafChains;
 
     public DremelStriper(ParquetSchema schema) {
         this.schema = schema;
+        this.leafChains = buildLeafChains(schema);
     }
 
-    /** Shreds every leaf of {@code batch} into its value and level streams, one {@link StripedLeaf} per leaf column. */
+    /**
+     * Builds the step chain of every repeated leaf up front. The chains depend only on the schema, and computing them
+     * eagerly keeps the striper free of lazily-mutated state.
+     */
+    private Map<ColumnPath, List<Step>> buildLeafChains(ParquetSchema schema) {
+        Map<ColumnPath, List<Step>> chains = new HashMap<>();
+        for (ColumnPath leafPath : schema.leafColumns()) {
+            if (schema.maxLevels(leafPath).maxRepetitionLevel() > 0) {
+                chains.put(leafPath, List.copyOf(leafChain(leafPath)));
+            }
+        }
+        return Map.copyOf(chains);
+    }
+
+    int precomputedChainCount() {
+        return leafChains.size();
+    }
+
+    /**
+     * Shreds every leaf of {@code batch} into its value and level streams, one {@link StripedLeaf} per leaf column.
+     * Each leaf gets its own workspace: every returned {@code StripedLeaf} aliases the backing arrays of the workspace
+     * that shredded it, and all of them must stay readable at once.
+     */
     public List<StripedLeaf> stripe(ParquetRecordBatch batch) {
         List<StripedLeaf> striped = new ArrayList<>();
         for (ColumnPath leafPath : schema.leafColumns()) {
-            striped.add(stripeLeaf(leafPath, batch));
+            striped.add(stripeLeaf(leafPath, batch, new LeafStripeWorkspace()));
         }
         return striped;
     }
 
-    private StripedLeaf stripeLeaf(ColumnPath leafPath, ParquetRecordBatch batch) {
+    /** Shreds one leaf of {@code batch} into {@code workspace}, whose backing arrays the result aliases. */
+    StripedLeaf stripeLeaf(ColumnPath leafPath, ParquetRecordBatch batch, LeafStripeWorkspace workspace) {
         LevelMaxima maxima = schema.maxLevels(leafPath);
+        workspace.reset();
         if (maxima.maxRepetitionLevel() == 0) {
-            return stripeNonRepeated(leafPath, maxima, batch);
+            return stripeNonRepeated(leafPath, maxima, batch, workspace);
         }
-        return stripeRepeated(leafPath, maxima, batch);
+        return stripeRepeated(leafPath, maxima, batch, workspace);
     }
 
     // --- non-repeated leaves: one entry per top-level row, repetition levels all zero ---
@@ -97,12 +122,13 @@ public final class DremelStriper {
      * Shreds one non-repeated leaf over {@code rowCount} rows. Every row contributes one definition level; a row whose
      * definition level reaches {@code maxDef} also contributes its value. Repetition levels are all zero.
      */
-    private StripedLeaf stripeNonRepeated(ColumnPath leafPath, LevelMaxima maxima, ParquetRecordBatch batch) {
+    private StripedLeaf stripeNonRepeated(
+            ColumnPath leafPath, LevelMaxima maxima, ParquetRecordBatch batch, LeafStripeWorkspace workspace) {
         LeafChain chain = navigate(leafPath, batch);
         int rowCount = batch.rowCount();
         int maxDef = maxima.maxDefinitionLevel();
-        int[] defLevels = new int[rowCount];
-        int[] presentRows = new int[rowCount];
+        int[] defLevels = workspace.defBackingForRows(rowCount);
+        int[] presentRows = workspace.rowOrdinalBacking(rowCount);
         int valueCount = 0;
         for (int row = 0; row < rowCount; row++) {
             int def = definitionLevel(chain, row);
@@ -118,6 +144,7 @@ public final class DremelStriper {
                 presentRows,
                 null,
                 defLevels,
+                rowCount,
                 valueCount,
                 maxima.maxRepetitionLevel(),
                 maxDef);
@@ -130,8 +157,9 @@ public final class DremelStriper {
      */
     private int definitionLevel(LeafChain chain, int row) {
         int def = 0;
-        for (OptionalAncestor ancestor : chain.optionalAncestors()) {
-            if (ancestor.validity().isNull(row)) {
+        List<OptionalAncestor> ancestors = chain.optionalAncestors();
+        for (int i = 0; i < ancestors.size(); i++) {
+            if (ancestors.get(i).validity().isNull(row)) {
                 return def;
             }
             def++;
@@ -224,22 +252,23 @@ public final class DremelStriper {
      * repetition level zero; the recursion descends list / map / struct levels, synthesizing repetition levels per the
      * Dremel rule.
      */
-    private StripedLeaf stripeRepeated(ColumnPath leafPath, LevelMaxima maxima, ParquetRecordBatch batch) {
-        List<Step> chain = leafChains.computeIfAbsent(leafPath, this::leafChain);
+    private StripedLeaf stripeRepeated(
+            ColumnPath leafPath, LevelMaxima maxima, ParquetRecordBatch batch, LeafStripeWorkspace workspace) {
+        List<Step> chain = leafChains.get(leafPath);
         ColumnVector topVector = topVector(leafPath, batch);
-        StripeBuilder builder = new StripeBuilder();
         int rowCount = batch.rowCount();
         for (int row = 0; row < rowCount; row++) {
-            emit(chain, 0, topVector, row, 0, 0, builder);
+            emit(chain, 0, topVector, row, 0, 0, workspace);
         }
         ColumnVector sourceValues = navigateToLeafVector(chain, topVector);
         return new StripedLeaf(
                 leafPath,
                 sourceValues,
-                builder.keptOrdinals(),
-                builder.repLevels(),
-                builder.defLevels(),
-                builder.valueCount(),
+                workspace.keptBacking(),
+                workspace.repBacking(),
+                workspace.defBacking(),
+                workspace.entryCount(),
+                workspace.valueCount(),
                 maxima.maxRepetitionLevel(),
                 maxima.maxDefinitionLevel());
     }
@@ -257,12 +286,12 @@ public final class DremelStriper {
             int index,
             int repToEmit,
             int defSoFar,
-            StripeBuilder builder) {
+            LeafStripeWorkspace workspace) {
         Step step = chain.get(stepIndex);
         switch (step) {
-            case LeafValueStep leaf -> emitLeaf(leaf, vector, index, repToEmit, defSoFar, builder);
-            case StructStep _ -> emitStruct(chain, stepIndex, vector, index, repToEmit, defSoFar, builder);
-            case RepeatedStep _ -> emitRepeated(chain, stepIndex, vector, index, repToEmit, defSoFar, builder);
+            case LeafValueStep leaf -> emitLeaf(leaf, vector, index, repToEmit, defSoFar, workspace);
+            case StructStep _ -> emitStruct(chain, stepIndex, vector, index, repToEmit, defSoFar, workspace);
+            case RepeatedStep _ -> emitRepeated(chain, stepIndex, vector, index, repToEmit, defSoFar, workspace);
         }
     }
 
@@ -277,14 +306,14 @@ public final class DremelStriper {
             int index,
             int repToEmit,
             int defSoFar,
-            StripeBuilder builder) {
+            LeafStripeWorkspace workspace) {
         if (!step.optional()) {
-            builder.addEntry(repToEmit, defSoFar, index);
+            workspace.addEntry(repToEmit, defSoFar, index);
             return;
         }
         boolean present = leafValues.validity().isValid(index);
         int def = defSoFar + (present ? 1 : 0);
-        builder.addEntry(repToEmit, def, present ? index : -1);
+        workspace.addEntry(repToEmit, def, present ? index : -1);
     }
 
     /**
@@ -299,16 +328,16 @@ public final class DremelStriper {
             int index,
             int repToEmit,
             int defSoFar,
-            StripeBuilder builder) {
+            LeafStripeWorkspace workspace) {
         StructStep step = (StructStep) chain.get(stepIndex);
         StructVector struct = asStruct(vector, step);
         if (step.optional() && struct.validity().isNull(index)) {
-            builder.addEntry(repToEmit, defSoFar, -1);
+            workspace.addEntry(repToEmit, defSoFar, -1);
             return;
         }
         int childDef = defSoFar + (step.optional() ? 1 : 0);
         ColumnVector childVector = struct.children().get(step.childPath());
-        emit(chain, stepIndex + 1, childVector, index, repToEmit, childDef, builder);
+        emit(chain, stepIndex + 1, childVector, index, repToEmit, childDef, workspace);
     }
 
     /**
@@ -327,7 +356,7 @@ public final class DremelStriper {
             int index,
             int repToEmit,
             int defSoFar,
-            StripeBuilder builder) {
+            LeafStripeWorkspace workspace) {
         RepeatedStep step = (RepeatedStep) chain.get(stepIndex);
         requireRepeatedContainer(vector, step);
         if (vector.validity().isNull(index)) {
@@ -336,21 +365,21 @@ public final class DremelStriper {
                         "Required repeated container '" + step.path().dot() + "' is null at row " + index
                                 + "; a REQUIRED list or map must be present (possibly empty)");
             }
-            builder.addEntry(repToEmit, defSoFar, -1);
+            workspace.addEntry(repToEmit, defSoFar, -1);
             return;
         }
         int groupDef = defSoFar + (step.groupOptional() ? 1 : 0);
         int start = rangeStart(vector, index);
         int end = rangeEnd(vector, index);
         if (start == end) {
-            builder.addEntry(repToEmit, groupDef, -1);
+            workspace.addEntry(repToEmit, groupDef, -1);
             return;
         }
         ColumnVector childVector = step.childVector(vector);
         int elementDef = groupDef + 1;
         for (int element = start; element < end; element++) {
             int repForElement = element == start ? repToEmit : step.repLevel();
-            emit(chain, stepIndex + 1, childVector, element, repForElement, elementDef, builder);
+            emit(chain, stepIndex + 1, childVector, element, repForElement, elementDef, workspace);
         }
     }
 
@@ -537,59 +566,5 @@ public final class DremelStriper {
 
     private String describe(ColumnVector vector) {
         return vector == null ? "null" : vector.getClass().getSimpleName();
-    }
-
-    /**
-     * Accumulates one repeated leaf's rep / def streams and the source ordinals of its present values in a single pass
-     * over the eager vectors.
-     */
-    private static final class StripeBuilder {
-
-        private int[] reps = new int[16];
-        private int[] defs = new int[16];
-        private int[] kept = new int[16];
-        private int entryCount;
-        private int valueCount;
-
-        void addEntry(int rep, int def, int keptOrdinal) {
-            ensureEntryCapacity();
-            reps[entryCount] = rep;
-            defs[entryCount] = def;
-            entryCount++;
-            if (keptOrdinal >= 0) {
-                ensureValueCapacity();
-                kept[valueCount] = keptOrdinal;
-                valueCount++;
-            }
-        }
-
-        int[] repLevels() {
-            return java.util.Arrays.copyOf(reps, entryCount);
-        }
-
-        int[] defLevels() {
-            return java.util.Arrays.copyOf(defs, entryCount);
-        }
-
-        int[] keptOrdinals() {
-            return java.util.Arrays.copyOf(kept, valueCount);
-        }
-
-        int valueCount() {
-            return valueCount;
-        }
-
-        private void ensureEntryCapacity() {
-            if (entryCount == reps.length) {
-                reps = java.util.Arrays.copyOf(reps, reps.length * 2);
-                defs = java.util.Arrays.copyOf(defs, defs.length * 2);
-            }
-        }
-
-        private void ensureValueCapacity() {
-            if (valueCount == kept.length) {
-                kept = java.util.Arrays.copyOf(kept, kept.length * 2);
-            }
-        }
     }
 }

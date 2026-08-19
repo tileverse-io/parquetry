@@ -24,16 +24,16 @@ import io.tileverse.parquetry.format.Encoding;
  *
  * <p>Inverse of {@link io.tileverse.parquetry.internal.read.page.PlainBinaryDecoder}.
  */
-public final class PlainBinaryEncoder implements Encoder<byte[][]> {
+public final class PlainBinaryEncoder implements Encoder<BinaryPayload> {
 
     @Override
-    public int encode(byte[][] values, int n, LittleEndianSink dst) throws IOException {
+    public int encode(BinaryPayload values, int n, LittleEndianSink dst) throws IOException {
         int written = 0;
         for (int i = 0; i < n; i++) {
-            byte[] value = values[i];
-            dst.writeInt(value.length);
-            dst.write(value);
-            written += Integer.BYTES + value.length;
+            int length = values.length(i);
+            dst.writeInt(length);
+            values.writeValueInto(i, dst);
+            written += Integer.BYTES + length;
         }
         return written;
     }

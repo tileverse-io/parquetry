@@ -49,7 +49,7 @@ class PlainFixedLenBinaryEncoderTest {
         PlainFixedLenBinaryEncoder encoder = new PlainFixedLenBinaryEncoder(3);
         GrowableByteSink out = new GrowableByteSink(64);
         byte[][] values = {{1, 2, 3, 4}};
-        assertThatThrownBy(() -> encoder.encode(values, 1, out))
+        assertThatThrownBy(() -> encoder.encode(new ArrayBinaryPayload(values, values.length), 1, out))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("length 4");
     }
@@ -76,7 +76,7 @@ class PlainFixedLenBinaryEncoderTest {
     @MethodSource("roundTripCases")
     void roundTripViaDecoder(String label, int width, byte[][] values) throws Exception {
         GrowableByteSink out = new GrowableByteSink(64);
-        new PlainFixedLenBinaryEncoder(width).encode(values, values.length, out);
+        new PlainFixedLenBinaryEncoder(width).encode(new ArrayBinaryPayload(values, values.length), values.length, out);
 
         PlainFixedLenBinaryDecoder decoder = new PlainFixedLenBinaryDecoder(width);
         decoder.load(MemorySegment.ofArray(out.toByteArray()), values.length);

@@ -298,6 +298,24 @@ class DremelStriperTest {
                 .hasMessageContaining("mylist");
     }
 
+    @Test
+    void everyRepeatedLeafChainIsBuiltAtConstruction() {
+        ParquetSchema schema = listOfOptionalInt();
+        int repeatedLeaves = 0;
+        for (ColumnPath leaf : schema.leafColumns()) {
+            if (schema.maxLevels(leaf).maxRepetitionLevel() > 0) {
+                repeatedLeaves++;
+            }
+        }
+
+        DremelStriper striper = new DremelStriper(schema);
+
+        assertThat(striper.precomputedChainCount())
+                .as("chains are schema-derived, hence knowable before any batch arrives")
+                .isEqualTo(repeatedLeaves)
+                .isGreaterThan(0);
+    }
+
     /**
      * Replays the read-side repeated-layout state machine over the striped streams to prove they invert: the rebuilt
      * per-slot offsets, validity, and kept element values must reproduce the original {@link ListVector}.

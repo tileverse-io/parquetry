@@ -26,19 +26,19 @@ import io.tileverse.parquetry.format.Encoding;
  * timestamp type; each value is written as 12 raw bytes (whose internal layout is up to the caller; the decoder also
  * yields raw bytes).
  */
-public final class PlainInt96Encoder implements Encoder<byte[][]> {
+public final class PlainInt96Encoder implements Encoder<BinaryPayload> {
 
     private static final int INT96_BYTES = 12;
 
     @Override
-    public int encode(byte[][] values, int n, LittleEndianSink dst) throws IOException {
+    public int encode(BinaryPayload values, int n, LittleEndianSink dst) throws IOException {
         for (int i = 0; i < n; i++) {
-            byte[] value = values[i];
-            if (value.length != INT96_BYTES) {
+            int valueLength = values.length(i);
+            if (valueLength != INT96_BYTES) {
                 throw new IllegalArgumentException(
-                        "INT96 value at index " + i + " has length " + value.length + " but must be " + INT96_BYTES);
+                        "INT96 value at index " + i + " has length " + valueLength + " but must be " + INT96_BYTES);
             }
-            dst.write(value);
+            values.writeValueInto(i, dst);
         }
         return n * INT96_BYTES;
     }

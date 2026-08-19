@@ -18,7 +18,6 @@ package io.tileverse.parquetry.internal.write.page;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
@@ -158,20 +157,19 @@ public final class PageWriter {
     }
 
     private EncodedPage emitDataPageV2(PreEncodedPageJob job, LittleEndianSink dst) throws IOException {
-        int repLen = encodeLevelsInto(repLevelSink, job.repetitionLevels(), column.maxRepetitionLevel());
-        int defLen = encodeLevelsInto(defLevelSink, job.definitionLevels(), column.maxDefinitionLevel());
+        int repLen = encodeLevelsInto(
+                repLevelSink, job.repetitionLevels(), job.payloadValueCount(), column.maxRepetitionLevel());
+        int defLen = encodeLevelsInto(
+                defLevelSink, job.definitionLevels(), job.payloadValueCount(), column.maxDefinitionLevel());
         MemorySegment encodedValues = job.encodedValueBytes();
         int rawValueByteSize = Math.toIntExact(encodedValues.byteSize());
         boolean shouldCompress = !(column.compression() instanceof Compression.Uncompressed);
 
-        byte[] valueBytes;
         int valueLen;
         if (shouldCompress) {
             valueLen = compressInto(encodedValues);
-            valueBytes = compressScratch;
         } else {
-            valueBytes = encodedValues.toArray(ValueLayout.JAVA_BYTE);
-            valueLen = valueBytes.length;
+            valueLen = rawValueByteSize;
         }
 
         int uncompressedPageSize = repLen + defLen + rawValueByteSize;
@@ -199,18 +197,24 @@ public final class PageWriter {
         int headerBytes = writeHeader(header, dst);
         repLevelSink.writeInto(dst);
         defLevelSink.writeInto(dst);
-        dst.write(valueBytes, 0, valueLen);
+        if (shouldCompress) {
+            dst.write(compressScratch, 0, valueLen);
+        } else {
+            dst.write(encodedValues);
+        }
 
         return new EncodedPage(header, headerBytes, compressedPageSize);
     }
 
     private EncodedPage emitDataPageV1(PreEncodedPageJob job, LittleEndianSink dst) throws IOException {
         v1PayloadSink.reset();
-        int repBlockLen = writeV1LevelBlock(v1PayloadSink, job.repetitionLevels(), column.maxRepetitionLevel());
-        int defBlockLen = writeV1LevelBlock(v1PayloadSink, job.definitionLevels(), column.maxDefinitionLevel());
+        int repBlockLen = writeV1LevelBlock(
+                v1PayloadSink, job.repetitionLevels(), job.payloadValueCount(), column.maxRepetitionLevel());
+        int defBlockLen = writeV1LevelBlock(
+                v1PayloadSink, job.definitionLevels(), job.payloadValueCount(), column.maxDefinitionLevel());
         MemorySegment encodedValues = job.encodedValueBytes();
         int rawValueByteSize = Math.toIntExact(encodedValues.byteSize());
-        appendSegment(v1PayloadSink, encodedValues);
+        v1PayloadSink.write(encodedValues);
         int uncompressedPayloadLen = repBlockLen + defBlockLen + rawValueByteSize;
 
         boolean shouldCompress = !(column.compression() instanceof Compression.Uncompressed);
@@ -258,13 +262,17 @@ public final class PageWriter {
         return plainValueSink.toByteArray();
     }
 
-    /** Encodes the levels into {@code target}; returns the byte length. Empty when {@code maxLevel == 0}. */
-    private int encodeLevelsInto(GrowableByteSink target, int[] levels, int maxLevel) throws IOException {
+    /**
+     * Encodes the first {@code count} levels from {@code levels} into {@code target}; returns the byte length. Empty
+     * when {@code maxLevel == 0}. {@code levels} may be an oversized backing array reused across pages, hence the
+     * explicit count rather than the array length.
+     */
+    private int encodeLevelsInto(GrowableByteSink target, int[] levels, int count, int maxLevel) throws IOException {
         target.reset();
-        if (maxLevel == 0 || levels == null || levels.length == 0) {
+        if (maxLevel == 0 || levels == null || count == 0) {
             return 0;
         }
-        return new LevelEncoder(maxLevel).encode(levels, levels.length, target);
+        return new LevelEncoder(maxLevel).encode(levels, count, target);
     }
 
     /**
@@ -273,19 +281,14 @@ public final class PageWriter {
      * at this max. The transient RLE bytes go through {@link #repLevelSink}, which is copied into {@code target} right
      * away, hence the rep and def calls do not collide.
      */
-    private int writeV1LevelBlock(GrowableByteSink target, int[] levels, int maxLevel) throws IOException {
+    private int writeV1LevelBlock(GrowableByteSink target, int[] levels, int count, int maxLevel) throws IOException {
         if (maxLevel == 0) {
             return 0;
         }
-        int encodedLen = encodeLevelsInto(repLevelSink, levels, maxLevel);
+        int encodedLen = encodeLevelsInto(repLevelSink, levels, count, maxLevel);
         target.writeInt(encodedLen);
         repLevelSink.writeInto(target);
         return Integer.BYTES + encodedLen;
-    }
-
-    private static void appendSegment(GrowableByteSink target, MemorySegment segment) {
-        byte[] bytes = segment.toArray(ValueLayout.JAVA_BYTE);
-        target.write(bytes, 0, bytes.length);
     }
 
     // Carrier types are encoder-specific (int[], long[], byte[][], ...); the runtime cast is intentional.

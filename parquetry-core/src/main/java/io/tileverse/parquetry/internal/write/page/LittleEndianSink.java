@@ -15,6 +15,8 @@
  */
 package io.tileverse.parquetry.internal.write.page;
 
+import java.lang.foreign.MemorySegment;
+
 /**
  * Write-only byte sink for a data page's encoded value bytes.
  *
@@ -43,6 +45,14 @@ public interface LittleEndianSink {
     /** Appends all of {@code src}. */
     default void write(byte[] src) {
         write(src, 0, src.length);
+    }
+
+    /** Appends {@code len} bytes from {@code src} starting at {@code off}. */
+    void write(MemorySegment src, long off, long len);
+
+    /** Appends all of {@code src}. */
+    default void write(MemorySegment src) {
+        write(src, 0L, src.byteSize());
     }
 
     /** The number of bytes appended since construction or the last reset. */

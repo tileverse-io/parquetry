@@ -71,15 +71,15 @@ public sealed interface DictionaryAttempt permits DictionaryAttempt.NumericAttem
         }
     }
 
-    public record BinaryAttempt(BinaryDictionaryEncoder encoder, Encoder<byte[][]> plainEncoder)
+    public record BinaryAttempt(BinaryDictionaryEncoder encoder, Encoder<BinaryPayload> plainEncoder)
             implements DictionaryAttempt {
 
-        public static BinaryAttempt create(long byteLimit, Encoder<byte[][]> plainEncoder) {
+        public static BinaryAttempt create(long byteLimit, Encoder<BinaryPayload> plainEncoder) {
             return new BinaryAttempt(BinaryDictionaryEncoder.variableLength(plainEncoder, byteLimit), plainEncoder);
         }
 
         public static BinaryAttempt createFixedLen(long byteLimit, int length) {
-            Encoder<byte[][]> plainEncoder = new PlainFixedLenBinaryEncoder(length);
+            Encoder<BinaryPayload> plainEncoder = new PlainFixedLenBinaryEncoder(length);
             return new BinaryAttempt(
                     BinaryDictionaryEncoder.fixedLength(plainEncoder, length, byteLimit), plainEncoder);
         }
@@ -89,7 +89,8 @@ public sealed interface DictionaryAttempt permits DictionaryAttempt.NumericAttem
             byte[][] carrier = encoder.dictionaryCarrier();
             // The plain encoder for binary dictionary values matches the column's case (BYTE_ARRAY uses length-
             // prefixed payload; FIXED_LEN_BYTE_ARRAY uses fixed-width payload). INT96 reuses the fixed-length encoder.
-            return pageWriter.writeDictionaryPage(carrier, carrier.length, plainEncoder, dst);
+            return pageWriter.writeDictionaryPage(
+                    new ArrayBinaryPayload(carrier, carrier.length), carrier.length, plainEncoder, dst);
         }
     }
 }

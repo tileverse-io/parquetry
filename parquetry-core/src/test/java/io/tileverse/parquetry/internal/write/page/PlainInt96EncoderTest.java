@@ -42,7 +42,7 @@ class PlainInt96EncoderTest {
         PlainInt96Encoder encoder = new PlainInt96Encoder();
         GrowableByteSink out = new GrowableByteSink(64);
         byte[][] bad = {new byte[11]};
-        assertThatThrownBy(() -> encoder.encode(bad, 1, out))
+        assertThatThrownBy(() -> encoder.encode(new ArrayBinaryPayload(bad, bad.length), 1, out))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("must be 12");
     }
@@ -72,7 +72,7 @@ class PlainInt96EncoderTest {
     @MethodSource("roundTripCases")
     void roundTripViaDecoder(String label, byte[][] values) throws Exception {
         GrowableByteSink out = new GrowableByteSink(64);
-        new PlainInt96Encoder().encode(values, values.length, out);
+        new PlainInt96Encoder().encode(new ArrayBinaryPayload(values, values.length), values.length, out);
 
         PlainInt96Decoder decoder = new PlainInt96Decoder();
         decoder.load(MemorySegment.ofArray(out.toByteArray()), values.length);

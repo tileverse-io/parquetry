@@ -42,6 +42,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.tileverse.parquetry.columnar.IntVector;
+import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.data.Compression;
 import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ParquetFileWriter;
@@ -607,6 +609,29 @@ class ColumnChunkWriterTest {
 
         assertThat(result.dictionaryPageOffset()).isZero();
         assertThat(result.encodings()).contains(Encoding.RLE_DICTIONARY);
+    }
+
+    @Test
+    void appendStripedReadsOnlyTheEntryCountPrefix() throws Exception {
+        WriteOptions options = WriteOptions.builder()
+                .pageValueLimit(16)
+                .pageByteLimit(1 << 20)
+                .encodingPolicy("col", EncodingPolicy.FORCE_PLAIN)
+                .build();
+        SchemaNode.Primitive leaf = requiredInt32("col");
+        IntVector values = IntVector.materialized(new int[] {10, 20}, Validity.allValid(2));
+        int[] keptOrdinals = new int[] {0, 1};
+        int[] defLevels = new int[] {0, 0, 7, 7};
+
+        ColumnChunkResult result;
+        try (ColumnChunkWriter writer = new ColumnChunkWriter(options, leaf, tempFile)) {
+            writer.appendStriped(values, keptOrdinals, null, defLevels, 2, 0);
+            result = writer.finishChunk();
+        }
+
+        assertThat(result.numValues())
+                .as("the tail beyond entryCount is stale capacity, not data")
+                .isEqualTo(2);
     }
 
     // --- helpers ---
