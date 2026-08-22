@@ -17,6 +17,8 @@ package io.tileverse.parquetry.cli.expr;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.List;
+
 import org.junit.jupiter.api.Test;
 
 class FilterSyntaxTest {
@@ -50,5 +52,42 @@ class FilterSyntaxTest {
                 .contains("ST_Intersects", "ST_Contains", "ST_Within", "ST_DWithin", "ST_Equals");
         assertThat(SpatialFilterTranslator.queryConstructorNames())
                 .containsExactly("ST_GeomFromText", "ST_MakeEnvelope");
+    }
+
+    @Test
+    void referenceListsEveryExtentFunctionTheTranslatorRecognizes() {
+        String reference = FilterSyntax.reference();
+        for (String extent : SpatialFilterTranslator.extentFunctionNames()) {
+            assertThat(reference).as("extent %s listed", extent).contains(extent);
+        }
+    }
+
+    @Test
+    void referenceExplainsWhatTheExtentFormMeans() {
+        String reference = FilterSyntax.reference();
+        assertThat(reference)
+                .contains("compares bounding boxes")
+                .contains("ST_Intersects, ST_Covers, ST_CoveredBy, ST_Equals and ST_Disjoint")
+                .contains("the other six are rejected")
+                .contains("ST_MakeEnvelope(...), ST_Extent(...) or ST_Envelope(...)")
+                .contains("Edges are inclusive");
+    }
+
+    @Test
+    void theExtentNoteBreaksAtItsSentences() {
+        List<String> extentNote = FilterSyntax.reference()
+                .lines()
+                .filter(line -> line.contains("ST_Extent(<geometry column>)") || line.startsWith("    "))
+                .toList();
+
+        assertThat(extentNote)
+                .as("one sentence per line keeps the note off a terminal's soft wrap")
+                .hasSize(4)
+                .allSatisfy(line -> assertThat(line).hasSizeLessThan(150));
+    }
+
+    @Test
+    void extentFunctionNamesAreCanonicalFirst() {
+        assertThat(SpatialFilterTranslator.extentFunctionNames()).containsExactly("ST_Extent", "ST_Envelope");
     }
 }
