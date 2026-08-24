@@ -34,6 +34,7 @@ import java.util.function.Consumer;
 
 import io.tileverse.parquetry.columnar.BinaryVector;
 import io.tileverse.parquetry.columnar.ColumnVector;
+import io.tileverse.parquetry.columnar.FilteredRecordBatch;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.format.BloomFilterHeader;
 import io.tileverse.parquetry.format.ColumnChunk;
@@ -248,7 +249,7 @@ public final class ParquetFileWriter implements AutoCloseable {
     private void appendBatchToCurrentRowGroup(ParquetRecordBatch batch) {
         try {
             fireWriteStartedOnce();
-            currentRowGroup.appendBatch(augmentWithCovering(batch));
+            appendDensified(batch);
             totalRows += batch.rowCount();
             maybeFireProgress();
             maybeFlushRowGroup();
@@ -256,6 +257,36 @@ public final class ParquetFileWriter implements AutoCloseable {
             markFailed();
             throw e;
         }
+    }
+
+    /**
+     * Appends {@code batch} to the open row group, gathering a selected view into a dense batch first. Two properties
+     * of the append make a selected view unsafe to hand it: its numeric and boolean cell reads take a physical backing
+     * index while it walks logical positions, which on a selected view writes rows the selection never exposed (the
+     * binary reads go through the logical accessor and would stay correct, leaving a row's columns disagreeing); and it
+     * reads the batch's columns from concurrent fan-out threads, while a bit-set selection resolves its rows through
+     * one mutable cursor shared by every column. Gathering here answers both, and the covering augment then wraps the
+     * dense batch rather than the view behind it.
+     *
+     * <p>A dense copy is made here and is therefore closed here. The caller's own batch is never closed by the writer.
+     */
+    private void appendDensified(ParquetRecordBatch batch) {
+        ParquetRecordBatch dense = densified(batch);
+        try {
+            currentRowGroup.appendBatch(augmentWithCovering(dense));
+        } finally {
+            if (dense != batch) {
+                dense.close();
+            }
+        }
+    }
+
+    /** {@code batch} itself when its rows are already dense, otherwise the gathered copy this writer owns. */
+    private static ParquetRecordBatch densified(ParquetRecordBatch batch) {
+        if (batch instanceof FilteredRecordBatch filtered) {
+            return filtered.compacted();
+        }
+        return batch;
     }
 
     /**

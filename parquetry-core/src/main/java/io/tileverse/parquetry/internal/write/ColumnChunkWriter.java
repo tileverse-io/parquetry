@@ -27,6 +27,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 
 import io.tileverse.parquetry.columnar.ColumnVector;
+import io.tileverse.parquetry.columnar.Selection;
 import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.data.Compression;
 import io.tileverse.parquetry.data.ParquetWriteException;
@@ -374,6 +375,22 @@ public final class ColumnChunkWriter implements AutoCloseable {
     }
 
     /**
+     * Rejects a vector that exposes its rows through a selection. The per-cell loops below walk logical positions while
+     * reading the numeric and boolean backings at a physical index; on a selected view that writes rows the selection
+     * never exposed. A caller holding a filtered or windowed batch gathers it dense first, which is what
+     * {@code ParquetFileWriter} does at its batch funnel. The property is the vector's own selection, not its type: a
+     * selected view is the same class as the vector it narrows.
+     */
+    private static void requireDenseRows(SchemaNode.Primitive leaf, ColumnVector vector) {
+        if (vector.selection() == Selection.ALL) {
+            return;
+        }
+        throw new ParquetWriteException("column " + leaf.name()
+                + " was supplied as a selected view over its backing; gather the batch dense first "
+                + "(FilteredRecordBatch.compacted()) and write that");
+    }
+
+    /**
      * Appends every cell of {@code vector} to this column chunk, walking the vector's validity bitset and dispatching
      * to the matching typed {@code appendXxx} for non-null cells. Nulls go through {@link #appendNull}; the caller is
      * responsible for matching the vector's kind to this column's primitive kind, which {@code ensureKind} re-checks on
@@ -386,6 +403,7 @@ public final class ColumnChunkWriter implements AutoCloseable {
      * level, which the reader would reconstruct as nulls.
      */
     public void appendVector(@NonNull SchemaNode.Primitive leaf, @NonNull ColumnVector vector) {
+        requireDenseRows(leaf, vector);
         int flatMaxDef = maxDefinitionLevelFor(leaf);
         if (column.maxDefinitionLevel() > flatMaxDef) {
             throw new ParquetWriteException("column " + leaf.name()
@@ -520,6 +538,7 @@ public final class ColumnChunkWriter implements AutoCloseable {
             int[] defLevels,
             int entryCount,
             int maxDef) {
+        requireDenseRows(leaf, values);
         if (entryCount < 0 || entryCount > defLevels.length) {
             throw new ParquetWriteException("striped entryCount " + entryCount + " out of range for " + defLevels.length
                     + " definition levels on column " + leaf.name());

@@ -195,12 +195,36 @@ class FilteredRecordBatchTest {
 
         ParquetRecordBatch slice = source.slice(1, 2);
         try (ParquetRecordBatch dense = ((FilteredRecordBatch) slice).compacted()) {
+            assertThat(dense).isNotSameAs(slice).isInstanceOf(DefaultParquetRecordBatch.class);
             assertThat(dense.rowCount()).isEqualTo(2);
             IntVector a = (IntVector) dense.columns().get(A);
             assertThat(a.getInt(0)).isEqualTo(11);
             assertThat(a.getInt(1)).isEqualTo(12);
         } finally {
             slice.close();
+        }
+    }
+
+    @Test
+    void compactedGathersEveryColumnsSurvivorsInLogicalOrder() {
+        ParquetRecordBatch source =
+                intBatch(Map.of(A, new int[] {10, 11, 12, 13, 14}, B, new int[] {20, 21, 22, 23, 24}));
+        BitSet keep = new BitSet();
+        keep.set(1);
+        keep.set(4);
+
+        FilteredRecordBatch view = (FilteredRecordBatch) FilteredRecordBatch.filtered(source, keep, schemaOf(A, B));
+        try (ParquetRecordBatch dense = view.compacted()) {
+            assertThat(dense).isNotSameAs(view);
+            assertThat(dense.rowCount()).isEqualTo(2);
+            IntVector a = (IntVector) dense.columns().get(A);
+            IntVector b = (IntVector) dense.columns().get(B);
+            assertThat(a.getInt(0)).isEqualTo(11);
+            assertThat(a.getInt(1)).isEqualTo(14);
+            assertThat(b.getInt(0)).isEqualTo(21);
+            assertThat(b.getInt(1)).isEqualTo(24);
+        } finally {
+            view.close();
         }
     }
 
