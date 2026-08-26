@@ -190,6 +190,11 @@ final class BatchColumnReader {
     // row space sits at page slot pageSurvivingSlots[r]. Null when the reader has no row mask.
     private int[] pageSurvivingSlots;
 
+    // A peeked page whose bytes are still compressed, held while the windows over it prove every one of its rows dead,
+    // and the count of its rows those windows have stepped over. Only a reader that canDeferPageLoad() holds one.
+    private PageCursor.PendingDataPage pendingPage;
+    private int pendingPageRowsSkipped;
+
     private int valuesConsumedInCurrentPage;
     private int logicalRowsConsumedInCurrentPage;
     private long valuesConsumedTotal;
@@ -297,8 +302,17 @@ final class BatchColumnReader {
      * is undecidable until the next page's first rep level is seen. Deferring the last-started row leaves it to
      * {@link #readSpanningRow}, which follows the row across pages. Masked readers never defer: a row mask requires an
      * offset index, and a page index implies row-aligned pages.
+     *
+     * <p>A reader that {@link #canDeferPageLoad() may answer from a page header} counts the next page's rows without
+     * decompressing it, which leaves a page whose windows all turn out dead compressed to the end.
      */
     int logicalRowsRemainingInCurrentPage() {
+        if (!pageLoaded && canDeferPageLoad()) {
+            peekOrLoadNextPage();
+            if (pendingPage != null) {
+                return pendingPage.statedRowCount() - pendingPageRowsSkipped;
+            }
+        }
         ensurePageLoaded();
         if (pageRepLevels == null) {
             return pageSize - valuesConsumedInCurrentPage;
@@ -552,12 +566,34 @@ final class BatchColumnReader {
         return readWindow(windowRows, valuesForLogicalRows(windowRows), survivingRows, acquiredBuffers);
     }
 
-    /** Advances past {@code windowRows} logical rows of the current page without materializing any of their values. */
+    /**
+     * Advances past {@code windowRows} logical rows of the current page without materializing any of their values. A
+     * page still held compressed stays so: its rows are stepped over from its header alone.
+     */
     void skipMaskedWindow(int windowRows) {
         requireWindowedValueDecode();
-        ensurePageLoaded();
         requireWindowFitsCurrentPage(windowRows);
+        if (pendingPage != null) {
+            skipPendingPageRows(windowRows);
+            return;
+        }
         advancePastWindow(valuesForLogicalRows(windowRows), windowRows);
+    }
+
+    /**
+     * Steps the page held pending past a window of dead rows, discarding the page unread once every one of its rows has
+     * been stepped over. A non-repeated page holds one value per row, hence its stepped-over rows are values consumed.
+     */
+    private void skipPendingPageRows(int windowRows) {
+        // Only a reader without a row mask holds a page compressed, hence there is no surviving-row total to advance
+        // here; such a reader ends on the page cursor, the same coupling hasMore() reads.
+        pendingPageRowsSkipped += windowRows;
+        valuesConsumedTotal += windowRows;
+        if (pendingPageRowsSkipped >= pendingPage.statedRowCount()) {
+            pageCursor.discardPending(pendingPage);
+            pendingPage = null;
+            pendingPageRowsSkipped = 0;
+        }
     }
 
     /**
@@ -766,9 +802,51 @@ final class BatchColumnReader {
     // ---- page lifecycle ----
 
     private void ensurePageLoaded() {
-        if (!pageLoaded) {
-            loadNextPage();
+        if (pageLoaded) {
+            return;
         }
+        if (pendingPage != null) {
+            loadPendingPage();
+            return;
+        }
+        loadNextPage();
+    }
+
+    /**
+     * True when this reader may answer a window from a page header alone: a masked, non-repeated column serving its
+     * pages' own rows. Such a header states the page's row count, while a repeated V1 page's rows are knowable only
+     * from its decoded levels. A reader narrowed by a row mask serves the mask's surviving rows instead - a row space
+     * no page header states - and the pages holding none of those rows are already stepped over by the page selection.
+     */
+    private boolean canDeferPageLoad() {
+        return valueDecode == ValueDecode.WINDOWED_MASK && maxLevels.maxRepetitionLevel() == 0 && survivingRows == null;
+    }
+
+    /**
+     * Holds the next data page compressed when its header states how many rows it has. A header that states none is
+     * loaded at once, because the rows of such a page are knowable only from its decoded levels.
+     */
+    private void peekOrLoadNextPage() {
+        if (pendingPage != null) {
+            return;
+        }
+        pendingPage = pageCursor.peekNextDataPage(maxLevels);
+        if (pendingPage != null && !pendingPage.statesRowCount()) {
+            loadPendingPage();
+        }
+    }
+
+    /**
+     * Opens the page held pending, decompressing its bytes and placing the reader past the rows the windows over it
+     * already stepped across. A non-repeated page holds one value per row, hence those rows are exactly the value slots
+     * the page opens past.
+     */
+    private void loadPendingPage() {
+        // Handing the page to the walk clears pendingPageRowsSkipped; the local keeps the resume point it held.
+        int rowsAlreadySkipped = pendingPageRowsSkipped;
+        loadNextPage();
+        valuesConsumedInCurrentPage = rowsAlreadySkipped;
+        logicalRowsConsumedInCurrentPage = rowsAlreadySkipped;
     }
 
     private void loadNextPage() {
@@ -832,10 +910,21 @@ final class BatchColumnReader {
 
     private DecodedPage readNextDataPage(Arena arena) {
         try {
+            if (pendingPage != null) {
+                return decodePendingPage(arena);
+            }
             return pageCursor.nextDataPage(maxLevels, codec, arena);
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to read next page for column " + columnPath.dot(), e);
         }
+    }
+
+    /** Hands the page held pending to the page walk for decompression, clearing the reader's pending state. */
+    private DecodedPage decodePendingPage(Arena arena) throws IOException {
+        PageCursor.PendingDataPage pending = pendingPage;
+        pendingPage = null;
+        pendingPageRowsSkipped = 0;
+        return pageCursor.decodePending(pending, maxLevels, codec, arena);
     }
 
     private void decodePage(DecodedPage page) {
@@ -913,6 +1002,7 @@ final class BatchColumnReader {
     }
 
     private void advancePastCurrentPage() {
+        requireNoPageHeldCompressed();
         pageLoaded = false;
         pageSize = 0;
         pageLogicalRowCount = 0;
@@ -931,6 +1021,27 @@ final class BatchColumnReader {
         closeLivePageArena();
         valuesConsumedInCurrentPage = 0;
         logicalRowsConsumedInCurrentPage = 0;
+    }
+
+    /**
+     * Fails a page advance that would leave a page held compressed behind. Such a page has not been decoded, discarded
+     * or counted, and the walk still holds it unresolved: advancing past it would strand the page cursor a page short
+     * of the reader and misplace every row after it.
+     */
+    private void requireNoPageHeldCompressed() {
+        if (pendingPage != null) {
+            throw new IllegalStateException("Column " + columnPath.dot() + " holds data page " + pendingPage.ordinal()
+                    + " compressed; decode or step over its rows before advancing past the current page");
+        }
+    }
+
+    /**
+     * Drops the page held compressed without decoding or discarding it, leaving the reader with no page pending. A read
+     * that ends before every row of that page was stepped over - a closed reader - takes this path.
+     */
+    private void dropPageHeldCompressed() {
+        pendingPage = null;
+        pendingPageRowsSkipped = 0;
     }
 
     /** Releases the off-heap origin validity bitmap held for the flat fast path, if any. */
@@ -2174,6 +2285,7 @@ final class BatchColumnReader {
 
     /** Releases the page Arena, the level scratches, and any pooled page state; idempotent via {@code advance}. */
     void close() {
+        dropPageHeldCompressed();
         advancePastCurrentPage();
         repLevelScratch.close();
         defLevelScratch.close();
@@ -2181,12 +2293,15 @@ final class BatchColumnReader {
 
     // ---- diagnostics ----
 
-    /** Data pages this reader actually decoded; pages skipped by the surviving-row mask are not counted. */
+    /** Data pages whose payload this reader decompressed and decoded. */
     int decodedDataPageCount() {
         return pageCursor.decodedDataPageCount();
     }
 
-    /** Data pages this reader advanced past without decoding because they fell outside the surviving rows. */
+    /**
+     * Data pages this reader reached and stepped over without decoding, whether the page selection excluded them or the
+     * windows over them proved every one of their rows dead.
+     */
     int skippedDataPageCount() {
         return pageCursor.skippedDataPageCount();
     }

@@ -193,6 +193,49 @@ class MaskedWindowColumnReadTest {
     }
 
     @Test
+    void windowsThatDropEveryRowOfTwoPagesStepOverThemUndecoded() throws Exception {
+        Path file = writeRequiredLongs();
+        ParquetSchema schema = flatSchema(requiredInt64("v"));
+        overColumn(file, schema, V, ValueDecode.WINDOWED_MASK, reader -> {
+            skipWholePage(reader);
+            skipWholePage(reader);
+
+            assertThat(reader.decodedDataPageCount())
+                    .as("neither page of dead rows was decompressed")
+                    .isZero();
+            assertThat(reader.skippedDataPageCount())
+                    .as("both pages of dead rows count as pruned")
+                    .isEqualTo(2);
+
+            assertThat(readWholePageKeepingEveryRow(reader))
+                    .as("the page after them still opens at its own first row")
+                    .containsExactly(10L, 11L, 12L, 13L, 14L);
+            assertThat(reader.decodedDataPageCount())
+                    .as("only the page a surviving row asked for was decompressed")
+                    .isEqualTo(1);
+            return null;
+        });
+    }
+
+    /** Steps the reader over every row its current page can serve, keeping none of them. */
+    private static void skipWholePage(BatchColumnReader reader) {
+        reader.skipMaskedWindow(reader.logicalRowsRemainingInCurrentPage());
+    }
+
+    /** Reads every row the reader's current page can serve, keeping all of them. */
+    private static List<Long> readWholePageKeepingEveryRow(BatchColumnReader reader) {
+        int windowRows = reader.logicalRowsRemainingInCurrentPage();
+        BitSet survivors = survivorsOf(0, windowRows, _ -> true);
+        BatchColumnReader.MaskedWindow window = reader.readMaskedWindow(windowRows, survivors, new ArrayList<>());
+        LongVector vector = (LongVector) window.vector();
+        List<Long> values = new ArrayList<>();
+        for (int i = 0; i < vector.size(); i++) {
+            values.add(vector.getLong(i));
+        }
+        return values;
+    }
+
+    @Test
     void aWholeBatchReadRejectsAWindowedReader() throws Exception {
         Path file = writeRequiredLongs();
         ParquetSchema schema = flatSchema(requiredInt64("v"));

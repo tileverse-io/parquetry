@@ -174,6 +174,56 @@ class MaskedScanRowGroupReaderTest {
     }
 
     @Test
+    void aHighlySelectivePredicateLeavesTheDeadOutputPagesUndecoded() throws Exception {
+        Path file = writeFortyRowsAcrossManyPages();
+        ParquetSchema fileSchema = fileSchema();
+        ParquetSchema outputSchema = fileSchema.project(Set.of(V, NAME));
+        Predicate predicate = Pred.col(ID).eq(25L);
+        int pagesPerColumn = pageCount(file, fileSchema, V);
+
+        ScanResult scanned = overMaskedScan(
+                file,
+                fileSchema,
+                outputSchema,
+                predicate,
+                ScanOptions.defaults(),
+                MaskedScanRowGroupReaderTest::drainRowsAndPages);
+        List<Row> reference = drainDecodeAllThenFilter(file, fileSchema, outputSchema, predicate);
+
+        assertThat(reference).as("one row matches id 25").hasSize(1);
+        assertThat(scanned.rows())
+                .as("the rows the scan emits still match the reference read")
+                .containsExactlyElementsOf(reference);
+        assertThat(scanned.pages().decoded() + scanned.pages().skipped())
+                .as("the scan reaches every page of the filter column and the two output columns")
+                .isEqualTo(3 * pagesPerColumn);
+        assertThat(scanned.pages().decoded())
+                .as("each output column decodes only the page holding the surviving row, beside the filter "
+                        + "column's whole walk")
+                .isEqualTo(pagesPerColumn + 2);
+        assertThat(scanned.pages().skipped())
+                .as("every other output page is stepped over with its bytes still compressed")
+                .isEqualTo(2 * (pagesPerColumn - 1));
+    }
+
+    /** The rows a scan emitted and the data pages it decoded and stepped over. */
+    private record ScanResult(List<Row> rows, BatchRowGroupReader.PageCounts pages) {}
+
+    private static ScanResult drainRowsAndPages(MaskedScanRowGroupReader reader) {
+        List<Row> rows = drainRows(reader);
+        return new ScanResult(rows, reader.pageCounts());
+    }
+
+    /** The data pages {@code leaf} holds in the fixture's single row group, as its offset index reports them. */
+    private int pageCount(Path file, ParquetSchema fileSchema, ColumnPath leaf) {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            FileMetaData footer = ParquetFormat.readFooter(source);
+            RowGroupChunks chunks = RowGroupChunks.of(footer.rowGroups().get(0), fileSchema, indexLoader(source));
+            return chunks.offsetIndex(leaf).orElseThrow().pageLocations().size();
+        }
+    }
+
+    @Test
     void aRowMaskNarrowsTheFilterAndOutputColumnsToTheSameRows() throws Exception {
         Path file = writeFortyRowsAcrossManyPages();
         ParquetSchema fileSchema = fileSchema();
