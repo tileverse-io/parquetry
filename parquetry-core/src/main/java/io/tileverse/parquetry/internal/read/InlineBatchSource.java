@@ -81,6 +81,11 @@ final class InlineBatchSource implements BatchSource {
     }
 
     @Override
+    public long recordFilterNanos() {
+        return driver.recordFilterNanos();
+    }
+
+    @Override
     public void close() {
         driver.close();
     }

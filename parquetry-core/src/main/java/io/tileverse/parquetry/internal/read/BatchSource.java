@@ -48,6 +48,12 @@ sealed interface BatchSource extends AutoCloseable permits InlineBatchSource, St
      */
     long decodeNanos();
 
+    /**
+     * Nanoseconds the decode driver spent evaluating the predicate over this row group, zero for a driver that
+     * evaluates none. Read only after the source is drained or closed, under the same join as {@link #pageCounts()}.
+     */
+    long recordFilterNanos();
+
     @Override
     void close();
 }

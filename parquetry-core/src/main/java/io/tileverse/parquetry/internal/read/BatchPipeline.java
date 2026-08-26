@@ -211,8 +211,10 @@ public final class BatchPipeline {
     /**
      * Folds the WKB envelope of every {@code predicate}-matching row's {@code geometryColumn} cell across the
      * coordinator's batches into {@code accumulator}, with no materialization. A {@code null} {@code predicate}
-     * contributes every row (the unfiltered scan); a null geometry cell is skipped. Every batch is closed as it is
-     * consumed; closing the stream cascades to the coordinator.
+     * contributes every row (the masked scan already applied it, or the scan is unfiltered); a null geometry cell is
+     * skipped. The rows each batch contributes are tallied into the row group that produced it, which is what its read
+     * event reports as matched. Every batch is closed as it is consumed; closing the stream cascades to the
+     * coordinator.
      */
     public static void boundsMatching(
             @NonNull ParallelDecodeCoordinator coordinator,
@@ -224,14 +226,18 @@ public final class BatchPipeline {
             Iterator<ParquetRecordBatch> it = batches.iterator();
             while (it.hasNext()) {
                 try (ParquetRecordBatch batch = it.next()) {
-                    foldBatchBounds(predicate, geometryColumn, batch, accumulator);
+                    long contributed = foldBatchBounds(predicate, geometryColumn, batch, accumulator);
+                    iterator.addMatchedToCurrentRowGroup(contributed);
                 }
             }
         }
     }
 
-    /** Folds the WKB envelope of each contributing row's geometry cell in {@code batch} into {@code accumulator}. */
-    private static void foldBatchBounds(
+    /**
+     * Folds the WKB envelope of each contributing row's geometry cell in {@code batch} into {@code accumulator} and
+     * returns how many rows contributed: the matching rows when a predicate narrows the batch, every row otherwise.
+     */
+    private static long foldBatchBounds(
             Predicate predicate, ColumnPath geometryColumn, ParquetRecordBatch batch, BoundsAccumulator accumulator) {
         BitSet matches = predicate == null ? null : VectorizedPredicateEvaluator.eval(predicate, batch);
         BinaryVector geometry = (BinaryVector) batch.columns().get(geometryColumn);
@@ -239,11 +245,12 @@ public final class BatchPipeline {
             for (int row = 0; row < batch.rowCount(); row++) {
                 foldRowBounds(geometry, row, accumulator);
             }
-            return;
+            return batch.rowCount();
         }
         for (int row = matches.nextSetBit(0); row >= 0; row = matches.nextSetBit(row + 1)) {
             foldRowBounds(geometry, row, accumulator);
         }
+        return matches.cardinality();
     }
 
     private static void foldRowBounds(BinaryVector geometry, int row, BoundsAccumulator accumulator) {
@@ -298,7 +305,7 @@ public final class BatchPipeline {
 
         /**
          * Attributes {@code matched} rows to the row group that produced the batch just returned by {@link #next()}.
-         * Only the count path calls it, and only when observing.
+         * The count path calls it with the rows the batch matched, the bounds fold with the rows it contributed.
          */
         void addMatchedToCurrentRowGroup(long matched) {
             currentRowGroup.addMatchedRows(matched);

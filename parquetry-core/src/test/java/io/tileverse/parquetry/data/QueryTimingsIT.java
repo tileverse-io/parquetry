@@ -119,8 +119,8 @@ class QueryTimingsIT {
                     .as("the residual row group decodes its predicate column")
                     .isPositive();
             assertThat(cpu.recordFilterNanos())
-                    .as("count evaluates batches columnar-style, never through the record filter")
-                    .isZero();
+                    .as("count takes the masked scan, whose per-window predicate evaluation is record-filter time")
+                    .isPositive();
         }
     }
 

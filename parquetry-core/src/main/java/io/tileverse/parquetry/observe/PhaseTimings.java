@@ -17,14 +17,18 @@ package io.tileverse.parquetry.observe;
 
 /**
  * Per-phase CPU nanosecond sums for one read. These are sums, never elapsed wall-clock; fetch and decode overlap across
- * row groups. Present only when {@code QueryObserver.wantsTimings()}.
+ * row groups. The phases are disjoint: no unit of work is attributed to two of them. Present only when
+ * {@code QueryObserver.wantsTimings()}.
  *
  * <p>{@code pipelineNanos} is query-level (one filter-pipeline run); it appears in the aggregated
  * {@code QueryStats.cpuTimings} and reads as zero on each per-row-group {@code RowGroupRead.timings}.
  *
  * <p>{@code recordFilterNanos} covers record-level processing as a whole: predicate evaluation plus the per-row
- * materialization interleaved with it, which cannot be cheaply separated. The count and readBatches paths run no
- * record-level filter and report zero.
+ * materialization interleaved with it, which cannot be cheaply separated. A masked scan evaluates the predicate window
+ * by window while decoding, and the {@code read}, {@code readBatches}, and {@code count} paths that take it all report
+ * that evaluation here rather than under {@code decodeNanos}. When a spatial decimation probe keeps a query off the
+ * masked scan, {@code readBatches} and {@code count} test whole decoded batches outside any bracket and report zero,
+ * while {@code read} still brackets its per-row materialization.
  */
 public record PhaseTimings(long pipelineNanos, long fetchNanos, long decodeNanos, long recordFilterNanos) {
 

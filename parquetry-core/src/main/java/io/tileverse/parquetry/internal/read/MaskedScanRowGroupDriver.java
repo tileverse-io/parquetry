@@ -52,6 +52,12 @@ final class MaskedScanRowGroupDriver implements RowGroupBatchDriver {
         return reader.rowsProduced();
     }
 
+    /** The time the scan spent testing its windows against the predicate. */
+    @Override
+    public long recordFilterNanos() {
+        return reader.recordFilterNanos();
+    }
+
     @Override
     public void close() {
         try {

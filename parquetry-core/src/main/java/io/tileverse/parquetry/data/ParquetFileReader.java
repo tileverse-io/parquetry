@@ -1060,12 +1060,14 @@ public final class ParquetFileReader {
         Optional<MaskedScan> maskedScan =
                 maskedScanFor(survivors, decodeMasks, scanSchema, outputSchema, normalized, recordLevel);
         Predicate recordFilter = (recordLevel && maskedScan.isEmpty()) ? recordFilterOf(normalized) : null;
+        Optional<SpatialDecimationGate> leafGate = spatialReadGates.leafGate(options);
+        // A masked scan still narrows: a MATCHED row group takes the full-decode driver, whose batches expose the scan
+        // columns rather than the caller's output columns. Emitting the decoded shape is therefore also the one case
+        // where nothing downstream drops a row, which lets every decoded row be reported as matched; any other shape
+        // tallies the rows it emits.
+        boolean emitDecodedShape = recordFilter == null && leafGate.isEmpty() && maskedScan.isEmpty();
         DecodeObservation decodeObservation = ReadObservation.decodeObservationFor(
-                plan,
-                observe,
-                options.queryObserver(),
-                recordFilter == null && maskedScan.isEmpty(),
-                observation.spillAccumulator());
+                plan, observe, options.queryObserver(), emitDecodedShape, observation.spillAccumulator());
         List<RowPositionSynthesis> rowPositions =
                 rowPositionSynthesesFor(survivors, rowGroupChunks, rowPositionRequests);
         Optional<RowGroupGate> rowGroupGate = spatialReadGates.rowGroupGate(survivors, options);
@@ -1080,10 +1082,6 @@ public final class ParquetFileReader {
                 decodeObservation,
                 rowPositions,
                 rowGroupGate);
-        Optional<SpatialDecimationGate> leafGate = spatialReadGates.leafGate(options);
-        // A masked scan still narrows: a MATCHED row group takes the full-decode driver, whose batches expose the scan
-        // columns rather than the caller's output columns.
-        boolean emitDecodedShape = recordFilter == null && leafGate.isEmpty() && maskedScan.isEmpty();
         Stream<ParquetRecordBatch> batches = emitDecodedShape
                 ? BatchPipeline.batches(coordinator)
                 : BatchPipeline.batches(coordinator, recordFilter, outputSchema, leafGate);

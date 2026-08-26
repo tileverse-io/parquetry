@@ -22,6 +22,7 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -32,14 +33,19 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
+import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.RowRanges;
+import io.tileverse.parquetry.filter.SpatialReadProbe;
+import io.tileverse.parquetry.filter.SpatialReadProbe.Decision;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.explain.RowGroupOutcome;
 import io.tileverse.parquetry.filter.explain.RowGroupPlan;
 import io.tileverse.parquetry.filter.explain.Tier;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.observe.QueryObserver;
@@ -51,20 +57,33 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.testsupport.Wkb;
 
 /**
  * Verifies that {@code onRowGroupRead} fires once per non-eliminated row group during decode, for the {@code read},
  * {@code count}, and {@code readBatches} paths, with correct {@code rowGroupIndex}, {@code rowsDecoded},
- * {@code rowsMatched}, and {@code pagesDecoded}.
+ * {@code rowsMatched}, {@code pagesDecoded}, and record-filter time.
  *
- * <p>The fixture writes ids {@code 0..8} four rows per row group, hence three row groups holding {@code [0,1,2,3]},
- * {@code [4,5,6,7]}, and {@code [8]}. The predicate {@code id >= 5} eliminates the first row group from its statistics,
- * proving the reported index is the true file ordinal (1 and 2) rather than the dense survivor position (0 and 1).
+ * <p>The base fixture writes ids {@code 0..8} four rows per row group, hence three row groups holding
+ * {@code [0,1,2,3]}, {@code [4,5,6,7]}, and {@code [8]}. The predicate {@code id >= 5} eliminates the first row group
+ * from its statistics, proving the reported index is the true file ordinal (1 and 2) rather than the dense survivor
+ * position (0 and 1).
  */
 class RowGroupReadFiringIT {
 
     private static final Predicate PREDICATE = col("id").gtEq(5);
     private static final long EXPECTED_MATCHES = 4L; // ids 5, 6, 7, 8
+
+    private static final int FILTERED_READ_ROWS = 120;
+    private static final int FILTERED_READ_MATCHES = 10;
+    private static final Predicate FILTERED_READ_PREDICATE =
+            Pred.and(col("id").gtEq(10L), col("id").lt(20L));
+    private static final Projection FILTERED_READ_OUTPUT =
+            Projection.ofPhysical(List.of(ColumnPath.of("v"), ColumnPath.of("name")));
+
+    private static final int POINT_CELLS = 3;
+    private static final int POINTS_PER_CELL = 4;
+    private static final int POINT_ROWS = POINT_CELLS * POINTS_PER_CELL;
 
     @Test
     void readFiresOnePerNonEliminatedRowGroup(@TempDir Path tmp) throws Exception {
@@ -199,6 +218,96 @@ class RowGroupReadFiringIT {
             assertThat(readLongColumn(reader, keyIs60, Projection.ofPhysical(Set.of(key, payload)), key))
                     .as("the gathered value of the shared column reaches the output row")
                     .containsExactly(60L);
+        }
+    }
+
+    /**
+     * A filtered read evaluates the predicate in scan and materializes only the rows that survive it. Its event reports
+     * every filter-column row as decoded, the survivors as matched, fewer output-column pages than a full scan of those
+     * columns decodes, and the scan's own predicate evaluation as record-filter time.
+     */
+    @Test
+    void aMaskedScanReportsFilterRowsDecodedAndSurvivorsMatched(@TempDir Path tmp) throws Exception {
+        Path file = writeFilteredReadFixture(tmp);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+            RecordingObserver observer = new RecordingObserver(true);
+            ReadOptions options = optionsWith(observer);
+            int fullScanPages = pagesDecodedByFullScan(reader, FILTERED_READ_OUTPUT);
+
+            try (Stream<ParquetRecord> rows = reader.read(FILTERED_READ_PREDICATE, FILTERED_READ_OUTPUT, options)) {
+                assertThat(rows.count()).isEqualTo(FILTERED_READ_MATCHES);
+            }
+
+            assertThat(observer.events).hasSize(1);
+            RowGroupRead event = observer.events.get(0);
+            assertThat(event.rowsDecoded())
+                    .as("the predicate column's rows are the decoded rows")
+                    .isEqualTo(FILTERED_READ_ROWS);
+            assertThat(event.rowsMatched()).as("only the survivors matched").isEqualTo(FILTERED_READ_MATCHES);
+            assertThat(event.pagesDecoded())
+                    .as("the output columns decode fewer pages than a full scan of them would")
+                    .isLessThan(fullScanPages);
+            assertThat(event.timings().orElseThrow().recordFilterNanos())
+                    .as("the per-window predicate evaluation is attributed to the record filter")
+                    .isPositive();
+        }
+    }
+
+    /**
+     * The batches path evaluates the same predicate in the same scan, and reports the same rows and the same
+     * record-filter time: the scan's own evaluation reaches the event no matter which entry point drains it.
+     */
+    @Test
+    void aMaskedScanAttributesItsPredicateTimeOnTheBatchesPath(@TempDir Path tmp) throws Exception {
+        Path file = writeFilteredReadFixture(tmp);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+            RecordingObserver observer = new RecordingObserver(true);
+            ReadOptions options = optionsWith(observer);
+
+            try (Stream<ParquetRecordBatch> batches =
+                    reader.readBatches(FILTERED_READ_PREDICATE, FILTERED_READ_OUTPUT, options)) {
+                batches.forEach(ParquetRecordBatch::close);
+            }
+
+            assertThat(observer.events).hasSize(1);
+            RowGroupRead event = observer.events.get(0);
+            assertThat(event.rowsMatched())
+                    .as("the batches path emits the same survivors the row path does")
+                    .isEqualTo(FILTERED_READ_MATCHES);
+            assertThat(event.timings().orElseThrow().recordFilterNanos())
+                    .as("the scan's predicate evaluation is attributed to the record filter on the batches path too")
+                    .isPositive();
+        }
+    }
+
+    /**
+     * A decimating spatial probe drops rows the read would otherwise emit. The rows the read did emit are the rows it
+     * reports matched: a probe that keeps one point per integer-X cell leaves fewer matched rows than decoded ones.
+     */
+    @Test
+    void aDecimatingProbeReportsOnlyTheRowsItEmitted(@TempDir Path tmp) throws Exception {
+        Path file = writePointsAcrossIntegerXCells(tmp);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+            RecordingObserver observer = new RecordingObserver();
+            ReadOptions options = ReadOptions.builder()
+                    .queryObserver(observer)
+                    .spatialReadProbe(keepFirstPointPerIntegerXCell())
+                    .build();
+
+            long emitted = emittedRows(reader, options);
+
+            assertThat(emitted).as("one point survives per integer-X cell").isEqualTo(POINT_CELLS);
+            assertThat(observer.events).hasSize(1);
+            RowGroupRead event = observer.events.get(0);
+            assertThat(event.rowsDecoded())
+                    .as("every point was decoded for the probe to see it")
+                    .isEqualTo(POINT_ROWS);
+            assertThat(event.rowsMatched())
+                    .as("the decimated rows are the rows the read emitted")
+                    .isEqualTo(emitted);
         }
     }
 
@@ -428,6 +537,101 @@ class RowGroupReadFiringIT {
         return file;
     }
 
+    /**
+     * 120 rows in one row group at eight values per page: {@code id} is the filter column, {@code v} and {@code name}
+     * the output columns. The ten ids the query matches sit in the first ten rows, and every later row alternates a
+     * value below the queried range with one above it, which leaves every page's id range overlapping the query and
+     * hence unprunable. The scan therefore walks all 120 rows while its output columns touch only the two pages the
+     * survivors fall in.
+     */
+    private static Path writeFilteredReadFixture(Path tmp) throws Exception {
+        ParquetSchema schema = flatSchema(requiredInt64("id"), requiredInt64("v"), requiredString("name"));
+        WriteOptions options = WriteOptions.builder()
+                .tempDir(tmp)
+                .rowGroupSize(RowGroupSize.rows(FILTERED_READ_ROWS))
+                .pageValueLimit(8)
+                .build();
+        Path file = tmp.resolve("filtered-read.parquet");
+        try (OutputStream out = Files.newOutputStream(file);
+                ParquetFileWriter writer = ParquetFileWriter.create(out, schema, options)) {
+            ParquetRecordBatchBuilder appender = writer.appender(1);
+            for (int row = 0; row < FILTERED_READ_ROWS; row++) {
+                WriteFixtures.appendRow(appender, schema, filteredReadRow(row));
+            }
+        }
+        return file;
+    }
+
+    private static Map<ColumnPath, Object> filteredReadRow(int row) {
+        return Map.of(
+                ColumnPath.of("id"), idAt(row), ColumnPath.of("v"), (long) row, ColumnPath.of("name"), "name-" + row);
+    }
+
+    /** The ten matching ids in the first ten rows; every later row alternates below and above the queried range. */
+    private static long idAt(int row) {
+        if (row < FILTERED_READ_MATCHES) {
+            return 10L + row;
+        }
+        if (row % 2 == 0) {
+            return 9L;
+        }
+        return 20L + row;
+    }
+
+    /** Four points in each of three integer-X cells, in one row group, under a GeoParquet geometry column. */
+    private static Path writePointsAcrossIntegerXCells(Path tmp) throws Exception {
+        ParquetSchema schema = flatSchema(requiredBinary("geometry"));
+        WriteOptions options =
+                WriteOptions.builder().tempDir(tmp).crsEpsg("geometry", 4326).build();
+        Path file = tmp.resolve("points.parquet");
+        try (OutputStream out = Files.newOutputStream(file);
+                ParquetFileWriter writer = ParquetFileWriter.create(out, schema, options)) {
+            ParquetRecordBatchBuilder appender = writer.appender(POINT_ROWS);
+            for (int cell = 0; cell < POINT_CELLS; cell++) {
+                for (int withinCell = 0; withinCell < POINTS_PER_CELL; withinCell++) {
+                    WriteFixtures.appendRow(appender, schema, pointRow(cell, withinCell));
+                }
+            }
+            appender.flush();
+        }
+        return file;
+    }
+
+    private static Map<ColumnPath, Object> pointRow(int cell, int withinCell) {
+        double x = cell + 0.1 * withinCell;
+        double y = 10.0 + cell;
+        return Map.of(ColumnPath.of("geometry"), Wkb.fromWkt("POINT (" + x + " " + y + ")"));
+    }
+
+    /** A probe that keeps the first point it sees in each integer-X cell and skips every later point in that cell. */
+    private static SpatialReadProbe keepFirstPointPerIntegerXCell() {
+        Set<Integer> painted = new HashSet<>();
+        return (minX, _, _, _) -> painted.add((int) Math.floor(minX)) ? Decision.keep() : Decision.skip();
+    }
+
+    /** The data pages an unfiltered read of {@code projection} decodes for the fixture's single row group. */
+    private static int pagesDecodedByFullScan(ParquetFileReader reader, Projection projection) {
+        RecordingObserver observer = new RecordingObserver();
+        try (Stream<ParquetRecord> rows = reader.read(Predicate.ALWAYS_TRUE, projection, optionsWith(observer))) {
+            rows.forEach(row -> {});
+        }
+        assertThat(observer.events).hasSize(1);
+        return observer.events.get(0).pagesDecoded();
+    }
+
+    /** The rows an unfiltered batch read emits under {@code options}, which a decimating probe narrows. */
+    private static long emittedRows(ParquetFileReader reader, ReadOptions options) {
+        try (Stream<ParquetRecordBatch> batches = reader.readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
+            return batches.mapToLong(RowGroupReadFiringIT::rowCountAndClose).sum();
+        }
+    }
+
+    private static long rowCountAndClose(ParquetRecordBatch batch) {
+        try (batch) {
+            return batch.rowCount();
+        }
+    }
+
     private static ReadOptions optionsWith(QueryObserver observer) {
         return ReadOptions.builder().queryObserver(observer).build();
     }
@@ -448,11 +652,40 @@ class RowGroupReadFiringIT {
                 name, Repetition.REQUIRED, PrimitiveKind.INT64, OptionalInt.empty(), Optional.empty(), -1);
     }
 
+    private static SchemaNode.Primitive requiredString(String name) {
+        return new SchemaNode.Primitive(
+                name,
+                Repetition.REQUIRED,
+                PrimitiveKind.BYTE_ARRAY,
+                OptionalInt.empty(),
+                Optional.of(new LogicalType.StringType()),
+                -1);
+    }
+
+    private static SchemaNode.Primitive requiredBinary(String name) {
+        return new SchemaNode.Primitive(
+                name, Repetition.REQUIRED, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1);
+    }
+
     private static final class RecordingObserver implements QueryObserver {
 
         private final List<RowGroupRead> events = new ArrayList<>();
+        private final boolean wantsTimings;
         private int finishedCount;
         private QueryStats lastStats;
+
+        RecordingObserver() {
+            this(false);
+        }
+
+        RecordingObserver(boolean wantsTimings) {
+            this.wantsTimings = wantsTimings;
+        }
+
+        @Override
+        public boolean wantsTimings() {
+            return wantsTimings;
+        }
 
         @Override
         public synchronized void onRowGroupRead(RowGroupRead event) {

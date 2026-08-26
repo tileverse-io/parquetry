@@ -25,6 +25,9 @@ import java.util.Optional;
  * prefetching reader, an early-terminated stream may have decoded ahead of consumption by up to the hand-off depth: the
  * figure is rows decoded, not rows consumed.
  *
+ * <p>{@code rowsMatched} is the rows the group contributed to the read's result: the rows that survived the predicate
+ * and any spatial decimation the read applied. A read that drops no row reports it equal to {@code rowsDecoded}.
+ *
  * <p>{@code pagesDecoded} and {@code pagesPruned} both count data pages the decode walk reached: the ones it decoded,
  * and the ones it stepped over because their rows fall outside the surviving rows. When
  * {@link io.tileverse.parquetry.data.ReadOptions#usePageNarrowedFetch()} is on - the default - a page the column-index

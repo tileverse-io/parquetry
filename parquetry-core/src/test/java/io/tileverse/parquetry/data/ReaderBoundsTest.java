@@ -111,6 +111,28 @@ class ReaderBoundsTest {
     }
 
     @Test
+    void scannedRowGroupReportsTheRowsItFolded() throws IOException {
+        Path file = writeGeometryFixture("folded-rows.parquet", 4L, grid(12));
+        // The row groups hold ids [0..3], [4..7] and [8..11]: statistics eliminate the first, the last folds its
+        // metadata box without decoding, and only the middle one is scanned, contributing the three rows it matches.
+        Predicate predicate = Pred.col("id").gtEq(5);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+            RecordingObserver observer = new RecordingObserver();
+            ReadOptions options = ReadOptions.builder().queryObserver(observer).build();
+
+            reader.bounds(predicate, options);
+
+            assertThat(observer.readRowGroupIndexes())
+                    .as("only the middle row group is scanned")
+                    .containsExactly(1);
+            assertThat(observer.events.get(0).rowsMatched())
+                    .as("the rows folded into the bounds are the rows the group contributed")
+                    .isEqualTo(3L);
+        }
+    }
+
+    @Test
     void spatialFilterEqualsOracle() throws IOException {
         Path file = writeGeometryFixture("spatial.parquet", 4L, grid(12));
         // The grid's points lie at (i, 2 * i) up to (11, 22); this window keeps only i <= 6 and clips the tail.

@@ -72,7 +72,11 @@ final class DecodedRowGroup implements AutoCloseable {
         return source.next();
     }
 
-    /** Adds {@code n} matched rows to this row group's tally; the read and count paths call it only when observing. */
+    /**
+     * Adds {@code n} matched rows to this row group's tally. Every drain that can drop a row calls it with the rows it
+     * kept; the tally reaches the read event only when an observation is attached and reports matched rows separately
+     * from decoded ones.
+     */
     void addMatchedRows(long n) {
         matchedRows += n;
     }
@@ -118,23 +122,42 @@ final class DecodedRowGroup implements AutoCloseable {
     }
 
     /**
-     * The row group's phase timings when the observer opted in, empty otherwise. Pipeline time is query-level and reads
-     * as zero per group; fetch time rode in on the observation, decode time comes from the drained source, and
-     * record-filter time accumulated through {@link #addRecordFilterNanos(long)}.
+     * The row group's phase timings when the observer opted in, empty otherwise, with each phase disjoint from the
+     * others. Pipeline time is query-level and reads as zero per group; fetch time rode in on the observation; the
+     * drained source's measurement splits between decode and record filter.
      */
     private Optional<PhaseTimings> timings() {
         if (!observation.wantsTimings()) {
             return Optional.empty();
         }
-        return Optional.of(new PhaseTimings(0L, observation.fetchNanos(), source.decodeNanos(), recordFilterNanos));
+        return Optional.of(new PhaseTimings(
+                0L, observation.fetchNanos(), decodeNanosWithoutPredicateEvaluation(), totalRecordFilterNanos()));
+    }
+
+    /**
+     * The source's decode measurement less the driver's predicate evaluation. The driver evaluates each window inside
+     * the bracket the source times as decode, and that evaluation is reported as record-filter time; taking it out here
+     * keeps the two phases from counting the same nanoseconds twice.
+     */
+    private long decodeNanosWithoutPredicateEvaluation() {
+        return Math.max(0L, source.decodeNanos() - source.recordFilterNanos());
+    }
+
+    /**
+     * The whole of the read's per-row testing: what the pipeline accumulated through
+     * {@link #addRecordFilterNanos(long)} plus what the decode driver spent evaluating the predicate in scan.
+     */
+    private long totalRecordFilterNanos() {
+        return recordFilterNanos + source.recordFilterNanos();
     }
 
     /**
      * The per-row-group context the read paths attach when an observer is present. {@code matchedEqualsDecoded} is
-     * {@code true} for the pushdown-only batches path (every decoded row is reported matched, no per-row work) and
-     * {@code false} for the record-filtering read and count paths (matches accumulate through
-     * {@link #addMatchedRows(long)}). {@code wantsTimings} mirrors the observer's opt-in; {@code fetchNanos} is the row
-     * group's already-measured fetch time, zero when timings are off.
+     * {@code true} only when the read emits its decoded batches whole - no predicate, no spatial decimation, no masked
+     * scan - and every decoded row is therefore a matched row reported with no per-row work. It is {@code false}
+     * wherever a row can be dropped, and the matched rows then come from the {@link #addMatchedRows(long)} tally.
+     * {@code wantsTimings} mirrors the observer's opt-in; {@code fetchNanos} is the row group's already-measured fetch
+     * time, zero when timings are off.
      */
     record ReadObservation(
             QueryObserver observer,

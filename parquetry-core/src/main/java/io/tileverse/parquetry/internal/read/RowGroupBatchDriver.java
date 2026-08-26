@@ -49,6 +49,14 @@ interface RowGroupBatchDriver extends AutoCloseable {
         return 0L;
     }
 
+    /**
+     * Nanoseconds this driver spent evaluating the predicate over the rows it decoded, for read observability. The
+     * default reports zero, which is what a driver that evaluates no predicate spends.
+     */
+    default long recordFilterNanos() {
+        return 0L;
+    }
+
     @Override
     void close();
 }

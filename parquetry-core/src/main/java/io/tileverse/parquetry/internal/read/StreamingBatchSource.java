@@ -193,6 +193,15 @@ final class StreamingBatchSource implements BatchSource {
         return decodeNanos;
     }
 
+    /**
+     * The driver's predicate-evaluation tally, under the same join as {@link #pageCounts()}: the consumer reads it only
+     * after {@link #close()} has awaited the producer.
+     */
+    @Override
+    public long recordFilterNanos() {
+        return driver.recordFilterNanos();
+    }
+
     @Override
     public void close() {
         handoff.close();
