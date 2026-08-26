@@ -14,7 +14,7 @@ permissions:
 jobs:
   publish-snapshot:
     name: Publish SNAPSHOT to Maven Central
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     # Only after a green validation run, or when triggered by hand.
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
 

@@ -26,7 +26,7 @@ env:
 jobs:
   lint:
     name: Code Quality & Formatting
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     # Skip on a merge commit: validation already ran during the PR.
     if: "github.event_name == 'pull_request' || !contains(github.event.head_commit.message, 'Merge pull request #')"
@@ -54,7 +54,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
 
     steps:
       - name: Checkout code
@@ -100,7 +100,7 @@ jobs:
 
   pr-validation-complete:
     name: PR Validation Complete
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     needs: [lint, build]
     # Always runs to give the workflow a definite success or failure.
     if: always()
