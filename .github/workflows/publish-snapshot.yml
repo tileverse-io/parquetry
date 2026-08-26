@@ -1,11 +1,15 @@
 name: Publish Snapshot
 
 on:
-  workflow_run:
-    workflows: ["Pull Request Validation"]
+  # A merged pull request lands as a push to main, which triggers this
+  # workflow and republishes the snapshot on every merge. push fires only
+  # for this repository's own branches, never for a fork pull request,
+  # keeping the publishing secrets away from untrusted code.
+  push:
     branches: [main]
-    types:
-      - completed
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
   workflow_dispatch:
 
 permissions:
@@ -15,8 +19,7 @@ jobs:
   publish-snapshot:
     name: Publish SNAPSHOT to Maven Central
     runs-on: ubuntu-24.04-arm
-    # Only after a green validation run, or when triggered by hand.
-    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip-publish]') }}
 
     steps:
       - name: Checkout code
@@ -48,7 +51,6 @@ jobs:
             }]
 
       - name: Publish snapshot
-        if: ${{ !contains(github.event.head_commit.message, '[skip-publish]') }}
         run: ./mvnw deploy -DskipTests -Dgpg.skip=false -ntp
         env:
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
