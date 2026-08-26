@@ -67,9 +67,9 @@ public interface GeometryFilter<T> {
 
     /**
      * Decode-then-test in one call: returns the decoded geometry when {@link #matches} accepts it, empty otherwise. An
-     * empty result drops the row, and under late materialization its other columns are never decoded. The returned
-     * geometry is used only for the per-row test today; the read path does not yet reuse it as the column's output
-     * value.
+     * empty result drops the row, and under the masked scan the other projected columns decode only for rows the filter
+     * keeps. The returned geometry is used only for the per-row test today; the read path does not yet reuse it as the
+     * column's output value.
      *
      * <p>The default implementation calls {@link #decode} and then {@link #matches}.
      */

@@ -22,7 +22,7 @@ import io.tileverse.parquetry.internal.read.BatchRowGroupReader.PageCounts;
  * Pulls one decoded {@link ParquetRecordBatch} at a time from one row group, decoding lazily on the calling thread.
  * Owns the row group's {@link RowGroupFetch}; {@link #close()} closes any open reader and releases the fetch.
  */
-// Open (not sealed): tests provide a fixture driver; the production impls are Classic/LateMaterialized.
+// Open (not sealed): tests provide a fixture driver; the production impls are Classic and MaskedScan.
 interface RowGroupBatchDriver extends AutoCloseable {
 
     /** True while more batches remain. */

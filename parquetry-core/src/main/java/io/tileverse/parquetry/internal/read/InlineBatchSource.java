@@ -42,7 +42,7 @@ final class InlineBatchSource implements BatchSource {
         this.wantsTimings = wantsTimings;
     }
 
-    // hasMore is timed too: the late-materializing driver runs its phase-1 predicate scan on the first hasMore call.
+    // hasMore is timed too: the masked scan driver computes its first surviving window on the first hasMore call.
     @Override
     public boolean hasNext() {
         if (!wantsTimings) {

@@ -25,6 +25,7 @@ import java.util.Optional;
 import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.function.Consumer;
+import java.util.function.ToLongFunction;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
@@ -162,21 +163,7 @@ public final class BatchPipeline {
             boolean observe,
             @NonNull Optional<SpatialDecimationGate> gate) {
         SpatialDecimationGate decimationGate = gate.orElse(null);
-        long total = 0L;
-        BatchIterator iterator = new BatchIterator(coordinator);
-        try (Stream<ParquetRecordBatch> batches = stream(iterator)) {
-            Iterator<ParquetRecordBatch> it = batches.iterator();
-            while (it.hasNext()) {
-                try (ParquetRecordBatch batch = it.next()) {
-                    long matched = countMatchingRows(predicate, batch, decimationGate);
-                    total += matched;
-                    if (observe) {
-                        iterator.addMatchedToCurrentRowGroup(matched);
-                    }
-                }
-            }
-        }
-        return total;
+        return sumMatchedRows(coordinator, observe, batch -> countMatchingRows(predicate, batch, decimationGate));
     }
 
     /** The matching-row count for one batch, decimated through {@code gate} when one is present. */
@@ -186,6 +173,39 @@ public final class BatchPipeline {
             gate.narrow(batch, matches);
         }
         return matches.cardinality();
+    }
+
+    /**
+     * Sums the rows of the batches the coordinator emits, testing none of them: a masked scan applied the predicate
+     * during decode, and every row of every batch it emits is a matching row. Every batch is closed as it is consumed;
+     * closing the stream cascades to the coordinator.
+     */
+    public static long countEmitted(@NonNull ParallelDecodeCoordinator coordinator, boolean observe) {
+        return sumMatchedRows(coordinator, observe, ParquetRecordBatch::rowCount);
+    }
+
+    /**
+     * Drains the coordinator's batches and sums the rows {@code matchedRows} reports for each, tallying them into the
+     * batch's own row group when {@code observe} is on. Every batch is closed as it is consumed; closing the stream
+     * cascades to the coordinator.
+     */
+    private static long sumMatchedRows(
+            ParallelDecodeCoordinator coordinator, boolean observe, ToLongFunction<ParquetRecordBatch> matchedRows) {
+        long total = 0L;
+        BatchIterator iterator = new BatchIterator(coordinator);
+        try (Stream<ParquetRecordBatch> batches = stream(iterator)) {
+            Iterator<ParquetRecordBatch> it = batches.iterator();
+            while (it.hasNext()) {
+                try (ParquetRecordBatch batch = it.next()) {
+                    long matched = matchedRows.applyAsLong(batch);
+                    total += matched;
+                    if (observe) {
+                        iterator.addMatchedToCurrentRowGroup(matched);
+                    }
+                }
+            }
+        }
+        return total;
     }
 
     /**
@@ -368,18 +388,27 @@ public final class BatchPipeline {
         // output-shaped.
         private ParquetRecordBatch filter(ParquetRecordBatch source) {
             if (gate == null && currentFilter == null) {
-                return FilteredRecordBatch.narrowed(source, outputSchema);
+                return matched(FilteredRecordBatch.narrowed(source, outputSchema), source.rowCount());
             }
             BitSet matches = survivorsOf(source);
-            int matched = matches.cardinality();
-            if (matched == 0) {
+            int matchedRows = matches.cardinality();
+            if (matchedRows == 0) {
                 source.close();
                 return null;
             }
-            if (matched == source.rowCount()) {
-                return FilteredRecordBatch.narrowed(source, outputSchema);
+            if (matchedRows == source.rowCount()) {
+                return matched(FilteredRecordBatch.narrowed(source, outputSchema), matchedRows);
             }
-            return FilteredRecordBatch.filtered(source, matches, outputSchema);
+            return matched(FilteredRecordBatch.filtered(source, matches, outputSchema), matchedRows);
+        }
+
+        /**
+         * Attributes an emitted batch's rows to the row group that produced it, which is what the read event reports as
+         * matched. A batch reaches here only once every row it holds has passed the filter and the gate.
+         */
+        private ParquetRecordBatch matched(ParquetRecordBatch emitted, int matchedRows) {
+            currentRowGroup.addMatchedRows(matchedRows);
+            return emitted;
         }
 
         /**

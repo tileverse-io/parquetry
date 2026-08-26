@@ -26,7 +26,7 @@ import io.tileverse.parquetry.internal.read.BatchForm;
 import io.tileverse.parquetry.internal.read.DecodeBufferAllocator;
 import io.tileverse.parquetry.internal.read.FetchBufferAllocator;
 import io.tileverse.parquetry.internal.read.FetchSpillStore;
-import io.tileverse.parquetry.internal.read.LateMaterialization;
+import io.tileverse.parquetry.internal.read.MaskedScan;
 import io.tileverse.parquetry.internal.read.ParallelDecodeCoordinator;
 import io.tileverse.parquetry.internal.read.ParallelDecodeCoordinator.DecodeObservation;
 import io.tileverse.parquetry.internal.read.RowGroupFetcher;
@@ -69,7 +69,7 @@ final class ReadResources {
             ParquetSchema projectedSchema,
             List<Optional<RowMask>> decodeMasks,
             ReadOptions options,
-            Optional<LateMaterialization> lateMat,
+            Optional<MaskedScan> maskedScan,
             BatchForm batchForm,
             FetchAccumulator accumulator,
             DecodeObservation observation,
@@ -95,7 +95,7 @@ final class ReadResources {
                 options.batchSize(),
                 decodeMasks,
                 recordEvalRequired,
-                lateMat,
+                maskedScan,
                 batchForm,
                 observation,
                 rowPositions,

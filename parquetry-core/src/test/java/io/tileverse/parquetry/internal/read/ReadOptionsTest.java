@@ -71,7 +71,7 @@ class ReadOptionsTest {
                 .useColumnIndexFilter(false)
                 .useBloomFilter(false)
                 .useRecordLevelFilter(false)
-                .useLateMaterialization(false)
+                .usePageNarrowedFetch(false)
                 .queryObserver(observer)
                 .batchSize(64)
                 .build();
@@ -98,7 +98,7 @@ class ReadOptionsTest {
         assertThat(swapped.useDictionaryFilter()).isTrue();
         assertThat(swapped.useBloomFilter()).isTrue();
         assertThat(swapped.useRecordLevelFilter()).isTrue();
-        assertThat(swapped.useLateMaterialization()).isTrue();
+        assertThat(swapped.usePageNarrowedFetch()).isTrue();
         assertThat(swapped.batchSize()).isEqualTo(original.batchSize());
     }
 

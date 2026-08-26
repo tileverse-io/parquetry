@@ -131,19 +131,49 @@ class ReadBatchesExactTest {
         }
     }
 
+    /**
+     * A row group whose statistics prove every row matches decodes through the full-decode driver, whose batches expose
+     * the scan columns - the caller's projection plus the predicate's. Narrowing those batches to the output schema is
+     * what keeps the predicate column out of the emitted shape.
+     */
     @Test
-    void readBatchesIsExactUnderLateMaterialization(@TempDir Path tmp) throws Exception {
+    void readBatchesNarrowsMatchedRowGroupsToTheProjection(@TempDir Path tmp) throws Exception {
         Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(tmp, ROW_COUNT);
-        Predicate predicate = Pred.col("year").eq(2022);
-        ReadOptions lateMatOn =
-                ReadOptions.builder().useLateMaterialization(true).build();
+        Predicate everyRowMatches = Pred.col("year").gtEq(2020);
+        ColumnPath value = ColumnPath.of("value");
+        Projection projection = Projection.ofPhysical(Set.of(value));
 
         try (ByteRangeSource source = TestParquetFiles.openRangeReader(file)) {
             ParquetFileReader reader = ParquetFileReader.open(source);
-            long viaCount = reader.count(predicate, lateMatOn);
+
+            long emitted = 0L;
+            try (Stream<ParquetRecordBatch> batches =
+                    reader.readBatches(everyRowMatches, projection, ReadOptions.DEFAULTS)) {
+                for (ParquetRecordBatch batch : batches.toList()) {
+                    assertThat(batch.columns().keySet())
+                            .as("a matched row group's batch is narrowed to the caller's projection")
+                            .containsExactly(value);
+                    emitted += batch.rowCount();
+                    batch.close();
+                }
+            }
+
+            assertThat(emitted).as("every row still reaches the caller").isEqualTo(ROW_COUNT);
+        }
+    }
+
+    @Test
+    void readBatchesIsExactUnderTheMaskedScan(@TempDir Path tmp) throws Exception {
+        Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(tmp, ROW_COUNT);
+        Predicate predicate = Pred.col("year").eq(2022);
+
+        try (ByteRangeSource source = TestParquetFiles.openRangeReader(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+            long viaCount = reader.count(predicate, ReadOptions.DEFAULTS);
 
             long viaBatches = 0L;
-            try (Stream<ParquetRecordBatch> batches = reader.readBatches(predicate, Projection.ALL, lateMatOn)) {
+            try (Stream<ParquetRecordBatch> batches =
+                    reader.readBatches(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
                 for (ParquetRecordBatch batch : batches.toList()) {
                     viaBatches += batch.rowCount();
                     batch.close();
@@ -151,7 +181,7 @@ class ReadBatchesExactTest {
             }
 
             assertThat(viaBatches)
-                    .as("late-materialized readBatches emits exactly the matching rows")
+                    .as("the masked scan emits exactly the matching rows")
                     .isEqualTo(viaCount);
         }
     }

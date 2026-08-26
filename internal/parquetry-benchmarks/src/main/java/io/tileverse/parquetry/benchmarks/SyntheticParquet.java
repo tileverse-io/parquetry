@@ -18,14 +18,11 @@ package io.tileverse.parquetry.benchmarks;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Random;
-import java.util.Set;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
@@ -33,7 +30,6 @@ import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.WriteOptions;
-import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -106,55 +102,9 @@ final class SyntheticParquet {
         }
     }
 
-    /**
-     * Returns the {@link ColumnPath} for the i-th output column in the wide-table schema ({@code v0}, {@code v1}, ...).
-     */
+    /** The {@link ColumnPath} of the i-th generated value column, named {@code v0}, {@code v1}, {@code v2}, ... */
     static ColumnPath valueColumn(int i) {
         return ColumnPath.of("v" + i);
-    }
-
-    /**
-     * Returns a projection over all {@code valueColumns} output columns ({@code v0..v{N-1}}) in the wide schema,
-     * deliberately excluding the {@code id} predicate column. This lets the read-path benchmark measure output-column
-     * decode work in isolation.
-     */
-    static Projection wideValueProjection(int valueColumns) {
-        Set<ColumnPath> cols = new HashSet<>();
-        for (int i = 0; i < valueColumns; i++) {
-            cols.add(valueColumn(i));
-        }
-        return Projection.ofPhysical(cols);
-    }
-
-    /**
-     * Writes one file with an {@code id INT64} key column and {@code valueColumns} DOUBLE output columns named
-     * {@code v0..v{N-1}}. Each output column value is deterministic: {@code id * (col + 1) * 0.5}. The rows are written
-     * in {@code ids} order; pass sorted ids to cluster matches into a few pages and make column-index pruning
-     * effective.
-     */
-    static void writeWideFile(Path file, WriteOptions options, long[] ids, int valueColumns) throws IOException {
-        ParquetSchema schema = wideSchema(valueColumns);
-        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
-            ParquetRecordBatchBuilder appender = writer.appender();
-            for (long id : ids) {
-                appender.setLong(0, id);
-                for (int col = 0; col < valueColumns; col++) {
-                    appender.setDouble(1 + col, id * (col + 1) * 0.5);
-                }
-                appender.endRow();
-            }
-            appender.flush();
-        }
-    }
-
-    private static ParquetSchema wideSchema(int valueColumns) {
-        List<SchemaNode> leaves = new ArrayList<>(1 + valueColumns);
-        leaves.add(required("id", PrimitiveKind.INT64));
-        for (int i = 0; i < valueColumns; i++) {
-            leaves.add(required("v" + i, PrimitiveKind.DOUBLE));
-        }
-        SchemaNode.Group root = new SchemaNode.Group("schema", Repetition.REQUIRED, leaves, Optional.empty(), -1);
-        return new ParquetSchema(root);
     }
 
     private static ParquetSchema idValueSchema() {

@@ -23,7 +23,10 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 
 import lombok.NonNull;
 
-/** Streams one row group through a {@link BatchRowGroupReader}, the standard (non-late-materialized) decode path. */
+/**
+ * Streams one row group through a {@link BatchRowGroupReader}, decoding every projected column over every row. This is
+ * the decode path for unfiltered reads and for row groups whose statistics proved every row matches.
+ */
 final class ClassicRowGroupDriver implements RowGroupBatchDriver {
 
     private final RowGroupFetch fetch;

@@ -21,9 +21,6 @@ enum ValueDecode {
     /** Decodes every value as the page loads; each batch slices the decoded page. */
     EAGER,
 
-    /** Decodes the whole page's surviving rows as it loads, skipping the values of the rows the row mask drops. */
-    PAGE_MASK,
-
     /**
      * Loads a page's levels and validity without its values and keeps the page's decoder open across the page's
      * windows; each window decodes only the value slots its surviving rows cover.

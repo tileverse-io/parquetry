@@ -288,6 +288,44 @@ class MaskedScanRowGroupReaderTest {
     }
 
     @Test
+    void anOutputSchemaWithNoLeafEmitsRowCountedBatchesWithNoColumns() throws Exception {
+        Path file = writeFortyRowsAcrossManyPages();
+        ParquetSchema fileSchema = fileSchema();
+        ParquetSchema noOutputColumns = fileSchema.project(Set.of());
+        Predicate predicate = Pred.and(Pred.col(ID).gtEq(10L), Pred.col(ID).lt(20L));
+
+        Tallies tallies = overMaskedScan(
+                file,
+                fileSchema,
+                noOutputColumns,
+                predicate,
+                ScanOptions.defaults(),
+                MaskedScanRowGroupReaderTest::drainEmptyBatches);
+
+        assertThat(tallies.rowsProduced())
+                .as("the filter columns alone size the windows and cover the row group")
+                .isEqualTo(ROW_COUNT);
+        assertThat(tallies.rowsMatched())
+                .as("the emitted batches count the matching rows without decoding a value for them")
+                .isEqualTo(10L);
+    }
+
+    /** Drains a scan whose batches hold no column, asserting each one still reports its surviving rows. */
+    private static Tallies drainEmptyBatches(MaskedScanRowGroupReader reader) {
+        while (reader.hasMore()) {
+            try (ParquetRecordBatch batch = reader.nextBatch()) {
+                assertThat(batch.columns())
+                        .as("an output set of no columns emits none")
+                        .isEmpty();
+                assertThat(batch.rowCount())
+                        .as("the batch still counts its rows")
+                        .isPositive();
+            }
+        }
+        return new Tallies(reader.rowsProduced(), reader.rowsMatched(), reader.recordFilterNanos());
+    }
+
+    @Test
     void closingWithABatchStillPendingReleasesItsBuffers() throws Exception {
         Path file = writeListsAcrossManyPages();
         ParquetSchema fileSchema = listFileSchema();
@@ -488,6 +526,7 @@ class MaskedScanRowGroupReaderTest {
                             options.batchSizeCap(),
                             fixture.rowMask(options.survivingRows()),
                             options.outputForm(),
+                            Optional.empty(),
                             fixture.rowsToScan(options.survivingRows()))) {
                 return action.over(reader);
             }

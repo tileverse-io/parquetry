@@ -43,10 +43,6 @@ import lombok.NonNull;
  * @param useColumnIndexFilter run the COLUMN_INDEX tier
  * @param useBloomFilter run the BLOOM_FILTER tier (when loaded)
  * @param useRecordLevelFilter run the RECORD_LEVEL tier inline during record assembly
- * @param useLateMaterialization on the {@code read(...)} and {@code readBatches(...)} paths over flat columns, decode
- *     the output columns only for rows that match the predicate (two-phase decode); when off, decode every surviving
- *     row's output columns and drop non-matches at materialization. Honored only when {@code useRecordLevelFilter} is
- *     on and the predicate is non-trivial; otherwise it has no effect.
  * @param usePageNarrowedFetch when the decode side qualifies a row group for page-skip, fetch only the surviving page
  *     runs (plus the dictionary prefix) instead of whole column chunks; when off, fetches stay whole-chunk while
  *     decode-side page skip continues unchanged. A page left out of the fetch is never header-walked either, hence it
@@ -66,7 +62,6 @@ public record ReadOptions(
         boolean useColumnIndexFilter,
         boolean useBloomFilter,
         boolean useRecordLevelFilter,
-        boolean useLateMaterialization,
         boolean usePageNarrowedFetch,
         @NonNull QueryObserver queryObserver,
         @NonNull OptionalInt batchSize,
@@ -96,7 +91,6 @@ public record ReadOptions(
         builder.useColumnIndexFilter = useColumnIndexFilter;
         builder.useBloomFilter = useBloomFilter;
         builder.useRecordLevelFilter = useRecordLevelFilter;
-        builder.useLateMaterialization = useLateMaterialization;
         builder.usePageNarrowedFetch = usePageNarrowedFetch;
         builder.queryObserver = queryObserver;
         builder.batchSize = batchSize;
@@ -112,7 +106,6 @@ public record ReadOptions(
         private boolean useColumnIndexFilter = true;
         private boolean useBloomFilter = true;
         private boolean useRecordLevelFilter = true;
-        private boolean useLateMaterialization = true;
         private boolean usePageNarrowedFetch = true;
         private QueryObserver queryObserver = QueryObserver.NONE;
         private OptionalInt batchSize = OptionalInt.empty();
@@ -142,11 +135,6 @@ public record ReadOptions(
 
         public Builder useRecordLevelFilter(boolean v) {
             this.useRecordLevelFilter = v;
-            return this;
-        }
-
-        public Builder useLateMaterialization(boolean v) {
-            this.useLateMaterialization = v;
             return this;
         }
 
@@ -189,7 +177,6 @@ public record ReadOptions(
                     useColumnIndexFilter,
                     useBloomFilter,
                     useRecordLevelFilter,
-                    useLateMaterialization,
                     usePageNarrowedFetch,
                     queryObserver,
                     batchSize,

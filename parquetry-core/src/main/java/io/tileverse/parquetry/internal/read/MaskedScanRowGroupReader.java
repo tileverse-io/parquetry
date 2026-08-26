@@ -19,6 +19,7 @@ import java.lang.foreign.Arena;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -32,6 +33,7 @@ import io.tileverse.parquetry.columnar.Compaction;
 import io.tileverse.parquetry.columnar.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.columnar.Levels;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
+import io.tileverse.parquetry.columnar.Selection;
 import io.tileverse.parquetry.columnar.VectorizedPredicateEvaluator;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.RowRanges;
@@ -64,7 +66,9 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
 
     private final DecodeBufferAllocator decodeBufferAllocator;
     private final ParquetSchema filterSchema;
+    private final ParquetSchema filterBatchSchema;
     private final ParquetSchema outputSchema;
+    private final ParquetSchema outputDecodeSchema;
     private final Predicate predicate;
     private final OptionalInt batchSizeCap;
     private final Optional<RowMask> rowMask;
@@ -72,6 +76,9 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
     private final long expectedRows;
     private final LevelAssemblyPlans filterPlans;
     private final LevelAssemblyPlans outputPlans;
+    // The synthesized columns the predicate reads, and those the output presents; each row group's own base offset.
+    private final Optional<RowPositionSynthesis> filterPositions;
+    private final Optional<RowPositionSynthesis> outputPositions;
 
     private final Map<ColumnPath, BatchColumnReader> filterReaders = new HashMap<>();
     private final Map<ColumnPath, BatchColumnReader> outputReaders = new HashMap<>();
@@ -87,7 +94,10 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
     private long recordFilterNanos;
 
     /**
+     * @param outputSchema the schema each emitted batch exposes, synthesized row-position leaves included; an output
+     *     schema with no leaf at all emits row-counted batches with no columns, which is what a count folds
      * @param filterLeaves the physical leaf columns the predicate reads
+     * @param rowPosition the row group's row-position synthesis inputs when the read synthesizes any column
      * @param expectedRows the rows this scan must cover: the row group's row count, or the count of surviving rows when
      *     a row mask narrows the readers' row space
      */
@@ -103,6 +113,7 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
             @NonNull OptionalInt batchSizeCap,
             @NonNull Optional<RowMask> rowMask,
             @NonNull BatchForm outputForm,
+            @NonNull Optional<RowPositionSynthesis> rowPosition,
             long expectedRows) {
         this.decodeBufferAllocator = decodeBufferAllocator;
         this.outputSchema = outputSchema;
@@ -112,9 +123,85 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
         this.outputForm = outputForm;
         this.expectedRows = expectedRows;
         this.filterSchema = fileSchema.project(filterLeaves);
+        this.filterPositions = positionsRead(rowPosition, predicate);
+        this.outputPositions = positionsPresented(rowPosition, outputSchema);
+        this.filterBatchSchema = withPositionLeaves(filterSchema, filterPositions);
+        this.outputDecodeSchema = withoutPositionLeaves(outputSchema, outputPositions);
         this.filterPlans = new LevelAssemblyPlans(filterSchema);
-        this.outputPlans = new LevelAssemblyPlans(outputSchema);
-        buildReaders(ProjectedLeaves.resolve(chunks, fileSchema), filterLeaves, outputSchema.leafColumns());
+        this.outputPlans = new LevelAssemblyPlans(outputDecodeSchema);
+        buildReaders(ProjectedLeaves.resolve(chunks, fileSchema), filterLeaves, outputDecodeSchema.leafColumns());
+    }
+
+    /**
+     * The synthesized columns the predicate evaluates over, which the filter batch must present. A positional test asks
+     * where a row sits in the file, and the row-group tiers prune by that same true position; a column the projection
+     * also presents as a coalesce therefore reaches the predicate as the position it names, never as the coalesced
+     * lineage value.
+     */
+    private static Optional<RowPositionSynthesis> positionsRead(
+            Optional<RowPositionSynthesis> rowPosition, Predicate predicate) {
+        Set<ColumnPath> namedPositionally = Set.copyOf(Predicate.rowPositionColumns(predicate));
+        return narrowTo(rowPosition, namedPositionally).map(MaskedScanRowGroupReader::asWithinFilePositions);
+    }
+
+    /** {@code synthesis} with every column a pure within-file position, which is a first row id of zero. */
+    private static RowPositionSynthesis asWithinFilePositions(RowPositionSynthesis synthesis) {
+        List<RowPositionColumn> positions = new ArrayList<>(synthesis.columns().size());
+        for (RowPositionColumn column : synthesis.columns()) {
+            positions.add(RowPositionColumn.position(column.name(), 0L));
+        }
+        return new RowPositionSynthesis(synthesis.base(), positions);
+    }
+
+    /** The synthesized columns the caller's projection asks for, which the emitted batch must present. */
+    private static Optional<RowPositionSynthesis> positionsPresented(
+            Optional<RowPositionSynthesis> rowPosition, ParquetSchema outputSchema) {
+        return narrowTo(rowPosition, Set.copyOf(outputSchema.leafColumns()));
+    }
+
+    /** The row group's synthesis restricted to the columns named in {@code names}, or empty when none is. */
+    private static Optional<RowPositionSynthesis> narrowTo(
+            Optional<RowPositionSynthesis> rowPosition, Set<ColumnPath> names) {
+        if (rowPosition.isEmpty()) {
+            return Optional.empty();
+        }
+        RowPositionSynthesis synthesis = rowPosition.orElseThrow();
+        List<RowPositionColumn> kept = new ArrayList<>(synthesis.columns().size());
+        for (RowPositionColumn column : synthesis.columns()) {
+            if (names.contains(column.name())) {
+                kept.add(column);
+            }
+        }
+        if (kept.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(new RowPositionSynthesis(synthesis.base(), kept));
+    }
+
+    /** {@code schema} plus the leaves {@code positions} synthesizes, which no column chunk holds. */
+    private static ParquetSchema withPositionLeaves(ParquetSchema schema, Optional<RowPositionSynthesis> positions) {
+        return positions
+                .map(synthesis -> schema.withAppendedLeaves(RowPositionVectors.leaves(synthesis.columns())))
+                .orElse(schema);
+    }
+
+    /**
+     * {@code schema} without the leaves {@code positions} synthesizes: the decoded shape the column readers and the
+     * batch assembly cover. A coalesce presented under its source name keeps that leaf, which the read does decode.
+     */
+    private static ParquetSchema withoutPositionLeaves(ParquetSchema schema, Optional<RowPositionSynthesis> positions) {
+        if (positions.isEmpty()) {
+            return schema;
+        }
+        Set<ColumnPath> synthesized = new HashSet<>();
+        for (RowPositionColumn column : positions.orElseThrow().columns()) {
+            if (!column.reusesSourceLeaf()) {
+                synthesized.add(column.name());
+            }
+        }
+        Set<ColumnPath> decoded = new HashSet<>(schema.leafColumns());
+        decoded.removeAll(synthesized);
+        return schema.project(decoded);
     }
 
     /**
@@ -205,15 +292,24 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
         if (windowRows == 0) {
             return readAndEvaluateSpanningRow();
         }
+        long firstDenseRow = rowsDecodedTotal;
         List<AutoCloseable> acquired = new ArrayList<>();
         Map<ColumnPath, ColumnVector> leafVectors = new HashMap<>();
         Map<ColumnPath, LevelSlice> repLevels = new HashMap<>();
         Map<ColumnPath, LevelSlice> defLevels = new HashMap<>();
         try {
             readFilterVectors(windowRows, leafVectors, repLevels, defLevels, acquired);
-            BitSet survivors = evaluate(leafVectors, repLevels, defLevels, windowRows, acquired);
+            BitSet survivors = evaluate(leafVectors, repLevels, defLevels, firstDenseRow, windowRows, acquired);
             rowsDecodedTotal += windowRows;
-            return new Window(windowRows, Survivors.of(survivors), leafVectors, repLevels, defLevels, acquired, false);
+            return new Window(
+                    firstDenseRow,
+                    windowRows,
+                    Survivors.of(survivors),
+                    leafVectors,
+                    repLevels,
+                    defLevels,
+                    acquired,
+                    false);
         } catch (RuntimeException e) {
             closeQuietly(acquired);
             throw e;
@@ -264,15 +360,17 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
      */
     private Window readAndEvaluateSpanningRow() {
         requireUnmaskedSpanningRow();
+        long firstDenseRow = rowsDecodedTotal;
         List<AutoCloseable> acquired = new ArrayList<>();
         Map<ColumnPath, ColumnVector> leafVectors = new HashMap<>();
         Map<ColumnPath, LevelSlice> repLevels = new HashMap<>();
         Map<ColumnPath, LevelSlice> defLevels = new HashMap<>();
         try {
             readFilterSpanningRow(leafVectors, repLevels, defLevels, acquired);
-            BitSet survivors = evaluate(leafVectors, repLevels, defLevels, 1, acquired);
+            BitSet survivors = evaluate(leafVectors, repLevels, defLevels, firstDenseRow, 1, acquired);
             rowsDecodedTotal++;
-            return new Window(1, Survivors.of(survivors), leafVectors, repLevels, defLevels, acquired, true);
+            return new Window(
+                    firstDenseRow, 1, Survivors.of(survivors), leafVectors, repLevels, defLevels, acquired, true);
         } catch (RuntimeException e) {
             closeQuietly(acquired);
             throw e;
@@ -317,10 +415,12 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
             Map<ColumnPath, ColumnVector> leafVectors,
             Map<ColumnPath, LevelSlice> repLevels,
             Map<ColumnPath, LevelSlice> defLevels,
+            long firstDenseRow,
             int windowRows,
             List<AutoCloseable> acquired) {
         long start = System.nanoTime();
-        try (ParquetRecordBatch filterBatch = filterBatch(leafVectors, repLevels, defLevels, windowRows, acquired)) {
+        try (ParquetRecordBatch filterBatch =
+                filterBatch(leafVectors, repLevels, defLevels, firstDenseRow, windowRows, acquired)) {
             return VectorizedPredicateEvaluator.eval(predicate, filterBatch);
         } finally {
             recordFilterNanos += System.nanoTime() - start;
@@ -328,14 +428,16 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
     }
 
     /**
-     * The window's filter columns as a batch the predicate evaluator reads. It registers no buffer: the window owns the
-     * decode buffers its vectors read, and closing this batch releases only its own arena.
+     * The window's filter columns as a batch the predicate evaluator reads, plus the row-position columns the predicate
+     * names. It registers no buffer: the window owns the decode buffers its vectors read, and closing this batch
+     * releases only its own arena.
      */
     @MustBeClosed
     private ParquetRecordBatch filterBatch(
             Map<ColumnPath, ColumnVector> leafVectors,
             Map<ColumnPath, LevelSlice> repLevels,
             Map<ColumnPath, LevelSlice> defLevels,
+            long firstDenseRow,
             int windowRows,
             List<AutoCloseable> acquired) {
         // Confined is enough: this batch never leaves the decode worker that builds it, and the same call closes it.
@@ -352,11 +454,22 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
                     windowRows,
                     decodeBufferAllocator,
                     acquired);
-            return new DefaultParquetRecordBatch(filterSchema, vectors, windowRows, batchArena);
+            Map<ColumnPath, ColumnVector> withPositions = addFilterPositions(vectors, firstDenseRow, windowRows);
+            return new DefaultParquetRecordBatch(filterBatchSchema, withPositions, windowRows, batchArena);
         } catch (RuntimeException e) {
             batchArena.close();
             throw e;
         }
+    }
+
+    /** The window's synthesized columns over its own rows, which the predicate reads beside the decoded ones. */
+    private Map<ColumnPath, ColumnVector> addFilterPositions(
+            Map<ColumnPath, ColumnVector> vectors, long firstDenseRow, int windowRows) {
+        if (filterPositions.isEmpty()) {
+            return vectors;
+        }
+        Selection positions = RowPositionVectors.window(rowMask, firstDenseRow, windowRows);
+        return RowPositionVectors.add(vectors, filterPositions.orElseThrow(), positions, windowRows);
     }
 
     /** Closes decode buffers in reverse order, best-effort: one failing close must not strand the others. */
@@ -384,15 +497,16 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
             Map<ColumnPath, ColumnVector> vectors = BatchAssembly.assemble(
                     outputForm,
                     outputPlans,
-                    outputSchema,
+                    outputDecodeSchema,
                     leafVectors,
                     repLevels,
                     defLevels,
                     survivors,
                     decodeBufferAllocator,
                     acquired);
+            Map<ColumnPath, ColumnVector> withPositions = addOutputPositions(vectors, window);
             DefaultParquetRecordBatch batch =
-                    new DefaultParquetRecordBatch(outputSchema, vectors, survivors, batchArena);
+                    new DefaultParquetRecordBatch(outputSchema, withPositions, survivors, batchArena);
             for (AutoCloseable buffer : acquired) {
                 batch.registerBuffer(buffer);
             }
@@ -403,6 +517,22 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
             batchArena.close();
             throw e;
         }
+    }
+
+    /**
+     * The emitted batch's synthesized columns, reporting each surviving row's true position: the window's positions
+     * restricted to the rows the predicate kept.
+     */
+    private Map<ColumnPath, ColumnVector> addOutputPositions(Map<ColumnPath, ColumnVector> vectors, Window window) {
+        if (outputPositions.isEmpty()) {
+            return vectors;
+        }
+        Selection positions = RowPositionVectors.survivors(
+                rowMask,
+                window.firstDenseRow(),
+                window.rows(),
+                window.survivors().bits());
+        return RowPositionVectors.add(vectors, outputPositions.orElseThrow(), positions, window.survivorCount());
     }
 
     /**
@@ -550,11 +680,13 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
 
     /**
      * One window's decoded filter columns and the rows of it the predicate kept. The vectors and level windows cover
-     * the window's own rows, indexed from zero; {@code acquiredBuffers} holds the decode buffers they read, which the
-     * emitted batch takes over and a dropped window releases. {@code spansPages} marks the one-row window that follows
-     * a row past the page it started in.
+     * the window's own rows, indexed from zero; {@code firstDenseRow} places those rows in the row group, counting the
+     * rows the scan walked before them. {@code acquiredBuffers} holds the decode buffers they read, which the emitted
+     * batch takes over and a dropped window releases. {@code spansPages} marks the one-row window that follows a row
+     * past the page it started in.
      */
     private record Window(
+            long firstDenseRow,
             int rows,
             Survivors survivors,
             Map<ColumnPath, ColumnVector> leafVectors,
