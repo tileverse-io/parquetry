@@ -29,7 +29,6 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.internal.read.page.DeltaLengthByteArrayDecoder;
-import io.tileverse.parquetry.testsupport.ByteArrayWritableChannel;
 
 class DeltaLengthByteArrayEncoderTest {
 
@@ -77,8 +76,8 @@ class DeltaLengthByteArrayEncoderTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("roundTripCases")
     void roundTripViaDecoder(String label, byte[][] values) throws Exception {
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
-        new DeltaLengthByteArrayEncoder().encode(values, values.length, out);
+        GrowableByteSink out = new GrowableByteSink(64);
+        new DeltaLengthByteArrayEncoder().encode(new ArrayBinaryPayload(values, values.length), values.length, out);
 
         DeltaLengthByteArrayDecoder decoder = new DeltaLengthByteArrayDecoder();
         decoder.load(MemorySegment.ofArray(out.toByteArray()), values.length);

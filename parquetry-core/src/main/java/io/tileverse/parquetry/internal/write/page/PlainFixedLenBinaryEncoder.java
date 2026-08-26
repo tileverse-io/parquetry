@@ -16,8 +16,6 @@
 package io.tileverse.parquetry.internal.write.page;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.WritableByteChannel;
 
 import io.tileverse.parquetry.format.Encoding;
 
@@ -27,7 +25,7 @@ import io.tileverse.parquetry.format.Encoding;
  * <p>Inverse of {@link io.tileverse.parquetry.internal.read.page.PlainFixedLenBinaryDecoder}. The fixed width comes
  * from the schema's {@code typeLength}; every value passed to {@link #encode} must match it exactly.
  */
-public record PlainFixedLenBinaryEncoder(int length) implements Encoder<byte[][]> {
+public record PlainFixedLenBinaryEncoder(int length) implements Encoder<BinaryPayload> {
 
     public PlainFixedLenBinaryEncoder {
         if (length < 0) {
@@ -36,14 +34,14 @@ public record PlainFixedLenBinaryEncoder(int length) implements Encoder<byte[][]
     }
 
     @Override
-    public int encode(byte[][] values, int n, WritableByteChannel dst) throws IOException {
+    public int encode(BinaryPayload values, int n, LittleEndianSink dst) throws IOException {
         for (int i = 0; i < n; i++) {
-            byte[] value = values[i];
-            if (value.length != length) {
+            int valueLength = values.length(i);
+            if (valueLength != length) {
                 throw new IllegalArgumentException("FIXED_LEN_BYTE_ARRAY value at index " + i + " has length "
-                        + value.length + " but encoder is configured for " + length);
+                        + valueLength + " but encoder is configured for " + length);
             }
-            ChannelWrites.writeFully(dst, ByteBuffer.wrap(value));
+            values.writeValueInto(i, dst);
         }
         return n * length;
     }

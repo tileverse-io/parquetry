@@ -16,7 +16,6 @@
 package io.tileverse.parquetry.internal.write.page;
 
 import java.io.IOException;
-import java.nio.channels.WritableByteChannel;
 
 import io.tileverse.parquetry.format.Encoding;
 
@@ -25,7 +24,7 @@ import io.tileverse.parquetry.format.Encoding;
  *
  * <p>Mirror of {@link io.tileverse.parquetry.internal.read.page.PageDecoder} for the write path. Implementations are
  * stateless across pages: a caller can reuse the same {@code Encoder<T>} to write many pages back-to-back by calling
- * {@link #encode(Object, int, WritableByteChannel)} once per page.
+ * {@link #encode(Object, int, LittleEndianSink)} once per page.
  *
  * <p>{@link #parquetEncoding()} returns the marker that goes in the page header's {@code encoding} field for DataPage
  * V2 writers; {@link #parquetEncodingV1()} returns the marker for DataPage V1 writers. The two values only differ for
@@ -56,7 +55,7 @@ public sealed interface Encoder<T>
      *
      * @return the number of bytes written to {@code dst}
      */
-    int encode(T values, int n, WritableByteChannel dst) throws IOException;
+    int encode(T values, int n, LittleEndianSink dst) throws IOException;
 
     /** The encoding marker for the page header in DataPage V2 mode. */
     Encoding parquetEncoding();

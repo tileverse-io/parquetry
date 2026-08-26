@@ -43,6 +43,9 @@ import org.tukaani.xz.XZOutputStream;
 
 import io.airlift.compress.v3.hadoop.HadoopOutputStream;
 import io.airlift.compress.v3.lz4.Lz4HadoopStreams;
+import io.airlift.compress.v3.lz4.Lz4JavaCompressor;
+import io.airlift.compress.v3.snappy.SnappyJavaCompressor;
+import io.airlift.compress.v3.zstd.ZstdJavaCompressor;
 import io.airlift.compress.v3.zstd.ZstdOutputStream;
 
 /**
@@ -171,21 +174,31 @@ class CodecTest {
                     Codec.xz());
         }
 
-        @ParameterizedTest(name = "{0}")
-        @MethodSource("nonTrivialCompressibleCodecs")
-        void compressOverflowThrowsIOException(Codec codec) {
-            try (Arena arena = Arena.ofConfined()) {
-                byte[] payload = new byte[4096];
-                // Random-like fill so even fast codecs cannot shrink it into 1 byte.
-                for (int i = 0; i < payload.length; i++) {
-                    payload[i] = (byte) (i * 31);
-                }
-                MemorySegment src = arena.allocate(payload.length);
-                MemorySegment.copy(payload, 0, src, ValueLayout.JAVA_BYTE, 0, payload.length);
-                MemorySegment tiny = arena.allocate(1);
-
-                assertThatThrownBy(() -> codec.compress(src, tiny)).isInstanceOf(IOException.class);
+        /**
+         * A too-small output must fail as an {@link IOException} whichever source the codec is handed. The read-only
+         * case pins the risky half of the read-only handling: the compressor's refusal, then the writable-copy retry,
+         * then a genuine overflow, which must still reach the caller as an {@link IOException} rather than as a silent
+         * success or a raw {@link IllegalArgumentException}.
+         */
+        @ParameterizedTest(name = "{1}/{0}")
+        @MethodSource("overflowCases")
+        void compressOverflowThrowsIOException(Codec codec, String sourceKind, boolean readOnlySource) {
+            byte[] payload = new byte[4096];
+            // Random-like fill so even fast codecs cannot shrink it into 1 byte.
+            for (int i = 0; i < payload.length; i++) {
+                payload[i] = (byte) (i * 31);
             }
+            MemorySegment writableSource = MemorySegment.ofArray(payload);
+            MemorySegment src = readOnlySource ? writableSource.asReadOnly() : writableSource;
+            MemorySegment tiny = MemorySegment.ofArray(new byte[1]);
+
+            assertThatThrownBy(() -> codec.compress(src, tiny)).isInstanceOf(IOException.class);
+        }
+
+        static Stream<Arguments> overflowCases() {
+            return nonTrivialCompressibleCodecs().stream()
+                    .flatMap(codec -> Stream.of(
+                            Arguments.of(codec, "writableSource", false), Arguments.of(codec, "readOnlySource", true)));
         }
 
         static List<Codec> nonTrivialCompressibleCodecs() {
@@ -198,6 +211,69 @@ class CodecTest {
                     Codec.lzo(),
                     Codec.bzip2(),
                     Codec.xz());
+        }
+
+        @ParameterizedTest(name = "readOnlySource/{0}")
+        @MethodSource("io.tileverse.parquetry.compression.CodecTest#unsafeBackedCodecs")
+        void compressesFromAReadOnlySource(String name, Codec codec) throws Exception {
+            byte[] payload = COMPRESSIBLE_PAYLOAD;
+            MemorySegment readOnlySource = MemorySegment.ofArray(payload).asReadOnly();
+            MemorySegment compressed = MemorySegment.ofArray(new byte[(int) codec.maxCompressedLength(payload.length)]);
+
+            int compressedLen = codec.compress(readOnlySource, compressed);
+
+            MemorySegment back = MemorySegment.ofArray(new byte[payload.length]);
+            codec.decompress(compressed.asSlice(0, compressedLen), back);
+            assertThat(back.toArray(JAVA_BYTE)).isEqualTo(payload);
+        }
+
+        /**
+         * Pins the aircompressor behaviour the read-only handling exists for, on every platform: the pure-Java
+         * compressors reach the source's base address through {@code Unsafe} and refuse a read-only segment, while the
+         * optimized ones accept it. Which of the two aircompressor picks depends on the platform, and the Windows
+         * runner has no native backend at all. Compressing a read-only source through {@link CompressionSupport} must
+         * therefore succeed even when the pure-Java compressor is the one running.
+         */
+        @ParameterizedTest(name = "javaCompressor/{0}")
+        @MethodSource("pureJavaCompressors")
+        void compressesFromAReadOnlySourceThroughThePureJavaCompressor(
+                String name, CompressionSupport.SegmentCompressor javaCompressor, int maxCompressedLength) {
+            byte[] payload = COMPRESSIBLE_PAYLOAD;
+            MemorySegment readOnlySource = MemorySegment.ofArray(payload).asReadOnly();
+            MemorySegment compressed = MemorySegment.ofArray(new byte[maxCompressedLength]);
+
+            assertThatThrownBy(() -> javaCompressor.compress(readOnlySource, compressed))
+                    .as("aircompressor's own refusal of a read-only source")
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("read-only");
+
+            int compressedLen = CompressionSupport.compressReadingFrom(readOnlySource, compressed, javaCompressor);
+            assertThat(compressedLen).as("compressed length").isPositive();
+        }
+
+        /**
+         * The pure-Java compressors that can be constructed directly. LZO has no separate Java implementation to name
+         * here: {@code LzoCompressor} is pure Java on every platform and is covered by
+         * {@link #compressesFromAReadOnlySource}.
+         */
+        static Stream<Arguments> pureJavaCompressors() {
+            ZstdJavaCompressor zstd = new ZstdJavaCompressor();
+            SnappyJavaCompressor snappy = new SnappyJavaCompressor();
+            Lz4JavaCompressor lz4 = new Lz4JavaCompressor();
+            int payloadLength = COMPRESSIBLE_PAYLOAD.length;
+            return Stream.of(
+                    Arguments.of(
+                            "zstd",
+                            (CompressionSupport.SegmentCompressor) zstd::compress,
+                            zstd.maxCompressedLength(payloadLength)),
+                    Arguments.of(
+                            "snappy",
+                            (CompressionSupport.SegmentCompressor) snappy::compress,
+                            snappy.maxCompressedLength(payloadLength)),
+                    Arguments.of(
+                            "lz4",
+                            (CompressionSupport.SegmentCompressor) lz4::compress,
+                            lz4.maxCompressedLength(payloadLength)));
         }
 
         /**

@@ -37,10 +37,10 @@ import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.internal.read.page.Dictionary;
 import io.tileverse.parquetry.internal.read.page.DictionaryDecoder;
 import io.tileverse.parquetry.internal.write.page.EncodedPage;
+import io.tileverse.parquetry.internal.write.page.GrowableByteSink;
 import io.tileverse.parquetry.internal.write.page.PageWriter;
 import io.tileverse.parquetry.internal.write.page.PlainInt32Encoder;
 import io.tileverse.parquetry.schema.PrimitiveKind;
-import io.tileverse.parquetry.testsupport.ByteArrayWritableChannel;
 
 class PageWriterDictionaryTest {
 
@@ -50,7 +50,7 @@ class PageWriterDictionaryTest {
         ColumnContext column = new ColumnContext(0, 0, PrimitiveKind.INT32, ParquetVersion.V2_0, Compression.zstd(3));
         PageWriter writer = new PageWriter(column);
 
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         EncodedPage encoded =
                 writer.writeDictionaryPage(dictionaryValues, dictionaryValues.length, new PlainInt32Encoder(), out);
 
@@ -94,7 +94,7 @@ class PageWriterDictionaryTest {
                 new ColumnContext(0, 0, PrimitiveKind.INT32, ParquetVersion.V1_1, Compression.uncompressed());
         PageWriter writer = new PageWriter(column);
 
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         writer.writeDictionaryPage(dictionaryValues, dictionaryValues.length, new PlainInt32Encoder(), out);
 
         ByteArrayInputStream in = new ByteArrayInputStream(out.toByteArray());
@@ -111,7 +111,7 @@ class PageWriterDictionaryTest {
         ColumnContext column = new ColumnContext(0, 0, PrimitiveKind.INT32, ParquetVersion.V2_0, Compression.snappy());
         PageWriter writer = new PageWriter(column);
 
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         writer.writeDictionaryPage(dictionaryValues, dictionaryValues.length, new PlainInt32Encoder(), out);
 
         ByteArrayInputStream in = new ByteArrayInputStream(out.toByteArray());

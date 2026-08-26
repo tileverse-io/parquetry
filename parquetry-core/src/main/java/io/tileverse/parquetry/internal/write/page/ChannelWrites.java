@@ -20,17 +20,17 @@ import java.nio.ByteBuffer;
 import java.nio.channels.WritableByteChannel;
 
 /**
- * Channel-write helpers shared by every {@link Encoder} that emits its page bytes into a {@link WritableByteChannel}.
+ * Drains a whole {@link ByteBuffer} into a {@link WritableByteChannel}.
  *
- * <p>A single {@link WritableByteChannel#write(ByteBuffer)} call may report a partial write count. The encoders never
- * tolerate a short write, so each one loops until the buffer is drained.
+ * <p>A single {@link WritableByteChannel#write(ByteBuffer)} call may report a partial write count. Every caller here
+ * requires the whole buffer to reach the channel, hence the drain loop.
  */
-final class ChannelWrites {
+public final class ChannelWrites {
 
     private ChannelWrites() {}
 
     /** Drains {@code buf} into {@code dst}, looping until {@code buf} has no remaining bytes. */
-    static void writeFully(WritableByteChannel dst, ByteBuffer buf) throws IOException {
+    public static void writeFully(WritableByteChannel dst, ByteBuffer buf) throws IOException {
         while (buf.hasRemaining()) {
             dst.write(buf);
         }

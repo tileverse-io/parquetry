@@ -27,7 +27,6 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.internal.read.page.PlainInt32Decoder;
-import io.tileverse.parquetry.testsupport.ByteArrayWritableChannel;
 
 class PlainInt32EncoderTest {
 
@@ -39,7 +38,7 @@ class PlainInt32EncoderTest {
 
     @Test
     void emptyInputWritesNoBytes() throws Exception {
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         int written = new PlainInt32Encoder().encode(new int[0], 0, out);
         assertThat(written).isZero();
         assertThat(out.size()).isZero();
@@ -47,7 +46,7 @@ class PlainInt32EncoderTest {
 
     @Test
     void bytesPerValueIsFour() throws Exception {
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         int written = new PlainInt32Encoder().encode(new int[] {1, 2, 3}, 3, out);
         assertThat(written).isEqualTo(12);
         assertThat(out.size()).isEqualTo(12);
@@ -75,7 +74,7 @@ class PlainInt32EncoderTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("roundTripCases")
     void roundTripViaDecoder(String label, int[] values) throws Exception {
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         new PlainInt32Encoder().encode(values, values.length, out);
 
         PlainInt32Decoder decoder = new PlainInt32Decoder();

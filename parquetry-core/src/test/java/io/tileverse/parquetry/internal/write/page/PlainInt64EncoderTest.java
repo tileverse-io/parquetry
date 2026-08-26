@@ -27,7 +27,6 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.internal.read.page.PlainInt64Decoder;
-import io.tileverse.parquetry.testsupport.ByteArrayWritableChannel;
 
 class PlainInt64EncoderTest {
 
@@ -38,7 +37,7 @@ class PlainInt64EncoderTest {
 
     @Test
     void emptyInputWritesNoBytes() throws Exception {
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         int written = new PlainInt64Encoder().encode(new long[0], 0, out);
         assertThat(written).isZero();
     }
@@ -58,7 +57,7 @@ class PlainInt64EncoderTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("roundTripCases")
     void roundTripViaDecoder(String label, long[] values) throws Exception {
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         new PlainInt64Encoder().encode(values, values.length, out);
 
         PlainInt64Decoder decoder = new PlainInt64Decoder();

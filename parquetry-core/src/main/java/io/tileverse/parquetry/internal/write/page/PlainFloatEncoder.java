@@ -15,11 +15,7 @@
  */
 package io.tileverse.parquetry.internal.write.page;
 
-import static java.nio.ByteOrder.LITTLE_ENDIAN;
-
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.WritableByteChannel;
 
 import io.tileverse.parquetry.format.Encoding;
 
@@ -27,24 +23,19 @@ import io.tileverse.parquetry.format.Encoding;
  * PLAIN encoder for FLOAT: writes each value as four little-endian IEEE 754 bytes, contiguous.
  *
  * <p>Inverse of {@link io.tileverse.parquetry.internal.read.page.PlainFloatDecoder}. NaN and signed-zero bit patterns
- * survive encoding; the underlying {@link ByteBuffer#putFloat(float)} call uses {@link Float#floatToRawIntBits(float)}
- * semantics implicitly.
+ * survive encoding because {@link LittleEndianSink#writeFloat(float)} emits {@link Float#floatToRawIntBits(float)}.
  */
 public final class PlainFloatEncoder implements Encoder<float[]> {
 
     @Override
-    public int encode(float[] values, int n, WritableByteChannel dst) throws IOException {
+    public int encode(float[] values, int n, LittleEndianSink dst) throws IOException {
         if (n == 0) {
             return 0;
         }
-        int totalBytes = n * Float.BYTES;
-        ByteBuffer buf = ByteBuffer.allocate(totalBytes).order(LITTLE_ENDIAN);
         for (int i = 0; i < n; i++) {
-            buf.putFloat(values[i]);
+            dst.writeFloat(values[i]);
         }
-        buf.flip();
-        ChannelWrites.writeFully(dst, buf);
-        return totalBytes;
+        return n * Float.BYTES;
     }
 
     @Override

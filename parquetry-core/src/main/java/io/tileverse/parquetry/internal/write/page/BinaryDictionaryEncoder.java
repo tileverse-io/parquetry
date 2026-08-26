@@ -17,7 +17,7 @@ package io.tileverse.parquetry.internal.write.page;
 
 import java.io.IOException;
 import java.lang.foreign.MemorySegment;
-import java.nio.channels.WritableByteChannel;
+import java.lang.foreign.ValueLayout;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -30,20 +30,19 @@ import io.airlift.compress.v3.xxhash.XxHash64Hasher;
  * Dictionary attempt for the binary kinds (BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, packed INT96), keyed by content hash
  * instead of boxed values. Values arrive as {@link MemorySegment} views of caller-owned memory: a lookup hashes the
  * segment (xxHash64) into an open-addressed table and confirms a hit with a byte compare; only a distinct value's bytes
- * are retained, using the {@code byte[]} the caller already materialized for the page payload store - no additional
- * copy per cell.
+ * are copied out of the segment and retained - a repeated value allocates nothing.
  *
- * <p>Page contract and fallback semantics match {@link DictionaryAttemptEncoder}: values append to the current page,
- * {@link #flushPage(WritableByteChannel)} closes it; pages encode as {@link Encoding#RLE_DICTIONARY} indices while the
- * dictionary's serialized payload stays within the byte budget, and fall back to {@link Encoding#PLAIN} once it
- * overflows.
+ * <p>Page contract and fallback semantics match the {@link PageDictionaryEncoder} contract: values append to the
+ * current page, {@link #flushPage(LittleEndianSink)} closes it; pages encode as {@link Encoding#RLE_DICTIONARY} indices
+ * while the dictionary's serialized payload stays within the byte budget, and fall back to {@link Encoding#PLAIN} once
+ * it overflows.
  */
 public final class BinaryDictionaryEncoder implements PageDictionaryEncoder {
 
     private static final int INITIAL_TABLE_SLOTS = 1 << 10;
     private static final int EMPTY_SLOT = -1;
 
-    private final Encoder<byte[][]> plainEncoder;
+    private final Encoder<BinaryPayload> plainEncoder;
 
     /** Fixed serialized size per value, or -1 for variable length (a 4-byte length prefix plus the bytes). */
     private final int fixedValueLength;
@@ -63,7 +62,8 @@ public final class BinaryDictionaryEncoder implements PageDictionaryEncoder {
     private int pageIndexCount;
     private final List<byte[]> pageFallbackValues = new ArrayList<>();
 
-    private BinaryDictionaryEncoder(Encoder<byte[][]> plainEncoder, int fixedValueLength, long dictionaryByteLimit) {
+    private BinaryDictionaryEncoder(
+            Encoder<BinaryPayload> plainEncoder, int fixedValueLength, long dictionaryByteLimit) {
         this.plainEncoder = plainEncoder;
         this.fixedValueLength = fixedValueLength;
         this.dictionaryByteLimit = dictionaryByteLimit;
@@ -73,24 +73,38 @@ public final class BinaryDictionaryEncoder implements PageDictionaryEncoder {
     }
 
     /** Encoder for BYTE_ARRAY columns; each dictionary value costs a 4-byte length prefix plus its bytes. */
-    public static BinaryDictionaryEncoder variableLength(Encoder<byte[][]> plainEncoder, long dictionaryByteLimit) {
+    public static BinaryDictionaryEncoder variableLength(
+            Encoder<BinaryPayload> plainEncoder, long dictionaryByteLimit) {
         return new BinaryDictionaryEncoder(plainEncoder, -1, dictionaryByteLimit);
     }
 
     /** Encoder for FIXED_LEN_BYTE_ARRAY / INT96 columns; each dictionary value costs exactly {@code valueLength}. */
     public static BinaryDictionaryEncoder fixedLength(
-            Encoder<byte[][]> plainEncoder, int valueLength, long dictionaryByteLimit) {
+            Encoder<BinaryPayload> plainEncoder, int valueLength, long dictionaryByteLimit) {
         return new BinaryDictionaryEncoder(plainEncoder, valueLength, dictionaryByteLimit);
     }
 
     /**
-     * Append one value to the current page. {@code value} and {@code retainable} hold the same bytes: the segment is
-     * hashed and compared, and the array is what the dictionary keeps when the value turns out to be distinct. Neither
-     * is touched after this call returns.
+     * Append one value to the current page. The segment is hashed and compared against the retained distinct values; a
+     * distinct value's bytes are copied when it joins the dictionary or the plain fallback, and a repeat only records
+     * its index. The segment is not touched after this call returns.
      */
-    public void appendValue(MemorySegment value, byte[] retainable) {
+    public void appendValue(MemorySegment value) {
+        append(value, null);
+    }
+
+    /**
+     * Append one value the caller already holds as a packed array (the INT96 path); the array itself is what the
+     * dictionary keeps when the value turns out to be distinct.
+     */
+    public void appendValue(byte[] retainable) {
+        append(MemorySegment.ofArray(retainable), retainable);
+    }
+
+    /** {@code retainable} is the array to keep on insert or overflow, or null to copy the segment at that point. */
+    private void append(MemorySegment value, byte[] retainable) {
         if (overflowed) {
-            pageFallbackValues.add(retainable);
+            pageFallbackValues.add(retain(value, retainable));
             return;
         }
         long hash = XxHash64Hasher.hash(value);
@@ -100,21 +114,20 @@ public final class BinaryDictionaryEncoder implements PageDictionaryEncoder {
             addPageIndex(existing);
             return;
         }
-        long candidateBytes = dictionaryBytes + sizeOf(retainable.length);
+        long candidateBytes = dictionaryBytes + sizeOf(value.byteSize());
         if (candidateBytes > dictionaryByteLimit) {
-            overflowToPlain(retainable);
+            overflowToPlain(retain(value, retainable));
             return;
         }
-        insert(slot, hash, retainable, candidateBytes);
+        insert(slot, hash, retain(value, retainable), candidateBytes);
     }
 
-    /** Convenience for callers holding only the array (the packed-INT96 path). */
-    public void appendValue(byte[] retainable) {
-        appendValue(MemorySegment.ofArray(retainable), retainable);
+    private static byte[] retain(MemorySegment value, byte[] retainable) {
+        return retainable != null ? retainable : value.toArray(ValueLayout.JAVA_BYTE);
     }
 
     @Override
-    public PageResult flushPage(WritableByteChannel dst) throws IOException {
+    public PageResult flushPage(LittleEndianSink dst) throws IOException {
         if (overflowed) {
             return flushPlainFallbackPage(dst);
         }
@@ -187,11 +200,11 @@ public final class BinaryDictionaryEncoder implements PageDictionaryEncoder {
         }
     }
 
-    private long sizeOf(int valueLength) {
+    private long sizeOf(long valueLength) {
         if (fixedValueLength >= 0) {
             return fixedValueLength;
         }
-        return (long) Integer.BYTES + valueLength;
+        return Integer.BYTES + valueLength;
     }
 
     private void overflowToPlain(byte[] value) {
@@ -211,7 +224,7 @@ public final class BinaryDictionaryEncoder implements PageDictionaryEncoder {
         pageIndices[pageIndexCount++] = index;
     }
 
-    private PageResult flushDictionaryPage(WritableByteChannel dst) throws IOException {
+    private PageResult flushDictionaryPage(LittleEndianSink dst) throws IOException {
         emittedDictionaryPage = true;
         int n = pageIndexCount;
         pageIndexCount = 0;
@@ -220,11 +233,11 @@ public final class BinaryDictionaryEncoder implements PageDictionaryEncoder {
         return new PageResult(Encoding.RLE_DICTIONARY, Encoding.PLAIN_DICTIONARY, n, bytesWritten);
     }
 
-    private PageResult flushPlainFallbackPage(WritableByteChannel dst) throws IOException {
+    private PageResult flushPlainFallbackPage(LittleEndianSink dst) throws IOException {
         int n = pageFallbackValues.size();
         byte[][] carrier = pageFallbackValues.toArray(new byte[0][]);
         pageFallbackValues.clear();
-        int bytesWritten = plainEncoder.encode(carrier, n, dst);
+        int bytesWritten = plainEncoder.encode(new ArrayBinaryPayload(carrier, n), n, dst);
         return new PageResult(Encoding.PLAIN, Encoding.PLAIN, n, bytesWritten);
     }
 }

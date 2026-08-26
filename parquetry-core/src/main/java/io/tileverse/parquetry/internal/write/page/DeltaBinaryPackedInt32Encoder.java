@@ -16,7 +16,6 @@
 package io.tileverse.parquetry.internal.write.page;
 
 import java.io.IOException;
-import java.nio.channels.WritableByteChannel;
 
 import io.tileverse.parquetry.format.Encoding;
 
@@ -29,7 +28,7 @@ import io.tileverse.parquetry.format.Encoding;
 public final class DeltaBinaryPackedInt32Encoder implements Encoder<int[]> {
 
     @Override
-    public int encode(int[] values, int n, WritableByteChannel dst) throws IOException {
+    public int encode(int[] values, int n, LittleEndianSink dst) throws IOException {
         long[] widened = new long[n];
         for (int i = 0; i < n; i++) {
             widened[i] = values[i];

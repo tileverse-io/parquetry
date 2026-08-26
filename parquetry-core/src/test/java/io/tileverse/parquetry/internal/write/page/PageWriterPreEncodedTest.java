@@ -36,7 +36,6 @@ import io.tileverse.parquetry.format.PageType;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.internal.write.ColumnContext;
 import io.tileverse.parquetry.schema.PrimitiveKind;
-import io.tileverse.parquetry.testsupport.ByteArrayWritableChannel;
 
 class PageWriterPreEncodedTest {
 
@@ -49,7 +48,7 @@ class PageWriterPreEncodedTest {
         ColumnContext column = new ColumnContext(0, 0, PrimitiveKind.INT32, ParquetVersion.V2_0, Compression.zstd(3));
         PageWriter writer = new PageWriter(column);
 
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         PreEncodedPageJob job =
                 new PreEncodedPageJob(encoded, Encoding.PLAIN, values.length, 0, values.length, null, null, null);
         EncodedPage result = writer.writeDataPageV2PreEncoded(job, out);
@@ -77,7 +76,7 @@ class PageWriterPreEncodedTest {
     @Test
     void v2PreEncodedPreservesRleDictionaryMarker() throws Exception {
         int[] dictIndices = {0, 1, 0, 2};
-        ByteArrayWritableChannel dictPayload = new ByteArrayWritableChannel();
+        GrowableByteSink dictPayload = new GrowableByteSink(64);
         new RleDictionaryEncoder().encode(dictIndices, dictIndices.length, dictPayload);
         byte[] dictBytes = dictPayload.toByteArray();
         MemorySegment encoded = MemorySegment.ofArray(dictBytes).asReadOnly();
@@ -85,7 +84,7 @@ class PageWriterPreEncodedTest {
         ColumnContext column = new ColumnContext(0, 0, PrimitiveKind.INT32, ParquetVersion.V2_0, Compression.zstd(3));
         PageWriter writer = new PageWriter(column);
 
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         PreEncodedPageJob job = new PreEncodedPageJob(
                 encoded, Encoding.RLE_DICTIONARY, dictIndices.length, 0, dictIndices.length, null, null, null);
         writer.writeDataPageV2PreEncoded(job, out);
@@ -114,7 +113,7 @@ class PageWriterPreEncodedTest {
                 new ColumnContext(1, 1, PrimitiveKind.INT32, ParquetVersion.V1_1, Compression.uncompressed());
         PageWriter writer = new PageWriter(column);
 
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         PreEncodedPageJob job =
                 new PreEncodedPageJob(encoded, Encoding.PLAIN, values.length, 0, 0, repLevels, defLevels, null);
         writer.writeDataPageV1PreEncoded(job, out);

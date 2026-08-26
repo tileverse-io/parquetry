@@ -27,7 +27,6 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.internal.read.page.PlainBooleanDecoder;
-import io.tileverse.parquetry.testsupport.ByteArrayWritableChannel;
 
 class PlainBooleanEncoderTest {
 
@@ -38,7 +37,7 @@ class PlainBooleanEncoderTest {
 
     @Test
     void emptyInputWritesNoBytes() throws Exception {
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         int written = new PlainBooleanEncoder().encode(new boolean[0], 0, out);
         assertThat(written).isZero();
     }
@@ -46,7 +45,7 @@ class PlainBooleanEncoderTest {
     @Test
     void packsLsbFirst() throws Exception {
         boolean[] values = {true, false, true, false, false, false, false, false};
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         new PlainBooleanEncoder().encode(values, values.length, out);
         // bit0 = 1, bit2 = 1 -> 0b0000_0101 = 0x05
         assertThat(out.toByteArray()).containsExactly(0x05);
@@ -83,7 +82,7 @@ class PlainBooleanEncoderTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("roundTripCases")
     void roundTripViaDecoder(String label, boolean[] values) throws Exception {
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         new PlainBooleanEncoder().encode(values, values.length, out);
 
         PlainBooleanDecoder decoder = new PlainBooleanDecoder();

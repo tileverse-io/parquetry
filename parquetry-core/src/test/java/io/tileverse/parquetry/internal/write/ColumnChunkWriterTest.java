@@ -26,31 +26,47 @@ import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.tileverse.parquetry.columnar.IntVector;
+import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.data.Compression;
+import io.tileverse.parquetry.data.ParquetFileReader;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetWriteException;
+import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.BloomFilterConfig;
 import io.tileverse.parquetry.data.WriteOptions.EncodingPolicy;
 import io.tileverse.parquetry.data.WriteOptions.ParquetVersion;
+import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.format.DataPageHeader;
 import io.tileverse.parquetry.format.DataPageHeaderV2;
 import io.tileverse.parquetry.format.Encoding;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.PageHeader;
 import io.tileverse.parquetry.format.PageType;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
+import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.record.ParquetRecord;
+import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
@@ -507,7 +523,188 @@ class ColumnChunkWriterTest {
         assertThat(result.numValues()).isEqualTo(32);
     }
 
+    @Test
+    void dictionaryBinaryColumnRoundTripsWithValueBufferSkipped() throws Exception {
+        // Low cardinality: dictionary stays active for the whole chunk.
+        List<byte[]> values = new ArrayList<>();
+        for (int i = 0; i < 5000; i++) {
+            values.add(("city-" + (i % 8)).getBytes(StandardCharsets.UTF_8));
+        }
+        byte[][] readBack = writeThenReadBinaryColumn(values);
+        assertThat(readBack).hasNumberOfRows(values.size());
+        for (int i = 0; i < values.size(); i++) {
+            assertThat(readBack[i]).containsExactly(values.get(i));
+        }
+    }
+
+    @Test
+    void overflowedDictionaryBinaryColumnRoundTripsWithValueBufferSkipped() throws Exception {
+        // High cardinality: dictionary overflows to PLAIN mid-chunk; the fallback must still emit every value.
+        List<byte[]> values = new ArrayList<>();
+        for (int i = 0; i < 20000; i++) {
+            values.add(("unique-value-" + i).getBytes(StandardCharsets.UTF_8));
+        }
+        byte[][] readBack = writeThenReadBinaryColumn(values);
+        assertThat(readBack).hasNumberOfRows(values.size());
+        for (int i = 0; i < values.size(); i++) {
+            assertThat(readBack[i]).containsExactly(values.get(i));
+        }
+    }
+
+    @Test
+    void geometryColumnDefaultsToPlainEncoding() throws Exception {
+        SchemaNode.Primitive leaf = requiredGeometry("geometry");
+        WriteOptions options = WriteOptions.builder()
+                .pageValueLimit(256)
+                .pageByteLimit(1 << 20)
+                .build();
+
+        ColumnChunkResult result;
+        try (ColumnChunkWriter writer = new ColumnChunkWriter(options, leaf, tempFile)) {
+            appendLowCardinalityPoints(writer, 3000);
+            result = writer.finishChunk();
+        }
+
+        assertThat(result.dictionaryPageOffset()).isEqualTo(-1L);
+        assertThat(result.encodings()).contains(Encoding.PLAIN);
+        assertThat(result.encodings()).doesNotContain(Encoding.RLE_DICTIONARY, Encoding.PLAIN_DICTIONARY);
+    }
+
+    @Test
+    void explicitAutoRestoresDictionaryOnGeometryColumn() throws Exception {
+        SchemaNode.Primitive leaf = requiredGeometry("geometry");
+        WriteOptions options = WriteOptions.builder()
+                .pageValueLimit(256)
+                .pageByteLimit(1 << 20)
+                .encodingPolicy("geometry", EncodingPolicy.AUTO)
+                .build();
+
+        ColumnChunkResult result;
+        try (ColumnChunkWriter writer = new ColumnChunkWriter(options, leaf, tempFile)) {
+            appendLowCardinalityPoints(writer, 3000);
+            result = writer.finishChunk();
+        }
+
+        assertThat(result.dictionaryPageOffset()).isZero();
+        assertThat(result.encodings()).contains(Encoding.RLE_DICTIONARY);
+    }
+
+    @Test
+    void nonGeometryBinaryColumnStillDefaultsToDictionary() throws Exception {
+        SchemaNode.Primitive leaf = new SchemaNode.Primitive(
+                "name", Repetition.REQUIRED, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1);
+        WriteOptions options = WriteOptions.builder()
+                .pageValueLimit(256)
+                .pageByteLimit(1 << 20)
+                .build();
+
+        ColumnChunkResult result;
+        try (ColumnChunkWriter writer = new ColumnChunkWriter(options, leaf, tempFile)) {
+            for (int i = 0; i < 3000; i++) {
+                byte[] value = ("city-" + (i % 3)).getBytes(StandardCharsets.UTF_8);
+                writer.appendBinary(MemorySegment.ofArray(value), 0, 0);
+            }
+            result = writer.finishChunk();
+        }
+
+        assertThat(result.dictionaryPageOffset()).isZero();
+        assertThat(result.encodings()).contains(Encoding.RLE_DICTIONARY);
+    }
+
+    @Test
+    void appendStripedReadsOnlyTheEntryCountPrefix() throws Exception {
+        WriteOptions options = WriteOptions.builder()
+                .pageValueLimit(16)
+                .pageByteLimit(1 << 20)
+                .encodingPolicy("col", EncodingPolicy.FORCE_PLAIN)
+                .build();
+        SchemaNode.Primitive leaf = requiredInt32("col");
+        IntVector values = IntVector.materialized(new int[] {10, 20}, Validity.allValid(2));
+        int[] keptOrdinals = new int[] {0, 1};
+        int[] defLevels = new int[] {0, 0, 7, 7};
+
+        ColumnChunkResult result;
+        try (ColumnChunkWriter writer = new ColumnChunkWriter(options, leaf, tempFile)) {
+            writer.appendStriped(values, keptOrdinals, null, defLevels, 2, 0);
+            result = writer.finishChunk();
+        }
+
+        assertThat(result.numValues())
+                .as("the tail beyond entryCount is stale capacity, not data")
+                .isEqualTo(2);
+    }
+
     // --- helpers ---
+
+    private static SchemaNode.Primitive requiredGeometry(String name) {
+        return new SchemaNode.Primitive(
+                name,
+                Repetition.REQUIRED,
+                PrimitiveKind.BYTE_ARRAY,
+                OptionalInt.empty(),
+                Optional.of(new LogicalType.Geometry(Optional.empty())),
+                -1);
+    }
+
+    private static void appendLowCardinalityPoints(ColumnChunkWriter writer, int count) {
+        byte[][] points = {wkbPoint(1.0, 2.0), wkbPoint(3.0, 4.0), wkbPoint(5.0, 6.0)};
+        for (int i = 0; i < count; i++) {
+            writer.appendBinary(MemorySegment.ofArray(points[i % points.length]), 0, 0);
+        }
+    }
+
+    private static byte[] wkbPoint(double x, double y) {
+        ByteBuffer buffer = ByteBuffer.allocate(21).order(LITTLE_ENDIAN);
+        buffer.put((byte) 1);
+        buffer.putInt(1);
+        buffer.putDouble(x);
+        buffer.putDouble(y);
+        return buffer.array();
+    }
+
+    /**
+     * Writes a single required {@code BYTE_ARRAY} column through the full writer under the default {@code AUTO}
+     * encoding policy (dictionary active) and reads every value back through parquetry's own reader. A small dictionary
+     * budget forces the high-cardinality case to overflow to {@code PLAIN} mid-chunk while the low-cardinality case
+     * stays dictionary-encoded, exercising both dictionary-active code paths.
+     */
+    private byte[][] writeThenReadBinaryColumn(List<byte[]> values) throws Exception {
+        ColumnPath col = ColumnPath.of("value");
+        ParquetSchema schema = flatBinarySchema(col);
+        WriteOptions options = WriteOptions.builder()
+                .tempDir(tempDir)
+                .dictionaryByteLimit(1024)
+                .build();
+        Path file = Files.createTempFile(tempDir, "binary-col", ".parquet");
+
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>(values.size());
+        for (byte[] value : values) {
+            Map<ColumnPath, Object> row = new HashMap<>(1);
+            row.put(col, value);
+            rows.add(row);
+        }
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
+            writer.writeBatch(WriteFixtures.batch(schema, rows));
+        }
+
+        List<byte[]> readBack = new ArrayList<>(values.size());
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+            try (Stream<ParquetRecord> records =
+                    reader.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
+                records.forEach(record -> readBack.add(record.getBinary(col)));
+            }
+        }
+        return readBack.toArray(new byte[0][]);
+    }
+
+    private static ParquetSchema flatBinarySchema(ColumnPath col) {
+        SchemaNode.Primitive leaf = new SchemaNode.Primitive(
+                col.name(), Repetition.REQUIRED, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1);
+        SchemaNode.Group root =
+                new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(leaf), Optional.empty(), -1);
+        return new ParquetSchema(root);
+    }
 
     private static SchemaNode.Primitive requiredInt32(String name) {
         return new SchemaNode.Primitive(

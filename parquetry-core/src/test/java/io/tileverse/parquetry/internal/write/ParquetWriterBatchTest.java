@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.internal.write;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
@@ -37,12 +38,15 @@ import org.junit.jupiter.api.io.TempDir;
 import io.tileverse.parquetry.columnar.BinaryVector;
 import io.tileverse.parquetry.columnar.ColumnVector;
 import io.tileverse.parquetry.columnar.DefaultParquetRecordBatch;
+import io.tileverse.parquetry.columnar.DoubleVector;
+import io.tileverse.parquetry.columnar.FilteredRecordBatch;
 import io.tileverse.parquetry.columnar.IntVector;
 import io.tileverse.parquetry.columnar.LongVector;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ParquetFileWriter;
+import io.tileverse.parquetry.data.ParquetWriteException;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
@@ -198,7 +202,119 @@ class ParquetWriterBatchTest {
         assertThat(readBack).extracting(m -> m.get("id")).containsExactly(100, 200, 201, 202, 300);
     }
 
+    @Test
+    void sparselyFilteredBatchWritesExactlyTheSurvivingRows() throws Exception {
+        ParquetSchema schema = flatSchema(requiredInt64("id"), requiredDouble("measure"), requiredBinary("name"));
+        WriteOptions options = options().build();
+        Path parquetFile = tempDir.resolve("sparse-filtered.parquet");
+
+        int rows = 1000;
+        BitSet survivors = scatteredSurvivors(rows);
+        List<Integer> expectedRows = survivors.stream().boxed().toList();
+
+        try (ParquetRecordBatch source = denseBatch(schema, rows);
+                ParquetFileWriter writer =
+                        ParquetFileWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
+            ParquetRecordBatch filtered = FilteredRecordBatch.filtered(source, survivors, schema);
+            writer.writeBatch(filtered);
+
+            LongVector callersIds = (LongVector) filtered.columns().get(ColumnPath.of("id"));
+            assertThat(callersIds.getLong(0))
+                    .as("the writer must leave the caller's batch open and readable")
+                    .isEqualTo(5_000_000_000L + expectedRows.get(0));
+        }
+
+        List<Map<String, Object>> readBack = readAll(parquetFile, schema);
+        assertThat(readBack).hasSize(expectedRows.size());
+        for (int logical = 0; logical < expectedRows.size(); logical++) {
+            int sourceRow = expectedRows.get(logical);
+            assertThat(readBack.get(logical))
+                    .as("logical row %d (source row %d)", logical, sourceRow)
+                    .containsEntry("id", 5_000_000_000L + sourceRow)
+                    .containsEntry("measure", sourceRow * 0.25d)
+                    .containsEntry("name", ("name-" + sourceRow).getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
     // --- helpers ---
+
+    @Test
+    void rangeWindowedBatchWritesExactlyTheWindowsRows() throws Exception {
+        ParquetSchema schema = flatSchema(requiredInt64("id"), requiredDouble("measure"), requiredBinary("name"));
+        Path parquetFile = tempDir.resolve("range-window.parquet");
+
+        int rows = 200;
+        int from = 37;
+        int count = 45;
+        try (ParquetRecordBatch source = denseBatch(schema, rows);
+                ParquetFileWriter writer = ParquetFileWriter.create(
+                        Files.newOutputStream(parquetFile), schema, options().build())) {
+            writer.writeBatch(source.slice(from, count));
+        }
+
+        List<Map<String, Object>> readBack = readAll(parquetFile, schema);
+        assertThat(readBack).hasSize(count);
+        for (int logical = 0; logical < count; logical++) {
+            int sourceRow = from + logical;
+            assertThat(readBack.get(logical))
+                    .as("logical row %d (source row %d)", logical, sourceRow)
+                    .containsEntry("id", 5_000_000_000L + sourceRow)
+                    .containsEntry("measure", sourceRow * 0.25d)
+                    .containsEntry("name", ("name-" + sourceRow).getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    @Test
+    void writingASelectedViewPackedIntoADenseBatchFailsLoudly() throws Exception {
+        ParquetSchema schema = flatSchema(requiredInt64("id"), requiredDouble("measure"), requiredBinary("name"));
+        Path parquetFile = tempDir.resolve("packed-selection.parquet");
+        int rows = 100;
+        BitSet survivors = scatteredSurvivors(rows);
+
+        try (ParquetRecordBatch source = denseBatch(schema, rows);
+                ParquetFileWriter writer = ParquetFileWriter.create(
+                        Files.newOutputStream(parquetFile), schema, options().build())) {
+            ParquetRecordBatch filtered = FilteredRecordBatch.filtered(source, survivors, schema);
+            ParquetRecordBatch packed = DefaultParquetRecordBatch.ofHeap(
+                    schema, new LinkedHashMap<>(filtered.columns()), filtered.rowCount());
+
+            assertThatThrownBy(() -> writer.writeBatch(packed))
+                    .isInstanceOf(ParquetWriteException.class)
+                    .hasMessageContaining("selected view over its backing")
+                    .hasMessageContaining("FilteredRecordBatch.compacted()")
+                    .hasMessageMatching("(?s).*column (id|measure|name) .*");
+        }
+    }
+
+    /** {@code rows} rows of int64 / double / binary, every cell derived from its row index. */
+    private ParquetRecordBatch denseBatch(ParquetSchema schema, int rows) {
+        long[] ids = new long[rows];
+        double[] measures = new double[rows];
+        MemorySegment[] names = new MemorySegment[rows];
+        for (int i = 0; i < rows; i++) {
+            ids[i] = 5_000_000_000L + i;
+            measures[i] = i * 0.25d;
+            names[i] = MemorySegment.ofArray(("name-" + i).getBytes(StandardCharsets.UTF_8))
+                    .asReadOnly();
+        }
+        Validity allValid = Validity.allValid(rows);
+        return buildBatch(
+                schema,
+                rows,
+                Map.of(
+                        ColumnPath.of("id"), LongVector.materialized(ids, allValid),
+                        ColumnPath.of("measure"), DoubleVector.materialized(measures, allValid),
+                        ColumnPath.of("name"), BinaryVector.materialized(names, allValid)));
+    }
+
+    /** Roughly a tenth of {@code rows}, scattered by an irregular stride to defeat any accidental pattern match. */
+    private static BitSet scatteredSurvivors(int rows) {
+        BitSet survivors = new BitSet(rows);
+        for (int row = 3; row < rows; row += 7 + (row % 5)) {
+            survivors.set(row);
+        }
+        return survivors;
+    }
 
     private WriteOptions.Builder options() {
         return WriteOptions.builder().tempDir(tempDir);
@@ -223,6 +339,11 @@ class ParquetWriterBatchTest {
     private static SchemaNode.Primitive requiredInt64(String name) {
         return new SchemaNode.Primitive(
                 name, Repetition.REQUIRED, PrimitiveKind.INT64, OptionalInt.empty(), Optional.empty(), -1);
+    }
+
+    private static SchemaNode.Primitive requiredDouble(String name) {
+        return new SchemaNode.Primitive(
+                name, Repetition.REQUIRED, PrimitiveKind.DOUBLE, OptionalInt.empty(), Optional.empty(), -1);
     }
 
     private static SchemaNode.Primitive requiredBinary(String name) {
@@ -260,6 +381,7 @@ class ParquetWriterBatchTest {
             switch (primitive.kind()) {
                 case INT32 -> row.put(leaf.dot(), parquetRecord.getInt(leaf));
                 case INT64 -> row.put(leaf.dot(), parquetRecord.getLong(leaf));
+                case DOUBLE -> row.put(leaf.dot(), parquetRecord.getDouble(leaf));
                 case BYTE_ARRAY -> row.put(leaf.dot(), parquetRecord.getBinary(leaf));
                 default -> throw new IllegalStateException("unsupported test kind: " + primitive.kind());
             }

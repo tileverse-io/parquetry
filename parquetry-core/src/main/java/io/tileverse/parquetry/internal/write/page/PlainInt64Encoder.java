@@ -15,11 +15,7 @@
  */
 package io.tileverse.parquetry.internal.write.page;
 
-import static java.nio.ByteOrder.LITTLE_ENDIAN;
-
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.WritableByteChannel;
 
 import io.tileverse.parquetry.format.Encoding;
 
@@ -31,18 +27,14 @@ import io.tileverse.parquetry.format.Encoding;
 public final class PlainInt64Encoder implements Encoder<long[]> {
 
     @Override
-    public int encode(long[] values, int n, WritableByteChannel dst) throws IOException {
+    public int encode(long[] values, int n, LittleEndianSink dst) throws IOException {
         if (n == 0) {
             return 0;
         }
-        int totalBytes = n * Long.BYTES;
-        ByteBuffer buf = ByteBuffer.allocate(totalBytes).order(LITTLE_ENDIAN);
         for (int i = 0; i < n; i++) {
-            buf.putLong(values[i]);
+            dst.writeLong(values[i]);
         }
-        buf.flip();
-        ChannelWrites.writeFully(dst, buf);
-        return totalBytes;
+        return n * Long.BYTES;
     }
 
     @Override

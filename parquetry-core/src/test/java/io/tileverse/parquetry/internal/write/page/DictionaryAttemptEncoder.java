@@ -16,7 +16,6 @@
 package io.tileverse.parquetry.internal.write.page;
 
 import java.io.IOException;
-import java.nio.channels.WritableByteChannel;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -25,12 +24,15 @@ import java.util.Map;
 import io.tileverse.parquetry.format.Encoding;
 
 /**
- * Page-level dictionary attempt with PLAIN fallback. Tracks unique values in a column-chunk dictionary while the
+ * Test-scope parity oracle: the original boxed-key dictionary attempt, retained as the reference implementation the
+ * production encoders are byte-compared against.
+ *
+ * <p>Page-level dictionary attempt with PLAIN fallback. Tracks unique values in a column-chunk dictionary while the
  * dictionary's serialized payload would stay under a byte budget; falls back to writing PLAIN pages once the budget is
  * exceeded.
  *
  * <p>The dataset-writer driver feeds this encoder one column value at a time: append every column value via
- * {@link #appendValue(Object)}, then close each page with {@link #flushPage(WritableByteChannel)}. As long as the
+ * {@link #appendValue(Object)}, then close each page with {@link #flushPage(LittleEndianSink)}. As long as the
  * dictionary fits inside {@code dictionaryByteLimit} the encoder emits {@link Encoding#RLE_DICTIONARY} pages of
  * dictionary indices; once it overflows, subsequent {@code appendValue} calls record the original value, and
  * {@link #flushPage} emits a {@link Encoding#PLAIN} page using {@code plainEncoder}.
@@ -99,7 +101,7 @@ public final class DictionaryAttemptEncoder<V, C> implements PageDictionaryEncod
     }
 
     @Override
-    public PageResult flushPage(WritableByteChannel dst) throws IOException {
+    public PageResult flushPage(LittleEndianSink dst) throws IOException {
         if (overflowed) {
             return flushPlainFallbackPage(dst);
         }
@@ -121,7 +123,7 @@ public final class DictionaryAttemptEncoder<V, C> implements PageDictionaryEncod
         return emittedDictionaryPage;
     }
 
-    private PageResult flushDictionaryPage(WritableByteChannel dst) throws IOException {
+    private PageResult flushDictionaryPage(LittleEndianSink dst) throws IOException {
         emittedDictionaryPage = true;
         int n = pageIndices.size();
         int[] indices = new int[n];
@@ -134,7 +136,7 @@ public final class DictionaryAttemptEncoder<V, C> implements PageDictionaryEncod
         return new PageResult(Encoding.RLE_DICTIONARY, Encoding.PLAIN_DICTIONARY, n, bytesWritten);
     }
 
-    private PageResult flushPlainFallbackPage(WritableByteChannel dst) throws IOException {
+    private PageResult flushPlainFallbackPage(LittleEndianSink dst) throws IOException {
         int n = pageFallbackValues.size();
         C carrier = carrierFactory.from(pageFallbackValues);
         pageFallbackValues.clear();

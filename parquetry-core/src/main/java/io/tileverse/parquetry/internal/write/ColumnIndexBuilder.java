@@ -186,23 +186,9 @@ public final class ColumnIndexBuilder {
             case INT64 -> Long.compare(a.get(INT64, 0), b.get(INT64, 0));
             case FLOAT -> Float.compare(a.get(FLOAT, 0), b.get(FLOAT, 0));
             case DOUBLE -> Double.compare(a.get(DOUBLE, 0), b.get(DOUBLE, 0));
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> compareBytes(a, b);
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> UnsignedLexOrder.compare(a, b);
             case INT96 -> 0;
         };
-    }
-
-    /** Unsigned lexicographic byte comparison, mirroring Parquet's default ColumnOrder for binary columns. */
-    private static int compareBytes(MemorySegment a, MemorySegment b) {
-        long aLen = a.byteSize();
-        long bLen = b.byteSize();
-        long common = Math.min(aLen, bLen);
-        for (long i = 0; i < common; i++) {
-            int diff = (a.get(JAVA_BYTE, i) & 0xff) - (b.get(JAVA_BYTE, i) & 0xff);
-            if (diff != 0) {
-                return diff;
-            }
-        }
-        return Long.compare(aLen, bLen);
     }
 
     private enum Direction {

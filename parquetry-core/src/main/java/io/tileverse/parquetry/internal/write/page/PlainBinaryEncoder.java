@@ -15,11 +15,7 @@
  */
 package io.tileverse.parquetry.internal.write.page;
 
-import static java.nio.ByteOrder.LITTLE_ENDIAN;
-
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.WritableByteChannel;
 
 import io.tileverse.parquetry.format.Encoding;
 
@@ -28,21 +24,16 @@ import io.tileverse.parquetry.format.Encoding;
  *
  * <p>Inverse of {@link io.tileverse.parquetry.internal.read.page.PlainBinaryDecoder}.
  */
-public final class PlainBinaryEncoder implements Encoder<byte[][]> {
+public final class PlainBinaryEncoder implements Encoder<BinaryPayload> {
 
     @Override
-    public int encode(byte[][] values, int n, WritableByteChannel dst) throws IOException {
+    public int encode(BinaryPayload values, int n, LittleEndianSink dst) throws IOException {
         int written = 0;
-        byte[] prefix = new byte[Integer.BYTES];
-        ByteBuffer prefixView = ByteBuffer.wrap(prefix).order(LITTLE_ENDIAN);
         for (int i = 0; i < n; i++) {
-            byte[] value = values[i];
-            prefixView.clear();
-            prefixView.putInt(value.length);
-            prefixView.flip();
-            ChannelWrites.writeFully(dst, prefixView);
-            ChannelWrites.writeFully(dst, ByteBuffer.wrap(value));
-            written += Integer.BYTES + value.length;
+            int length = values.length(i);
+            dst.writeInt(length);
+            values.writeValueInto(i, dst);
+            written += Integer.BYTES + length;
         }
         return written;
     }

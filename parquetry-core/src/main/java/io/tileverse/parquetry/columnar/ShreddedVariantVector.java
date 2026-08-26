@@ -102,11 +102,14 @@ public final class ShreddedVariantVector implements ColumnVector {
      */
     public StructVector asStructView() {
         requireUnselected();
-        // Built once over immutable leaf vectors; single-threaded during striping, no synchronization needed.
-        if (structView == null) {
-            structView = buildStructView();
+        // Racing callers may each build a view. StructVector is an all-final record over the same immutable
+        // leaves: the duplicates are interchangeable, and final-field semantics make racy publication safe.
+        StructVector view = structView;
+        if (view == null) {
+            view = buildStructView();
+            structView = view;
         }
-        return structView;
+        return view;
     }
 
     private StructVector buildStructView() {

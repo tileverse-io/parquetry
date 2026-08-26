@@ -23,6 +23,7 @@ import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 
 import org.junit.jupiter.api.Test;
 
@@ -37,7 +38,6 @@ import io.tileverse.parquetry.format.Statistics;
 import io.tileverse.parquetry.internal.read.page.LevelDecoder;
 import io.tileverse.parquetry.internal.write.ColumnContext;
 import io.tileverse.parquetry.schema.PrimitiveKind;
-import io.tileverse.parquetry.testsupport.ByteArrayWritableChannel;
 
 class PageWriterV2Test {
 
@@ -49,7 +49,7 @@ class PageWriterV2Test {
         ColumnContext column = new ColumnContext(0, 0, PrimitiveKind.INT32, ParquetVersion.V2_0, Compression.zstd(3));
         PageWriter writer = new PageWriter(column);
 
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         PageEncodeJob job =
                 new PageEncodeJob(values, values.length, 0, values.length, null, null, new PlainInt32Encoder(), stats);
         EncodedPage encoded = writer.writeDataPageV2(job, out);
@@ -92,7 +92,7 @@ class PageWriterV2Test {
         ColumnContext column = new ColumnContext(1, 2, PrimitiveKind.INT32, ParquetVersion.V2_0, Compression.snappy());
         PageWriter writer = new PageWriter(column);
 
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         PageEncodeJob job = new PageEncodeJob(
                 values,
                 values.length,
@@ -141,7 +141,7 @@ class PageWriterV2Test {
                 new ColumnContext(0, 0, PrimitiveKind.INT32, ParquetVersion.V2_0, Compression.uncompressed());
         PageWriter writer = new PageWriter(column);
 
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         PageEncodeJob job = new PageEncodeJob(
                 values,
                 values.length,
@@ -171,7 +171,7 @@ class PageWriterV2Test {
         PageWriter writer = new PageWriter(column);
 
         PageStatistics stats = pageStats(MemorySegment.NULL, MemorySegment.NULL, 3, true);
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         PageEncodeJob job = new PageEncodeJob(
                 new int[0],
                 defLevels.length,
@@ -203,7 +203,7 @@ class PageWriterV2Test {
         ColumnContext column = new ColumnContext(0, 0, PrimitiveKind.INT32, ParquetVersion.V2_0, Compression.snappy());
         PageWriter writer = new PageWriter(column);
 
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         PageEncodeJob job = new PageEncodeJob(
                 values,
                 values.length,
@@ -224,7 +224,49 @@ class PageWriterV2Test {
         assertThat(decoded).containsExactly(values);
     }
 
+    @Test
+    void reusedWriterEmitsTwoIndependentV2Pages() throws Exception {
+        ColumnContext column = new ColumnContext(0, 0, PrimitiveKind.INT32, ParquetVersion.V2_0, Compression.zstd(3));
+        PageWriter writer = new PageWriter(column);
+
+        int[] first = {1, 2, 3};
+        int[] second = {10, 20, 30, 40, 50, 60, 70};
+        assertThat(decodeV2IntPage(writer, column, first)).containsExactly(first);
+        assertThat(decodeV2IntPage(writer, column, second)).containsExactly(second);
+    }
+
+    @Test
+    void reusedWriterCompressesGrowingPages() throws Exception {
+        ColumnContext column = new ColumnContext(0, 0, PrimitiveKind.INT32, ParquetVersion.V2_0, Compression.zstd(3));
+        PageWriter writer = new PageWriter(column);
+
+        int[] small = {1};
+        int[] large = new int[4096];
+        for (int i = 0; i < large.length; i++) {
+            large[i] = i;
+        }
+        assertThat(decodeV2IntPage(writer, column, small)).containsExactly(small);
+        assertThat(decodeV2IntPage(writer, column, large)).containsExactly(large);
+    }
+
     // --- helpers ---
+
+    private static int[] decodeV2IntPage(PageWriter writer, ColumnContext column, int[] values) throws Exception {
+        int min = Arrays.stream(values).min().orElseThrow();
+        int max = Arrays.stream(values).max().orElseThrow();
+        PageStatistics stats = pageStats(encodeInt32(min), encodeInt32(max), 0, false);
+        PageEncodeJob job =
+                new PageEncodeJob(values, values.length, 0, values.length, null, null, new PlainInt32Encoder(), stats);
+
+        GrowableByteSink out = new GrowableByteSink(64);
+        writer.writeDataPageV2(job, out);
+
+        ByteArrayInputStream in = new ByteArrayInputStream(out.toByteArray());
+        PageHeader header = ParquetFormat.readPageHeader(in);
+        byte[] tail = remaining(in);
+        byte[] decompressed = decompress(column.compression(), tail, header.uncompressedPageSize());
+        return decodeInt32sLittleEndian(decompressed, values.length);
+    }
 
     private static PageStatistics pageStats(byte[] min, byte[] max, long nullCount, boolean isNullPage) {
         return new PageStatistics(

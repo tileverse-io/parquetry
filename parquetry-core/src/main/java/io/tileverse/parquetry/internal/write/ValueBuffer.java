@@ -15,11 +15,12 @@
  */
 package io.tileverse.parquetry.internal.write;
 
-import java.util.ArrayList;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.util.Arrays;
-import java.util.List;
 
 import io.tileverse.parquetry.internal.write.page.Encoder;
+import io.tileverse.parquetry.internal.write.page.PackedBinaryPayload;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 
 /**
@@ -67,6 +68,10 @@ abstract class ValueBuffer {
     }
 
     void addBinary(byte[] value) {
+        throw new UnsupportedOperationException();
+    }
+
+    void addBinary(MemorySegment src, long off, long len) {
         throw new UnsupportedOperationException();
     }
 
@@ -190,28 +195,65 @@ abstract class ValueBuffer {
         }
     }
 
-    /** Backs BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, and INT96; the latter stores its packed 12-byte representation. */
+    /**
+     * Backs BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, and INT96; the latter stores its packed 12-byte representation. Every
+     * value is copied into one contiguous {@code backing} array with a parallel (offset, length) index, minting no
+     * per-value array.
+     */
     private static final class BinaryBuffer extends ValueBuffer {
 
-        private final List<byte[]> values = new ArrayList<>(1024);
+        private byte[] backing = new byte[4096];
+        private int[] offsets = new int[1024];
+        private int[] lengths = new int[1024];
+        private int size;
+        private int byteEnd;
 
         @Override
-        void addBinary(byte[] value) {
-            values.add(value);
+        void addBinary(MemorySegment src, long off, long len) {
+            int length = Math.toIntExact(len);
+            int start = reserveBytes(length);
+            MemorySegment.copy(src, ValueLayout.JAVA_BYTE, off, backing, start, length);
+            recordValue(start, length);
         }
 
         @Override
-        Object payloadValues(int nonNullCount) {
-            byte[][] carrier = new byte[nonNullCount][];
-            for (int i = 0; i < nonNullCount; i++) {
-                carrier[i] = values.get(i);
+        void addBinary(byte[] value) {
+            int start = reserveBytes(value.length);
+            System.arraycopy(value, 0, backing, start, value.length);
+            recordValue(start, value.length);
+        }
+
+        private int reserveBytes(int length) {
+            long needed = (long) byteEnd + length;
+            if (needed > backing.length) {
+                long grown = Math.max((long) backing.length * 2, needed);
+                backing = Arrays.copyOf(backing, Math.toIntExact(grown));
             }
-            return carrier;
+            return byteEnd;
+        }
+
+        private void recordValue(int start, int length) {
+            if (size == offsets.length) {
+                offsets = Arrays.copyOf(offsets, offsets.length * 2);
+                lengths = Arrays.copyOf(lengths, lengths.length * 2);
+            }
+            offsets[size] = start;
+            lengths[size] = length;
+            size++;
+            byteEnd = start + length;
+        }
+
+        // The payload aliases the live backing and index arrays rather than copying them. This is sound because the
+        // caller encodes the page synchronously before clear() reuses the buffer for the next page.
+        @Override
+        Object payloadValues(int nonNullCount) {
+            return new PackedBinaryPayload(backing, offsets, lengths, nonNullCount);
         }
 
         @Override
         void clear() {
-            values.clear();
+            size = 0;
+            byteEnd = 0;
         }
     }
 }

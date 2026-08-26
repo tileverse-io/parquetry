@@ -29,7 +29,6 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.internal.read.page.PlainFixedLenBinaryDecoder;
-import io.tileverse.parquetry.testsupport.ByteArrayWritableChannel;
 
 class PlainFixedLenBinaryEncoderTest {
 
@@ -48,9 +47,9 @@ class PlainFixedLenBinaryEncoderTest {
     @Test
     void rejectsMismatchedLength() {
         PlainFixedLenBinaryEncoder encoder = new PlainFixedLenBinaryEncoder(3);
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         byte[][] values = {{1, 2, 3, 4}};
-        assertThatThrownBy(() -> encoder.encode(values, 1, out))
+        assertThatThrownBy(() -> encoder.encode(new ArrayBinaryPayload(values, values.length), 1, out))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("length 4");
     }
@@ -76,8 +75,8 @@ class PlainFixedLenBinaryEncoderTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("roundTripCases")
     void roundTripViaDecoder(String label, int width, byte[][] values) throws Exception {
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
-        new PlainFixedLenBinaryEncoder(width).encode(values, values.length, out);
+        GrowableByteSink out = new GrowableByteSink(64);
+        new PlainFixedLenBinaryEncoder(width).encode(new ArrayBinaryPayload(values, values.length), values.length, out);
 
         PlainFixedLenBinaryDecoder decoder = new PlainFixedLenBinaryDecoder(width);
         decoder.load(MemorySegment.ofArray(out.toByteArray()), values.length);

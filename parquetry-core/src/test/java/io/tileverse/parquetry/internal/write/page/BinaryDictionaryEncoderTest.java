@@ -17,11 +17,9 @@ package io.tileverse.parquetry.internal.write.page;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
-import java.nio.channels.Channels;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -70,13 +68,13 @@ class BinaryDictionaryEncoderTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("sequences")
     void matchesGenericEncoderPageByPage(String name, List<byte[]> values, int pageSize) throws IOException {
-        DictionaryAttemptEncoder<ByteBuffer, byte[][]> reference = referenceVariableLengthEncoder(LIMIT);
+        DictionaryAttemptEncoder<ByteBuffer, BinaryPayload> reference = referenceVariableLengthEncoder(LIMIT);
         BinaryDictionaryEncoder tested = BinaryDictionaryEncoder.variableLength(new PlainBinaryEncoder(), LIMIT);
 
         for (int i = 0; i < values.size(); i++) {
             byte[] value = values.get(i);
             reference.appendValue(ByteBuffer.wrap(value));
-            tested.appendValue(MemorySegment.ofArray(value), value);
+            tested.appendValue(MemorySegment.ofArray(value));
             boolean pageBoundary = (i + 1) % pageSize == 0 || i == values.size() - 1;
             if (pageBoundary) {
                 assertPageFlushIdentical(reference, tested, name + " page ending at " + i);
@@ -90,7 +88,7 @@ class BinaryDictionaryEncoderTest {
     @Test
     void fixedLengthSizingMatchesGenericEncoder() throws IOException {
         int len = 12;
-        DictionaryAttemptEncoder<ByteBuffer, byte[][]> reference = referenceFixedLengthEncoder(LIMIT, len);
+        DictionaryAttemptEncoder<ByteBuffer, BinaryPayload> reference = referenceFixedLengthEncoder(LIMIT, len);
         BinaryDictionaryEncoder tested =
                 BinaryDictionaryEncoder.fixedLength(new PlainFixedLenBinaryEncoder(len), len, LIMIT);
         Random random = new Random(7);
@@ -102,10 +100,47 @@ class BinaryDictionaryEncoderTest {
                 random.nextBytes(value);
             }
             reference.appendValue(ByteBuffer.wrap(value));
-            tested.appendValue(MemorySegment.ofArray(value), value);
+            tested.appendValue(MemorySegment.ofArray(value));
         }
         assertPageFlushIdentical(reference, tested, "fixed-length page");
         assertThat(tested.overflowed()).isEqualTo(reference.overflowed());
+        assertThat(tested.dictionaryCarrier()).isEqualTo(carrierOf(reference.dictionaryValues()));
+    }
+
+    @Test
+    void segmentOnlyAppendRetainsOneEntryPerDistinctValue() {
+        BinaryDictionaryEncoder encoder = BinaryDictionaryEncoder.variableLength(new PlainBinaryEncoder(), LIMIT);
+        byte[] repeated = "repeated".getBytes(StandardCharsets.UTF_8);
+        byte[] repeatedCopy = "repeated".getBytes(StandardCharsets.UTF_8);
+        byte[] distinct = "distinct".getBytes(StandardCharsets.UTF_8);
+
+        encoder.appendValue(MemorySegment.ofArray(repeated));
+        encoder.appendValue(MemorySegment.ofArray(repeatedCopy));
+        assertThat(encoder.dictionaryCarrier()).isEqualTo(new byte[][] {repeated});
+
+        encoder.appendValue(MemorySegment.ofArray(distinct));
+        assertThat(encoder.dictionaryCarrier()).isEqualTo(new byte[][] {repeated, distinct});
+    }
+
+    @Test
+    void segmentOnlyAppendOverflowMatchesGenericEncoder() throws IOException {
+        long limit = 20;
+        DictionaryAttemptEncoder<ByteBuffer, BinaryPayload> reference = referenceVariableLengthEncoder(limit);
+        BinaryDictionaryEncoder tested = BinaryDictionaryEncoder.variableLength(new PlainBinaryEncoder(), limit);
+        List<byte[]> values = List.of(
+                "alpha".getBytes(StandardCharsets.UTF_8),
+                "beta".getBytes(StandardCharsets.UTF_8),
+                "alpha".getBytes(StandardCharsets.UTF_8),
+                "gamma".getBytes(StandardCharsets.UTF_8),
+                "delta".getBytes(StandardCharsets.UTF_8));
+
+        for (byte[] value : values) {
+            reference.appendValue(ByteBuffer.wrap(value));
+            tested.appendValue(MemorySegment.ofArray(value));
+        }
+
+        assertThat(tested.overflowed()).isTrue();
+        assertPageFlushIdentical(reference, tested, "overflow through segment-only append");
         assertThat(tested.dictionaryCarrier()).isEqualTo(carrierOf(reference.dictionaryValues()));
     }
 
@@ -119,7 +154,7 @@ class BinaryDictionaryEncoderTest {
             "one".getBytes(StandardCharsets.UTF_8)
         };
         for (byte[] value : values) {
-            viaSegment.appendValue(MemorySegment.ofArray(value), value);
+            viaSegment.appendValue(MemorySegment.ofArray(value));
             viaArray.appendValue(value);
         }
         assertThat(flushToBytes(viaArray)).isEqualTo(flushToBytes(viaSegment));
@@ -128,7 +163,7 @@ class BinaryDictionaryEncoderTest {
 
     @Test
     void tableGrowthKeepsDedupeAndIndexOrder() throws IOException {
-        DictionaryAttemptEncoder<ByteBuffer, byte[][]> reference = referenceVariableLengthEncoder(Long.MAX_VALUE);
+        DictionaryAttemptEncoder<ByteBuffer, BinaryPayload> reference = referenceVariableLengthEncoder(Long.MAX_VALUE);
         BinaryDictionaryEncoder tested =
                 BinaryDictionaryEncoder.variableLength(new PlainBinaryEncoder(), Long.MAX_VALUE);
         Random random = new Random(1234);
@@ -136,7 +171,7 @@ class BinaryDictionaryEncoderTest {
             // ~2000 distinct values force several grow-and-rehash rounds; repeats exercise post-growth lookups.
             byte[] value = ("key-" + random.nextInt(2000)).getBytes(StandardCharsets.UTF_8);
             reference.appendValue(ByteBuffer.wrap(value));
-            tested.appendValue(MemorySegment.ofArray(value), value);
+            tested.appendValue(MemorySegment.ofArray(value));
             if ((i + 1) % 1000 == 0) {
                 assertPageFlushIdentical(reference, tested, "growth page ending at " + i);
             }
@@ -149,7 +184,7 @@ class BinaryDictionaryEncoderTest {
     void overflowAfterDictionaryPageFlushMatchesGenericEncoder() throws IOException {
         long limit = 40;
         int pageSize = 3;
-        DictionaryAttemptEncoder<ByteBuffer, byte[][]> reference = referenceVariableLengthEncoder(limit);
+        DictionaryAttemptEncoder<ByteBuffer, BinaryPayload> reference = referenceVariableLengthEncoder(limit);
         BinaryDictionaryEncoder tested = BinaryDictionaryEncoder.variableLength(new PlainBinaryEncoder(), limit);
 
         List<byte[]> values = new ArrayList<>();
@@ -161,7 +196,7 @@ class BinaryDictionaryEncoderTest {
         for (int i = 0; i < values.size(); i++) {
             byte[] value = values.get(i);
             reference.appendValue(ByteBuffer.wrap(value));
-            tested.appendValue(MemorySegment.ofArray(value), value);
+            tested.appendValue(MemorySegment.ofArray(value));
             boolean pageBoundary = (i + 1) % pageSize == 0 || i == values.size() - 1;
             if (pageBoundary) {
                 if (!tested.overflowed()) {
@@ -185,37 +220,45 @@ class BinaryDictionaryEncoderTest {
     }
 
     private static void assertPageFlushIdentical(
-            DictionaryAttemptEncoder<ByteBuffer, byte[][]> reference, BinaryDictionaryEncoder tested, String context)
+            DictionaryAttemptEncoder<ByteBuffer, BinaryPayload> reference,
+            BinaryDictionaryEncoder tested,
+            String context)
             throws IOException {
-        ByteArrayOutputStream referenceBytes = new ByteArrayOutputStream();
-        PageDictionaryEncoder.PageResult referenceResult = reference.flushPage(Channels.newChannel(referenceBytes));
-        ByteArrayOutputStream testedBytes = new ByteArrayOutputStream();
-        PageDictionaryEncoder.PageResult testedResult = tested.flushPage(Channels.newChannel(testedBytes));
+        GrowableByteSink referenceBytes = new GrowableByteSink(64);
+        PageDictionaryEncoder.PageResult referenceResult = reference.flushPage(referenceBytes);
+        GrowableByteSink testedBytes = new GrowableByteSink(64);
+        PageDictionaryEncoder.PageResult testedResult = tested.flushPage(testedBytes);
         assertThat(testedBytes.toByteArray()).as(context).isEqualTo(referenceBytes.toByteArray());
         assertThat(testedResult).as(context).isEqualTo(referenceResult);
     }
 
     private static byte[] flushToBytes(BinaryDictionaryEncoder encoder) throws IOException {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        encoder.flushPage(Channels.newChannel(out));
+        GrowableByteSink out = new GrowableByteSink(64);
+        encoder.flushPage(out);
         return out.toByteArray();
     }
 
     /** Constructed exactly as DictionaryAttempt.BinaryAttempt.create wires the generic encoder today. */
-    private static DictionaryAttemptEncoder<ByteBuffer, byte[][]> referenceVariableLengthEncoder(long limit) {
+    private static DictionaryAttemptEncoder<ByteBuffer, BinaryPayload> referenceVariableLengthEncoder(long limit) {
         return new DictionaryAttemptEncoder<>(
                 new PlainBinaryEncoder(),
-                BinaryDictionaryEncoderTest::carrierOf,
+                BinaryDictionaryEncoderTest::payloadOf,
                 value -> (long) Integer.BYTES + value.remaining(),
                 limit);
     }
 
-    private static DictionaryAttemptEncoder<ByteBuffer, byte[][]> referenceFixedLengthEncoder(long limit, int length) {
+    private static DictionaryAttemptEncoder<ByteBuffer, BinaryPayload> referenceFixedLengthEncoder(
+            long limit, int length) {
         return new DictionaryAttemptEncoder<>(
                 new PlainFixedLenBinaryEncoder(length),
-                BinaryDictionaryEncoderTest::carrierOf,
+                BinaryDictionaryEncoderTest::payloadOf,
                 value -> (long) length,
                 limit);
+    }
+
+    private static BinaryPayload payloadOf(List<ByteBuffer> values) {
+        byte[][] carrier = carrierOf(values);
+        return new ArrayBinaryPayload(carrier, carrier.length);
     }
 
     private static byte[][] carrierOf(List<ByteBuffer> values) {

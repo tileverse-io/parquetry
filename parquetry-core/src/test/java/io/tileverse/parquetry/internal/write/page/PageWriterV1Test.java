@@ -37,7 +37,6 @@ import io.tileverse.parquetry.format.Statistics;
 import io.tileverse.parquetry.internal.read.page.LevelDecoder;
 import io.tileverse.parquetry.internal.write.ColumnContext;
 import io.tileverse.parquetry.schema.PrimitiveKind;
-import io.tileverse.parquetry.testsupport.ByteArrayWritableChannel;
 
 class PageWriterV1Test {
 
@@ -47,7 +46,7 @@ class PageWriterV1Test {
         ColumnContext column = new ColumnContext(0, 0, PrimitiveKind.INT32, ParquetVersion.V1_1, Compression.zstd(3));
         PageWriter writer = new PageWriter(column);
 
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         PageEncodeJob job = new PageEncodeJob(
                 values,
                 values.length,
@@ -92,7 +91,7 @@ class PageWriterV1Test {
                 new ColumnContext(1, 2, PrimitiveKind.INT32, ParquetVersion.V1_1, Compression.uncompressed());
         PageWriter writer = new PageWriter(column);
 
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         PageEncodeJob job = new PageEncodeJob(
                 values,
                 values.length,
@@ -142,7 +141,7 @@ class PageWriterV1Test {
                 new ColumnContext(0, 0, PrimitiveKind.INT32, ParquetVersion.V1_1, Compression.uncompressed());
         PageWriter writer = new PageWriter(column);
 
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         PageEncodeJob job = new PageEncodeJob(
                 values,
                 values.length,
@@ -169,7 +168,7 @@ class PageWriterV1Test {
         ColumnContext column = new ColumnContext(0, 1, PrimitiveKind.INT32, ParquetVersion.V1_1, Compression.zstd(3));
         PageWriter writer = new PageWriter(column);
 
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         PageEncodeJob job = new PageEncodeJob(
                 new int[0],
                 defLevels.length,
@@ -196,7 +195,7 @@ class PageWriterV1Test {
         ColumnContext column = new ColumnContext(0, 0, PrimitiveKind.INT32, ParquetVersion.V1_1, Compression.snappy());
         PageWriter writer = new PageWriter(column);
 
-        ByteArrayWritableChannel out = new ByteArrayWritableChannel();
+        GrowableByteSink out = new GrowableByteSink(64);
         PageEncodeJob job = new PageEncodeJob(
                 values,
                 values.length,

@@ -15,16 +15,9 @@
  */
 package io.tileverse.parquetry.internal.write.page;
 
-import static java.nio.ByteOrder.LITTLE_ENDIAN;
-
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
-import java.nio.ByteBuffer;
-import java.nio.channels.Channels;
-import java.nio.channels.WritableByteChannel;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
@@ -42,16 +35,15 @@ import io.tileverse.parquetry.format.Statistics;
 import io.tileverse.parquetry.internal.write.ColumnContext;
 
 /**
- * Serializes data and dictionary pages onto a column-chunk channel.
+ * Serializes data and dictionary pages into a page byte sink.
  *
  * <p>The two data-page methods, {@link #writeDataPageV2} and {@link #writeDataPageV1}, share the same input shape -- a
  * primitive-carrier of values, the rep/def level arrays, a value encoder, and a {@link PageStatistics} snapshot -- but
  * differ in wire layout. V2 stores rep/def bytes uncompressed in front of the compressed values; V1 concatenates the
  * level-length-prefixed level bytes with the values and compresses the whole blob. The {@code *PreEncoded} variants
- * accept the already-encoded value bytes plus an explicit encoding marker, supporting page-level encoders such as
- * {@link DictionaryAttemptEncoder} that emit the value bytes themselves and only need the framing service.
- * {@link #writeDictionaryPage} emits a PLAIN-encoded dictionary that precedes any dictionary-encoded data page in the
- * same column chunk.
+ * accept the already-encoded value bytes plus an explicit encoding marker, supporting {@link PageDictionaryEncoder}
+ * implementations that emit the value bytes themselves and only need the framing service. {@link #writeDictionaryPage}
+ * emits a PLAIN-encoded dictionary that precedes any dictionary-encoded data page in the same column chunk.
  *
  * <p>One writer is bound to a single {@link ColumnContext}: the context resolves the codec instance, the V1/V2 page
  * layout, and the page-header encoding markers that match the column's physical type.
@@ -61,6 +53,13 @@ public final class PageWriter {
     private final ColumnContext column;
     private final Compression codec;
 
+    private final GrowableByteSink plainValueSink = new GrowableByteSink(64);
+    private final GrowableByteSink repLevelSink = new GrowableByteSink(64);
+    private final GrowableByteSink defLevelSink = new GrowableByteSink(64);
+    private final GrowableByteSink v1PayloadSink = new GrowableByteSink(64);
+    private final ByteArrayOutputStream headerScratch = new ByteArrayOutputStream();
+    private byte[] compressScratch = new byte[0];
+
     public PageWriter(ColumnContext column) {
         this.column = column;
         this.codec = column.compression();
@@ -69,10 +68,9 @@ public final class PageWriter {
     /**
      * Writes a V2 data page to {@code dst}. Levels are emitted uncompressed before the (optionally) compressed values.
      */
-    public EncodedPage writeDataPageV2(PageEncodeJob job, WritableByteChannel dst) throws IOException {
+    public EncodedPage writeDataPageV2(PageEncodeJob job, LittleEndianSink dst) throws IOException {
         int nonNullCount = job.payloadValueCount() - job.nullCount();
-        byte[] rawValueBytes = encodeValues(job.valuesEncoder(), job.payloadValues(), nonNullCount);
-        MemorySegment encodedValues = MemorySegment.ofArray(rawValueBytes).asReadOnly();
+        MemorySegment encodedValues = encodeValuesSegment(job.valuesEncoder(), job.payloadValues(), nonNullCount);
         PreEncodedPageJob preEncoded = new PreEncodedPageJob(
                 encodedValues,
                 job.valuesEncoder().parquetEncoding(),
@@ -89,7 +87,7 @@ public final class PageWriter {
      * Writes a V2 data page using value bytes that have already been encoded by the caller. The
      * {@link PreEncodedPageJob#valuesEncoding()} marker is placed verbatim into the page header.
      */
-    public EncodedPage writeDataPageV2PreEncoded(PreEncodedPageJob job, WritableByteChannel dst) throws IOException {
+    public EncodedPage writeDataPageV2PreEncoded(PreEncodedPageJob job, LittleEndianSink dst) throws IOException {
         return emitDataPageV2(job, dst);
     }
 
@@ -97,10 +95,9 @@ public final class PageWriter {
      * Writes a V1 data page to {@code dst}. The level-length-prefixed level bytes and the value bytes are concatenated
      * and compressed as a single blob; the page header carries only the total compressed and uncompressed sizes.
      */
-    public EncodedPage writeDataPageV1(PageEncodeJob job, WritableByteChannel dst) throws IOException {
+    public EncodedPage writeDataPageV1(PageEncodeJob job, LittleEndianSink dst) throws IOException {
         int nonNullCount = job.payloadValueCount() - job.nullCount();
-        byte[] rawValueBytes = encodeValues(job.valuesEncoder(), job.payloadValues(), nonNullCount);
-        MemorySegment encodedValues = MemorySegment.ofArray(rawValueBytes).asReadOnly();
+        MemorySegment encodedValues = encodeValuesSegment(job.valuesEncoder(), job.payloadValues(), nonNullCount);
         PreEncodedPageJob preEncoded = new PreEncodedPageJob(
                 encodedValues,
                 job.valuesEncoder().parquetEncodingV1(),
@@ -117,7 +114,7 @@ public final class PageWriter {
      * Writes a V1 data page using value bytes that have already been encoded by the caller. The
      * {@link PreEncodedPageJob#valuesEncoding()} marker is placed verbatim into the page header.
      */
-    public EncodedPage writeDataPageV1PreEncoded(PreEncodedPageJob job, WritableByteChannel dst) throws IOException {
+    public EncodedPage writeDataPageV1PreEncoded(PreEncodedPageJob job, LittleEndianSink dst) throws IOException {
         return emitDataPageV1(job, dst);
     }
 
@@ -127,19 +124,26 @@ public final class PageWriter {
      * and {@link Encoding#PLAIN} for V2 columns, matching what the read-side dictionary decoder expects.
      */
     public EncodedPage writeDictionaryPage(
-            Object dictionaryValues, int valueCount, Encoder<?> plainEncoder, WritableByteChannel dst)
-            throws IOException {
+            Object dictionaryValues, int valueCount, Encoder<?> plainEncoder, LittleEndianSink dst) throws IOException {
 
         byte[] rawValueBytes = encodeValues(plainEncoder, dictionaryValues, valueCount);
         boolean shouldCompress = !(column.compression() instanceof Compression.Uncompressed);
-        byte[] pageBytes = shouldCompress ? compress(rawValueBytes) : rawValueBytes;
+        byte[] pageBytes;
+        int pageLen;
+        if (shouldCompress) {
+            pageLen = compressInto(MemorySegment.ofArray(rawValueBytes));
+            pageBytes = compressScratch;
+        } else {
+            pageBytes = rawValueBytes;
+            pageLen = rawValueBytes.length;
+        }
 
         Encoding encoding = column.parquetVersion() == ParquetVersion.V1_1 ? Encoding.PLAIN_DICTIONARY : Encoding.PLAIN;
         DictionaryPageHeader dict = new DictionaryPageHeader(valueCount, encoding, false);
         PageHeader header = new PageHeader(
                 PageType.DICTIONARY_PAGE,
                 rawValueBytes.length,
-                pageBytes.length,
+                pageLen,
                 OptionalInt.empty(),
                 Optional.empty(),
                 Optional.empty(),
@@ -147,29 +151,37 @@ public final class PageWriter {
                 Optional.empty());
 
         int headerBytes = writeHeader(header, dst);
-        ChannelWrites.writeFully(dst, ByteBuffer.wrap(pageBytes));
+        dst.write(pageBytes, 0, pageLen);
 
-        return new EncodedPage(header, headerBytes, pageBytes.length);
+        return new EncodedPage(header, headerBytes, pageLen);
     }
 
-    private EncodedPage emitDataPageV2(PreEncodedPageJob job, WritableByteChannel dst) throws IOException {
-        byte[] repLevelBytes = encodeLevels(job.repetitionLevels(), column.maxRepetitionLevel());
-        byte[] defLevelBytes = encodeLevels(job.definitionLevels(), column.maxDefinitionLevel());
-        byte[] rawValueBytes = job.encodedValueBytes().toArray(ValueLayout.JAVA_BYTE);
-
+    private EncodedPage emitDataPageV2(PreEncodedPageJob job, LittleEndianSink dst) throws IOException {
+        int repLen = encodeLevelsInto(
+                repLevelSink, job.repetitionLevels(), job.payloadValueCount(), column.maxRepetitionLevel());
+        int defLen = encodeLevelsInto(
+                defLevelSink, job.definitionLevels(), job.payloadValueCount(), column.maxDefinitionLevel());
+        MemorySegment encodedValues = job.encodedValueBytes();
+        int rawValueByteSize = Math.toIntExact(encodedValues.byteSize());
         boolean shouldCompress = !(column.compression() instanceof Compression.Uncompressed);
-        byte[] valueBytes = shouldCompress ? compress(rawValueBytes) : rawValueBytes;
 
-        int uncompressedPageSize = repLevelBytes.length + defLevelBytes.length + rawValueBytes.length;
-        int compressedPageSize = repLevelBytes.length + defLevelBytes.length + valueBytes.length;
+        int valueLen;
+        if (shouldCompress) {
+            valueLen = compressInto(encodedValues);
+        } else {
+            valueLen = rawValueByteSize;
+        }
+
+        int uncompressedPageSize = repLen + defLen + rawValueByteSize;
+        int compressedPageSize = repLen + defLen + valueLen;
 
         DataPageHeaderV2 v2 = new DataPageHeaderV2(
                 job.payloadValueCount(),
                 job.nullCount(),
                 job.rowCount(),
                 job.valuesEncoding(),
-                defLevelBytes.length,
-                repLevelBytes.length,
+                defLen,
+                repLen,
                 shouldCompress,
                 statisticsFromPage(job.pageStats()));
         PageHeader header = new PageHeader(
@@ -183,21 +195,38 @@ public final class PageWriter {
                 Optional.of(v2));
 
         int headerBytes = writeHeader(header, dst);
-        ChannelWrites.writeFully(dst, ByteBuffer.wrap(repLevelBytes));
-        ChannelWrites.writeFully(dst, ByteBuffer.wrap(defLevelBytes));
-        ChannelWrites.writeFully(dst, ByteBuffer.wrap(valueBytes));
+        repLevelSink.writeInto(dst);
+        defLevelSink.writeInto(dst);
+        if (shouldCompress) {
+            dst.write(compressScratch, 0, valueLen);
+        } else {
+            dst.write(encodedValues);
+        }
 
         return new EncodedPage(header, headerBytes, compressedPageSize);
     }
 
-    private EncodedPage emitDataPageV1(PreEncodedPageJob job, WritableByteChannel dst) throws IOException {
-        byte[] repBlock = encodeV1LevelBlock(job.repetitionLevels(), column.maxRepetitionLevel());
-        byte[] defBlock = encodeV1LevelBlock(job.definitionLevels(), column.maxDefinitionLevel());
-        byte[] rawValueBytes = job.encodedValueBytes().toArray(ValueLayout.JAVA_BYTE);
+    private EncodedPage emitDataPageV1(PreEncodedPageJob job, LittleEndianSink dst) throws IOException {
+        v1PayloadSink.reset();
+        int repBlockLen = writeV1LevelBlock(
+                v1PayloadSink, job.repetitionLevels(), job.payloadValueCount(), column.maxRepetitionLevel());
+        int defBlockLen = writeV1LevelBlock(
+                v1PayloadSink, job.definitionLevels(), job.payloadValueCount(), column.maxDefinitionLevel());
+        MemorySegment encodedValues = job.encodedValueBytes();
+        int rawValueByteSize = Math.toIntExact(encodedValues.byteSize());
+        v1PayloadSink.write(encodedValues);
+        int uncompressedPayloadLen = repBlockLen + defBlockLen + rawValueByteSize;
 
-        byte[] uncompressedPayload = concat(repBlock, defBlock, rawValueBytes);
         boolean shouldCompress = !(column.compression() instanceof Compression.Uncompressed);
-        byte[] pageBytes = shouldCompress ? compress(uncompressedPayload) : uncompressedPayload;
+        byte[] pageBytes;
+        int pageLen;
+        if (shouldCompress) {
+            pageLen = compressInto(v1PayloadSink.codecSegment());
+            pageBytes = compressScratch;
+        } else {
+            pageBytes = v1PayloadSink.array();
+            pageLen = v1PayloadSink.size();
+        }
 
         DataPageHeader v1 = new DataPageHeader(
                 job.payloadValueCount(),
@@ -207,8 +236,8 @@ public final class PageWriter {
                 statisticsFromPage(job.pageStats()));
         PageHeader header = new PageHeader(
                 PageType.DATA_PAGE,
-                uncompressedPayload.length,
-                pageBytes.length,
+                uncompressedPayloadLen,
+                pageLen,
                 OptionalInt.empty(),
                 Optional.of(v1),
                 Optional.empty(),
@@ -216,74 +245,83 @@ public final class PageWriter {
                 Optional.empty());
 
         int headerBytes = writeHeader(header, dst);
-        ChannelWrites.writeFully(dst, ByteBuffer.wrap(pageBytes));
+        dst.write(pageBytes, 0, pageLen);
 
-        return new EncodedPage(header, headerBytes, pageBytes.length);
+        return new EncodedPage(header, headerBytes, pageLen);
     }
 
-    private byte[] encodeLevels(int[] levels, int maxLevel) throws IOException {
-        if (maxLevel == 0) {
-            return new byte[0];
-        }
-        if (levels == null || levels.length == 0) {
-            return new byte[0];
-        }
-        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        WritableByteChannel bufferChannel = Channels.newChannel(buffer);
-        new LevelEncoder(maxLevel).encode(levels, levels.length, bufferChannel);
-        return buffer.toByteArray();
+    private MemorySegment encodeValuesSegment(Encoder<?> encoder, Object values, int n) throws IOException {
+        plainValueSink.reset();
+        encodeWithErasedCarrier(encoder, values, n, plainValueSink);
+        return plainValueSink.codecSegment();
+    }
+
+    private byte[] encodeValues(Encoder<?> encoder, Object values, int n) throws IOException {
+        plainValueSink.reset();
+        encodeWithErasedCarrier(encoder, values, n, plainValueSink);
+        return plainValueSink.toByteArray();
     }
 
     /**
-     * Builds the V1 level stream: when the column has a non-zero max level, prefix the RLE-encoded level bytes with
-     * their length as a little-endian 4-byte integer; otherwise emit nothing.
+     * Encodes the first {@code count} levels from {@code levels} into {@code target}; returns the byte length. Empty
+     * when {@code maxLevel == 0}. {@code levels} may be an oversized backing array reused across pages, hence the
+     * explicit count rather than the array length.
      */
-    private byte[] encodeV1LevelBlock(int[] levels, int maxLevel) throws IOException {
-        if (maxLevel == 0) {
-            return new byte[0];
+    private int encodeLevelsInto(GrowableByteSink target, int[] levels, int count, int maxLevel) throws IOException {
+        target.reset();
+        if (maxLevel == 0 || levels == null || count == 0) {
+            return 0;
         }
-        byte[] encoded = encodeLevels(levels, maxLevel);
-        byte[] block = new byte[Integer.BYTES + encoded.length];
-        ByteBuffer.wrap(block).order(LITTLE_ENDIAN).putInt(encoded.length);
-        System.arraycopy(encoded, 0, block, Integer.BYTES, encoded.length);
-        return block;
+        return new LevelEncoder(maxLevel).encode(levels, count, target);
     }
 
-    private static byte[] encodeValues(Encoder<?> encoder, Object values, int n) throws IOException {
-        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        WritableByteChannel bufferChannel = Channels.newChannel(buffer);
-        encodeWithErasedCarrier(encoder, values, n, bufferChannel);
-        return buffer.toByteArray();
+    /**
+     * Writes the V1 level block (a 4-byte little-endian length prefix followed by the RLE level bytes) into
+     * {@code target} and returns the total bytes written; writes nothing and returns zero when the column has no levels
+     * at this max. The transient RLE bytes go through {@link #repLevelSink}, which is copied into {@code target} right
+     * away, hence the rep and def calls do not collide.
+     */
+    private int writeV1LevelBlock(GrowableByteSink target, int[] levels, int count, int maxLevel) throws IOException {
+        if (maxLevel == 0) {
+            return 0;
+        }
+        int encodedLen = encodeLevelsInto(repLevelSink, levels, count, maxLevel);
+        target.writeInt(encodedLen);
+        repLevelSink.writeInto(target);
+        return Integer.BYTES + encodedLen;
     }
 
     // Carrier types are encoder-specific (int[], long[], byte[][], ...); the runtime cast is intentional.
     @SuppressWarnings({"unchecked", "rawtypes"})
-    private static void encodeWithErasedCarrier(Encoder encoder, Object values, int n, WritableByteChannel dst)
+    private static void encodeWithErasedCarrier(Encoder encoder, Object values, int n, LittleEndianSink dst)
             throws IOException {
         encoder.encode(values, n, dst);
     }
 
-    private byte[] compress(byte[] source) throws IOException {
-        if (source.length == 0) {
-            return source;
+    /**
+     * Compresses {@code source} into the reusable {@link #compressScratch} buffer, growing it when the codec's worst
+     * case exceeds the current capacity, and returns the number of compressed bytes. Callers read
+     * {@code compressScratch[0, returned)}; the compressed bytes on the wire are unchanged because the codec is
+     * deterministic and sees the same destination bounds as a freshly sized array.
+     */
+    private int compressInto(MemorySegment source) throws IOException {
+        long sourceSize = source.byteSize();
+        if (sourceSize == 0L) {
+            return 0;
         }
-        long maxLen = codec.maxCompressedLength(source.length);
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment src = arena.allocate(source.length);
-            MemorySegment.copy(source, 0, src, ValueLayout.JAVA_BYTE, 0L, source.length);
-            MemorySegment dst = arena.allocate(maxLen);
-            int written = codec.compress(src, dst);
-            byte[] out = new byte[written];
-            MemorySegment.copy(dst, ValueLayout.JAVA_BYTE, 0L, out, 0, written);
-            return out;
+        int maxLen = Math.toIntExact(codec.maxCompressedLength(sourceSize));
+        if (compressScratch.length < maxLen) {
+            compressScratch = new byte[maxLen];
         }
+        MemorySegment dst = MemorySegment.ofArray(compressScratch).asSlice(0L, maxLen);
+        return codec.compress(source, dst);
     }
 
-    private static int writeHeader(PageHeader header, WritableByteChannel dst) throws IOException {
-        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        ParquetFormat.writePageHeader(buffer, header);
-        byte[] bytes = buffer.toByteArray();
-        ChannelWrites.writeFully(dst, ByteBuffer.wrap(bytes));
+    private int writeHeader(PageHeader header, LittleEndianSink dst) throws IOException {
+        headerScratch.reset();
+        ParquetFormat.writePageHeader(headerScratch, header);
+        byte[] bytes = headerScratch.toByteArray();
+        dst.write(bytes, 0, bytes.length);
         return bytes.length;
     }
 
@@ -307,13 +345,5 @@ public final class PageWriter {
                 .isMaxValueExact(max != MemorySegment.NULL)
                 .build();
         return Optional.of(statistics);
-    }
-
-    private static byte[] concat(byte[] a, byte[] b, byte[] c) {
-        byte[] out = new byte[a.length + b.length + c.length];
-        System.arraycopy(a, 0, out, 0, a.length);
-        System.arraycopy(b, 0, out, a.length, b.length);
-        System.arraycopy(c, 0, out, a.length + b.length, c.length);
-        return out;
     }
 }
