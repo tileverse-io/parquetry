@@ -69,6 +69,9 @@ class MaskedWindowColumnReadTest {
     private static final int ROW_COUNT = 50;
     private static final int ROWS_PER_PAGE = 5;
 
+    /** Page width of the fixture whose single window holds room for two separated runs of kept rows. */
+    private static final int WIDE_ROWS_PER_PAGE = 12;
+
     @TempDir
     Path tempDir;
 
@@ -153,6 +156,92 @@ class MaskedWindowColumnReadTest {
         assertThat(masked.decodedValueCount())
                 .as("%s: a masked read decodes no more values than survive", label)
                 .isLessThanOrEqualTo(eager.decodedValueCount());
+    }
+
+    @Test
+    void aWindowKeepingEveryRowOfAPageDecodesItInOneBulkCall() throws Exception {
+        Path file = writeRequiredLongs();
+        ParquetSchema schema = flatSchema(requiredInt64("v"));
+        DrainResult masked = drainMasked(file, schema, V, _ -> true, WindowSplit.WHOLE_PAGE);
+
+        assertThat(masked.decodedValueCount())
+                .as("every row's value was decoded")
+                .isEqualTo(ROW_COUNT);
+        assertThat(masked.windowDecodeCallCount())
+                .as("one bulk call per page-wide window, not one per value")
+                .isEqualTo(ROW_COUNT / ROWS_PER_PAGE);
+    }
+
+    @Test
+    void aWindowKeepingEveryRowOfANullablePageDecodesOneRunAtATime() throws Exception {
+        Path file = writeNullableLongs();
+        ParquetSchema schema = flatSchema(optionalInt64("v"));
+        DrainResult masked = drainMasked(file, schema, V, _ -> true, WindowSplit.WHOLE_PAGE);
+
+        assertThat(masked.windowDecodeCallCount())
+                .as("the present rows between the null ones decode in runs, not value by value")
+                .isEqualTo(nonNullRunCount());
+    }
+
+    /**
+     * Runs of adjacent present rows in the nullable fixture, counted page by page: a run opens on a present row that
+     * either starts a page or follows a null one, and no run spans a page because no window does.
+     */
+    private static int nonNullRunCount() {
+        int runs = 0;
+        for (int row = 0; row < ROW_COUNT; row++) {
+            if (isNullRow(row)) {
+                continue;
+            }
+            if (row % ROWS_PER_PAGE == 0 || isNullRow(row - 1)) {
+                runs++;
+            }
+        }
+        return runs;
+    }
+
+    @Test
+    void aWindowKeepingEveryRowOfAListPageDecodesFewerCallsThanValues() throws Exception {
+        Path file = writeListsOfLongs();
+        ParquetSchema schema = listOfInt64Schema();
+        DrainResult eager = drainEagerKeeping(file, schema, ELEMENT, _ -> true);
+        DrainResult masked = drainMasked(file, schema, ELEMENT, _ -> true, WindowSplit.WHOLE_PAGE);
+
+        assertThat(masked.values()).isEqualTo(eager.values());
+        assertThat(masked.windowDecodeCallCount())
+                .as("a repeated column's fully surviving windows decode in runs too")
+                .isLessThan(masked.decodedValueCount());
+    }
+
+    @Test
+    void aWindowWhoseKeptRowsNeverAdjoinDecodesOneCallPerValue() throws Exception {
+        Path file = writeRequiredLongs();
+        ParquetSchema schema = flatSchema(requiredInt64("v"));
+        DrainResult masked = drainMasked(file, schema, V, row -> row % 2 == 0, WindowSplit.WHOLE_PAGE);
+
+        assertThat(masked.windowDecodeCallCount())
+                .as("no two kept rows adjoin, hence no run is longer than one value")
+                .isEqualTo(masked.decodedValueCount());
+    }
+
+    @Test
+    void aWindowKeepingTwoRunsOfRowsDecodesOneBulkCallPerRun() throws Exception {
+        Path file = writeRequiredLongs(WIDE_ROWS_PER_PAGE);
+        ParquetSchema schema = flatSchema(requiredInt64("v"));
+        DrainResult masked = overColumn(file, schema, V, ValueDecode.WINDOWED_MASK, reader -> {
+            BitSet survivors = new BitSet(WIDE_ROWS_PER_PAGE);
+            survivors.set(2, 6);
+            survivors.set(8, 10);
+            DrainedRows drained = new DrainedRows();
+            drained.addWindow(reader.readMaskedWindow(WIDE_ROWS_PER_PAGE, survivors, new ArrayList<>()));
+            return drained.toResult(reader.decodedValueCount(), reader.windowDecodeCallCount());
+        });
+
+        assertThat(masked.values()).containsExactly(2L, 3L, 4L, 5L, 8L, 9L);
+        assertThat(masked.decodedValueCount()).isEqualTo(6);
+        assertThat(masked.windowDecodeCallCount())
+                .as("the two runs of kept rows cost one bulk call each, not one call per row")
+                .isEqualTo(2);
     }
 
     @Test
@@ -298,7 +387,7 @@ class MaskedWindowColumnReadTest {
                 }
                 firstRow += windowRows;
             }
-            return drained.toResult(reader.decodedValueCount());
+            return drained.toResult(reader.decodedValueCount(), reader.windowDecodeCallCount());
         });
     }
 
@@ -319,7 +408,7 @@ class MaskedWindowColumnReadTest {
                 readEagerWindow(reader, windowRows, firstRow, survives, acquiredBuffers, drained);
                 firstRow += windowRows;
             }
-            return drained.toResult(reader.decodedValueCount());
+            return drained.toResult(reader.decodedValueCount(), reader.windowDecodeCallCount());
         });
     }
 
@@ -415,8 +504,8 @@ class MaskedWindowColumnReadTest {
             }
         }
 
-        DrainResult toResult(long decodedValueCount) {
-            return new DrainResult(values, nulls, repLevels, defLevels, decodedValueCount);
+        DrainResult toResult(long decodedValueCount, long windowDecodeCallCount) {
+            return new DrainResult(values, nulls, repLevels, defLevels, decodedValueCount, windowDecodeCallCount);
         }
     }
 
@@ -425,7 +514,8 @@ class MaskedWindowColumnReadTest {
             List<Boolean> nulls,
             List<Integer> repLevels,
             List<Integer> defLevels,
-            long decodedValueCount) {}
+            long decodedValueCount,
+            long windowDecodeCallCount) {}
 
     // --- reader construction ---
 
@@ -499,13 +589,18 @@ class MaskedWindowColumnReadTest {
     // --- fixtures ---
 
     private Path writeRequiredLongs() throws Exception {
-        Path file = tempDir.resolve("masked-required.parquet");
+        return writeRequiredLongs(ROWS_PER_PAGE);
+    }
+
+    private Path writeRequiredLongs(int rowsPerPage) throws Exception {
+        Path file = tempDir.resolve("masked-required-" + rowsPerPage + ".parquet");
         ParquetSchema schema = flatSchema(requiredInt64("v"));
         List<Map<ColumnPath, Object>> rows = new ArrayList<>();
         for (int v = 0; v < ROW_COUNT; v++) {
             rows.add(requiredRow(v));
         }
-        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, pageEvery())) {
+        try (ParquetFileWriter writer =
+                ParquetFileWriter.create(Files.newOutputStream(file), schema, pageEvery(rowsPerPage))) {
             writer.writeBatch(WriteFixtures.batch(schema, rows));
         }
         return file;
@@ -588,9 +683,13 @@ class MaskedWindowColumnReadTest {
     }
 
     private WriteOptions pageEvery() {
+        return pageEvery(ROWS_PER_PAGE);
+    }
+
+    private WriteOptions pageEvery(int rowsPerPage) {
         return WriteOptions.builder()
                 .tempDir(tempDir)
-                .pageValueLimit(ROWS_PER_PAGE)
+                .pageValueLimit(rowsPerPage)
                 .build();
     }
 

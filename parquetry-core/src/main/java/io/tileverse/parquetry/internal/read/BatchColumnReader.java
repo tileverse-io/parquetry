@@ -164,8 +164,8 @@ final class BatchColumnReader {
     // Unmasked pages back this with a window of the pooled page-metadata segment (pageBinaryMetaPooled, released at
     // page-advance); masked reads keep a heap array behind the same sequence.
     private IntSequence pageIndices;
-    // Heap index slots for the windowed masked lane, filled one kept row at a time and wrapped into pageIndices at the
-    // end of decodeKeptSlots; null outside that window.
+    // Heap index slots for the windowed masked lane, filled as the window's kept slots decode and wrapped into
+    // pageIndices at the end of decodeKeptSlots; null outside that window.
     private int[] maskedIndices;
     // Chunk-level dictionary entries (shared heap-owned segments), built once from this.dictionary and reused across
     // pages.
@@ -202,6 +202,7 @@ final class BatchColumnReader {
     // decide the chunk is drained. Stays zero for an unmasked reader, which ends on the page cursor instead.
     private long survivingRowsConsumedTotal;
     private long decodedValueCount;
+    private long windowDecodeCallCount;
 
     BatchColumnReader(
             @NonNull DecodeBufferAllocator decodeBufferAllocator,
@@ -709,14 +710,14 @@ final class BatchColumnReader {
 
     /**
      * Decodes the values at {@code keep} into a fresh window-sized payload, stepping the page decoder over the non-null
-     * slots between them. Returns the window's own null mask, indexed by kept slot.
+     * slots the window drops. Returns the window's own null mask, indexed by kept slot.
      */
     private Validity decodeKeptSlots(int[] keep) {
         clearTypedPayloads();
         allocateCompactedPayload(keep.length);
         BitSet keptValidity = new BitSet(keep.length);
         if (windowDecoder != null) {
-            gatherKeptSlots(keep, keptValidity);
+            materializeKeptSlots(keep, keptValidity);
         }
         if (maskedIndices != null) {
             pageIndices = IntSequence.of(maskedIndices);
@@ -727,35 +728,121 @@ final class BatchColumnReader {
     }
 
     /**
-     * Walks the page's slots from the decoder's cursor to the last kept slot, decoding one value per kept non-null slot
-     * and coalescing the non-null slots between them into a single skip. The walk holds the decoder's invariant - every
-     * non-null slot below {@link #windowDecoderSlot} has been decoded or skipped - by applying the coalesced skip both
-     * before the next decoded value and once the walk ends: a walk ending on a kept null slot has no value to decode
-     * after it and would otherwise leave the decoder behind for every later window of the page. Slots past the last
-     * kept one are left for the next window's walk, which starts where this one stopped.
+     * Materializes the kept slots' values, in bulk when the window keeps an unbroken run of slots opening at the
+     * decoder's cursor and slot by slot otherwise.
+     */
+    private void materializeKeptSlots(int[] keep, BitSet keptValidity) {
+        if (keepsAnUnbrokenRunAtTheDecoderCursor(keep)) {
+            decodeKeptRun(keep[0], keep.length, 0, keptValidity);
+        } else {
+            gatherKeptSlots(keep, keptValidity);
+        }
+    }
+
+    /**
+     * True when the window's kept slots open at the decoder's cursor and ascend without a gap. Such a window has no
+     * dropped slot to step over, before or between its values, which lets its runs of non-null slots come out of the
+     * decoder's bulk lanes instead of one call per value. Both tests are O(1): the kept slots are ascending and
+     * distinct, hence they are contiguous exactly when the span between the first and the last is their count.
+     */
+    private boolean keepsAnUnbrokenRunAtTheDecoderCursor(int[] keep) {
+        if (keep.length == 0) {
+            return false;
+        }
+        if (keep[0] != windowDecoderSlot) {
+            return false;
+        }
+        return keep[keep.length - 1] - keep[0] == keep.length - 1;
+    }
+
+    /**
+     * Decodes the {@code runLength} page slots from {@code firstSlot}, which the window keeps in full, into the
+     * compacted payload. A null slot consumes no decoder value and leaves its payload slot at the unwritten default the
+     * window's validity marks absent, hence the run costs one bulk call per run of non-null slots inside it.
+     */
+    private void decodeKeptRun(int firstSlot, int runLength, int payloadBase, BitSet keptValidity) {
+        if (pageSlotValidity.hasNulls()) {
+            decodeNonNullRuns(firstSlot, runLength, payloadBase, keptValidity);
+        } else {
+            decodeIntoPayload(payloadBase, runLength, keptValidity);
+        }
+        windowDecoderSlot = firstSlot + runLength;
+    }
+
+    /** Decodes each maximal run of non-null slots the kept run holds, one bulk call per run. */
+    private void decodeNonNullRuns(int firstSlot, int runLength, int payloadBase, BitSet keptValidity) {
+        int end = firstSlot + runLength;
+        int slot = firstSlot;
+        while (slot < end) {
+            if (pageSlotValidity.isNull(slot)) {
+                slot++;
+                continue;
+            }
+            int runStart = slot;
+            while (slot < end && pageSlotValidity.isValid(slot)) {
+                slot++;
+            }
+            decodeIntoPayload(payloadBase + (runStart - firstSlot), slot - runStart, keptValidity);
+        }
+    }
+
+    /** Decodes {@code count} non-null values into the payload from {@code payloadIndex} and marks them non-null. */
+    private void decodeIntoPayload(int payloadIndex, int count, BitSet keptValidity) {
+        decodeRunInto(windowDecoder, payloadIndex, count);
+        keptValidity.set(payloadIndex, payloadIndex + count);
+        decodedValueCount += count;
+    }
+
+    /**
+     * Walks the page's slots from the decoder's cursor to the last kept slot, decoding each run of adjacent kept
+     * non-null slots in one bulk call and coalescing the non-null slots the window drops into a single skip. The walk
+     * holds the decoder's invariant - every non-null slot below {@link #windowDecoderSlot} has been decoded or skipped
+     * - by applying the coalesced skip both before the next decoded run and once the walk ends: a walk ending on a kept
+     * null slot has no value to decode after it and would otherwise leave the decoder behind for every later window of
+     * the page. Slots past the last kept one are left for the next window's walk, which starts where this one stopped.
      */
     private void gatherKeptSlots(int[] keep, BitSet keptValidity) {
         int keepCursor = 0;
         int pendingSkip = 0;
-        for (int slot = windowDecoderSlot; slot < pageRawSlotCount && keepCursor < keep.length; slot++) {
+        int slot = windowDecoderSlot;
+        while (slot < pageRawSlotCount && keepCursor < keep.length) {
             boolean nonNull = pageSlotValidity.isValid(slot);
-            if (keep[keepCursor] == slot) {
+            if (keep[keepCursor] != slot) {
                 if (nonNull) {
-                    skipDroppedValues(pendingSkip);
-                    pendingSkip = 0;
-                    decodeOneInto(windowDecoder, keepCursor);
-                    keptValidity.set(keepCursor);
-                    decodedValueCount++;
+                    pendingSkip++;
                 }
-                keepCursor++;
+                slot++;
             } else if (nonNull) {
-                pendingSkip++;
+                int runLength = keptNonNullRunLength(keep, keepCursor, slot);
+                skipDroppedValues(pendingSkip);
+                pendingSkip = 0;
+                decodeIntoPayload(keepCursor, runLength, keptValidity);
+                keepCursor += runLength;
+                slot += runLength;
+            } else {
+                keepCursor++;
+                slot++;
             }
         }
         skipDroppedValues(pendingSkip);
         if (keep.length > 0) {
             windowDecoderSlot = keep[keep.length - 1] + 1;
         }
+    }
+
+    /**
+     * Length of the run of values the decoder can hand over in one call at the walk's position: the slots from
+     * {@code slot} on that the window keeps without a gap and that are all non-null, hence take consecutive decoder
+     * values and land in consecutive payload slots from {@code keepCursor}.
+     */
+    private int keptNonNullRunLength(int[] keep, int keepCursor, int slot) {
+        int runLength = 1;
+        while (keepCursor + runLength < keep.length
+                && keep[keepCursor + runLength] == slot + runLength
+                && pageSlotValidity.isValid(slot + runLength)) {
+            runLength++;
+        }
+        return runLength;
     }
 
     /** Steps the page decoder over the values of the non-null slots a window's walk crossed without keeping. */
@@ -1837,18 +1924,24 @@ final class BatchColumnReader {
         }
     }
 
-    private void decodeOneInto(PageDecoder<?> decoder, int index) {
+    /**
+     * Decodes the decoder's next {@code count} values into the compacted payload from {@code index} onward, through the
+     * bulk lane of the column's kind. The values land contiguously, which makes the caller responsible for issuing one
+     * call per run of payload slots that consume consecutive decoder values.
+     */
+    private void decodeRunInto(PageDecoder<?> decoder, int index, int count) {
+        windowDecodeCallCount++;
         if (isDictionaryBinaryPage()) {
-            ((RleDictionaryPageDecoder<?>) decoder).decodeIndices(1, maskedIndices, index);
+            ((RleDictionaryPageDecoder<?>) decoder).decodeIndices(count, maskedIndices, index);
             return;
         }
         switch (leaf.kind()) {
-            case INT32 -> decoder.decodeInts(1, pageInts, index);
-            case INT64 -> decoder.decodeLongs(1, pageLongs, index);
-            case FLOAT -> decoder.decodeFloats(1, pageFloats, index);
-            case DOUBLE -> decoder.decodeDoubles(1, pageDoubles, index);
-            case BOOLEAN -> decoder.decodeBooleans(1, pageBooleans, index);
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> decoder.decodeBinary(1, pageSegments, index);
+            case INT32 -> decoder.decodeInts(count, pageInts, index);
+            case INT64 -> decoder.decodeLongs(count, pageLongs, index);
+            case FLOAT -> decoder.decodeFloats(count, pageFloats, index);
+            case DOUBLE -> decoder.decodeDoubles(count, pageDoubles, index);
+            case BOOLEAN -> decoder.decodeBooleans(count, pageBooleans, index);
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> decoder.decodeBinary(count, pageSegments, index);
         }
     }
 
@@ -2309,6 +2402,15 @@ final class BatchColumnReader {
     /** Count of non-null values run through a value decoder by this reader. */
     long decodedValueCount() {
         return decodedValueCount;
+    }
+
+    /**
+     * Count of calls the windowed lane made into the page decoder's bulk lanes. One call covers one run of payload
+     * slots taking consecutive decoder values, hence a window materialized run by run counts far fewer calls than the
+     * values it decoded, and a window materialized slot by slot counts one call per value.
+     */
+    long windowDecodeCallCount() {
+        return windowDecodeCallCount;
     }
 
     ColumnPath columnPath() {

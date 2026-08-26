@@ -43,6 +43,7 @@ import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.ReadOptions;
+import io.tileverse.parquetry.data.RowGroupSummary;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
 import io.tileverse.parquetry.filter.Bbox;
@@ -125,6 +126,23 @@ class MaskedScanParityIT {
         }
     }
 
+    /**
+     * The delta scenarios only put a page decoder under a mask when their predicate keeps part of the fixture: a
+     * predicate every row passes leaves nothing to skip, and one no row passes leaves nothing to decode.
+     */
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("deltaScenarios")
+    void aDeltaScenarioKeepsSomeRowsAndDropsOthers(Case scenario) {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(fileOf(scenario))) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+            List<ColumnPath> compared = comparedColumns(scenario.projectedColumns());
+
+            long kept = referenceRows(reader, scenario.predicate(), compared).size();
+
+            assertThat(kept).as("rows kept").isPositive().isLessThan(rowCountOf(reader));
+        }
+    }
+
     // --- the case matrix ---
 
     /**
@@ -189,13 +207,14 @@ class MaskedScanParityIT {
     /**
      * The reads worth checking, each labelled by fixture, predicate selectivity and projection shape. The corpus
      * fixtures cover nullable flat columns, three-level lists, nested lists of lists, maps of maps, a legacy repeated
-     * group with no LIST annotation, and v2 data pages.
+     * group with no LIST annotation, DELTA-encoded columns, and v2 data pages.
      */
     private static List<Case> scenarios() {
         List<Case> scenarios = new ArrayList<>();
         scenarios.addAll(impalaScenarios());
         scenarios.addAll(nestedListAndMapScenarios());
         scenarios.addAll(repeatedAndDataPageV2Scenarios());
+        scenarios.addAll(deltaScenarios());
         scenarios.addAll(geoScenarios());
         return scenarios;
     }
@@ -291,6 +310,56 @@ class MaskedScanParityIT {
                         dataPageV2,
                         Pred.col("b").gt(100),
                         List.of("b", "e")));
+    }
+
+    /**
+     * The DELTA-encoded corpus fixtures, the one encoding family whose page decoder rebuilds a running state as it
+     * walks values: stepping over a filtered-out row has to advance that state rather than jump past it, and a masked
+     * read interleaves those steps with bulk decode calls on the same decoder. Every projection here names DELTA
+     * columns; a label reads "delta output-only" when the predicate tests a different column than the projection
+     * decodes, and "delta filter and output" when one DELTA column serves both.
+     *
+     * <p>{@code delta_binary_packed.parquet} is 66 DELTA_BINARY_PACKED integer columns over 200 rows;
+     * {@code delta_byte_array.parquet} is nine nullable DELTA_BYTE_ARRAY string columns over 1000 rows;
+     * {@code delta_length_byte_array.parquet} is a single nullable DELTA_LENGTH_BYTE_ARRAY string column over 1000
+     * rows, written with v2 data pages; the two {@code delta_encoding_*_column.parquet} files pair DELTA_BINARY_PACKED
+     * integers with DELTA_BYTE_ARRAY strings over 100 rows, required in one and optional in the other.
+     */
+    static List<Case> deltaScenarios() {
+        return List.of(
+                scenario(
+                        "delta_binary_packed selective, delta output-only projection",
+                        "delta_binary_packed.parquet",
+                        Pred.col("int_value").gtEq(0),
+                        List.of("bitwidth1", "bitwidth33", "bitwidth64")),
+                scenario(
+                        "delta_binary_packed selective, delta filter and output projection",
+                        "delta_binary_packed.parquet",
+                        Pred.col("bitwidth5").gtEq(-100L),
+                        List.of("bitwidth5", "bitwidth20")),
+                scenario(
+                        "delta_byte_array selective, delta output-only projection",
+                        "delta_byte_array.parquet",
+                        Pred.col("c_salutation").eq("Dr."),
+                        List.of("c_first_name", "c_last_name", "c_email_address")),
+                scenario(
+                        "delta_length_byte_array selective on three rows spread across the file, delta filter and"
+                                + " output projection",
+                        "delta_length_byte_array.parquet",
+                        Pred.col("FRUIT")
+                                .inStrings(
+                                        "apple_banana_mango9", "apple_banana_mango250000", "apple_banana_mango998001"),
+                        List.of("FRUIT")),
+                scenario(
+                        "delta_encoding_required_column selective, delta output-only projection",
+                        "delta_encoding_required_column.parquet",
+                        Pred.col("c_birth_month:").gtEq(7),
+                        List.of("c_first_name:", "c_email_address:")),
+                scenario(
+                        "delta_encoding_optional_column selective, delta output-only projection",
+                        "delta_encoding_optional_column.parquet",
+                        Pred.col("c_birth_year").gtEq(1960L),
+                        List.of("c_customer_id", "c_email_address")));
     }
 
     /** The written GeoParquet fixture, whose bbox covering columns lower a spatial leaf to numeric comparisons. */
@@ -412,6 +481,15 @@ class MaskedScanParityIT {
         List<Long> ids = new ArrayList<>();
         forEachMatchingRow(reader, predicate, row -> ids.add(row.getLong(ColumnPath.of("id"))));
         return ids;
+    }
+
+    /** Every row of the file, as the footer counts them. */
+    private static long rowCountOf(ParquetFileReader reader) {
+        long rows = 0;
+        for (RowGroupSummary rowGroup : reader.rowGroups()) {
+            rows += rowGroup.rowCount();
+        }
+        return rows;
     }
 
     private static void forEachMatchingRow(
