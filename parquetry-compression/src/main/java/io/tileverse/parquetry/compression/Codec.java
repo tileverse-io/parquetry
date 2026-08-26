@@ -167,6 +167,9 @@ public sealed interface Codec
      * <p>Implementations must respect {@code output.byteSize()} as a hard upper bound; if compressed output would
      * exceed it, throw {@link IOException} -- callers size the output via {@link #maxCompressedLength(long)}.
      *
+     * <p>{@code src} may be read-only. Some compression backends read their input through {@code Unsafe} and reject a
+     * read-only segment; an implementation built on one of those must handle the rejection rather than pass it on.
+     *
      * @throws UnsupportedOperationException if this codec only supports decompression (Brotli, Hadoop-framed LZ4)
      */
     int compress(MemorySegment src, MemorySegment output) throws IOException;
@@ -248,10 +251,11 @@ public sealed interface Codec
         public int compress(MemorySegment src, MemorySegment output) throws IOException {
             SnappyCompressor compressor = SnappyCompressor.create();
             try {
-                return compressor.compress(src, output);
-            } catch (IllegalArgumentException overflow) {
+                return CompressionSupport.compressReadingFrom(src, output, compressor::compress);
+            } catch (IllegalArgumentException failure) {
                 throw new IOException(
-                        "SNAPPY output buffer too small for input of " + src.byteSize() + " bytes", overflow);
+                        "SNAPPY compress failed for input of " + src.byteSize() + " bytes: " + failure.getMessage(),
+                        failure);
             }
         }
 
@@ -424,10 +428,11 @@ public sealed interface Codec
         public int compress(MemorySegment src, MemorySegment output) throws IOException {
             Lz4Compressor compressor = Lz4Compressor.create();
             try {
-                return compressor.compress(src, output);
-            } catch (IllegalArgumentException overflow) {
+                return CompressionSupport.compressReadingFrom(src, output, compressor::compress);
+            } catch (IllegalArgumentException failure) {
                 throw new IOException(
-                        "LZ4_RAW output buffer too small for input of " + src.byteSize() + " bytes", overflow);
+                        "LZ4_RAW compress failed for input of " + src.byteSize() + " bytes: " + failure.getMessage(),
+                        failure);
             }
         }
 
@@ -530,10 +535,11 @@ public sealed interface Codec
         public int compress(MemorySegment src, MemorySegment output) throws IOException {
             ZstdCompressor compressor = compressorAtBestLevel();
             try {
-                return compressor.compress(src, output);
-            } catch (IllegalArgumentException overflow) {
+                return CompressionSupport.compressReadingFrom(src, output, compressor::compress);
+            } catch (IllegalArgumentException failure) {
                 throw new IOException(
-                        "ZSTD output buffer too small for input of " + src.byteSize() + " bytes", overflow);
+                        "ZSTD compress failed for input of " + src.byteSize() + " bytes: " + failure.getMessage(),
+                        failure);
             }
         }
 
@@ -621,10 +627,11 @@ public sealed interface Codec
         public int compress(MemorySegment src, MemorySegment output) throws IOException {
             LzoCompressor compressor = new LzoCompressor();
             try {
-                return compressor.compress(src, output);
-            } catch (IllegalArgumentException overflow) {
+                return CompressionSupport.compressReadingFrom(src, output, compressor::compress);
+            } catch (IllegalArgumentException failure) {
                 throw new IOException(
-                        "LZO output buffer too small for input of " + src.byteSize() + " bytes", overflow);
+                        "LZO compress failed for input of " + src.byteSize() + " bytes: " + failure.getMessage(),
+                        failure);
             }
         }
 

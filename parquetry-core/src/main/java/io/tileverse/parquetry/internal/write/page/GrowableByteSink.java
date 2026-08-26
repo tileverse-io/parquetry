@@ -118,12 +118,14 @@ public final class GrowableByteSink implements LittleEndianSink {
     }
 
     /**
-     * A read-only heap segment over {@code [0, size())} for a heap-to-heap consumer. The view aliases the live backing
-     * array and is valid only until the next write, {@link #reset()}, or growth; copy via {@link #toByteArray()} to
-     * retain it.
+     * A writable heap segment over {@code [0, size())} for handing to a compressor. The codec only reads it; the
+     * writability is what its pure-Java fallback demands, because that fallback reaches the base address through
+     * {@code Unsafe} and refuses a read-only segment. Every platform without a native compression backend runs that
+     * fallback. The view aliases the live backing array and is valid only until the next write, {@link #reset()}, or
+     * growth; copy via {@link #toByteArray()} to retain it.
      */
-    public MemorySegment heapSegment() {
-        return MemorySegment.ofArray(buf).asSlice(0L, count).asReadOnly();
+    public MemorySegment codecSegment() {
+        return MemorySegment.ofArray(buf).asSlice(0L, count);
     }
 
     private void ensureCapacity(int extra) {

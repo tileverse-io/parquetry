@@ -221,7 +221,7 @@ public final class PageWriter {
         byte[] pageBytes;
         int pageLen;
         if (shouldCompress) {
-            pageLen = compressInto(v1PayloadSink.heapSegment());
+            pageLen = compressInto(v1PayloadSink.codecSegment());
             pageBytes = compressScratch;
         } else {
             pageBytes = v1PayloadSink.array();
@@ -253,7 +253,7 @@ public final class PageWriter {
     private MemorySegment encodeValuesSegment(Encoder<?> encoder, Object values, int n) throws IOException {
         plainValueSink.reset();
         encodeWithErasedCarrier(encoder, values, n, plainValueSink);
-        return plainValueSink.heapSegment();
+        return plainValueSink.codecSegment();
     }
 
     private byte[] encodeValues(Encoder<?> encoder, Object values, int n) throws IOException {

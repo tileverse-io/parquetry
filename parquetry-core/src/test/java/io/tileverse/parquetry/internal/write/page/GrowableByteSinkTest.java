@@ -88,14 +88,26 @@ class GrowableByteSinkTest {
     }
 
     @Test
-    void heapSegmentViewsCurrentContentReadOnly() {
-        GrowableByteSink sink = new GrowableByteSink(4);
+    void codecSegmentViewsCurrentContentWritable() {
+        GrowableByteSink sink = new GrowableByteSink(16);
         sink.write(new byte[] {0x11, 0x22, 0x33});
-        MemorySegment seg = sink.heapSegment();
-        assertThat(seg.byteSize()).isEqualTo(3);
-        assertThat(seg.isReadOnly()).isTrue();
-        byte[] copy = seg.toArray(ValueLayout.JAVA_BYTE);
-        assertThat(copy).containsExactly(0x11, 0x22, 0x33);
+
+        MemorySegment seg = sink.codecSegment();
+
+        assertThat(seg.byteSize()).isEqualTo(3); // the written prefix, not the 16-byte capacity
+        assertThat(seg.isReadOnly()).isFalse();
+        assertThat(seg.toArray(ValueLayout.JAVA_BYTE)).containsExactly(0x11, 0x22, 0x33);
+    }
+
+    @Test
+    void codecSegmentAliasesTheSinkBackingArray() {
+        GrowableByteSink sink = new GrowableByteSink(16);
+        sink.write(new byte[] {0x11, 0x22, 0x33});
+
+        MemorySegment seg = sink.codecSegment();
+        seg.set(ValueLayout.JAVA_BYTE, 1, (byte) 0x44);
+
+        assertThat(sink.array()[1]).isEqualTo((byte) 0x44);
     }
 
     @Test

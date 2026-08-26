@@ -89,6 +89,31 @@ final class CompressionSupport {
         int decompress(MemorySegment src, MemorySegment output);
     }
 
+    /**
+     * Runs an aircompressor segment-to-segment encode, tolerating a read-only source under the same rules as
+     * {@link #decompressReadingFrom}: the pure-Java compressor reaches the source's base address through {@code Unsafe}
+     * and refuses a read-only segment, and platforms without a native backend (the Windows runner) always run it. Only
+     * on that refusal, and only for a read-only source, is the source copied once to a writable heap segment and the
+     * encode retried; a refusal for any other reason, such as an output buffer too small for the encoded bytes,
+     * propagates to the caller.
+     */
+    static int compressReadingFrom(MemorySegment src, MemorySegment output, SegmentCompressor compressor) {
+        try {
+            return compressor.compress(src, output);
+        } catch (IllegalArgumentException refusal) {
+            if (!src.isReadOnly()) {
+                throw refusal;
+            }
+            return compressor.compress(MemorySegment.ofArray(src.toArray(JAVA_BYTE)), output);
+        }
+    }
+
+    /** An aircompressor encoder's segment-to-segment compress method, returning the number of bytes written. */
+    @FunctionalInterface
+    interface SegmentCompressor {
+        int compress(MemorySegment src, MemorySegment output);
+    }
+
     static void writeFromSegment(MemorySegment src, OutputStream sink) throws IOException {
         byte[] buf = new byte[8192];
         long remaining = src.byteSize();

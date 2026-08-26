@@ -910,7 +910,7 @@ public final class ColumnChunkWriter implements AutoCloseable {
             throws IOException {
         dictValueSink.reset();
         PageDictionaryEncoder.PageResult pageResult = dictionary.encoder().flushPage(dictValueSink);
-        MemorySegment encodedValues = dictValueSink.heapSegment();
+        MemorySegment encodedValues = dictValueSink.codecSegment();
         Encoding marker =
                 options.parquetVersion() == ParquetVersion.V2_0 ? pageResult.v2Encoding() : pageResult.v1Encoding();
         PreEncodedPageJob job = new PreEncodedPageJob(
