@@ -36,6 +36,7 @@ import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.format.OffsetIndex;
+import io.tileverse.parquetry.internal.read.ProjectedLeaves.ProjectedLeaf;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaNode;
@@ -174,7 +175,7 @@ public final class BatchRowGroupReader implements AutoCloseable {
         this.decodeBufferAllocator = decodeBufferAllocator;
         this.projectedSchema = projectedSchema;
         this.batchSizeCap = batchSizeCap;
-        this.projectedLeaves = resolveProjectedLeaves(chunks, fileSchema);
+        this.projectedLeaves = ProjectedLeaves.resolve(chunks, fileSchema);
         this.rowMask = rowMask;
         this.skipDecode = skipDecode;
         this.batchForm = batchForm;
@@ -359,10 +360,8 @@ public final class BatchRowGroupReader implements AutoCloseable {
     }
 
     /**
-     * Wraps the row-aligned LIST and MAP groups in the requested {@link BatchForm}: the eager Arrow-shape vectors for
-     * {@link BatchForm#ASSEMBLED}, or the lazy level vectors for {@link BatchForm#LEVELS}. The level form acquires a
-     * batch-owned {@link BatchLevels} into {@code acquiredBuffers}, which the batch owns and closes, and assembles from
-     * the metadata this reader resolved for the batch's leaves.
+     * Wraps the batch's row-aligned LIST and MAP groups in this read's {@link BatchForm}, assembling from the metadata
+     * this reader resolved for the batch's leaves.
      */
     private Map<ColumnPath, ColumnVector> assembleGroups(
             Map<ColumnPath, ColumnVector> leafVectors,
@@ -370,21 +369,16 @@ public final class BatchRowGroupReader implements AutoCloseable {
             Map<ColumnPath, LevelSlice> defLevelsByLeaf,
             int batchRows,
             List<AutoCloseable> acquiredBuffers) {
-        return switch (batchForm) {
-            case ASSEMBLED ->
-                NestedVectorAssembler.assembleNestedViews(
-                        projectedSchema, leafVectors, repLevelsByLeaf, defLevelsByLeaf, batchRows);
-            case LEVELS ->
-                LevelVectorAssembler.assembleLevelForm(
-                        levelAssemblyPlans.forLeaves(leafVectors.keySet()),
-                        projectedSchema,
-                        leafVectors,
-                        repLevelsByLeaf,
-                        defLevelsByLeaf,
-                        batchRows,
-                        decodeBufferAllocator,
-                        acquiredBuffers);
-        };
+        return BatchAssembly.assemble(
+                batchForm,
+                levelAssemblyPlans,
+                projectedSchema,
+                leafVectors,
+                repLevelsByLeaf,
+                defLevelsByLeaf,
+                batchRows,
+                decodeBufferAllocator,
+                acquiredBuffers);
     }
 
     /** Closes the buffers acquired for a batch that failed to assemble, in reverse order, best-effort. */
@@ -479,8 +473,9 @@ public final class BatchRowGroupReader implements AutoCloseable {
         }
         RowMask mask = rowMask.orElseThrow();
         OffsetIndex offsetIndex = mask.offsetIndexes().get(leaf.path());
+        ValueDecode valueDecode = skipDecode ? ValueDecode.PAGE_MASK : ValueDecode.EAGER;
         return new BatchColumnReader(
-                decodeBufferAllocator, leaf.chunk(), leaf.leaf(), mask.survivingRows(), offsetIndex, skipDecode);
+                decodeBufferAllocator, leaf.chunk(), leaf.leaf(), mask.survivingRows(), offsetIndex, valueDecode);
     }
 
     // --- batch row count computation ---
@@ -560,33 +555,4 @@ public final class BatchRowGroupReader implements AutoCloseable {
         }
         return vectors;
     }
-
-    // --- projected-leaf resolution ---
-
-    /**
-     * Resolves each fetched chunk to its file-schema leaf. Uses {@link ParquetSchema#find(ColumnPath)} to walk the
-     * schema tree and cast to {@link SchemaNode.Primitive} - the same pattern
-     * {@link RowGroupReader#resolvePrimitiveLeaf} uses.
-     */
-    private static List<ProjectedLeaf> resolveProjectedLeaves(
-            List<FetchedColumnChunk> chunks, ParquetSchema fileSchema) {
-        List<ProjectedLeaf> result = new ArrayList<>(chunks.size());
-        for (FetchedColumnChunk chunk : chunks) {
-            ColumnPath path = chunk.path();
-            SchemaNode field = fileSchema
-                    .find(path)
-                    .orElseThrow(() -> new IllegalStateException(
-                            "Projected chunk path " + path.dot() + " not found in file schema"));
-            if (!(field instanceof SchemaNode.Primitive primitive)) {
-                throw new IllegalStateException(
-                        "Projected column " + path.dot() + " is not a primitive leaf in the file schema");
-            }
-            result.add(new ProjectedLeaf(path, chunk, primitive));
-        }
-        return result;
-    }
-
-    // --- internal value type ---
-
-    private record ProjectedLeaf(ColumnPath path, FetchedColumnChunk chunk, SchemaNode.Primitive leaf) {}
 }

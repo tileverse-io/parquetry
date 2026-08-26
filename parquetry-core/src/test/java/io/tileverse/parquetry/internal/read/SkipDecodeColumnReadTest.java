@@ -75,8 +75,8 @@ class SkipDecodeColumnReadTest {
         RowRanges mask = new RowRanges(List.of(new Range(4, 5), new Range(22, 22), new Range(47, 47)));
         int selectedNonNull = 4;
 
-        DrainResult compact = drainWith(file, schema, mask, false);
-        DrainResult skip = drainWith(file, schema, mask, true);
+        DrainResult compact = drainWith(file, schema, mask, ValueDecode.EAGER);
+        DrainResult skip = drainWith(file, schema, mask, ValueDecode.PAGE_MASK);
 
         assertThat(skip.values).as("emitted values match the compact path").isEqualTo(compact.values);
         assertThat(skip.nulls).as("emitted nulls match the compact path").isEqualTo(compact.nulls);
@@ -98,8 +98,8 @@ class SkipDecodeColumnReadTest {
         RowRanges mask = new RowRanges(List.of(new Range(3, 6), new Range(20, 23), new Range(48, 49)));
         int selectedNonNull = countSelectedNonNull(mask);
 
-        DrainResult compact = drainWith(file, schema, mask, false);
-        DrainResult skip = drainWith(file, schema, mask, true);
+        DrainResult compact = drainWith(file, schema, mask, ValueDecode.EAGER);
+        DrainResult skip = drainWith(file, schema, mask, ValueDecode.PAGE_MASK);
 
         assertThat(skip.values).as("emitted values match the compact path").isEqualTo(compact.values);
         assertThat(skip.nulls).as("emitted nulls match the compact path").isEqualTo(compact.nulls);
@@ -112,7 +112,7 @@ class SkipDecodeColumnReadTest {
                 .isLessThan(compact.decodedValueCount);
     }
 
-    private DrainResult drainWith(Path file, ParquetSchema schema, RowRanges mask, boolean skipDecode)
+    private DrainResult drainWith(Path file, ParquetSchema schema, RowRanges mask, ValueDecode valueDecode)
             throws Exception {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             FileMetaData footer = ParquetFormat.readFooter(source);
@@ -142,7 +142,7 @@ class SkipDecodeColumnReadTest {
                     fetcher.fetch(survivor, fetcher.planFor(survivor, Optional.empty()), BudgetReservation.NONE)) {
                 FetchedColumnChunk chunk = fetch.columns().get(0);
                 BatchColumnReader colReader = new BatchColumnReader(
-                        TestDecodeBuffers.ample(), chunk, leaf(schema), mask, offsetIndex, skipDecode);
+                        TestDecodeBuffers.ample(), chunk, leaf(schema), mask, offsetIndex, valueDecode);
 
                 DrainResult result = drainLongs(colReader);
                 colReader.close();
