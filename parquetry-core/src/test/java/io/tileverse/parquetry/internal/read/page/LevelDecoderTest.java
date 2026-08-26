@@ -19,8 +19,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
+import java.util.Arrays;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 class LevelDecoderTest {
 
@@ -101,6 +107,89 @@ class LevelDecoderTest {
         int[] dst = new int[1];
         d.decode(1, dst, 0);
         assertThat(dst[0]).as("6th value, still in run").isEqualTo(7);
+    }
+
+    @Test
+    void anRleRunIsJumpedRatherThanWalked() {
+        // One RLE run of 2_000_000_000 sevens at bit width 3: header = 2_000_000_000 << 1 = 4_000_000_000 as a
+        // five-byte varint, then one value byte. Skipping must not scale with the run length: the budget sits far
+        // above a constant-cost jump and far below any per-value walk of two billion values.
+        byte[] stream = {(byte) 0x80, (byte) 0xD0, (byte) 0xAC, (byte) 0xF3, 0x0E, 0x07};
+        LevelDecoder decoder = new LevelDecoder(3);
+        decoder.load(MemorySegment.ofArray(stream));
+
+        long start = System.nanoTime();
+        decoder.skip(2_000_000_000);
+        long elapsedNanos = System.nanoTime() - start;
+
+        int[] tail = new int[1];
+        decoder.load(MemorySegment.ofArray(stream));
+        decoder.skip(1_999_999_999);
+        decoder.decode(1, tail, 0);
+        assertThat(tail[0])
+                .as("the run's last value is still readable after the jump")
+                .isEqualTo(7);
+        assertThat(elapsedNanos)
+                .as("skipping an RLE run does not walk it")
+                .isLessThan(TimeUnit.MILLISECONDS.toNanos(100));
+    }
+
+    static Stream<Arguments> skipVectors() {
+        // each vector is a bit width, an encoded stream, and its total value count
+        return Stream.of(
+                // RLE run of 40 sevens
+                Arguments.of(3, new byte[] {(byte) (40 << 1), 0x07}, 40),
+                // bit-packed run of 16 three-bit values then an RLE run of 8 zeros
+                Arguments.of(
+                        3,
+                        new byte[] {
+                            0x05, (byte) 0x88, (byte) 0xC6, (byte) 0xFA, (byte) 0x88, (byte) 0xC6, (byte) 0xFA, 16, 0x00
+                        },
+                        24),
+                // RLE run of 3 zeros, bit-packed run of 8 ones, RLE run of 2 zeros (bit width 1)
+                Arguments.of(1, new byte[] {6, 0, 3, (byte) 0xff, 4, 0}, 13),
+                // bit width 0: every level is zero and neither decode nor skip reads a byte
+                Arguments.of(0, new byte[0], 13));
+    }
+
+    @ParameterizedTest
+    @MethodSource("skipVectors")
+    void skipLandsWhereADecodeWouldHave(int bitWidth, byte[] stream, int total) {
+        int[] expected = new int[total];
+        LevelDecoder reference = new LevelDecoder(bitWidth);
+        reference.load(MemorySegment.ofArray(stream));
+        reference.decode(total, expected, 0);
+
+        for (int skipped = 0; skipped <= total; skipped++) {
+            LevelDecoder decoder = new LevelDecoder(bitWidth);
+            decoder.load(MemorySegment.ofArray(stream));
+            decoder.skip(skipped);
+            int[] tail = new int[total - skipped];
+            decoder.decode(total - skipped, tail, 0);
+            assertThat(tail)
+                    .as("skip(%d) then decode the tail", skipped)
+                    .containsExactly(Arrays.copyOfRange(expected, skipped, total));
+        }
+    }
+
+    @ParameterizedTest
+    @MethodSource("skipVectors")
+    void repeatedSkipsComposeLikeOneSkip(int bitWidth, byte[] stream, int total) {
+        int[] expected = new int[total];
+        LevelDecoder reference = new LevelDecoder(bitWidth);
+        reference.load(MemorySegment.ofArray(stream));
+        reference.decode(total, expected, 0);
+
+        LevelDecoder decoder = new LevelDecoder(bitWidth);
+        decoder.load(MemorySegment.ofArray(stream));
+        int position = 0;
+        while (position + 3 <= total) {
+            decoder.skip(2);
+            int[] one = new int[1];
+            decoder.decode(1, one, 0);
+            assertThat(one[0]).as("value at %d", position + 2).isEqualTo(expected[position + 2]);
+            position += 3;
+        }
     }
 
     @Test

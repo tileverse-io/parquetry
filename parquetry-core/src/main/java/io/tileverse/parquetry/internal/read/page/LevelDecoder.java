@@ -84,13 +84,48 @@ public final class LevelDecoder {
         this.bitsInBuffer = 0;
     }
 
-    /** Skip {@code n} values without materializing them. */
+    /**
+     * Skips {@code n} values without materializing them. The cost is per run, never per value: an RLE run is jumped in
+     * constant time, and a bit-packed run costs one buffer adjustment plus a cursor step.
+     */
     public void skip(int n) {
         if (bitWidth == 0) {
             return;
         }
-        for (int i = 0; i < n; i++) {
-            nextValue();
+        int remaining = n;
+        while (remaining > 0) {
+            if (remainingInRun == 0) {
+                readNextRunHeader();
+            }
+            int take = Math.min(remainingInRun, remaining);
+            if (!currentRunIsRle) {
+                dropBitPackedBits((long) take * bitWidth);
+            }
+            remainingInRun -= take;
+            remaining -= take;
+        }
+    }
+
+    /**
+     * Drops {@code bits} bits of the current bit-packed run: the buffered bits first, then whole bytes of the stream,
+     * then the leading bits of one refill byte. Leaves the buffer holding only the bits after the drop, which is the
+     * state {@link #readBitPackedValue()} resumes from.
+     */
+    private void dropBitPackedBits(long bits) {
+        if (bits < bitsInBuffer) {
+            bitPackedBuffer >>>= bits;
+            bitsInBuffer -= (int) bits;
+            return;
+        }
+        long beyondBuffer = bits - bitsInBuffer;
+        bitPackedBuffer = 0L;
+        bitsInBuffer = 0;
+        position += beyondBuffer >>> 3;
+        int leftover = (int) (beyondBuffer & 7L);
+        if (leftover > 0) {
+            int refill = readByte();
+            bitPackedBuffer = ((long) refill) >>> leftover;
+            bitsInBuffer = 8 - leftover;
         }
     }
 

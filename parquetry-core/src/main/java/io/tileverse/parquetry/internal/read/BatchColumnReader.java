@@ -523,6 +523,7 @@ final class BatchColumnReader {
                     : pageDefLevels.validityAt(maxLevels.maxDefinitionLevel());
         }
         pageLogicalRowCount = (pageRepLevels == null) ? pageSize : pageRepLevels.countOf(0);
+        pageCursor.recordCurrentPageRowCount(pageLogicalRowCount);
         clearTypedPayloads();
         pageWasDictionary = PageDecoders.isDictionaryEncoded(page.valuesEncoding());
         if (skipDecode && survivingRows != null) {

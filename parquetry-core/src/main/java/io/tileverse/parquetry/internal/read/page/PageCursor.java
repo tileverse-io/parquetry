@@ -19,8 +19,11 @@ import java.io.IOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.util.List;
+import java.util.Optional;
 
 import io.tileverse.parquetry.data.Compression;
+import io.tileverse.parquetry.format.DataPageHeader;
+import io.tileverse.parquetry.format.DataPageHeaderV2;
 import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.PageHeader;
 import io.tileverse.parquetry.format.PageType;
@@ -42,6 +45,8 @@ import io.tileverse.parquetry.schema.LevelMaxima;
  */
 public final class PageCursor {
 
+    private static final int UNSTATED_ROW_COUNT = -1;
+
     private final List<DataPageRun> runs;
     private final ColumnPath columnPath;
     private final PageSelection selection; // null = no page-skip (decode every data page)
@@ -51,6 +56,8 @@ public final class PageCursor {
     private long position;
     private int dataPageOrdinal;
     private long currentPageFirstRowIndex;
+    private long nextPageFirstRowIndex;
+    private int currentPageStatedRowCount = UNSTATED_ROW_COUNT;
     private int decodedDataPageCount;
     private int skippedDataPageCount;
 
@@ -98,7 +105,9 @@ public final class PageCursor {
             int ordinal = dataPageOrdinal++;
             MemorySegment pagePayload = sliceAndAdvance(compressedSize);
             if (selection == null || selection.isSurviving(ordinal)) {
-                currentPageFirstRowIndex = (selection != null) ? selection.firstRowIndex(ordinal) : 0L;
+                currentPageFirstRowIndex =
+                        (selection != null) ? selection.firstRowIndex(ordinal) : nextPageFirstRowIndex;
+                currentPageStatedRowCount = statedRowCount(header, maxLevels);
                 decodedDataPageCount++;
                 return DataPageReader.forHeader(header).read(header, maxLevels, pagePayload, codec, pageArena);
             }
@@ -124,9 +133,42 @@ public final class PageCursor {
         return true;
     }
 
-    /** First row index (relative to the row group) of the page most recently returned by {@link #nextDataPage}. */
+    /**
+     * First row index (relative to the row group) of the page most recently returned by {@link #nextDataPage}. With a
+     * {@link PageSelection} it is the selection's mapping; without one it is the running sum of the row counts reported
+     * through {@link #recordCurrentPageRowCount(int)}.
+     */
     public long currentPageFirstRowIndex() {
         return currentPageFirstRowIndex;
+    }
+
+    /**
+     * Records the row count the column reader counted in the page most recently returned by {@link #nextDataPage},
+     * advancing the walk to the next page's first row. A header that states its own row count must agree with the
+     * counted one; a disagreement is a malformed file rather than a silently misaligned read.
+     */
+    public void recordCurrentPageRowCount(int rows) {
+        if (currentPageStatedRowCount != UNSTATED_ROW_COUNT && currentPageStatedRowCount != rows) {
+            throw new MalformedFileException("Column " + columnPath.dot() + " data page " + (dataPageOrdinal - 1)
+                    + " declares " + currentPageStatedRowCount + " rows but its levels hold " + rows);
+        }
+        nextPageFirstRowIndex = currentPageFirstRowIndex + rows;
+    }
+
+    /**
+     * The row count a data page header states, or {@link #UNSTATED_ROW_COUNT} when it states none. A V2 header counts
+     * rows directly. A V1 header of a non-repeated column has one value per row, hence its value count is its row
+     * count; a V1 header of a repeated column states neither, and only the decoded repetition levels know.
+     */
+    private static int statedRowCount(PageHeader header, LevelMaxima maxLevels) {
+        Optional<DataPageHeaderV2> v2 = header.dataPageHeaderV2();
+        if (v2.isPresent()) {
+            return v2.orElseThrow().numRows();
+        }
+        if (maxLevels.maxRepetitionLevel() == 0) {
+            return header.dataPageHeader().map(DataPageHeader::numValues).orElse(UNSTATED_ROW_COUNT);
+        }
+        return UNSTATED_ROW_COUNT;
     }
 
     /** Data pages decompressed and decoded so far; excludes pages skipped by the {@link PageSelection}. */
