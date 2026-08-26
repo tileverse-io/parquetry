@@ -67,7 +67,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     private final OptionalInt batchSizeCap;
     private final List<Optional<RowMask>> rowMasks;
     private final List<Boolean> recordEvalRequired;
-    private final Optional<LateMaterialization> lateMat;
+    private final Optional<MaskedScan> maskedScan;
     private final BatchForm batchForm;
     private final DecodeObservation observation;
     private final List<RowPositionSynthesis> rowPositions;
@@ -94,7 +94,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
             @NonNull OptionalInt batchSizeCap,
             @NonNull List<Optional<RowMask>> rowMasks,
             @NonNull List<Boolean> recordEvalRequired,
-            @NonNull Optional<LateMaterialization> lateMat,
+            @NonNull Optional<MaskedScan> maskedScan,
             @NonNull BatchForm batchForm,
             @NonNull DecodeObservation observation,
             @NonNull List<RowPositionSynthesis> rowPositions,
@@ -112,7 +112,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
         this.batchSizeCap = batchSizeCap;
         this.rowMasks = List.copyOf(rowMasks);
         this.recordEvalRequired = List.copyOf(recordEvalRequired);
-        this.lateMat = lateMat;
+        this.maskedScan = maskedScan;
         this.batchForm = batchForm;
         this.observation = observation;
         this.rowPositions = List.copyOf(rowPositions);
@@ -222,8 +222,8 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     }
 
     private RowGroupBatchDriver buildDriver(RowGroupFetch fetch, Optional<RowMask> mask, int index) {
-        if (lateMat.isPresent()) {
-            return buildLateMaterializedDriver(fetch, mask, index);
+        if (maskedScan.isPresent() && Boolean.TRUE.equals(recordEvalRequired.get(index))) {
+            return buildMaskedScanDriver(fetch, mask, index);
         }
         return new ClassicRowGroupDriver(
                 decodeBufferAllocator,
@@ -244,26 +244,37 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
         return rowPositions.isEmpty() ? Optional.empty() : Optional.of(rowPositions.get(index));
     }
 
-    private RowGroupBatchDriver buildLateMaterializedDriver(RowGroupFetch fetch, Optional<RowMask> mask, int index) {
-        LateMaterialization lm = lateMat.orElseThrow();
-        LateMaterialization.PerRowGroup perRg = lm.perRowGroup().get(index);
-        LateMaterializingRowGroupReader reader = new LateMaterializingRowGroupReader(
+    /**
+     * The masked scan driver for one row group: the predicate columns decode and evaluate per window, and the output
+     * columns decode only the rows that survived.
+     */
+    @SuppressWarnings("java:S2095") // the returned driver owns the reader and closes it
+    private RowGroupBatchDriver buildMaskedScanDriver(RowGroupFetch fetch, Optional<RowMask> mask, int index) {
+        MaskedScan scan = maskedScan.orElseThrow();
+        MaskedScanRowGroupReader reader = new MaskedScanRowGroupReader(
                 decodeBufferAllocator,
                 fetch.columns(),
                 fileSchema,
-                lm.outputSchema(),
-                lm.predicateLeaves(),
-                lm.predicate(),
+                scan.outputSchema(),
+                scan.filterLeaves(),
+                scan.predicate(),
                 batchSizeCap,
                 mask,
-                perRg.outputOffsetIndexes(),
-                perRg.numRows(),
-                batchForm);
-        return new LateMaterializedRowGroupDriver(fetch, reader);
+                batchForm,
+                rowPositionFor(index),
+                scan.rowsToScan().get(index));
+        return new MaskedScanRowGroupDriver(fetch, reader);
     }
 
+    /**
+     * Whether the pipeline still tests each decoded row against the predicate. A masked scan applied it exactly during
+     * decode; a MATCHED row group had it proved by statistics.
+     */
     private boolean evalRequiredFor(int index) {
-        return !lateMat.isPresent() && recordEvalRequired.get(index);
+        if (maskedScan.isPresent()) {
+            return false;
+        }
+        return recordEvalRequired.get(index);
     }
 
     /**

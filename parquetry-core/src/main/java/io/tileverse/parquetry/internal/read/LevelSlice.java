@@ -61,4 +61,16 @@ record LevelSlice(Levels levels, int from, int length) {
     int[] toArray() {
         return levels.toArray(from, length);
     }
+
+    /**
+     * The window's entries at the window-relative positions {@code keep}, reindexed from zero; heap-backed and owned.
+     * Every position must lie within {@code [0, length())}.
+     */
+    Levels gather(int[] keep) {
+        int[] out = new int[keep.length];
+        for (int j = 0; j < keep.length; j++) {
+            out[j] = levels.get(from + Objects.checkIndex(keep[j], length));
+        }
+        return Levels.of(out);
+    }
 }

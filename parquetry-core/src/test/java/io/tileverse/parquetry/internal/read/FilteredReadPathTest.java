@@ -48,11 +48,11 @@ import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
- * End-to-end coverage of the late-materializing read path through the public {@link ParquetFileReader} API. Every case
- * compares the read against a brute-force baseline that decodes all rows and filters them in Java with the same
- * predicate, asserting identical rows in identical order.
+ * End-to-end coverage of the filtered read path through the public {@link ParquetFileReader} API. Every case compares
+ * the read against a brute-force baseline that decodes all rows and filters them in Java with the same predicate,
+ * asserting identical rows in identical order.
  */
-class LateMaterializationReadTest {
+class FilteredReadPathTest {
 
     private static final ColumnPath ID = ColumnPath.of("id");
     private static final ColumnPath V = ColumnPath.of("v");
@@ -94,7 +94,7 @@ class LateMaterializationReadTest {
                 .containsExactlyElementsOf(expected)
                 .hasSize(1);
         assertThat(actual.get(0).id())
-                .as("the projected id carries the matched value")
+                .as("the projected id holds the matched value")
                 .isEqualTo(73L);
     }
 
@@ -149,7 +149,7 @@ class LateMaterializationReadTest {
         List<Row> actual = readRows(file, Predicate.ALWAYS_TRUE, projection, ReadOptions.DEFAULTS);
 
         assertThat(actual)
-                .as("a trivially-true predicate is not eligible for late materialization and returns every row")
+                .as("a trivially-true predicate has nothing to evaluate per row and returns every row")
                 .hasSize(ROW_COUNT);
     }
 
@@ -167,26 +167,6 @@ class LateMaterializationReadTest {
                 .containsExactlyElementsOf(expected)
                 .as("seventy rows match id in [10, 80)")
                 .hasSize(70);
-    }
-
-    @Test
-    void disablingLateMaterializationKeepsResultsIdentical() throws Exception {
-        Path file = writeRows(WriteOptions.RowGroupSize.rows(25));
-        Predicate predicate = col("id").gtEq(10L).and(col("id").lt(80L));
-        Projection projection = Projection.ofPhysical(Set.of(V, NAME));
-        ReadOptions lateMatOff =
-                ReadOptions.builder().useLateMaterialization(false).build();
-
-        List<Row> withLateMat = readRows(file, predicate, projection, ReadOptions.DEFAULTS);
-        List<Row> withoutLateMat = readRows(file, predicate, projection, lateMatOff);
-        List<Row> expected = baseline(predicate, projection);
-
-        assertThat(withLateMat)
-                .as("the two-phase path and the full-decode fallback return the same matching rows")
-                .containsExactlyElementsOf(withoutLateMat);
-        assertThat(withoutLateMat)
-                .as("the fallback still applies the record filter and matches the baseline")
-                .containsExactlyElementsOf(expected);
     }
 
     // --- read + baseline helpers ---
@@ -264,7 +244,7 @@ class LateMaterializationReadTest {
     // --- file writing ---
 
     private Path writeRows(WriteOptions.RowGroupSize rowGroupSize) throws Exception {
-        Path file = tempDir.resolve("late-materialization-read.parquet");
+        Path file = tempDir.resolve("filtered-read.parquet");
         ParquetSchema schema = fileSchema();
         WriteOptions options = WriteOptions.builder()
                 .tempDir(tempDir)

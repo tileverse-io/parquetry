@@ -25,6 +25,7 @@ import java.util.Optional;
 import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.function.Consumer;
+import java.util.function.ToLongFunction;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
@@ -162,21 +163,7 @@ public final class BatchPipeline {
             boolean observe,
             @NonNull Optional<SpatialDecimationGate> gate) {
         SpatialDecimationGate decimationGate = gate.orElse(null);
-        long total = 0L;
-        BatchIterator iterator = new BatchIterator(coordinator);
-        try (Stream<ParquetRecordBatch> batches = stream(iterator)) {
-            Iterator<ParquetRecordBatch> it = batches.iterator();
-            while (it.hasNext()) {
-                try (ParquetRecordBatch batch = it.next()) {
-                    long matched = countMatchingRows(predicate, batch, decimationGate);
-                    total += matched;
-                    if (observe) {
-                        iterator.addMatchedToCurrentRowGroup(matched);
-                    }
-                }
-            }
-        }
-        return total;
+        return sumMatchedRows(coordinator, observe, batch -> countMatchingRows(predicate, batch, decimationGate));
     }
 
     /** The matching-row count for one batch, decimated through {@code gate} when one is present. */
@@ -189,10 +176,45 @@ public final class BatchPipeline {
     }
 
     /**
+     * Sums the rows of the batches the coordinator emits, testing none of them: a masked scan applied the predicate
+     * during decode, and every row of every batch it emits is a matching row. Every batch is closed as it is consumed;
+     * closing the stream cascades to the coordinator.
+     */
+    public static long countEmitted(@NonNull ParallelDecodeCoordinator coordinator, boolean observe) {
+        return sumMatchedRows(coordinator, observe, ParquetRecordBatch::rowCount);
+    }
+
+    /**
+     * Drains the coordinator's batches and sums the rows {@code matchedRows} reports for each, tallying them into the
+     * batch's own row group when {@code observe} is on. Every batch is closed as it is consumed; closing the stream
+     * cascades to the coordinator.
+     */
+    private static long sumMatchedRows(
+            ParallelDecodeCoordinator coordinator, boolean observe, ToLongFunction<ParquetRecordBatch> matchedRows) {
+        long total = 0L;
+        BatchIterator iterator = new BatchIterator(coordinator);
+        try (Stream<ParquetRecordBatch> batches = stream(iterator)) {
+            Iterator<ParquetRecordBatch> it = batches.iterator();
+            while (it.hasNext()) {
+                try (ParquetRecordBatch batch = it.next()) {
+                    long matched = matchedRows.applyAsLong(batch);
+                    total += matched;
+                    if (observe) {
+                        iterator.addMatchedToCurrentRowGroup(matched);
+                    }
+                }
+            }
+        }
+        return total;
+    }
+
+    /**
      * Folds the WKB envelope of every {@code predicate}-matching row's {@code geometryColumn} cell across the
      * coordinator's batches into {@code accumulator}, with no materialization. A {@code null} {@code predicate}
-     * contributes every row (the unfiltered scan); a null geometry cell is skipped. Every batch is closed as it is
-     * consumed; closing the stream cascades to the coordinator.
+     * contributes every row (the masked scan already applied it, or the scan is unfiltered); a null geometry cell is
+     * skipped. The rows each batch contributes are tallied into the row group that produced it, which is what its read
+     * event reports as matched. Every batch is closed as it is consumed; closing the stream cascades to the
+     * coordinator.
      */
     public static void boundsMatching(
             @NonNull ParallelDecodeCoordinator coordinator,
@@ -204,14 +226,18 @@ public final class BatchPipeline {
             Iterator<ParquetRecordBatch> it = batches.iterator();
             while (it.hasNext()) {
                 try (ParquetRecordBatch batch = it.next()) {
-                    foldBatchBounds(predicate, geometryColumn, batch, accumulator);
+                    long contributed = foldBatchBounds(predicate, geometryColumn, batch, accumulator);
+                    iterator.addMatchedToCurrentRowGroup(contributed);
                 }
             }
         }
     }
 
-    /** Folds the WKB envelope of each contributing row's geometry cell in {@code batch} into {@code accumulator}. */
-    private static void foldBatchBounds(
+    /**
+     * Folds the WKB envelope of each contributing row's geometry cell in {@code batch} into {@code accumulator} and
+     * returns how many rows contributed: the matching rows when a predicate narrows the batch, every row otherwise.
+     */
+    private static long foldBatchBounds(
             Predicate predicate, ColumnPath geometryColumn, ParquetRecordBatch batch, BoundsAccumulator accumulator) {
         BitSet matches = predicate == null ? null : VectorizedPredicateEvaluator.eval(predicate, batch);
         BinaryVector geometry = (BinaryVector) batch.columns().get(geometryColumn);
@@ -219,11 +245,12 @@ public final class BatchPipeline {
             for (int row = 0; row < batch.rowCount(); row++) {
                 foldRowBounds(geometry, row, accumulator);
             }
-            return;
+            return batch.rowCount();
         }
         for (int row = matches.nextSetBit(0); row >= 0; row = matches.nextSetBit(row + 1)) {
             foldRowBounds(geometry, row, accumulator);
         }
+        return matches.cardinality();
     }
 
     private static void foldRowBounds(BinaryVector geometry, int row, BoundsAccumulator accumulator) {
@@ -278,7 +305,7 @@ public final class BatchPipeline {
 
         /**
          * Attributes {@code matched} rows to the row group that produced the batch just returned by {@link #next()}.
-         * Only the count path calls it, and only when observing.
+         * The count path calls it with the rows the batch matched, the bounds fold with the rows it contributed.
          */
         void addMatchedToCurrentRowGroup(long matched) {
             currentRowGroup.addMatchedRows(matched);
@@ -368,18 +395,27 @@ public final class BatchPipeline {
         // output-shaped.
         private ParquetRecordBatch filter(ParquetRecordBatch source) {
             if (gate == null && currentFilter == null) {
-                return FilteredRecordBatch.narrowed(source, outputSchema);
+                return matched(FilteredRecordBatch.narrowed(source, outputSchema), source.rowCount());
             }
             BitSet matches = survivorsOf(source);
-            int matched = matches.cardinality();
-            if (matched == 0) {
+            int matchedRows = matches.cardinality();
+            if (matchedRows == 0) {
                 source.close();
                 return null;
             }
-            if (matched == source.rowCount()) {
-                return FilteredRecordBatch.narrowed(source, outputSchema);
+            if (matchedRows == source.rowCount()) {
+                return matched(FilteredRecordBatch.narrowed(source, outputSchema), matchedRows);
             }
-            return FilteredRecordBatch.filtered(source, matches, outputSchema);
+            return matched(FilteredRecordBatch.filtered(source, matches, outputSchema), matchedRows);
+        }
+
+        /**
+         * Attributes an emitted batch's rows to the row group that produced it, which is what the read event reports as
+         * matched. A batch reaches here only once every row it holds has passed the filter and the gate.
+         */
+        private ParquetRecordBatch matched(ParquetRecordBatch emitted, int matchedRows) {
+            currentRowGroup.addMatchedRows(matchedRows);
+            return emitted;
         }
 
         /**

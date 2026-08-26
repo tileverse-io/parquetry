@@ -70,7 +70,7 @@ flowchart LR
 | Filter | drop row groups and pages that cannot match, using metadata only | footer + index sections | `FilterPipeline`, `ExplainPlan`, `RowGroupSurvivor`, `RowMask` |
 | Fetch | turn the surviving column chunks into a few coalesced range reads, prefetched | column-chunk bytes | `RowGroupFetcher`, `RowGroupPrefetcher`, `FetchedColumnChunk` |
 | Decode | decompress + decode pages into columnar batches, streamed in file order, decoding upcoming row groups ahead within a heap budget | (in memory) | `ParallelDecodeCoordinator`, `DecodeBudget`, `BatchRowGroupReader`, `BatchColumnReader` |
-| Materialize | flatten batches into the caller's record shape, apply the row filter | (in memory) | `BatchPipeline`, `Materializer`, `ParquetRecord` |
+| Materialize | flatten batches into the caller's record shape | (in memory) | `BatchPipeline`, `Materializer`, `ParquetRecord` |
 
 Two cross-cutting helpers thread through filter, fetch, and decode:
 
@@ -79,7 +79,7 @@ Two cross-cutting helpers thread through filter, fetch, and decode:
   read at most once no matter how many stages ask.
 - **`ReadOptions`** - the tunables: which filter tiers run, the buffer pool, the
   off-heap fetch budget, the on-heap decode budget, prefetch depth, decode
-  parallelism, late materialization.
+  parallelism.
 
 ---
 
@@ -104,7 +104,7 @@ sequenceDiagram
     FP-->>R: ExplainPlan (per row group: ELIMINATED / PARTIAL / FULL / MATCHED)
     R->>R: survivorsFor(plan) -> survivors
     R->>R: decodeMasksFor(survivors) -> per-group RowMask (page skip)
-    R->>DC: new coordinator(survivors, masks, lateMat?)
+    R->>DC: new coordinator(survivors, masks, maskedScan?)
     R->>BP: rows(coordinator, materializer, outputSchema, recordFilter)
     BP-->>C: Stream (lazy)
 
@@ -114,9 +114,9 @@ sequenceDiagram
     BP->>DC: next() decoded row group (file order)
     DC->>PF: take(rowGroupIndex) fetched bytes
     PF-->>DC: RowGroupFetch (coalesced, prefetched)
-    DC->>DC: decode columns -> batches (parallel, page-skip)
+    DC->>DC: decode columns -> batches (parallel, page-skip, predicate in scan)
     DC-->>BP: DecodedRowGroup
-    BP->>BP: flatten batch -> rows, apply record filter
+    BP->>BP: flatten batch -> rows
     BP-->>C: ParquetRecord
 ```
 
@@ -135,10 +135,10 @@ Key points the diagram encodes:
   per-row record filter). `PARTIAL` becomes a `RowMask` that skips non-surviving
   pages during decode.
 
-`readBatches()` is the same spine without the last step: it returns the decoded
-batches directly (the page-pruned superset) and does not apply the record filter.
-The row `read()` is `readBatches`' pipeline plus row-flattening and per-row
-filtering.
+`readBatches()` is the same spine without the last step: it returns the batches
+themselves, holding exactly the rows the predicate matched, narrowed to the
+caller's projection. The row `read()` is `readBatches`' pipeline plus
+row-flattening into the caller's record shape.
 
 ---
 
@@ -259,41 +259,66 @@ not "load the file." Sizing both budgets against a container limit is covered in
 
 ---
 
-## 6. Late materialization
+## 6. The masked scan
 
-For a selective predicate over a wide row, decoding every surviving row's output
-columns and then dropping non-matches is wasteful. Late materialization decodes
-the output columns only for matching rows. It is a **row-`read()` optimization**
-over flat columns; it is on by default (`ReadOptions.useLateMaterialization`).
+Decoding every surviving row's output columns and then dropping the non-matches
+is wasteful under a selective predicate. A filtered read therefore decodes each
+row group in **one pass that applies the predicate as it goes**: the filter
+columns decode, the predicate runs over them, and an output column materializes
+a value only where the predicate kept the row. One driver per row group, one
+walk over the bytes.
 
 ```mermaid
 flowchart TD
-    eligible{"eligible?<br/>flat scan columns,<br/>record filter on,<br/>non-trivial predicate,<br/>offset indexes present"}
-    eligible -->|no| full["full decode + per-row record filter<br/>(also the readBatches path)"]
-    eligible -->|yes| p1
+    outcome{"row group outcome"}
+    outcome -->|"MATCHED<br/>(statistics proved every row matches)"| classic["ClassicRowGroupDriver<br/>full decode, no predicate"]
+    outcome -->|"FULL / PARTIAL"| win
 
-    subgraph twophase["LateMaterializingRowGroupReader"]
-        p1["Phase 1: decode PREDICATE columns<br/>over surviving rows"]
-        eval["evaluate predicate per row<br/>(RecordLevelEvaluator) -> Selection"]
-        p2["Phase 2: decode OUTPUT columns<br/>only for selected rows"]
-        skip["skip-decode: PageDecoder.skip over<br/>non-selected runs, decode only selected"]
-        p1 --> eval --> p2 --> skip
+    subgraph scan["MaskedScanRowGroupDriver -> MaskedScanRowGroupReader"]
+        win["next window: the rows every reader<br/>can serve from the page it stands on,<br/>capped by the batch size"]
+        filt["decode the FILTER columns<br/>over the whole window"]
+        eval["evaluate the predicate over the window<br/>(VectorizedPredicateEvaluator)<br/>-> the window's surviving rows"]
+        out["OUTPUT-only columns: decode the value<br/>slots the survivors cover, step the page<br/>decoder over the rest"]
+        gather["SHARED columns: gather the survivors<br/>out of the window already decoded"]
+        win --> filt --> eval --> out --> gather
     end
 
-    skip --> batches["pre-filtered batches<br/>(record filter already applied)"]
-    full --> batches
+    gather --> batches["batch of surviving rows,<br/>dense and in row order"]
+    classic --> narrow["narrow to the caller's projection"]
+    narrow --> batches
 ```
 
-- **Phase 1** decodes only the predicate's columns (using the page-skip mask) and
-  runs the record-level evaluator per surviving row, producing a `Selection` - a
-  `RowRanges` of the rows that match, a subset of the surviving rows.
-- **Phase 2** decodes the output columns with that `Selection` as their mask and
-  **skip-decode** turned on: within each page it advances the decoder past the
-  non-selected values and materializes only the selected ones. Decoded-value count
-  then tracks selectivity, not page size.
-- When late materialization runs, the batches are already filtered; the
-  record-level filter at materialization is skipped. Every ineligible case and
-  `readBatches` take the unchanged full-decode path, with identical results.
+- **A window is page-bounded, not row-group-bounded.** It is the run of rows every
+  scanned column can serve from the page it currently stands on, capped by the
+  read's batch size. A window whose rows all fail the predicate emits nothing and
+  materializes no output value at all.
+- **Output columns pay for survivors only.** An output-only leaf reads the value
+  slots its surviving rows cover and steps its page decoder past the rest
+  (`ValueDecode.WINDOWED_MASK`, survivor slots computed by `MaskedValues`).
+  Decoded-value count tracks selectivity, not page size.
+- **A column that both filters and outputs is read once.** It decodes as a filter
+  column, and its surviving rows are gathered out of the window already in hand
+  rather than through a second reader over the same pages.
+- **`MATCHED` row groups never reach the scan.** Statistics already proved every
+  row matches; there is nothing to evaluate. They take `ClassicRowGroupDriver`
+  over the scan schema, and the batch pipeline narrows the result to the caller's
+  projection - which is what keeps a predicate-only column out of the emitted
+  shape.
+- **Unfiltered reads are untouched.** No predicate means no scan:
+  `ClassicRowGroupDriver` decodes the projection and nothing narrows.
+- **Offset indexes are not required.** The scan walks pages as it meets them.
+  Where the `COLUMN_INDEX` tier did produce a `RowMask`, the scan's readers take
+  it and walk only the surviving rows; the two compose. Building that mask still
+  needs offset indexes and flat scan columns (section 4), and it is the mask, not
+  the scan, that is flat-only.
+- **Nested output columns are supported.** Repetition and definition levels travel
+  with each window and are gathered alongside the values. A row whose values
+  outrun the page it started in is followed across the boundary as a one-row
+  window.
+- **Both `read()` and `readBatches()` take it.** The predicate is applied exactly
+  during decode, and no per-row filter runs afterwards at materialization.
+- **The walk is proved.** A scan whose windows do not add up to the rows the plan
+  left it throws `MalformedFileException` rather than silently dropping rows.
 
 [`count()`](counting.md) pushes the same instinct to its limit: it materializes
 no records at all, answering proven row groups from metadata and counting the rest
@@ -325,10 +350,13 @@ classDiagram
     class ParallelDecodeCoordinator
     class RowGroupPrefetcher
     class RowGroupFetcher
+    class ClassicRowGroupDriver
+    class MaskedScanRowGroupDriver
     class BatchRowGroupReader
+    class MaskedScanRowGroupReader
     class BatchColumnReader
-    class LateMaterializingRowGroupReader
-    class Selection
+    class ValueDecode
+    class MaskedValues
     class BatchPipeline
     class Materializer
 
@@ -341,11 +369,14 @@ classDiagram
     ParquetFileReader --> ParallelDecodeCoordinator : per read
     ParallelDecodeCoordinator --> RowGroupPrefetcher : pulls fetched bytes
     RowGroupPrefetcher --> RowGroupFetcher : coalesced reads
-    ParallelDecodeCoordinator --> BatchRowGroupReader : full-decode path
-    ParallelDecodeCoordinator --> LateMaterializingRowGroupReader : late-mat path
+    ParallelDecodeCoordinator --> ClassicRowGroupDriver : unfiltered or MATCHED
+    ParallelDecodeCoordinator --> MaskedScanRowGroupDriver : filtered row group
+    ClassicRowGroupDriver --> BatchRowGroupReader : full decode
+    MaskedScanRowGroupDriver --> MaskedScanRowGroupReader : one masked walk
     BatchRowGroupReader --> BatchColumnReader : one per leaf
-    LateMaterializingRowGroupReader --> BatchRowGroupReader : two phases
-    LateMaterializingRowGroupReader --> Selection : phase 1 result
+    MaskedScanRowGroupReader --> BatchColumnReader : one per scanned leaf
+    MaskedScanRowGroupReader --> MaskedValues : survivor value slots
+    BatchColumnReader --> ValueDecode : eager or windowed-mask
     ParquetFileReader --> BatchPipeline : rows / batches
     BatchPipeline --> Materializer : record shape
 ```
@@ -358,20 +389,21 @@ classDiagram
 |------|----------|
 | Entry, orchestration | `data/ParquetFileReader.java`, `data/ReadOptions.java` |
 | Footer + schema | `format/ParquetFormat.java`, `schema/SchemaBuilder.java` |
-| Filter pipeline + tiers | `filter/FilterPipeline.java`, `filter/*Evaluator.java`, `filter/ExplainPlan.java` |
-| Per-call chunk view | `data/read/RowGroupChunks.java` |
-| Survivors + page-skip mask | `data/read/RowGroupSurvivor.java`, `data/read/RowMask.java`, `data/read/page/PageSelection.java` |
-| Fetch | `data/read/RowGroupFetcher.java`, `data/read/RowGroupPrefetcher.java`, `data/read/CoalescingFetchPlanner.java` |
-| Parallel decode + budgets | `data/read/ParallelDecodeCoordinator.java`, `data/read/StreamingBatchSource.java`, `data/read/DecodeBudget.java`, `data/read/BatchRowGroupReader.java` |
-| Column / page decode | `data/read/BatchColumnReader.java`, `data/read/page/PageCursor.java`, `data/read/page/PageDecoder.java` |
-| Late materialization | `data/read/LateMaterializingRowGroupReader.java`, `data/read/Selection.java` |
-| Materialize | `data/read/BatchPipeline.java`, `materializer/Materializer.java` |
-| Counting (no materialization) | `data/ParquetFileReader.java` (`count`), `data/read/BatchPipeline.java` (`countMatching`), `batch/VectorizedPredicateEvaluator.java` |
+| Filter pipeline + tiers | `internal/filter/FilterPipeline.java`, `internal/filter/*Evaluator.java`, `filter/explain/ExplainPlan.java` |
+| Per-call chunk view | `internal/read/RowGroupChunks.java` |
+| Survivors + page-skip mask | `internal/read/RowGroupSurvivor.java`, `internal/read/RowMask.java`, `internal/read/page/PageSelection.java` |
+| Fetch | `internal/read/RowGroupFetcher.java`, `internal/read/RowGroupPrefetcher.java`, `internal/read/CoalescingFetchPlanner.java` |
+| Parallel decode + budgets | `internal/read/ParallelDecodeCoordinator.java`, `internal/read/StreamingBatchSource.java`, `runtime/DecodeBudget.java`, `internal/read/BatchRowGroupReader.java` |
+| Column / page decode | `internal/read/BatchColumnReader.java`, `internal/read/page/PageCursor.java`, `internal/read/page/PageDecoder.java` |
+| Masked scan (filtered decode) | `internal/read/MaskedScanRowGroupReader.java`, `internal/read/MaskedScanRowGroupDriver.java`, `internal/read/MaskedValues.java`, `internal/read/ValueDecode.java` |
+| Materialize | `internal/read/BatchPipeline.java`, `materializer/Materializer.java` |
+| Counting (no materialization) | `data/ParquetFileReader.java` (`count`), `internal/read/BatchPipeline.java` (`countMatching`), `columnar/VectorizedPredicateEvaluator.java` |
 
 ---
 
-*Scope: the row and batch read paths over flat columns. Nested/repeated columns
-take the full-decode path (late materialization and page-skip are flat-only).
+*Scope: the row and batch read paths. Flat and nested/repeated columns both go
+through the masked scan; the column-index page-skip mask is the flat-only part,
+and a read whose scan columns are not all flat simply runs the scan without one.
 Spatial (bbox) filtering is covered in [spatial-filtering.md](spatial-filtering.md),
 counting without materialization in [counting.md](counting.md). Writing, encryption,
 and the geometry materializer are documented separately.*

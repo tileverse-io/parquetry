@@ -15,45 +15,19 @@
  */
 package io.tileverse.parquetry.internal.read;
 
-import java.util.Optional;
-import java.util.OptionalInt;
-
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
-import io.tileverse.parquetry.schema.ParquetSchema;
 
 import lombok.NonNull;
 
-/**
- * Streams one row group through a {@link BatchRowGroupReader}, decoding every projected column over every row. This is
- * the decode path for unfiltered reads and for row groups whose statistics proved every row matches.
- */
-final class ClassicRowGroupDriver implements RowGroupBatchDriver {
+/** Streams one row group through a {@link MaskedScanRowGroupReader}, the decode path for a filtered read. */
+final class MaskedScanRowGroupDriver implements RowGroupBatchDriver {
 
     private final RowGroupFetch fetch;
-    private final BatchRowGroupReader reader;
+    private final MaskedScanRowGroupReader reader;
 
-    @SuppressWarnings(
-            "java:S107") // the decode inputs plus the form flag and row-position synthesis; a parameter object
-    // would only relocate the arity
-    ClassicRowGroupDriver(
-            @NonNull DecodeBufferAllocator decodeBufferAllocator,
-            @NonNull RowGroupFetch fetch,
-            @NonNull ParquetSchema projectedSchema,
-            @NonNull ParquetSchema fileSchema,
-            @NonNull OptionalInt batchSizeCap,
-            @NonNull Optional<RowMask> rowMask,
-            @NonNull BatchForm batchForm,
-            @NonNull Optional<RowPositionSynthesis> rowPosition) {
+    MaskedScanRowGroupDriver(@NonNull RowGroupFetch fetch, @NonNull MaskedScanRowGroupReader reader) {
         this.fetch = fetch;
-        this.reader = new BatchRowGroupReader(
-                decodeBufferAllocator,
-                fetch.columns(),
-                projectedSchema,
-                fileSchema,
-                batchSizeCap,
-                rowMask,
-                batchForm,
-                rowPosition);
+        this.reader = reader;
     }
 
     @Override
@@ -72,9 +46,16 @@ final class ClassicRowGroupDriver implements RowGroupBatchDriver {
         return reader.pageCounts();
     }
 
+    /** The rows this row group ran through decode: every filter-column row of every window the scan evaluated. */
     @Override
     public long rowsProduced() {
         return reader.rowsProduced();
+    }
+
+    /** The time the scan spent testing its windows against the predicate. */
+    @Override
+    public long recordFilterNanos() {
+        return reader.recordFilterNanos();
     }
 
     @Override

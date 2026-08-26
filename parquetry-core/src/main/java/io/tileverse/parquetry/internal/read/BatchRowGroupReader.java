@@ -17,7 +17,6 @@ package io.tileverse.parquetry.internal.read;
 
 import java.lang.foreign.Arena;
 import java.util.ArrayList;
-import java.util.BitSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,18 +26,14 @@ import java.util.OptionalInt;
 import com.google.errorprone.annotations.MustBeClosed;
 
 import io.tileverse.parquetry.columnar.ColumnVector;
-import io.tileverse.parquetry.columnar.ConstantVectors;
 import io.tileverse.parquetry.columnar.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.columnar.Levels;
-import io.tileverse.parquetry.columnar.LongVector;
-import io.tileverse.parquetry.columnar.OutputBatches;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
-import io.tileverse.parquetry.filter.RowRanges;
-import io.tileverse.parquetry.filter.Value;
+import io.tileverse.parquetry.columnar.Selection;
 import io.tileverse.parquetry.format.OffsetIndex;
+import io.tileverse.parquetry.internal.read.ProjectedLeaves.ProjectedLeaf;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
-import io.tileverse.parquetry.schema.SchemaNode;
 
 import lombok.NonNull;
 
@@ -69,7 +64,6 @@ public final class BatchRowGroupReader implements AutoCloseable {
     private final OptionalInt batchSizeCap;
     private final List<ProjectedLeaf> projectedLeaves;
     private final Optional<RowMask> rowMask;
-    private final boolean skipDecode;
     private final BatchForm batchForm;
     private final DecodeBufferAllocator decodeBufferAllocator;
     private final Optional<RowPositionSynthesis> rowPosition;
@@ -95,7 +89,6 @@ public final class BatchRowGroupReader implements AutoCloseable {
                 fileSchema,
                 batchSizeCap,
                 rowMask,
-                false,
                 batchForm,
                 Optional.empty());
     }
@@ -117,84 +110,17 @@ public final class BatchRowGroupReader implements AutoCloseable {
             @NonNull Optional<RowMask> rowMask,
             @NonNull BatchForm batchForm,
             @NonNull Optional<RowPositionSynthesis> rowPosition) {
-        this(
-                decodeBufferAllocator,
-                chunks,
-                projectedSchema,
-                fileSchema,
-                batchSizeCap,
-                rowMask,
-                false,
-                batchForm,
-                rowPosition);
-    }
-
-    /**
-     * Builds a reader that, when a {@code rowMask} is present, decodes only the masked rows' values via skip-decode
-     * instead of decoding the whole page and discarding the rest. {@code skipDecode} has no effect when the mask is
-     * empty (the reader decodes every row in full). Skip-decode is defined for flat columns only; the caller guarantees
-     * every masked column is flat.
-     */
-    @SuppressWarnings("java:S107") // the decode inputs plus the skip-decode and form flags; a parameter object would
-    // only relocate the arity
-    public BatchRowGroupReader(
-            @NonNull DecodeBufferAllocator decodeBufferAllocator,
-            @NonNull List<FetchedColumnChunk> chunks,
-            @NonNull ParquetSchema projectedSchema,
-            @NonNull ParquetSchema fileSchema,
-            @NonNull OptionalInt batchSizeCap,
-            @NonNull Optional<RowMask> rowMask,
-            boolean skipDecode,
-            @NonNull BatchForm batchForm) {
-        this(
-                decodeBufferAllocator,
-                chunks,
-                projectedSchema,
-                fileSchema,
-                batchSizeCap,
-                rowMask,
-                skipDecode,
-                batchForm,
-                Optional.empty());
-    }
-
-    @SuppressWarnings(
-            "java:S107") // the decode inputs plus the skip-decode/form flags and the row-position synthesis; a
-    // parameter object would only relocate the arity
-    private BatchRowGroupReader(
-            DecodeBufferAllocator decodeBufferAllocator,
-            List<FetchedColumnChunk> chunks,
-            ParquetSchema projectedSchema,
-            ParquetSchema fileSchema,
-            OptionalInt batchSizeCap,
-            Optional<RowMask> rowMask,
-            boolean skipDecode,
-            BatchForm batchForm,
-            Optional<RowPositionSynthesis> rowPosition) {
         this.decodeBufferAllocator = decodeBufferAllocator;
         this.projectedSchema = projectedSchema;
         this.batchSizeCap = batchSizeCap;
-        this.projectedLeaves = resolveProjectedLeaves(chunks, fileSchema);
+        this.projectedLeaves = ProjectedLeaves.resolve(chunks, fileSchema);
         this.rowMask = rowMask;
-        this.skipDecode = skipDecode;
         this.batchForm = batchForm;
         this.rowPosition = rowPosition;
         this.levelAssemblyPlans = new LevelAssemblyPlans(projectedSchema);
         this.batchSchema = rowPosition
-                .map(synthesis -> projectedSchema.withAppendedLeaves(rowPositionLeaves(synthesis.columns())))
+                .map(synthesis -> projectedSchema.withAppendedLeaves(RowPositionVectors.leaves(synthesis.columns())))
                 .orElse(projectedSchema);
-    }
-
-    private static List<SchemaNode.Primitive> rowPositionLeaves(List<RowPositionColumn> columns) {
-        List<SchemaNode.Primitive> leaves = new ArrayList<>(columns.size());
-        for (RowPositionColumn column : columns) {
-            // A coalesce presented under its source name reuses that physical leaf; a pure row position and a
-            // renamed coalesce each add a new leaf.
-            if (!column.reusesSourceLeaf()) {
-                leaves.add(OutputBatches.rowPositionLeaf(column.name().name(), -1));
-            }
-        }
-        return leaves;
     }
 
     /**
@@ -280,89 +206,13 @@ public final class BatchRowGroupReader implements AutoCloseable {
         if (rowPosition.isEmpty()) {
             return vectors;
         }
-        RowPositionSynthesis synthesis = rowPosition.orElseThrow();
-        io.tileverse.parquetry.columnar.Selection positions = rowGroupRelativePositions(firstRowDenseIndex, batchRows);
-        // One position map shared across columns, each offset by the row group base plus its own first row id. A
-        // within-file position (firstRowId 0) and an Iceberg row id over the same rows therefore get distinct vectors.
-        Map<ColumnPath, ColumnVector> withPosition = new HashMap<>(vectors);
-        for (RowPositionColumn column : synthesis.columns()) {
-            withPosition.put(column.name(), synthesizedColumn(column, synthesis.base(), positions, batchRows, vectors));
-        }
-        return withPosition;
+        Selection positions = RowPositionVectors.window(rowMask, firstRowDenseIndex, batchRows);
+        return RowPositionVectors.add(vectors, rowPosition.orElseThrow(), positions, batchRows);
     }
 
     /**
-     * The vector for one synthesized column. A pure row position is {@code base + firstRowId} plus each row's position.
-     * A coalesce reads the decoded physical column at its source and fills each null cell with the row position or the
-     * constant; the physical value wins where present.
-     */
-    private static ColumnVector synthesizedColumn(
-            RowPositionColumn column,
-            long groupBase,
-            io.tileverse.parquetry.columnar.Selection positions,
-            int batchRows,
-            Map<ColumnPath, ColumnVector> vectors) {
-        if (!column.isCoalesce()) {
-            return LongVector.rowPositions(groupBase + column.firstRowId(), positions, batchRows);
-        }
-        LongVector physical = coalesceSource(vectors, column.coalesceSource().orElseThrow());
-        LongVector fallback = column.coalesceConstant().isPresent()
-                ? (LongVector) ConstantVectors.of(
-                        new Value.LongVal(column.coalesceConstant().getAsLong()), batchRows)
-                : LongVector.rowPositions(groupBase + column.firstRowId(), positions, batchRows);
-        return LongVector.coalesced(physical, fallback);
-    }
-
-    private static LongVector coalesceSource(Map<ColumnPath, ColumnVector> vectors, ColumnPath source) {
-        if (vectors.get(source) instanceof LongVector longVector) {
-            return longVector;
-        }
-        throw new IllegalStateException("coalesce source column " + source + " was not decoded as an INT64 column");
-    }
-
-    /**
-     * The selection mapping each of the batch's {@code batchRows} logical rows to its row-group-relative physical
-     * position. With no row mask the emitted rows are contiguous from {@code firstRowDenseIndex}. With a row mask the
-     * emitted rows are the surviving rows in row-group order; the dense indexes {@code [firstRowDenseIndex,
-     * firstRowDenseIndex + batchRows)} map to the matching surviving positions.
-     */
-    private io.tileverse.parquetry.columnar.Selection rowGroupRelativePositions(
-            long firstRowDenseIndex, int batchRows) {
-        if (rowMask.isEmpty()) {
-            return io.tileverse.parquetry.columnar.Selection.range(Math.toIntExact(firstRowDenseIndex), batchRows);
-        }
-        return survivingPositionWindow(rowMask.orElseThrow().survivingRows(), firstRowDenseIndex, batchRows);
-    }
-
-    /**
-     * The surviving row-group positions for the dense window {@code [firstRowDenseIndex, firstRowDenseIndex +
-     * batchRows)}: it walks the surviving ranges, skips the first {@code firstRowDenseIndex} surviving rows, then sets
-     * a bit per row-group-relative position for the next {@code batchRows} surviving rows.
-     */
-    private static io.tileverse.parquetry.columnar.Selection survivingPositionWindow(
-            RowRanges survivingRows, long firstRowDenseIndex, int batchRows) {
-        BitSet positions = new BitSet();
-        long dense = 0L;
-        long windowEnd = firstRowDenseIndex + batchRows;
-        for (RowRanges.Range range : survivingRows.ranges()) {
-            for (long position = range.first(); position <= range.last(); position++) {
-                if (dense >= firstRowDenseIndex && dense < windowEnd) {
-                    positions.set(Math.toIntExact(position));
-                }
-                dense++;
-                if (dense >= windowEnd) {
-                    return io.tileverse.parquetry.columnar.Selection.bits(positions);
-                }
-            }
-        }
-        return io.tileverse.parquetry.columnar.Selection.bits(positions);
-    }
-
-    /**
-     * Wraps the row-aligned LIST and MAP groups in the requested {@link BatchForm}: the eager Arrow-shape vectors for
-     * {@link BatchForm#ASSEMBLED}, or the lazy level vectors for {@link BatchForm#LEVELS}. The level form acquires a
-     * batch-owned {@link BatchLevels} into {@code acquiredBuffers}, which the batch owns and closes, and assembles from
-     * the metadata this reader resolved for the batch's leaves.
+     * Wraps the batch's row-aligned LIST and MAP groups in this read's {@link BatchForm}, assembling from the metadata
+     * this reader resolved for the batch's leaves.
      */
     private Map<ColumnPath, ColumnVector> assembleGroups(
             Map<ColumnPath, ColumnVector> leafVectors,
@@ -370,21 +220,16 @@ public final class BatchRowGroupReader implements AutoCloseable {
             Map<ColumnPath, LevelSlice> defLevelsByLeaf,
             int batchRows,
             List<AutoCloseable> acquiredBuffers) {
-        return switch (batchForm) {
-            case ASSEMBLED ->
-                NestedVectorAssembler.assembleNestedViews(
-                        projectedSchema, leafVectors, repLevelsByLeaf, defLevelsByLeaf, batchRows);
-            case LEVELS ->
-                LevelVectorAssembler.assembleLevelForm(
-                        levelAssemblyPlans.forLeaves(leafVectors.keySet()),
-                        projectedSchema,
-                        leafVectors,
-                        repLevelsByLeaf,
-                        defLevelsByLeaf,
-                        batchRows,
-                        decodeBufferAllocator,
-                        acquiredBuffers);
-        };
+        return BatchAssembly.assemble(
+                batchForm,
+                levelAssemblyPlans,
+                projectedSchema,
+                leafVectors,
+                repLevelsByLeaf,
+                defLevelsByLeaf,
+                batchRows,
+                decodeBufferAllocator,
+                acquiredBuffers);
     }
 
     /** Closes the buffers acquired for a batch that failed to assemble, in reverse order, best-effort. */
@@ -480,7 +325,7 @@ public final class BatchRowGroupReader implements AutoCloseable {
         RowMask mask = rowMask.orElseThrow();
         OffsetIndex offsetIndex = mask.offsetIndexes().get(leaf.path());
         return new BatchColumnReader(
-                decodeBufferAllocator, leaf.chunk(), leaf.leaf(), mask.survivingRows(), offsetIndex, skipDecode);
+                decodeBufferAllocator, leaf.chunk(), leaf.leaf(), mask.survivingRows(), offsetIndex);
     }
 
     // --- batch row count computation ---
@@ -560,33 +405,4 @@ public final class BatchRowGroupReader implements AutoCloseable {
         }
         return vectors;
     }
-
-    // --- projected-leaf resolution ---
-
-    /**
-     * Resolves each fetched chunk to its file-schema leaf. Uses {@link ParquetSchema#find(ColumnPath)} to walk the
-     * schema tree and cast to {@link SchemaNode.Primitive} - the same pattern
-     * {@link RowGroupReader#resolvePrimitiveLeaf} uses.
-     */
-    private static List<ProjectedLeaf> resolveProjectedLeaves(
-            List<FetchedColumnChunk> chunks, ParquetSchema fileSchema) {
-        List<ProjectedLeaf> result = new ArrayList<>(chunks.size());
-        for (FetchedColumnChunk chunk : chunks) {
-            ColumnPath path = chunk.path();
-            SchemaNode field = fileSchema
-                    .find(path)
-                    .orElseThrow(() -> new IllegalStateException(
-                            "Projected chunk path " + path.dot() + " not found in file schema"));
-            if (!(field instanceof SchemaNode.Primitive primitive)) {
-                throw new IllegalStateException(
-                        "Projected column " + path.dot() + " is not a primitive leaf in the file schema");
-            }
-            result.add(new ProjectedLeaf(path, chunk, primitive));
-        }
-        return result;
-    }
-
-    // --- internal value type ---
-
-    private record ProjectedLeaf(ColumnPath path, FetchedColumnChunk chunk, SchemaNode.Primitive leaf) {}
 }

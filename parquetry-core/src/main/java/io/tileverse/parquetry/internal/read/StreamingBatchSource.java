@@ -105,7 +105,7 @@ final class StreamingBatchSource implements BatchSource {
         }
     }
 
-    // hasMore is timed too: the late-materializing driver runs its phase-1 predicate scan on the first hasMore call.
+    // hasMore is timed too: the masked scan driver computes its first surviving window on the first hasMore call.
     // Only the driver calls are bracketed, never the hand-off, which may park waiting on the consumer.
     private boolean hasMoreTimed() {
         if (!wantsTimings) {
@@ -191,6 +191,15 @@ final class StreamingBatchSource implements BatchSource {
     @Override
     public long decodeNanos() {
         return decodeNanos;
+    }
+
+    /**
+     * The driver's predicate-evaluation tally, under the same join as {@link #pageCounts()}: the consumer reads it only
+     * after {@link #close()} has awaited the producer.
+     */
+    @Override
+    public long recordFilterNanos() {
+        return driver.recordFilterNanos();
     }
 
     @Override

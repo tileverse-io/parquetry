@@ -33,9 +33,10 @@ import io.tileverse.parquetry.schema.ColumnPath;
  * {@link StructVector} / {@link VariantVector} children, re-indexing container offsets and gathering the child elements
  * each kept row spans. It reads no leaf or level state.
  *
- * <p>Two callers: the Dremel assembler drops phantom elements of an enclosing repeated group during nested
- * reconstruction, and {@link FilteredRecordBatch#compacted()} rebuilds a predicate-filtered view as dense vectors for
- * the Arrow export boundary.
+ * <p>Three callers: the Dremel assembler drops phantom elements of an enclosing repeated group during nested
+ * reconstruction, {@link FilteredRecordBatch#compacted()} rebuilds a predicate-filtered view as dense vectors for the
+ * Arrow export boundary, and the filtering row-group scan narrows a decoded window's leaf values to the rows its
+ * predicate kept.
  *
  * <p>Two shapes are rejected deliberately. A {@link ShreddedVariantVector} is refused because in assembly reaching one
  * means the unsupported shredded-under-list/map read shape; {@code FilteredRecordBatch.compacted()} unshreds a legal

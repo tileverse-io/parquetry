@@ -68,10 +68,9 @@ class ExactBatchFilterParityTest {
 
     @ParameterizedTest
     @MethodSource("battery")
-    void readEqualsReadBatchesEqualsCountWithoutLateMaterialization(Predicate predicate, @TempDir Path tmp)
+    void readEqualsReadBatchesEqualsCountWithoutColumnIndexPruning(Predicate predicate, @TempDir Path tmp)
             throws Exception {
-        ReadOptions options =
-                ReadOptions.builder().useLateMaterialization(false).build();
+        ReadOptions options = ReadOptions.builder().useColumnIndexFilter(false).build();
         assertReadEqualsReadBatchesEqualsCount(predicate, options, tmp);
     }
 

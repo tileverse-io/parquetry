@@ -53,9 +53,9 @@ import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
- * Parameterized correctness sweep for the late-materializing read path. Every case reads rows through the full
- * late-materialization path and compares against a brute-force baseline that decodes all rows then filters them in Java
- * using the same predicate logic.
+ * Parameterized correctness sweep for the filtered read path. Every case reads rows through the full read path and
+ * compares against a brute-force baseline that decodes all rows then filters them in Java using the same predicate
+ * logic.
  *
  * <p>The fixture file contains:
  *
@@ -70,7 +70,7 @@ import io.tileverse.parquetry.schema.SchemaNode;
  * <p>Small page value limit and multiple row groups ensure both page-pruning and full row-group skipping are exercised.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-class LateMaterializationCorrectnessTest {
+class FilteredReadCorrectnessTest {
 
     private static final ColumnPath ID = ColumnPath.of("id");
     private static final ColumnPath I32 = ColumnPath.of("i32");
@@ -111,7 +111,7 @@ class LateMaterializationCorrectnessTest {
     @BeforeAll
     void writeFixture(@TempDir Path tempDir) throws Exception {
         fixtureDir = tempDir;
-        fixtureFile = tempDir.resolve("lm-correctness.parquet");
+        fixtureFile = tempDir.resolve("filtered-read-correctness.parquet");
         ParquetSchema schema = buildSchema();
         // Small page limit and 30-row groups produce four row groups and many pages,
         // making both partial-group and full-group pruning happen across predicates.
@@ -166,7 +166,7 @@ class LateMaterializationCorrectnessTest {
                         col("id").gtEq(90L).and(col("id").lt(120L)),
                         Projection.ofPhysical(Set.of(I32, I64, D)),
                         30),
-                // all rows - late materialization should not activate for ALWAYS_TRUE
+                // all rows - a trivially-true predicate has nothing to evaluate per row
                 new Case(
                         "all-rows-always-true",
                         Predicate.ALWAYS_TRUE,
@@ -183,24 +183,24 @@ class LateMaterializationCorrectnessTest {
     }
 
     // ---------------------------------------------------------------------------
-    // Parameterized test: late-mat read equals brute-force baseline
+    // Parameterized test: the filtered read equals the brute-force baseline
     // ---------------------------------------------------------------------------
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("predicateCases")
-    void lateMaterializationMatchesBaseline(Case tc) {
+    void filteredReadMatchesBaseline(Case tc) {
         List<Row> actual = readRows(tc.predicate(), tc.projection(), ReadOptions.DEFAULTS);
         List<Row> expected = buildBaseline(tc.predicate(), tc.projection());
 
         assertThat(actual)
                 .as("%s: row count", tc.label())
                 .hasSize(tc.expectedCount())
-                .as("%s: late-mat rows equal brute-force baseline (same count, values, order)", tc.label())
+                .as("%s: read rows equal brute-force baseline (same count, values, order)", tc.label())
                 .containsExactlyElementsOf(expected);
     }
 
     // ---------------------------------------------------------------------------
-    // Parameterized test: nullable output columns carry nulls in the right positions
+    // Parameterized test: nullable output columns hold nulls in the right positions
     // ---------------------------------------------------------------------------
 
     @ParameterizedTest(name = "{0}")
@@ -273,7 +273,7 @@ class LateMaterializationCorrectnessTest {
         if (tc.predicate() != Predicate.ALWAYS_TRUE && tc.expectedCount() > 0 && tc.expectedCount() < ROW_COUNT) {
             List<Row> matchingRows = readRows(tc.predicate(), tc.projection(), ReadOptions.DEFAULTS);
             assertThat(batchRows)
-                    .as("%s: readBatches result is a superset of the late-mat-filtered rows", tc.label())
+                    .as("%s: readBatches result is a superset of the filtered rows", tc.label())
                     .containsAll(matchingRows);
         }
     }

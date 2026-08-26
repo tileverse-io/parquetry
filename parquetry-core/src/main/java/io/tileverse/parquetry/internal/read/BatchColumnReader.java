@@ -77,6 +77,13 @@ import lombok.NonNull;
  * at page-advance, because the per-batch slices copy their bytes straight from the page. Each {@link #readBatch} call
  * then slices the current page; within-page splitting is correct because the page state (level scratches, heap arrays,
  * the pooled value and metadata segments, or the live page plus its offsets) outlives every slice of the page.
+ *
+ * <p>{@link ValueDecode} chooses when a page's values materialize. {@code EAGER} decodes at page load, as above.
+ * {@code WINDOWED_MASK} loads a page's levels and validity only and keeps the page's value decoder open; each
+ * {@link #readMaskedWindow} then decodes just the value slots its surviving rows cover, and the page Arena stays open
+ * until the page's last window. A windowed reader built with a row mask serves the mask's surviving rows as its row
+ * space - the same rows, in the same order, that the eager masked lane serves - and resolves each of them to the raw
+ * page slot it occupies before the decoder walk.
  */
 final class BatchColumnReader {
 
@@ -93,7 +100,7 @@ final class BatchColumnReader {
     private final int repBitWidth;
     private final Optional<Dictionary<?>> dictionary;
     private final RowRanges survivingRows; // null when this column is not masked
-    private final boolean skipDecode;
+    private final ValueDecode valueDecode;
     private final DecodeBufferAllocator decodeBufferAllocator;
     private final LevelScratch repLevelScratch;
     private final LevelScratch defLevelScratch;
@@ -107,7 +114,8 @@ final class BatchColumnReader {
     // The page's per-row null mask, whichever representation Validity collapsed it to: all-valid (no bitmap), a heap
     // BitSet, or - on the flat optional fast path - the pooled off-heap bitmap decoded straight from the def-level
     // stream. The pooled buffer behind that last representation is pageValidityPooled, held for the page's lifetime
-    // and released at page-advance; it is non-null exactly when pageValidity reads the off-heap bitmap.
+    // and released at page-advance; it is non-null exactly when pageValidity reads the off-heap bitmap. Null in the
+    // windowed lane, which moves the page's mask to pageSlotValidity when it opens the page.
     private Validity pageValidity;
     private SegmentPool.Pooled pageValidityPooled;
     private Levels pageRepLevels; // null when maxRep == 0
@@ -156,8 +164,8 @@ final class BatchColumnReader {
     // Unmasked pages back this with a window of the pooled page-metadata segment (pageBinaryMetaPooled, released at
     // page-advance); masked reads keep a heap array behind the same sequence.
     private IntSequence pageIndices;
-    // Heap index slots for the masked skip-decode lane, filled one kept row at a time and wrapped into pageIndices at
-    // the end of decodeSelectedRows; null outside that window.
+    // Heap index slots for the windowed masked lane, filled as the window's kept slots decode and wrapped into
+    // pageIndices at the end of decodeKeptSlots; null outside that window.
     private int[] maskedIndices;
     // Chunk-level dictionary entries (shared heap-owned segments), built once from this.dictionary and reused across
     // pages.
@@ -165,17 +173,42 @@ final class BatchColumnReader {
     // Total byte size of dictEntries, summed as the entries are built and handed to every vector over them.
     private long dictEntryBytes;
 
+    // The page's decoder, held open across the page's windows in WINDOWED_MASK mode: value decode is forward-only, and
+    // consecutive windows resume where the previous one stopped rather than re-reading the page.
+    private PageDecoder<?> windowDecoder;
+    // The page value slot the window decoder's cursor stands at: every non-null slot below it has been decoded or
+    // skipped. Slots between the last kept slot of a window and the next window's start are skipped lazily, when the
+    // next window's walk reaches them.
+    private int windowDecoderSlot;
+    // The page's whole per-slot null mask, read by each window to place its decoder skips. A window's own mask is
+    // built per window and belongs to that window's vector.
+    private Validity pageSlotValidity;
+    // The page's value slots as written, which the window walk steps over. Distinct from pageSize once a row mask has
+    // narrowed the reader's row space to the page's surviving rows.
+    private int pageRawSlotCount;
+    // The raw page slot of each of the page's mask-surviving rows, ascending: row r of the windowed masked reader's
+    // row space sits at page slot pageSurvivingSlots[r]. Null when the reader has no row mask.
+    private int[] pageSurvivingSlots;
+
+    // A peeked page whose bytes are still compressed, held while the windows over it prove every one of its rows dead,
+    // and the count of its rows those windows have stepped over. Only a reader that canDeferPageLoad() holds one.
+    private PageCursor.PendingDataPage pendingPage;
+    private int pendingPageRowsSkipped;
+
     private int valuesConsumedInCurrentPage;
     private int logicalRowsConsumedInCurrentPage;
     private long valuesConsumedTotal;
+    // Rows consumed out of a row mask's surviving rows, the unit hasMore() compares against RowRanges.totalRows() to
+    // decide the chunk is drained. Stays zero for an unmasked reader, which ends on the page cursor instead.
     private long survivingRowsConsumedTotal;
     private long decodedValueCount;
+    private long windowDecodeCallCount;
 
     BatchColumnReader(
             @NonNull DecodeBufferAllocator decodeBufferAllocator,
             @NonNull FetchedColumnChunk chunk,
             @NonNull SchemaNode.Primitive leaf) {
-        this(decodeBufferAllocator, chunk, leaf, null, null, false);
+        this(decodeBufferAllocator, chunk, leaf, null, null, ValueDecode.EAGER);
     }
 
     BatchColumnReader(
@@ -184,7 +217,7 @@ final class BatchColumnReader {
             @NonNull SchemaNode.Primitive leaf,
             RowRanges survivingRows,
             OffsetIndex offsetIndex) {
-        this(decodeBufferAllocator, chunk, leaf, survivingRows, offsetIndex, false);
+        this(decodeBufferAllocator, chunk, leaf, survivingRows, offsetIndex, ValueDecode.EAGER);
     }
 
     BatchColumnReader(
@@ -193,11 +226,11 @@ final class BatchColumnReader {
             @NonNull SchemaNode.Primitive leaf,
             RowRanges survivingRows,
             OffsetIndex offsetIndex,
-            boolean skipDecode) {
+            @NonNull ValueDecode valueDecode) {
         this.decodeBufferAllocator = decodeBufferAllocator;
         this.repLevelScratch = new LevelScratch(decodeBufferAllocator);
         this.defLevelScratch = new LevelScratch(decodeBufferAllocator);
-        this.skipDecode = skipDecode;
+        this.valueDecode = valueDecode;
         this.columnPath = chunk.path();
         this.leaf = leaf;
         this.maxLevels = new LevelMaxima(chunk.maxRepetitionLevel(), chunk.maxDefinitionLevel());
@@ -206,13 +239,38 @@ final class BatchColumnReader {
         this.defBitWidth = LevelDecoder.computeBitWidth(maxLevels.maxDefinitionLevel());
         this.repBitWidth = LevelDecoder.computeBitWidth(maxLevels.maxRepetitionLevel());
         this.dictionary = chunk.dictionary();
-        if (survivingRows != null && offsetIndex != null) {
+        if (survivingRows != null) {
+            requireOffsetIndexForRowMask(chunk, offsetIndex);
+            requireFlatColumnForWindowedMask(chunk, valueDecode);
             this.survivingRows = survivingRows;
             PageSelection selection = PageSelection.forColumn(offsetIndex, totalValues, survivingRows);
             this.pageCursor = new PageCursor(chunk.dataPageRuns(), columnPath, selection);
         } else {
             this.survivingRows = null;
             this.pageCursor = new PageCursor(chunk.dataPageRuns(), columnPath, null);
+        }
+    }
+
+    /**
+     * Fails a masked read of a column with no offset index. A row mask states row-group row indexes, and every masked
+     * lane places them in the column's pages through the offset index; without one the reader has no way to tell which
+     * of a page's values the mask keeps.
+     */
+    private static void requireOffsetIndexForRowMask(FetchedColumnChunk chunk, OffsetIndex offsetIndex) {
+        if (offsetIndex == null) {
+            throw new IllegalArgumentException("Column " + chunk.path().dot()
+                    + " was given a row mask without an offset index; a row mask requires the column's offset index");
+        }
+    }
+
+    /**
+     * Fails a windowed masked read of a repeated column. A row mask indexes top-level rows, and both masked lanes
+     * resolve a surviving row to exactly one value slot, which only a flat column has.
+     */
+    private static void requireFlatColumnForWindowedMask(FetchedColumnChunk chunk, ValueDecode valueDecode) {
+        if (valueDecode == ValueDecode.WINDOWED_MASK && chunk.maxRepetitionLevel() > 0) {
+            throw new IllegalArgumentException("A row mask over the windowed value decode is only defined for flat "
+                    + "columns; column " + chunk.path().dot() + " is repeated");
         }
     }
 
@@ -245,8 +303,17 @@ final class BatchColumnReader {
      * is undecidable until the next page's first rep level is seen. Deferring the last-started row leaves it to
      * {@link #readSpanningRow}, which follows the row across pages. Masked readers never defer: a row mask requires an
      * offset index, and a page index implies row-aligned pages.
+     *
+     * <p>A reader that {@link #canDeferPageLoad() may answer from a page header} counts the next page's rows without
+     * decompressing it, which leaves a page whose windows all turn out dead compressed to the end.
      */
     int logicalRowsRemainingInCurrentPage() {
+        if (!pageLoaded && canDeferPageLoad()) {
+            peekOrLoadNextPage();
+            if (pendingPage != null) {
+                return pendingPage.statedRowCount() - pendingPageRowsSkipped;
+            }
+        }
         ensurePageLoaded();
         if (pageRepLevels == null) {
             return pageSize - valuesConsumedInCurrentPage;
@@ -310,6 +377,7 @@ final class BatchColumnReader {
      * until it is exhausted, then advance to the next page on demand.
      */
     ColumnVector readBatch(int maxValues, List<AutoCloseable> acquiredBuffers) {
+        requireMaterializedValueDecode();
         if (maxValues <= 0) {
             throw new IllegalArgumentException("maxValues must be positive; got " + maxValues);
         }
@@ -322,17 +390,31 @@ final class BatchColumnReader {
         int n = Math.min(maxValues, pageSize - start);
 
         ColumnVector vec = sliceVector(start, n, acquiredBuffers);
+        int rowsInSlice = countLogicalRowsInSlice(start, n);
 
         valuesConsumedInCurrentPage += n;
-        logicalRowsConsumedInCurrentPage += countLogicalRowsInSlice(start, n);
+        logicalRowsConsumedInCurrentPage += rowsInSlice;
         valuesConsumedTotal += n;
         if (survivingRows != null) {
-            survivingRowsConsumedTotal += n;
+            survivingRowsConsumedTotal += rowsInSlice;
         }
         if (valuesConsumedInCurrentPage >= pageSize) {
             advancePastCurrentPage();
         }
         return vec;
+    }
+
+    /**
+     * Fails a whole-batch read on a reader that leaves its pages' values to the windowed lane. Such a reader holds no
+     * materialized page payload a batch could slice; its values come one window at a time through
+     * {@link #readMaskedWindow}.
+     */
+    private void requireMaterializedValueDecode() {
+        if (valueDecode == ValueDecode.WINDOWED_MASK) {
+            throw new IllegalStateException("Column " + columnPath.dot()
+                    + " serves values one window at a time under the windowed value decode; it has no materialized "
+                    + "page a batch read can slice");
+        }
     }
 
     // ---- page-spanning row read ----
@@ -456,12 +538,402 @@ final class BatchColumnReader {
         return out;
     }
 
+    // ---- windowed masked read ----
+
+    /**
+     * One window of a masked column: the surviving rows' values in window order, plus the matching windows of the rep-
+     * and def-level streams. {@code repLevels} is null for a flat column; {@code defLevels} is null when the column has
+     * no def-level stream.
+     *
+     * <p>Every component outlives the page it was read from. The vector's values sit in decode buffers the owning batch
+     * closes, or - for a dictionary-encoded column - in the chunk's heap-owned dictionary entries; the level windows
+     * are heap-owned copies of the page's level streams.
+     */
+    record MaskedWindow(ColumnVector vector, Levels repLevels, Levels defLevels) {}
+
+    /**
+     * Reads the next {@code windowRows} logical rows, materializing only the values of the rows set in
+     * {@code survivingRows} (indexed from the window's first row). The values of the dropped rows are stepped over in
+     * the page's decoder rather than decoded. The window must lie within the current page, which
+     * {@link #logicalRowsRemainingInCurrentPage()} bounds.
+     *
+     * <p>A reader built with a row mask counts these rows over the mask's surviving rows: the window advances past
+     * {@code windowRows} of them and the rows the mask dropped cost no decode either.
+     */
+    MaskedWindow readMaskedWindow(int windowRows, BitSet survivingRows, List<AutoCloseable> acquiredBuffers) {
+        requireWindowedValueDecode();
+        ensurePageLoaded();
+        requireWindowFitsCurrentPage(windowRows);
+        return readWindow(windowRows, valuesForLogicalRows(windowRows), survivingRows, acquiredBuffers);
+    }
+
+    /**
+     * Advances past {@code windowRows} logical rows of the current page without materializing any of their values. A
+     * page still held compressed stays so: its rows are stepped over from its header alone.
+     */
+    void skipMaskedWindow(int windowRows) {
+        requireWindowedValueDecode();
+        requireWindowFitsCurrentPage(windowRows);
+        if (pendingPage != null) {
+            skipPendingPageRows(windowRows);
+            return;
+        }
+        advancePastWindow(valuesForLogicalRows(windowRows), windowRows);
+    }
+
+    /**
+     * Steps the page held pending past a window of dead rows, discarding the page unread once every one of its rows has
+     * been stepped over. A non-repeated page holds one value per row, hence its stepped-over rows are values consumed.
+     */
+    private void skipPendingPageRows(int windowRows) {
+        // Only a reader without a row mask holds a page compressed, hence there is no surviving-row total to advance
+        // here; such a reader ends on the page cursor, the same coupling hasMore() reads.
+        pendingPageRowsSkipped += windowRows;
+        valuesConsumedTotal += windowRows;
+        if (pendingPageRowsSkipped >= pendingPage.statedRowCount()) {
+            pageCursor.discardPending(pendingPage);
+            pendingPage = null;
+            pendingPageRowsSkipped = 0;
+        }
+    }
+
+    /**
+     * Fails a windowed read on a reader that materializes its pages at load. Only the windowed lane keeps a page's
+     * value decoder open across the page's windows; the other lanes have none to serve a window from and would answer
+     * an all-absent vector.
+     */
+    private void requireWindowedValueDecode() {
+        if (valueDecode != ValueDecode.WINDOWED_MASK) {
+            throw new IllegalStateException("Column " + columnPath.dot()
+                    + " serves windows only under the windowed value decode; this reader decodes " + valueDecode);
+        }
+    }
+
+    /**
+     * Fails a window that reaches past the rows the current page can serve on its own. A window is resolved against one
+     * page's level stream and one page's decoder; a longer one would stop at the page end and return fewer rows than
+     * asked for, leaving the reader's row accounting adrift. A row that outruns its page goes through
+     * {@link #readMaskedSpanningRow} instead.
+     */
+    private void requireWindowFitsCurrentPage(int windowRows) {
+        int servableRows = logicalRowsRemainingInCurrentPage();
+        if (windowRows > servableRows) {
+            throw new IllegalArgumentException("Window of " + windowRows + " rows exceeds the " + servableRows
+                    + " rows the current page of column " + columnPath.dot() + " can serve");
+        }
+    }
+
+    /**
+     * Reads exactly one logical row, following its values across data-page boundaries, and materializes them only when
+     * {@code keep} is set. The driver calls this when some column's current page holds no complete row; every column
+     * then advances one row through this path to stay in lockstep.
+     */
+    MaskedWindow readMaskedSpanningRow(boolean keep, List<AutoCloseable> acquiredBuffers) {
+        requireWindowedValueDecode();
+        BitSet survivors = new BitSet(1);
+        if (keep) {
+            survivors.set(0);
+        }
+        ensurePageLoaded();
+        skipEmptyPages();
+        if (pageRepLevels == null) {
+            return readRowStartPart(survivors, acquiredBuffers);
+        }
+        List<MaskedWindow> parts = new ArrayList<>(2);
+        parts.add(readRowStartPart(survivors, acquiredBuffers));
+        while (rowContinuesIntoNextPage()) {
+            parts.add(readMaskedContinuation(survivors, acquiredBuffers));
+        }
+        return mergeMaskedParts(parts, acquiredBuffers);
+    }
+
+    /**
+     * Reads the current page's values of the row opening under the cursor, up to the row's next boundary or the page
+     * end. This is the one window allowed to reach past {@link #logicalRowsRemainingInCurrentPage()}, which defers a
+     * row that may continue into the next page precisely for this path to follow.
+     */
+    private MaskedWindow readRowStartPart(BitSet survivors, List<AutoCloseable> acquiredBuffers) {
+        return readWindow(1, valuesForLogicalRows(1), survivors, acquiredBuffers);
+    }
+
+    /**
+     * Reads the current page's leading values of a row that started in a previous page. The window spans no complete
+     * logical row, hence bit zero of {@code survivingRows} decides the whole continuation run.
+     */
+    private MaskedWindow readMaskedContinuation(BitSet survivingRows, List<AutoCloseable> acquiredBuffers) {
+        int continuationValues = pageRepLevels.valuesForRows(valuesConsumedInCurrentPage, 0);
+        return readWindow(0, continuationValues, survivingRows, acquiredBuffers);
+    }
+
+    /**
+     * Materializes the surviving rows of the window that opens at the reader's page position, covers {@code windowRows}
+     * complete logical rows and advances the position by {@code windowValues}. The two counts are the page's own value
+     * slots for an unmasked reader and the page's mask-surviving rows for a masked one; {@link #keptSlots} is where
+     * either resolves to the raw page slots the decoder walk visits.
+     */
+    private MaskedWindow readWindow(
+            int windowRows, int windowValues, BitSet survivingRows, List<AutoCloseable> acquiredBuffers) {
+        int windowStart = valuesConsumedInCurrentPage;
+        int[] keep = keptSlots(windowStart, windowRows, windowValues, survivingRows);
+        Validity keptValidity = decodeKeptSlots(keep);
+        ColumnVector vector = sliceVector(0, keep.length, keptValidity, acquiredBuffers);
+        Levels repWindow = (pageRepLevels == null) ? null : pageRepLevels.gather(keep);
+        Levels defWindow = (pageDefLevels == null) ? null : pageDefLevels.gather(keep);
+        advancePastWindow(windowValues, windowRows);
+        return new MaskedWindow(vector, repWindow, defWindow);
+    }
+
+    /**
+     * The page value slots the window's surviving rows cover. A masked reader's window rows index the page's
+     * mask-surviving rows and resolve through {@link #pageSurvivingSlots}; an unmasked window's flat rows map one to
+     * one onto the page's slots and its repeated rows by run.
+     */
+    private int[] keptSlots(int windowStart, int windowRows, int windowValues, BitSet survivingRows) {
+        if (pageSurvivingSlots != null) {
+            return maskSurvivingSlots(windowStart, windowRows, survivingRows);
+        }
+        if (pageRepLevels == null) {
+            return MaskedValues.flatSlots(windowStart, windowRows, survivingRows);
+        }
+        return MaskedValues.repeatedSlots(windowStart, pageRepLevels, windowStart, windowValues, survivingRows);
+    }
+
+    /** Resolves the window's kept rows, which index the page's mask-surviving rows, to the page's raw value slots. */
+    private int[] maskSurvivingSlots(int windowStart, int windowRows, BitSet survivingRows) {
+        int[] keptRows = MaskedValues.flatSlots(windowStart, windowRows, survivingRows);
+        int[] slots = new int[keptRows.length];
+        for (int i = 0; i < slots.length; i++) {
+            slots[i] = pageSurvivingSlots[keptRows[i]];
+        }
+        return slots;
+    }
+
+    /**
+     * Decodes the values at {@code keep} into a fresh window-sized payload, stepping the page decoder over the non-null
+     * slots the window drops. Returns the window's own null mask, indexed by kept slot.
+     */
+    private Validity decodeKeptSlots(int[] keep) {
+        clearTypedPayloads();
+        allocateCompactedPayload(keep.length);
+        BitSet keptValidity = new BitSet(keep.length);
+        if (windowDecoder != null) {
+            materializeKeptSlots(keep, keptValidity);
+        }
+        if (maskedIndices != null) {
+            pageIndices = IntSequence.of(maskedIndices);
+            maskedIndices = null;
+        }
+        freezeBinaryPageIfNeeded();
+        return Validity.of(keptValidity, keep.length);
+    }
+
+    /**
+     * Materializes the kept slots' values, in bulk when the window keeps an unbroken run of slots opening at the
+     * decoder's cursor and slot by slot otherwise.
+     */
+    private void materializeKeptSlots(int[] keep, BitSet keptValidity) {
+        if (keepsAnUnbrokenRunAtTheDecoderCursor(keep)) {
+            decodeKeptRun(keep[0], keep.length, 0, keptValidity);
+        } else {
+            gatherKeptSlots(keep, keptValidity);
+        }
+    }
+
+    /**
+     * True when the window's kept slots open at the decoder's cursor and ascend without a gap. Such a window has no
+     * dropped slot to step over, before or between its values, which lets its runs of non-null slots come out of the
+     * decoder's bulk lanes instead of one call per value. Both tests are O(1): the kept slots are ascending and
+     * distinct, hence they are contiguous exactly when the span between the first and the last is their count.
+     */
+    private boolean keepsAnUnbrokenRunAtTheDecoderCursor(int[] keep) {
+        if (keep.length == 0) {
+            return false;
+        }
+        if (keep[0] != windowDecoderSlot) {
+            return false;
+        }
+        return keep[keep.length - 1] - keep[0] == keep.length - 1;
+    }
+
+    /**
+     * Decodes the {@code runLength} page slots from {@code firstSlot}, which the window keeps in full, into the
+     * compacted payload. A null slot consumes no decoder value and leaves its payload slot at the unwritten default the
+     * window's validity marks absent, hence the run costs one bulk call per run of non-null slots inside it.
+     */
+    private void decodeKeptRun(int firstSlot, int runLength, int payloadBase, BitSet keptValidity) {
+        if (pageSlotValidity.hasNulls()) {
+            decodeNonNullRuns(firstSlot, runLength, payloadBase, keptValidity);
+        } else {
+            decodeIntoPayload(payloadBase, runLength, keptValidity);
+        }
+        windowDecoderSlot = firstSlot + runLength;
+    }
+
+    /** Decodes each maximal run of non-null slots the kept run holds, one bulk call per run. */
+    private void decodeNonNullRuns(int firstSlot, int runLength, int payloadBase, BitSet keptValidity) {
+        int end = firstSlot + runLength;
+        int slot = firstSlot;
+        while (slot < end) {
+            if (pageSlotValidity.isNull(slot)) {
+                slot++;
+                continue;
+            }
+            int runStart = slot;
+            while (slot < end && pageSlotValidity.isValid(slot)) {
+                slot++;
+            }
+            decodeIntoPayload(payloadBase + (runStart - firstSlot), slot - runStart, keptValidity);
+        }
+    }
+
+    /** Decodes {@code count} non-null values into the payload from {@code payloadIndex} and marks them non-null. */
+    private void decodeIntoPayload(int payloadIndex, int count, BitSet keptValidity) {
+        decodeRunInto(windowDecoder, payloadIndex, count);
+        keptValidity.set(payloadIndex, payloadIndex + count);
+        decodedValueCount += count;
+    }
+
+    /**
+     * Walks the page's slots from the decoder's cursor to the last kept slot, decoding each run of adjacent kept
+     * non-null slots in one bulk call and coalescing the non-null slots the window drops into a single skip. The walk
+     * holds the decoder's invariant - every non-null slot below {@link #windowDecoderSlot} has been decoded or skipped
+     * - by applying the coalesced skip both before the next decoded run and once the walk ends: a walk ending on a kept
+     * null slot has no value to decode after it and would otherwise leave the decoder behind for every later window of
+     * the page. Slots past the last kept one are left for the next window's walk, which starts where this one stopped.
+     */
+    private void gatherKeptSlots(int[] keep, BitSet keptValidity) {
+        int keepCursor = 0;
+        int pendingSkip = 0;
+        int slot = windowDecoderSlot;
+        while (slot < pageRawSlotCount && keepCursor < keep.length) {
+            boolean nonNull = pageSlotValidity.isValid(slot);
+            if (keep[keepCursor] != slot) {
+                if (nonNull) {
+                    pendingSkip++;
+                }
+                slot++;
+            } else if (nonNull) {
+                int runLength = keptNonNullRunLength(keep, keepCursor, slot);
+                skipDroppedValues(pendingSkip);
+                pendingSkip = 0;
+                decodeIntoPayload(keepCursor, runLength, keptValidity);
+                keepCursor += runLength;
+                slot += runLength;
+            } else {
+                keepCursor++;
+                slot++;
+            }
+        }
+        skipDroppedValues(pendingSkip);
+        if (keep.length > 0) {
+            windowDecoderSlot = keep[keep.length - 1] + 1;
+        }
+    }
+
+    /**
+     * Length of the run of values the decoder can hand over in one call at the walk's position: the slots from
+     * {@code slot} on that the window keeps without a gap and that are all non-null, hence take consecutive decoder
+     * values and land in consecutive payload slots from {@code keepCursor}.
+     */
+    private int keptNonNullRunLength(int[] keep, int keepCursor, int slot) {
+        int runLength = 1;
+        while (keepCursor + runLength < keep.length
+                && keep[keepCursor + runLength] == slot + runLength
+                && pageSlotValidity.isValid(slot + runLength)) {
+            runLength++;
+        }
+        return runLength;
+    }
+
+    /** Steps the page decoder over the values of the non-null slots a window's walk crossed without keeping. */
+    private void skipDroppedValues(int nonNullSlots) {
+        if (nonNullSlots > 0) {
+            windowDecoder.skip(nonNullSlots);
+        }
+    }
+
+    /** Joins the per-page parts of one page-spanning row into a single window over the whole row. */
+    private MaskedWindow mergeMaskedParts(List<MaskedWindow> parts, List<AutoCloseable> acquiredBuffers) {
+        if (parts.size() == 1) {
+            return parts.get(0);
+        }
+        List<ColumnVector> vectors = new ArrayList<>(parts.size());
+        List<int[]> repParts = new ArrayList<>(parts.size());
+        List<int[]> defParts = new ArrayList<>(parts.size());
+        for (MaskedWindow part : parts) {
+            vectors.add(part.vector());
+            repParts.add(wholeLevels(part.repLevels()));
+            defParts.add(wholeLevels(part.defLevels()));
+        }
+        ColumnVector merged = SpanningRowVectors.merge(leaf, vectors, decodeBufferAllocator, acquiredBuffers);
+        return new MaskedWindow(merged, Levels.of(concatLevels(repParts)), Levels.of(concatLevels(defParts)));
+    }
+
+    private static int[] wholeLevels(Levels levels) {
+        return levels.toArray(0, levels.size());
+    }
+
+    /** Moves the page cursors past a window, advancing to the next page when the window consumed the last value. */
+    private void advancePastWindow(int windowValues, int windowRows) {
+        valuesConsumedInCurrentPage += windowValues;
+        logicalRowsConsumedInCurrentPage += windowRows;
+        valuesConsumedTotal += windowValues;
+        if (survivingRows != null) {
+            survivingRowsConsumedTotal += windowRows;
+        }
+        if (valuesConsumedInCurrentPage >= pageSize) {
+            advancePastCurrentPage();
+        }
+    }
+
     // ---- page lifecycle ----
 
     private void ensurePageLoaded() {
-        if (!pageLoaded) {
-            loadNextPage();
+        if (pageLoaded) {
+            return;
         }
+        if (pendingPage != null) {
+            loadPendingPage();
+            return;
+        }
+        loadNextPage();
+    }
+
+    /**
+     * True when this reader may answer a window from a page header alone: a masked, non-repeated column serving its
+     * pages' own rows. Such a header states the page's row count, while a repeated V1 page's rows are knowable only
+     * from its decoded levels. A reader narrowed by a row mask serves the mask's surviving rows instead - a row space
+     * no page header states - and the pages holding none of those rows are already stepped over by the page selection.
+     */
+    private boolean canDeferPageLoad() {
+        return valueDecode == ValueDecode.WINDOWED_MASK && maxLevels.maxRepetitionLevel() == 0 && survivingRows == null;
+    }
+
+    /**
+     * Holds the next data page compressed when its header states how many rows it has. A header that states none is
+     * loaded at once, because the rows of such a page are knowable only from its decoded levels.
+     */
+    private void peekOrLoadNextPage() {
+        if (pendingPage != null) {
+            return;
+        }
+        pendingPage = pageCursor.peekNextDataPage(maxLevels);
+        if (pendingPage != null && !pendingPage.statesRowCount()) {
+            loadPendingPage();
+        }
+    }
+
+    /**
+     * Opens the page held pending, decompressing its bytes and placing the reader past the rows the windows over it
+     * already stepped across. A non-repeated page holds one value per row, hence those rows are exactly the value slots
+     * the page opens past.
+     */
+    private void loadPendingPage() {
+        // Handing the page to the walk clears pendingPageRowsSkipped; the local keeps the resume point it held.
+        int rowsAlreadySkipped = pendingPageRowsSkipped;
+        loadNextPage();
+        valuesConsumedInCurrentPage = rowsAlreadySkipped;
+        logicalRowsConsumedInCurrentPage = rowsAlreadySkipped;
     }
 
     private void loadNextPage() {
@@ -486,16 +958,11 @@ final class BatchColumnReader {
             }
             decodePage(page);
         } catch (RuntimeException e) {
-            // the origin-validity bitmap, the pooled page-values segment, and the pooled binary-metadata segment may
-            // already be parked in their fields when the value decode throws; unwind them here rather than holding
-            // them (and their decode-budget reservations) until the reader is closed
-            releaseOriginValidity();
-            releasePageValues();
-            releaseBinaryMeta();
+            unwindPartialPageLoad();
             arena.close();
             throw e;
         }
-        if (pageBackingIsLivePage) {
+        if (pageArenaOutlivesLoad()) {
             livePageArena = arena;
         } else {
             arena.close();
@@ -503,12 +970,48 @@ final class BatchColumnReader {
         return true;
     }
 
+    /**
+     * Drops what a page load that threw already parked in the reader's fields: the pooled buffers, whose decode-budget
+     * reservations would otherwise be held until the reader closes, and the windowed lane's page-scoped decoder - which
+     * reads the page bytes the Arena is about to release - along with the page mask that places its skips.
+     */
+    private void unwindPartialPageLoad() {
+        releaseOriginValidity();
+        releasePageValues();
+        releaseBinaryMeta();
+        windowDecoder = null;
+        windowDecoderSlot = 0;
+        pageSlotValidity = null;
+        pageRawSlotCount = 0;
+        pageSurvivingSlots = null;
+    }
+
+    /**
+     * True when something loaded with the page still reads the decompressed page bytes after the load returns: a page
+     * payload sliced straight from the live page, or the windowed lane's decoder, which the page's windows keep pulling
+     * values from.
+     */
+    private boolean pageArenaOutlivesLoad() {
+        return pageBackingIsLivePage || windowDecoder != null;
+    }
+
     private DecodedPage readNextDataPage(Arena arena) {
         try {
+            if (pendingPage != null) {
+                return decodePendingPage(arena);
+            }
             return pageCursor.nextDataPage(maxLevels, codec, arena);
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to read next page for column " + columnPath.dot(), e);
         }
+    }
+
+    /** Hands the page held pending to the page walk for decompression, clearing the reader's pending state. */
+    private DecodedPage decodePendingPage(Arena arena) throws IOException {
+        PageCursor.PendingDataPage pending = pendingPage;
+        pendingPage = null;
+        pendingPageRowsSkipped = 0;
+        return pageCursor.decodePending(pending, maxLevels, codec, arena);
     }
 
     private void decodePage(DecodedPage page) {
@@ -523,29 +1026,81 @@ final class BatchColumnReader {
                     : pageDefLevels.validityAt(maxLevels.maxDefinitionLevel());
         }
         pageLogicalRowCount = (pageRepLevels == null) ? pageSize : pageRepLevels.countOf(0);
+        pageCursor.recordCurrentPageRowCount(pageLogicalRowCount);
         clearTypedPayloads();
         pageWasDictionary = PageDecoders.isDictionaryEncoded(page.valuesEncoding());
-        if (skipDecode && survivingRows != null) {
-            decodeSelectedRows(page, pageCursor.currentPageFirstRowIndex());
+        if (valueDecode == ValueDecode.WINDOWED_MASK) {
+            openWindowDecoder(page);
+            narrowRowSpaceToSurvivingRows();
         } else {
-            decodeValuesByKind(page);
-            if (survivingRows != null) {
-                compactToSurvivingRows(pageCursor.currentPageFirstRowIndex());
-            }
+            decodePageValues(page);
         }
-        freezeBinaryPageIfNeeded();
         valuesConsumedInCurrentPage = 0;
         logicalRowsConsumedInCurrentPage = 0;
         pageLoaded = true;
     }
 
+    /** The eager value lane: the page's values materialize before the first batch slices them. */
+    private void decodePageValues(DecodedPage page) {
+        decodeValuesByKind(page);
+        if (survivingRows != null) {
+            compactToSurvivingRows(pageCursor.currentPageFirstRowIndex());
+        }
+        freezeBinaryPageIfNeeded();
+    }
+
+    /**
+     * Opens the page's value decoder for the windowed masked lane and parks the page's per-slot null mask, which the
+     * windows read to place their skips. The mask moves to {@link #pageSlotValidity}, where it stays indexed by raw
+     * page slot while the reader's row space narrows to the rows a row mask keeps. An all-null page needs no decoder at
+     * all.
+     */
+    private void openWindowDecoder(DecodedPage page) {
+        pageSlotValidity = pageValidity;
+        pageValidity = null;
+        pageRawSlotCount = pageSize;
+        windowDecoderSlot = 0;
+        int nonNullCount = pageSlotValidity.cardinality();
+        if (nonNullCount == 0) {
+            windowDecoder = null;
+            return;
+        }
+        if (isDictionaryBinaryPage()) {
+            dictionaryEntries();
+        }
+        windowDecoder = PageDecoders.decoderFor(
+                leaf.kind(), this::requiredByteWidth, page.valuesEncoding(), dictionary.orElse(null));
+        windowDecoder.load(page.valueBytes(), nonNullCount);
+    }
+
+    /**
+     * Narrows the windowed lane's row space to the rows a row mask keeps, leaving the reader serving those rows in
+     * their order - the row space the eager masked lane's callers see. The page's raw slots stay reachable through
+     * {@link #pageSurvivingSlots}, which every window's kept rows resolve through before the decoder walk. An unmasked
+     * reader keeps the page's own row space.
+     */
+    private void narrowRowSpaceToSurvivingRows() {
+        if (survivingRows == null) {
+            return;
+        }
+        pageSurvivingSlots = survivingLocalPositions(pageCursor.currentPageFirstRowIndex(), pageRawSlotCount);
+        pageSize = pageSurvivingSlots.length;
+        pageLogicalRowCount = pageSize;
+    }
+
     private void advancePastCurrentPage() {
+        requireNoPageHeldCompressed();
         pageLoaded = false;
         pageSize = 0;
         pageLogicalRowCount = 0;
         pageValidity = null;
         pageRepLevels = null;
         pageDefLevels = null;
+        windowDecoder = null;
+        windowDecoderSlot = 0;
+        pageSlotValidity = null;
+        pageRawSlotCount = 0;
+        pageSurvivingSlots = null;
         releaseOriginValidity();
         releasePageValues();
         releaseBinaryMeta();
@@ -553,6 +1108,27 @@ final class BatchColumnReader {
         closeLivePageArena();
         valuesConsumedInCurrentPage = 0;
         logicalRowsConsumedInCurrentPage = 0;
+    }
+
+    /**
+     * Fails a page advance that would leave a page held compressed behind. Such a page has not been decoded, discarded
+     * or counted, and the walk still holds it unresolved: advancing past it would strand the page cursor a page short
+     * of the reader and misplace every row after it.
+     */
+    private void requireNoPageHeldCompressed() {
+        if (pendingPage != null) {
+            throw new IllegalStateException("Column " + columnPath.dot() + " holds data page " + pendingPage.ordinal()
+                    + " compressed; decode or step over its rows before advancing past the current page");
+        }
+    }
+
+    /**
+     * Drops the page held compressed without decoding or discarding it, leaving the reader with no page pending. A read
+     * that ends before every row of that page was stepped over - a closed reader - takes this path.
+     */
+    private void dropPageHeldCompressed() {
+        pendingPage = null;
+        pendingPageRowsSkipped = 0;
     }
 
     /** Releases the off-heap origin validity bitmap held for the flat fast path, if any. */
@@ -616,7 +1192,9 @@ final class BatchColumnReader {
      * leaf's def levels to rebuild the optional struct's per-row null mask. Dropping that stream would silently lose
      * the struct's null rows. Only a top-level-flat leaf has no group ancestor that will ever ask for its def levels.
      *
-     * <p>Masked reads keep the heap path because their compaction rewrites the page validity row by row.
+     * <p>A masked read keeps the heap path: it rewrites the page validity row by row as it compacts, and the windowed
+     * lane hands each window the def levels of the rows it kept, which the fast path has already collapsed into a
+     * bitmap.
      */
     private boolean canDecodeOriginValidity() {
         if (columnPath.numParts() != 1) {
@@ -625,7 +1203,7 @@ final class BatchColumnReader {
         if (maxLevels.maxRepetitionLevel() != 0 || maxLevels.maxDefinitionLevel() != 1) {
             return false;
         }
-        if (survivingRows != null || skipDecode) {
+        if (survivingRows != null || valueDecode != ValueDecode.EAGER) {
             return false;
         }
         return pageSize > 0;
@@ -1328,70 +1906,7 @@ final class BatchColumnReader {
         }
     }
 
-    // ---- skip-decode for masked reads ----
-
-    /**
-     * Decodes only the surviving rows' non-null values for the just-loaded page, advancing the decoder past the
-     * unselected non-null values with {@link PageDecoder#skip(int)} instead of materializing them. Produces per-page
-     * arrays identical to {@link #compactToSurvivingRows(long)} while touching only the kept values. Flat columns only:
-     * one value per row, no repetition levels.
-     */
-    private void decodeSelectedRows(DecodedPage page, long pageFirstRow) {
-        if (pageRepLevels != null) {
-            throw new IllegalStateException(
-                    "skip-decode is only defined for flat columns; column " + columnPath.dot() + " is repeated");
-        }
-        int[] keep = survivingLocalPositions(pageFirstRow, pageSize);
-        int nonNullCount = pageValidity.cardinality();
-        Encoding encoding = page.valuesEncoding();
-        Dictionary<?> dict = dictionary.orElse(null);
-        allocateCompactedPayload(keep.length);
-        BitSet keptValidity = new BitSet(keep.length);
-
-        if (nonNullCount > 0) {
-            PageDecoder<?> decoder = PageDecoders.decoderFor(leaf.kind(), this::requiredByteWidth, encoding, dict);
-            decoder.load(page.valueBytes(), nonNullCount);
-            gatherSelectedValues(decoder, keep, keptValidity);
-        }
-
-        if (pageDefLevels != null) {
-            pageDefLevels = pageDefLevels.gather(keep);
-        }
-        if (maskedIndices != null) {
-            pageIndices = IntSequence.of(maskedIndices);
-            maskedIndices = null;
-        }
-        pageValidity = Validity.of(keptValidity, keep.length);
-        pageSize = keep.length;
-        pageLogicalRowCount = keep.length;
-    }
-
-    /**
-     * Walks the page rows in order, decoding one value per kept non-null row into slot {@code keepCursor} and skipping
-     * over the unselected non-null values that precede it. Non-null values past the last kept row are never consumed.
-     */
-    private void gatherSelectedValues(PageDecoder<?> decoder, int[] keep, BitSet keptValidity) {
-        int keepCursor = 0;
-        int pendingSkip = 0;
-        for (int row = 0; row < pageSize && keepCursor < keep.length; row++) {
-            boolean nonNull = pageValidity.isValid(row);
-            boolean kept = keep[keepCursor] == row;
-            if (kept) {
-                if (nonNull) {
-                    if (pendingSkip > 0) {
-                        decoder.skip(pendingSkip);
-                        pendingSkip = 0;
-                    }
-                    decodeOneInto(decoder, keepCursor);
-                    keptValidity.set(keepCursor);
-                    decodedValueCount++;
-                }
-                keepCursor++;
-            } else if (nonNull) {
-                pendingSkip++;
-            }
-        }
-    }
+    // ---- per-window value materialization ----
 
     private void allocateCompactedPayload(int size) {
         if (isDictionaryBinaryPage()) {
@@ -1409,18 +1924,24 @@ final class BatchColumnReader {
         }
     }
 
-    private void decodeOneInto(PageDecoder<?> decoder, int index) {
+    /**
+     * Decodes the decoder's next {@code count} values into the compacted payload from {@code index} onward, through the
+     * bulk lane of the column's kind. The values land contiguously, which makes the caller responsible for issuing one
+     * call per run of payload slots that consume consecutive decoder values.
+     */
+    private void decodeRunInto(PageDecoder<?> decoder, int index, int count) {
+        windowDecodeCallCount++;
         if (isDictionaryBinaryPage()) {
-            ((RleDictionaryPageDecoder<?>) decoder).decodeIndices(1, maskedIndices, index);
+            ((RleDictionaryPageDecoder<?>) decoder).decodeIndices(count, maskedIndices, index);
             return;
         }
         switch (leaf.kind()) {
-            case INT32 -> decoder.decodeInts(1, pageInts, index);
-            case INT64 -> decoder.decodeLongs(1, pageLongs, index);
-            case FLOAT -> decoder.decodeFloats(1, pageFloats, index);
-            case DOUBLE -> decoder.decodeDoubles(1, pageDoubles, index);
-            case BOOLEAN -> decoder.decodeBooleans(1, pageBooleans, index);
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> decoder.decodeBinary(1, pageSegments, index);
+            case INT32 -> decoder.decodeInts(count, pageInts, index);
+            case INT64 -> decoder.decodeLongs(count, pageLongs, index);
+            case FLOAT -> decoder.decodeFloats(count, pageFloats, index);
+            case DOUBLE -> decoder.decodeDoubles(count, pageDoubles, index);
+            case BOOLEAN -> decoder.decodeBooleans(count, pageBooleans, index);
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> decoder.decodeBinary(count, pageSegments, index);
         }
     }
 
@@ -1549,7 +2070,11 @@ final class BatchColumnReader {
     // ---- vector slicing ----
 
     private ColumnVector sliceVector(int start, int n, List<AutoCloseable> acquiredBuffers) {
-        Validity sliceValidityMask = sliceCurrentValidity(start, n, acquiredBuffers);
+        return sliceVector(start, n, sliceCurrentValidity(start, n, acquiredBuffers), acquiredBuffers);
+    }
+
+    private ColumnVector sliceVector(
+            int start, int n, Validity sliceValidityMask, List<AutoCloseable> acquiredBuffers) {
         return switch (leaf.kind()) {
             case INT32 -> sliceInt(start, n, sliceValidityMask, acquiredBuffers);
             case INT64 -> sliceLong(start, n, sliceValidityMask, acquiredBuffers);
@@ -1853,6 +2378,7 @@ final class BatchColumnReader {
 
     /** Releases the page Arena, the level scratches, and any pooled page state; idempotent via {@code advance}. */
     void close() {
+        dropPageHeldCompressed();
         advancePastCurrentPage();
         repLevelScratch.close();
         defLevelScratch.close();
@@ -1860,12 +2386,15 @@ final class BatchColumnReader {
 
     // ---- diagnostics ----
 
-    /** Data pages this reader actually decoded; pages skipped by the surviving-row mask are not counted. */
+    /** Data pages whose payload this reader decompressed and decoded. */
     int decodedDataPageCount() {
         return pageCursor.decodedDataPageCount();
     }
 
-    /** Data pages this reader advanced past without decoding because they fell outside the surviving rows. */
+    /**
+     * Data pages this reader reached and stepped over without decoding, whether the page selection excluded them or the
+     * windows over them proved every one of their rows dead.
+     */
     int skippedDataPageCount() {
         return pageCursor.skippedDataPageCount();
     }
@@ -1873,6 +2402,15 @@ final class BatchColumnReader {
     /** Count of non-null values run through a value decoder by this reader. */
     long decodedValueCount() {
         return decodedValueCount;
+    }
+
+    /**
+     * Count of calls the windowed lane made into the page decoder's bulk lanes. One call covers one run of payload
+     * slots taking consecutive decoder values, hence a window materialized run by run counts far fewer calls than the
+     * values it decoded, and a window materialized slot by slot counts one call per value.
+     */
+    long windowDecodeCallCount() {
+        return windowDecodeCallCount;
     }
 
     ColumnPath columnPath() {

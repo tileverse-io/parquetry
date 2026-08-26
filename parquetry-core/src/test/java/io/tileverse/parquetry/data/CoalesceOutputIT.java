@@ -22,7 +22,10 @@ import java.nio.file.Path;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.SequencedSet;
+import java.util.Set;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
+import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -32,6 +35,7 @@ import io.tileverse.parquetry.columnar.LongVector;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.filter.SortedLongPositionSet;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.internal.read.TestParquetFiles;
 import io.tileverse.parquetry.io.ByteRangeSource;
@@ -103,6 +107,27 @@ class CoalesceOutputIT {
         });
 
         assertThat(rows).isEqualTo(ROWS - 1L);
+    }
+
+    @Test
+    void appliesAPositionalDeleteNamingTheRenamedCoalesceColumn(@TempDir Path tmp) throws Exception {
+        Path file = fixture(tmp);
+        // The predicate and the projection name the same output column: the delete tests the row's TRUE position
+        // while the projection presents the coalesced lineage value.
+        long[] deletedPositions = {0L, 5L, 4_096L, 4_097L, ROWS - 1L};
+        Predicate deletesPositions = new Predicate.RowIndexExcluded(ROW_ID, SortedLongPositionSet.of(deletedPositions));
+        Projection projection = projectionOf(
+                new Projection.Column.Physical(ID, ID),
+                new Projection.Column.Coalesce(ROW_ID, STORED, positionFallback()));
+
+        Set<Long> deleted = LongStream.of(deletedPositions).boxed().collect(Collectors.toSet());
+        long rows = forEachRow(file, deletesPositions, projection, rec -> {
+            long id = rec.getLong(ID);
+            assertThat(id).as("the row at a deleted position must not survive").isNotIn(deleted);
+            assertThat(rec.getLong(ROW_ID)).isEqualTo(expectedRowId(id));
+        });
+
+        assertThat(rows).isEqualTo(ROWS - deletedPositions.length);
     }
 
     @Test
