@@ -31,7 +31,7 @@ env:
 jobs:
   benchmarks-smoke:
     name: Benchmarks Smoke
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
     # Skip on a merge commit: validation already ran during the PR.
     if: "github.event_name == 'pull_request' || !contains(github.event.head_commit.message, 'Merge pull request #')"
