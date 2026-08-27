@@ -24,23 +24,20 @@ import org.junit.jupiter.api.Test;
 class ParquetStorageTest {
 
     @Test
-    void appliesCacheDefaultsWhenCallerLeavesThemUnset() {
+    void appliesCacheDefaultWhenCallerLeavesItUnset() {
         Properties tuned = ParquetStorage.withParquetDefaults(new Properties());
 
         assertThat(tuned.getProperty("storage.caching.enabled")).isEqualTo("true");
-        assertThat(tuned.getProperty("storage.caching.blockaligned")).isEqualTo("false");
     }
 
     @Test
-    void callerValuesOverrideTheDefaults() {
+    void callerValueOverridesTheDefault() {
         Properties caller = new Properties();
         caller.setProperty("storage.caching.enabled", "false");
-        caller.setProperty("storage.caching.blockaligned", "true");
 
         Properties tuned = ParquetStorage.withParquetDefaults(caller);
 
         assertThat(tuned.getProperty("storage.caching.enabled")).isEqualTo("false");
-        assertThat(tuned.getProperty("storage.caching.blockaligned")).isEqualTo("true");
     }
 
     @Test
@@ -51,6 +48,6 @@ class ParquetStorageTest {
         Properties tuned = ParquetStorage.withParquetDefaults(caller);
 
         assertThat(tuned.getProperty("storage.http.timeout-millis")).isEqualTo("5000");
-        assertThat(tuned.getProperty("storage.caching.blockaligned")).isEqualTo("false");
+        assertThat(tuned.getProperty("storage.caching.enabled")).isEqualTo("true");
     }
 }

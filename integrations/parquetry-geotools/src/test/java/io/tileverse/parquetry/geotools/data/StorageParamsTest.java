@@ -106,10 +106,8 @@ class StorageParamsTest {
     }
 
     @Test
-    void exposesOnlyCachingEnabled() {
+    void exposesCachingEnabled() {
         assertThat(find("storage.caching.enabled")).isPresent();
-        assertThat(find("storage.caching.blockaligned")).isEmpty();
-        assertThat(find("storage.caching.blocksize")).isEmpty();
     }
 
     @Test

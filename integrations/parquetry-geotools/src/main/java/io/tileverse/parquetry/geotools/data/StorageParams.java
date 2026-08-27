@@ -43,10 +43,6 @@ public final class StorageParams {
 
     private static final String STORAGE_PREFIX = "storage.";
 
-    /** Block alignment and block size are not exposed: parquet reads are byte-range native and need neither. */
-    private static final Set<String> EXCLUDED_KEYS =
-            Set.of("storage.caching.blockaligned", "storage.caching.blocksize");
-
     /** The storage connection parameters, the provider selector first, then the backend parameters by group. */
     static final List<Param> PROVIDER_PARAMS = buildProviderParams();
 
@@ -93,7 +89,6 @@ public final class StorageParams {
         seen.add(StorageConfig.PROVIDER_ID_KEY);
         StorageProvider.getProviders().stream()
                 .flatMap(provider -> provider.getParameters().stream())
-                .filter(parameter -> !EXCLUDED_KEYS.contains(parameter.key()))
                 .sorted(byGroupThenKey())
                 .forEach(parameter -> {
                     if (seen.add(parameter.key())) {

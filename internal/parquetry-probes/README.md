@@ -36,7 +36,7 @@ and inflates close-path timings.)
 
 | main class | measures | key properties |
 |---|---|---|
-| `ProbeMain` | single-file read scenarios (engines, decode-ahead, prefetch) | `parquetry.probe.{url,concurrency,warmup,measure,decodeAhead,prefetchDepth,httpCache,blockAligned,...}` |
+| `ProbeMain` | single-file read scenarios (engines, decode-ahead, prefetch) | `parquetry.probe.{url,concurrency,warmup,measure,decodeAhead,prefetchDepth,httpCache,...}` |
 | `MultiFileReadProbe` | N-file remote reads: per-file baseline vs the multi-file fan-out | `probe.{baseUrl,fileCount,pipeline,mode,maxConcurrentFiles}` |
 
 ### MultiFileReadProbe
