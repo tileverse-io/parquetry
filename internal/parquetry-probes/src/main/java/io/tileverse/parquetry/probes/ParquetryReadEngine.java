@@ -167,22 +167,17 @@ final class ParquetryReadEngine implements ReadEngine {
 
     /**
      * The Parquet-tuned storage cache configuration. Because parquetry already coalesces column chunks into
-     * row-group-sized ranges, the right cache granularity is one entry per coalesced range, not 64 KB blocks: block
-     * alignment would shatter each coalesced range into ~128 backend requests. Defaults therefore model the production
-     * intent - caching on, alignment off (cache native Parquet ranges) - matching what
-     * {@code parquetry-tileverse-storage} should set.
+     * row-group-sized ranges, the right cache granularity is one entry per coalesced range - exactly what the
+     * tileverse-storage cache stores. Defaults model the production intent - caching on - matching
+     * {@code parquetry-tileverse-storage}.
      *
      * <p>Override for benchmarking: {@code parquetry.probe.httpCache=false} turns caching off entirely, keeping the
-     * cross-read dedup from hiding fetch latency across measurement waves; {@code parquetry.probe.blockAligned=true}
-     * restores the tileverse-storage default 64 KB alignment (the pre-fix behavior, to measure the request-count
-     * blowup).
+     * cross-read dedup from hiding fetch latency across measurement waves.
      */
     private static Properties remoteStorageProperties() {
         Properties props = new Properties();
         boolean caching = Boolean.parseBoolean(System.getProperty("parquetry.probe.httpCache", "true"));
-        boolean blockAligned = Boolean.getBoolean("parquetry.probe.blockAligned");
         props.setProperty("storage.caching.enabled", Boolean.toString(caching));
-        props.setProperty("storage.caching.blockaligned", Boolean.toString(blockAligned));
         return props;
     }
 

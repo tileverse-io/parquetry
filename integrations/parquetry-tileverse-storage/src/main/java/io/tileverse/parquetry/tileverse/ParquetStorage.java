@@ -25,17 +25,15 @@ import io.tileverse.storage.StorageFactory;
 /**
  * Opens a tileverse-storage {@link Storage} tuned for parquetry's read pattern. Because parquetry coalesces a row
  * group's projected column chunks into row-group-sized byte ranges before reading, the storage cache should hold one
- * entry per coalesced range. The tileverse-storage default - a 64 KB block-aligned cache - re-fragments each coalesced
- * range into roughly 128 backend requests; this helper enables caching with block alignment off, caching each native
- * Parquet range as a unit.
+ * entry per coalesced range. The tileverse-storage cache stores exactly the requested ranges (since 2.1 it never
+ * realigns them into fixed blocks), which is precisely that granularity; this helper only turns caching on.
  *
- * <p>Caller-supplied properties win: a deployment that explicitly sets {@code storage.caching.enabled} or
- * {@code storage.caching.blockaligned} overrides these defaults.
+ * <p>Caller-supplied properties win: a deployment that explicitly sets {@code storage.caching.enabled} overrides the
+ * default.
  */
 public final class ParquetStorage {
 
     private static final String CACHE_ENABLED = "storage.caching.enabled";
-    private static final String CACHE_BLOCK_ALIGNED = "storage.caching.blockaligned";
 
     private ParquetStorage() {}
 
@@ -55,13 +53,12 @@ public final class ParquetStorage {
     }
 
     /**
-     * Returns a copy of {@code properties} with parquetry's cache defaults filled in for any key the caller left unset:
-     * caching enabled, block alignment off. Caller-supplied values are preserved.
+     * Returns a copy of {@code properties} with parquetry's cache default filled in when the caller left it unset:
+     * caching enabled. Caller-supplied values are preserved.
      */
     static Properties withParquetDefaults(Properties properties) {
         Properties tuned = new Properties();
         tuned.setProperty(CACHE_ENABLED, "true");
-        tuned.setProperty(CACHE_BLOCK_ALIGNED, "false");
         tuned.putAll(properties);
         return tuned;
     }

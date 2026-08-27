@@ -321,13 +321,12 @@ public final class MultiFileReadProbe {
     }
 
     /**
-     * The Parquet-tuned storage cache configuration, matching {@link ParquetryReadEngine}: caching on, block alignment
-     * off, caching one entry per coalesced Parquet range rather than shattering each range into fixed 64 KB blocks.
+     * The Parquet-tuned storage cache configuration, matching {@link ParquetryReadEngine}: caching on, one entry per
+     * coalesced Parquet range.
      */
     private static Properties storageProperties() {
         Properties props = new Properties();
         props.setProperty("storage.caching.enabled", "true");
-        props.setProperty("storage.caching.blockaligned", "false");
         return props;
     }
 
