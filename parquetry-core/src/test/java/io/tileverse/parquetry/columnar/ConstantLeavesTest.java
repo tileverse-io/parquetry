@@ -18,7 +18,9 @@ package io.tileverse.parquetry.columnar;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.UUID;
@@ -91,6 +93,23 @@ class ConstantLeavesTest {
         assertThat(leaf.repetition()).isEqualTo(Repetition.OPTIONAL);
         assertThat(leaf.typeLength()).isEqualTo(OptionalInt.empty());
         assertThat(leaf.fieldId()).isEqualTo(7);
+    }
+
+    @Test
+    void decimalLeafIsFlbaWithDecimalLogicalType() {
+        ConstantLeaves.LeafType leaf = ConstantLeaves.kindAndLogicalType(new Value.DecimalVal(new BigDecimal("1.23")));
+        assertThat(leaf.kind()).isEqualTo(PrimitiveKind.FIXED_LEN_BYTE_ARRAY);
+        assertThat(leaf.logicalType())
+                .get()
+                .isInstanceOfSatisfying(
+                        LogicalType.Decimal.class, d -> assertThat(d.scale()).isEqualTo(2));
+    }
+
+    @Test
+    void timeLeafIsInt64WithTimeLogicalType() {
+        ConstantLeaves.LeafType leaf = ConstantLeaves.kindAndLogicalType(new Value.TimeVal(LocalTime.NOON));
+        assertThat(leaf.kind()).isEqualTo(PrimitiveKind.INT64);
+        assertThat(leaf.logicalType()).get().isInstanceOf(LogicalType.Time.class);
     }
 
     @Test

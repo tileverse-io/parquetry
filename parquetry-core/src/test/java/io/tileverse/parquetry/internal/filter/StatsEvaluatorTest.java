@@ -22,6 +22,8 @@ import static io.tileverse.parquetry.format.ParquetLayouts.INT64;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.lang.foreign.MemorySegment;
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -30,7 +32,9 @@ import java.util.OptionalLong;
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.Statistics;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -263,6 +267,94 @@ class StatsEvaluatorTest {
         assertThat(d).isNotInstanceOf(PruningDecision.PassedAll.class);
     }
 
+    // --- typed-bound tests: verify that INT64 Timestamp and FLBA Decimal bounds decode to typed Values ---
+
+    @Test
+    void int64TimestampEqAtMinIsInconclusive() {
+        LocalDateTime t0 = LocalDateTime.of(2020, 1, 1, 0, 0, 0);
+        LocalDateTime t1 = LocalDateTime.of(2025, 1, 1, 0, 0, 0);
+        FilterPipeline.ColumnStatsLookup cols = singleTimestamp("ts", t0, t1);
+        // t0 is exactly the minimum; the value is within range and the row group cannot be ruled out.
+        Predicate p = new Predicate.Eq(ColumnPath.of("ts"), new Value.TimestampVal(t0, true));
+        PruningDecision d = StatsEvaluator.evaluate(p, cols, ROW_COUNT);
+        assertThat(d).isNotInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void int64TimestampEqBelowMinIsEliminated() {
+        LocalDateTime t0 = LocalDateTime.of(2020, 1, 1, 0, 0, 0);
+        LocalDateTime t1 = LocalDateTime.of(2025, 1, 1, 0, 0, 0);
+        FilterPipeline.ColumnStatsLookup cols = singleTimestamp("ts", t0, t1);
+        // One day before the minimum; no column value can match Eq at this timestamp.
+        Predicate p = new Predicate.Eq(ColumnPath.of("ts"), new Value.TimestampVal(t0.minusDays(1), true));
+        PruningDecision d = StatsEvaluator.evaluate(p, cols, ROW_COUNT);
+        assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void flbaDecimalEqWithinRangeIsInconclusive() {
+        // column range [-3.00, 5.00] at scale 2; unscaled [-300, 500]
+        FilterPipeline.ColumnStatsLookup cols = singleDecimal("amount", -300, 500, 2);
+        // 1.00 is within [-3.00, 5.00]; the row group cannot be ruled out.
+        Predicate p = new Predicate.Eq(ColumnPath.of("amount"), new Value.DecimalVal(BigDecimal.valueOf(100, 2)));
+        PruningDecision d = StatsEvaluator.evaluate(p, cols, ROW_COUNT);
+        assertThat(d).isNotInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void flbaDecimalLtBelowMinIsEliminated() {
+        // column range [-3.00, 5.00] at scale 2; unscaled [-300, 500]
+        FilterPipeline.ColumnStatsLookup cols = singleDecimal("amount", -300, 500, 2);
+        // Lt(-9.00): every column value is >= -3.00 > -9.00 - Lt(-9.00) matches no row.
+        Predicate p = new Predicate.Lt(ColumnPath.of("amount"), new Value.DecimalVal(BigDecimal.valueOf(-900, 2)));
+        PruningDecision d = StatsEvaluator.evaluate(p, cols, ROW_COUNT);
+        assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void flbaDecimalGtWithinRangeIsNotEliminated() {
+        // column range [-3.00, 5.00] at scale 2; unscaled [-300, 500]
+        FilterPipeline.ColumnStatsLookup cols = singleDecimal("amount", -300, 500, 2);
+        // Gt(4.00): 4.00 < 5.00, rows above 4.00 may exist; the row group must not be eliminated. This
+        // discriminates the typed decimal path: an unsigned byte compare would read the operand as equal
+        // to max and wrongly eliminate.
+        Predicate p = new Predicate.Gt(ColumnPath.of("amount"), new Value.DecimalVal(BigDecimal.valueOf(400, 2)));
+        PruningDecision d = StatsEvaluator.evaluate(p, cols, ROW_COUNT);
+        assertThat(d).isNotInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    // --- helpers ---
+
+    private static FilterPipeline.ColumnStatsLookup singleTimestamp(String name, LocalDateTime min, LocalDateTime max) {
+        long minMicros = TemporalValues.toEpochUnit(min, LogicalType.TimeUnit.MICROS);
+        long maxMicros = TemporalValues.toEpochUnit(max, LogicalType.TimeUnit.MICROS);
+        Statistics stats = Statistics.builder()
+                .nullCount(OptionalLong.of(0L))
+                .minValue(encodeLong(minMicros))
+                .maxValue(encodeLong(maxMicros))
+                .build();
+        LogicalType logicalType = new LogicalType.Timestamp(true, LogicalType.TimeUnit.MICROS);
+        return single(name, PrimitiveKind.INT64, stats, logicalType);
+    }
+
+    private static FilterPipeline.ColumnStatsLookup singleDecimal(
+            String name, int unscaledMin, int unscaledMax, int scale) {
+        Statistics stats = Statistics.builder()
+                .nullCount(OptionalLong.of(0L))
+                .minValue(encodeSignedFlba(unscaledMin))
+                .maxValue(encodeSignedFlba(unscaledMax))
+                .build();
+        LogicalType logicalType = new LogicalType.Decimal(scale, 9);
+        return single(name, PrimitiveKind.FIXED_LEN_BYTE_ARRAY, stats, logicalType);
+    }
+
+    private static FilterPipeline.ColumnStatsLookup single(
+            String name, PrimitiveKind kind, Statistics stats, LogicalType logicalType) {
+        Map<ColumnPath, FilterPipeline.ColumnStats> map = new HashMap<>();
+        map.put(ColumnPath.of(name), new FilterPipeline.ColumnStats(kind, stats, Optional.of(logicalType)));
+        return path -> Optional.ofNullable(map.get(path));
+    }
+
     private static FilterPipeline.ColumnStatsLookup single(String name, PrimitiveKind kind, Statistics stats) {
         Map<ColumnPath, FilterPipeline.ColumnStats> map = new HashMap<>();
         map.put(ColumnPath.of(name), new FilterPipeline.ColumnStats(kind, stats));
@@ -321,5 +413,15 @@ class StatsEvaluatorTest {
         MemorySegment segment = MemorySegment.ofArray(new byte[8]);
         segment.set(DOUBLE, 0, v);
         return segment.asReadOnly();
+    }
+
+    /** Encodes an unscaled decimal integer as a 4-byte signed big-endian two's-complement segment. */
+    private static MemorySegment encodeSignedFlba(int unscaled) {
+        byte[] bytes = new byte[4];
+        bytes[0] = (byte) ((unscaled >>> 24) & 0xFF);
+        bytes[1] = (byte) ((unscaled >>> 16) & 0xFF);
+        bytes[2] = (byte) ((unscaled >>> 8) & 0xFF);
+        bytes[3] = (byte) (unscaled & 0xFF);
+        return MemorySegment.ofArray(bytes).asReadOnly();
     }
 }

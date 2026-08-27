@@ -16,8 +16,11 @@
 package io.tileverse.parquetry.filter;
 
 import java.lang.foreign.MemorySegment;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -36,7 +39,9 @@ public sealed interface Value
                 Value.StringVal,
                 Value.DateVal,
                 Value.TimestampVal,
-                Value.UuidVal {
+                Value.UuidVal,
+                Value.DecimalVal,
+                Value.TimeVal {
 
     record BoolVal(boolean value) implements Value {}
 
@@ -66,4 +71,18 @@ public sealed interface Value
      * signed and would disagree with file statistics whenever a long's high bit differs.
      */
     record UuidVal(UUID value) implements Value {}
+
+    /** A decimal predicate value; the scale is conveyed by {@link BigDecimal#scale()}. */
+    record DecimalVal(BigDecimal value) implements Value {
+        public DecimalVal {
+            Objects.requireNonNull(value, "value");
+        }
+    }
+
+    /** A time-of-day predicate value (no zone). */
+    record TimeVal(LocalTime value) implements Value {
+        public TimeVal {
+            Objects.requireNonNull(value, "value");
+        }
+    }
 }

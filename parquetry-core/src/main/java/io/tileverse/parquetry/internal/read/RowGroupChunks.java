@@ -23,6 +23,7 @@ import java.util.Optional;
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.ColumnMetaData;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnBloom;
@@ -99,6 +100,13 @@ public final class RowGroupChunks {
                 .flatMap(node -> node instanceof SchemaNode.Primitive p ? Optional.of(p.kind()) : Optional.empty());
     }
 
+    /** The logical type annotation of {@code path}, or empty when absent or when the path is not a primitive. */
+    private Optional<LogicalType> logicalType(ColumnPath path) {
+        return fileSchema
+                .find(path)
+                .flatMap(node -> node instanceof SchemaNode.Primitive p ? p.logicalType() : Optional.empty());
+    }
+
     /** True when {@code path} is a non-repeated leaf (max repetition level 0). */
     public boolean isFlat(ColumnPath path) {
         return fileSchema.maxLevels(path).maxRepetitionLevel() == 0;
@@ -115,7 +123,7 @@ public final class RowGroupChunks {
             return Optional.empty();
         }
         return primitiveKind(path)
-                .map(kind -> new ColumnStats(kind, columnMeta.statistics().orElseThrow()));
+                .map(kind -> new ColumnStats(kind, columnMeta.statistics().orElseThrow(), logicalType(path)));
     }
 
     /** The memoized {@link OffsetIndex}, or empty when absent or unreadable. */
@@ -184,7 +192,8 @@ public final class RowGroupChunks {
         if (ci.isEmpty() || oi.isEmpty()) {
             return Optional.empty();
         }
-        return Optional.of(new ColumnPageStats(kind.orElseThrow(), ci.orElseThrow(), oi.orElseThrow()));
+        return Optional.of(
+                new ColumnPageStats(kind.orElseThrow(), ci.orElseThrow(), oi.orElseThrow(), logicalType(path)));
     }
 
     private Optional<ColumnBloom> loadBloom(ColumnPath path) {
@@ -203,7 +212,7 @@ public final class RowGroupChunks {
                     : -1;
             SplitBlockBloomFilter filter =
                     loader.readBloom(columnMeta.bloomFilterOffset().getAsLong(), length);
-            return Optional.of(new ColumnBloom(kind.orElseThrow(), filter));
+            return Optional.of(new ColumnBloom(kind.orElseThrow(), filter, logicalType(path)));
         } catch (RuntimeException _) {
             return Optional.empty();
         }

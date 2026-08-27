@@ -60,19 +60,21 @@ final class DictionaryEvaluator {
             case io.tileverse.parquetry.filter.Predicate.Not(io.tileverse.parquetry.filter.Predicate child) ->
                 evalNotLeaf(child, dictionaries);
             case io.tileverse.parquetry.filter.Predicate.Eq(ColumnPath col, Value v) ->
-                evalLeaf(col, dictionaries, dv -> equals(v, dv), "Eq");
+                leafOrSkip(col, dictionaries, v, dv -> equals(v, dv), "Eq");
             case io.tileverse.parquetry.filter.Predicate.NotEq(ColumnPath col, Value v) ->
-                evalLeaf(col, dictionaries, dv -> !equals(v, dv), "NotEq");
+                leafOrSkip(col, dictionaries, v, dv -> !equals(v, dv), "NotEq");
             case io.tileverse.parquetry.filter.Predicate.Lt(ColumnPath col, Value v) ->
-                evalLeaf(col, dictionaries, dv -> compare(dv, v) < 0, "Lt");
+                leafOrSkip(col, dictionaries, v, dv -> compare(dv, v) < 0, "Lt");
             case io.tileverse.parquetry.filter.Predicate.LtEq(ColumnPath col, Value v) ->
-                evalLeaf(col, dictionaries, dv -> compare(dv, v) <= 0, "LtEq");
+                leafOrSkip(col, dictionaries, v, dv -> compare(dv, v) <= 0, "LtEq");
             case io.tileverse.parquetry.filter.Predicate.Gt(ColumnPath col, Value v) ->
-                evalLeaf(col, dictionaries, dv -> compare(dv, v) > 0, "Gt");
+                leafOrSkip(col, dictionaries, v, dv -> compare(dv, v) > 0, "Gt");
             case io.tileverse.parquetry.filter.Predicate.GtEq(ColumnPath col, Value v) ->
-                evalLeaf(col, dictionaries, dv -> compare(dv, v) >= 0, "GtEq");
+                leafOrSkip(col, dictionaries, v, dv -> compare(dv, v) >= 0, "GtEq");
             case io.tileverse.parquetry.filter.Predicate.In(ColumnPath col, List<Value> values) ->
-                evalLeaf(col, dictionaries, dv -> values.stream().anyMatch(v -> equals(v, dv)), "In");
+                values.stream().allMatch(DictionaryEvaluator::dictComparable)
+                        ? evalLeaf(col, dictionaries, dv -> values.stream().anyMatch(v -> equals(v, dv)), "In")
+                        : new PruningDecision.NotApplied(TIER, "In " + col.dot() + ": type not dictionary-comparable");
             case io.tileverse.parquetry.filter.Predicate.IsNull _ ->
                 new PruningDecision.NotApplied(TIER, "IsNull: dictionaries don't track nulls");
             case io.tileverse.parquetry.filter.Predicate.IsNotNull _ ->
@@ -141,6 +143,29 @@ final class DictionaryEvaluator {
     }
 
     /**
+     * Returns true when the value type can be compared against a dictionary entry without knowing the column's logical
+     * type. Timestamp, time, and decimal values encode their java.time / BigDecimal form as a unit-dependent INT64 or
+     * FIXED_LEN_BYTE_ARRAY; the column unit and scale are not available here - a naive comparison would produce a wrong
+     * result and could falsely eliminate the row group.
+     */
+    private static boolean dictComparable(Value v) {
+        return !(v instanceof Value.TimestampVal || v instanceof Value.TimeVal || v instanceof Value.DecimalVal);
+    }
+
+    /**
+     * Routes a leaf predicate through {@link #evalLeaf} when the value type is dictionary-comparable, or returns
+     * NotApplied when it is not. This prevents a unit-unaware conversion from producing a wrong comparison result that
+     * could falsely eliminate the row group.
+     */
+    private static PruningDecision leafOrSkip(
+            ColumnPath col, FilterPipeline.DictionaryLookup dicts, Value v, Predicate<Object> matches, String op) {
+        if (!dictComparable(v)) {
+            return new PruningDecision.NotApplied(TIER, op + " " + col.dot() + ": type not dictionary-comparable");
+        }
+        return evalLeaf(col, dicts, matches, op);
+    }
+
+    /**
      * Evaluates a leaf predicate against the column's dictionary by walking every dictionary entry. If no entry
      * satisfies {@code matches}, the row group is eliminated.
      */
@@ -180,8 +205,6 @@ final class DictionaryEvaluator {
             when dictValue instanceof MemorySegment dv -> UuidConverter.compareSegmentToUuid(dv, qv) == 0;
             case Value.DateVal(java.time.LocalDate qv)
             when dictValue instanceof Integer dv -> (int) qv.toEpochDay() == dv;
-            case Value.TimestampVal(java.time.LocalDateTime qv, boolean _)
-            when dictValue instanceof Long dv -> qv.toEpochSecond(java.time.ZoneOffset.UTC) * 1000L == dv;
             default -> false;
         };
     }
@@ -204,8 +227,6 @@ final class DictionaryEvaluator {
             when dictValue instanceof MemorySegment dv -> UuidConverter.compareSegmentToUuid(dv, qv);
             case Value.DateVal(java.time.LocalDate qv)
             when dictValue instanceof Integer dv -> Integer.compare(dv, (int) qv.toEpochDay());
-            case Value.TimestampVal(java.time.LocalDateTime qv, boolean _)
-            when dictValue instanceof Long dv -> Long.compare(dv, qv.toEpochSecond(java.time.ZoneOffset.UTC) * 1000L);
             default -> 0;
         };
     }

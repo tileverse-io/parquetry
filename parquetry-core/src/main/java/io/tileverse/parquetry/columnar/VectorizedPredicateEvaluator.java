@@ -16,21 +16,29 @@
 package io.tileverse.parquetry.columnar;
 
 import java.lang.foreign.MemorySegment;
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.IntPredicate;
 
 import io.tileverse.parquetry.filter.GeometryFilter;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.RowPositionSet;
 import io.tileverse.parquetry.filter.Value;
+import io.tileverse.parquetry.format.LogicalType;
+import io.tileverse.parquetry.internal.filter.DecimalValues;
 import io.tileverse.parquetry.internal.filter.RecordAccessors;
 import io.tileverse.parquetry.internal.filter.RecordLevelEvaluator;
+import io.tileverse.parquetry.internal.filter.TemporalValues;
 import io.tileverse.parquetry.internal.filter.ValueComparison;
 import io.tileverse.parquetry.internal.filter.spatial.WkbEnvelope;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
  * Evaluates a normalized predicate against one {@link ParquetRecordBatch} columnar-style, returning the {@link BitSet}
@@ -254,9 +262,18 @@ public final class VectorizedPredicateEvaluator {
                 }
             }
             case LongVector lv -> {
-                for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
-                    if (accept.test(ValueComparison.compareLong(lv.getLong(r), v))) {
-                        out.set(r);
+                if (v instanceof Value.TimestampVal || v instanceof Value.TimeVal) {
+                    long query = temporalQueryUnit(v, batch, col);
+                    for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
+                        if (accept.test(Long.compare(lv.getLong(r), query))) {
+                            out.set(r);
+                        }
+                    }
+                } else {
+                    for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
+                        if (accept.test(ValueComparison.compareLong(lv.getLong(r), v))) {
+                            out.set(r);
+                        }
                     }
                 }
             }
@@ -289,9 +306,20 @@ public final class VectorizedPredicateEvaluator {
                 }
             }
             case FixedLenBinaryVector fixed -> {
-                for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
-                    if (accept.test(ValueComparison.compareBinary(fixed.get(r), v))) {
-                        out.set(r);
+                if (v instanceof Value.DecimalVal(BigDecimal query)) {
+                    decimalMask(
+                            fixed,
+                            validity,
+                            query,
+                            decimalScale(batch, col),
+                            decimalByteLength(batch, col),
+                            accept,
+                            out);
+                } else {
+                    for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
+                        if (accept.test(ValueComparison.compareBinary(fixed.get(r), v))) {
+                            out.set(r);
+                        }
                     }
                 }
             }
@@ -307,6 +335,77 @@ public final class VectorizedPredicateEvaluator {
             }
         }
         return out;
+    }
+
+    private static long temporalQueryUnit(Value v, ParquetRecordBatch batch, ColumnPath col) {
+        LogicalType leaf = leafLogicalType(batch, col)
+                .orElseThrow(() ->
+                        new IllegalStateException("temporal query on column without a logical type: " + col.dot()));
+        return switch (v) {
+            case Value.TimestampVal(LocalDateTime dt, boolean _)
+            when leaf instanceof LogicalType.Timestamp(boolean _, LogicalType.TimeUnit unit) ->
+                TemporalValues.toEpochUnit(dt, unit);
+            case Value.TimeVal(LocalTime t)
+            when leaf instanceof LogicalType.Time(boolean _, LogicalType.TimeUnit unit) ->
+                TemporalValues.toTimeUnit(t, unit);
+            default -> throw new IllegalStateException("temporal path reached with " + v + " and leaf " + leaf);
+        };
+    }
+
+    // A matching scale and a cell of at most 8 bytes compare as primitive longs (no allocation); a wider cell, a
+    // scale mismatch, or a query whose unscaled value overflows a signed long falls back to an exact BigDecimal
+    // comparison at the column scale. The fast path requires the query to fit in a signed long because it compares
+    // against a cell decoded as one; bitLength() < 64 admits exactly [-2^63, 2^63-1], matching signedLong's range, and
+    // keeps an oversized query from truncating and flipping the comparison sign.
+    private static void decimalMask(
+            FixedLenBinaryVector fixed,
+            Validity validity,
+            BigDecimal query,
+            int columnScale,
+            int byteLength,
+            IntPredicate accept,
+            BitSet out) {
+        if (query.scale() == columnScale
+                && byteLength >= 1
+                && byteLength <= 8
+                && query.unscaledValue().bitLength() < 64) {
+            long queryUnscaled = query.unscaledValue().longValue();
+            for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
+                if (accept.test(Long.compare(DecimalValues.signedLong(fixed.get(r)), queryUnscaled))) {
+                    out.set(r);
+                }
+            }
+            return;
+        }
+        for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
+            if (accept.test(
+                    DecimalValues.toBigDecimal(fixed.get(r), columnScale).compareTo(query))) {
+                out.set(r);
+            }
+        }
+    }
+
+    private static Optional<LogicalType> leafLogicalType(ParquetRecordBatch batch, ColumnPath col) {
+        return batch.projectedSchema()
+                .find(col)
+                .flatMap(node -> node instanceof SchemaNode.Primitive p ? p.logicalType() : Optional.empty());
+    }
+
+    private static int decimalScale(ParquetRecordBatch batch, ColumnPath col) {
+        return leafLogicalType(batch, col)
+                .filter(LogicalType.Decimal.class::isInstance)
+                .map(LogicalType.Decimal.class::cast)
+                .map(LogicalType.Decimal::scale)
+                .orElseThrow(() -> new IllegalStateException("decimal query on non-decimal column " + col.dot()));
+    }
+
+    private static int decimalByteLength(ParquetRecordBatch batch, ColumnPath col) {
+        return batch.projectedSchema()
+                .find(col)
+                .filter(SchemaNode.Primitive.class::isInstance)
+                .map(SchemaNode.Primitive.class::cast)
+                .map(p -> p.typeLength().orElse(-1))
+                .orElse(-1);
     }
 
     private static BitSet inMask(ParquetRecordBatch batch, ColumnPath col, List<Value> values) {

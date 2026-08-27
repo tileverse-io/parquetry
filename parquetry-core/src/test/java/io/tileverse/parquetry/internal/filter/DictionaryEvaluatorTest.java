@@ -19,8 +19,12 @@ import static io.tileverse.parquetry.filter.Pred.col;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.lang.foreign.MemorySegment;
+import java.math.BigDecimal;
 import java.nio.IntBuffer;
+import java.nio.LongBuffer;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -29,6 +33,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.internal.read.page.Dictionary;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -153,6 +158,39 @@ class DictionaryEvaluatorTest {
                 .isInstanceOf(PruningDecision.NotApplied.class);
     }
 
+    @Test
+    void eqTimestampIsNotApplied() {
+        // TimestampVal comparisons against a dictionary are not supported: the column unit (MILLIS/MICROS/NANOS)
+        // is not available here - the evaluator cannot correctly convert the LocalDateTime to the raw INT64.
+        // Returning NotApplied is always safe; an incorrect conversion could falsely eliminate the row group.
+        FilterPipeline.DictionaryLookup dicts = single("ts", new Dictionary.LongDict(longBuf(1L, 2L, 3L)));
+        LocalDateTime ts = LocalDateTime.of(2023, 1, 1, 0, 0);
+        assertThat(DictionaryEvaluator.evaluate(
+                        new Predicate.Eq(ColumnPath.of("ts"), new Value.TimestampVal(ts, true)), dicts))
+                .isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
+    @Test
+    void eqTimeValIsNotApplied() {
+        // TimeVal comparisons against a dictionary are not supported for the same reason as TimestampVal:
+        // the column unit is not available to convert LocalTime to the raw INT64.
+        FilterPipeline.DictionaryLookup dicts = single("t", new Dictionary.LongDict(longBuf(1L, 2L, 3L)));
+        LocalTime time = LocalTime.of(12, 0);
+        assertThat(DictionaryEvaluator.evaluate(new Predicate.Eq(ColumnPath.of("t"), new Value.TimeVal(time)), dicts))
+                .isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
+    @Test
+    void eqDecimalValIsNotApplied() {
+        // DecimalVal comparisons against a dictionary are not supported: the dictionary provides raw encoded
+        // values and the scale required to interpret them is not available at this tier.
+        FilterPipeline.DictionaryLookup dicts = single("amount", new Dictionary.LongDict(longBuf(100L, 200L)));
+        BigDecimal queryVal = new BigDecimal("1.00");
+        assertThat(DictionaryEvaluator.evaluate(
+                        new Predicate.Eq(ColumnPath.of("amount"), new Value.DecimalVal(queryVal)), dicts))
+                .isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
     private static FilterPipeline.DictionaryLookup single(String name, Dictionary<?> dict) {
         Map<ColumnPath, Dictionary<?>> map = new HashMap<>();
         map.put(ColumnPath.of(name), dict);
@@ -161,6 +199,10 @@ class DictionaryEvaluatorTest {
 
     private static IntBuffer intBuf(int... values) {
         return IntBuffer.wrap(values);
+    }
+
+    private static LongBuffer longBuf(long... values) {
+        return LongBuffer.wrap(values);
     }
 
     private static FilterPipeline.DictionaryLookup empty() {

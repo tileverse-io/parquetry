@@ -15,12 +15,15 @@
  */
 package io.tileverse.parquetry.internal.filter;
 
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
 
 import io.tileverse.parquetry.filter.MatchAction;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Value;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.ParquetSchemaException;
@@ -272,6 +275,9 @@ public final class PredicateNormalizer {
         }
     }
 
+    // S7475 (bare _ in nested record patterns) is informational only - palantirJavaFormat 2.90 cannot
+    // parse the bare-underscore form Sonar suggests; see memory feedback-palantir-unnamed-pattern.
+    @SuppressWarnings("java:S7475")
     private static boolean isCompatible(SchemaNode.Primitive prim, Value v) {
         PrimitiveKind kind = prim.kind();
         return switch (v) {
@@ -289,10 +295,47 @@ public final class PredicateNormalizer {
             case Value.StringVal _ -> kind == PrimitiveKind.BYTE_ARRAY;
             case Value.BinaryVal _ -> kind == PrimitiveKind.BYTE_ARRAY || kind == PrimitiveKind.FIXED_LEN_BYTE_ARRAY;
             case Value.DateVal _ -> kind == PrimitiveKind.INT32;
-            case Value.TimestampVal _ -> kind == PrimitiveKind.INT64 || kind == PrimitiveKind.INT96;
+            case Value.TimestampVal(LocalDateTime value, boolean _) -> timestampCompatible(prim, value);
             case Value.UuidVal _ ->
                 kind == PrimitiveKind.FIXED_LEN_BYTE_ARRAY && prim.typeLength().orElse(-1) == UuidConverter.BYTES;
+            case Value.DecimalVal _ -> isDecimalColumn(prim);
+            case Value.TimeVal(LocalTime value) -> timeCompatible(prim, value);
         };
+    }
+
+    private static boolean isDecimalColumn(SchemaNode.Primitive prim) {
+        return prim.kind() == PrimitiveKind.FIXED_LEN_BYTE_ARRAY
+                && prim.logicalType().orElse(null) instanceof LogicalType.Decimal;
+    }
+
+    // S7475: palantirJavaFormat 2.90 cannot parse bare _ in nested record patterns; see memory
+    // feedback-palantir-unnamed-pattern.
+    @SuppressWarnings("java:S7475")
+    private static boolean timestampCompatible(SchemaNode.Primitive prim, LocalDateTime value) {
+        // INT96 is the legacy nanosecond timestamp encoding used by older writers; it has no logical-type
+        // annotation, which is why the check below would miss it.
+        if (prim.kind() == PrimitiveKind.INT96) {
+            return true;
+        }
+        // A temporal predicate finer than the column unit is rejected: record-level evaluation truncates
+        // the predicate to the column unit while STATS and COLUMN_INDEX compare it at full precision; the
+        // tiers would then disagree and prune incorrectly.
+        return prim.kind() == PrimitiveKind.INT64
+                && prim.logicalType().orElse(null)
+                        instanceof LogicalType.Timestamp(boolean _, LogicalType.TimeUnit unit)
+                && TemporalValues.fitsUnit(value.getNano(), unit);
+    }
+
+    // S7475: palantirJavaFormat 2.90 cannot parse bare _ in nested record patterns; see memory
+    // feedback-palantir-unnamed-pattern.
+    @SuppressWarnings("java:S7475")
+    private static boolean timeCompatible(SchemaNode.Primitive prim, LocalTime value) {
+        // A temporal predicate finer than the column unit is rejected: record-level evaluation truncates
+        // the predicate to the column unit while STATS and COLUMN_INDEX compare it at full precision; the
+        // tiers would then disagree and prune incorrectly.
+        return prim.kind() == PrimitiveKind.INT64
+                && prim.logicalType().orElse(null) instanceof LogicalType.Time(boolean _, LogicalType.TimeUnit unit)
+                && TemporalValues.fitsUnit(value.toNanoOfDay(), unit);
     }
 
     /**

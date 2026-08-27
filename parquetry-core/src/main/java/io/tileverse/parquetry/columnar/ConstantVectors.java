@@ -65,6 +65,8 @@ public final class ConstantVectors {
             case Value.DateVal _ -> IntVector.materialized(new int[rowCount], allNull);
             case Value.StringVal _ -> binary(new byte[0], rowCount, allNull);
             case Value.UuidVal _ -> binary(new byte[0], rowCount, allNull);
+            case Value.DecimalVal _ -> binary(new byte[0], rowCount, allNull);
+            case Value.TimeVal _ -> LongVector.materialized(new long[rowCount], allNull);
             default -> throw new IllegalArgumentException("constant column unsupported for value " + typeOf);
         };
     }

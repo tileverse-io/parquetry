@@ -15,13 +15,6 @@
  */
 package io.tileverse.parquetry.internal.filter;
 
-import static io.tileverse.parquetry.format.ParquetLayouts.DOUBLE;
-import static io.tileverse.parquetry.format.ParquetLayouts.FLOAT;
-import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
-import static io.tileverse.parquetry.format.ParquetLayouts.INT64;
-import static java.lang.foreign.ValueLayout.JAVA_BYTE;
-
-import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -36,7 +29,6 @@ import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.PageLocation;
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.schema.PrimitiveKind;
 
 /**
  * Tier-3 (COLUMN_INDEX) evaluator. Uses per-page min/max + null markers from {@code ColumnIndex} together with the page
@@ -179,8 +171,10 @@ final class ColumnIndexEvaluator {
             if (Boolean.TRUE.equals(idx.nullPages().get(i))) {
                 continue; // all-null page can't satisfy a value comparison
             }
-            Optional<Value> minVal = decode(stats.kind(), idx.minValues().get(i));
-            Optional<Value> maxVal = decode(stats.kind(), idx.maxValues().get(i));
+            Optional<Value> minVal = StatisticsValueDecoder.decode(
+                    stats.kind(), stats.logicalType(), idx.minValues().get(i));
+            Optional<Value> maxVal = StatisticsValueDecoder.decode(
+                    stats.kind(), stats.logicalType(), idx.maxValues().get(i));
             if (minVal.isEmpty() || maxVal.isEmpty()) {
                 return Optional.empty(); // unsupported type; bail to NotApplied
             }
@@ -297,20 +291,6 @@ final class ColumnIndexEvaluator {
     /** True when min == max == v (so the page has exactly one distinct value equal to {@code v}). */
     private static boolean singleValueEqual(Value v, Value min, Value max) {
         return compare(min, max) == 0 && compare(v, min) == 0;
-    }
-
-    /** Decodes a Parquet PLAIN-encoded min/max value into a typed {@link Value}. */
-    private static Optional<Value> decode(PrimitiveKind kind, MemorySegment raw) {
-        long size = raw.byteSize();
-        return switch (kind) {
-            case BOOLEAN -> size >= 1 ? Optional.of(new Value.BoolVal(raw.get(JAVA_BYTE, 0) != 0)) : Optional.empty();
-            case INT32 -> size >= 4 ? Optional.of(new Value.IntVal(raw.get(INT32, 0))) : Optional.empty();
-            case INT64 -> size >= 8 ? Optional.of(new Value.LongVal(raw.get(INT64, 0))) : Optional.empty();
-            case FLOAT -> size >= 4 ? Optional.of(new Value.FloatVal(raw.get(FLOAT, 0))) : Optional.empty();
-            case DOUBLE -> size >= 8 ? Optional.of(new Value.DoubleVal(raw.get(DOUBLE, 0))) : Optional.empty();
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> Optional.of(new Value.BinaryVal(raw));
-            case INT96 -> Optional.empty();
-        };
     }
 
     /** Orders two decoded {@link Value}s through the shared {@link ValueComparison} ordering. */

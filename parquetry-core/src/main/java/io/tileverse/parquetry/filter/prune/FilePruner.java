@@ -88,6 +88,8 @@ public final class FilePruner {
             case Value.DateVal _ -> PrimitiveKind.INT32;
             case Value.TimestampVal _ -> PrimitiveKind.INT64;
             case Value.UuidVal _ -> PrimitiveKind.FIXED_LEN_BYTE_ARRAY;
+            case Value.DecimalVal _ -> PrimitiveKind.FIXED_LEN_BYTE_ARRAY;
+            case Value.TimeVal _ -> PrimitiveKind.INT64;
         };
     }
 }

@@ -29,6 +29,7 @@ import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.filter.explain.Tier;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -135,7 +136,7 @@ final class BloomFilterEvaluator {
             return new PruningDecision.NotApplied(TIER, "Eq " + col.dot() + ": no bloom filter loaded");
         }
         FilterPipeline.ColumnBloom cb = bloom.get();
-        OptionalLong hash = hashFor(v, cb.kind());
+        OptionalLong hash = hashFor(v, cb.kind(), cb.logicalType());
         if (hash.isEmpty()) {
             return new PruningDecision.NotApplied(TIER, "Eq " + col.dot() + ": value/kind not hashable for bloom");
         }
@@ -156,7 +157,7 @@ final class BloomFilterEvaluator {
         }
         FilterPipeline.ColumnBloom cb = bloom.get();
         for (Value v : values) {
-            OptionalLong hash = hashFor(v, cb.kind());
+            OptionalLong hash = hashFor(v, cb.kind(), cb.logicalType());
             if (hash.isEmpty()) {
                 return new PruningDecision.NotApplied(TIER, "In " + col.dot() + ": value/kind not hashable for bloom");
             }
@@ -169,12 +170,16 @@ final class BloomFilterEvaluator {
     }
 
     /**
-     * Maps a predicate-side {@link Value} to its bloom-filter hash, honoring Parquet's plain-encoding rule. Returns
-     * empty when the column kind / value combination has no defined bloom hash (e.g. an INT96 column or a date/time
-     * predicate on a non-matching column kind); the caller surfaces those as NotApplied.
+     * Maps a predicate-side {@link Value} to its bloom-filter hash, honoring Parquet's plain-encoding rule.
+     *
+     * <p>Timestamp and time values require the column's logical type to determine the storage unit (MILLIS / MICROS /
+     * NANOS). Without a matching logical type the hash cannot be computed correctly; those cases return empty and
+     * degrade to NotApplied at the call site - which is always safe. Decimal values have no defined bloom-filter hash
+     * and also reach the empty default. Returns empty when the column kind / value combination has no defined bloom
+     * hash (e.g. an INT96 column or a type mismatch); the caller degrades those to NotApplied.
      */
-    @SuppressWarnings("java:S7475") // see DictionaryEvaluator: palantirJavaFormat 2.90 cannot parse bare _ in patterns
-    private static OptionalLong hashFor(Value v, PrimitiveKind kind) {
+    @SuppressWarnings("java:S7475") // palantirJavaFormat 2.90 cannot parse bare _ in nested record patterns
+    private static OptionalLong hashFor(Value v, PrimitiveKind kind, Optional<LogicalType> logicalType) {
         return switch (v) {
             case Value.BoolVal _ -> OptionalLong.empty();
             case Value.IntVal(int qv)
@@ -197,8 +202,14 @@ final class BloomFilterEvaluator {
             case Value.DateVal(java.time.LocalDate qv)
             when kind == PrimitiveKind.INT32 -> OptionalLong.of(SplitBlockBloomFilter.hashInt32((int) qv.toEpochDay()));
             case Value.TimestampVal(java.time.LocalDateTime qv, boolean _)
-            when kind == PrimitiveKind.INT64 ->
-                OptionalLong.of(SplitBlockBloomFilter.hashInt64(qv.toEpochSecond(java.time.ZoneOffset.UTC) * 1000L));
+            when kind == PrimitiveKind.INT64
+                    && logicalType.orElse(null)
+                            instanceof LogicalType.Timestamp(boolean _, LogicalType.TimeUnit unit) ->
+                OptionalLong.of(SplitBlockBloomFilter.hashInt64(TemporalValues.toEpochUnit(qv, unit)));
+            case Value.TimeVal(java.time.LocalTime qv)
+            when kind == PrimitiveKind.INT64
+                    && logicalType.orElse(null) instanceof LogicalType.Time(boolean _, LogicalType.TimeUnit unit) ->
+                OptionalLong.of(SplitBlockBloomFilter.hashInt64(TemporalValues.toTimeUnit(qv, unit)));
             default -> OptionalLong.empty();
         };
     }
