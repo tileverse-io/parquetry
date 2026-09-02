@@ -1019,8 +1019,12 @@ public final class ParquetRecordBatchBuilder implements AutoCloseable {
         return rows;
     }
 
-    /** The running per-value byte estimate that drives the byte-bound auto-flush. Visible for testing. */
-    long approxBatchBytes() {
+    /**
+     * The running estimate of authored value bytes in the pending batch. Counts value payloads only (not validity,
+     * offsets, or accumulator overhead); a soft lower bound. External producers batching through a standalone builder
+     * poll this after each {@link #endRow()} to freeze a batch on a byte budget the way a writer-bound appender does.
+     */
+    public long approxBatchBytes() {
         return approxBatchBytes;
     }
 
