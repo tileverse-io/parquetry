@@ -266,7 +266,7 @@ public final class LevelVectorAssembler {
             if (children.isEmpty()) {
                 return null;
             }
-            Validity validity = dremel.structValidity(plan.structDefLevel(), plan.validityLeaf(), numRows);
+            Validity validity = dremel.structValidity(plan.structDefLevel(), plan.validityLeaf(), 0, numRows);
             return new StructVector(children, validity, numRows);
         }
 
