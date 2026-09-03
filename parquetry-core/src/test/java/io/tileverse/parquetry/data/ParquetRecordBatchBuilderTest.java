@@ -165,4 +165,107 @@ class ParquetRecordBatchBuilderTest {
         assertThat(r1.getDouble(2)).isEqualTo(2.5);
         assertThat(r1.isNull(3)).isTrue();
     }
+
+    // --- nested container authoring misuse ---
+
+    @Test
+    void addListWithoutAnOpenScopeThrows() {
+        ParquetRecordBatchBuilder builder = ParquetRecordBatchBuilder.forSchema(listOfListSchema());
+        assertThatThrownBy(builder::addList)
+                .isInstanceOf(ParquetWriteException.class)
+                .hasMessageContaining("without an open list or map scope");
+    }
+
+    @Test
+    void addListInMapScopeWithoutAnOpenEntryThrows() {
+        ParquetRecordBatchBuilder builder = ParquetRecordBatchBuilder.forSchema(mapOfListSchema());
+        builder.beginMap("m");
+        assertThatThrownBy(builder::addList)
+                .isInstanceOf(ParquetWriteException.class)
+                .hasMessageContaining("putEntry");
+    }
+
+    @Test
+    void addListOnAScalarElementListThrows() {
+        ParquetRecordBatchBuilder builder = ParquetRecordBatchBuilder.forSchema(listOfIntSchema());
+        builder.beginList("nums");
+        assertThatThrownBy(builder::addList)
+                .isInstanceOf(ParquetWriteException.class)
+                .hasMessageContaining("is not a list group");
+    }
+
+    @Test
+    void addListMixedWithAddElementThrows() {
+        ParquetRecordBatchBuilder builder = ParquetRecordBatchBuilder.forSchema(listOfListSchema());
+        builder.beginList("outer").addElement();
+        assertThatThrownBy(builder::addList)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("addElement");
+    }
+
+    @Test
+    void beginListByPathAsTheDirectElementPointsAtAddList() {
+        ParquetRecordBatchBuilder builder = ParquetRecordBatchBuilder.forSchema(listOfListSchema());
+        builder.beginList("outer");
+        assertThatThrownBy(() -> builder.beginList(ColumnPath.of("element")))
+                .isInstanceOf(ParquetWriteException.class)
+                .hasMessageContaining("addList()/addMap()");
+    }
+
+    @Test
+    void endEntryWithAnUnclosedValueContainerThrows() {
+        ParquetRecordBatchBuilder builder = ParquetRecordBatchBuilder.forSchema(mapOfListSchema());
+        builder.beginMap("m")
+                .putEntry()
+                .setString(ColumnPath.of("key_value", "key"), "a")
+                .addList();
+        assertThatThrownBy(builder::endEntry)
+                .isInstanceOf(ParquetWriteException.class)
+                .hasMessageContaining("without an open map scope");
+    }
+
+    private static ParquetSchema listOfListSchema() {
+        SchemaNode.Primitive element = new SchemaNode.Primitive(
+                "element", Repetition.OPTIONAL, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
+        return new ParquetSchema(new SchemaNode.Group(
+                "root",
+                Repetition.REQUIRED,
+                List.of(listGroup("outer", listGroup("element", element))),
+                Optional.empty(),
+                -1));
+    }
+
+    private static ParquetSchema listOfIntSchema() {
+        SchemaNode.Primitive element = new SchemaNode.Primitive(
+                "element", Repetition.OPTIONAL, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
+        return new ParquetSchema(new SchemaNode.Group(
+                "root", Repetition.REQUIRED, List.of(listGroup("nums", element)), Optional.empty(), -1));
+    }
+
+    private static ParquetSchema mapOfListSchema() {
+        SchemaNode.Primitive key = new SchemaNode.Primitive(
+                "key", Repetition.REQUIRED, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1);
+        SchemaNode.Primitive element = new SchemaNode.Primitive(
+                "element", Repetition.OPTIONAL, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
+        SchemaNode.Group keyValue = new SchemaNode.Group(
+                "key_value", Repetition.REPEATED, List.of(key, listGroup("value", element)), Optional.empty(), -1);
+        SchemaNode.Group map = new SchemaNode.Group(
+                "m",
+                Repetition.OPTIONAL,
+                List.of(keyValue),
+                Optional.of(new io.tileverse.parquetry.format.LogicalType.MapType()),
+                -1);
+        return new ParquetSchema(new SchemaNode.Group("root", Repetition.REQUIRED, List.of(map), Optional.empty(), -1));
+    }
+
+    private static SchemaNode.Group listGroup(String name, SchemaNode element) {
+        SchemaNode.Group repeated =
+                new SchemaNode.Group("list", Repetition.REPEATED, List.of(element), Optional.empty(), -1);
+        return new SchemaNode.Group(
+                name,
+                Repetition.OPTIONAL,
+                List.of(repeated),
+                Optional.of(new io.tileverse.parquetry.format.LogicalType.ListType()),
+                -1);
+    }
 }

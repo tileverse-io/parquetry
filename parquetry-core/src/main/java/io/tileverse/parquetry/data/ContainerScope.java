@@ -40,6 +40,7 @@ final class ContainerScope {
     private final String entryNodeName;
     private final String keyNodeName;
     private final String valueNodeName;
+    private final boolean commitsParentElement;
     private boolean entryStarted;
 
     private ContainerScope(
@@ -49,7 +50,8 @@ final class ContainerScope {
             String elementNodeName,
             String entryNodeName,
             String keyNodeName,
-            String valueNodeName) {
+            String valueNodeName,
+            boolean commitsParentElement) {
         this.path = path;
         this.listAccumulator = listAccumulator;
         this.mapAccumulator = mapAccumulator;
@@ -57,11 +59,12 @@ final class ContainerScope {
         this.entryNodeName = entryNodeName;
         this.keyNodeName = keyNodeName;
         this.valueNodeName = valueNodeName;
+        this.commitsParentElement = commitsParentElement;
     }
 
     static ContainerScope list(
             ColumnPath path, ColumnAccumulator.ListAccumulator listAccumulator, String elementNodeName) {
-        return new ContainerScope(path, listAccumulator, null, elementNodeName, null, null, null);
+        return new ContainerScope(path, listAccumulator, null, elementNodeName, null, null, null, false);
     }
 
     static ContainerScope map(
@@ -70,7 +73,28 @@ final class ContainerScope {
             String entryNodeName,
             String keyNodeName,
             String valueNodeName) {
-        return new ContainerScope(path, null, mapAccumulator, null, entryNodeName, keyNodeName, valueNodeName);
+        return new ContainerScope(path, null, mapAccumulator, null, entryNodeName, keyNodeName, valueNodeName, false);
+    }
+
+    /** A list opened as the enclosing list's current element: closing it commits that element. */
+    static ContainerScope listAsElement(
+            ColumnPath path, ColumnAccumulator.ListAccumulator listAccumulator, String elementNodeName) {
+        return new ContainerScope(path, listAccumulator, null, elementNodeName, null, null, null, true);
+    }
+
+    /** A map opened as the enclosing list's current element: closing it commits that element. */
+    static ContainerScope mapAsElement(
+            ColumnPath path,
+            ColumnAccumulator.MapAccumulator mapAccumulator,
+            String entryNodeName,
+            String keyNodeName,
+            String valueNodeName) {
+        return new ContainerScope(path, null, mapAccumulator, null, entryNodeName, keyNodeName, valueNodeName, true);
+    }
+
+    /** True when closing this scope must commit the current element of the enclosing list scope. */
+    boolean commitsParentElement() {
+        return commitsParentElement;
     }
 
     ColumnPath path() {
@@ -91,6 +115,10 @@ final class ContainerScope {
 
     ColumnAccumulator elementAccumulator() {
         return listAccumulator.element();
+    }
+
+    ColumnAccumulator mapValueAccumulator() {
+        return mapAccumulator.value();
     }
 
     void openElement() {
@@ -123,26 +151,24 @@ final class ContainerScope {
      * accumulator (maps).
      */
     void setRelative(ColumnPath path, Consumer<ColumnAccumulator> stage) {
+        stage.accept(relativeTarget(path, isList() ? "element setter" : "entry setter"));
+    }
+
+    /**
+     * Resolves the accumulator addressed by {@code path} within the active element or entry, marking every struct on
+     * the way present. The path starts at the repeated wrapper node ({@code element} for a list, {@code key_value} for
+     * a map); {@code verb} names the caller in the no-open-element error.
+     */
+    ColumnAccumulator relativeTarget(ColumnPath path, String verb) {
         if (isList()) {
-            setListElement(path, stage);
-        } else {
-            setMapEntry(path, stage);
+            requireStarted(verb, ADD_ELEMENT);
+            requireFirstPart(path, elementNodeName);
+            return navigate(listAccumulator.element(), path, 1);
         }
-    }
-
-    private void setListElement(ColumnPath path, Consumer<ColumnAccumulator> stage) {
-        requireStarted("element setter", ADD_ELEMENT);
-        requireFirstPart(path, elementNodeName);
-        ColumnAccumulator target = navigate(listAccumulator.element(), path, 1);
-        stage.accept(target);
-    }
-
-    private void setMapEntry(ColumnPath path, Consumer<ColumnAccumulator> stage) {
-        requireStarted("entry setter", PUT_ENTRY);
+        requireStarted(verb, PUT_ENTRY);
         requireFirstPart(path, entryNodeName);
         ColumnAccumulator child = selectEntryChild(path.part(1));
-        ColumnAccumulator target = navigate(child, path, 2);
-        stage.accept(target);
+        return navigate(child, path, 2);
     }
 
     private ColumnAccumulator selectEntryChild(String childName) {
