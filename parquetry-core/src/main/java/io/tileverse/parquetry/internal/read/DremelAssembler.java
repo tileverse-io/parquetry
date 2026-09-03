@@ -422,10 +422,11 @@ final class DremelAssembler {
     }
 
     /**
-     * Per-slot struct validity from a row-aligned descendant leaf's def stream. A struct at definition level 0 is
-     * always present; otherwise it is present in a slot when the descendant's def for that slot reaches the struct's
-     * level. A struct whose only descendants live under a repeated child cannot be addressed by slot index here and
-     * stays all present; the enclosing list/map already restores its element-level validity.
+     * Per-slot struct validity, read from a descendant leaf's def stream. A struct at definition level 0 is always
+     * present; otherwise it is present in a slot when the descendant's def level at the slot's first stream entry
+     * reaches the struct's level. Prefers a slot-aligned descendant (one stream entry per slot); a struct whose only
+     * leaves live under a deeper repeated node reads any descendant leaf instead, partitioning its stream into slots at
+     * the group's own max repetition level.
      */
     Validity structValidity(SchemaNode.Group group, List<String> groupPath, int numSlots) {
         int structDefLevel = maxDef(groupPath);
@@ -433,28 +434,37 @@ final class DremelAssembler {
             return Validity.allValid(numSlots);
         }
         ColumnPath descendant = firstRowAlignedDescendantLeaf(group, groupPath, leafVectors.keySet());
-        return structValidity(structDefLevel, descendant, numSlots);
+        if (descendant == null) {
+            descendant = findFirstDescendantLeafPath(group, groupPath);
+        }
+        return structValidity(structDefLevel, descendant, repLevel(groupPath), numSlots);
     }
 
     /**
-     * Per-slot struct validity from an already resolved definition level and row-aligned descendant leaf, the two facts
-     * {@link #structValidity(SchemaNode.Group, List, int)} derives from the schema on every call. A {@code null}
-     * descendant means the struct has no row-aligned leaf to read a level from and stays all present.
+     * Per-slot struct validity from an already resolved definition level and descendant leaf. Slot {@code k} reads the
+     * def level of the {@code k}-th stream entry with {@code rep <= slotBoundaryRepLevel}; for a slot-aligned leaf
+     * every entry qualifies and the walk degenerates to entry-per-slot. A {@code null} descendant or an absent def
+     * stream leaves the struct all present (there is no level to read, e.g. an all-REQUIRED chain).
      */
-    Validity structValidity(int structDefLevel, ColumnPath rowAlignedDescendant, int numSlots) {
+    Validity structValidity(int structDefLevel, ColumnPath descendantLeaf, int slotBoundaryRepLevel, int numSlots) {
         if (structDefLevel == 0) {
             return Validity.allValid(numSlots);
         }
-        LevelSlice defLevels = rowAlignedDescendant == null ? null : defLevelsByLeaf.get(rowAlignedDescendant);
+        LevelSlice defLevels = descendantLeaf == null ? null : defLevelsByLeaf.get(descendantLeaf);
         if (defLevels == null) {
             return Validity.allValid(numSlots);
         }
+        LevelSlice repLevels = repLevelsByLeaf.get(descendantLeaf);
         BitSet validity = new BitSet(numSlots);
-        int limit = Math.min(numSlots, defLevels.length());
-        for (int slot = 0; slot < limit; slot++) {
-            if (defLevels.at(slot) >= structDefLevel) {
+        int slot = 0;
+        for (int i = 0; i < defLevels.length() && slot < numSlots; i++) {
+            if (repLevels != null && repLevels.at(i) > slotBoundaryRepLevel) {
+                continue;
+            }
+            if (defLevels.at(i) >= structDefLevel) {
                 validity.set(slot);
             }
+            slot++;
         }
         return Validity.of(validity, numSlots);
     }

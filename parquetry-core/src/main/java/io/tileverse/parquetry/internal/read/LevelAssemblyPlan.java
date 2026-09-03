@@ -277,8 +277,20 @@ final class LevelAssemblyPlan {
                     path,
                     fields,
                     groupDefLevel(path),
-                    DremelAssembler.firstRowAlignedDescendantLeaf(group, groupPath, presentLeaves),
+                    validityLeaf(group, groupPath),
                     repeatedDescendantLeavesOf(group, groupPath));
+        }
+
+        /**
+         * The leaf whose def stream reports the struct's per-row presence: a row-aligned descendant when one exists,
+         * otherwise any present descendant leaf (its stream is partitioned into rows at {@code rep == 0}).
+         */
+        private ColumnPath validityLeaf(SchemaNode.Group group, List<String> groupPath) {
+            ColumnPath rowAligned = DremelAssembler.firstRowAlignedDescendantLeaf(group, groupPath, presentLeaves);
+            if (rowAligned != null) {
+                return rowAligned;
+            }
+            return firstPresentDescendantLeaf(group, groupPath);
         }
 
         private StructFieldPlan structFieldPlan(SchemaNode child, List<String> childPath) {
