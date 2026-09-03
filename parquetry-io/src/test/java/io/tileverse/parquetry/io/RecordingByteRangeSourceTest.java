@@ -102,16 +102,21 @@ class RecordingByteRangeSourceTest {
         try (RecordingByteRangeSource recording = new RecordingByteRangeSource(sourceOf(1_000))) {
             AtomicBoolean appending = new AtomicBoolean(true);
             CountDownLatch readersLooping = new CountDownLatch(readers);
+            CountDownLatch growthSeen = new CountDownLatch(1);
             try (ExecutorService pool = Executors.newFixedThreadPool(writers + readers)) {
                 List<Future<Integer>> observeTasks = new ArrayList<>();
                 for (int t = 0; t < readers; t++) {
-                    observeTasks.add(pool.submit(() -> observeWhileAppending(recording, appending, readersLooping)));
+                    observeTasks.add(
+                            pool.submit(() -> observeWhileAppending(recording, appending, readersLooping, growthSeen)));
                 }
                 List<Future<?>> appendTasks = new ArrayList<>();
                 for (int t = 0; t < writers; t++) {
                     appendTasks.add(pool.submit(() -> {
                         awaitReadersOrFail(readersLooping);
                         for (int i = 0; i < readsPerWriter; i++) {
+                            if (i == readsPerWriter / 2) {
+                                awaitGrowthSeenOrFail(growthSeen);
+                            }
                             recording.read(0, MemorySegment.ofArray(new byte[1]));
                         }
                         return null;
@@ -143,12 +148,26 @@ class RecordingByteRangeSourceTest {
     }
 
     /**
+     * Holds every writer at the halfway point until some reader has observed the recorded list grow. Without this
+     * handshake a starved scheduler (small CI runners) can run the whole append phase between two reader iterations:
+     * every reader then sees only the empty list and the final assertion reports a vacuous run. Half the load is
+     * already appended when writers arrive here, meaning one scheduled reader iteration is enough to release them.
+     */
+    private static void awaitGrowthSeenOrFail(CountDownLatch growthSeen) throws InterruptedException {
+        boolean seen = growthSeen.await(30, TimeUnit.SECONDS);
+        assertThat(seen).as("a reader observed the recorded list grow").isTrue();
+    }
+
+    /**
      * Snapshots and walks the recorded ranges until appending stops, returning how many times the walked list was
      * longer than the previous one. Handing out a live view of the recorded list instead of a snapshot would throw
      * {@link ConcurrentModificationException} mid-walk here.
      */
     private static int observeWhileAppending(
-            RecordingByteRangeSource recording, AtomicBoolean appending, CountDownLatch readersLooping) {
+            RecordingByteRangeSource recording,
+            AtomicBoolean appending,
+            CountDownLatch readersLooping,
+            CountDownLatch growthSeen) {
         int growthObservations = 0;
         int previousSize = 0;
         boolean signalledLooping = false;
@@ -158,6 +177,7 @@ class RecordingByteRangeSourceTest {
                 assertThat(snapshot.size()).isGreaterThanOrEqualTo(previousSize);
                 if (snapshot.size() > previousSize) {
                     growthObservations++;
+                    growthSeen.countDown();
                 }
                 previousSize = snapshot.size();
                 long bytes = 0;
