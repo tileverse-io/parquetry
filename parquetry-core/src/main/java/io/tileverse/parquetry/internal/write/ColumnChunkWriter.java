@@ -785,8 +785,6 @@ public final class ColumnChunkWriter implements AutoCloseable {
         Statistics statistics = chunkStats.finishChunk();
         GeospatialStatistics geospatialStatistics = geoStats != null ? geoStats.finish() : null;
 
-        tempFileChannel.force(true);
-
         MemorySegment bloomBytes = bloomFilter != null ? captureBloomBytes(bloomFilter) : MemorySegment.NULL;
 
         return new ColumnChunkResult(
