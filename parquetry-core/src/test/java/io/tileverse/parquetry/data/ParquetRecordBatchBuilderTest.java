@@ -25,6 +25,7 @@ import java.util.OptionalInt;
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -164,6 +165,27 @@ class ParquetRecordBatchBuilderTest {
         assertThat(r1.getLong(1)).isEqualTo(200L);
         assertThat(r1.getDouble(2)).isEqualTo(2.5);
         assertThat(r1.isNull(3)).isTrue();
+    }
+
+    @Test
+    void byteEstimateGrowsWithAuthoredValues() {
+        SchemaNode.Primitive name = new SchemaNode.Primitive(
+                "name",
+                Repetition.OPTIONAL,
+                PrimitiveKind.BYTE_ARRAY,
+                OptionalInt.empty(),
+                Optional.of(new LogicalType.StringType()),
+                -1);
+        SchemaNode.Group root =
+                new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(name), Optional.empty(), -1);
+        ParquetRecordBatchBuilder builder = ParquetRecordBatchBuilder.forSchema(new ParquetSchema(root));
+
+        assertThat(builder.approxBatchBytes()).isZero();
+        builder.setString(0, "twelve chars").endRow();
+        long afterFirstRow = builder.approxBatchBytes();
+        assertThat(afterFirstRow).isPositive();
+        builder.setString(0, "twelve chars").endRow();
+        assertThat(builder.approxBatchBytes()).isGreaterThan(afterFirstRow);
     }
 
     // --- nested container authoring misuse ---
