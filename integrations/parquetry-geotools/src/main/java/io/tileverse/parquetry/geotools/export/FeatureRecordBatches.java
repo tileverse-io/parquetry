@@ -100,6 +100,9 @@ public final class FeatureRecordBatches {
      *
      * <p>The returned stream must be closed (try-with-resources) to release the underlying feature iterator.
      *
+     * <p>Geometries are encoded easting-first, as Parquet requires of stored coordinates. A collection whose CRS
+     * declares latitude before longitude is reprojected first; see {@link EastingFirstFeatures}.
+     *
      * @throws IllegalArgumentException when {@code batchRows} is not positive
      */
     public Stream<ParquetRecordBatch> batches(
@@ -123,7 +126,8 @@ public final class FeatureRecordBatches {
         if (maxBatchBytes < 1) {
             throw new IllegalArgumentException("maxBatchBytes must be positive: " + maxBatchBytes);
         }
-        FeatureIterator<SimpleFeature> iterator = features.features();
+        FeatureCollection<SimpleFeatureType, SimpleFeature> eastingFirst = EastingFirstFeatures.reproject(features);
+        FeatureIterator<SimpleFeature> iterator = eastingFirst.features();
         BatchIterator batchIterator = new BatchIterator(iterator, batchRows, maxBatchBytes);
         Spliterator<ParquetRecordBatch> spliterator =
                 Spliterators.spliteratorUnknownSize(batchIterator, Spliterator.ORDERED | Spliterator.NONNULL);
@@ -169,7 +173,7 @@ public final class FeatureRecordBatches {
         if (epsg == null) {
             return CoordinateReferenceSystems.ogcCrs84();
         }
-        return CoordinateReferenceSystems.forEpsg(epsg).orElseGet(CoordinateReferenceSystems::ogcCrs84);
+        return EastingFirstCrs.forEpsg(epsg).orElseGet(CoordinateReferenceSystems::ogcCrs84);
     }
 
     /** Rebuilds {@code base} through its canonical constructor with {@code crs} replacing its own CRS map. */
