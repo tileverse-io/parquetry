@@ -192,11 +192,11 @@ class StructNestedListWriteRoundTripIT {
     }
 
     /**
-     * Opening a list directly inside an open list element is not authorable through the scope verbs and must fail with
-     * a clear message naming the open container, rather than producing wrong output.
+     * Inside an open element scope a container path resolves RELATIVE to the element wrapper; a path that does not
+     * anchor there must fail with a clear message, rather than producing wrong output.
      */
     @Test
-    void openingContainerInsideContainerScopeThrowsClearly() {
+    void openingContainerWithABadRelativePathThrowsClearly() {
         ParquetSchema schema = personWithPhonesSchema();
         ParquetRecordBatchBuilder builder = ParquetRecordBatchBuilder.forSchema(schema);
 
@@ -205,7 +205,7 @@ class StructNestedListWriteRoundTripIT {
         ColumnPath nested = ColumnPath.of("nested");
         assertThatThrownBy(() -> builder.beginList(nested))
                 .isInstanceOf(ParquetWriteException.class)
-                .hasMessageContaining("phones");
+                .hasMessageContaining("does not start with the expected node");
     }
 
     // --- value extraction ---

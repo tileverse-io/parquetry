@@ -19,6 +19,8 @@ import java.io.UncheckedIOException;
 import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -206,11 +208,29 @@ public final class ParquetRecordBatchBuilder implements AutoCloseable {
      * {@link #endList()} is an empty (present) list.
      */
     public ParquetRecordBatchBuilder beginList(ColumnPath path) {
-        rejectContainerInsideContainerScope(path, "list");
+        ContainerScope enclosing = containerScopeStack.peek();
+        if (enclosing != null) {
+            return beginNestedList(enclosing, path);
+        }
         ColumnAccumulator.ListAccumulator listAcc = resolveListAccumulator(path);
         listAcc.markPresent();
         String elementNodeName = listElementNodeName(path);
         containerScopeStack.push(ContainerScope.list(path, listAcc, elementNodeName));
+        return this;
+    }
+
+    /**
+     * Opens a list nested inside the active element or entry through structs, addressed by its relative path from the
+     * repeated wrapper node ({@code element} / {@code key_value}). The enclosing element stays open and is still closed
+     * by its own {@link #endElement()} / {@link #endEntry()}. A container that is ITSELF the current element or entry
+     * value has no relative name and is opened with {@link #addList()} instead.
+     */
+    private ParquetRecordBatchBuilder beginNestedList(ContainerScope enclosing, ColumnPath path) {
+        requireOpenElementForNestedBegin(enclosing, "list", path);
+        ColumnAccumulator.ListAccumulator inner = requireInnerList(enclosing.relativeTarget(path, "beginList"), path);
+        inner.markPresent();
+        ColumnPath absolutePath = relativeToAbsolute(enclosing, path);
+        containerScopeStack.push(ContainerScope.list(absolutePath, inner, listElementNodeName(absolutePath)));
         return this;
     }
 
@@ -248,6 +268,127 @@ public final class ParquetRecordBatchBuilder implements AutoCloseable {
         ContainerScope scope = requireListScope(ContainerScope.END_ELEMENT);
         scope.closeElement();
         return this;
+    }
+
+    /**
+     * Opens a list that is directly the current element of the active list scope, or the current entry's value of the
+     * active map scope. In a list scope this starts a fresh element whose content is the inner list, and closing the
+     * inner scope with {@link #endList()} commits that element ({@link #addElement()}/{@link #endElement()} are not
+     * involved). In a map scope it requires an open entry and stages the inner list as the entry's value; the entry is
+     * committed by {@link #endEntry()} as usual.
+     */
+    public ParquetRecordBatchBuilder addList() {
+        ContainerScope parent = requireOpenContainerScope("addList");
+        if (parent.isList()) {
+            requireNoExplicitElement(parent, "addList");
+            ColumnPath innerPath = listElementContainerPath(parent.path());
+            ColumnAccumulator.ListAccumulator inner = requireInnerList(parent.elementAccumulator(), innerPath);
+            inner.markPresent();
+            containerScopeStack.push(ContainerScope.listAsElement(innerPath, inner, listElementNodeName(innerPath)));
+            return this;
+        }
+        requireOpenEntry(parent, "addList");
+        ColumnPath innerPath = mapValueContainerPath(parent.path());
+        ColumnAccumulator.ListAccumulator inner = requireInnerList(parent.mapValueAccumulator(), innerPath);
+        inner.markPresent();
+        containerScopeStack.push(ContainerScope.list(innerPath, inner, listElementNodeName(innerPath)));
+        return this;
+    }
+
+    /**
+     * Opens a map that is directly the current element of the active list scope, or the current entry's value of the
+     * active map scope; the exact counterpart of {@link #addList()} for map-typed elements and values.
+     */
+    public ParquetRecordBatchBuilder addMap() {
+        ContainerScope parent = requireOpenContainerScope("addMap");
+        if (parent.isList()) {
+            requireNoExplicitElement(parent, "addMap");
+            ColumnPath innerPath = listElementContainerPath(parent.path());
+            ColumnAccumulator.MapAccumulator inner = requireInnerMap(parent.elementAccumulator(), innerPath);
+            inner.markPresent();
+            containerScopeStack.push(innerMapScope(innerPath, inner, true));
+            return this;
+        }
+        requireOpenEntry(parent, "addMap");
+        ColumnPath innerPath = mapValueContainerPath(parent.path());
+        ColumnAccumulator.MapAccumulator inner = requireInnerMap(parent.mapValueAccumulator(), innerPath);
+        inner.markPresent();
+        containerScopeStack.push(innerMapScope(innerPath, inner, false));
+        return this;
+    }
+
+    private ContainerScope innerMapScope(
+            ColumnPath innerPath, ColumnAccumulator.MapAccumulator inner, boolean asElement) {
+        SchemaNode.Group keyValue = mapKeyValueNode(innerPath);
+        String keyName = keyValue.children().get(0).name();
+        String valueName = keyValue.children().get(1).name();
+        if (asElement) {
+            return ContainerScope.mapAsElement(innerPath, inner, keyValue.name(), keyName, valueName);
+        }
+        return ContainerScope.map(innerPath, inner, keyValue.name(), keyName, valueName);
+    }
+
+    /** The schema path of a list's element node: the single child of the list's repeated child group. */
+    private ColumnPath listElementContainerPath(ColumnPath listPath) {
+        SchemaNode.Group listGroup = requireGroup(listPath, "list");
+        SchemaNode repeated = listGroup.children().get(0);
+        if (!(repeated instanceof SchemaNode.Group repeatedGroup)) {
+            throw new ParquetWriteException(
+                    "List " + listPath.dot() + " has a primitive element; author it with the scalar add* verbs");
+        }
+        SchemaNode element = repeatedGroup.children().get(0);
+        return childPath(listPath, repeatedGroup.name(), element.name());
+    }
+
+    /** The schema path of a map's value node under its {@code key_value} group. */
+    private ColumnPath mapValueContainerPath(ColumnPath mapPath) {
+        SchemaNode.Group keyValue = mapKeyValueNode(mapPath);
+        SchemaNode value = keyValue.children().get(1);
+        return childPath(mapPath, keyValue.name(), value.name());
+    }
+
+    private static ColumnPath childPath(ColumnPath base, String... names) {
+        List<String> parts = new ArrayList<>(base.numParts() + names.length);
+        for (int i = 0; i < base.numParts(); i++) {
+            parts.add(base.part(i));
+        }
+        parts.addAll(Arrays.asList(names));
+        return ColumnPath.of(parts);
+    }
+
+    private ContainerScope requireOpenContainerScope(String verb) {
+        ContainerScope scope = containerScopeStack.peek();
+        if (scope == null) {
+            throw new ParquetWriteException(verb + " called without an open list or map scope");
+        }
+        return scope;
+    }
+
+    private void requireNoExplicitElement(ContainerScope scope, String verb) {
+        if (scope.elementStarted()) {
+            throw new IllegalStateException(
+                    verb + " must not be mixed with addElement()/endElement() within one element");
+        }
+    }
+
+    private void requireOpenEntry(ContainerScope scope, String verb) {
+        if (!scope.elementStarted()) {
+            throw new ParquetWriteException(verb + " requires an open map entry; call putEntry() first");
+        }
+    }
+
+    private ColumnAccumulator.ListAccumulator requireInnerList(ColumnAccumulator acc, ColumnPath innerPath) {
+        if (!(acc instanceof ColumnAccumulator.ListAccumulator inner)) {
+            throw new ParquetWriteException("Column " + innerPath.dot() + " is not a list group");
+        }
+        return inner;
+    }
+
+    private ColumnAccumulator.MapAccumulator requireInnerMap(ColumnAccumulator acc, ColumnPath innerPath) {
+        if (!(acc instanceof ColumnAccumulator.MapAccumulator inner)) {
+            throw new ParquetWriteException("Column " + innerPath.dot() + " is not a map group");
+        }
+        return inner;
     }
 
     /** Appends one int element to the active list. Shorthand for an {@link #addElement()} of a scalar element. */
@@ -318,11 +459,23 @@ public final class ParquetRecordBatchBuilder implements AutoCloseable {
         return scope;
     }
 
-    /** Closes the innermost open list scope. Its elements are committed on the enclosing {@link #endRow()}. */
+    /**
+     * Closes the innermost open list scope. A list opened with {@link #addList()} commits itself as the enclosing
+     * list's element; a top-level or entry-value list is committed by the enclosing {@link #endRow()} /
+     * {@link #endEntry()}.
+     */
     public ParquetRecordBatchBuilder endList() {
-        requireListScope("endList");
+        ContainerScope scope = requireListScope("endList");
         containerScopeStack.pop();
+        commitParentElementIfNeeded(scope);
         return this;
+    }
+
+    /** Commits the enclosing list's current element when the closed scope was opened as that element. */
+    private void commitParentElementIfNeeded(ContainerScope closed) {
+        if (closed.commitsParentElement()) {
+            containerScopeStack.peek().commitElement();
+        }
     }
 
     private ColumnAccumulator.ListAccumulator resolveListAccumulator(ColumnPath path) {
@@ -349,7 +502,10 @@ public final class ParquetRecordBatchBuilder implements AutoCloseable {
      * map's {@code key_value} node. A map with no entry authored before {@link #endMap()} is an empty (present) map.
      */
     public ParquetRecordBatchBuilder beginMap(ColumnPath path) {
-        rejectContainerInsideContainerScope(path, "map");
+        ContainerScope enclosing = containerScopeStack.peek();
+        if (enclosing != null) {
+            return beginNestedMap(enclosing, path);
+        }
         ColumnAccumulator.MapAccumulator mapAcc = resolveMapAccumulator(path);
         mapAcc.markPresent();
         SchemaNode.Group keyValue = mapKeyValueNode(path);
@@ -357,6 +513,45 @@ public final class ParquetRecordBatchBuilder implements AutoCloseable {
         String valueName = keyValue.children().get(1).name();
         containerScopeStack.push(ContainerScope.map(path, mapAcc, keyValue.name(), keyName, valueName));
         return this;
+    }
+
+    /** The {@link #beginNestedList} counterpart for maps nested inside the active element or entry through structs. */
+    private ParquetRecordBatchBuilder beginNestedMap(ContainerScope enclosing, ColumnPath path) {
+        requireOpenElementForNestedBegin(enclosing, "map", path);
+        ColumnAccumulator.MapAccumulator inner = requireInnerMap(enclosing.relativeTarget(path, "beginMap"), path);
+        inner.markPresent();
+        ColumnPath absolutePath = relativeToAbsolute(enclosing, path);
+        containerScopeStack.push(innerMapScope(absolutePath, inner, false));
+        return this;
+    }
+
+    private void requireOpenElementForNestedBegin(ContainerScope enclosing, String kind, ColumnPath path) {
+        if (!enclosing.elementStarted()) {
+            throw new ParquetWriteException("Cannot open " + kind + " " + path.dot()
+                    + " by path inside the open container scope "
+                    + enclosing.path().dot()
+                    + " without an open element or entry; use addList()/addMap() for a container that is itself the"
+                    + " current element or entry value, or open the element first (addElement()/putEntry())");
+        }
+    }
+
+    /**
+     * The absolute schema path of a scope-relative container path. A list-relative path anchors at the element node and
+     * gains the repeated child segment; a map-relative path already starts at the {@code key_value} node.
+     */
+    private ColumnPath relativeToAbsolute(ContainerScope enclosing, ColumnPath relative) {
+        List<String> parts = new ArrayList<>();
+        for (int i = 0; i < enclosing.path().numParts(); i++) {
+            parts.add(enclosing.path().part(i));
+        }
+        if (enclosing.isList()) {
+            SchemaNode.Group listGroup = requireGroup(enclosing.path(), "list");
+            parts.add(listGroup.children().get(0).name());
+        }
+        for (int i = 0; i < relative.numParts(); i++) {
+            parts.add(relative.part(i));
+        }
+        return ColumnPath.of(parts);
     }
 
     /** The {@code key_value} node of a map. */
@@ -396,10 +591,14 @@ public final class ParquetRecordBatchBuilder implements AutoCloseable {
         return this;
     }
 
-    /** Closes the innermost open map scope. Its entries are committed on the enclosing {@link #endRow()}. */
+    /**
+     * Closes the innermost open map scope. A map opened with {@link #addMap()} commits itself as the enclosing list's
+     * element; a top-level or entry-value map is committed by the enclosing {@link #endRow()} / {@link #endEntry()}.
+     */
     public ParquetRecordBatchBuilder endMap() {
-        requireMapScope("endMap");
+        ContainerScope scope = requireMapScope("endMap");
         containerScopeStack.pop();
+        commitParentElementIfNeeded(scope);
         return this;
     }
 
@@ -432,23 +631,6 @@ public final class ParquetRecordBatchBuilder implements AutoCloseable {
             return resolveTopLevelAccumulator(path);
         }
         return resolveContainerInStructScope(path, scope);
-    }
-
-    /**
-     * Rejects opening a list or map directly inside an open list or map scope. A container nested inside a list element
-     * or map entry (a list of lists, a map whose value is a list) is not authorable through the scope verbs: the active
-     * element setters address leaves under the element, not a fresh container. Rejecting it names the open container
-     * rather than letting the path resolve to a wrong target.
-     */
-    private void rejectContainerInsideContainerScope(ColumnPath path, String kind) {
-        if (containerScopeStack.isEmpty()) {
-            return;
-        }
-        ContainerScope active = containerScopeStack.peek();
-        throw new ParquetWriteException(
-                "Cannot open " + kind + " " + path.dot()
-                        + " inside the open container scope " + active.path().dot()
-                        + "; a list or map nested inside a list element or map entry is not authorable through the scope verbs");
     }
 
     private ColumnAccumulator resolveTopLevelAccumulator(ColumnPath path) {
