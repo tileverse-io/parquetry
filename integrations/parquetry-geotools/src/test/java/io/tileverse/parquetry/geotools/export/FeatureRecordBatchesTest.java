@@ -207,15 +207,18 @@ class FeatureRecordBatchesTest {
         assertThat(decoded.getCoordinate().getZ()).isEqualTo(5.0);
     }
 
+    /**
+     * WGS84 geometry is declared as OGC:CRS84 rather than EPSG:4326: coordinates are stored longitude-first, and CRS84
+     * is the identifier that says so.
+     */
     @Test
-    void withGeometryCrsAddsResolvedEpsgForMissingColumn() throws Exception {
+    void withGeometryCrsAddsResolvedCrsForMissingColumn() throws Exception {
         SimpleFeatureType featureType = buildFeatureType();
         FeatureRecordBatches recordBatches = FeatureRecordBatches.forType(featureType);
 
         WriteOptions rebuilt = recordBatches.withGeometryCrs(WriteOptions.defaults());
 
-        assertThat(rebuilt.crs())
-                .containsEntry("geom", CoordinateReferenceSystems.forEpsg(4326).orElseThrow());
+        assertThat(rebuilt.crs()).containsEntry("geom", CoordinateReferenceSystems.ogcCrs84());
     }
 
     @Test

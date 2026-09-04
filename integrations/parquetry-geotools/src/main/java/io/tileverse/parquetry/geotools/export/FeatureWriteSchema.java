@@ -46,7 +46,6 @@ import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
-import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystems;
 
 /**
  * Inverts a GeoTools {@link SimpleFeatureType} into the Parquet write schema and per-attribute plan a feature writer
@@ -192,12 +191,13 @@ record FeatureWriteSchema(
 
     /**
      * The {@link GeoColumn} for a geometry column: WKB encoding, an unknown geometry-types list (GeoParquet semantics
-     * for "not declared"), and the PROJJSON CRS resolved from its EPSG code when one was found.
+     * for "not declared"), and the PROJJSON CRS the stored coordinate order calls for, resolved from its EPSG code when
+     * one was found.
      */
     private static GeoColumn geoColumn(String columnName, Map<String, Integer> geometryEpsg) {
         Integer epsg = geometryEpsg.get(columnName);
         Optional<io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem> crs =
-                epsg == null ? Optional.empty() : CoordinateReferenceSystems.forEpsg(epsg);
+                epsg == null ? Optional.empty() : EastingFirstCrs.forEpsg(epsg);
         return GeoColumn.builder()
                 .encoding(Optional.of("WKB"))
                 .geometryTypes(List.of())
