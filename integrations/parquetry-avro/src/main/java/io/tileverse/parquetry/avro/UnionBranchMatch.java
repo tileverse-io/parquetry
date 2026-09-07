@@ -38,12 +38,12 @@ final class UnionBranchMatch {
     static boolean accepts(AvroSchema schema, Object value) {
         return switch (schema) {
             case AvroSchema.Ref ref -> accepts(ref.target(), value);
-            case AvroSchema.Union ignored -> false;
+            case AvroSchema.Union _ -> false;
             case AvroSchema.Primitive primitive -> acceptsPrimitive(primitive, value);
-            case AvroSchema.Record ignored -> value instanceof AvroRecord || value instanceof Map<?, ?>;
-            case AvroSchema.Array ignored -> value instanceof Collection<?> || isArray(value);
-            case AvroSchema.Map ignored -> value instanceof Map<?, ?>;
-            case AvroSchema.Enum ignored -> value instanceof CharSequence;
+            case AvroSchema.Record _ -> value instanceof AvroRecord || value instanceof Map<?, ?>;
+            case AvroSchema.Array _ -> value instanceof Collection<?> || isArray(value);
+            case AvroSchema.Map _ -> value instanceof Map<?, ?>;
+            case AvroSchema.Enum _ -> value instanceof CharSequence;
             case AvroSchema.Fixed fixed -> acceptsFixed(fixed, value);
         };
     }

@@ -20,7 +20,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.geotools.api.feature.simple.SimpleFeature;
@@ -105,10 +104,10 @@ class FeatureRecordBatchesTest {
         ParquetRecordBatch batch = batches.get(0);
         assertThat(batch.rowCount()).isEqualTo(6);
         for (int i = 0; i < 6; i++) {
-            ParquetRecord record = batch.materialize(i);
-            assertThat(record.isNull(ColumnPath.of("geom"))).isEqualTo(i % 3 == 0);
-            assertThat(record.isNull(ColumnPath.of("name"))).isEqualTo(i % 2 == 0);
-            assertThat(record.getInt(ColumnPath.of("count"))).isEqualTo(i);
+            ParquetRecord row = batch.materialize(i);
+            assertThat(row.isNull(ColumnPath.of("geom"))).isEqualTo(i % 3 == 0);
+            assertThat(row.isNull(ColumnPath.of("name"))).isEqualTo(i % 2 == 0);
+            assertThat(row.getInt(ColumnPath.of("count"))).isEqualTo(i);
         }
     }
 
@@ -156,8 +155,8 @@ class FeatureRecordBatchesTest {
         List<ParquetRecordBatch> batches = collectBatches(FeatureRecordBatches.forType(featureType), features, 10);
 
         ParquetRecordBatch batch = batches.get(0);
-        ParquetRecord record = batch.materialize(0);
-        byte[] wkb = record.getBinary(ColumnPath.of("geom"));
+        ParquetRecord row = batch.materialize(0);
+        byte[] wkb = row.getBinary(ColumnPath.of("geom"));
         Point decoded = (Point) new MemorySegmentWkbReader().read(java.lang.foreign.MemorySegment.ofArray(wkb));
 
         assertThat(decoded.equalsExact(sourcePoint)).isTrue();
@@ -222,7 +221,7 @@ class FeatureRecordBatchesTest {
     }
 
     @Test
-    void withGeometryCrsFallsBackToCrs84WhenEpsgUnresolved() throws Exception {
+    void withGeometryCrsFallsBackToCrs84WhenEpsgUnresolved() {
         SimpleFeatureTypeBuilder typeBuilder = new SimpleFeatureTypeBuilder();
         typeBuilder.setName("t");
         typeBuilder.add("geom", Point.class);
@@ -278,7 +277,7 @@ class FeatureRecordBatchesTest {
             FeatureCollection<SimpleFeatureType, SimpleFeature> features,
             int batchRows) {
         try (Stream<ParquetRecordBatch> stream = recordBatches.batches(features, batchRows)) {
-            return stream.collect(Collectors.toList());
+            return stream.toList();
         }
     }
 
@@ -292,7 +291,7 @@ class FeatureRecordBatchesTest {
             int batchRows,
             long maxBatchBytes) {
         try (Stream<ParquetRecordBatch> stream = recordBatches.batches(features, batchRows, maxBatchBytes)) {
-            return stream.collect(Collectors.toList());
+            return stream.toList();
         }
     }
 

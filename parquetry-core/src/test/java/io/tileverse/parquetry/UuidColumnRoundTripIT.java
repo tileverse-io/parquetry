@@ -91,7 +91,7 @@ class UuidColumnRoundTripIT {
         assertThat(readIds(file, Pred.col(ID).lt(all.get(5)))).containsExactlyInAnyOrderElementsOf(firstFive);
     }
 
-    private List<UUID> readIds(Path file, Predicate predicate) throws Exception {
+    private List<UUID> readIds(Path file, Predicate predicate) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetFileReader reader = ParquetFileReader.open(source);
             try (Stream<ParquetRecord> rows = reader.read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {

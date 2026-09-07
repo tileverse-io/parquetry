@@ -40,6 +40,9 @@ import io.tileverse.parquetry.filter.Bbox;
  */
 final class DuckDbReadEngine implements ReadEngine {
 
+    private static final String WHERE = " WHERE ";
+    private static final String AND = " AND ";
+
     private final ReadContext context;
     private DuckDbProfile lastProfile;
     private long sink;
@@ -129,54 +132,71 @@ final class DuckDbReadEngine implements ReadEngine {
      */
     private void touchValue(ResultSet resultSet, int column, int sqlType) throws SQLException {
         switch (sqlType) {
-            case Types.BOOLEAN, Types.BIT -> {
-                boolean value = resultSet.getBoolean(column);
-                if (!resultSet.wasNull()) {
-                    sink += value ? 1L : 0L;
-                }
-            }
-            case Types.TINYINT, Types.SMALLINT, Types.INTEGER -> {
-                int value = resultSet.getInt(column);
-                if (!resultSet.wasNull()) {
-                    sink += value;
-                }
-            }
-            case Types.BIGINT -> {
-                long value = resultSet.getLong(column);
-                if (!resultSet.wasNull()) {
-                    sink += value;
-                }
-            }
-            case Types.REAL -> {
-                float value = resultSet.getFloat(column);
-                if (!resultSet.wasNull()) {
-                    sink += (long) value;
-                }
-            }
-            case Types.FLOAT, Types.DOUBLE -> {
-                double value = resultSet.getDouble(column);
-                if (!resultSet.wasNull()) {
-                    sink += (long) value;
-                }
-            }
-            case Types.CHAR, Types.VARCHAR, Types.LONGVARCHAR, Types.NVARCHAR, Types.LONGNVARCHAR -> {
-                String value = resultSet.getString(column);
-                if (value != null) {
-                    sink += value.length();
-                }
-            }
-            case Types.BINARY, Types.VARBINARY, Types.LONGVARBINARY -> {
-                byte[] value = resultSet.getBytes(column);
-                if (value != null) {
-                    sink += value.length;
-                }
-            }
-            default -> {
-                Object value = resultSet.getObject(column);
-                if (value != null) {
-                    sink += value.hashCode();
-                }
-            }
+            case Types.BOOLEAN, Types.BIT -> touchBoolean(resultSet, column);
+            case Types.TINYINT, Types.SMALLINT, Types.INTEGER -> touchInt(resultSet, column);
+            case Types.BIGINT -> touchLong(resultSet, column);
+            case Types.REAL -> touchFloat(resultSet, column);
+            case Types.FLOAT, Types.DOUBLE -> touchDouble(resultSet, column);
+            case Types.CHAR, Types.VARCHAR, Types.LONGVARCHAR, Types.NVARCHAR, Types.LONGNVARCHAR ->
+                touchString(resultSet, column);
+            case Types.BINARY, Types.VARBINARY, Types.LONGVARBINARY -> touchBytes(resultSet, column);
+            default -> touchObject(resultSet, column);
+        }
+    }
+
+    private void touchBoolean(ResultSet resultSet, int column) throws SQLException {
+        boolean value = resultSet.getBoolean(column);
+        if (!resultSet.wasNull()) {
+            sink += value ? 1L : 0L;
+        }
+    }
+
+    private void touchInt(ResultSet resultSet, int column) throws SQLException {
+        int value = resultSet.getInt(column);
+        if (!resultSet.wasNull()) {
+            sink += value;
+        }
+    }
+
+    private void touchLong(ResultSet resultSet, int column) throws SQLException {
+        long value = resultSet.getLong(column);
+        if (!resultSet.wasNull()) {
+            sink += value;
+        }
+    }
+
+    private void touchFloat(ResultSet resultSet, int column) throws SQLException {
+        float value = resultSet.getFloat(column);
+        if (!resultSet.wasNull()) {
+            sink += (long) value;
+        }
+    }
+
+    private void touchDouble(ResultSet resultSet, int column) throws SQLException {
+        double value = resultSet.getDouble(column);
+        if (!resultSet.wasNull()) {
+            sink += (long) value;
+        }
+    }
+
+    private void touchString(ResultSet resultSet, int column) throws SQLException {
+        String value = resultSet.getString(column);
+        if (value != null) {
+            sink += value.length();
+        }
+    }
+
+    private void touchBytes(ResultSet resultSet, int column) throws SQLException {
+        byte[] value = resultSet.getBytes(column);
+        if (value != null) {
+            sink += value.length;
+        }
+    }
+
+    private void touchObject(ResultSet resultSet, int column) throws SQLException {
+        Object value = resultSet.getObject(column);
+        if (value != null) {
+            sink += value.hashCode();
         }
     }
 
@@ -186,10 +206,10 @@ final class DuckDbReadEngine implements ReadEngine {
         String where =
                 switch (scenario) {
                     case NO_FILTER -> "";
-                    case ATTRIBUTE -> " WHERE " + attributeSql();
-                    case BBOX -> " WHERE " + bboxSql();
-                    case SPATIAL -> " WHERE " + spatialSql();
-                    case ATTRIBUTE_AND_SPATIAL -> " WHERE " + attributeSql() + " AND " + spatialSql();
+                    case ATTRIBUTE -> WHERE + attributeSql();
+                    case BBOX -> WHERE + bboxSql();
+                    case SPATIAL -> WHERE + spatialSql();
+                    case ATTRIBUTE_AND_SPATIAL -> WHERE + attributeSql() + AND + spatialSql();
                 };
         return "SELECT " + selectList() + " FROM " + source + where;
     }
@@ -222,9 +242,9 @@ final class DuckDbReadEngine implements ReadEngine {
         if (context.bboxCoveringAvailable()) {
             String bbox = context.bboxColumn();
             return structField(bbox, "xmin") + " <= " + q.maxX()
-                    + " AND " + structField(bbox, "xmax") + " >= " + q.minX()
-                    + " AND " + structField(bbox, "ymin") + " <= " + q.maxY()
-                    + " AND " + structField(bbox, "ymax") + " >= " + q.minY();
+                    + AND + structField(bbox, "xmax") + " >= " + q.minX()
+                    + AND + structField(bbox, "ymin") + " <= " + q.maxY()
+                    + AND + structField(bbox, "ymax") + " >= " + q.minY();
         }
         String geom = context.geometryColumnName();
         return "ST_XMin(" + geom + ") <= " + q.maxX()

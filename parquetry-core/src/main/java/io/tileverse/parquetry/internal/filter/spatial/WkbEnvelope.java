@@ -476,10 +476,9 @@ public final class WkbEnvelope {
                     intLayout = INT_BE;
                     doubleLayout = DOUBLE_BE;
                 }
-                default -> {
+                default ->
                     throw new ParquetFormatException(
                             "Invalid WKB byte-order byte: 0x" + Integer.toHexString(order & 0xff));
-                }
             }
         }
 

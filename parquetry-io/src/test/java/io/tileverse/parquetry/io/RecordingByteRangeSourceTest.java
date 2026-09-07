@@ -52,7 +52,9 @@ class RecordingByteRangeSourceTest {
             }
 
             @Override
-            public void close() {}
+            public void close() {
+                // the fixed in-memory segment holds no resource to release
+            }
         };
     }
 
@@ -174,7 +176,7 @@ class RecordingByteRangeSourceTest {
         try {
             while (appending.get() || !signalledLooping) {
                 List<RecordingByteRangeSource.Range> snapshot = recording.ranges();
-                assertThat(snapshot.size()).isGreaterThanOrEqualTo(previousSize);
+                assertThat(snapshot).hasSizeGreaterThanOrEqualTo(previousSize);
                 if (snapshot.size() > previousSize) {
                     growthObservations++;
                     growthSeen.countDown();

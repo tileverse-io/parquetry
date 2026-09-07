@@ -229,13 +229,13 @@ class IcebergNestedGuardTest {
                 name, Repetition.OPTIONAL, PrimitiveKind.DOUBLE, OptionalInt.empty(), Optional.empty(), fieldId);
     }
 
-    // Standard Parquet LIST: <name> (LIST) { repeated group list { <element> } }
+    /** The standard Parquet LIST shape: a LIST-annotated group wrapping a repeated {@code list} group of elements. */
     private static SchemaNode.Group listColumn(String name, int listId, String elementName, int elementId) {
         SchemaNode.Group repeated = group("list", -1, List.of(leaf(elementName, elementId)));
         return group(name, listId, List.of(repeated));
     }
 
-    // Standard Parquet MAP: <name> (MAP) { repeated group key_value { <key>; <value> } }
+    /** The standard Parquet MAP shape: a MAP-annotated group wrapping a repeated {@code key_value} group. */
     private static SchemaNode.Group mapColumn(
             String name, int mapId, String keyName, int keyId, String valueName, int valueId) {
         SchemaNode.Group keyValue = group("key_value", -1, List.of(leaf(keyName, keyId), leaf(valueName, valueId)));

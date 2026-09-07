@@ -52,7 +52,7 @@ class GeoParquetPushdownIT {
 
     private static final FilterFactory FF = CommonFactoryFinder.getFilterFactory();
 
-    private static CatalogDataStore store(Path dir) throws Exception {
+    private static CatalogDataStore store(Path dir) {
         Path file = TestCorpus.extractFile("geoparquet/examples/example.parquet", dir);
         FilesetCatalog catalog = FilesetCatalog.open(
                 LocalFileSource.file(file),
@@ -94,14 +94,6 @@ class GeoParquetPushdownIT {
             }
         }
         return envelope;
-    }
-
-    private static void assertSameEnvelope(ReferencedEnvelope actual, ReferencedEnvelope expected) {
-        assertThat(actual).isNotNull();
-        assertThat(actual.getMinX()).isEqualTo(expected.getMinX());
-        assertThat(actual.getMaxX()).isEqualTo(expected.getMaxX());
-        assertThat(actual.getMinY()).isEqualTo(expected.getMinY());
-        assertThat(actual.getMaxY()).isEqualTo(expected.getMaxY());
     }
 
     @Test

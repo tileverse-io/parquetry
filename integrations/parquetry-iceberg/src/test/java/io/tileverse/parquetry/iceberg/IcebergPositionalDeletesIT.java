@@ -77,7 +77,7 @@ class IcebergPositionalDeletesIT {
         withDataset(dataset -> {
             Set<Long> ids = idsOf(collect(dataset, Predicate.ALWAYS_TRUE));
 
-            assertThat(ids).doesNotContainAnyElementsOf(deletedIds());
+            assertThat(ids).isNotEmpty().doesNotContainAnyElementsOf(deletedIds());
         });
     }
 

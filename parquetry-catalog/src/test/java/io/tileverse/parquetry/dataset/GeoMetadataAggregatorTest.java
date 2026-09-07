@@ -69,8 +69,8 @@ class GeoMetadataAggregatorTest {
         Optional<GeoParquetMetadata> merged = GeoMetadataAggregator.aggregate(List.of(a, b));
         assertThat(merged).isPresent();
         BoundingBox bbox = merged.get().columns().get("geometry").bbox().orElseThrow();
-        assertThat(bbox.xmin()).isEqualTo(0);
-        assertThat(bbox.ymin()).isEqualTo(0);
+        assertThat(bbox.xmin()).isZero();
+        assertThat(bbox.ymin()).isZero();
         assertThat(bbox.xmax()).isEqualTo(20);
         assertThat(bbox.ymax()).isEqualTo(20);
         assertThat(merged.get().columns().get("geometry").geometryTypes())

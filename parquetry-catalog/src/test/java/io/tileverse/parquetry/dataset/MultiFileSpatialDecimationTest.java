@@ -37,7 +37,6 @@ import io.tileverse.parquetry.data.WriteOptions.GeoParquetMetadataMode;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.SpatialReadProbe;
-import io.tileverse.parquetry.filter.SpatialReadProbe.Decision;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.runtime.ParquetRuntime;

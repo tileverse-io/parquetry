@@ -39,7 +39,7 @@ class StructTest {
     @Test
     void indexesFieldByName() {
         Struct struct = new Struct(LOCALITY_TYPE, new Object[] {"NYC"});
-        assertThat(struct.get("locality")).isEqualTo("NYC");
+        assertThat(struct).containsEntry("locality", "NYC");
     }
 
     @Test

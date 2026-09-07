@@ -56,20 +56,25 @@ public record PageRun(long fileOffset, int length, int firstPageOrdinal) {
             PageLocation location = pageLocations.get(ordinal);
             long pageStart = location.offset();
             long pageEnd = pageStart + location.compressedPageSize();
-            if (runStart >= 0 && pageStart == runEnd) {
+            boolean abutsOpenRun = runStart >= 0 && pageStart == runEnd;
+            if (abutsOpenRun) {
                 runEnd = pageEnd;
-                continue;
+            } else {
+                if (runStart >= 0) {
+                    runs.add(spanning(runStart, runEnd, runFirstOrdinal));
+                }
+                runStart = pageStart;
+                runEnd = pageEnd;
+                runFirstOrdinal = ordinal;
             }
-            if (runStart >= 0) {
-                runs.add(new PageRun(runStart, Math.toIntExact(runEnd - runStart), runFirstOrdinal));
-            }
-            runStart = pageStart;
-            runEnd = pageEnd;
-            runFirstOrdinal = ordinal;
         }
         if (runStart >= 0) {
-            runs.add(new PageRun(runStart, Math.toIntExact(runEnd - runStart), runFirstOrdinal));
+            runs.add(spanning(runStart, runEnd, runFirstOrdinal));
         }
         return runs;
+    }
+
+    private static PageRun spanning(long start, long end, int firstPageOrdinal) {
+        return new PageRun(start, Math.toIntExact(end - start), firstPageOrdinal);
     }
 }

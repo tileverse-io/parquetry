@@ -75,7 +75,7 @@ final class PartitionTypeInference {
         try {
             Long.parseLong(raw);
             return true;
-        } catch (NumberFormatException notLong) {
+        } catch (NumberFormatException _) {
             return false;
         }
     }
@@ -87,7 +87,7 @@ final class PartitionTypeInference {
         try {
             Double.parseDouble(raw);
             return true;
-        } catch (NumberFormatException notDouble) {
+        } catch (NumberFormatException _) {
             return false;
         }
     }
@@ -96,7 +96,7 @@ final class PartitionTypeInference {
         try {
             LocalDate.parse(raw);
             return true;
-        } catch (DateTimeParseException notDate) {
+        } catch (DateTimeParseException _) {
             return false;
         }
     }

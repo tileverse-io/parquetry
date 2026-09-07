@@ -45,7 +45,7 @@ class LongVectorRowPositionsTest {
     void identitySelectionGivesContiguousPositions() {
         LongVector pos = LongVector.rowPositions(0L, Selection.ALL, 3);
 
-        assertThat(pos.getLong(0)).isEqualTo(0L);
+        assertThat(pos.getLong(0)).isZero();
         assertThat(pos.getLong(2)).isEqualTo(2L);
     }
 

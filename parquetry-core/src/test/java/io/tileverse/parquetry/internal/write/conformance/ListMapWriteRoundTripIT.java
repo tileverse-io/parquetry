@@ -137,8 +137,11 @@ class ListMapWriteRoundTripIT {
         assertThat(rows).hasSize(3);
 
         Map<String, String> map0 = stringMap(rows.get(0).get(TAGS));
-        assertThat(map0).hasSize(2).containsEntry("a", "1");
-        assertThat(map0).as("a null map value reads back as null").containsEntry("b", null);
+        assertThat(map0)
+                .hasSize(2)
+                .containsEntry("a", "1")
+                .as("a null map value reads back as null")
+                .containsEntry("b", null);
 
         assertThat(asMap(rows.get(1).get(TAGS)))
                 .as("empty map reads as a present, empty Map")

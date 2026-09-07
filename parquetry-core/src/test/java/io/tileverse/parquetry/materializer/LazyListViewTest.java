@@ -101,8 +101,7 @@ class LazyListViewTest {
 
         List<?> row = ListMaterializer.materializeAt(outer, 0, null);
 
-        assertThat(row).hasSize(3);
-        assertThat(row).isInstanceOf(ListMaterializer.LazyListView.class);
+        assertThat(row).hasSize(3).isInstanceOf(ListMaterializer.LazyListView.class);
         assertThat(row.get(0)).isInstanceOf(ListMaterializer.LazyListView.class);
         assertThat(nestedList(row, 0)).containsExactly(10, 20);
         assertThat(nestedList(row, 1)).isEmpty();
@@ -154,7 +153,7 @@ class LazyListViewTest {
 
         List<?> row = ListMaterializer.materializeAt(vec, 0, null);
 
-        assertThat(row.size()).isEqualTo(3);
+        assertThat(row).hasSize(3);
         assertThatThrownBy(() -> row.get(0)).isInstanceOf(IllegalStateException.class);
     }
 

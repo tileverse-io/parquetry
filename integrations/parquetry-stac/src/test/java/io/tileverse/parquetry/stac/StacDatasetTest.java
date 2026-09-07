@@ -97,12 +97,7 @@ class StacDatasetTest {
                     storages,
                     OpenOptions.DEFAULTS);
             try {
-                assertThatThrownBy(() -> {
-                            try (Stream<ParquetRecord> rows =
-                                    dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
-                                rows.count();
-                            }
-                        })
+                assertThatThrownBy(() -> countRows(dataset, Predicate.ALWAYS_TRUE))
                         .isInstanceOf(StacFormatException.class)
                         .hasMessageContaining("i1")
                         .hasMessageContaining("schema");
@@ -142,16 +137,12 @@ class StacDatasetTest {
     }
 
     private static void readExpectingFailure(StacDataset dataset) {
-        assertThatThrownBy(() -> {
-                    try (Stream<ParquetRecord> rows =
-                            dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
-                        rows.count();
-                    }
-                })
-                .isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> countRows(dataset, Predicate.ALWAYS_TRUE)).isInstanceOf(RuntimeException.class);
     }
 
     @Test
+    // S7466: the project style declares explicit local types rather than var
+    @SuppressWarnings("java:S7466")
     void aReadStreamDoesNotOpenEverySurvivorFooterUpFront(@TempDir Path dir) throws Exception {
         int parts = 5;
         List<StacItemRef> refs = new ArrayList<>();
@@ -169,7 +160,7 @@ class StacDatasetTest {
         try (ContainerStorages storages = new ContainerStorages(new Properties())) {
             StacDataset dataset = new StacDataset("buildings", "geometry", refs, bboxes, storages, oneAtATime);
             try {
-                try (Stream<ParquetRecord> rows =
+                try (Stream<ParquetRecord> _ =
                         dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                     // intentionally not consumed: the pre-fix guard opened every survivor's footer at this point
                 }

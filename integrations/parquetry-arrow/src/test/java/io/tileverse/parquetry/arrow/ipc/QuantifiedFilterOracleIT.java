@@ -151,7 +151,7 @@ class QuantifiedFilterOracleIT {
         }
     }
 
-    private Set<Long> matchedScoreIds(Path scoresFile) throws Exception {
+    private Set<Long> matchedScoreIds(Path scoresFile) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(scoresFile)) {
             ParquetFileReader reader = ParquetFileReader.open(source);
             ColumnPath physicalLeaf = onlyLeafUnder(reader.schema(), LOGICAL_SCORES);
@@ -201,7 +201,7 @@ class QuantifiedFilterOracleIT {
                 .isEqualTo(oracleMatches);
     }
 
-    private Set<Long> matchedIds(Path nestedFile, MatchAction match) throws Exception {
+    private Set<Long> matchedIds(Path nestedFile, MatchAction match) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(nestedFile)) {
             ParquetFileReader reader = ParquetFileReader.open(source);
             ColumnPath physicalLeaf = resolveRepeatedLeaf(reader.schema(), LOGICAL_LOCALITY);

@@ -46,7 +46,7 @@ class IcebergNestedSchemaTest {
                 """);
 
         assertThat(nested.isEmpty()).isFalse();
-        assertThat(nested.parentOf(2)).isEqualTo(0);
+        assertThat(nested.parentOf(2)).isZero();
         assertThat(nested.nameOf(2)).isEqualTo("bbox");
         assertThat(nested.parentOf(5)).isEqualTo(2);
         assertThat(nested.nameOf(5)).isEqualTo("xmin");

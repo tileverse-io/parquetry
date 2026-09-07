@@ -114,6 +114,9 @@ public final class LevelListMaterializer {
      * leaf's position in lockstep, handing struct and Variant elements (and multi-leaf nested lists) their per-element
      * windows without rescanning the span per element.
      */
+    // S2160: AbstractList defines equality element-wise per the List contract; the fields below are lazy backing
+    // state, not part of the value
+    @SuppressWarnings("java:S2160")
     static final class LevelListView extends AbstractList<Object> implements RandomAccess {
 
         private final LevelSource vec;

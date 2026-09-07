@@ -77,6 +77,7 @@ sealed interface Resolved {
         // volatile, mirroring AvroSchema.Ref: the resolver binds before the plan escapes resolve(), but plans travel
         // inside Streams across threads and callers may cache them in plain fields; without it a racing reader could
         // legally observe an unbound PlanRef and reject valid data.
+        @SuppressWarnings("java:S3077") // bound once to an immutable plan; volatile is the correct publish
         private volatile Resolved target;
 
         Resolved target() {

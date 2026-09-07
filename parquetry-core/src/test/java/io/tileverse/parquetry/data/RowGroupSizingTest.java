@@ -107,7 +107,7 @@ class RowGroupSizingTest {
     }
 
     @Test
-    void writerRoutesThroughTheRowsPolicy() throws Exception {
+    void writerRoutesThroughTheRowsPolicy() {
         ParquetSchema schema = flatSchema(requiredInt32("id"));
         WriteOptions options = WriteOptions.builder()
                 .tempDir(tempDir)
@@ -124,7 +124,7 @@ class RowGroupSizingTest {
     }
 
     @Test
-    void limitForcesRowGroupFlushUnderRowsPolicy() throws Exception {
+    void limitForcesRowGroupFlushUnderRowsPolicy() {
         WriteOptions options = WriteOptions.builder()
                 .tempDir(tempDir)
                 .rowGroupSize(RowGroupSize.rows(10_000_000L))
@@ -135,8 +135,7 @@ class RowGroupSizingTest {
         assertThat(rowGroups).isGreaterThan(1L);
     }
 
-    private long writeManyRowsWithTinyLimitAndCountRowGroups(WriteOptions options, int rows, long tinyLimit)
-            throws Exception {
+    private long writeManyRowsWithTinyLimitAndCountRowGroups(WriteOptions options, int rows, long tinyLimit) {
         ParquetSchema schema = flatSchema(requiredInt32("id"));
         ByteArrayOutputStream sink = new ByteArrayOutputStream();
         try (ParquetFileWriter writer = ParquetFileWriter.assembleWriter(

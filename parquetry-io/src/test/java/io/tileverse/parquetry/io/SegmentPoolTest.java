@@ -84,7 +84,9 @@ class SegmentPoolTest {
         assertThatCode(pooled::close).doesNotThrowAnyException();
     }
 
+    // S7466: the project style declares explicit local types rather than var
     @Test
+    @SuppressWarnings("java:S7466")
     void createReturnsIndependentPools() {
         SegmentPool a = SegmentPool.create();
         SegmentPool b = SegmentPool.create();

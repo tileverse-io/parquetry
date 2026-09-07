@@ -73,14 +73,14 @@ class CatalogDataStoreTest {
         return new CatalogDataStore(catalog) {};
     }
 
-    private static FilesetCatalog geoCatalog(Path dir) throws Exception {
+    private static FilesetCatalog geoCatalog(Path dir) {
         Path file = TestCorpus.extractFile("geoparquet/examples/example.parquet", dir);
         return FilesetCatalog.open(
                 LocalFileSource.file(file),
                 CatalogOptions.builder().datasetName("example").build());
     }
 
-    private static FilesetCatalog nonGeoCatalog(Path dir) throws Exception {
+    private static FilesetCatalog nonGeoCatalog(Path dir) {
         Path file = TestCorpus.extractFile("parquet-testing/data/alltypes_plain.parquet", dir);
         return FilesetCatalog.open(
                 LocalFileSource.file(file),

@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.variant.ShreddedVariant;
 
 class ShreddedVariantTest {
@@ -37,7 +38,9 @@ class ShreddedVariantTest {
 
     @Test
     void unsignedInt32ScalarIsRejected() {
-        assertThatThrownBy(() -> ShreddedVariant.classify(VariantSchemas.scalarUnsignedInt32Group()))
+        SchemaNode.Group unsignedInt32 = VariantSchemas.scalarUnsignedInt32Group();
+
+        assertThatThrownBy(() -> ShreddedVariant.classify(unsignedInt32))
                 .isInstanceOf(ParquetFormatException.class)
                 .hasMessageContaining("Unsupported shredded value type");
     }
@@ -54,7 +57,9 @@ class ShreddedVariantTest {
 
     @Test
     void fixedLen4WithoutLogicalTypeIsRejected() {
-        assertThatThrownBy(() -> ShreddedVariant.classify(VariantSchemas.fixedLen4Group()))
+        SchemaNode.Group fixedLen4 = VariantSchemas.fixedLen4Group();
+
+        assertThatThrownBy(() -> ShreddedVariant.classify(fixedLen4))
                 .isInstanceOf(ParquetFormatException.class)
                 .hasMessageContaining("Unsupported shredded value type");
     }
@@ -75,15 +80,18 @@ class ShreddedVariantTest {
 
     @Test
     void objectFieldThatIsAPrimitiveIsRejected() {
-        assertThatThrownBy(() -> ShreddedVariant.classify(VariantSchemas.objectWithPrimitiveFieldGroup()))
+        SchemaNode.Group objectWithPrimitiveField = VariantSchemas.objectWithPrimitiveFieldGroup();
+
+        assertThatThrownBy(() -> ShreddedVariant.classify(objectWithPrimitiveField))
                 .isInstanceOf(ParquetFormatException.class)
                 .hasMessageContaining("must be a value/typed_value group");
     }
 
     @Test
     void fieldWithNeitherValueNorTypedValueIsRejected() {
-        assertThatThrownBy(
-                        () -> ShreddedVariant.classify(VariantSchemas.objectFieldWithNeitherValueNorTypedValueGroup()))
+        SchemaNode.Group fieldWithNeither = VariantSchemas.objectFieldWithNeitherValueNorTypedValueGroup();
+
+        assertThatThrownBy(() -> ShreddedVariant.classify(fieldWithNeither))
                 .isInstanceOf(ParquetFormatException.class)
                 .hasMessageContaining("neither a value nor a typed_value");
     }

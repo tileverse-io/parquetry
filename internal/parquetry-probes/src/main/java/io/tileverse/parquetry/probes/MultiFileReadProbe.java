@@ -81,6 +81,7 @@ import io.tileverse.parquetry.tileverse.ByteRangeSources;
  * <p>One untimed warmup precedes the timed measurement (a single file read for {@code perFile}, a whole run for
  * {@code fileset}); it warms the JIT and the HTTP connection. The probe prints one parseable line per run.
  */
+@SuppressWarnings("java:S106") // a probe tool reports to stdout by design; its output is read and diffed by hand
 public final class MultiFileReadProbe {
 
     private MultiFileReadProbe() {}
@@ -132,6 +133,7 @@ public final class MultiFileReadProbe {
         }
     }
 
+    @SuppressWarnings("java:S1172") // the JVM entry-point signature; every setting comes from system properties
     public static void main(String[] args) {
         String baseUrl = requiredProperty("probe.baseUrl");
         int fileCount = Integer.parseInt(requiredProperty("probe.fileCount"));

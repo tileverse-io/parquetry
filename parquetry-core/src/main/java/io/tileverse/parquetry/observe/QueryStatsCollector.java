@@ -16,7 +16,6 @@
 package io.tileverse.parquetry.observe;
 
 import java.util.EnumMap;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
@@ -118,7 +117,7 @@ public final class QueryStatsCollector implements QueryObserver {
 
     private Map<Tier, Integer> tierSnapshot() {
         synchronized (tierLock) {
-            return new HashMap<>(eliminatedByTier);
+            return new EnumMap<>(eliminatedByTier);
         }
     }
 

@@ -70,8 +70,8 @@ final class GeoParquetCorpus {
     }
 
     /** A length-bounded copy of the WKB bytes at {@code column}, or {@code null} when the value is absent. */
-    static byte[] wkbBytes(ParquetRecord record, ColumnPath column) {
-        return record.readBinary(
+    static byte[] wkbBytes(ParquetRecord row, ColumnPath column) {
+        return row.readBinary(
                 column,
                 (backing, offset, length) -> backing.asSlice(offset, length).toArray(JAVA_BYTE));
     }

@@ -56,14 +56,19 @@ class HivePartitioningTest {
         HivePartitioning binding =
                 HivePartitioning.bind(List.of(Map.of("year", "2024", "city", "rome")), schemaWithYearAndCity());
         FileStats stats = binding.fileStats(Map.of("year", "2024", "city", "rome"), 100L);
-        assertThat(stats.columns().get(ColumnPath.of("year")))
-                .isEqualTo(new ColumnStatistics(
-                        Optional.of(new Value.IntVal(2024)), Optional.of(new Value.IntVal(2024)), OptionalLong.of(0)));
-        assertThat(stats.columns().get(ColumnPath.of("city")))
-                .isEqualTo(new ColumnStatistics(
-                        Optional.of(new Value.StringVal("rome")),
-                        Optional.of(new Value.StringVal("rome")),
-                        OptionalLong.of(0)));
+        assertThat(stats.columns())
+                .containsEntry(
+                        ColumnPath.of("year"),
+                        new ColumnStatistics(
+                                Optional.of(new Value.IntVal(2024)),
+                                Optional.of(new Value.IntVal(2024)),
+                                OptionalLong.of(0)))
+                .containsEntry(
+                        ColumnPath.of("city"),
+                        new ColumnStatistics(
+                                Optional.of(new Value.StringVal("rome")),
+                                Optional.of(new Value.StringVal("rome")),
+                                OptionalLong.of(0)));
         assertThat(stats.recordCount()).isEqualTo(100L);
     }
 
@@ -78,11 +83,13 @@ class HivePartitioningTest {
         assertThat(binding.hasSynthetic()).isTrue();
         assertThat(binding.syntheticLeaves()).hasSize(1);
         FileStats stats = binding.fileStats(Map.of("year", "2024"), 5L);
-        assertThat(stats.columns().get(ColumnPath.of("year")))
-                .isEqualTo(new ColumnStatistics(
-                        Optional.of(new Value.LongVal(2024L)),
-                        Optional.of(new Value.LongVal(2024L)),
-                        OptionalLong.of(0)));
+        assertThat(stats.columns())
+                .containsEntry(
+                        ColumnPath.of("year"),
+                        new ColumnStatistics(
+                                Optional.of(new Value.LongVal(2024L)),
+                                Optional.of(new Value.LongVal(2024L)),
+                                OptionalLong.of(0)));
         assertThat(binding.constantsFor(Map.of("year", "2024")))
                 .containsExactly(new ConstantColumn(ColumnPath.of("year"), new Value.LongVal(2024L)));
     }
@@ -110,8 +117,10 @@ class HivePartitioningTest {
         HivePartitioning binding = HivePartitioning.bind(List.of(Map.of("dt", "2024-01-15")), schemaWithDateColumn());
         FileStats stats = binding.fileStats(Map.of("dt", "2024-01-15"), 7L);
         Value.DateVal expected = new Value.DateVal(LocalDate.parse("2024-01-15"));
-        assertThat(stats.columns().get(ColumnPath.of("dt")))
-                .isEqualTo(new ColumnStatistics(Optional.of(expected), Optional.of(expected), OptionalLong.of(0)));
+        assertThat(stats.columns())
+                .containsEntry(
+                        ColumnPath.of("dt"),
+                        new ColumnStatistics(Optional.of(expected), Optional.of(expected), OptionalLong.of(0)));
     }
 
     @Test
@@ -140,22 +149,27 @@ class HivePartitioningTest {
 
     @Test
     void keyCollidingWithRepeatedColumnIsRejected() {
-        assertThatThrownBy(() -> HivePartitioning.bind(List.of(Map.of("tags", "x")), schemaWithRepeatedTags()))
+        List<Map<String, String>> partitions = List.of(Map.of("tags", "x"));
+        ParquetSchema schema = schemaWithRepeatedTags();
+        assertThatThrownBy(() -> HivePartitioning.bind(partitions, schema))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("collides with a non-scalar column");
     }
 
     @Test
     void keyCollidingWithGroupColumnIsRejected() {
-        assertThatThrownBy(() -> HivePartitioning.bind(List.of(Map.of("tags", "x")), schemaWithGroupTags()))
+        List<Map<String, String>> partitions = List.of(Map.of("tags", "x"));
+        ParquetSchema schema = schemaWithGroupTags();
+        assertThatThrownBy(() -> HivePartitioning.bind(partitions, schema))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("collides with a non-scalar column");
     }
 
     @Test
     void syntheticHiveNullSentinelIsRejected() {
-        assertThatThrownBy(() -> HivePartitioning.bind(
-                        List.of(Map.of("dt", "__HIVE_DEFAULT_PARTITION__")), schemaWithoutDtColumn()))
+        List<Map<String, String>> partitions = List.of(Map.of("dt", "__HIVE_DEFAULT_PARTITION__"));
+        ParquetSchema schema = schemaWithoutDtColumn();
+        assertThatThrownBy(() -> HivePartitioning.bind(partitions, schema))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("__HIVE_DEFAULT_PARTITION__");
     }

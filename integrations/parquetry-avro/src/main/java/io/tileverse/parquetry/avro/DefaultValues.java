@@ -74,7 +74,7 @@ final class DefaultValues {
         Long value = require(Long.class, jsonDefault, "int");
         try {
             return Math.toIntExact(value);
-        } catch (ArithmeticException outOfRange) {
+        } catch (ArithmeticException _) {
             throw new AvroFormatException("Default value " + value + " is out of int range");
         }
     }

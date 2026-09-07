@@ -82,9 +82,9 @@ class DremelStriperReuseTest {
         assertThat(reusedSmaller)
                 .as("a grown backing must not leak the larger batch's tail into the smaller result")
                 .isEqualTo(freshSmaller);
-        assertThat(reusedSmaller.defLevelsRaw().length)
+        assertThat(reusedSmaller.defLevelsRaw())
                 .as("the backing keeps its grown capacity")
-                .isGreaterThan(reusedSmaller.entryCount());
+                .hasSizeGreaterThan(reusedSmaller.entryCount());
     }
 
     @Test

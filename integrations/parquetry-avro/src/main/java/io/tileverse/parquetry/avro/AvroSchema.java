@@ -232,6 +232,7 @@ public sealed interface AvroSchema
 
         // volatile: the parser binds before the schema escapes, but consumers may publish a parsed schema across
         // threads through a plain field; without it a racing reader could legally observe an unbound Ref.
+        @SuppressWarnings("java:S3077") // bound once to an immutable schema; volatile is the correct publish
         private volatile AvroSchema target;
 
         Ref(String fullName) {

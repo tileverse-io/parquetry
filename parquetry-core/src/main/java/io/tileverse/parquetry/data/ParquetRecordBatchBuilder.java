@@ -69,6 +69,8 @@ public final class ParquetRecordBatchBuilder implements AutoCloseable {
     // Check for interrupt every 1024 rows: a cheap bitmask cadence that bounds cancellation latency without a per-row
     // branch cost.
     private static final int INTERRUPT_CHECK_ROW_MASK = 1023;
+    private static final String ADD_LIST = "addList";
+    private static final String ADD_MAP = "addMap";
 
     private final ParquetSchema schema;
     private final List<ColumnPath> leaves;
@@ -278,16 +280,16 @@ public final class ParquetRecordBatchBuilder implements AutoCloseable {
      * committed by {@link #endEntry()} as usual.
      */
     public ParquetRecordBatchBuilder addList() {
-        ContainerScope parent = requireOpenContainerScope("addList");
+        ContainerScope parent = requireOpenContainerScope(ADD_LIST);
         if (parent.isList()) {
-            requireNoExplicitElement(parent, "addList");
+            requireNoExplicitElement(parent, ADD_LIST);
             ColumnPath innerPath = listElementContainerPath(parent.path());
             ColumnAccumulator.ListAccumulator inner = requireInnerList(parent.elementAccumulator(), innerPath);
             inner.markPresent();
             containerScopeStack.push(ContainerScope.listAsElement(innerPath, inner, listElementNodeName(innerPath)));
             return this;
         }
-        requireOpenEntry(parent, "addList");
+        requireOpenEntry(parent, ADD_LIST);
         ColumnPath innerPath = mapValueContainerPath(parent.path());
         ColumnAccumulator.ListAccumulator inner = requireInnerList(parent.mapValueAccumulator(), innerPath);
         inner.markPresent();
@@ -300,16 +302,16 @@ public final class ParquetRecordBatchBuilder implements AutoCloseable {
      * active map scope; the exact counterpart of {@link #addList()} for map-typed elements and values.
      */
     public ParquetRecordBatchBuilder addMap() {
-        ContainerScope parent = requireOpenContainerScope("addMap");
+        ContainerScope parent = requireOpenContainerScope(ADD_MAP);
         if (parent.isList()) {
-            requireNoExplicitElement(parent, "addMap");
+            requireNoExplicitElement(parent, ADD_MAP);
             ColumnPath innerPath = listElementContainerPath(parent.path());
             ColumnAccumulator.MapAccumulator inner = requireInnerMap(parent.elementAccumulator(), innerPath);
             inner.markPresent();
             containerScopeStack.push(innerMapScope(innerPath, inner, true));
             return this;
         }
-        requireOpenEntry(parent, "addMap");
+        requireOpenEntry(parent, ADD_MAP);
         ColumnPath innerPath = mapValueContainerPath(parent.path());
         ColumnAccumulator.MapAccumulator inner = requireInnerMap(parent.mapValueAccumulator(), innerPath);
         inner.markPresent();

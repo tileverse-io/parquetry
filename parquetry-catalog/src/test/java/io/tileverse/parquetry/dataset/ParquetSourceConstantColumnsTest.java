@@ -40,7 +40,7 @@ class ParquetSourceConstantColumnsTest {
     private static final Path FILE = CorpusFixtures.parquetTestingData().resolve("alltypes_plain.parquet");
 
     @Test
-    void appendsConstantColumnToEveryRow() throws Exception {
+    void appendsConstantColumnToEveryRow() {
         try (ByteRangeSource byteSource = ByteRangeSource.ofFile(FILE)) {
             ParquetSource source = ParquetSource.open(byteSource);
             ColumnPath yearPart = ColumnPath.of("year_part");

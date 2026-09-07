@@ -39,7 +39,6 @@ import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
 import org.openjdk.jmh.annotations.Level;
 import org.openjdk.jmh.annotations.Measurement;
-import org.openjdk.jmh.annotations.Mode;
 import org.openjdk.jmh.annotations.OutputTimeUnit;
 import org.openjdk.jmh.annotations.Param;
 import org.openjdk.jmh.annotations.Scope;
@@ -126,7 +125,8 @@ import io.tileverse.parquetry.schema.SchemaNode;
  * }</pre>
  */
 @State(Scope.Benchmark)
-@BenchmarkMode(Mode.AverageTime)
+// spelled out because the query-strategy enum this class declares is also named Mode
+@BenchmarkMode(org.openjdk.jmh.annotations.Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @Warmup(iterations = 3, time = 2)
 @Measurement(iterations = 5, time = 2)

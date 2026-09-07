@@ -23,6 +23,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.assertj.core.api.InstanceOfAssertFactories;
 import org.geotools.api.data.FeatureReader;
 import org.geotools.api.data.Query;
 import org.geotools.api.feature.simple.SimpleFeature;
@@ -96,18 +97,18 @@ class NestedReadIT {
         List<?> addressList = (List<?>) addresses;
         assertThat(addressList).hasSize(2);
 
-        assertThat(addressList.get(0)).isInstanceOf(Map.class);
-        Map<?, ?> firstAddress = (Map<?, ?>) addressList.get(0);
-        assertThat(firstAddress.get("locality")).isEqualTo("NYC");
-        assertThat(firstAddress.get("postcode")).isEqualTo("10001");
+        assertThat(addressList.get(0))
+                .asInstanceOf(InstanceOfAssertFactories.MAP)
+                .containsEntry("locality", "NYC")
+                .containsEntry("postcode", "10001");
 
-        Object brand = feature.getAttribute("brand");
-        assertThat(brand).isInstanceOf(Map.class);
-        assertThat(((Map<?, ?>) brand).get("name")).isEqualTo("Acme");
+        assertThat(feature.getAttribute("brand"))
+                .asInstanceOf(InstanceOfAssertFactories.MAP)
+                .containsEntry("name", "Acme");
 
-        Object tags = feature.getAttribute("tags");
-        assertThat(tags).isInstanceOf(Map.class);
-        assertThat(((Map<?, ?>) tags).get("k1")).isEqualTo("v1");
+        assertThat(feature.getAttribute("tags"))
+                .asInstanceOf(InstanceOfAssertFactories.MAP)
+                .containsEntry("k1", "v1");
     }
 
     private void assertRowTwo(SimpleFeature feature) {
@@ -126,10 +127,11 @@ class NestedReadIT {
         List<?> addressList = (List<?>) addresses;
         assertThat(addressList).hasSize(2);
 
-        assertThat(addressList.get(1)).isInstanceOf(Map.class);
-        Map<?, ?> secondAddress = (Map<?, ?>) addressList.get(1);
-        assertThat(secondAddress.get("locality")).isNull();
-        assertThat(secondAddress.get("postcode")).isEqualTo("00000");
+        assertThat(addressList.get(1))
+                .asInstanceOf(InstanceOfAssertFactories.MAP)
+                .containsEntry("postcode", "00000")
+                .extractingByKey("locality")
+                .isNull();
     }
 
     private void assertNoLiveParquetRecord(List<SimpleFeature> features) {

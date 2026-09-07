@@ -28,7 +28,7 @@ class CDataLayoutsTest {
     @Test
     void arrowSchemaMatchesTheCAbi() {
         assertThat(CDataLayouts.ARROW_SCHEMA.byteSize()).isEqualTo(72);
-        assertThat(CDataLayouts.ARROW_SCHEMA.byteOffset(groupElement("format"))).isEqualTo(0);
+        assertThat(CDataLayouts.ARROW_SCHEMA.byteOffset(groupElement("format"))).isZero();
         assertThat(CDataLayouts.ARROW_SCHEMA.byteOffset(groupElement("flags"))).isEqualTo(24);
         assertThat(CDataLayouts.ARROW_SCHEMA.byteOffset(groupElement("n_children")))
                 .isEqualTo(32);
@@ -43,7 +43,7 @@ class CDataLayoutsTest {
     @Test
     void arrowArrayMatchesTheCAbi() {
         assertThat(CDataLayouts.ARROW_ARRAY.byteSize()).isEqualTo(80);
-        assertThat(CDataLayouts.ARROW_ARRAY.byteOffset(groupElement("length"))).isEqualTo(0);
+        assertThat(CDataLayouts.ARROW_ARRAY.byteOffset(groupElement("length"))).isZero();
         assertThat(CDataLayouts.ARROW_ARRAY.byteOffset(groupElement("n_buffers")))
                 .isEqualTo(24);
         assertThat(CDataLayouts.ARROW_ARRAY.byteOffset(groupElement("buffers"))).isEqualTo(40);
@@ -56,7 +56,7 @@ class CDataLayoutsTest {
     void arrowArrayStreamMatchesTheCAbi() {
         assertThat(CDataLayouts.ARROW_ARRAY_STREAM.byteSize()).isEqualTo(40);
         assertThat(CDataLayouts.ARROW_ARRAY_STREAM.byteOffset(groupElement("get_schema")))
-                .isEqualTo(0);
+                .isZero();
         assertThat(CDataLayouts.ARROW_ARRAY_STREAM.byteOffset(groupElement("get_next")))
                 .isEqualTo(8);
         assertThat(CDataLayouts.ARROW_ARRAY_STREAM.byteOffset(groupElement("release")))

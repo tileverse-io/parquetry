@@ -97,7 +97,7 @@ class ArrowIpcWriterChannelTest {
     }
 
     @Test
-    void flushesTheOutputStreamSoBufferedSinksAreComplete() throws Exception {
+    void flushesTheOutputStreamSoBufferedSinksAreComplete() {
         ParquetSchema schema = schema();
 
         ByteArrayOutputStream reference = new ByteArrayOutputStream();

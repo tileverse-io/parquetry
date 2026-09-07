@@ -73,25 +73,29 @@ final class BatchHandoff implements AutoCloseable {
      */
     void put(@NonNull HandoffItem item) throws InterruptedException {
         while (!cancelled.get()) {
-            if (!slots.tryAcquire(POLL_MILLIS, TimeUnit.MILLISECONDS)) {
-                continue;
+            if (slots.tryAcquire(POLL_MILLIS, TimeUnit.MILLISECONDS)) {
+                if (cancelled.get()) {
+                    slots.release();
+                    break;
+                }
+                enqueueHoldingPermit(item);
+                return;
             }
-            if (cancelled.get()) {
-                slots.release();
-                break;
-            }
-            // Permits bound queued items at capacity and the physical queue holds capacity + 1, leaving the
-            // reserved marker slot; with a permit held this offer cannot fail.
-            if (!queue.offer(item)) {
-                slots.release();
-                throw new IllegalStateException("Hand-off queue rejected an item within its permit bound");
-            }
-            if (cancelled.get()) {
-                drainAndDiscard();
-            }
-            return;
         }
         discardQuietly(item);
+    }
+
+    /** Enqueues {@code item} into the slot the caller's just-acquired permit reserves. */
+    private void enqueueHoldingPermit(HandoffItem item) {
+        // Permits bound queued items at capacity and the physical queue holds capacity + 1, leaving the
+        // reserved marker slot; with a permit held this offer cannot fail.
+        if (!queue.offer(item)) {
+            slots.release();
+            throw new IllegalStateException("Hand-off queue rejected an item within its permit bound");
+        }
+        if (cancelled.get()) {
+            drainAndDiscard();
+        }
     }
 
     void complete() {

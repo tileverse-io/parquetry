@@ -334,7 +334,7 @@ class RowGroupReadFiringIT {
                     .as("only the delivered row group fires; undelivered speculative groups stay silent")
                     .hasSize(1);
             RowGroupRead delivered = events.get(0);
-            assertThat(delivered.rowGroupIndex()).isEqualTo(0);
+            assertThat(delivered.rowGroupIndex()).isZero();
             assertThat(delivered.rowsDecoded())
                     .as("rows decoded stay within the delivered group's row count")
                     .isBetween(1L, 4L);

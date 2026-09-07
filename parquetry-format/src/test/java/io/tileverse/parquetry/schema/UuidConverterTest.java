@@ -54,7 +54,7 @@ class UuidConverterTest {
         assertThat(UuidConverter.compareSegmentToUuid(lowSeg, high)).isNegative();
         assertThat(UuidConverter.compareSegmentToUuid(lowSeg, low)).isZero();
         // signed UUID.compareTo DISAGREES here: it says high < low
-        assertThat(high.compareTo(low)).isNegative();
+        assertThat(high).isLessThan(low);
     }
 
     @Test
@@ -79,7 +79,7 @@ class UuidConverterTest {
         assertThat(UuidConverter.compareSegmentToUuid(UuidConverter.toReadOnlySegment(high), high))
                 .isZero();
         // signed UUID.compareTo DISAGREES on the low word too: it says high < low
-        assertThat(high.compareTo(low)).isNegative();
+        assertThat(high).isLessThan(low);
     }
 
     private static void fillWith(MemorySegment segment, byte value) {

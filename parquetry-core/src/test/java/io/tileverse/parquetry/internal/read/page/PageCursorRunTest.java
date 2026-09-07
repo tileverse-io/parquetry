@@ -220,9 +220,9 @@ class PageCursorRunTest {
      */
     private static PageSelection firstPageAndAdjacentPairSelection(ChunkFixture fixture) {
         List<PageLocation> locations = fixture.offsetIndex().pageLocations();
-        assertThat(locations.size())
+        assertThat(locations)
                 .as("the fixture must hold enough pages for a hole and a following adjacent pair")
-                .isGreaterThanOrEqualTo(5);
+                .hasSizeGreaterThanOrEqualTo(5);
         long firstPageLastRow = locations.get(1).firstRowIndex() - 1;
         long pairFirstRow = locations.get(2).firstRowIndex();
         long pairLastRow = locations.get(4).firstRowIndex() - 1;

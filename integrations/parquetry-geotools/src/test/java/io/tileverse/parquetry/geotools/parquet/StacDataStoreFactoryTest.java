@@ -34,9 +34,10 @@ class StacDataStoreFactoryTest {
         Param[] params = new StacDataStoreFactory().getParametersInfo();
         List<String> keys = Arrays.stream(params).map(param -> param.key).toList();
 
-        assertThat(keys).contains("stac-geoparquet", "namespace");
-        assertThat(keys).doesNotContain("storage.provider");
-        assertThat(keys).anyMatch(key -> key.startsWith("storage.") && !key.equals("storage.provider"));
+        assertThat(keys)
+                .contains("stac-geoparquet", "namespace")
+                .doesNotContain("storage.provider")
+                .anyMatch(key -> key.startsWith("storage.") && !key.equals("storage.provider"));
     }
 
     @Test

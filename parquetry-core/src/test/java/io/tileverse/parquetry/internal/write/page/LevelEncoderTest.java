@@ -39,7 +39,7 @@ class LevelEncoderTest {
     }
 
     @Test
-    void bitWidthZeroEmitsNoBytes() throws Exception {
+    void bitWidthZeroEmitsNoBytes() {
         LevelEncoder encoder = new LevelEncoder(0);
         GrowableByteSink out = new GrowableByteSink(64);
         int written = encoder.encode(new int[] {0, 0, 0, 0}, 4, out);
@@ -95,7 +95,7 @@ class LevelEncoderTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("roundTripCases")
-    void roundTripViaLevelDecoder(String label, int maxLevel, int[] levels) throws Exception {
+    void roundTripViaLevelDecoder(String label, int maxLevel, int[] levels) {
         GrowableByteSink out = new GrowableByteSink(64);
         new LevelEncoder(maxLevel).encode(levels, levels.length, out);
 
@@ -108,7 +108,7 @@ class LevelEncoderTest {
     }
 
     @Test
-    void emptyInputEmitsNoBytes() throws Exception {
+    void emptyInputEmitsNoBytes() {
         GrowableByteSink out = new GrowableByteSink(64);
         int written = new LevelEncoder(3).encode(new int[0], 0, out);
         assertThat(written).isZero();

@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.iceberg;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
@@ -108,7 +109,8 @@ class IcebergWarehouseCatalogTest {
 
     @Test
     void anEmptyRegistryIsRejected() {
-        assertThatThrownBy(() -> IcebergWarehouseCatalog.ofLocalTables(new LinkedHashMap<>()))
+        SequencedMap<String, Path> noTables = new LinkedHashMap<>();
+        assertThatThrownBy(() -> IcebergWarehouseCatalog.ofLocalTables(noTables))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -117,7 +119,8 @@ class IcebergWarehouseCatalogTest {
         IcebergWarehouseCatalog catalog = IcebergWarehouseCatalog.openLocal(warehouseWithTwoTables());
         catalog.dataset("tableB");
         catalog.close();
-        catalog.close();
+
+        assertThatCode(catalog::close).doesNotThrowAnyException();
     }
 
     @Test

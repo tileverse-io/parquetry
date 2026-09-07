@@ -85,28 +85,27 @@ final class ColumnMetaDataDeserializer {
                 break;
             }
             lastFieldId = fh.fieldId();
-            if (skipsWriterSpecificField(r, fh)) {
-                continue;
-            }
-            switch (fh.fieldId()) {
-                case 1 -> type = PhysicalType.valueOf(r.readI32());
-                case 2 -> encodings = readEncodingList(r);
-                case 3 -> pathInSchema = readStringList(r);
-                case 4 -> codec = CompressionCodec.valueOf(r.readI32());
-                case 5 -> numValues = r.readI64();
-                case 6 -> totalUncompressedSize = r.readI64();
-                case 7 -> totalCompressedSize = r.readI64();
-                case 8 -> keyValueMetadata = readKeyValueList(r);
-                case 9 -> dataPageOffset = r.readI64();
-                case 10 -> indexPageOffset = OptionalLong.of(r.readI64());
-                case 11 -> dictionaryPageOffset = OptionalLong.of(r.readI64());
-                case 12 -> statistics = Optional.of(StatisticsDeserializer.read(r));
-                case 13 -> encodingStats = readEncodingStatsList(r);
-                case 14 -> bloomFilterOffset = OptionalLong.of(r.readI64());
-                case 15 -> bloomFilterLength = OptionalLong.of(r.readI32());
-                case 16 -> sizeStatistics = Optional.of(SizeStatisticsDeserializer.read(r));
-                case 17 -> geospatialStatistics = Optional.of(GeospatialStatisticsDeserializer.read(r));
-                default -> r.skipField(fh.type());
+            if (!skipsWriterSpecificField(r, fh)) {
+                switch (fh.fieldId()) {
+                    case 1 -> type = PhysicalType.valueOf(r.readI32());
+                    case 2 -> encodings = readEncodingList(r);
+                    case 3 -> pathInSchema = readStringList(r);
+                    case 4 -> codec = CompressionCodec.valueOf(r.readI32());
+                    case 5 -> numValues = r.readI64();
+                    case 6 -> totalUncompressedSize = r.readI64();
+                    case 7 -> totalCompressedSize = r.readI64();
+                    case 8 -> keyValueMetadata = readKeyValueList(r);
+                    case 9 -> dataPageOffset = r.readI64();
+                    case 10 -> indexPageOffset = OptionalLong.of(r.readI64());
+                    case 11 -> dictionaryPageOffset = OptionalLong.of(r.readI64());
+                    case 12 -> statistics = Optional.of(StatisticsDeserializer.read(r));
+                    case 13 -> encodingStats = readEncodingStatsList(r);
+                    case 14 -> bloomFilterOffset = OptionalLong.of(r.readI64());
+                    case 15 -> bloomFilterLength = OptionalLong.of(r.readI32());
+                    case 16 -> sizeStatistics = Optional.of(SizeStatisticsDeserializer.read(r));
+                    case 17 -> geospatialStatistics = Optional.of(GeospatialStatisticsDeserializer.read(r));
+                    default -> r.skipField(fh.type());
+                }
             }
         }
         return new ColumnMetaData(

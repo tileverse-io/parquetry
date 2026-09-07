@@ -17,7 +17,6 @@ package io.tileverse.parquetry.internal.read;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.io.IOException;
 import java.lang.foreign.MemorySegment;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -184,8 +183,7 @@ class SpatialRowGroupPruningTest {
      * Writes {@link #ROWS_PER_GROUP} unit rectangles spread across the cluster's [origin..origin+10] square as one
      * batch, which the {@link RowGroupSize#rows(int)} policy turns into a single dedicated row group.
      */
-    private static void writeCluster(ParquetFileWriter writer, ParquetSchema schema, int clusterIndex, double origin)
-            throws IOException {
+    private static void writeCluster(ParquetFileWriter writer, ParquetSchema schema, int clusterIndex, double origin) {
         List<Map<ColumnPath, Object>> rows = new ArrayList<>();
         for (int i = 0; i < ROWS_PER_GROUP; i++) {
             int id = clusterIndex * ROWS_PER_GROUP + i;

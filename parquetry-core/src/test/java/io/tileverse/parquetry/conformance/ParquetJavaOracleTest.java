@@ -59,11 +59,17 @@ class ParquetJavaOracleTest {
 
         Map<String, Object> row = ParquetJavaOracle.canonicalize(group);
 
-        assertThat(row.get("i")).as("int leaf").isEqualTo(7);
-        assertThat(row.get("l")).as("long leaf").isEqualTo(8L);
-        assertThat(row.get("d")).as("double leaf").isEqualTo(1.5d);
-        assertThat(row.get("b")).as("boolean leaf").isEqualTo(true);
-        assertThat(row.get("s")).as("binary leaf as ByteBuffer").isEqualTo(ByteBuffer.wrap("hi".getBytes()));
+        assertThat(row)
+                .as("int leaf")
+                .containsEntry("i", 7)
+                .as("long leaf")
+                .containsEntry("l", 8L)
+                .as("double leaf")
+                .containsEntry("d", 1.5d)
+                .as("boolean leaf")
+                .containsEntry("b", true)
+                .as("binary leaf as ByteBuffer")
+                .containsEntry("s", ByteBuffer.wrap("hi".getBytes()));
         assertThat(row.get("opt")).as("absent optional is null").isNull();
         assertThat(row.keySet()).as("field order preserved").containsExactly("i", "l", "d", "b", "s", "opt");
     }
@@ -80,7 +86,7 @@ class ParquetJavaOracleTest {
 
         Map<String, Object> row = ParquetJavaOracle.canonicalize(group);
 
-        assertThat(row.get("ts")).as("INT96 leaf as 12-byte ByteBuffer").isEqualTo(ByteBuffer.wrap(twelve));
+        assertThat(row).as("INT96 leaf as 12-byte ByteBuffer").containsEntry("ts", ByteBuffer.wrap(twelve));
     }
 
     @Test
@@ -100,7 +106,7 @@ class ParquetJavaOracleTest {
 
         Map<String, Object> row = ParquetJavaOracle.canonicalize(group);
 
-        assertThat(row.get("point")).as("struct as nested map").isEqualTo(Map.of("x", 3, "y", 4));
+        assertThat(row).as("struct as nested map").containsEntry("point", Map.of("x", 3, "y", 4));
     }
 
     @Test
@@ -115,15 +121,11 @@ class ParquetJavaOracleTest {
         Group list = present.addGroup(0);
         list.addGroup(0).add(0, 10);
         list.addGroup(0).add(0, 20);
-        assertThat(ParquetJavaOracle.canonicalize(present).get("nums"))
-                .as("present list")
-                .isEqualTo(List.of(10, 20));
+        assertThat(ParquetJavaOracle.canonicalize(present)).as("present list").containsEntry("nums", List.of(10, 20));
 
         SimpleGroup empty = new SimpleGroup(schema);
         empty.addGroup(0);
-        assertThat(ParquetJavaOracle.canonicalize(empty).get("nums"))
-                .as("empty list")
-                .isEqualTo(List.of());
+        assertThat(ParquetJavaOracle.canonicalize(empty)).as("empty list").containsEntry("nums", List.of());
 
         SimpleGroup nullList = new SimpleGroup(schema);
         assertThat(ParquetJavaOracle.canonicalize(nullList).get("nums"))
@@ -145,9 +147,9 @@ class ParquetJavaOracleTest {
         list.addGroup(0); // element group present, the optional INT32 left absent -> null element
         list.addGroup(0).add(0, 30);
 
-        assertThat(ParquetJavaOracle.canonicalize(group).get("nums"))
+        assertThat(ParquetJavaOracle.canonicalize(group))
                 .as("absent optional element canonicalizes to null")
-                .isEqualTo(Arrays.asList(10, null, 30));
+                .containsEntry("nums", Arrays.asList(10, null, 30));
     }
 
     @Test
@@ -190,8 +192,8 @@ class ParquetJavaOracleTest {
         group.add(0, 6);
         group.add(0, 7);
 
-        assertThat(ParquetJavaOracle.canonicalize(group).get("vals"))
+        assertThat(ParquetJavaOracle.canonicalize(group))
                 .as("legacy repeated primitive as list")
-                .isEqualTo(List.of(5, 6, 7));
+                .containsEntry("vals", List.of(5, 6, 7));
     }
 }

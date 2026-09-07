@@ -49,7 +49,7 @@ class WriteObserverIT {
     private static final int EXPECTED_ROW_GROUPS = TOTAL_ROWS / ROWS_PER_GROUP;
 
     @Test
-    void observerReceivesEveryWriteEvent(@TempDir Path tempDir) throws Exception {
+    void observerReceivesEveryWriteEvent(@TempDir Path tempDir) {
         ParquetSchema schema = flatSchema(requiredInt32("id"));
         RecordingObserver recorder = new RecordingObserver();
         WriteOptions options = WriteOptions.builder()
@@ -74,7 +74,7 @@ class WriteObserverIT {
     }
 
     @Test
-    void everyProgressMilestoneFiresInOrderWithinASingleFlush(@TempDir Path tempDir) throws Exception {
+    void everyProgressMilestoneFiresInOrderWithinASingleFlush(@TempDir Path tempDir) {
         ParquetSchema schema = flatSchema(requiredInt32("id"));
         RecordingObserver recorder = new RecordingObserver();
         long cadence = 1000L;

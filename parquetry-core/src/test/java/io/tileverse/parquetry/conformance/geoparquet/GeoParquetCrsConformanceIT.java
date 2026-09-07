@@ -53,7 +53,7 @@ class GeoParquetCrsConformanceIT {
         "crs-projjson-full.parquet, -1",
         "crs-default.parquet, -1",
     })
-    void parsesGeometryColumnCrsIdentity(String fixture, int expectedEpsg) throws Exception {
+    void parsesGeometryColumnCrsIdentity(String fixture, int expectedEpsg) {
         Path file = GeoParquetCorpus.crs().resolve(fixture);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetFileReader reader = ParquetFileReader.open(source);
@@ -85,7 +85,7 @@ class GeoParquetCrsConformanceIT {
 
     @ParameterizedTest(name = "{0}")
     @CsvSource({"crs-ogc-crs84.parquet, OGC, CRS84"})
-    void parsesNonEpsgAuthorityIdentity(String fixture, String authority, String code) throws Exception {
+    void parsesNonEpsgAuthorityIdentity(String fixture, String authority, String code) {
         Path file = GeoParquetCorpus.crs().resolve(fixture);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetFileReader reader = ParquetFileReader.open(source);

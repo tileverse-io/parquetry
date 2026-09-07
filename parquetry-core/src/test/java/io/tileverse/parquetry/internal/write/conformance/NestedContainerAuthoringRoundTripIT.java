@@ -209,8 +209,7 @@ class NestedContainerAuthoringRoundTripIT {
         assertThat(rows).hasSize(3);
 
         java.util.Map<String, Object> row0 = keyedMap(rows.get(0).get(M));
-        assertThat(row0).hasSize(3);
-        assertThat(row0.get("a")).isEqualTo(List.of(1, 2));
+        assertThat(row0).hasSize(3).containsEntry("a", List.of(1, 2));
         assertThat(asList(row0.get("b"))).as("empty value list").isEmpty();
         assertThat(row0.get("c")).as("unset value list reads as null").isNull();
         assertThat((java.util.Map<?, ?>) rows.get(1).get(M)).isEmpty();
@@ -244,8 +243,7 @@ class NestedContainerAuthoringRoundTripIT {
         List<?> elements = asList(rows.get(0).get(OUTER));
         assertThat(elements).hasSize(3);
         java.util.Map<String, Object> first = keyedMap(elements.get(0));
-        assertThat(first).hasSize(1);
-        assertThat(first.get("a")).isEqualTo(1);
+        assertThat(first).hasSize(1).containsEntry("a", 1);
         assertThat((java.util.Map<?, ?>) elements.get(1))
                 .as("empty map element")
                 .isEmpty();
@@ -288,8 +286,7 @@ class NestedContainerAuthoringRoundTripIT {
         java.util.Map<String, Object> row0 = keyedMap(rows.get(0).get(M));
         assertThat(row0).hasSize(3);
         java.util.Map<String, Object> inner = keyedMap(row0.get("out"));
-        assertThat(inner).hasSize(1);
-        assertThat(inner.get("in")).isEqualTo(5);
+        assertThat(inner).hasSize(1).containsEntry("in", 5);
         assertThat((java.util.Map<?, ?>) row0.get("empty")).isEmpty();
         assertThat(row0.get("nil")).isNull();
     }

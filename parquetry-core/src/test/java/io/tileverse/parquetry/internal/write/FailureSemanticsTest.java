@@ -126,7 +126,7 @@ class FailureSemanticsTest {
     }
 
     @Test
-    void closeOnFailedWriterDoesNotEmitFooter() throws Exception {
+    void closeOnFailedWriterDoesNotEmitFooter() {
         ParquetSchema schema = flatSchema(requiredInt32("id"));
         WriteOptions options = options().rowGroupSize(RowGroupSize.rows(1)).build();
 
@@ -213,7 +213,7 @@ class FailureSemanticsTest {
     }
 
     @Test
-    void closeIsIdempotentAfterFailure() throws Exception {
+    void closeIsIdempotentAfterFailure() {
         ParquetSchema schema = flatSchema(requiredInt32("id"));
         WriteOptions options = options().rowGroupSize(RowGroupSize.rows(1)).build();
 
@@ -222,9 +222,9 @@ class FailureSemanticsTest {
         Map<ColumnPath, Object> firstRow = Map.of(ColumnPath.of("id"), 1);
         assertThatThrownBy(() -> writeRow(writer, schema, firstRow)).isInstanceOf(RuntimeException.class);
         writer.close();
-        long firstSize = sink.writtenBytes().length;
+        int firstSize = sink.writtenBytes().length;
         writer.close();
-        assertThat(sink.writtenBytes().length).isEqualTo(firstSize);
+        assertThat(sink.writtenBytes()).hasSize(firstSize);
     }
 
     // --- helpers ---
@@ -233,8 +233,7 @@ class FailureSemanticsTest {
         return WriteOptions.builder().tempDir(tempDir);
     }
 
-    private static void writeRow(ParquetFileWriter writer, ParquetSchema schema, Map<ColumnPath, Object> values)
-            throws IOException {
+    private static void writeRow(ParquetFileWriter writer, ParquetSchema schema, Map<ColumnPath, Object> values) {
         writer.writeBatch(WriteFixtures.batch(schema, List.of(values)));
     }
 

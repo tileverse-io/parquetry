@@ -60,7 +60,7 @@ final class PartitionValueParser {
     private static Optional<Value> parseDate(String raw) {
         try {
             return Optional.of(new Value.DateVal(LocalDate.parse(raw)));
-        } catch (DateTimeParseException notADate) {
+        } catch (DateTimeParseException _) {
             return Optional.empty();
         }
     }
@@ -90,7 +90,7 @@ final class PartitionValueParser {
     private static <T> Optional<T> tryParse(String raw, Function<String, T> parser) {
         try {
             return Optional.of(parser.apply(raw));
-        } catch (NumberFormatException notANumber) {
+        } catch (NumberFormatException _) {
             return Optional.empty();
         }
     }

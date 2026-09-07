@@ -115,14 +115,11 @@ class OutputBatchesTest {
     void selectRejectsAnUnknownName() {
         DefaultParquetRecordBatch base = sourceBatch();
 
-        assertThatThrownBy(() -> OutputBatches.select(base, List.of(ColumnPath.of("missing"))))
+        List<ColumnPath> unknown = List.of(ColumnPath.of("missing"));
+
+        assertThatThrownBy(() -> OutputBatches.select(base, unknown))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("not produced");
-    }
-
-    private static int leafFieldId(ParquetRecordBatch batch, ColumnPath leaf) {
-        SchemaNode node = batch.projectedSchema().find(leaf).orElseThrow();
-        return node.fieldId();
     }
 
     @Test

@@ -71,7 +71,7 @@ final class EastingFirstFeatures {
                 return Optional.empty();
             }
             return Optional.of(CRS.decode("EPSG:" + code, true));
-        } catch (FactoryException e) {
+        } catch (FactoryException _) {
             return Optional.empty();
         }
     }

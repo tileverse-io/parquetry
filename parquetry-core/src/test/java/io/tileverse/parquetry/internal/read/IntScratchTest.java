@@ -25,7 +25,7 @@ class IntScratchTest {
     void reusesTheSameArrayWhileCapacitySuffices() {
         IntScratch scratch = new IntScratch();
         int[] first = scratch.array(100);
-        assertThat(first.length).isGreaterThanOrEqualTo(100);
+        assertThat(first).hasSizeGreaterThanOrEqualTo(100);
         int[] second = scratch.array(64);
         assertThat(second).as("a smaller request reuses the same array").isSameAs(first);
         int[] third = scratch.array(first.length);
@@ -36,16 +36,15 @@ class IntScratchTest {
     void growsToTheNextPowerOfTwo() {
         IntScratch scratch = new IntScratch();
         int[] small = scratch.array(10);
-        assertThat(small.length).as("floor capacity").isEqualTo(1024);
+        assertThat(small).as("floor capacity").hasSize(1024);
         int[] grown = scratch.array(1500);
-        assertThat(grown).isNotSameAs(small);
-        assertThat(grown.length).isEqualTo(2048);
+        assertThat(grown).isNotSameAs(small).hasSize(2048);
         assertThat(scratch.array(2048)).as("growth is sticky").isSameAs(grown);
     }
 
     @Test
     void zeroLengthRequestIsServed() {
         IntScratch scratch = new IntScratch();
-        assertThat(scratch.array(0).length).isGreaterThanOrEqualTo(0);
+        assertThat(scratch.array(0)).hasSizeGreaterThanOrEqualTo(0);
     }
 }

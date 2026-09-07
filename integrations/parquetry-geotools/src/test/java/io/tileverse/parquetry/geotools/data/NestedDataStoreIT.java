@@ -30,6 +30,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
+import org.assertj.core.api.InstanceOfAssertFactories;
 import org.geotools.api.data.FeatureReader;
 import org.geotools.api.data.Query;
 import org.geotools.api.feature.simple.SimpleFeature;
@@ -138,11 +139,10 @@ class NestedDataStoreIT {
         assertThat(addresses).isInstanceOf(List.class);
 
         List<?> addressList = (List<?>) addresses;
-        assertThat(addressList.get(0)).isInstanceOf(Map.class);
-
-        Map<?, ?> firstAddress = (Map<?, ?>) addressList.get(0);
-        assertThat(firstAddress.get("locality")).isEqualTo("NYC");
-        assertThat(firstAddress.get("postcode")).isEqualTo("10001");
+        assertThat(addressList.get(0))
+                .asInstanceOf(InstanceOfAssertFactories.MAP)
+                .containsEntry("locality", "NYC")
+                .containsEntry("postcode", "10001");
     }
 
     private void assertNoLiveParquetRecord(SimpleFeature feature) {

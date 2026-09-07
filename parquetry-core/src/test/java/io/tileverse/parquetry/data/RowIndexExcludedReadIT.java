@@ -91,9 +91,10 @@ class RowIndexExcludedReadIT {
             }
         }
 
-        assertThat(survivors).containsExactlyElementsOf(expected);
-        assertThat(survivors).doesNotContainAnyElementsOf(deleted);
-        assertThat(survivors).hasSize(ROWS - deletedPositions.length);
+        assertThat(survivors)
+                .containsExactlyElementsOf(expected)
+                .doesNotContainAnyElementsOf(deleted)
+                .hasSize(ROWS - deletedPositions.length);
     }
 
     @Test
@@ -221,8 +222,7 @@ class RowIndexExcludedReadIT {
 
         List<Long> survivors = collectPositions(file, predicate, RowIndexExcludedReadIT::positionFromValue);
         List<Long> expected = bruteForceSurvivors(predicate, ROWS);
-        assertThat(survivors).containsExactlyElementsOf(expected);
-        assertThat(survivors).allMatch(position -> position >= firstRowGroupRows);
+        assertThat(survivors).containsExactlyElementsOf(expected).allMatch(position -> position >= firstRowGroupRows);
     }
 
     @Test

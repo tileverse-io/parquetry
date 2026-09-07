@@ -76,8 +76,11 @@ class CanonicalRowFromParquetryTest {
             ParquetRecord row = batch.materialize(0);
             Map<String, Object> canonical = CanonicalRow.fromParquetry(row, schema);
 
-            assertThat(canonical.get("i")).as("int leaf").isEqualTo(7);
-            assertThat(canonical.get("s")).as("binary leaf as ByteBuffer").isEqualTo(ByteBuffer.wrap("hi".getBytes()));
+            assertThat(canonical)
+                    .as("int leaf")
+                    .containsEntry("i", 7)
+                    .as("binary leaf as ByteBuffer")
+                    .containsEntry("s", ByteBuffer.wrap("hi".getBytes()));
             assertThat(canonical.get("opt")).as("absent optional is null").isNull();
             assertThat(canonical.keySet()).as("field order preserved").containsExactly("i", "s", "opt");
         }
@@ -105,7 +108,7 @@ class CanonicalRowFromParquetryTest {
 
         try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, cols, 1, Arena.ofConfined())) {
             Map<String, Object> canonical = CanonicalRow.fromParquetry(batch.materialize(0), schema);
-            assertThat(canonical.get("point")).as("struct as nested map").isEqualTo(Map.of("x", 3, "y", 4));
+            assertThat(canonical).as("struct as nested map").containsEntry("point", Map.of("x", 3, "y", 4));
         }
     }
 
@@ -171,12 +174,12 @@ class CanonicalRowFromParquetryTest {
         Map<ColumnPath, ColumnVector> cols = Map.of(ColumnPath.of("nums"), listVec);
 
         try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, cols, 3, Arena.ofConfined())) {
-            assertThat(CanonicalRow.fromParquetry(batch.materialize(0), schema).get("nums"))
+            assertThat(CanonicalRow.fromParquetry(batch.materialize(0), schema))
                     .as("present list")
-                    .isEqualTo(List.of(10, 20));
-            assertThat(CanonicalRow.fromParquetry(batch.materialize(1), schema).get("nums"))
+                    .containsEntry("nums", List.of(10, 20));
+            assertThat(CanonicalRow.fromParquetry(batch.materialize(1), schema))
                     .as("empty list")
-                    .isEqualTo(List.of());
+                    .containsEntry("nums", List.of());
             assertThat(CanonicalRow.fromParquetry(batch.materialize(2), schema).get("nums"))
                     .as("null list")
                     .isNull();

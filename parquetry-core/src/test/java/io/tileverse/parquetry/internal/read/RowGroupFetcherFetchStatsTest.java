@@ -54,6 +54,8 @@ class RowGroupFetcherFetchStatsTest {
     Path tempDir;
 
     @Test
+    // S7466: the project style declares explicit local types rather than var
+    @SuppressWarnings("java:S7466")
     void fetchRecordsPageBytesIntoTheActiveAccumulator() throws Exception {
         Path file = writeRows();
         ParquetSchema schema = flatSchema();
@@ -63,7 +65,7 @@ class RowGroupFetcherFetchStatsTest {
             RowGroupFetcher fetcher = TestFetchers.over(source, schema, schema, SegmentPool.getDefault(), accumulator);
             FetchPlan plan = fetcher.planFor(survivor, Optional.empty());
 
-            try (RowGroupFetch fetch = fetcher.fetch(survivor, plan, BudgetReservation.NONE)) {
+            try (RowGroupFetch _ = fetcher.fetch(survivor, plan, BudgetReservation.NONE)) {
                 FetchStats stats = accumulator.snapshot();
                 assertThat(stats.pageBytes())
                         .as("page bytes recorded match the plan's total range bytes")

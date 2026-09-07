@@ -79,8 +79,11 @@ class NativeImageSmokeIT {
         String output = new String(process.getInputStream().readAllBytes());
         int code = process.waitFor();
         assertThat(code).as("output was: %s", output).isZero();
-        assertThat(output).contains("Rosario").contains("Cordoba").contains("Buenos Aires");
-        assertThat(output).doesNotContain("\"id\":4");
+        assertThat(output)
+                .contains("Rosario")
+                .contains("Cordoba")
+                .contains("Buenos Aires")
+                .doesNotContain("\"id\":4");
     }
 
     @Test
@@ -132,7 +135,6 @@ class NativeImageSmokeIT {
         String output = new String(process.getInputStream().readAllBytes());
         int code = process.waitFor();
         assertThat(code).as("output was: %s", output).isZero();
-        assertThat(output).contains("\"id\":1");
-        assertThat(output).doesNotContain("\"id\":2");
+        assertThat(output).contains("\"id\":1").doesNotContain("\"id\":2");
     }
 }

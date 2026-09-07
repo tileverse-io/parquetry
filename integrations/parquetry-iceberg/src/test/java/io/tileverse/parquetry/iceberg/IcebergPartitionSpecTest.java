@@ -42,8 +42,7 @@ class IcebergPartitionSpecTest {
 
         assertThat(spec.isEmpty()).isFalse();
         assertThat(spec.byPartitionFieldId(1000)).contains(new PartitionField(1000, 2, "category", "identity"));
-        assertThat(spec.identitySourceFields()).containsOnlyKeys(2);
-        assertThat(spec.identitySourceFields().get(2)).isEqualTo(CATEGORY);
+        assertThat(spec.identitySourceFields()).containsOnlyKeys(2).containsEntry(2, CATEGORY);
     }
 
     @Test

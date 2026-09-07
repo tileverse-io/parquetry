@@ -101,18 +101,16 @@ public final class DatasetResolver {
 
     private static DatasetCatalog buildCatalog(InputKind kind, Properties storageProperties) {
         return switch (kind) {
-            case InputKind.IcebergLocal local ->
-                IcebergTableCatalog.openLocal(local.tableDir(), IcebergOptions.defaults());
-            case InputKind.LocalFile local ->
-                FilesetCatalog.open(LocalFileSource.file(local.file()), CatalogOptions.defaults());
-            case InputKind.Fileset fileset ->
+            case InputKind.IcebergLocal(Path tableDir) ->
+                IcebergTableCatalog.openLocal(tableDir, IcebergOptions.defaults());
+            case InputKind.LocalFile(Path file) ->
+                FilesetCatalog.open(LocalFileSource.file(file), CatalogOptions.defaults());
+            case InputKind.Fileset(URI baseUri, String glob) ->
                 FilesetCatalog.open(
-                        ParquetFileSources.open(fileset.baseUri(), fileset.glob(), storageProperties),
-                        CatalogOptions.defaults());
-            case InputKind.RemoteObject remote ->
-                FilesetCatalog.open(
-                        ParquetFileSources.openObject(remote.uri(), storageProperties), CatalogOptions.defaults());
-            case InputKind.RemotePrefix remote -> openRemotePrefix(remote.uri(), storageProperties);
+                        ParquetFileSources.open(baseUri, glob, storageProperties), CatalogOptions.defaults());
+            case InputKind.RemoteObject(URI uri) ->
+                FilesetCatalog.open(ParquetFileSources.openObject(uri, storageProperties), CatalogOptions.defaults());
+            case InputKind.RemotePrefix(URI uri) -> openRemotePrefix(uri, storageProperties);
         };
     }
 
@@ -184,8 +182,8 @@ public final class DatasetResolver {
 
     private static InputKind globFileset(String pathOrUri) {
         int meta = firstGlobMetaIndex(pathOrUri);
-        // Split on the last separator of either kind. A Windows argument such as C:\data\*.parquet uses backslashes;
-        // the base must stay free of glob characters for normalizeToUri to resolve it to a real path URI.
+        // Split on the last separator of either kind, because a Windows argument such as C:\data\*.parquet uses
+        // backslashes. The base must stay free of glob characters for normalizeToUri to resolve it to a real path URI.
         int lastSeparator = Math.max(pathOrUri.lastIndexOf('/', meta), pathOrUri.lastIndexOf('\\', meta));
         String base = lastSeparator < 0 ? "." : pathOrUri.substring(0, lastSeparator);
         String glob = lastSeparator < 0 ? pathOrUri : pathOrUri.substring(lastSeparator + 1);
@@ -228,7 +226,7 @@ public final class DatasetResolver {
         try {
             URI uri = UriResolver.normalizeToUri(pathOrUri);
             return isLocal(uri) && Files.isRegularFile(Path.of(uri));
-        } catch (RuntimeException notAPath) {
+        } catch (RuntimeException _) {
             return false;
         }
     }
@@ -241,7 +239,7 @@ public final class DatasetResolver {
     private static void closeQuietly(Storage storage) {
         try {
             storage.close();
-        } catch (Exception ignored) {
+        } catch (Exception _) {
             // Best-effort: the probe failed cleanly and the storage is being discarded; a close error is noise here.
         }
     }

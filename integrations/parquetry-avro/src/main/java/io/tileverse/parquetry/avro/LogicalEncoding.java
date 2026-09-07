@@ -47,25 +47,24 @@ final class LogicalEncoding {
         LogicalType logical = schema.logicalType().orElseThrow();
         return switch (logical) {
             case LogicalType.Decimal decimal -> encodeDecimal(schema, decimal, value, out);
-            case LogicalType.Uuid ignored -> encodeUuid(schema, value, out);
-            case LogicalType.Date ignored -> encodeInt(value, LocalDate.class, date -> (int) date.toEpochDay(), out);
-            case LogicalType.TimeMillis ignored ->
+            case LogicalType.Uuid _ -> encodeUuid(schema, value, out);
+            case LogicalType.Date _ -> encodeInt(value, LocalDate.class, date -> (int) date.toEpochDay(), out);
+            case LogicalType.TimeMillis _ ->
                 encodeInt(value, LocalTime.class, time -> (int) (time.toNanoOfDay() / 1_000_000L), out);
-            case LogicalType.TimeMicros ignored ->
+            case LogicalType.TimeMicros _ ->
                 encodeLong(value, LocalTime.class, time -> time.toNanoOfDay() / 1_000L, out);
-            case LogicalType.TimestampMillis ignored -> encodeLong(value, Instant.class, Instant::toEpochMilli, out);
-            case LogicalType.TimestampMicros ignored ->
-                encodeLong(value, Instant.class, LogicalEncoding::epochMicros, out);
-            case LogicalType.LocalTimestampMillis ignored ->
+            case LogicalType.TimestampMillis _ -> encodeLong(value, Instant.class, Instant::toEpochMilli, out);
+            case LogicalType.TimestampMicros _ -> encodeLong(value, Instant.class, LogicalEncoding::epochMicros, out);
+            case LogicalType.LocalTimestampMillis _ ->
                 encodeLong(
                         value,
                         LocalDateTime.class,
                         dt -> dt.toInstant(ZoneOffset.UTC).toEpochMilli(),
                         out);
-            case LogicalType.LocalTimestampMicros ignored ->
+            case LogicalType.LocalTimestampMicros _ ->
                 encodeLong(value, LocalDateTime.class, dt -> epochMicros(dt.toInstant(ZoneOffset.UTC)), out);
-            case LogicalType.Duration ignored -> encodeDuration(value, out);
-            case LogicalType.Unknown ignored -> false;
+            case LogicalType.Duration _ -> encodeDuration(value, out);
+            case LogicalType.Unknown _ -> false;
         };
     }
 
@@ -141,14 +140,14 @@ final class LogicalEncoding {
     }
 
     private boolean encodeDuration(Object value, AvroBinaryEncoder out) {
-        if (!(value instanceof AvroDuration duration)) {
+        if (!(value instanceof AvroDuration(long months, long days, long millis))) {
             return false;
         }
         byte[] fixed12 = new byte[12];
         MemorySegment segment = MemorySegment.ofArray(fixed12);
-        segment.set(LITTLE_ENDIAN_INT, 0, (int) duration.months());
-        segment.set(LITTLE_ENDIAN_INT, 4, (int) duration.days());
-        segment.set(LITTLE_ENDIAN_INT, 8, (int) duration.millis());
+        segment.set(LITTLE_ENDIAN_INT, 0, (int) months);
+        segment.set(LITTLE_ENDIAN_INT, 4, (int) days);
+        segment.set(LITTLE_ENDIAN_INT, 8, (int) millis);
         out.writeFixed(fixed12);
         return true;
     }

@@ -98,7 +98,7 @@ public final class StorageIcebergFileIO implements IcebergFileIO {
                     .map(file -> logicalRoot + "/" + unprefixed(file.key()))
                     .sorted()
                     .toList();
-        } catch (UnsupportedCapabilityException cannotList) {
+        } catch (UnsupportedCapabilityException _) {
             return List.of();
         }
     }

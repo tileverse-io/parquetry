@@ -45,7 +45,7 @@ class ParquetSourceProduceSetTest {
     private static final Path FILE = CorpusFixtures.parquetTestingData().resolve("alltypes_plain.parquet");
 
     @Test
-    void coreReaderProducesRenamedPhysicalAndConstant() throws Exception {
+    void coreReaderProducesRenamedPhysicalAndConstant() {
         try (ByteRangeSource byteSource = ByteRangeSource.ofFile(FILE)) {
             ParquetSource source = ParquetSource.open(byteSource);
             ColumnPath firstLeaf = source.schema().leafColumns().get(0);
@@ -68,7 +68,7 @@ class ParquetSourceProduceSetTest {
     }
 
     @Test
-    void outputColumnsSelectAndReorderTheProducedColumns() throws Exception {
+    void outputColumnsSelectAndReorderTheProducedColumns() {
         try (ByteRangeSource byteSource = ByteRangeSource.ofFile(FILE)) {
             ParquetSource source = ParquetSource.open(byteSource);
             ColumnPath first = source.schema().leafColumns().get(0);

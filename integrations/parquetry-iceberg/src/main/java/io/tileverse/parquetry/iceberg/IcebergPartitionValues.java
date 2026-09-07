@@ -38,24 +38,32 @@ final class IcebergPartitionValues {
     static Map<Integer, Value> constantsFor(IcebergPartitionSpec spec, Map<Integer, Object> partitionValues) {
         Map<Integer, Value> constants = new HashMap<>();
         for (Map.Entry<Integer, Object> entry : partitionValues.entrySet()) {
-            PartitionField partitionField =
-                    spec.byPartitionFieldId(entry.getKey()).orElse(null);
-            if (partitionField == null || !partitionField.isIdentity()) {
-                continue;
-            }
-            Object raw = entry.getValue();
-            if (raw == null) {
-                continue;
-            }
-            IcebergField source = spec.identitySourceFields().get(partitionField.sourceFieldId());
-            if (source == null) {
-                // The partition's source column is no longer in the current schema (dropped by evolution). It is not
-                // a presented field, nothing references it, and it cannot be reconstructed; skip it rather than fail.
-                continue;
-            }
-            constants.put(partitionField.sourceFieldId(), toValue(source, raw));
+            addIdentityConstant(spec, entry.getKey(), entry.getValue(), constants);
         }
         return constants;
+    }
+
+    /**
+     * Records the constant one raw tuple entry contributes, if any. An entry contributes nothing when its transform is
+     * not identity, when its value is null, or when its source column was dropped by schema evolution.
+     */
+    private static void addIdentityConstant(
+            IcebergPartitionSpec spec, int partitionFieldId, Object raw, Map<Integer, Value> constants) {
+        PartitionField partitionField =
+                spec.byPartitionFieldId(partitionFieldId).orElse(null);
+        if (partitionField == null || !partitionField.isIdentity()) {
+            return;
+        }
+        if (raw == null) {
+            return;
+        }
+        IcebergField source = spec.identitySourceFields().get(partitionField.sourceFieldId());
+        if (source == null) {
+            // A dropped source column is not a presented field, nothing references it, and it cannot be
+            // reconstructed; skip it rather than fail.
+            return;
+        }
+        constants.put(partitionField.sourceFieldId(), toValue(source, raw));
     }
 
     private static Value toValue(IcebergField source, Object raw) {

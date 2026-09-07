@@ -38,7 +38,7 @@ class ValidityTest {
     @Test
     void allValidNextSetBitWalksEveryRowThenStops() {
         Validity v = Validity.allValid(3);
-        assertThat(v.nextSetBit(0)).isEqualTo(0);
+        assertThat(v.nextSetBit(0)).isZero();
         assertThat(v.nextSetBit(1)).isEqualTo(1);
         assertThat(v.nextSetBit(2)).isEqualTo(2);
         assertThat(v.nextSetBit(3)).as("no row beyond size").isEqualTo(-1);

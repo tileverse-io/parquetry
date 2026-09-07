@@ -63,17 +63,18 @@ class StorageOptionsTest {
 
         Properties props = host.storage.toProperties();
 
-        assertThat(props).containsEntry("storage.provider", "s3");
-        assertThat(props).containsEntry("storage.s3.region", "us-east-1");
-        assertThat(props).containsEntry("storage.s3.aws-access-key-id", "AK");
-        assertThat(props).containsEntry("storage.s3.aws-secret-access-key", "SK");
-        assertThat(props).containsEntry("storage.s3.force-path-style", "true");
-        assertThat(props).containsEntry("storage.s3.anonymous", "true");
-        assertThat(props).containsEntry("storage.gcs.project-id", "proj");
-        assertThat(props).containsEntry("storage.s3.endpoint", "http://localhost:4443");
-        assertThat(props).containsEntry("storage.gcs.endpoint", "http://localhost:4443");
-        assertThat(props).containsEntry("storage.azure.endpoint", "http://localhost:4443");
-        assertThat(props).hasSize(10);
+        assertThat(props)
+                .containsEntry("storage.provider", "s3")
+                .containsEntry("storage.s3.region", "us-east-1")
+                .containsEntry("storage.s3.aws-access-key-id", "AK")
+                .containsEntry("storage.s3.aws-secret-access-key", "SK")
+                .containsEntry("storage.s3.force-path-style", "true")
+                .containsEntry("storage.s3.anonymous", "true")
+                .containsEntry("storage.gcs.project-id", "proj")
+                .containsEntry("storage.s3.endpoint", "http://localhost:4443")
+                .containsEntry("storage.gcs.endpoint", "http://localhost:4443")
+                .containsEntry("storage.azure.endpoint", "http://localhost:4443")
+                .hasSize(10);
     }
 
     @Test

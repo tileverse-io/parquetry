@@ -46,16 +46,16 @@ public final class AvroDataFileWriter implements AutoCloseable {
     }
 
     /** Writes one record: a {@code Map} by field name or an {@link AvroRecord}. */
-    public void write(Object record) {
+    public void write(Object datum) {
         AvroBinaryEncoder encoded = new AvroBinaryEncoder();
-        datumEncoder.encode(schema, record, encoded);
+        datumEncoder.encode(schema, datum, encoded);
         ocfWriter.append(encoded.toByteArray());
     }
 
     /** Writes every record in {@code records}. */
     public void write(Iterable<?> records) {
-        for (Object record : records) {
-            write(record);
+        for (Object datum : records) {
+            write(datum);
         }
     }
 
@@ -66,6 +66,8 @@ public final class AvroDataFileWriter implements AutoCloseable {
 
     /** Configures an {@link AvroDataFileWriter}: codec, block-flush threshold, and sync marker. */
     public static final class Builder {
+
+        private static final SecureRandom SYNC_MARKERS = new SecureRandom();
 
         private final String schemaJson;
         private String codec = "null";
@@ -112,7 +114,7 @@ public final class AvroDataFileWriter implements AutoCloseable {
 
         private static byte[] randomSyncMarker() {
             byte[] marker = new byte[SYNC_SIZE];
-            new SecureRandom().nextBytes(marker);
+            SYNC_MARKERS.nextBytes(marker);
             return marker;
         }
     }

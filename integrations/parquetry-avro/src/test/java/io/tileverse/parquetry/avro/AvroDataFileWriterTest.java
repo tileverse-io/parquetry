@@ -48,7 +48,7 @@ class AvroDataFileWriterTest {
             assertThat(rows.get(0).get("id")).isEqualTo(1L);
             assertThat(rows.get(0).get("name")).isEqualTo("alice");
             assertThat(rows.get(1).get("name")).isNull();
-            assertThat(reader.metadata().get("avro.schema")).isEqualTo(SCHEMA);
+            assertThat(reader.metadata()).containsEntry("avro.schema", SCHEMA);
         }
     }
 
@@ -61,14 +61,15 @@ class AvroDataFileWriterTest {
 
     @Test
     void rejectsNonPositiveBlockSize() {
-        assertThatThrownBy(() -> AvroDataFileWriter.builder(SCHEMA).blockSize(0))
-                .isInstanceOf(IllegalArgumentException.class);
+        AvroDataFileWriter.Builder builder = AvroDataFileWriter.builder(SCHEMA);
+        assertThatThrownBy(() -> builder.blockSize(0)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void rejectsSyncMarkerOfWrongLength() {
+        AvroDataFileWriter.Builder builder = AvroDataFileWriter.builder(SCHEMA);
         byte[] fifteenBytes = new byte[15];
-        assertThatThrownBy(() -> AvroDataFileWriter.builder(SCHEMA).syncMarker(fifteenBytes))
+        assertThatThrownBy(() -> builder.syncMarker(fifteenBytes))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("16");
     }

@@ -80,7 +80,7 @@ class BatchHandoffTest {
             try {
                 handoff.put(new HandoffItem.InHeap(b1));
                 secondPutReturned.countDown();
-            } catch (InterruptedException e) {
+            } catch (InterruptedException _) {
                 Thread.currentThread().interrupt();
             }
         });
@@ -139,14 +139,14 @@ class BatchHandoffTest {
         Thread producer = new Thread(() -> {
             try {
                 handoff.put(new HandoffItem.InHeap(held));
-            } catch (InterruptedException e) {
+            } catch (InterruptedException _) {
                 Thread.currentThread().interrupt();
             } finally {
                 putReturned.countDown();
             }
         });
         producer.start();
-        Thread.sleep(100); // let the producer park on the full queue
+        awaitParkedOnFullQueue(producer);
 
         handoff.close(); // cancels: drains the queued batch and releases the parked producer
 
@@ -211,6 +211,23 @@ class BatchHandoffTest {
             assertThat(diskBudget.available())
                     .as("the spilled item's disk reservation is released on discard")
                     .isGreaterThan(afterSpill);
+        }
+    }
+
+    /**
+     * Spins until {@code producer} parks inside its full-queue put. The put waits in timed permit polls, making
+     * TIMED_WAITING the parked state to watch for. The cancel path under test only runs once the producer is actually
+     * blocked, and a fixed pause would either race a slow scheduler or burn wall time.
+     */
+    private static void awaitParkedOnFullQueue(Thread producer) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        Thread.State state = producer.getState();
+        while (state != Thread.State.WAITING && state != Thread.State.TIMED_WAITING) {
+            if (System.nanoTime() > deadline) {
+                throw new AssertionError("the producer never parked on the full queue");
+            }
+            Thread.onSpinWait();
+            state = producer.getState();
         }
     }
 

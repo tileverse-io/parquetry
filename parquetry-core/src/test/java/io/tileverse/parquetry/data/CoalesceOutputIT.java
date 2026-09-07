@@ -179,11 +179,14 @@ class CoalesceOutputIT {
 
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetFileReader reader = ParquetFileReader.open(source);
-            assertThatThrownBy(() -> reader.read(Predicate.ALWAYS_TRUE, projection, ReadOptions.DEFAULTS)
-                            .close())
+            assertThatThrownBy(() -> readAndClose(reader, projection))
                     .isInstanceOf(ParquetSchemaException.class)
                     .hasMessageContaining("id");
         }
+    }
+
+    private static void readAndClose(ParquetFileReader reader, Projection projection) {
+        reader.read(Predicate.ALWAYS_TRUE, projection, ReadOptions.DEFAULTS).close();
     }
 
     /** A stored cell (every third row) keeps its value; a null cell falls back to {@code FIRST_ROW_ID + position}. */
@@ -208,8 +211,8 @@ class CoalesceOutputIT {
     }
 
     /** Runs {@code check} on every emitted row and returns the row count, anchoring against a vacuously empty read. */
-    private static long forEachRow(Path file, Predicate predicate, Projection projection, Consumer<ParquetRecord> check)
-            throws Exception {
+    private static long forEachRow(
+            Path file, Predicate predicate, Projection projection, Consumer<ParquetRecord> check) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetFileReader reader = ParquetFileReader.open(source);
             try (Stream<ParquetRecord> rows = reader.read(predicate, projection, ReadOptions.DEFAULTS)) {

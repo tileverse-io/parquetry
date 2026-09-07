@@ -308,7 +308,7 @@ public final class UriResolver {
             if (uri.getScheme() != null) {
                 return uri;
             }
-        } catch (URISyntaxException e) {
+        } catch (URISyntaxException _) {
             // not a URI; treat it as a filesystem path below
         }
         return Path.of(pathOrUri).toAbsolutePath().normalize().toUri();
@@ -317,7 +317,7 @@ public final class UriResolver {
     private static void closeQuietly(Storage storage) {
         try {
             storage.close();
-        } catch (Exception ignored) {
+        } catch (Exception _) {
             // best effort during failed open
         }
     }

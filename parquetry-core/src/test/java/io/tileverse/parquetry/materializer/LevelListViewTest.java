@@ -261,8 +261,7 @@ class LevelListViewTest {
                 1);
 
         List<?> list = LevelListMaterializer.materializeAt(vec, 0);
-        assertThat(list).hasSize(4);
-        assertThat(list).isEqualTo(List.of(1.0, 2.0, 3.0, 4.0));
+        assertThat(list).hasSize(4).isEqualTo(List.of(1.0, 2.0, 3.0, 4.0));
         // get(size-1) then get(0) forces the cursor to rewind to the window start.
         assertThat(list.get(3)).isEqualTo(4.0);
         assertThat(list.get(0)).isEqualTo(1.0);
@@ -347,13 +346,13 @@ class LevelListViewTest {
         ColumnPath metadataLeaf = ColumnPath.of("xs", "list", "element", "metadata");
 
         BinaryVector leaf = BinaryVector.materialized(new MemorySegment[] {utf8("m")}, Validity.allValid(1));
-        assertThatThrownBy(() -> LevelListVector.of(
-                        schema,
-                        ColumnPath.of("xs"),
-                        Map.of(metadataLeaf, leaf),
-                        Map.of(metadataLeaf, leafLevels(new int[] {0}, new int[] {3}, new int[] {0, 1})),
-                        Validity.allValid(1),
-                        1))
+        ColumnPath listPath = ColumnPath.of("xs");
+        Map<ColumnPath, ColumnVector> leaves = Map.of(metadataLeaf, leaf);
+        Map<ColumnPath, LeafLevels> levels =
+                Map.of(metadataLeaf, leafLevels(new int[] {0}, new int[] {3}, new int[] {0, 1}));
+        Validity rowValidity = Validity.allValid(1);
+
+        assertThatThrownBy(() -> LevelListVector.of(schema, listPath, leaves, levels, rowValidity, 1))
                 .isInstanceOf(ParquetFormatException.class)
                 .hasMessageContaining("list or map");
     }

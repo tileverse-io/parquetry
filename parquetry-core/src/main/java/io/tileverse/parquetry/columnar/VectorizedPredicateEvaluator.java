@@ -243,8 +243,8 @@ public final class VectorizedPredicateEvaluator {
         return nullMask;
     }
 
-    // S6541 (Brain Method): the per-vector-type loops are an intentional dispatch table on the hot count path;
-    // collapsing them to lower the metric would reintroduce per-row megamorphic dispatch (see the in-body note).
+    // S6541 (Brain Method): the per-vector-type loops are an intentional dispatch table on the hot count path.
+    // Collapsing them to lower the metric would reintroduce per-row megamorphic dispatch (see the in-body note).
     @SuppressWarnings({"java:S3776", "java:S6541"})
     private static BitSet compareMask(ParquetRecordBatch batch, ColumnPath col, Value v, IntPredicate accept) {
         ColumnVector vec = vectorOf(batch, col);

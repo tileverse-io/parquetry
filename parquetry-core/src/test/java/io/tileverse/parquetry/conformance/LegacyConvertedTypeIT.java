@@ -44,7 +44,7 @@ class LegacyConvertedTypeIT {
 
     @ParameterizedTest(name = "{0} [{1}] backfills to {2}")
     @MethodSource("legacyConvertedTypeColumns")
-    void backfillsLogicalTypeFromRealFileFooter(String fixture, String column, LogicalType expected) throws Exception {
+    void backfillsLogicalTypeFromRealFileFooter(String fixture, String column, LogicalType expected) {
         Path file = CorpusFixtures.parquetTestingData().resolve(fixture);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetFileReader reader = ParquetFileReader.open(source);

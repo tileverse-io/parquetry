@@ -360,7 +360,7 @@ public sealed interface Codec
                         target = grown;
                     }
                     ByteBuffer window =
-                            target.asSlice(produced, capacity - produced).asByteBuffer();
+                            target.asSlice(produced, (long) capacity - produced).asByteBuffer();
                     int n = inflater.inflate(window);
                     if (n == 0) {
                         if (inflater.finished()) {

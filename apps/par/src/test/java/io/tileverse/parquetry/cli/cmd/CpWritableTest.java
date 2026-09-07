@@ -44,7 +44,8 @@ class CpWritableTest {
 
     @Test
     void int96IsRejectedAtTopLevel() {
-        assertThatThrownBy(() -> CpWritable.requireWritable(int96Top()))
+        ParquetSchema schema = int96Top();
+        assertThatThrownBy(() -> CpWritable.requireWritable(schema))
                 .isInstanceOf(UnsupportedSchemaException.class)
                 .hasMessageContaining("INT96")
                 .hasMessageContaining("ts");
@@ -52,7 +53,8 @@ class CpWritableTest {
 
     @Test
     void int96IsRejectedInsideAStruct() {
-        assertThatThrownBy(() -> CpWritable.requireWritable(int96InStruct()))
+        ParquetSchema schema = int96InStruct();
+        assertThatThrownBy(() -> CpWritable.requireWritable(schema))
                 .isInstanceOf(UnsupportedSchemaException.class)
                 .hasMessageContaining("INT96")
                 .hasMessageContaining("bbox.ts");

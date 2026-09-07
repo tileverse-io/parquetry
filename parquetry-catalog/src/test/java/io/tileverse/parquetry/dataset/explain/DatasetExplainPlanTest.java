@@ -64,8 +64,9 @@ class DatasetExplainPlanTest {
 
         String table = plan.toAsciiTable();
 
-        assertThat(table).contains("a.parquet", "KEEP", "b.parquet", "SKIP", "bounds disjoint");
-        assertThat(table).contains("1 kept", "1 skipped");
+        assertThat(table)
+                .contains("a.parquet", "KEEP", "b.parquet", "SKIP", "bounds disjoint")
+                .contains("1 kept", "1 skipped");
     }
 
     @Test

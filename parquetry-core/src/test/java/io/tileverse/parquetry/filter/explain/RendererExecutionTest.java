@@ -54,14 +54,19 @@ class RendererExecutionTest {
         ExplainPlan plan = planWithAllTiersActive().withExecution(stats(), Map.of(0, rowGroupRead(0)));
 
         String table = plan.toAsciiTable();
-        assertThat(table).contains("actual").contains("bytes").contains("time").contains("Total");
-        assertThat(table).contains("17"); // rows matched
-        assertThat(table).contains("4096"); // bytes read
+        assertThat(table)
+                .contains("actual")
+                .contains("bytes")
+                .contains("time")
+                .contains("Total")
+                .contains("17") // rows matched
+                .contains("4096"); // bytes read
 
         String json = plan.toJson();
-        assertThat(json).contains("\"execution\"");
-        assertThat(json).contains("\"rowsMatched\":42");
-        assertThat(json).contains("\"rowGroupsRead\":1");
+        assertThat(json)
+                .contains("\"execution\"")
+                .contains("\"rowsMatched\":42")
+                .contains("\"rowGroupsRead\":1");
     }
 
     @Test

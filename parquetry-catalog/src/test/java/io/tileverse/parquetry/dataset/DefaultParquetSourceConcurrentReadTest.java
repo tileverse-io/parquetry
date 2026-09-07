@@ -238,8 +238,8 @@ class DefaultParquetSourceConcurrentReadTest {
             sources.add(TestParquetFiles.openRangeReader(junk));
             sources.add(TestParquetFiles.openRangeReader(good));
 
-            assertThatThrownBy(() -> ParquetSource.open(TestFilesets.of(sources)))
-                    .isInstanceOf(ParquetFormatException.class);
+            FilesetReader fileset = TestFilesets.of(sources);
+            assertThatThrownBy(() -> ParquetSource.open(fileset)).isInstanceOf(ParquetFormatException.class);
         } finally {
             closeAll(sources);
         }

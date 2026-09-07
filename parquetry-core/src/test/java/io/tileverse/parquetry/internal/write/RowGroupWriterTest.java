@@ -73,7 +73,7 @@ class RowGroupWriterTest {
     Path tempDir;
 
     @Test
-    void singleColumnInt32RoundTripsThroughConsolidatedOutput() throws Exception {
+    void singleColumnInt32RoundTripsThroughConsolidatedOutput() {
         ParquetSchema schema = flatSchema(requiredInt32("id"));
         WriteOptions options = options()
                 .pageValueLimit(64)
@@ -109,7 +109,7 @@ class RowGroupWriterTest {
     }
 
     @Test
-    void multiColumnSchemaPlacesChunksBackToBackInSchemaOrder() throws Exception {
+    void multiColumnSchemaPlacesChunksBackToBackInSchemaOrder() {
         SchemaNode.Primitive idLeaf = requiredInt32("id");
         SchemaNode.Primitive timestampLeaf = requiredInt64("timestamp");
         SchemaNode.Primitive nameLeaf = requiredBinary("name");
@@ -160,7 +160,7 @@ class RowGroupWriterTest {
     }
 
     @Test
-    void emptyRowGroupRejectsFlush() throws Exception {
+    void emptyRowGroupRejectsFlush() {
         ParquetSchema schema = flatSchema(requiredInt32("id"));
         WriteOptions options = options().build();
         ByteArrayByteSink sink = new ByteArrayByteSink();
@@ -172,7 +172,7 @@ class RowGroupWriterTest {
     }
 
     @Test
-    void dictionaryPageOffsetsAreAbsoluteAfterConsolidation() throws Exception {
+    void dictionaryPageOffsetsAreAbsoluteAfterConsolidation() {
         ParquetSchema schema = flatSchema(requiredInt32("color_id"), requiredInt32("brightness"));
         WriteOptions options = options().pageValueLimit(64).build();
 
@@ -214,7 +214,7 @@ class RowGroupWriterTest {
     }
 
     @Test
-    void offsetIndexEntriesAreAbsoluteAndNonOverlapping() throws Exception {
+    void offsetIndexEntriesAreAbsoluteAndNonOverlapping() {
         ParquetSchema schema = flatSchema(requiredInt32("a"), requiredInt32("b"));
         WriteOptions options = options()
                 .pageValueLimit(8)
@@ -313,7 +313,7 @@ class RowGroupWriterTest {
     }
 
     @Test
-    void optionalColumnRecordsNullsForAbsentValues() throws Exception {
+    void optionalColumnRecordsNullsForAbsentValues() {
         SchemaNode.Primitive optional = new SchemaNode.Primitive(
                 "nullable", Repetition.OPTIONAL, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
         ParquetSchema schema = flatSchema(optional);
@@ -398,7 +398,7 @@ class RowGroupWriterTest {
     }
 
     @Test
-    void parallelAppendProducesBytesIdenticalToInlineAppend() throws Exception {
+    void parallelAppendProducesBytesIdenticalToInlineAppend() {
         ParquetSchema schema = flatSchema(requiredInt32("id"), requiredInt64("timestamp"), requiredBinary("name"));
         WriteOptions options = options().pageValueLimit(64).build();
         List<Map<ColumnPath, Object>> rows = new ArrayList<>();

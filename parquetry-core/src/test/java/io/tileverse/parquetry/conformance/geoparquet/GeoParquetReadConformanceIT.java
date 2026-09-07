@@ -64,7 +64,7 @@ class GeoParquetReadConformanceIT {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("conformanceFiles")
-    void readsMetadataAndDecodesEveryGeometry(String label, Path file) throws Exception {
+    void readsMetadataAndDecodesEveryGeometry(String label, Path file) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetFileReader reader = ParquetFileReader.open(source);
 

@@ -115,7 +115,7 @@ public final class ShreddedVariantShredder {
         VariantScalarDecoder.Decoded decoded = VariantScalarDecoder.decode(scalar, value);
         return switch (decoded) {
             case VariantScalarDecoder.Matched(Object physical) -> new ScalarShred(physical, null);
-            case VariantScalarDecoder.Mismatch ignored -> new ScalarShred(null, value.value());
+            case VariantScalarDecoder.Mismatch _ -> new ScalarShred(null, value.value());
         };
     }
 

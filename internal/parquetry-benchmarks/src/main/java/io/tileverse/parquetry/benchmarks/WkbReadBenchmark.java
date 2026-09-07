@@ -26,6 +26,7 @@ import org.locationtech.jts.geom.LinearRing;
 import org.locationtech.jts.geom.Polygon;
 import org.locationtech.jts.geom.impl.PackedCoordinateSequenceFactory;
 import org.locationtech.jts.io.ByteOrderValues;
+import org.locationtech.jts.io.ParseException;
 import org.locationtech.jts.io.WKBReader;
 import org.locationtech.jts.io.WKBWriter;
 import org.openjdk.jmh.annotations.Benchmark;
@@ -148,7 +149,7 @@ public class WkbReadBenchmark {
     }
 
     @Benchmark
-    public void decode(Blackhole bh) throws Exception {
+    public void decode(Blackhole bh) throws ParseException {
         Geometry decoded =
                 switch (reader) {
                     case JTS_PACKED -> jtsReader.read(wkbBytes);

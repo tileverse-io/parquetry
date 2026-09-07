@@ -121,7 +121,7 @@ class NestedContainerPassThroughWriteIT {
             ParquetSchema schema = reader.schema();
             try (Stream<ParquetRecord> records =
                     reader.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
-                return records.map(record -> CanonicalRow.fromParquetry(record, schema))
+                return records.map(row -> CanonicalRow.fromParquetry(row, schema))
                         .toList();
             }
         }

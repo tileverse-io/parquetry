@@ -15,6 +15,7 @@
  */
 package io.tileverse.parquetry.probes;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -65,6 +66,7 @@ import java.util.Optional;
  *       reports throughput, latency percentiles, and an OK/OOM/ERROR status.
  * </ul>
  */
+@SuppressWarnings("java:S106") // a probe tool reports to stdout/stderr by design; its output is read and diffed by hand
 public final class ColumnarReadComparisonProbe {
 
     private Path file;
@@ -75,6 +77,7 @@ public final class ColumnarReadComparisonProbe {
     private boolean analyze;
 
     /** Runs the columnar-path read comparison, configured from {@code parquetry.probe.*} system properties. */
+    @SuppressWarnings("java:S1172") // the JVM entry-point signature; every setting comes from system properties
     public static void main(String[] args) throws Exception {
         if (System.getProperty("parquetry.probe.file") == null) {
             IO.println("Set -Dparquetry.probe.file=<parquet file> to run the columnar read comparison probe.");
@@ -94,7 +97,7 @@ public final class ColumnarReadComparisonProbe {
         this.analyze = config.analyze();
     }
 
-    private void run() throws Exception {
+    private void run() throws IOException {
         note("Columnar read-path comparison over %s (%.1f MiB), full scan"
                 .formatted(file, Files.size(file) / (1024.0 * 1024.0)));
         note("JVM availableProcessors=%d, maxHeap=%d MiB, concurrency=%d%n"

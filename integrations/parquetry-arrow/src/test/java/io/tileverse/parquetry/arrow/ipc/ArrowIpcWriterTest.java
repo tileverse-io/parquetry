@@ -52,6 +52,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 class ArrowIpcWriterTest {
 
@@ -101,7 +102,8 @@ class ArrowIpcWriterTest {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
 
         Stream<ParquetRecordBatch> empty = Stream.empty();
-        assertThatThrownBy(() -> ArrowIpcWriter.write(schema, Optional.empty(), empty, out))
+        Optional<GeoParquetMetadata> noGeo = Optional.empty();
+        assertThatThrownBy(() -> ArrowIpcWriter.write(schema, noGeo, empty, out))
                 .isInstanceOf(UnsupportedFeatureException.class)
                 .hasMessageContaining("DECIMAL");
         assertThat(out.size()).isZero();

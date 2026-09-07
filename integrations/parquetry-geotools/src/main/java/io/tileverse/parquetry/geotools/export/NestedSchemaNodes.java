@@ -47,9 +47,9 @@ final class NestedSchemaNodes {
     /** Converts {@code type} into the group node named {@code name}. */
     static SchemaNode.Group toGroup(String name, NestedType type) {
         return switch (type) {
-            case NestedType.ListType list -> listGroup(name, list.element());
-            case NestedType.MapType map -> mapGroup(name, map.key(), map.value());
-            case NestedType.StructType struct -> structGroup(name, struct.fields());
+            case NestedType.ListType(NestedType element) -> listGroup(name, element);
+            case NestedType.MapType(NestedType keyType, NestedType valueType) -> mapGroup(name, keyType, valueType);
+            case NestedType.StructType(List<NestedType.Field> fields) -> structGroup(name, fields);
             case NestedType.ScalarType _ -> throw new IllegalArgumentException("scalar has no group form: " + name);
             case NestedType.VariantType _ ->
                 throw new IllegalArgumentException("Variant attributes are not writable: " + name);
@@ -86,18 +86,18 @@ final class NestedSchemaNodes {
 
     /** A child node for {@code type}: an OPTIONAL scalar leaf, or a nested group built recursively. */
     private static SchemaNode childNode(String name, NestedType type) {
-        if (type instanceof NestedType.ScalarType scalar) {
-            return scalarLeaf(name, scalar.binding(), Repetition.OPTIONAL);
+        if (type instanceof NestedType.ScalarType(Class<?> binding)) {
+            return scalarLeaf(name, binding, Repetition.OPTIONAL);
         }
         return toGroup(name, type);
     }
 
     /** A map key leaf: REQUIRED per the standard map encoding, and always a scalar. */
     private static SchemaNode requiredScalarNode(String name, NestedType type) {
-        if (!(type instanceof NestedType.ScalarType scalar)) {
+        if (!(type instanceof NestedType.ScalarType(Class<?> binding))) {
             throw new IllegalArgumentException("map key must be a scalar type, not " + type);
         }
-        return scalarLeaf(name, scalar.binding(), Repetition.REQUIRED);
+        return scalarLeaf(name, binding, Repetition.REQUIRED);
     }
 
     /**

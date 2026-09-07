@@ -42,7 +42,9 @@ class PlainInt96EncoderTest {
         PlainInt96Encoder encoder = new PlainInt96Encoder();
         GrowableByteSink out = new GrowableByteSink(64);
         byte[][] bad = {new byte[11]};
-        assertThatThrownBy(() -> encoder.encode(new ArrayBinaryPayload(bad, bad.length), 1, out))
+        ArrayBinaryPayload payload = new ArrayBinaryPayload(bad, bad.length);
+
+        assertThatThrownBy(() -> encoder.encode(payload, 1, out))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("must be 12");
     }

@@ -267,7 +267,7 @@ public final class PageWriter {
      * when {@code maxLevel == 0}. {@code levels} may be an oversized backing array reused across pages, hence the
      * explicit count rather than the array length.
      */
-    private int encodeLevelsInto(GrowableByteSink target, int[] levels, int count, int maxLevel) throws IOException {
+    private int encodeLevelsInto(GrowableByteSink target, int[] levels, int count, int maxLevel) {
         target.reset();
         if (maxLevel == 0 || levels == null || count == 0) {
             return 0;
@@ -281,7 +281,7 @@ public final class PageWriter {
      * at this max. The transient RLE bytes go through {@link #repLevelSink}, which is copied into {@code target} right
      * away, hence the rep and def calls do not collide.
      */
-    private int writeV1LevelBlock(GrowableByteSink target, int[] levels, int count, int maxLevel) throws IOException {
+    private int writeV1LevelBlock(GrowableByteSink target, int[] levels, int count, int maxLevel) {
         if (maxLevel == 0) {
             return 0;
         }
@@ -317,7 +317,7 @@ public final class PageWriter {
         return codec.compress(source, dst);
     }
 
-    private int writeHeader(PageHeader header, LittleEndianSink dst) throws IOException {
+    private int writeHeader(PageHeader header, LittleEndianSink dst) {
         headerScratch.reset();
         ParquetFormat.writePageHeader(headerScratch, header);
         byte[] bytes = headerScratch.toByteArray();

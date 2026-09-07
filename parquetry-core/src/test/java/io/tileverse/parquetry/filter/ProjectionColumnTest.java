@@ -49,13 +49,11 @@ class ProjectionColumnTest {
     @Test
     void nullChecksHold() {
         ColumnPath n = ColumnPath.of("n");
+        ColumnPath x = ColumnPath.of("x");
         assertThatThrownBy(() -> new Projection.Column.Physical(null, n)).isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new Projection.Column.Constant(ColumnPath.of("x"), null))
-                .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new Projection.Column.Promoted(ColumnPath.of("x"), n, null))
-                .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new Projection.Column.Null(ColumnPath.of("x"), null))
-                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new Projection.Column.Constant(x, null)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new Projection.Column.Promoted(x, n, null)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new Projection.Column.Null(x, null)).isInstanceOf(NullPointerException.class);
         assertThatThrownBy(() -> new Projection.Column.RowPosition(null, 0L)).isInstanceOf(NullPointerException.class);
     }
 }

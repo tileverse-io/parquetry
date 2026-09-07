@@ -293,7 +293,9 @@ class BatchColumnReaderTest {
         SegmentPool pool = SegmentPool.create();
         BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(pool), chunk, optionalInt32Leaf());
 
-        assertThatThrownBy(() -> reader.readBatch(10, new ArrayList<>())).isInstanceOf(RuntimeException.class);
+        List<AutoCloseable> acquiredBuffers = new ArrayList<>();
+
+        assertThatThrownBy(() -> reader.readBatch(10, acquiredBuffers)).isInstanceOf(RuntimeException.class);
         assertThat(pool.stats().outstandingBorrows())
                 .as("the origin-validity bitmap must be released when the page decode fails")
                 .isZero();

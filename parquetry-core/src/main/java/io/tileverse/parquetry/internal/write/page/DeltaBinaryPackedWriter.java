@@ -15,8 +15,6 @@
  */
 package io.tileverse.parquetry.internal.write.page;
 
-import java.io.IOException;
-
 /**
  * Shared DELTA_BINARY_PACKED encode engine. Works on {@code long} internally; INT32 and INT64 encoders both call into
  * here after widening their input.
@@ -50,7 +48,7 @@ final class DeltaBinaryPackedWriter {
      * {@code n} real values) and the DELTA_BYTE_ARRAY / DELTA_LENGTH_BYTE_ARRAY paths (which drain the padding to reach
      * the bytes that follow).
      */
-    static int write(long[] values, int n, LittleEndianSink dst) throws IOException {
+    static int write(long[] values, int n, LittleEndianSink dst) {
         int start = dst.size();
         writeHeader(dst, n);
         if (n == 0) {

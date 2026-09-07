@@ -121,6 +121,8 @@ final class ConcurrentFooterGather {
     }
 
     /** The sequential one-file gather; the returned file keeps its parsed source for the dataset to reuse. */
+    // S1181: an Error must close the byte source before it propagates unchanged; nothing here is swallowed.
+    @SuppressWarnings("java:S1181")
     private static GatheredFile gatherSingle(FileEntry file) {
         ByteRangeSource source = file.open();
         try {

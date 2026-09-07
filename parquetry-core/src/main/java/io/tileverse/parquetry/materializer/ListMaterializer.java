@@ -120,6 +120,9 @@ public final class ListMaterializer {
      * Each {@code get(int)} on a struct element returns a fresh record instance with identity equality; do not rely on
      * element identity or {@code contains}/{@code indexOf} over struct lists.
      */
+    // S2160: AbstractList defines equality element-wise per the List contract; the fields below are lazy backing
+    // state, not part of the value
+    @SuppressWarnings("java:S2160")
     static final class LazyListView extends AbstractList<Object> implements RandomAccess {
 
         private final ColumnVector child;

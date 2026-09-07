@@ -45,7 +45,7 @@ class ObserverFiringTest {
     private static final Predicate PREDICATE = col("id").gtEq(0);
 
     @Test
-    void explainFiresQueryStartedAndPlannedDecisions(@TempDir Path tmp) throws Exception {
+    void explainFiresQueryStartedAndPlannedDecisions(@TempDir Path tmp) {
         Path file = corpusFile(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetFileReader reader = ParquetFileReader.open(source);
@@ -59,7 +59,7 @@ class ObserverFiringTest {
     }
 
     @Test
-    void countFiresQueryStartedAndPlannedDecisions(@TempDir Path tmp) throws Exception {
+    void countFiresQueryStartedAndPlannedDecisions(@TempDir Path tmp) {
         Path file = corpusFile(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetFileReader reader = ParquetFileReader.open(source);
@@ -73,7 +73,7 @@ class ObserverFiringTest {
     }
 
     @Test
-    void readFiresQueryStartedAndPlannedDecisions(@TempDir Path tmp) throws Exception {
+    void readFiresQueryStartedAndPlannedDecisions(@TempDir Path tmp) {
         Path file = corpusFile(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetFileReader reader = ParquetFileReader.open(source);
@@ -89,7 +89,7 @@ class ObserverFiringTest {
     }
 
     @Test
-    void readBatchesFiresQueryStartedAndPlannedDecisions(@TempDir Path tmp) throws Exception {
+    void readBatchesFiresQueryStartedAndPlannedDecisions(@TempDir Path tmp) {
         Path file = corpusFile(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetFileReader reader = ParquetFileReader.open(source);
@@ -105,7 +105,7 @@ class ObserverFiringTest {
     }
 
     @Test
-    void countFiresQueryFinishedOnce(@TempDir Path tmp) throws Exception {
+    void countFiresQueryFinishedOnce(@TempDir Path tmp) {
         Path file = corpusFile(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetFileReader reader = ParquetFileReader.open(source);
@@ -122,7 +122,7 @@ class ObserverFiringTest {
     }
 
     @Test
-    void readFiresQueryFinishedOnStreamClose(@TempDir Path tmp) throws Exception {
+    void readFiresQueryFinishedOnStreamClose(@TempDir Path tmp) {
         Path file = corpusFile(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetFileReader reader = ParquetFileReader.open(source);
@@ -145,7 +145,7 @@ class ObserverFiringTest {
     }
 
     @Test
-    void readBatchesFiresQueryFinishedOnStreamClose(@TempDir Path tmp) throws Exception {
+    void readBatchesFiresQueryFinishedOnStreamClose(@TempDir Path tmp) {
         Path file = corpusFile(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetFileReader reader = ParquetFileReader.open(source);
@@ -168,7 +168,7 @@ class ObserverFiringTest {
     }
 
     @Test
-    void noObserverFiresNothing(@TempDir Path tmp) throws Exception {
+    void noObserverFiresNothing(@TempDir Path tmp) {
         Path file = corpusFile(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetFileReader reader = ParquetFileReader.open(source);

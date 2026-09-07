@@ -160,9 +160,9 @@ class StreamingLevelsParityIT {
             batches.forEach(batch -> {
                 try (batch) {
                     for (int row = 0; row < batch.rowCount(); row++) {
-                        ParquetRecord record = batch.materialize(row);
-                        if (RecordLevelEvaluator.test(predicate, RecordAccessors.of(record))) {
-                            rows.add(record.detach());
+                        ParquetRecord materialized = batch.materialize(row);
+                        if (RecordLevelEvaluator.test(predicate, RecordAccessors.of(materialized))) {
+                            rows.add(materialized.detach());
                         }
                     }
                 }

@@ -39,10 +39,11 @@ class WriteOptionsCoveringTest {
 
     @Test
     void explicitCoveringUnderV2OnlyIsRejected() {
-        assertThatThrownBy(() -> WriteOptions.builder()
-                        .geoParquetMetadata(GeoParquetMetadataMode.V2_0_ONLY)
-                        .bboxCovering(CoveringMode.AUTO)
-                        .build())
+        WriteOptions.Builder builder = WriteOptions.builder()
+                .geoParquetMetadata(GeoParquetMetadataMode.V2_0_ONLY)
+                .bboxCovering(CoveringMode.AUTO);
+
+        assertThatThrownBy(builder::build)
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("V2_0_ONLY");
     }

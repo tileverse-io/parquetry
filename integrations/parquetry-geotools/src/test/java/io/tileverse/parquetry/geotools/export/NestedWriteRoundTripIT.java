@@ -27,6 +27,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.assertj.core.api.InstanceOfAssertFactories;
 import org.geotools.api.data.FeatureReader;
 import org.geotools.api.data.Query;
 import org.geotools.api.feature.simple.SimpleFeature;
@@ -126,16 +127,14 @@ class NestedWriteRoundTripIT {
                 .as("an empty inner list round-trips as present and empty")
                 .isEqualTo(List.of());
 
-        Map<?, ?> translations = (Map<?, ?>) feature.getAttribute("translations");
-        assertThat(translations).hasSize(3);
-        assertThat(translations.get("en")).isEqualTo(List.of("one", "two"));
-        assertThat(translations.get("empty"))
+        assertThat(feature.getAttribute("translations"))
+                .asInstanceOf(InstanceOfAssertFactories.MAP)
+                .hasSize(3)
+                .containsEntry("en", List.of("one", "two"))
                 .as("an empty list value round-trips as present and empty")
-                .isEqualTo(List.of());
-        assertThat(translations.containsKey("none"))
-                .as("a null list value round-trips as a present key")
-                .isTrue();
-        assertThat(translations.get("none")).isNull();
+                .containsEntry("empty", List.of())
+                .as("a null list value round-trips as a present key holding null")
+                .containsEntry("none", null);
 
         List<?> properties = (List<?>) feature.getAttribute("properties");
         assertThat(properties).hasSize(3);

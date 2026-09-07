@@ -59,7 +59,7 @@ final class IcebergMetadataResolver {
             String candidate = metadataDir + "/v" + version + ".metadata.json";
             List<String> entries = io.list(metadataDir + "/");
             return entries.contains(candidate) ? Optional.of(candidate) : Optional.empty();
-        } catch (RuntimeException hintUnavailable) {
+        } catch (RuntimeException _) {
             return Optional.empty();
         }
     }

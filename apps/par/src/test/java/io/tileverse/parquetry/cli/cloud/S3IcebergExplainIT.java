@@ -110,8 +110,8 @@ class S3IcebergExplainIT {
                 .isZero();
 
         String report = result.stdout();
-        // Manifest-bound pruning over the moved table keeps california.parquet and skips the other nine data files;
-        // a flat-fileset misread would keep all ten with no skips.
+        // Manifest-bound pruning over the moved table keeps california.parquet and skips the other nine data
+        // files. A flat-fileset misread would keep all ten with no skips.
         assertThat(report)
                 .contains("1 kept, 9 skipped")
                 .contains("california.parquet")

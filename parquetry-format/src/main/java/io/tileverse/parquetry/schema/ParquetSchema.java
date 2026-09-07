@@ -418,10 +418,9 @@ public record ParquetSchema(SchemaNode.Group root) {
             childPath.add(child.name());
             boolean childKept = keepAll || kept.contains(ColumnPath.of(childPath));
             switch (child) {
-                case SchemaNode.Primitive p -> {
-                    if (childKept) {
-                        projected.add(p);
-                    }
+                case SchemaNode.Primitive p when childKept -> projected.add(p);
+                case SchemaNode.Primitive _ -> {
+                    // a primitive the projection drops contributes no node
                 }
                 case SchemaNode.Group g -> {
                     SchemaNode.Group sub = projectGroup(g, groupPath, kept, false, childKept);

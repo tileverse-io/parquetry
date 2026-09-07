@@ -87,9 +87,7 @@ class NestedPropertyAccessorTest {
         Object result = accessor().get(feature, "addresses/locality", Object.class);
         assertThat(result).isInstanceOf(List.class);
         List<Object> localities = asObjectList(result);
-        assertThat(localities).hasSize(2);
-        assertThat(localities).contains("NYC");
-        assertThat(localities).containsNull();
+        assertThat(localities).hasSize(2).contains("NYC").containsNull();
     }
 
     @Test

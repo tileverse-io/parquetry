@@ -66,8 +66,8 @@ class StorageParamsTest {
         // GeoServer's store edit page shows the Param title as the field tooltip (the label comes from
         // GeoServerApplication.properties). The tooltip must be the full description, not the short title.
         Param endpoint = find("storage.s3.endpoint").orElseThrow();
-        assertThat(endpoint.title.toString()).isEqualTo(endpoint.description.toString());
-        assertThat(endpoint.title.toString()).contains("S3-compatible");
+        String tooltip = endpoint.title.toString();
+        assertThat(tooltip).isEqualTo(endpoint.description.toString()).contains("S3-compatible");
     }
 
     @Test
@@ -94,15 +94,12 @@ class StorageParamsTest {
 
     @Test
     void marksSecretsAsPassword() {
-        assertThat(find("storage.s3.aws-secret-access-key")
-                        .orElseThrow()
-                        .metadata
-                        .get(Parameter.IS_PASSWORD))
-                .isEqualTo(Boolean.TRUE);
-        assertThat(find("storage.azure.account-key").orElseThrow().metadata.get(Parameter.IS_PASSWORD))
-                .isEqualTo(Boolean.TRUE);
-        assertThat(find("storage.http.password").orElseThrow().metadata.get(Parameter.IS_PASSWORD))
-                .isEqualTo(Boolean.TRUE);
+        assertThat(find("storage.s3.aws-secret-access-key").orElseThrow().metadata)
+                .containsEntry(Parameter.IS_PASSWORD, Boolean.TRUE);
+        assertThat(find("storage.azure.account-key").orElseThrow().metadata)
+                .containsEntry(Parameter.IS_PASSWORD, Boolean.TRUE);
+        assertThat(find("storage.http.password").orElseThrow().metadata)
+                .containsEntry(Parameter.IS_PASSWORD, Boolean.TRUE);
     }
 
     @Test
@@ -113,7 +110,7 @@ class StorageParamsTest {
     @Test
     void allStorageParamsAreAdvancedAndOptional() {
         assertThat(StorageParams.PROVIDER_PARAMS)
-                .allSatisfy(p -> assertThat(p.metadata.get(Parameter.LEVEL)).isEqualTo("advanced"))
+                .allSatisfy(p -> assertThat(p.metadata).containsEntry(Parameter.LEVEL, "advanced"))
                 .allSatisfy(p -> assertThat(p.required).isFalse());
     }
 
@@ -132,9 +129,9 @@ class StorageParamsTest {
         List<String> withoutProvider = keysOf(StorageParams.withStorageParamsNoProvider(core));
 
         assertThat(withProvider).contains("storage.provider");
-        assertThat(withoutProvider).doesNotContain("storage.provider");
-        assertThat(withoutProvider).contains("core");
         assertThat(withoutProvider)
+                .doesNotContain("storage.provider")
+                .contains("core")
                 .containsAll(withProvider.stream()
                         .filter(key -> !key.equals("storage.provider"))
                         .toList());

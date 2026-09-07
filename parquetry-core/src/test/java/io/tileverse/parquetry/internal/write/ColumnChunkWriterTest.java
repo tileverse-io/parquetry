@@ -692,7 +692,7 @@ class ColumnChunkWriterTest {
             ParquetFileReader reader = ParquetFileReader.open(source);
             try (Stream<ParquetRecord> records =
                     reader.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
-                records.forEach(record -> readBack.add(record.getBinary(col)));
+                records.forEach(row -> readBack.add(row.getBinary(col)));
             }
         }
         return readBack.toArray(new byte[0][]);

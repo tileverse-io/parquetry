@@ -114,7 +114,7 @@ class ScalarTypeReadIT {
         Predicate ltBoundary = new Predicate.Lt(DEC_SMALL, new Value.DecimalVal(boundary));
         assertThat(countRows(file, gtBoundary))
                 .as("Gt(dec_small, 2^63) must return 0: no file value exceeds the out-of-range query")
-                .isEqualTo(0L);
+                .isZero();
         assertThat(countRows(file, ltBoundary))
                 .as("Lt(dec_small, 2^63) must return all 4 rows: every file value is below the out-of-range query")
                 .isEqualTo(4L);
@@ -131,10 +131,11 @@ class ScalarTypeReadIT {
             ExplainPlan plan = reader.explain(above, Projection.ALL, ReadOptions.DEFAULTS);
             assertThat(plan.rowGroups())
                     .as("STATS tier must eliminate every row group: 100.00 exceeds the column max of 5.00")
+                    .isNotEmpty()
                     .allMatch(rowGroup -> rowGroup.outcome() == RowGroupOutcome.ELIMINATED);
             assertThat(countRows(reader, above))
                     .as("no row must be returned after STATS elimination")
-                    .isEqualTo(0L);
+                    .isZero();
         }
     }
 

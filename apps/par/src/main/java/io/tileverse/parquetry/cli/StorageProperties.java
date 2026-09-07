@@ -32,8 +32,8 @@ final class StorageProperties {
     private static final String KEY_S3_PATH_STYLE = "storage.s3.force-path-style";
     private static final String KEY_S3_ANONYMOUS = "storage.s3.anonymous";
     private static final String KEY_GCS_PROJECT = "storage.gcs.project-id";
-    // Each provider exposes its own endpoint-override key. The single --endpoint flag sets all of them;
-    // only the key for the resolved provider is read, the others are ignored.
+    // Each provider exposes its own endpoint-override key. The single --endpoint flag sets all of them, and only
+    // the key for the resolved provider is read; the others are ignored.
     private static final String KEY_S3_ENDPOINT = "storage.s3.endpoint";
     private static final String KEY_GCS_ENDPOINT = "storage.gcs.endpoint";
     private static final String KEY_AZURE_ENDPOINT = "storage.azure.endpoint";

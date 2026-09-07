@@ -141,7 +141,7 @@ final class DuckDbColumnarEngine implements ColumnarEngine {
                     touchArrow(child);
                 }
             }
-            case ListVector list -> touchArrow((FieldVector) list.getDataVector());
+            case ListVector list -> touchArrow(list.getDataVector());
             case IntVector ints -> forEachDefined(ints, row -> sink += ints.get(row));
             case BigIntVector longs -> forEachDefined(longs, row -> sink += longs.get(row));
             case SmallIntVector shorts -> forEachDefined(shorts, row -> sink += shorts.get(row));

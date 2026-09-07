@@ -100,13 +100,11 @@ final class ProjectionPlan {
                 case Projection.Column.Coalesce(
                         ColumnPath name,
                         ColumnPath source,
-                        Projection.Column.Coalesce.Fallback _) -> {
-                    if (!name.equals(source)) {
-                        leaves.add(OutputBatches.rowPositionLeaf(name.name(), -1));
-                    }
-                }
+                        Projection.Column.Coalesce.Fallback _)
+                when !name.equals(source) -> leaves.add(OutputBatches.rowPositionLeaf(name.name(), -1));
                 default -> {
-                    // physical, promoted, constant, and null columns synthesize nothing
+                    // physical, promoted, constant and null columns, and a coalesce under its source name,
+                    // synthesize nothing
                 }
             }
         }

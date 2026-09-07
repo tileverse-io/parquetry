@@ -73,7 +73,8 @@ class StacDatasetCatalogTest {
                 assertThat(rows.count()).isEqualTo(2);
             }
 
-            assertThatThrownBy(() -> catalog.dataset("basemap-tiles").schema())
+            ParquetDataset basemapTiles = catalog.dataset("basemap-tiles");
+            assertThatThrownBy(basemapTiles::schema)
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessageContaining("basemap-tiles")
                     .hasMessageContaining("no GeoParquet");

@@ -254,7 +254,7 @@ final class SqlPredicateTranslator {
         String text = Literals.asString(value);
         try {
             return UUID.fromString(text);
-        } catch (IllegalArgumentException invalid) {
+        } catch (IllegalArgumentException _) {
             throw new FilterParseException("expected a UUID literal, got: " + text);
         }
     }
