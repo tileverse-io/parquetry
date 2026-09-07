@@ -138,8 +138,8 @@ class EastingFirstFeaturesTest {
         FeatureRecordBatches recordBatches = FeatureRecordBatches.forType(featureType);
         try (Stream<ParquetRecordBatch> batches = recordBatches.batches(features, 10)) {
             List<ParquetRecordBatch> collected = batches.toList();
-            ParquetRecord record = collected.get(0).materialize(0);
-            byte[] wkb = record.getBinary(ColumnPath.of("geom"));
+            ParquetRecord row = collected.get(0).materialize(0);
+            byte[] wkb = row.getBinary(ColumnPath.of("geom"));
             return (Point) new MemorySegmentWkbReader().read(MemorySegment.ofArray(wkb));
         }
     }

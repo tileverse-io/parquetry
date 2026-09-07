@@ -50,6 +50,8 @@ import io.tileverse.parquetry.io.ByteRangeSource;
  */
 public final class IcebergTableCatalog implements DatasetCatalog {
 
+    private static final String OPTIONS_ARGUMENT = "options";
+
     private final String tableName;
     private final IcebergDataset dataset;
     private final List<ByteRangeSource> openSources;
@@ -69,7 +71,7 @@ public final class IcebergTableCatalog implements DatasetCatalog {
      */
     public static IcebergTableCatalog openLocal(Path tableDir, IcebergOptions options) {
         Objects.requireNonNull(tableDir, "tableDir");
-        Objects.requireNonNull(options, "options");
+        Objects.requireNonNull(options, OPTIONS_ARGUMENT);
         String physicalTableLocation = stripTrailingSlash(tableDir.toUri().toString());
         return openStorage(tableName(tableDir), physicalTableLocation, StorageFactory.open(tableDir.toUri()), options);
     }
@@ -83,7 +85,7 @@ public final class IcebergTableCatalog implements DatasetCatalog {
     public static IcebergTableCatalog open(String tableLocation, IcebergFileIO io, IcebergOptions options) {
         Objects.requireNonNull(tableLocation, "tableLocation");
         Objects.requireNonNull(io, "io");
-        Objects.requireNonNull(options, "options");
+        Objects.requireNonNull(options, OPTIONS_ARGUMENT);
         IcebergTableMetadata metadata = resolveMetadata(io, tableLocation, options);
         return openWithMetadata(tableNameFromLocation(tableLocation), metadata, io);
     }
@@ -97,7 +99,7 @@ public final class IcebergTableCatalog implements DatasetCatalog {
     public static IcebergTableCatalog openStorage(String physicalLocation, Storage storage, IcebergOptions options) {
         Objects.requireNonNull(physicalLocation, "physicalLocation");
         Objects.requireNonNull(storage, "storage");
-        Objects.requireNonNull(options, "options");
+        Objects.requireNonNull(options, OPTIONS_ARGUMENT);
         IcebergTableMetadata metadata;
         StorageIcebergFileIO io;
         try {

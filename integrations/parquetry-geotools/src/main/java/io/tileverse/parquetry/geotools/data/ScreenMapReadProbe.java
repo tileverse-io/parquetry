@@ -59,7 +59,7 @@ public final class ScreenMapReadProbe implements SpatialReadProbe {
         try {
             boolean alreadyPainted = screenMap.checkAndSet(env);
             return alreadyPainted ? Decision.skip() : Decision.keep();
-        } catch (TransformException e) {
+        } catch (TransformException _) {
             return Decision.keep();
         }
     }
@@ -78,7 +78,7 @@ public final class ScreenMapReadProbe implements SpatialReadProbe {
         try {
             boolean alreadyPainted = screenMap.get(env);
             return alreadyPainted ? Decision.skip() : Decision.descend();
-        } catch (TransformException e) {
+        } catch (TransformException _) {
             return Decision.descend();
         }
     }

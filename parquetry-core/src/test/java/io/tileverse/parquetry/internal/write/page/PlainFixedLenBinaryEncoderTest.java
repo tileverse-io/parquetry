@@ -49,7 +49,9 @@ class PlainFixedLenBinaryEncoderTest {
         PlainFixedLenBinaryEncoder encoder = new PlainFixedLenBinaryEncoder(3);
         GrowableByteSink out = new GrowableByteSink(64);
         byte[][] values = {{1, 2, 3, 4}};
-        assertThatThrownBy(() -> encoder.encode(new ArrayBinaryPayload(values, values.length), 1, out))
+        ArrayBinaryPayload payload = new ArrayBinaryPayload(values, values.length);
+
+        assertThatThrownBy(() -> encoder.encode(payload, 1, out))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("length 4");
     }

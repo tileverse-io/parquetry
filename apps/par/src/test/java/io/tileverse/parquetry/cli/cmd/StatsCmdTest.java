@@ -41,17 +41,18 @@ class StatsCmdTest {
         int code = cmd.execute("stats", file.toString());
         assertThat(code).isZero();
         String output = out.toString();
-        // Header columns must be present
-        assertThat(output).contains("min");
-        // All four leaf columns must appear
-        assertThat(output).contains("id");
-        assertThat(output).contains("name");
-        assertThat(output).contains("pop");
-        assertThat(output).contains("capital");
-        // The INT32 type token for the id column must appear
-        assertThat(output).contains("INT32");
-        // The writer emits min/max statistics; verify a concrete max value for pop
-        assertThat(output).contains("3100000");
+        assertThat(output)
+                // Header columns must be present
+                .contains("min")
+                // All four leaf columns must appear
+                .contains("id")
+                .contains("name")
+                .contains("pop")
+                .contains("capital")
+                // The INT32 type token for the id column must appear
+                .contains("INT32")
+                // The writer emits min/max statistics; verify a concrete max value for pop
+                .contains("3100000");
     }
 
     @Test
@@ -64,9 +65,7 @@ class StatsCmdTest {
         int code = cmd.execute("stats", file.toString(), "-o", "json");
         assertThat(code).isZero();
         String output = out.toString();
-        assertThat(output).startsWith("[");
-        assertThat(output).contains("\"column\"");
-        assertThat(output).contains("\"type\"");
+        assertThat(output).startsWith("[").contains("\"column\"").contains("\"type\"");
     }
 
     @Test

@@ -79,7 +79,7 @@ class DuckDbDecimalIT {
         }
     }
 
-    private String firstColumnName(FileChannel channel) throws Exception {
+    private String firstColumnName(FileChannel channel) {
         ParquetFileReader reader = ParquetFileReader.open(ByteRangeSource.ofChannel(channel));
         return reader.schema().leafColumns().get(0).name();
     }

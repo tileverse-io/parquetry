@@ -107,6 +107,7 @@ class IcebergEvolvedEqualityDeletesIT {
             List<ParquetRecord> rows = collect(dataset, Predicate.ALWAYS_TRUE);
 
             assertThat(rows)
+                    .isNotEmpty()
                     .allSatisfy(row -> assertThat(row.getString(CATEGORY)).isIn("b", "c"));
         });
     }
@@ -130,7 +131,9 @@ class IcebergEvolvedEqualityDeletesIT {
 
             List<ParquetRecord> rows = collect(dataset, Predicate.ALWAYS_TRUE, idAndValue);
 
-            assertThat(rows).allSatisfy(row -> assertThat(row.getDouble(VALUE)).isEqualTo(row.getLong(ID) * 1.5));
+            assertThat(rows)
+                    .isNotEmpty()
+                    .allSatisfy(row -> assertThat(row.getDouble(VALUE)).isEqualTo(row.getLong(ID) * 1.5));
         });
     }
 
@@ -139,7 +142,9 @@ class IcebergEvolvedEqualityDeletesIT {
         withDataset(dataset -> {
             List<ParquetRecord> rows = collect(dataset, Predicate.ALWAYS_TRUE);
 
-            assertThat(rows).allSatisfy(row -> assertThat(row.getDouble(VALUE)).isEqualTo(row.getLong(ID) * 1.5));
+            assertThat(rows)
+                    .isNotEmpty()
+                    .allSatisfy(row -> assertThat(row.getDouble(VALUE)).isEqualTo(row.getLong(ID) * 1.5));
         });
     }
 

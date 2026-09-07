@@ -1183,22 +1183,13 @@ public final class ParquetFileReader {
     }
 
     /**
-     * Binds index-section reads to this reader's {@link ByteRangeSource}. Index, offset-index, and bloom reads do not
-     * record into a {@link FetchAccumulator}; the accumulating form lives in
-     * {@link #indexSectionLoader(FetchAccumulator)}, which the read entry points use.
-     */
-    private IndexSectionLoader indexSectionLoader() {
-        return indexSectionLoader(FetchAccumulator.NONE);
-    }
-
-    /**
      * Binds index-section reads to this reader's {@link ByteRangeSource} and records each section's bytes into
      * {@code accumulator}: a column-index read as {@link FetchPurpose#COLUMN_INDEX}, an offset-index read as
      * {@link FetchPurpose#OFFSET_INDEX}, and a bloom-filter read as {@link FetchPurpose#BLOOM_FILTER}. The recorded
      * byte count is the section's on-disk length. A bloom filter whose length the writer recorded counts the full chunk
      * (header plus bitset); one whose length is absent counts the bitset byte size discovered from the filter header,
      * the only figure cheaply available on that path. Passing {@link FetchAccumulator#NONE} reduces every record call
-     * to a no-op, matching {@link #indexSectionLoader()}.
+     * to a no-op.
      */
     private IndexSectionLoader indexSectionLoader(FetchAccumulator accumulator) {
         return new FooterIndexSectionLoader(source, accumulator);

@@ -59,10 +59,10 @@ class AvroWriteOracleTest {
         List<GenericRecord> read = readWithAvroJava(file, SCHEMA);
 
         assertThat(read).hasSize(1);
-        GenericRecord record = read.get(0);
-        assertThat(record.get("id")).isEqualTo(7L);
-        assertThat(normalizeField(record, "tags")).isEqualTo(List.of("a", "b"));
-        assertThat(normalizeField(record, "props")).isEqualTo(Map.of("k", 1));
+        GenericRecord datum = read.get(0);
+        assertThat(datum.get("id")).isEqualTo(7L);
+        assertThat(normalizeField(datum, "tags")).isEqualTo(List.of("a", "b"));
+        assertThat(normalizeField(datum, "props")).isEqualTo(Map.of("k", 1));
     }
 
     @Test
@@ -89,7 +89,7 @@ class AvroWriteOracleTest {
         }
     }
 
-    private static byte[] writeSmallRecord(String codec) throws IOException {
+    private static byte[] writeSmallRecord(String codec) {
         InMemoryByteSink sink = new InMemoryByteSink();
         try (AvroDataFileWriter writer =
                 AvroDataFileWriter.builder(SCHEMA).codec(codec).build(sink)) {
@@ -98,7 +98,7 @@ class AvroWriteOracleTest {
         return sink.toByteArray();
     }
 
-    private static byte[] rewriteWithOurWriter(String schemaJson, List<AvroRecord> records) throws IOException {
+    private static byte[] rewriteWithOurWriter(String schemaJson, List<AvroRecord> records) {
         InMemoryByteSink sink = new InMemoryByteSink();
         try (AvroDataFileWriter writer = AvroDataFileWriter.builder(schemaJson).build(sink)) {
             writer.write(records);
@@ -119,7 +119,7 @@ class AvroWriteOracleTest {
         return records;
     }
 
-    private static Object normalizeField(GenericRecord record, String field) {
-        return OracleValueNormalizer.normalize(record.get(field));
+    private static Object normalizeField(GenericRecord datum, String field) {
+        return OracleValueNormalizer.normalize(datum.get(field));
     }
 }

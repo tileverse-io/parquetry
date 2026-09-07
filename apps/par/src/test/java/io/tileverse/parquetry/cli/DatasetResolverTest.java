@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.cli;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.util.Properties;
@@ -109,9 +110,9 @@ class DatasetResolverTest {
 
     @Test
     void missingPathFailsClearly(@TempDir Path dir) {
-        Path missing = dir.resolve("nope.parquet");
-        org.assertj.core.api.Assertions.assertThatThrownBy(
-                        () -> DatasetResolver.open(missing.toString(), new Properties()))
+        String missing = dir.resolve("nope.parquet").toString();
+        Properties storageProperties = new Properties();
+        assertThatThrownBy(() -> DatasetResolver.open(missing, storageProperties))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }

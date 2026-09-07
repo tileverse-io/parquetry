@@ -150,9 +150,10 @@ public final class CpCmd implements Callable<Integer> {
         WriteOptions writeOptions =
                 buildWriteOptions(writeSchema, writerTempDir(sourceFileName), sourceKeyValue, rowGroupSize);
         long limit = options.limit == null ? Long.MAX_VALUE : options.limit;
+        Query query = buildQuery(predicate, projection, limit);
         try (UriResolver.OpenSink sink =
                 UriResolver.openForWrite(dst, sourceFileName, overwrite, dstStorage.toProperties())) {
-            writeAndFinalize(source, writeSchema, projection, predicate, writeOptions, rowGroupSize, limit, sink);
+            writeAndFinalize(source, writeSchema, query, writeOptions, rowGroupSize, sink);
             sink.commit();
         }
     }
@@ -170,13 +171,10 @@ public final class CpCmd implements Callable<Integer> {
     private void writeAndFinalize(
             ParquetSource source,
             ParquetSchema writeSchema,
-            Projections.Resolved projection,
-            Predicate predicate,
+            Query query,
             WriteOptions writeOptions,
             WriteOptions.RowGroupSize rowGroupSize,
-            long limit,
             UriResolver.OpenSink sink) {
-        Query query = buildQuery(predicate, projection, limit);
         try (ParquetFileWriter writer = ParquetFileWriter.create(sink.out(), writeSchema, writeOptions);
                 Stream<ParquetRecordBatch> batches = source.readBatches(query, pumpReadOptions(rowGroupSize))) {
             batches.forEach(batch -> {
@@ -258,38 +256,40 @@ public final class CpCmd implements Callable<Integer> {
         return WriteOptions.RowGroupSize.bytes(rowGroupSizing.bytes);
     }
 
-    private static long parseByteSize(String text) {
-        Matcher matcher = BYTE_SIZE_PATTERN.matcher(text);
-        if (!matcher.matches()) {
-            throw new IllegalArgumentException(
-                    "invalid size '" + text + "'; use a byte count or a value like 256MB (units K, M, G are binary)");
-        }
-        long value = Long.parseLong(matcher.group(1));
-        long multiplier = byteUnitMultiplier(matcher.group(2).toUpperCase(Locale.ROOT));
-        return Math.multiplyExact(value, multiplier);
-    }
-
-    private static long byteUnitMultiplier(String unit) {
-        return switch (unit) {
-            case "", "B" -> 1L;
-            case "K", "KB", "KIB" -> 1024L;
-            case "M", "MB", "MIB" -> 1024L * 1024L;
-            case "G", "GB", "GIB" -> 1024L * 1024L * 1024L;
-            default ->
-                throw new IllegalArgumentException("unsupported size unit '" + unit + "'; use K, M, or G (binary)");
-        };
-    }
-
     /** Maximum rows the copy appender buffers per batch; also bounds where a row-count target seals a row group. */
     private static final int MAX_COPY_BATCH_ROWS = 8192;
 
-    private static final Pattern BYTE_SIZE_PATTERN = Pattern.compile("\\s*(\\d+)\\s*([A-Za-z]*)\\s*");
-
     /** Parses {@code --row-group-bytes} values like {@code 256MB} into an uncompressed byte count. */
     static final class ByteSizeConverter implements CommandLine.ITypeConverter<Long> {
+
+        // possessive whitespace runs: each borders a disjoint character class, ruling out backtracking blowup
+        private static final Pattern BYTE_SIZE_PATTERN = Pattern.compile("\\s*+(\\d+)\\s*+([A-Za-z]*)\\s*+");
+
         @Override
         public Long convert(String value) {
             return parseByteSize(value);
+        }
+
+        private static long parseByteSize(String text) {
+            Matcher matcher = BYTE_SIZE_PATTERN.matcher(text);
+            if (!matcher.matches()) {
+                throw new IllegalArgumentException("invalid size '" + text
+                        + "'; use a byte count or a value like 256MB (units K, M, G are binary)");
+            }
+            long value = Long.parseLong(matcher.group(1));
+            long multiplier = byteUnitMultiplier(matcher.group(2).toUpperCase(Locale.ROOT));
+            return Math.multiplyExact(value, multiplier);
+        }
+
+        private static long byteUnitMultiplier(String unit) {
+            return switch (unit) {
+                case "", "B" -> 1L;
+                case "K", "KB", "KIB" -> 1024L;
+                case "M", "MB", "MIB" -> 1024L * 1024L;
+                case "G", "GB", "GIB" -> 1024L * 1024L * 1024L;
+                default ->
+                    throw new IllegalArgumentException("unsupported size unit '" + unit + "'; use K, M, or G (binary)");
+            };
         }
     }
 

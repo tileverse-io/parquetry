@@ -105,7 +105,7 @@ record IcebergGeometryType(String baseKind, Optional<ParquetCrs> crs, Optional<E
         }
         try {
             return Optional.of(EdgeInterpolationAlgorithm.valueOf(token.toUpperCase(Locale.ROOT)));
-        } catch (IllegalArgumentException unrecognized) {
+        } catch (IllegalArgumentException _) {
             return Optional.empty();
         }
     }

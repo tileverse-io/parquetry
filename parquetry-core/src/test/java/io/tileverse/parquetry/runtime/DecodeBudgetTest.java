@@ -129,7 +129,7 @@ class DecodeBudgetTest {
             done.countDown();
         });
         waiter.start();
-        Thread.sleep(100);
+        awaitParkedOnTheFullBudget(waiter);
         giveUp.set(true);
         budget.wakeWaiters();
         assertThat(done.await(2, TimeUnit.SECONDS)).isTrue();
@@ -148,5 +148,19 @@ class DecodeBudgetTest {
     @Test
     void defaultBudgetHasPositiveCapacity() {
         assertThat(DecodeBudget.defaultBudget().capacity()).isPositive();
+    }
+
+    /**
+     * Spins until {@code waiter} parks inside its reserve call. Raising the give-up flag before the thread parks would
+     * take the fast exit and leave the wake path untested, and a fixed pause only guesses at when the park happens.
+     */
+    private static void awaitParkedOnTheFullBudget(Thread waiter) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (waiter.getState() != Thread.State.WAITING) {
+            if (System.nanoTime() > deadline) {
+                throw new AssertionError("the reserving thread never parked on the full budget");
+            }
+            Thread.onSpinWait();
+        }
     }
 }

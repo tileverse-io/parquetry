@@ -94,12 +94,18 @@ public final class StacDataset implements GeoParquetDataset {
     private final ConcurrentHashMap<Integer, ParquetSource> perFileDatasets = new ConcurrentHashMap<>();
     private final ConcurrentLinkedQueue<RangeReader> openedReaders = new ConcurrentLinkedQueue<>();
 
+    // Each lazy field below is written once with an immutable snapshot; volatile is the correct publish for that.
+    @SuppressWarnings("java:S3077")
     private volatile ParquetSchema schema;
+
+    @SuppressWarnings("java:S3077")
     private volatile Optional<GeoParquetMetadata> geoMetadata;
+
+    @SuppressWarnings("java:S3077")
     private volatile Materialized materialized;
 
     // A null field marks the not-yet-resolved lazy state, distinct from a resolved Optional.empty() (no first part).
-    @SuppressWarnings("java:S2789")
+    @SuppressWarnings({"java:S2789", "java:S3077"})
     private volatile Optional<StacItemRef> firstRef;
 
     /** The collection's resolved data parts: one GeoParquet part reference and its declared item box per item. */
@@ -677,7 +683,7 @@ public final class StacDataset implements GeoParquetDataset {
         }
         try {
             return Optional.of(GeoParquetMetadata.parse(geoJson));
-        } catch (RuntimeException unparseable) {
+        } catch (RuntimeException _) {
             return Optional.empty();
         }
     }

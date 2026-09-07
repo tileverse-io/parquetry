@@ -204,20 +204,28 @@ public final class RowGroupWriter implements AutoCloseable {
     private void appendDirectLeaves(Map<ColumnPath, ColumnVector> columns, int batchRows) {
         List<Runnable> units = new ArrayList<>(leaves.size());
         for (LeafBinding binding : leaves) {
-            if (binding.requiresStriping()) {
-                continue;
+            ColumnVector vector = directVector(binding, columns);
+            if (vector != null) {
+                requireBatchSized(binding, vector, batchRows);
+                units.add(() -> binding.writer.appendVector(binding.leaf, vector));
             }
-            ColumnVector vector = columns.get(binding.path);
-            if (vector == null) {
-                continue;
-            }
-            if (vector.size() != batchRows) {
-                throw new ParquetWriteException("Batch column " + binding.path.dot() + " size " + vector.size()
-                        + " does not match batch rowCount " + batchRows);
-            }
-            units.add(() -> binding.writer.appendVector(binding.leaf, vector));
         }
         fanOut.run(units);
+    }
+
+    /** The vector supplied at {@code binding}'s full leaf path, or null when the leaf is not written directly. */
+    private static ColumnVector directVector(LeafBinding binding, Map<ColumnPath, ColumnVector> columns) {
+        if (binding.requiresStriping()) {
+            return null;
+        }
+        return columns.get(binding.path);
+    }
+
+    private static void requireBatchSized(LeafBinding binding, ColumnVector vector, int batchRows) {
+        if (vector.size() != batchRows) {
+            throw new ParquetWriteException("Batch column " + binding.path.dot() + " size " + vector.size()
+                    + " does not match batch rowCount " + batchRows);
+        }
     }
 
     /**

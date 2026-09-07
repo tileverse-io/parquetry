@@ -87,7 +87,7 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
     public boolean canProcess(Map<String, ?> params) {
         try {
             return GEOPARQUET_URI.lookUp(params) != null;
-        } catch (IOException e) {
+        } catch (IOException _) {
             return false;
         }
     }

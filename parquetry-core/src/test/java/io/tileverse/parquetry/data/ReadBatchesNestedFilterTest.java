@@ -82,12 +82,10 @@ class ReadBatchesNestedFilterTest {
             assertThat(viaBatches)
                     .as("readBatches matches read over a file with STRUCT, LIST, and MAP columns")
                     .isEqualTo(viaRead);
-            assertThat(viaBatches.size())
-                    .as("readBatches row count matches count()")
-                    .isEqualTo((int) viaCount);
-            assertThat(viaBatches.size())
+            assertThat(viaBatches).as("readBatches row count matches count()").hasSize((int) viaCount);
+            assertThat(viaBatches)
                     .as("the predicate selects a strict subset of the %d rows", ROW_COUNT)
-                    .isLessThan(ROW_COUNT);
+                    .hasSizeLessThan(ROW_COUNT);
         }
     }
 

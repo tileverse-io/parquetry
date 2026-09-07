@@ -186,8 +186,8 @@ final class ShreddedVariantClassifier {
         }
         return switch (logicalType.get()) {
             case IntType(byte bitWidth, boolean isSigned) when isSigned -> signedInt32TypeId(primitive, bitWidth);
-            case Decimal ignored -> TYPE_DECIMAL4;
-            case LogicalType.DateType ignored -> TYPE_DATE;
+            case Decimal _ -> TYPE_DECIMAL4;
+            case LogicalType.DateType _ -> TYPE_DATE;
             default -> throw unsupported(primitive);
         };
     }
@@ -207,7 +207,7 @@ final class ShreddedVariantClassifier {
         }
         return switch (logicalType.get()) {
             case IntType(byte bitWidth, boolean isSigned) when isSigned && bitWidth == 64 -> TYPE_INT64;
-            case Decimal ignored -> TYPE_DECIMAL8;
+            case Decimal _ -> TYPE_DECIMAL8;
             case LogicalType.Time time -> timeTypeId(primitive, time);
             case LogicalType.Timestamp timestamp -> timestampTypeId(primitive, timestamp);
             default -> throw unsupported(primitive);
@@ -235,8 +235,8 @@ final class ShreddedVariantClassifier {
             return TYPE_BINARY;
         }
         return switch (logicalType.get()) {
-            case LogicalType.StringType ignored -> TYPE_STRING;
-            case LogicalType.Decimal ignored -> TYPE_DECIMAL16;
+            case LogicalType.StringType _ -> TYPE_STRING;
+            case LogicalType.Decimal _ -> TYPE_DECIMAL16;
             default -> throw unsupported(primitive);
         };
     }
@@ -246,8 +246,8 @@ final class ShreddedVariantClassifier {
             throw unsupported(primitive);
         }
         return switch (logicalType.get()) {
-            case LogicalType.UuidType ignored -> TYPE_UUID;
-            case Decimal ignored -> TYPE_DECIMAL16;
+            case LogicalType.UuidType _ -> TYPE_UUID;
+            case Decimal _ -> TYPE_DECIMAL16;
             default -> throw unsupported(primitive);
         };
     }

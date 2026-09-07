@@ -17,16 +17,21 @@ package io.tileverse.parquetry.iceberg;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.storage.StorageFactory;
 
@@ -55,28 +60,28 @@ class IcebergMetadataResolverTest {
         assertThat(resolved).endsWith("/metadata/v2.metadata.json");
     }
 
-    @Test
-    void versionHintWinsOverHighestVersion() throws Exception {
+    /**
+     * A version hint beats the highest version on disk (hint 1 over v2), selects the version it names (hint 2), and
+     * falls back to the highest version when it names one that is absent (hint 5).
+     */
+    @ParameterizedTest(name = "version hint \"{0}\" resolves {1}")
+    @MethodSource("versionHints")
+    void resolvesTheVersionNamedByTheHint(String hint, String expectedMetadataFile) throws Exception {
         Path tableDir = tableWithMetadataVersions(1, 2);
-        writeVersionHint(tableDir, "  1\n");
+        writeVersionHint(tableDir, hint);
         IcebergFileIO bootstrap = bootstrapFor(tableDir);
 
         String resolved =
                 IcebergMetadataResolver.resolve(bootstrap, tableLocation(tableDir), IcebergOptions.defaults());
 
-        assertThat(resolved).endsWith("/metadata/v1.metadata.json");
+        assertThat(resolved).endsWith(expectedMetadataFile);
     }
 
-    @Test
-    void versionHintSelectsTheNamedVersion() throws Exception {
-        Path tableDir = tableWithMetadataVersions(1, 2);
-        writeVersionHint(tableDir, "2");
-        IcebergFileIO bootstrap = bootstrapFor(tableDir);
-
-        String resolved =
-                IcebergMetadataResolver.resolve(bootstrap, tableLocation(tableDir), IcebergOptions.defaults());
-
-        assertThat(resolved).endsWith("/metadata/v2.metadata.json");
+    static Stream<Arguments> versionHints() {
+        return Stream.of(
+                arguments("  1\n", "/metadata/v1.metadata.json"),
+                arguments("2", "/metadata/v2.metadata.json"),
+                arguments("5", "/metadata/v2.metadata.json"));
     }
 
     @Test
@@ -94,27 +99,16 @@ class IcebergMetadataResolverTest {
     }
 
     @Test
-    void hintNamingAMissingVersionFallsThroughToHighest() throws Exception {
-        Path tableDir = tableWithMetadataVersions(1, 2);
-        writeVersionHint(tableDir, "5");
-        IcebergFileIO bootstrap = bootstrapFor(tableDir);
-
-        String resolved =
-                IcebergMetadataResolver.resolve(bootstrap, tableLocation(tableDir), IcebergOptions.defaults());
-
-        assertThat(resolved).endsWith("/metadata/v2.metadata.json");
-    }
-
-    @Test
     void failsWhenNothingResolvable() throws Exception {
         Path tableDir = tempDir.resolve("empty");
         Files.createDirectories(tableDir.resolve("metadata"));
         IcebergFileIO bootstrap = bootstrapFor(tableDir);
+        String location = tableLocation(tableDir);
+        IcebergOptions defaults = IcebergOptions.defaults();
 
-        assertThatThrownBy(() ->
-                        IcebergMetadataResolver.resolve(bootstrap, tableLocation(tableDir), IcebergOptions.defaults()))
+        assertThatThrownBy(() -> IcebergMetadataResolver.resolve(bootstrap, location, defaults))
                 .isInstanceOf(IcebergFormatException.class)
-                .hasMessageContaining(tableLocation(tableDir));
+                .hasMessageContaining(location);
     }
 
     @Test
@@ -124,9 +118,10 @@ class IcebergMetadataResolverTest {
 
         List<String> entries = io.list(tableDir.toUri() + "metadata/");
 
-        assertThat(entries).hasSize(2);
-        assertThat(entries).anySatisfy(entry -> assertThat(entry).endsWith("/v1.metadata.json"));
-        assertThat(entries).anySatisfy(entry -> assertThat(entry).endsWith("/v2.metadata.json"));
+        assertThat(entries)
+                .hasSize(2)
+                .anySatisfy(entry -> assertThat(entry).endsWith("/v1.metadata.json"))
+                .anySatisfy(entry -> assertThat(entry).endsWith("/v2.metadata.json"));
         for (String entry : entries) {
             io.open(entry).close();
         }

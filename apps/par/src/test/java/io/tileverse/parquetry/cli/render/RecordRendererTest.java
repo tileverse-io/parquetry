@@ -67,8 +67,7 @@ class RecordRendererTest {
         String[] lines = out.strip().split("\n");
         assertThat(lines).hasSize(4);
         assertThat(lines[0]).contains("\"id\":1", "\"name\":\"Rosario\"", "\"pop\":1300000", "\"capital\":false");
-        assertThat(lines[3]).contains("\"id\":4");
-        assertThat(lines[3]).doesNotContain("\"name\":\"");
+        assertThat(lines[3]).contains("\"id\":4").doesNotContain("\"name\":\"");
     }
 
     @Test

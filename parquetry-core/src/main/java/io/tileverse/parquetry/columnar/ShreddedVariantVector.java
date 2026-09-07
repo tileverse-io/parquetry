@@ -187,6 +187,8 @@ public final class ShreddedVariantVector implements ColumnVector {
      * array is null/absent, which the reconstructor distinguishes from a present-but-empty array. Array elements are
      * never omitted; each slot in {@code [offsets[row], offsets[row + 1])} maps to one element of {@code element}.
      */
+    // S6218: an internal transport record for assembled inputs; equality and printing are never used on it
+    @SuppressWarnings("java:S6218")
     public record ArrayInput(int[] offsets, Validity presence, VariantInput element) implements TypedInput {}
 
     @Override
@@ -303,7 +305,7 @@ public final class ShreddedVariantVector implements ColumnVector {
     private long typedHeapBytes(TypedInput typed) {
         return switch (typed) {
             case null -> 0L;
-            case ScalarInput scalar -> scalar.vector().approximateHeapBytes();
+            case ScalarInput(ColumnVector vector) -> vector.approximateHeapBytes();
             case ObjectInput object -> objectHeapBytes(object);
             case ArrayInput array -> arrayHeapBytes(array);
         };
@@ -340,8 +342,7 @@ public final class ShreddedVariantVector implements ColumnVector {
 
         @Override
         public boolean hasTypedScalar() {
-            return input.typed() instanceof ScalarInput scalar
-                    && !scalar.vector().isNull(row);
+            return input.typed() instanceof ScalarInput(ColumnVector vector) && !vector.isNull(row);
         }
 
         @Override
@@ -355,30 +356,34 @@ public final class ShreddedVariantVector implements ColumnVector {
                     && !object.presence().isNull(row);
         }
 
+        // S1168: null means "no typed object at this row", which reconstruction must tell apart from an empty one
         @Override
+        @SuppressWarnings("java:S1168")
         public Map<String, NodeReader> typedObjectFields() {
-            if (!(input.typed() instanceof ObjectInput object)
-                    || object.presence().isNull(row)) {
+            if (!(input.typed() instanceof ObjectInput(Validity presence, Map<String, VariantInput> fields))
+                    || presence.isNull(row)) {
                 return null;
             }
-            Map<String, NodeReader> fieldReaders =
-                    new LinkedHashMap<>(object.fields().size());
-            for (Map.Entry<String, VariantInput> field : object.fields().entrySet()) {
+            Map<String, NodeReader> fieldReaders = LinkedHashMap.newLinkedHashMap(fields.size());
+            for (Map.Entry<String, VariantInput> field : fields.entrySet()) {
                 fieldReaders.put(field.getKey(), readerAt(field.getValue(), row));
             }
             return fieldReaders;
         }
 
+        // S1168: null means "no typed array at this row", which reconstruction must tell apart from an empty one
         @Override
+        @SuppressWarnings("java:S1168")
         public List<NodeReader> typedArrayElements() {
-            if (!(input.typed() instanceof ArrayInput array) || array.presence().isNull(row)) {
+            if (!(input.typed() instanceof ArrayInput(int[] offsets, Validity presence, VariantInput element))
+                    || presence.isNull(row)) {
                 return null;
             }
-            int start = array.offsets()[row];
-            int end = array.offsets()[row + 1];
+            int start = offsets[row];
+            int end = offsets[row + 1];
             List<NodeReader> elementReaders = new ArrayList<>(end - start);
-            for (int element = start; element < end; element++) {
-                elementReaders.add(readerAt(array.element(), element));
+            for (int slot = start; slot < end; slot++) {
+                elementReaders.add(readerAt(element, slot));
             }
             return elementReaders;
         }

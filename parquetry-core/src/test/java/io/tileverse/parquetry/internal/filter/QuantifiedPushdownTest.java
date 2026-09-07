@@ -93,8 +93,9 @@ class QuantifiedPushdownTest {
         FilterPipeline.ColumnStatsLookup cols = intStatsLookup(7, 7);
         Predicate quantified = quantifiedInt(MatchAction.ANY, 7);
         PruningDecision decision = StatsEvaluator.evaluate(quantified, cols, ROW_COUNT);
-        assertThat(decision).isInstanceOf(PruningDecision.NotApplied.class);
-        assertThat(decision).isNotInstanceOf(PruningDecision.PassedAll.class);
+        assertThat(decision)
+                .isInstanceOf(PruningDecision.NotApplied.class)
+                .isNotInstanceOf(PruningDecision.PassedAll.class);
     }
 
     @Test

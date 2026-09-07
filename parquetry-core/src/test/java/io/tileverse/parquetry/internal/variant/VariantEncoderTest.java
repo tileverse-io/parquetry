@@ -27,8 +27,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.UUID;
+import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.ParquetFormatException;
@@ -239,12 +242,18 @@ class VariantEncoderTest {
         assertThat(actual).isEqualTo(expected);
     }
 
-    @Test
-    void longStringMatchesEncoder() {
-        String text = "x".repeat(100);
+    /** 63 is the last length the short-string form can hold, 64 the first that needs the long form. */
+    @ParameterizedTest(name = "a {0}-character string matches the encoder")
+    @MethodSource("stringLengthsAcrossTheShortStringBoundary")
+    void repeatedStringMatchesEncoder(int length) {
+        String text = "x".repeat(length);
         byte[] actual = encode(stringScalar(), readOnly(text.getBytes(StandardCharsets.UTF_8)));
         byte[] expected = new VariantEncoder().addString(text).encode().value().toArray(JAVA_BYTE);
         assertThat(actual).isEqualTo(expected);
+    }
+
+    static IntStream stringLengthsAcrossTheShortStringBoundary() {
+        return IntStream.of(63, 64, 100);
     }
 
     @Test
@@ -260,22 +269,6 @@ class VariantEncoderTest {
     void emptyStringMatchesEncoder() {
         byte[] actual = encode(stringScalar(), readOnly(new byte[0]));
         byte[] expected = new VariantEncoder().addString("").encode().value().toArray(JAVA_BYTE);
-        assertThat(actual).isEqualTo(expected);
-    }
-
-    @Test
-    void lastShortStringMatchesEncoder() {
-        String text = "x".repeat(63);
-        byte[] actual = encode(stringScalar(), readOnly(text.getBytes(StandardCharsets.UTF_8)));
-        byte[] expected = new VariantEncoder().addString(text).encode().value().toArray(JAVA_BYTE);
-        assertThat(actual).isEqualTo(expected);
-    }
-
-    @Test
-    void firstLongStringMatchesEncoder() {
-        String text = "x".repeat(64);
-        byte[] actual = encode(stringScalar(), readOnly(text.getBytes(StandardCharsets.UTF_8)));
-        byte[] expected = new VariantEncoder().addString(text).encode().value().toArray(JAVA_BYTE);
         assertThat(actual).isEqualTo(expected);
     }
 

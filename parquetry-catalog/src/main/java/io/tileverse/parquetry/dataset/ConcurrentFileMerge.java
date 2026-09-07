@@ -100,6 +100,8 @@ final class ConcurrentFileMerge {
     }
 
     /** One element, end, or failure of one file, tagged with the file's index. */
+    // S2326: T types the element payload; the queue and the exhaustive record patterns below depend on it.
+    @SuppressWarnings("java:S2326")
     private sealed interface Item<T> {
         record Element<T>(int file, T value, Semaphore permit) implements Item<T> {}
 
@@ -175,6 +177,8 @@ final class ConcurrentFileMerge {
             }
         }
 
+        // S1181: a producer thread traps every failure into a tagged marker; the consumer rethrows it, Errors included.
+        @SuppressWarnings("java:S1181")
         private void produceOneFile(int file, Semaphore permits) {
             try (Stream<T> perFile = openFile.apply(file)) {
                 Iterator<T> elements = perFile.iterator();

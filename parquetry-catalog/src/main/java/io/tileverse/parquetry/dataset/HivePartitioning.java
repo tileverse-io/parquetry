@@ -135,7 +135,7 @@ public final class HivePartitioning {
 
     private static BoundColumn bindSynthetic(String key, List<Map<String, String>> perFilePartitions) {
         List<String> values = valuesOf(key, perFilePartitions);
-        rejectNullPartition(key, values);
+        rejectNullPartition(values);
         PartitionKind partitionKind = PartitionTypeInference.inferConsistent(values);
         return new BoundColumn(true, null, Optional.empty(), partitionKind);
     }
@@ -145,7 +145,7 @@ public final class HivePartitioning {
      * column whose type could give the null a meaning, and treating the sentinel as a literal string would silently
      * invert {@code IS NULL}. Fail fast instead.
      */
-    private static void rejectNullPartition(String key, List<String> values) {
+    private static void rejectNullPartition(List<String> values) {
         for (String value : values) {
             if (PartitionValueParser.isNullPartition(value)) {
                 throw new IllegalStateException("hive null partitions (" + PartitionValueParser.HIVE_NULL_PARTITION

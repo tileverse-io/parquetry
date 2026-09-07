@@ -82,7 +82,8 @@ class ParquetRecordBatchBuilderTest {
     @Test
     void setNullOnRequiredColumnThrowsByPath() {
         ParquetRecordBatchBuilder builder = builderWithRequiredId();
-        assertThatThrownBy(() -> builder.setNull(ColumnPath.of("id")))
+        ColumnPath id = ColumnPath.of("id");
+        assertThatThrownBy(() -> builder.setNull(id))
                 .isInstanceOf(ParquetWriteException.class)
                 .hasMessageContaining("id");
     }
@@ -229,7 +230,8 @@ class ParquetRecordBatchBuilderTest {
     void beginListByPathAsTheDirectElementPointsAtAddList() {
         ParquetRecordBatchBuilder builder = ParquetRecordBatchBuilder.forSchema(listOfListSchema());
         builder.beginList("outer");
-        assertThatThrownBy(() -> builder.beginList(ColumnPath.of("element")))
+        ColumnPath element = ColumnPath.of("element");
+        assertThatThrownBy(() -> builder.beginList(element))
                 .isInstanceOf(ParquetWriteException.class)
                 .hasMessageContaining("addList()/addMap()");
     }

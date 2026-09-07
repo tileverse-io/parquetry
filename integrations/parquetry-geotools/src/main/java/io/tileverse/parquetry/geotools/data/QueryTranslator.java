@@ -50,6 +50,8 @@ final class QueryTranslator {
      * re-apply (INCLUDE when nothing is left); {@code readProjection} is the column set to decode; {@code outputNames}
      * is the requested output attribute set ({@link Query#ALL_NAMES} for all).
      */
+    // S6218: an internal transport record, consumed field by field and never compared or printed
+    @SuppressWarnings("java:S6218")
     record TranslatedQuery(Predicate predicate, Filter postFilter, Projection readProjection, String[] outputNames) {}
 
     private static final Capabilities CAPABILITIES = PushdownFilterCapabilities.create();

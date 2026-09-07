@@ -23,6 +23,7 @@ package io.tileverse.parquetry.probes;
  * java -Dparquetry.probe.file=buildings.parquet -Dparquetry.probe.concurrency=8 -jar probes.jar read
  * }</pre>
  */
+@SuppressWarnings("java:S106") // a probe tool reports to stdout by design; its output is read and diffed by hand
 public final class ProbeMain {
 
     private ProbeMain() {}

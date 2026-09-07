@@ -149,13 +149,13 @@ class DeepNestingAssemblyTest {
             Map<?, ?> inner0 = (Map<?, ?>) onlyValue(row0);
             assertThat(asString(onlyKey(row0))).as("row 0 outer key").isEqualTo("a");
             assertThat(inner0).as("row 0 inner map has two entries").hasSize(2);
-            assertThat(inner0.get(1)).as("row 0 inner[1]").isEqualTo(true);
-            assertThat(inner0.get(2)).as("row 0 inner[2]").isEqualTo(false);
+            assertThat((Boolean) inner0.get(1)).as("row 0 inner[1]").isTrue();
+            assertThat((Boolean) inner0.get(2)).as("row 0 inner[2]").isFalse();
 
             Map<?, ?> row1 = (Map<?, ?>) batch.materialize(1).get(ColumnPath.of("a"));
             Map<?, ?> inner1 = (Map<?, ?>) onlyValue(row1);
             assertThat(inner1).as("row 1 inner map has one entry").hasSize(1);
-            assertThat(inner1.get(1)).as("row 1 inner[1]").isEqualTo(true);
+            assertThat((Boolean) inner1.get(1)).as("row 1 inner[1]").isTrue();
 
             Map<?, ?> row2 = (Map<?, ?>) batch.materialize(2).get(ColumnPath.of("a"));
             assertThat(asString(onlyKey(row2))).as("row 2 outer key").isEqualTo("c");

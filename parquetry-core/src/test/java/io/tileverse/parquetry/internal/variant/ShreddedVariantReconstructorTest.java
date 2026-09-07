@@ -74,7 +74,9 @@ class ShreddedVariantReconstructorTest {
         ShreddedVariant.Scalar model = scalar(PrimitiveKind.INT64, 6);
         NodeReader reader = TestNodeReader.valueAndScalar(value, 7L);
 
-        assertThatThrownBy(() -> reconstructor(emptyMetadata()).reconstruct(model, reader))
+        ShreddedVariantReconstructor reconstructor = reconstructor(emptyMetadata());
+
+        assertThatThrownBy(() -> reconstructor.reconstruct(model, reader))
                 .isInstanceOf(ParquetFormatException.class)
                 .hasMessageContaining("conflicting value and typed_value");
     }
@@ -146,7 +148,9 @@ class ShreddedVariantReconstructorTest {
         ShreddedVariant.ShreddedObject model = object(Map.of("a", scalarField(PrimitiveKind.INT32, 5)));
         NodeReader reader = TestNodeReader.valueAndObjectFields(scalarValue, Map.of("a", TestNodeReader.scalar(1)));
 
-        assertThatThrownBy(() -> reconstructor(reference).reconstruct(model, reader))
+        ShreddedVariantReconstructor reconstructor = reconstructor(reference);
+
+        assertThatThrownBy(() -> reconstructor.reconstruct(model, reader))
                 .isInstanceOf(ParquetFormatException.class)
                 .hasMessageContaining("non-object value with shredded fields");
     }
@@ -165,7 +169,9 @@ class ShreddedVariantReconstructorTest {
         ShreddedVariant.ShreddedObject model = object(Map.of("a", scalarField(PrimitiveKind.INT32, 5)));
         NodeReader reader = TestNodeReader.valueAndObjectFields(scalarValue, Map.of("a", TestNodeReader.empty()));
 
-        assertThatThrownBy(() -> reconstructor(metadata).reconstruct(model, reader))
+        ShreddedVariantReconstructor reconstructor = reconstructor(metadata);
+
+        assertThatThrownBy(() -> reconstructor.reconstruct(model, reader))
                 .isInstanceOf(ParquetFormatException.class)
                 .hasMessageContaining("non-object value with shredded fields");
     }
@@ -212,7 +218,9 @@ class ShreddedVariantReconstructorTest {
         NodeReader reader = TestNodeReader.valueAndObjectFields(
                 unshreddedBOnly, Map.of("a", TestNodeReader.scalar(1), "b", TestNodeReader.empty()));
 
-        assertThatThrownBy(() -> reconstructor(metadata).reconstruct(model, reader))
+        ShreddedVariantReconstructor reconstructor = reconstructor(metadata);
+
+        assertThatThrownBy(() -> reconstructor.reconstruct(model, reader))
                 .isInstanceOf(ParquetFormatException.class)
                 .hasMessageContaining("conflicting value and typed_value for field");
     }
@@ -236,7 +244,9 @@ class ShreddedVariantReconstructorTest {
         ShreddedVariant.ShreddedObject model = object(Map.of("a", scalarField(PrimitiveKind.INT32, 5)));
         NodeReader reader = TestNodeReader.valueAndObjectFields(unshreddedAOnly, Map.of("a", TestNodeReader.scalar(1)));
 
-        assertThatThrownBy(() -> reconstructor(reference).reconstruct(model, reader))
+        ShreddedVariantReconstructor reconstructor = reconstructor(reference);
+
+        assertThatThrownBy(() -> reconstructor.reconstruct(model, reader))
                 .isInstanceOf(ParquetFormatException.class)
                 .hasMessageContaining("conflicting value and typed_value for field");
     }
@@ -420,7 +430,9 @@ class ShreddedVariantReconstructorTest {
         ShreddedVariant.ShreddedArray model = array(scalarField(PrimitiveKind.INT32, 5));
         NodeReader reader = TestNodeReader.valueAndArrayElements(value, List.of(TestNodeReader.scalar(1)));
 
-        assertThatThrownBy(() -> reconstructor(metadata).reconstruct(model, reader))
+        ShreddedVariantReconstructor reconstructor = reconstructor(metadata);
+
+        assertThatThrownBy(() -> reconstructor.reconstruct(model, reader))
                 .isInstanceOf(ParquetFormatException.class)
                 .hasMessageContaining("conflicting value and typed_value");
     }

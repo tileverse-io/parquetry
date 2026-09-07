@@ -72,7 +72,9 @@ public final class GeospatialStatisticsAccumulator implements WkbEnvelope.Visito
         geospatialTypes.add(rawType);
     }
 
+    // S3516: the boolean is the walk-callback continue flag; this accumulator visits every coordinate and never aborts
     @Override
+    @SuppressWarnings("java:S3516")
     public boolean coordinate(double x, double y, double z, double m, boolean hasZ, boolean hasM) {
         if (Double.isNaN(x) || Double.isNaN(y)) {
             return true; // POINT EMPTY and other degenerate coordinates have no real location

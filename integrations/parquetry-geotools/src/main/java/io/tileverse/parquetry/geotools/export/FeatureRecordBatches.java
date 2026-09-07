@@ -155,16 +155,18 @@ public final class FeatureRecordBatches {
             Map<String, CoordinateReferenceSystem> existingCrs) {
         Map<String, CoordinateReferenceSystem> additions = new LinkedHashMap<>();
         for (FeatureWriteSchema.WriteAttribute attribute : writeSchema.attributes()) {
-            if (!attribute.geometry()) {
-                continue;
+            if (needsCrsEntry(attribute, existingCrs)) {
+                String columnPath = attribute.path().dot();
+                additions.put(columnPath, resolveCrs(columnPath));
             }
-            String columnPath = attribute.path().dot();
-            if (existingCrs.containsKey(columnPath)) {
-                continue;
-            }
-            additions.put(columnPath, resolveCrs(columnPath));
         }
         return additions;
+    }
+
+    /** Whether {@code attribute} is a geometry column that {@code existingCrs} does not already name. */
+    private static boolean needsCrsEntry(
+            FeatureWriteSchema.WriteAttribute attribute, Map<String, CoordinateReferenceSystem> existingCrs) {
+        return attribute.geometry() && !existingCrs.containsKey(attribute.path().dot());
     }
 
     /** The CRS for {@code columnPath}: its resolved EPSG code when one was found, else explicit CRS84. */
@@ -294,7 +296,15 @@ public final class FeatureRecordBatches {
                 builder.setBinary(path, MemorySegment.ofArray((byte[]) value));
             } else if (binding == UUID.class) {
                 builder.setUuid(path, (UUID) value);
-            } else if (binding == LocalDate.class) {
+            } else {
+                setTemporalScalar(builder, path, binding, value);
+            }
+        }
+
+        /** Stages a date or timestamp {@code value}: dates as epoch days, timestamps as epoch microseconds. */
+        private static void setTemporalScalar(
+                ParquetRecordBatchBuilder builder, ColumnPath path, Class<?> binding, Object value) {
+            if (binding == LocalDate.class) {
                 builder.setInt(path, (int) ((LocalDate) value).toEpochDay());
             } else if (binding == java.sql.Date.class) {
                 builder.setInt(path, (int) ((java.sql.Date) value).toLocalDate().toEpochDay());

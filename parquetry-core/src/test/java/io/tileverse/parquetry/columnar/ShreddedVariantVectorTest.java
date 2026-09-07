@@ -89,8 +89,6 @@ class ShreddedVariantVectorTest {
                 .addInt(1)
                 .endObject()
                 .encode();
-        VariantMetadata metadata = new VariantMetadata(reference.metadata());
-
         BinaryVector metadataColumn = sharedMetadataColumn(new VariantEncoder.Encoded[] {reference}, 1);
         ShreddedVariant.ShreddedObject model = object(Map.of("a", scalarField(PrimitiveKind.INT32, 5)));
         IntVector fieldColumn = IntVector.materialized(new int[] {1}, Validity.allValid(1));

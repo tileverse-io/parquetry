@@ -143,8 +143,8 @@ class DuckDbCorpusRoundTripIT {
             ParquetFileReader reader, Predicate predicate, Projection projection, ParquetSchema projectedSchema) {
         List<Row> rows = new ArrayList<>();
         try (Stream<ParquetRecord> records = reader.read(predicate, projection, ReadOptions.DEFAULTS)) {
-            records.forEach(record ->
-                    rows.add(new Row(record.getInt(ID), record.getInt(INT_COL), record.getString(STRING_COL))));
+            records.forEach(
+                    read -> rows.add(new Row(read.getInt(ID), read.getInt(INT_COL), read.getString(STRING_COL))));
         }
         return batchOf(projectedSchema, rows);
     }

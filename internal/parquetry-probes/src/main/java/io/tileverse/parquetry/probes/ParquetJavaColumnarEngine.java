@@ -63,7 +63,7 @@ final class ParquetJavaColumnarEngine implements ColumnarEngine {
             while (pages != null) {
                 ColumnReadStoreImpl store = new ColumnReadStoreImpl(pages, recordConverter, schema, createdBy);
                 for (ColumnDescriptor column : columns) {
-                    touchColumn(store, column);
+                    touchColumn(store, pages, column);
                 }
                 rows += pages.getRowCount();
                 pages = reader.readNextRowGroup();
@@ -91,11 +91,12 @@ final class ParquetJavaColumnarEngine implements ColumnarEngine {
                 .toList();
     }
 
-    private void touchColumn(ColumnReadStoreImpl store, ColumnDescriptor column) {
+    private void touchColumn(ColumnReadStoreImpl store, PageReadStore pages, ColumnDescriptor column) {
         ColumnReader columnReader = store.getColumnReader(column);
         int maxDefinitionLevel = column.getMaxDefinitionLevel();
         PrimitiveTypeName kind = column.getPrimitiveType().getPrimitiveTypeName();
-        for (long i = 0, n = columnReader.getTotalValueCount(); i < n; i++) {
+        long valueCount = pages.getPageReader(column).getTotalValueCount();
+        for (long i = 0; i < valueCount; i++) {
             if (columnReader.getCurrentDefinitionLevel() == maxDefinitionLevel) {
                 touchPrimitive(columnReader, kind);
             }

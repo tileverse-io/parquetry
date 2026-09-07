@@ -175,7 +175,7 @@ class FeatureTypeMapperTest {
     }
 
     @Test
-    void mapsExampleGeoParquetToSimpleFeatureType(@TempDir Path dir) throws Exception {
+    void mapsExampleGeoParquetToSimpleFeatureType(@TempDir Path dir) {
         Path file = TestCorpus.extractFile("geoparquet/examples/example.parquet", dir);
         try (ByteRangeSource src = ByteRangeSource.ofFile(file)) {
             ParquetSource ds = ParquetSource.open(src);
@@ -206,8 +206,8 @@ class FeatureTypeMapperTest {
         List<String> names = ft.getAttributeDescriptors().stream()
                 .map(AttributeDescriptor::getLocalName)
                 .toList();
-        assertThat(names).containsExactlyInAnyOrder("id", "geometry", "brand", "addresses", "tags");
         assertThat(names)
+                .containsExactlyInAnyOrder("id", "geometry", "brand", "addresses", "tags")
                 .as("nested columns must not be flattened to dotted attribute names")
                 .doesNotContain("addresses.list.element.locality", "brand.name");
     }
@@ -283,10 +283,10 @@ class FeatureTypeMapperTest {
                 FeatureTypeMapper.map("countries", null, schema, Optional.of(GeoParquetMetadata.parse(geoJson)), null);
 
         List<String> attributeNames = mapping.featureType().getAttributeDescriptors().stream()
-                .map(descriptor -> descriptor.getLocalName())
+                .map(AttributeDescriptor::getLocalName)
                 .toList();
-        assertThat(attributeNames).contains("geom", "name");
         assertThat(attributeNames)
+                .contains("geom", "name")
                 .as("the bbox covering is an internal spatial index, not a user attribute")
                 .doesNotContain("geom_bbox.xmin", "geom_bbox.ymin", "geom_bbox.xmax", "geom_bbox.ymax");
     }

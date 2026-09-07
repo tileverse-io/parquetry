@@ -50,7 +50,7 @@ class JsonReaderTest {
     @SuppressWarnings("unchecked")
     void preservesIntegerFieldIdAsLong() {
         Map<String, Object> root = (Map<String, Object>) JsonReader.parse("{\"field-id\":2}");
-        assertThat(root.get("field-id")).isEqualTo(2L);
+        assertThat(root).containsEntry("field-id", 2L);
     }
 
     @Test
@@ -59,11 +59,11 @@ class JsonReaderTest {
         Map<String, Object> root = (Map<String, Object>)
                 JsonReader.parse("{\"symbols\":[\"A\",\"B\"],\"size\":16,\"flag\":false,\"ratio\":1.25,\"none\":null}");
         assertThat((List<Object>) root.get("symbols")).containsExactly("A", "B");
-        assertThat(root.get("size")).isEqualTo(16L);
-        assertThat(root.get("flag")).isEqualTo(Boolean.FALSE);
-        assertThat(root.get("ratio")).isEqualTo(1.25d);
-        assertThat(root).containsKey("none");
-        assertThat(root.get("none")).isNull();
+        assertThat(root)
+                .containsEntry("size", 16L)
+                .containsEntry("flag", Boolean.FALSE)
+                .containsEntry("ratio", 1.25d)
+                .containsEntry("none", null);
     }
 
     @Test

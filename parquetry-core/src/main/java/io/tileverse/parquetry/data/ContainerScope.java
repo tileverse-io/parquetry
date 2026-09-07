@@ -33,13 +33,14 @@ final class ContainerScope {
     static final String PUT_ENTRY = "putEntry";
     static final String END_ENTRY = "endEntry";
 
+    /** The node names a map scope addresses: its repeated entry wrapper and the entry's key and value children. */
+    private record MapNodes(String entry, String key, String value) {}
+
     private final ColumnPath path;
     private final ColumnAccumulator.ListAccumulator listAccumulator;
     private final ColumnAccumulator.MapAccumulator mapAccumulator;
     private final String elementNodeName;
-    private final String entryNodeName;
-    private final String keyNodeName;
-    private final String valueNodeName;
+    private final MapNodes mapNodes;
     private final boolean commitsParentElement;
     private boolean entryStarted;
 
@@ -48,23 +49,19 @@ final class ContainerScope {
             ColumnAccumulator.ListAccumulator listAccumulator,
             ColumnAccumulator.MapAccumulator mapAccumulator,
             String elementNodeName,
-            String entryNodeName,
-            String keyNodeName,
-            String valueNodeName,
+            MapNodes mapNodes,
             boolean commitsParentElement) {
         this.path = path;
         this.listAccumulator = listAccumulator;
         this.mapAccumulator = mapAccumulator;
         this.elementNodeName = elementNodeName;
-        this.entryNodeName = entryNodeName;
-        this.keyNodeName = keyNodeName;
-        this.valueNodeName = valueNodeName;
+        this.mapNodes = mapNodes;
         this.commitsParentElement = commitsParentElement;
     }
 
     static ContainerScope list(
             ColumnPath path, ColumnAccumulator.ListAccumulator listAccumulator, String elementNodeName) {
-        return new ContainerScope(path, listAccumulator, null, elementNodeName, null, null, null, false);
+        return new ContainerScope(path, listAccumulator, null, elementNodeName, null, false);
     }
 
     static ContainerScope map(
@@ -73,13 +70,14 @@ final class ContainerScope {
             String entryNodeName,
             String keyNodeName,
             String valueNodeName) {
-        return new ContainerScope(path, null, mapAccumulator, null, entryNodeName, keyNodeName, valueNodeName, false);
+        MapNodes nodes = new MapNodes(entryNodeName, keyNodeName, valueNodeName);
+        return new ContainerScope(path, null, mapAccumulator, null, nodes, false);
     }
 
     /** A list opened as the enclosing list's current element: closing it commits that element. */
     static ContainerScope listAsElement(
             ColumnPath path, ColumnAccumulator.ListAccumulator listAccumulator, String elementNodeName) {
-        return new ContainerScope(path, listAccumulator, null, elementNodeName, null, null, null, true);
+        return new ContainerScope(path, listAccumulator, null, elementNodeName, null, true);
     }
 
     /** A map opened as the enclosing list's current element: closing it commits that element. */
@@ -89,7 +87,8 @@ final class ContainerScope {
             String entryNodeName,
             String keyNodeName,
             String valueNodeName) {
-        return new ContainerScope(path, null, mapAccumulator, null, entryNodeName, keyNodeName, valueNodeName, true);
+        MapNodes nodes = new MapNodes(entryNodeName, keyNodeName, valueNodeName);
+        return new ContainerScope(path, null, mapAccumulator, null, nodes, true);
     }
 
     /** True when closing this scope must commit the current element of the enclosing list scope. */
@@ -166,16 +165,16 @@ final class ContainerScope {
             return navigate(listAccumulator.element(), path, 1);
         }
         requireStarted(verb, PUT_ENTRY);
-        requireFirstPart(path, entryNodeName);
+        requireFirstPart(path, mapNodes.entry());
         ColumnAccumulator child = selectEntryChild(path.part(1));
         return navigate(child, path, 2);
     }
 
     private ColumnAccumulator selectEntryChild(String childName) {
-        if (childName.equals(keyNodeName)) {
+        if (childName.equals(mapNodes.key())) {
             return mapAccumulator.key();
         }
-        if (childName.equals(valueNodeName)) {
+        if (childName.equals(mapNodes.value())) {
             return mapAccumulator.value();
         }
         throw new ParquetWriteException("Map entry has no field named " + childName);

@@ -19,7 +19,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.ByteArrayOutputStream;
-import java.io.IOException;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -273,7 +272,7 @@ class ParquetWriterTest {
     }
 
     @Test
-    void writerNeverClosesTheSinkItWasGiven() throws Exception {
+    void writerNeverClosesTheSinkItWasGiven() {
         ParquetSchema schema = flatSchema(requiredInt32("id"));
         WriteOptions options = options().build();
         CloseCountingByteSink sink = new CloseCountingByteSink();
@@ -310,8 +309,7 @@ class ParquetWriterTest {
                 name, Repetition.REQUIRED, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1);
     }
 
-    private static void writeRow(ParquetFileWriter writer, ParquetSchema schema, Map<ColumnPath, Object> values)
-            throws IOException {
+    private static void writeRow(ParquetFileWriter writer, ParquetSchema schema, Map<ColumnPath, Object> values) {
         writer.writeBatch(WriteFixtures.batch(schema, List.of(values)));
     }
 

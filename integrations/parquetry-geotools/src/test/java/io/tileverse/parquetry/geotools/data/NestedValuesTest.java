@@ -75,8 +75,8 @@ class NestedValuesTest {
 
         Object first = addresses.get(0);
         assertThat(first).isInstanceOf(Map.class).isInstanceOf(Struct.class);
-        Map<?, ?> firstAddress = (Map<?, ?>) first;
-        assertThat(firstAddress.get("locality")).isEqualTo("NYC");
+        Struct firstAddress = (Struct) first;
+        assertThat(firstAddress).containsEntry("locality", "NYC");
 
         assertNoParquetRecord(value);
     }

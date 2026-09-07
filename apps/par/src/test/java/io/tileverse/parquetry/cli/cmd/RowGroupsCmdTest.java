@@ -43,12 +43,8 @@ class RowGroupsCmdTest {
 
         assertThat(code).isZero();
         String output = out.toString();
-        // Header row must mention both column labels
-        assertThat(output).contains("index");
-        assertThat(output).contains("rows");
-        // Cities fixture has 4 rows in a single row group at index 0
-        assertThat(output).contains("4");
-        assertThat(output).contains("0");
+        // Header row mentions both column labels; the cities fixture has 4 rows in a single row group at index 0
+        assertThat(output).contains("index", "rows", "4", "0");
     }
 
     @Test
@@ -64,8 +60,7 @@ class RowGroupsCmdTest {
         assertThat(code).isZero();
         String output = out.toString().strip();
         // JSON output is an array
-        assertThat(output).startsWith("[");
-        assertThat(output).contains("\"rows\"");
+        assertThat(output).startsWith("[").contains("\"rows\"");
     }
 
     @Test

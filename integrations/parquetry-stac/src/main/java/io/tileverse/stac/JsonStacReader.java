@@ -132,23 +132,25 @@ public final class JsonStacReader implements StacCatalogReader {
                 intoCatalogs.add(readCatalog(childUri, child));
             }
         }
-    }
 
-    private StacCollection readCollection(URI collectionUri, JsonNode root) {
-        String id = requiredText(root, "id");
-        String title = optionalText(root, TITLE);
-        Optional<StacExtent> extent = StacJson.readExtent(root);
-        List<StacLink> links = readLinks(root);
-        return new StacCollection(
-                id,
-                title,
-                extent,
-                links,
-                () -> readItems(collectionUri, links),
-                () -> readFirstItem(collectionUri, links));
+        private StacCollection readCollection(URI collectionUri, JsonNode root) {
+            String id = requiredText(root, "id");
+            String title = optionalText(root, TITLE);
+            Optional<StacExtent> extent = StacJson.readExtent(root);
+            List<StacLink> collectionLinks = readLinks(root);
+            return new StacCollection(
+                    id,
+                    title,
+                    extent,
+                    collectionLinks,
+                    () -> readItems(collectionUri, collectionLinks),
+                    () -> readFirstItem(collectionUri, collectionLinks));
+        }
     }
 
     /** Reads the first linked item's document alone; a consumer probing one representative item pays one read. */
+    // S3398: item reading is a reader concern; the lazy suppliers ChildDocuments builds are just its only callers today
+    @SuppressWarnings("java:S3398")
     private Optional<StacItem> readFirstItem(URI base, List<StacLink> links) {
         for (StacLink link : links) {
             if ("item".equals(link.rel())) {
@@ -158,6 +160,8 @@ public final class JsonStacReader implements StacCatalogReader {
         return Optional.empty();
     }
 
+    // S3398: item reading is a reader concern; the lazy suppliers ChildDocuments builds are just its only callers today
+    @SuppressWarnings("java:S3398")
     private List<StacItem> readItems(URI base, List<StacLink> links) {
         List<URI> itemUris = new ArrayList<>();
         for (StacLink link : links) {

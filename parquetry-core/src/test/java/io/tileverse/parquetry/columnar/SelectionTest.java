@@ -38,7 +38,7 @@ class SelectionTest {
 
         @Test
         void lengthIsUnsupportedBecauseItHasNoDomain() {
-            assertThatThrownBy(() -> Selection.ALL.length())
+            assertThatThrownBy(Selection.ALL::length)
                     .isInstanceOf(UnsupportedOperationException.class)
                     .hasMessageContaining("== ALL guard");
         }
@@ -50,8 +50,12 @@ class SelectionTest {
         }
 
         @Test
-        void isTheSharedSingleton() {
-            assertThat(Selection.ALL).isSameAs(Selection.ALL);
+        void isTheOnlyInstanceHandedOut() {
+            // the == ALL fast-path guard is only sound while no other factory returns the sentinel
+            Selection ranged = Selection.range(0, 3);
+            Selection masked = Selection.bits(survivors(0, 1, 2));
+            assertThat(ranged).isNotSameAs(Selection.ALL);
+            assertThat(masked).isNotSameAs(Selection.ALL);
         }
     }
 

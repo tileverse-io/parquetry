@@ -86,8 +86,7 @@ class ParquetWriterAppenderTest {
         // here (the 1M row threshold and the 128MB default row-group sizing are never reached), and multiple byte
         // flushes can coalesce into one open row group, hence the assertion stays at >= 1 rather than a flaky > 1.
         List<String> values = readBackStrings(parquetFile);
-        assertThat(values).hasSize(rowCount);
-        assertThat(values).allMatch(cell::equals);
+        assertThat(values).hasSize(rowCount).allMatch(cell::equals);
         assertThat(rowGroupCountOf(parquetFile)).isGreaterThanOrEqualTo(1);
     }
 
@@ -205,16 +204,18 @@ class ParquetWriterAppenderTest {
             ParquetRecordBatchBuilder appender = writer.appender(1_000_000);
             try {
                 Thread.currentThread().interrupt();
-                assertThatThrownBy(() -> {
-                            for (int i = 0; i < 1024; i++) {
-                                appender.setInt(0, i).endRow();
-                            }
-                        })
+                assertThatThrownBy(() -> appendInts(appender, 1024))
                         .isInstanceOf(UncheckedIOException.class)
                         .hasCauseInstanceOf(InterruptedIOException.class);
             } finally {
                 Thread.interrupted(); // clear the interrupt status for the rest of the suite
             }
+        }
+    }
+
+    private static void appendInts(ParquetRecordBatchBuilder appender, int rowCount) {
+        for (int i = 0; i < rowCount; i++) {
+            appender.setInt(0, i).endRow();
         }
     }
 

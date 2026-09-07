@@ -175,6 +175,8 @@ public final class FilesetCatalog implements DatasetCatalog {
      * {@link #close()} only after the build succeeds; a failed build closes them here and leaves the entry pending,
      * ready for a later retry. (A failed gather closes every source it opened before propagating.)
      */
+    // S1181: an Error must close the byte sources this build opened before it propagates unchanged; none is swallowed.
+    @SuppressWarnings("java:S1181")
     private ParquetDataset buildLazily(PendingDataset pending) {
         List<ConcurrentFooterGather.GatheredFile> gathered = ConcurrentFooterGather.gather(pending.files());
         List<ByteRangeSource> opened = gathered.stream()

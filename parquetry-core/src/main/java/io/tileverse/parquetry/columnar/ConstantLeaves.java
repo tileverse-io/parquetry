@@ -47,15 +47,14 @@ public final class ConstantLeaves {
     /** The physical kind and logical type for {@code value}, for callers building a leaf with their own name and id. */
     public static LeafType kindAndLogicalType(Value value) {
         return switch (value) {
-            case Value.IntVal ignored -> new LeafType(PrimitiveKind.INT32, Optional.empty());
-            case Value.LongVal ignored -> new LeafType(PrimitiveKind.INT64, Optional.empty());
-            case Value.DoubleVal ignored -> new LeafType(PrimitiveKind.DOUBLE, Optional.empty());
-            case Value.FloatVal ignored -> new LeafType(PrimitiveKind.FLOAT, Optional.empty());
-            case Value.BoolVal ignored -> new LeafType(PrimitiveKind.BOOLEAN, Optional.empty());
-            case Value.DateVal ignored -> new LeafType(PrimitiveKind.INT32, Optional.of(new LogicalType.DateType()));
-            case Value.StringVal ignored ->
-                new LeafType(PrimitiveKind.BYTE_ARRAY, Optional.of(new LogicalType.StringType()));
-            case Value.UuidVal ignored ->
+            case Value.IntVal _ -> new LeafType(PrimitiveKind.INT32, Optional.empty());
+            case Value.LongVal _ -> new LeafType(PrimitiveKind.INT64, Optional.empty());
+            case Value.DoubleVal _ -> new LeafType(PrimitiveKind.DOUBLE, Optional.empty());
+            case Value.FloatVal _ -> new LeafType(PrimitiveKind.FLOAT, Optional.empty());
+            case Value.BoolVal _ -> new LeafType(PrimitiveKind.BOOLEAN, Optional.empty());
+            case Value.DateVal _ -> new LeafType(PrimitiveKind.INT32, Optional.of(new LogicalType.DateType()));
+            case Value.StringVal _ -> new LeafType(PrimitiveKind.BYTE_ARRAY, Optional.of(new LogicalType.StringType()));
+            case Value.UuidVal _ ->
                 new LeafType(PrimitiveKind.FIXED_LEN_BYTE_ARRAY, Optional.of(new LogicalType.UuidType()));
             case Value.DecimalVal(BigDecimal v) ->
                 new LeafType(

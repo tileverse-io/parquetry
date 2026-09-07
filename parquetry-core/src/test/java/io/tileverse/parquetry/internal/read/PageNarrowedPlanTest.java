@@ -98,7 +98,7 @@ class PageNarrowedPlanTest {
     }
 
     @Test
-    void maskAbsentPlansWholeChunks() throws IOException {
+    void maskAbsentPlansWholeChunks() {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             Fixture fixture = Fixture.open(source);
 
@@ -114,7 +114,7 @@ class PageNarrowedPlanTest {
     }
 
     @Test
-    void maskNarrowsToSurvivingRunsPlusDictionaryPrefixWhenPresent() throws IOException {
+    void maskNarrowsToSurvivingRunsPlusDictionaryPrefixWhenPresent() {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             Fixture fixture = Fixture.open(source);
             assertThat(fixture.offsetIndex(A).pageLocations()).hasSize(PAGE_COUNT);
@@ -143,7 +143,7 @@ class PageNarrowedPlanTest {
     }
 
     @Test
-    void allPagesSurvivingPlansExactlyTheWholeChunk() throws IOException {
+    void allPagesSurvivingPlansExactlyTheWholeChunk() {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             Fixture fixture = Fixture.open(source);
 
@@ -156,7 +156,7 @@ class PageNarrowedPlanTest {
     }
 
     @Test
-    void columnMissingFromTheMaskFallsBackToItsWholeChunk() throws IOException {
+    void columnMissingFromTheMaskFallsBackToItsWholeChunk() {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             Fixture fixture = Fixture.open(source);
             RowMask maskWithoutB = new RowMask(firstAndLastRows(), Map.of(A, fixture.offsetIndex(A)));
@@ -169,7 +169,7 @@ class PageNarrowedPlanTest {
     }
 
     @Test
-    void malformedFirstDataPageOffsetFallsBackToWholeChunk() throws IOException {
+    void malformedFirstDataPageOffsetFallsBackToWholeChunk() {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             Fixture fixture = Fixture.open(source);
             OffsetIndex beforeTheChunk = withFirstPageOffset(fixture.offsetIndex(A), chunkStartOf(fixture.meta(A)) - 1);
@@ -185,7 +185,7 @@ class PageNarrowedPlanTest {
     }
 
     @Test
-    void lastPageEndingPastTheChunkFallsBackToWholeChunk() throws IOException {
+    void lastPageEndingPastTheChunkFallsBackToWholeChunk() {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             Fixture fixture = Fixture.open(source);
             OffsetIndex spillingPastTheChunk =
@@ -202,7 +202,7 @@ class PageNarrowedPlanTest {
     }
 
     @Test
-    void middlePageOutsideTheChunkFallsBackToWholeChunk() throws IOException {
+    void middlePageOutsideTheChunkFallsBackToWholeChunk() {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             Fixture fixture = Fixture.open(source);
             OffsetIndex middlePagePastTheChunk =
@@ -220,7 +220,7 @@ class PageNarrowedPlanTest {
     }
 
     @Test
-    void firstDataPageAtTheChunkEndFallsBackToWholeChunk() throws IOException {
+    void firstDataPageAtTheChunkEndFallsBackToWholeChunk() {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             Fixture fixture = Fixture.open(source);
             OffsetIndex pastTheChunk = withFirstPageOffset(fixture.offsetIndex(A), chunkEndOf(fixture.meta(A)));
@@ -234,7 +234,7 @@ class PageNarrowedPlanTest {
     }
 
     @Test
-    void unsetDictionaryOffsetWithDataPageOffsetAtTheDictionaryPageStillYieldsThePrefix() throws IOException {
+    void unsetDictionaryOffsetWithDataPageOffsetAtTheDictionaryPageStillYieldsThePrefix() {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             Fixture fixture = Fixture.open(source);
             long dictionaryPageOffset = fixture.meta(B).dictionaryPageOffset().orElseThrow();
@@ -253,7 +253,7 @@ class PageNarrowedPlanTest {
     }
 
     @Test
-    void zeroSurvivingPagesForAColumnFailsLoud() throws IOException {
+    void zeroSurvivingPagesForAColumnFailsLoud() {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             Fixture fixture = Fixture.open(source);
             RowRanges pastTheRowGroup = new RowRanges(List.of(new Range(ROW_COUNT + 10, ROW_COUNT + 20)));
@@ -267,7 +267,7 @@ class PageNarrowedPlanTest {
     }
 
     @Test
-    void fetchingWithAColumnMissingFromThePlanFailsLoud() throws IOException {
+    void fetchingWithAColumnMissingFromThePlanFailsLoud() {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             Fixture fixture = Fixture.open(source);
             FetchPlan withoutB = fixture.planWithoutSlicesFor(B);
@@ -279,15 +279,16 @@ class PageNarrowedPlanTest {
     }
 
     @Test
-    void dictionaryPrefixWhoseFirstPageIsADataPageFailsLoud() throws IOException {
+    void dictionaryPrefixWhoseFirstPageIsADataPageFailsLoud() {
         try (Arena arena = Arena.ofConfined();
                 ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             Fixture fixture = Fixture.open(source);
             MemorySegment firstDataPage = fixture.readFirstDataPage(A, arena);
             List<DataPageRun> runs = List.of(new DataPageRun(firstDataPage, 0));
+            Optional<MemorySegment> prefixThatIsReallyADataPage = Optional.of(firstDataPage);
+            ColumnMetaData meta = fixture.meta(A);
 
-            assertThatThrownBy(
-                            () -> ColumnChunkSlicer.slice(Optional.of(firstDataPage), runs, fixture.meta(A), A, SCHEMA))
+            assertThatThrownBy(() -> ColumnChunkSlicer.slice(prefixThatIsReallyADataPage, runs, meta, A, SCHEMA))
                     .isInstanceOf(MalformedFileException.class)
                     .hasMessageContaining(A.dot())
                     .hasMessageContaining("DATA_PAGE");
@@ -295,7 +296,7 @@ class PageNarrowedPlanTest {
     }
 
     @Test
-    void slicingAColumnWithoutAnyFetchedDataPageFailsLoud() throws IOException {
+    void slicingAColumnWithoutAnyFetchedDataPageFailsLoud() {
         try (Arena arena = Arena.ofConfined();
                 ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             Fixture fixture = Fixture.open(source);

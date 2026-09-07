@@ -27,7 +27,6 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
@@ -274,6 +273,8 @@ class FilesetCatalogTest {
         }
     }
 
+    // S2925: the awaited state is reached by another thread; the poll is deadline-bounded and yields between checks.
+    @SuppressWarnings("java:S2925")
     private static void waitUntil(BooleanSupplier condition) throws InterruptedException {
         long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
         while (!condition.getAsBoolean()) {
@@ -460,7 +461,7 @@ class FilesetCatalogTest {
                 CatalogOptions.builder().datasetName("places").build())) {
             ParquetDataset ds = catalog.dataset("places");
             assertThat(ds).isInstanceOf(GeoParquetDataset.class);
-            assertThat(((GeoParquetDataset) ds).geoMetadata()).isEqualTo(Optional.empty());
+            assertThat(((GeoParquetDataset) ds).geoMetadata()).isEmpty();
         }
     }
 

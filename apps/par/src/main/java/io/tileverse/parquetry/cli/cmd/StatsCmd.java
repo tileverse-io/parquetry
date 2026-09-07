@@ -126,7 +126,7 @@ public final class StatsCmd implements Callable<Integer> {
         }
         switch (options.format) {
             case JSON -> StatsRenderer.writeJson(out, stats);
-            case JSONL, CSV, TSV ->
+            case JSONL, CSV, TSV, ARROW ->
                 throw new ParameterException(
                         spec.commandLine(),
                         "stats does not support --format "

@@ -36,6 +36,7 @@ import java.util.stream.Stream;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.ipc.ArrowStreamReader;
+import org.assertj.core.api.InstanceOfAssertFactories;
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.columnar.BinaryVector;
@@ -56,6 +57,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 class RoundTripNestedTest {
 
@@ -72,7 +74,9 @@ class RoundTripNestedTest {
                     (org.apache.arrow.vector.complex.ListVector) root.getVector("nums");
             assertThat(vector.getObject(0)).isEqualTo(List.of(1, 2, 3));
             assertThat(vector.isNull(1)).isTrue();
-            assertThat(vector.getObject(2)).asList().isEmpty();
+            assertThat(vector.getObject(2))
+                    .asInstanceOf(InstanceOfAssertFactories.LIST)
+                    .isEmpty();
         });
     }
 
@@ -209,8 +213,9 @@ class RoundTripNestedTest {
         ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, Map.of(), 0, Arena.ofShared());
         Stream<ParquetRecordBatch> batches = Stream.of(batch);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
+        Optional<GeoParquetMetadata> noGeo = Optional.empty();
 
-        assertThatThrownBy(() -> ArrowIpcWriter.write(schema, Optional.empty(), batches, out))
+        assertThatThrownBy(() -> ArrowIpcWriter.write(schema, noGeo, batches, out))
                 .isInstanceOf(UnsupportedFeatureException.class)
                 .hasMessageContaining("Variant nested under a list or map");
     }

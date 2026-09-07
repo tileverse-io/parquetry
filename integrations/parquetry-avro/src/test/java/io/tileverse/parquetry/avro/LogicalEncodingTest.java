@@ -103,10 +103,9 @@ class LogicalEncodingTest {
     void rejectsWrongDecimalScale() {
         AvroSchema schema =
                 AvroSchema.parse("{\"type\":\"bytes\",\"logicalType\":\"decimal\",\"precision\":10,\"scale\":2}");
-        assertThatThrownBy(() -> {
-                    AvroBinaryEncoder out = new AvroBinaryEncoder();
-                    encoder.encode(schema, new BigDecimal("1.234"), out);
-                })
+        AvroBinaryEncoder out = new AvroBinaryEncoder();
+        BigDecimal threeDecimalPlaces = new BigDecimal("1.234");
+        assertThatThrownBy(() -> encoder.encode(schema, threeDecimalPlaces, out))
                 .isInstanceOf(AvroFormatException.class)
                 .hasMessageContaining("scale");
     }

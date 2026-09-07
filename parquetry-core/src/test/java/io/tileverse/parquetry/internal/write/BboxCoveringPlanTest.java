@@ -92,7 +92,9 @@ class BboxCoveringPlanTest {
     void explicitCoveringWithNoGeometryThrows() {
         WriteOptions options =
                 WriteOptions.builder().bboxCovering(CoveringMode.FLOAT).build();
-        assertThatThrownBy(() -> resolve(options, geoSchema()))
+        ParquetSchema schema = geoSchema();
+
+        assertThatThrownBy(() -> resolve(options, schema))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessageContaining("geometry");
     }

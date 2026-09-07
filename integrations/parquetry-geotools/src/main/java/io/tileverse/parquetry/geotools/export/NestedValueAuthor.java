@@ -57,9 +57,11 @@ final class NestedValueAuthor {
      */
     static void author(ParquetRecordBatchBuilder builder, ColumnPath path, NestedType type, Object value) {
         switch (type) {
-            case NestedType.ListType list -> authorList(builder, path, list.element(), (List<?>) value);
-            case NestedType.MapType map -> authorMap(builder, path, map.key(), map.value(), (Map<?, ?>) value);
-            case NestedType.StructType struct -> authorStruct(builder, path, struct.fields(), (Map<?, ?>) value);
+            case NestedType.ListType(NestedType element) -> authorList(builder, path, element, (List<?>) value);
+            case NestedType.MapType(NestedType keyType, NestedType valueType) ->
+                authorMap(builder, path, keyType, valueType, (Map<?, ?>) value);
+            case NestedType.StructType(List<NestedType.Field> fields) ->
+                authorStruct(builder, path, fields, (Map<?, ?>) value);
             case NestedType.ScalarType scalar -> throw new IllegalArgumentException("not a container: " + scalar);
             case NestedType.VariantType _ ->
                 throw new IllegalArgumentException("Variant attributes are not writable: " + path.dot());
@@ -105,10 +107,12 @@ final class NestedValueAuthor {
             return;
         }
         switch (fieldType) {
-            case NestedType.ScalarType scalar -> setScalar(builder, path, scalar.binding(), fieldValue);
-            case NestedType.StructType struct -> authorStruct(builder, path, struct.fields(), (Map<?, ?>) fieldValue);
-            case NestedType.ListType list -> authorList(builder, path, list.element(), (List<?>) fieldValue);
-            case NestedType.MapType map -> authorMap(builder, path, map.key(), map.value(), (Map<?, ?>) fieldValue);
+            case NestedType.ScalarType(Class<?> binding) -> setScalar(builder, path, binding, fieldValue);
+            case NestedType.StructType(List<NestedType.Field> fields) ->
+                authorStruct(builder, path, fields, (Map<?, ?>) fieldValue);
+            case NestedType.ListType(NestedType element) -> authorList(builder, path, element, (List<?>) fieldValue);
+            case NestedType.MapType(NestedType keyType, NestedType valueType) ->
+                authorMap(builder, path, keyType, valueType, (Map<?, ?>) fieldValue);
             case NestedType.VariantType _ ->
                 throw new IllegalArgumentException("Variant attributes are not writable: " + path.dot());
         }
@@ -134,20 +138,20 @@ final class NestedValueAuthor {
             return;
         }
         switch (elementType) {
-            case NestedType.ScalarType scalar -> addScalarElement(builder, scalar.binding(), element);
-            case NestedType.StructType struct -> {
+            case NestedType.ScalarType(Class<?> binding) -> addScalarElement(builder, binding, element);
+            case NestedType.StructType(List<NestedType.Field> fields) -> {
                 builder.addElement();
-                authorRelativeStructFields(builder, List.of(LIST_ELEMENT_NAME), struct.fields(), (Map<?, ?>) element);
+                authorRelativeStructFields(builder, List.of(LIST_ELEMENT_NAME), fields, (Map<?, ?>) element);
                 builder.endElement();
             }
-            case NestedType.ListType list -> {
+            case NestedType.ListType(NestedType nestedElementType) -> {
                 builder.addList();
-                authorElements(builder, attributePath, list.element(), (List<?>) element);
+                authorElements(builder, attributePath, nestedElementType, (List<?>) element);
                 builder.endList();
             }
-            case NestedType.MapType map -> {
+            case NestedType.MapType(NestedType keyType, NestedType valueType) -> {
                 builder.addMap();
-                authorEntries(builder, attributePath, map.key(), map.value(), (Map<?, ?>) element);
+                authorEntries(builder, attributePath, keyType, valueType, (Map<?, ?>) element);
                 builder.endMap();
             }
             case NestedType.VariantType _ ->
@@ -184,18 +188,17 @@ final class NestedValueAuthor {
             return;
         }
         switch (valueType) {
-            case NestedType.ScalarType scalar -> setScalar(builder, valuePath, scalar.binding(), value);
-            case NestedType.StructType struct ->
-                authorRelativeStructFields(
-                        builder, List.of(MAP_ENTRY_NAME, MAP_VALUE_NAME), struct.fields(), (Map<?, ?>) value);
-            case NestedType.ListType list -> {
+            case NestedType.ScalarType(Class<?> binding) -> setScalar(builder, valuePath, binding, value);
+            case NestedType.StructType(List<NestedType.Field> fields) ->
+                authorRelativeStructFields(builder, List.of(MAP_ENTRY_NAME, MAP_VALUE_NAME), fields, (Map<?, ?>) value);
+            case NestedType.ListType(NestedType elementType) -> {
                 builder.addList();
-                authorElements(builder, attributePath, list.element(), (List<?>) value);
+                authorElements(builder, attributePath, elementType, (List<?>) value);
                 builder.endList();
             }
-            case NestedType.MapType map -> {
+            case NestedType.MapType(NestedType nestedKeyType, NestedType nestedValueType) -> {
                 builder.addMap();
-                authorEntries(builder, attributePath, map.key(), map.value(), (Map<?, ?>) value);
+                authorEntries(builder, attributePath, nestedKeyType, nestedValueType, (Map<?, ?>) value);
                 builder.endMap();
             }
             case NestedType.VariantType _ ->
@@ -208,11 +211,11 @@ final class NestedValueAuthor {
         if (key == null) {
             throw new IllegalArgumentException("map key must not be null: " + attributePath.dot());
         }
-        if (!(keyType instanceof NestedType.ScalarType scalar)) {
+        if (!(keyType instanceof NestedType.ScalarType(Class<?> binding))) {
             throw new IllegalArgumentException("map key must be a scalar type, not " + keyType);
         }
         ColumnPath keyPath = ColumnPath.of(MAP_ENTRY_NAME, MAP_KEY_NAME);
-        setScalar(builder, keyPath, scalar.binding(), key);
+        setScalar(builder, keyPath, binding, key);
     }
 
     // --- relative mode: inside an open beginList element or beginMap entry, no beginStruct used ---
@@ -242,17 +245,17 @@ final class NestedValueAuthor {
             return;
         }
         switch (fieldType) {
-            case NestedType.ScalarType scalar -> setScalar(builder, path, scalar.binding(), fieldValue);
-            case NestedType.StructType struct ->
-                authorRelativeStructFields(builder, pathParts, struct.fields(), (Map<?, ?>) fieldValue);
-            case NestedType.ListType list -> {
+            case NestedType.ScalarType(Class<?> binding) -> setScalar(builder, path, binding, fieldValue);
+            case NestedType.StructType(List<NestedType.Field> fields) ->
+                authorRelativeStructFields(builder, pathParts, fields, (Map<?, ?>) fieldValue);
+            case NestedType.ListType(NestedType elementType) -> {
                 builder.beginList(path);
-                authorElements(builder, path, list.element(), (List<?>) fieldValue);
+                authorElements(builder, path, elementType, (List<?>) fieldValue);
                 builder.endList();
             }
-            case NestedType.MapType map -> {
+            case NestedType.MapType(NestedType keyType, NestedType valueType) -> {
                 builder.beginMap(path);
-                authorEntries(builder, path, map.key(), map.value(), (Map<?, ?>) fieldValue);
+                authorEntries(builder, path, keyType, valueType, (Map<?, ?>) fieldValue);
                 builder.endMap();
             }
             case NestedType.VariantType _ ->

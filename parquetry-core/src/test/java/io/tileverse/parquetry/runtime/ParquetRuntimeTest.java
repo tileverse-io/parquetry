@@ -149,8 +149,8 @@ class ParquetRuntimeTest {
         assertThat(tuned.maxConcurrentFiles()).isEqualTo(16);
         assertThat(tuned.withMaxConcurrentFiles(2).maxConcurrentFiles()).isEqualTo(2);
 
-        assertThatThrownBy(() -> ParquetRuntime.builder().maxConcurrentFiles(0))
-                .isInstanceOf(IllegalArgumentException.class);
+        ParquetRuntime.Builder builder = ParquetRuntime.builder();
+        assertThatThrownBy(() -> builder.maxConcurrentFiles(0)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

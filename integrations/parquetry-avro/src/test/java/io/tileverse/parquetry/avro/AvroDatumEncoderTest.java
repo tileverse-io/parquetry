@@ -64,7 +64,8 @@ class AvroDatumEncoderTest {
         AvroSchema schema = AvroSchema.parse("""
                 {"type":"record","name":"R","fields":[{"name":"a","type":"int"}]}
                 """);
-        assertThatThrownBy(() -> roundTrip(schema, Map.of("a", 1, "typo", 2)))
+        Map<String, Integer> withUnknownKey = Map.of("a", 1, "typo", 2);
+        assertThatThrownBy(() -> roundTrip(schema, withUnknownKey))
                 .isInstanceOf(AvroFormatException.class)
                 .hasMessageContaining("typo");
     }
@@ -74,7 +75,8 @@ class AvroDatumEncoderTest {
         AvroSchema schema = AvroSchema.parse("""
                 {"type":"record","name":"R","fields":[{"name":"a","type":"int"}]}
                 """);
-        assertThatThrownBy(() -> roundTrip(schema, Map.of()))
+        Map<String, Integer> noFields = Map.of();
+        assertThatThrownBy(() -> roundTrip(schema, noFields))
                 .isInstanceOf(AvroFormatException.class)
                 .hasMessageContaining("a");
     }

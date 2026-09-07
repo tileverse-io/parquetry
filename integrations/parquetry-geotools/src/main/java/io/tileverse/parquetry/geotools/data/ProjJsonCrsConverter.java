@@ -124,7 +124,7 @@ final class ProjJsonCrsConverter {
         try {
             // longitudeFirst=true: GeoParquet geometry columns use lon/lat (easting-first) order.
             return CRS.decode("EPSG:" + epsg.getAsInt(), true);
-        } catch (FactoryException e) {
+        } catch (FactoryException _) {
             return DefaultGeographicCRS.WGS84;
         }
     }

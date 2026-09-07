@@ -147,7 +147,7 @@ public class CliSteps {
     private Path asWorkDirPath(String arg) {
         try {
             return workDir.resolve(arg);
-        } catch (InvalidPathException notAPath) {
+        } catch (InvalidPathException _) {
             return null;
         }
     }
@@ -167,7 +167,7 @@ public class CliSteps {
             } else if (c == '\'' || c == '"') {
                 quote = c;
             } else if (Character.isWhitespace(c)) {
-                if (current.length() > 0) {
+                if (!current.isEmpty()) {
                     out.add(current.toString());
                     current.setLength(0);
                 }
@@ -175,7 +175,7 @@ public class CliSteps {
                 current.append(c);
             }
         }
-        if (current.length() > 0) {
+        if (!current.isEmpty()) {
             out.add(current.toString());
         }
         return out;

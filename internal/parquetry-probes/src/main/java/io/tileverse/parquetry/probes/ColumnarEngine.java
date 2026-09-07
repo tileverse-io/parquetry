@@ -29,6 +29,7 @@ interface ColumnarEngine extends AutoCloseable {
     String name();
 
     /** Scans the whole file and consumes (touches) every leaf value, returning the row count. */
+    @SuppressWarnings("java:S112") // each engine fails with its own library's checked type (JDBC, IO)
     long scan() throws Exception;
 
     /** Running total folded from every consumed value, kept so the JIT cannot elide the decode work. */

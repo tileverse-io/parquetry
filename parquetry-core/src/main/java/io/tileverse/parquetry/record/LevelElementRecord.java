@@ -41,7 +41,6 @@ import io.tileverse.parquetry.columnar.MapMeta;
 import io.tileverse.parquetry.materializer.LeafWindows;
 import io.tileverse.parquetry.materializer.LevelListMaterializer;
 import io.tileverse.parquetry.materializer.LevelMapMaterializer;
-import io.tileverse.parquetry.record.ParquetRecord.BinaryView;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.ParquetSchemaException;

@@ -99,14 +99,12 @@ public final class OutputBatches {
 
     private static ColumnVector vectorFor(Projection.Column column, ParquetRecordBatch base) {
         return switch (column) {
-            case Projection.Column.Physical(ColumnPath ignored, ColumnPath source) ->
+            case Projection.Column.Physical(ColumnPath _, ColumnPath source) ->
                 base.columns().get(source);
-            case Projection.Column.Promoted(ColumnPath ignored, ColumnPath source, PrimitiveKind target) ->
+            case Projection.Column.Promoted(ColumnPath _, ColumnPath source, PrimitiveKind target) ->
                 VectorWidening.widen(base.columns().get(source), target);
-            case Projection.Column.Constant(ColumnPath ignored, Value value) ->
-                ConstantVectors.of(value, base.rowCount());
-            case Projection.Column.Null(ColumnPath ignored, Value typeOf) ->
-                ConstantVectors.ofNull(typeOf, base.rowCount());
+            case Projection.Column.Constant(ColumnPath _, Value value) -> ConstantVectors.of(value, base.rowCount());
+            case Projection.Column.Null(ColumnPath _, Value typeOf) -> ConstantVectors.ofNull(typeOf, base.rowCount());
             case Projection.Column.RowPosition(ColumnPath name, long _) -> synthesizedVector(name, base);
             case Projection.Column.Coalesce(ColumnPath name, ColumnPath _, Projection.Column.Coalesce.Fallback _) ->
                 synthesizedVector(name, base);
@@ -125,7 +123,7 @@ public final class OutputBatches {
         return switch (column) {
             case Projection.Column.Physical(ColumnPath name, ColumnPath source) ->
                 renamed(sourceLeaf(sourceSchema, source), name.name(), fieldId);
-            case Projection.Column.Promoted(ColumnPath name, ColumnPath ignored, PrimitiveKind target) ->
+            case Projection.Column.Promoted(ColumnPath name, ColumnPath _, PrimitiveKind target) ->
                 promotedLeaf(name.name(), target, fieldId);
             case Projection.Column.Constant(ColumnPath name, Value value) ->
                 ConstantLeaves.primitiveFor(name.name(), value, fieldId);

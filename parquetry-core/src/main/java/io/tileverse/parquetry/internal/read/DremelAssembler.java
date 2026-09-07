@@ -457,14 +457,16 @@ final class DremelAssembler {
         LevelSlice repLevels = repLevelsByLeaf.get(descendantLeaf);
         BitSet validity = new BitSet(numSlots);
         int slot = 0;
-        for (int i = 0; i < defLevels.length() && slot < numSlots; i++) {
-            if (repLevels != null && repLevels.at(i) > slotBoundaryRepLevel) {
-                continue;
+        int entry = 0;
+        while (entry < defLevels.length() && slot < numSlots) {
+            boolean entryOpensSlot = repLevels == null || repLevels.at(entry) <= slotBoundaryRepLevel;
+            if (entryOpensSlot) {
+                if (defLevels.at(entry) >= structDefLevel) {
+                    validity.set(slot);
+                }
+                slot++;
             }
-            if (defLevels.at(i) >= structDefLevel) {
-                validity.set(slot);
-            }
-            slot++;
+            entry++;
         }
         return Validity.of(validity, numSlots);
     }

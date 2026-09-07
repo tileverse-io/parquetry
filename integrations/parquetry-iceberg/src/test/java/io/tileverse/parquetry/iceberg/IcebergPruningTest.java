@@ -60,8 +60,7 @@ class IcebergPruningTest {
             Predicate predicate = new Predicate.Spatial.BboxIntersects(ColumnPath.of(GEOM_COLUMN), california);
 
             IcebergDataset.FilePlan plan = dataset.plan(predicate);
-            assertThat(plan.survivors()).isNotEmpty();
-            assertThat(plan.survivors().size()).isLessThan(totalFiles);
+            assertThat(plan.survivors()).isNotEmpty().hasSizeLessThan(totalFiles);
             assertThat(plan.eliminated()).isNotEmpty();
             for (EliminatedFile eliminated : plan.eliminated()) {
                 assertThat(eliminated.decision()).isInstanceOf(PruningDecision.Eliminated.class);

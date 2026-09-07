@@ -36,7 +36,7 @@ final class AvroDatumEncoder {
     void encode(AvroSchema schema, Object value, AvroBinaryEncoder out) {
         switch (schema) {
             case AvroSchema.Primitive primitive -> encodePrimitive(primitive, value, out);
-            case AvroSchema.Record record -> encodeRecord(record, value, out);
+            case AvroSchema.Record recordSchema -> encodeRecord(recordSchema, value, out);
             case AvroSchema.Union union -> encodeUnion(union, value, out);
             case AvroSchema.Array array -> encodeArray(array, value, out);
             case AvroSchema.Map map -> encodeMap(map, value, out);
@@ -70,25 +70,25 @@ final class AvroDatumEncoder {
         }
     }
 
-    private void encodeRecord(AvroSchema.Record record, Object value, AvroBinaryEncoder out) {
+    private void encodeRecord(AvroSchema.Record recordSchema, Object value, AvroBinaryEncoder out) {
         switch (value) {
-            case AvroRecord avroRecord -> encodeRecordFromPositions(record, avroRecord, out);
-            case Map<?, ?> map -> encodeRecordFromMap(record, map, out);
+            case AvroRecord avroRecord -> encodeRecordFromPositions(recordSchema, avroRecord, out);
+            case Map<?, ?> map -> encodeRecordFromMap(recordSchema, map, out);
             default ->
                 throw new AvroFormatException("A record value must be an AvroRecord or a Map, got " + describe(value));
         }
     }
 
-    private void encodeRecordFromPositions(AvroSchema.Record record, AvroRecord value, AvroBinaryEncoder out) {
-        List<AvroSchema.Field> fields = record.fields();
+    private void encodeRecordFromPositions(AvroSchema.Record recordSchema, AvroRecord value, AvroBinaryEncoder out) {
+        List<AvroSchema.Field> fields = recordSchema.fields();
         for (int i = 0; i < fields.size(); i++) {
             encode(fields.get(i).schema(), value.get(i), out);
         }
     }
 
-    private void encodeRecordFromMap(AvroSchema.Record record, Map<?, ?> map, AvroBinaryEncoder out) {
+    private void encodeRecordFromMap(AvroSchema.Record recordSchema, Map<?, ?> map, AvroBinaryEncoder out) {
         Set<String> seen = new LinkedHashSet<>();
-        for (AvroSchema.Field field : record.fields()) {
+        for (AvroSchema.Field field : recordSchema.fields()) {
             seen.add(field.name());
             encode(field.schema(), valueForField(field, map), out);
         }

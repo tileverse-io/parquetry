@@ -32,8 +32,9 @@ class SchemaRendererTest {
     void textTreeListsEveryLeafWithKind() {
         ParquetSchema schema = Fixtures.citiesSchema();
         String text = render(out -> SchemaRenderer.writeText(out, schema));
-        assertThat(text).contains("id", "INT32", "name", "BYTE_ARRAY", "pop", "INT64", "capital", "BOOLEAN");
-        assertThat(text).contains("required", "optional");
+        assertThat(text)
+                .contains("id", "INT32", "name", "BYTE_ARRAY", "pop", "INT64", "capital", "BOOLEAN")
+                .contains("required", "optional");
     }
 
     @Test

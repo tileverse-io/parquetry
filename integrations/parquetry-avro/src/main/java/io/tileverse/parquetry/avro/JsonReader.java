@@ -23,6 +23,7 @@ import java.util.Map;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.JsonParser;
 import tools.jackson.core.JsonToken;
+import tools.jackson.core.ObjectReadContext;
 import tools.jackson.core.json.JsonFactory;
 
 /**
@@ -37,7 +38,7 @@ final class JsonReader {
     private JsonReader() {}
 
     static Object parse(String json) {
-        try (JsonParser parser = FACTORY.createParser(json)) {
+        try (JsonParser parser = FACTORY.createParser(ObjectReadContext.empty(), json)) {
             JsonToken first = parser.nextToken();
             if (first == null) {
                 throw new AvroFormatException("Empty JSON input");

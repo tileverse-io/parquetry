@@ -39,15 +39,16 @@ class ProjectionTest {
         Projection.Column k = new Projection.Column.Constant(ColumnPath.of("k"), new Value.IntVal(1));
         Projection.Of of = (Projection.Of) Projection.of(set(a, k));
         assertThat(of.columns()).containsExactly(a, k);
-        assertThatThrownBy(() -> Projection.of(new LinkedHashSet<Projection.Column>()))
-                .isInstanceOf(IllegalArgumentException.class);
+        SequencedSet<Projection.Column> empty = new LinkedHashSet<>();
+        assertThatThrownBy(() -> Projection.of(empty)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void ofRejectsDuplicateName() {
         Projection.Column first = new Projection.Column.Physical(ColumnPath.of("x"), ColumnPath.of("a"));
         Projection.Column second = new Projection.Column.Physical(ColumnPath.of("x"), ColumnPath.of("b"));
-        assertThatThrownBy(() -> Projection.of(set(first, second))).isInstanceOf(IllegalArgumentException.class);
+        SequencedSet<Projection.Column> duplicates = set(first, second);
+        assertThatThrownBy(() -> Projection.of(duplicates)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

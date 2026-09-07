@@ -97,7 +97,7 @@ final class IcebergFileStats {
                     OptionalDouble.empty(),
                     OptionalDouble.empty(),
                     OptionalDouble.empty());
-        } catch (IcebergFormatException undecodable) {
+        } catch (IcebergFormatException _) {
             // Any bound we cannot decode (an unsupported encoding or a malformed payload) is skipped: pruning is
             // best-effort and never blocks a read. A bad geometry bound just means no spatial pruning for this column.
             return null;
@@ -120,7 +120,7 @@ final class IcebergFileStats {
     private static Optional<Value> decode(IcebergField field, MemorySegment bytes) {
         try {
             return Optional.of(IcebergBounds.decodeValue(field.type(), bytes));
-        } catch (IcebergFormatException undecodable) {
+        } catch (IcebergFormatException _) {
             // Any bound we cannot decode (an unsupported type or a malformed payload) is skipped: pruning is
             // best-effort and never blocks a read. The column simply contributes nothing to pruning.
             return Optional.empty();

@@ -95,12 +95,7 @@ class ConcurrentFileMergeTest {
             }
             return Stream.of("f" + index);
         };
-        assertThatThrownBy(() -> {
-                    try (Stream<String> merged =
-                            ConcurrentFileMerge.stream(3, openFile, element -> {}, 3, Emission.UNORDERED)) {
-                        merged.toList();
-                    }
-                })
+        assertThatThrownBy(() -> drain(3, openFile, Emission.UNORDERED, 3))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("file 1 failed to open");
     }
@@ -114,19 +109,14 @@ class ConcurrentFileMergeTest {
             return Stream.of("f" + index);
         };
         List<String> delivered = new ArrayList<>();
-        assertThatThrownBy(() -> {
-                    try (Stream<String> merged =
-                            ConcurrentFileMerge.stream(3, openFile, element -> {}, 3, Emission.SURVIVOR_ORDER)) {
-                        merged.forEach(delivered::add);
-                    }
-                })
+        assertThatThrownBy(() -> drainInto(3, openFile, Emission.SURVIVOR_ORDER, 3, delivered))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("file 2 failed");
         assertThat(delivered).containsExactly("f0", "f1");
     }
 
     @Test
-    void earlyCloseDiscardsUndeliveredElementsAndStopsProducers() throws Exception {
+    void earlyCloseDiscardsUndeliveredElementsAndStopsProducers() {
         int fileCount = 8;
         Set<String> discarded = ConcurrentHashMap.newKeySet();
         Set<String> produced = ConcurrentHashMap.newKeySet();
@@ -164,9 +154,19 @@ class ConcurrentFileMergeTest {
     }
 
     private static List<String> drain(List<List<String>> files, Emission emission, int k) {
-        try (Stream<String> merged =
-                ConcurrentFileMerge.stream(files.size(), filesOf(files), element -> {}, k, emission)) {
-            return merged.toList();
+        return drain(files.size(), filesOf(files), emission, k);
+    }
+
+    private static List<String> drain(int fileCount, IntFunction<Stream<String>> openFile, Emission emission, int k) {
+        List<String> drained = new ArrayList<>();
+        drainInto(fileCount, openFile, emission, k, drained);
+        return drained;
+    }
+
+    private static void drainInto(
+            int fileCount, IntFunction<Stream<String>> openFile, Emission emission, int k, List<String> sink) {
+        try (Stream<String> merged = ConcurrentFileMerge.stream(fileCount, openFile, element -> {}, k, emission)) {
+            merged.forEach(sink::add);
         }
     }
 

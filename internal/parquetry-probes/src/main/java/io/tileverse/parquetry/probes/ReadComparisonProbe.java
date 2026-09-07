@@ -15,6 +15,7 @@
  */
 package io.tileverse.parquetry.probes;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -107,6 +108,7 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
  *       {@code 2 x cores} requests.
  * </ul>
  */
+@SuppressWarnings("java:S106") // a probe tool reports to stdout/stderr by design; its output is read and diffed by hand
 public final class ReadComparisonProbe {
 
     private Path file;
@@ -133,6 +135,7 @@ public final class ReadComparisonProbe {
     private boolean analyze;
 
     /** Runs the row-path read comparison, configured from {@code parquetry.probe.*} system properties. */
+    @SuppressWarnings("java:S1172") // the JVM entry-point signature; every setting comes from system properties
     public static void main(String[] args) throws Exception {
         if (System.getProperty("parquetry.probe.file") == null) {
             IO.println("Set -Dparquetry.probe.file=<parquet file> to run the read-path comparison probe.");
@@ -236,13 +239,13 @@ public final class ReadComparisonProbe {
         if (geometryColumnName == null) {
             return;
         }
-        GeoColumn column = geo.map(GeoParquetMetadata::columns)
+        Optional<BoundingBox> columnBbox = geo.map(GeoParquetMetadata::columns)
                 .map(columns -> columns.get(geometryColumnName))
-                .orElse(null);
-        if (column == null || column.bbox().isEmpty()) {
+                .flatMap(GeoColumn::bbox);
+        if (columnBbox.isEmpty()) {
             return;
         }
-        BoundingBox bbox = column.bbox().get();
+        BoundingBox bbox = columnBbox.get();
         double width = bbox.xmax() - bbox.xmin();
         double height = bbox.ymax() - bbox.ymin();
         double half = 0.25 * Math.min(width, height);
@@ -341,7 +344,7 @@ public final class ReadComparisonProbe {
         return engines;
     }
 
-    private void run() throws Exception {
+    private void run() throws IOException {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             resolveCapabilities(ParquetFileReader.open(source));
         }
@@ -391,14 +394,7 @@ public final class ReadComparisonProbe {
 
     private void runSequential(List<ReadEngine> engines) {
         List<Row> rows = new ArrayList<>();
-        for (Scenario scenario : Scenario.values()) {
-            if (!scenarioEnabled(scenario)) {
-                continue;
-            }
-            if (!scenarioSupported(scenario)) {
-                note("skipping %s: %s".formatted(scenario, scenarioSkipReason(scenario)));
-                continue;
-            }
+        for (Scenario scenario : runnableScenarios()) {
             for (ReadEngine engine : engines) {
                 rows.add(measure(engine, scenario));
             }
@@ -416,19 +412,31 @@ public final class ReadComparisonProbe {
     private void runConcurrent(List<ReadEngine> engines) {
         note("Concurrency: %d reads in flight per engine/scenario pass%n".formatted(concurrency));
         List<ConcurrentRow> rows = new ArrayList<>();
-        for (Scenario scenario : Scenario.values()) {
-            if (!scenarioEnabled(scenario)) {
-                continue;
-            }
-            if (!scenarioSupported(scenario)) {
-                note("skipping %s: %s".formatted(scenario, scenarioSkipReason(scenario)));
-                continue;
-            }
+        for (Scenario scenario : runnableScenarios()) {
             for (ReadEngine engine : engines) {
                 rows.add(measureConcurrent(engine, scenario));
             }
         }
         printConcurrentTable(rows);
+    }
+
+    /**
+     * The scenarios to measure: those the run selected and this file's columns support. Notes each selected scenario
+     * the file cannot support, with the reason.
+     */
+    private List<Scenario> runnableScenarios() {
+        List<Scenario> runnable = new ArrayList<>();
+        for (Scenario scenario : Scenario.values()) {
+            if (!scenarioEnabled(scenario)) {
+                continue;
+            }
+            if (scenarioSupported(scenario)) {
+                runnable.add(scenario);
+            } else {
+                note("skipping %s: %s".formatted(scenario, scenarioSkipReason(scenario)));
+            }
+        }
+        return runnable;
     }
 
     private Row measure(ReadEngine engine, Scenario scenario) {

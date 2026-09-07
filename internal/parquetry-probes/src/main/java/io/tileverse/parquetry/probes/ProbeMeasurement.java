@@ -37,6 +37,7 @@ import com.sun.management.ThreadMXBean;
  * status. A GeoServer pod under the control-flow extension admits 2xNcores concurrent requests; this lets the probes
  * answer whether parquetry completes that workload at a pod-sized heap and how throughput scales with cores.
  */
+@SuppressWarnings("java:S106") // a probe tool reports to stdout/stderr by design; its output is read and diffed by hand
 final class ProbeMeasurement {
 
     private ProbeMeasurement() {}
@@ -44,6 +45,7 @@ final class ProbeMeasurement {
     /** One full read, returning the number of rows it consumed. */
     @FunctionalInterface
     interface ReadTask {
+        @SuppressWarnings("java:S112") // each engine fails with its own library's checked type (JDBC, IO)
         long read() throws Exception;
     }
 
@@ -228,6 +230,7 @@ final class ProbeMeasurement {
      * cross-engine contamination but does not fully isolate engines (live off-heap state and GC history persist across
      * engines). For pristine memory numbers, run one engine per process (the {@code parquetry.probe.engines} property).
      */
+    @SuppressWarnings("java:S1215") // the deliberate best-effort collection the javadoc above describes
     static void settle() {
         for (int round = 0; round < 2; round++) {
             System.gc();
@@ -270,12 +273,13 @@ final class ProbeMeasurement {
         }
     }
 
+    @SuppressWarnings("java:S2189") // the daemon sampler runs for the process lifetime; interruption is its exit path
     private static void sampleHeapForever() {
         while (true) {
             peakHeapUsed.accumulateAndGet(currentHeapUsed(), Math::max);
             try {
                 Thread.sleep(HEAP_SAMPLE_INTERVAL_MS);
-            } catch (InterruptedException e) {
+            } catch (InterruptedException _) {
                 Thread.currentThread().interrupt();
                 return;
             }
@@ -302,7 +306,7 @@ final class ProbeMeasurement {
         List<Double> sorted = new ArrayList<>(latenciesMillis);
         sorted.sort(Double::compareTo);
         int rank = (int) Math.ceil(percentile / 100.0 * sorted.size()) - 1;
-        int index = Math.max(0, Math.min(rank, sorted.size() - 1));
+        int index = Math.clamp(rank, 0, sorted.size() - 1);
         return sorted.get(index);
     }
 

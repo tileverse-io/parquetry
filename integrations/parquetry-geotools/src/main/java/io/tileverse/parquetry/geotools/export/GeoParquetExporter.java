@@ -15,7 +15,6 @@
  */
 package io.tileverse.parquetry.geotools.export;
 
-import java.io.IOException;
 import java.io.OutputStream;
 import java.util.stream.Stream;
 
@@ -43,13 +42,11 @@ public final class GeoParquetExporter {
      * Writes every feature in {@code features} to {@code out} as a GeoParquet file.
      *
      * <p>{@code out} is flushed by the underlying writer's footer but never closed; a caller that owns the stream (a
-     * servlet response, for example) keeps control of its lifecycle.
-     *
-     * @throws IOException on a write failure
+     * servlet response, for example) keeps control of its lifecycle. Write failures flow as parquetry's unchecked
+     * domain exceptions.
      */
     public static void export(
-            FeatureCollection<SimpleFeatureType, SimpleFeature> features, OutputStream out, WriteOptions options)
-            throws IOException {
+            FeatureCollection<SimpleFeatureType, SimpleFeature> features, OutputStream out, WriteOptions options) {
         FeatureRecordBatches bridge = FeatureRecordBatches.forType(features.getSchema());
         WriteOptions effective = bridge.withGeometryCrs(options);
         try (Stream<ParquetRecordBatch> batches = bridge.batches(features, FeatureRecordBatches.DEFAULT_BATCH_ROWS);

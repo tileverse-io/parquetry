@@ -80,12 +80,13 @@ class JsonStacReaderTest {
 
             assertThat(collections).hasSize(1);
             assertThat(children).isEmpty();
-            assertThat(reads.get("building/collection.json")).isEqualTo(1);
+            assertThat(reads).containsEntry("building/collection.json", 1);
             assertThat(reads.keySet()).noneMatch(key -> key.contains("items/"));
 
             collections.get(0).items();
-            assertThat(reads.get("building/items/item-west.json")).isEqualTo(1);
-            assertThat(reads.get("building/items/item-east.json")).isEqualTo(1);
+            assertThat(reads)
+                    .containsEntry("building/items/item-west.json", 1)
+                    .containsEntry("building/items/item-east.json", 1);
         }
     }
 
@@ -101,7 +102,7 @@ class JsonStacReaderTest {
             Optional<StacItem> first = building.firstItem();
 
             assertThat(first).map(StacItem::id).hasValue("item-west");
-            assertThat(reads.get("building/items/item-west.json")).isEqualTo(1);
+            assertThat(reads).containsEntry("building/items/item-west.json", 1);
             assertThat(reads.keySet()).doesNotContain("building/items/item-east.json");
         }
     }

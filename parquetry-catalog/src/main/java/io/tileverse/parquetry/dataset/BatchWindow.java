@@ -46,8 +46,7 @@ final class BatchWindow {
     static Gatherer<ParquetRecordBatch, ?, ParquetRecordBatch> of(long offset, OptionalLong limit) {
         long initialRemaining = limit.isPresent() ? limit.getAsLong() : UNBOUNDED;
         return Gatherer.<ParquetRecordBatch, State, ParquetRecordBatch>ofSequential(
-                () -> new State(offset, initialRemaining),
-                (state, batch, downstream) -> integrate(state, batch, downstream));
+                () -> new State(offset, initialRemaining), BatchWindow::integrate);
     }
 
     private static final long UNBOUNDED = -1L;

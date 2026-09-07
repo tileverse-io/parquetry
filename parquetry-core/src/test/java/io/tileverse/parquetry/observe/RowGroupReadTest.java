@@ -30,7 +30,7 @@ class RowGroupReadTest {
 
         RowGroupRead sum = a.combine(b);
 
-        assertThat(sum.rowGroupIndex()).isEqualTo(0);
+        assertThat(sum.rowGroupIndex()).isZero();
         assertThat(sum.rowsDecoded()).isEqualTo(150);
         assertThat(sum.rowsMatched()).isEqualTo(50);
         assertThat(sum.pagesDecoded()).isEqualTo(12);

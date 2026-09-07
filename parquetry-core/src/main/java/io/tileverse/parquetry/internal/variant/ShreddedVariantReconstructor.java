@@ -245,9 +245,9 @@ public final class ShreddedVariantReconstructor {
     private boolean isTypedValueAbsent(ShreddedVariant typed, NodeReader fieldReader) {
         return switch (typed) {
             case null -> true;
-            case ShreddedVariant.Scalar ignored -> !fieldReader.hasTypedScalar();
-            case ShreddedVariant.ShreddedObject ignored -> !fieldReader.hasTypedObject();
-            case ShreddedVariant.ShreddedArray ignored -> fieldReader.typedArrayElements() == null;
+            case ShreddedVariant.Scalar _ -> !fieldReader.hasTypedScalar();
+            case ShreddedVariant.ShreddedObject _ -> !fieldReader.hasTypedObject();
+            case ShreddedVariant.ShreddedArray _ -> fieldReader.typedArrayElements() == null;
         };
     }
 

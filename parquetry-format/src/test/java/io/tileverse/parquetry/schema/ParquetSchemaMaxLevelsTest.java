@@ -89,8 +89,9 @@ class ParquetSchemaMaxLevelsTest {
     @Test
     void segmentThatIsAPrefixOfAChildNameDoesNotMatch() {
         ParquetSchema prefixes = prefixSiblingSchema();
+        ColumnPath prefixOfAChildName = ColumnPath.of("a", "leaf");
 
-        assertThatThrownBy(() -> prefixes.maxLevels(ColumnPath.of("a", "leaf")))
+        assertThatThrownBy(() -> prefixes.maxLevels(prefixOfAChildName))
                 .isInstanceOf(ParquetSchemaException.class)
                 .hasMessage("ParquetSchema missing child 'a' along path a.leaf");
     }
@@ -98,8 +99,9 @@ class ParquetSchemaMaxLevelsTest {
     @Test
     void segmentThatExtendsAChildNameDoesNotMatch() {
         ParquetSchema prefixes = prefixSiblingSchema();
+        ColumnPath extensionOfAChildName = ColumnPath.of("abcd", "leaf");
 
-        assertThatThrownBy(() -> prefixes.maxLevels(ColumnPath.of("abcd", "leaf")))
+        assertThatThrownBy(() -> prefixes.maxLevels(extensionOfAChildName))
                 .isInstanceOf(ParquetSchemaException.class)
                 .hasMessage("ParquetSchema missing child 'abcd' along path abcd.leaf");
     }

@@ -26,6 +26,7 @@ import org.junit.jupiter.api.Test;
 import io.tileverse.parquetry.format.EdgeInterpolationAlgorithm;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.LogicalType.TimeUnit;
+import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
@@ -42,8 +43,7 @@ class IcebergSchemaTest {
                 new IcebergField(7, "geom", "geometry", false)));
 
         List<SchemaNode> children = schema.parquetSchema().root().children();
-        assertThat(children).hasSize(3);
-        assertThat(children).allMatch(child -> child instanceof SchemaNode.Primitive);
+        assertThat(children).hasSize(3).allMatch(child -> child instanceof SchemaNode.Primitive);
 
         SchemaNode.Primitive id = (SchemaNode.Primitive) children.get(0);
         assertThat(id.name()).isEqualTo("id");
@@ -177,7 +177,7 @@ class IcebergSchemaTest {
         ParquetSchema presented = schema.parquetSchema();
         assertThat(presented.leafColumns())
                 .singleElement()
-                .extracting(path -> path.dot())
+                .extracting(ColumnPath::dot)
                 .isEqualTo("id");
     }
 

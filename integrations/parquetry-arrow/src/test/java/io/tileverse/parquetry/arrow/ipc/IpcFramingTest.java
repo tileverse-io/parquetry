@@ -18,7 +18,6 @@ package io.tileverse.parquetry.arrow.ipc;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.ByteArrayOutputStream;
-import java.io.IOException;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -83,7 +82,7 @@ class IpcFramingTest {
         assertThat(buf.hasRemaining()).isFalse();
     }
 
-    private static void assertFramedBytes(byte[] framed, byte[] metadata, byte[] body) throws IOException {
+    private static void assertFramedBytes(byte[] framed, byte[] metadata, byte[] body) {
         ByteBuffer buf = ByteBuffer.wrap(framed).order(ByteOrder.LITTLE_ENDIAN);
         assertThat(buf.getInt()).isEqualTo(0xFFFFFFFF); // continuation
         int metaLen = buf.getInt();

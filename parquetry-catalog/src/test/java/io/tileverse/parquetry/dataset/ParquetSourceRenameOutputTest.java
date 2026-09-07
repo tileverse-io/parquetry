@@ -51,7 +51,7 @@ class ParquetSourceRenameOutputTest {
     private static final ColumnPath RECORD_ID = ColumnPath.of("record_id");
 
     @Test
-    void readWithRenameOutputLowersPredicateToPhysicalName() throws Exception {
+    void readWithRenameOutputLowersPredicateToPhysicalName() {
         try (ByteRangeSource bytes = ByteRangeSource.ofFile(FILE)) {
             ParquetSource source = ParquetSource.open(bytes);
             Query renamed = renameIdToRecordIdQuery(presentedIdGreaterThan(4));
@@ -64,7 +64,7 @@ class ParquetSourceRenameOutputTest {
     }
 
     @Test
-    void readBatchesWithRenameOutputDoesNotThrow() throws Exception {
+    void readBatchesWithRenameOutputDoesNotThrow() {
         try (ByteRangeSource bytes = ByteRangeSource.ofFile(FILE)) {
             ParquetSource source = ParquetSource.open(bytes);
             Query renamed = renameIdToRecordIdQuery(presentedIdGreaterThan(4));
@@ -79,7 +79,7 @@ class ParquetSourceRenameOutputTest {
     }
 
     @Test
-    void shapedReadReturnsExactlyTheMatchingRows() throws Exception {
+    void shapedReadReturnsExactlyTheMatchingRows() {
         try (ByteRangeSource bytes = ByteRangeSource.ofFile(FILE)) {
             ParquetSource source = ParquetSource.open(bytes);
             Query renamed = renameIdToRecordIdQuery(presentedIdGreaterThan(4));
@@ -94,7 +94,7 @@ class ParquetSourceRenameOutputTest {
     }
 
     @Test
-    void countWithRenameOutputLowersPredicateToPhysicalName() throws Exception {
+    void countWithRenameOutputLowersPredicateToPhysicalName() {
         try (ByteRangeSource bytes = ByteRangeSource.ofFile(FILE)) {
             ParquetSource source = ParquetSource.open(bytes);
             Query renamed = renameIdToRecordIdQuery(presentedIdGreaterThan(4));
@@ -106,7 +106,7 @@ class ParquetSourceRenameOutputTest {
     }
 
     @Test
-    void explainWithRenameOutputLowersPredicateToPhysicalName() throws Exception {
+    void explainWithRenameOutputLowersPredicateToPhysicalName() {
         try (ByteRangeSource bytes = ByteRangeSource.ofFile(FILE)) {
             ParquetSource source = ParquetSource.open(bytes);
             Query renamed = renameIdToRecordIdQuery(presentedIdGreaterThan(4));
@@ -120,7 +120,7 @@ class ParquetSourceRenameOutputTest {
     }
 
     @Test
-    void explainAnalyzeWithRenameOutputDoesNotThrow() throws Exception {
+    void explainAnalyzeWithRenameOutputDoesNotThrow() {
         try (ByteRangeSource bytes = ByteRangeSource.ofFile(FILE)) {
             ParquetSource source = ParquetSource.open(bytes);
             Query renamed = renameIdToRecordIdQuery(presentedIdGreaterThan(4));
@@ -131,7 +131,7 @@ class ParquetSourceRenameOutputTest {
     }
 
     @Test
-    void emptyOutputIdentityCaseIsUnchanged() throws Exception {
+    void emptyOutputIdentityCaseIsUnchanged() {
         try (ByteRangeSource bytes = ByteRangeSource.ofFile(FILE)) {
             ParquetSource source = ParquetSource.open(bytes);
             Query identity = Query.of(physicalIdGreaterThan(4), Projection.ALL);

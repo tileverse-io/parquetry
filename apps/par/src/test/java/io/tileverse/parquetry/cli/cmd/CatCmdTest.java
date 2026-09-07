@@ -48,8 +48,9 @@ class CatCmdTest {
         assertThat(code).isZero();
         String[] lines = out.toString().strip().split("\n");
         assertThat(lines).hasSize(3);
-        assertThat(lines[0]).contains("\"name\":\"Rosario\"", "\"pop\":1300000");
-        assertThat(lines[0]).doesNotContain("\"id\"", "\"capital\"");
+        assertThat(lines[0])
+                .contains("\"name\":\"Rosario\"", "\"pop\":1300000")
+                .doesNotContain("\"id\"", "\"capital\"");
     }
 
     @Test
@@ -107,7 +108,7 @@ class CatCmdTest {
     }
 
     @Test
-    void catEmitsNestedFieldAsCompactCsvCell(@TempDir Path dir) throws Exception {
+    void catEmitsNestedFieldAsCompactCsvCell(@TempDir Path dir) {
         Path file = TestCorpus.extractFile("parquet-testing/data/nested_maps.snappy.parquet", dir);
         StringWriter out = new StringWriter();
         CommandLine cmd = Par.newCommandLine();

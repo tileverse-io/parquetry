@@ -29,6 +29,7 @@ interface ReadEngine extends AutoCloseable {
     String name();
 
     /** Reads the scenario and consumes (touches) every value of every surviving row, returning the row count. */
+    @SuppressWarnings("java:S112") // each engine fails with its own library's checked type (JDBC, IO)
     long read(Scenario scenario) throws Exception;
 
     /** Running total folded from every consumed value, kept so the JIT cannot elide the materialization work. */

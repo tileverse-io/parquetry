@@ -344,14 +344,11 @@ public final class FilesetDataset implements GeoParquetDataset {
         List<Integer> needRead = new ArrayList<>();
         for (int index : pruneSurvivors(predicate)) {
             Predicate residual = residualFor(index, predicate);
-            if (residual.equals(Predicate.ALWAYS_FALSE)) {
-                continue;
-            }
             if (residual.equals(Predicate.ALWAYS_TRUE)) {
                 total += partitionStats.get(index).recordCount();
-                continue;
+            } else if (!residual.equals(Predicate.ALWAYS_FALSE)) {
+                needRead.add(index);
             }
-            needRead.add(index);
         }
         if (needRead.isEmpty()) {
             return total;

@@ -422,7 +422,7 @@ class PageNarrowedFetchReadTest {
         try (recording) {
             ParquetFileReader reader = ParquetFileReader.open(recording, runtime, Optional.empty());
             try (Stream<ParquetRecord> stream = reader.read(predicate, projection, options)) {
-                stream.forEach(record -> rows.add(cells.apply(record)));
+                stream.forEach(row -> rows.add(cells.apply(row)));
             }
         }
         return new Leg<>(rows, recording);
@@ -433,16 +433,16 @@ class PageNarrowedFetchReadTest {
      * cell hands out a {@link MemorySegment} view whose identity, not content, decides equality, and whose buffer is
      * released when the stream closes. Hex-formatting the bytes keeps such a cell comparable across two legs.
      */
-    private static List<Object> stableCellsOf(ParquetRecord record) {
-        List<Object> cells = new ArrayList<>(record.columnCount());
-        for (int col = 0; col < record.columnCount(); col++) {
-            cells.add(stableCell(record, col));
+    private static List<Object> stableCellsOf(ParquetRecord row) {
+        List<Object> cells = new ArrayList<>(row.columnCount());
+        for (int col = 0; col < row.columnCount(); col++) {
+            cells.add(stableCell(row, col));
         }
         return cells;
     }
 
-    private static Object stableCell(ParquetRecord record, int col) {
-        Object value = record.get(col);
+    private static Object stableCell(ParquetRecord row, int col) {
+        Object value = row.get(col);
         if (value instanceof MemorySegment segment) {
             return HexFormat.of().formatHex(segment.toArray(ValueLayout.JAVA_BYTE));
         }

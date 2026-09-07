@@ -81,7 +81,7 @@ class GrowableByteSinkTest {
         sink.write(new byte[] {1, 2, 3, 4, 5, 6});
         byte[] backingBefore = sink.array();
         sink.reset();
-        assertThat(sink.size()).isEqualTo(0);
+        assertThat(sink.size()).isZero();
         sink.write(new byte[] {9});
         assertThat(sink.array()).isSameAs(backingBefore); // no reallocation on reuse
         assertThat(sink.toByteArray()).containsExactly(9);

@@ -25,6 +25,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -119,8 +120,7 @@ class ShreddedVariantReadConformanceIT {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("validReadableCases")
-    void reconstructsEveryRowToItsCanonicalVariantBytes(String parquetFile, Map<String, Object> testCase)
-            throws Exception {
+    void reconstructsEveryRowToItsCanonicalVariantBytes(String parquetFile, Map<String, Object> testCase) {
         List<String> expectedRowFiles = expectedRowFiles(testCase);
         readBatchesAndAssertRows(parquetFile, expectedRowFiles);
     }
@@ -128,7 +128,7 @@ class ShreddedVariantReadConformanceIT {
     @ParameterizedTest(name = "{0}")
     @MethodSource("validReadableCases")
     void reconstructsEveryRowToItsCanonicalVariantBytesThroughStreamingRead(
-            String parquetFile, Map<String, Object> testCase) throws Exception {
+            String parquetFile, Map<String, Object> testCase) {
         List<String> expectedRowFiles = expectedRowFiles(testCase);
         streamRowsAndAssert(parquetFile, expectedRowFiles);
     }
@@ -171,7 +171,7 @@ class ShreddedVariantReadConformanceIT {
                 .isInstanceOf(ParquetFormatException.class);
     }
 
-    private void readBatchesAndAssertRows(String parquetFile, List<String> expectedRowFiles) throws IOException {
+    private void readBatchesAndAssertRows(String parquetFile, List<String> expectedRowFiles) {
         Path file = corpusDir.resolve(parquetFile);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetFileReader reader = ParquetFileReader.open(source);
@@ -188,7 +188,7 @@ class ShreddedVariantReadConformanceIT {
         }
     }
 
-    private void readEveryRowThroughBatches(String parquetFile) throws IOException {
+    private void readEveryRowThroughBatches(String parquetFile) {
         Path file = corpusDir.resolve(parquetFile);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetFileReader reader = ParquetFileReader.open(source);
@@ -211,15 +211,15 @@ class ShreddedVariantReadConformanceIT {
         }
     }
 
-    private void streamRowsAndAssert(String parquetFile, List<String> expectedRowFiles) throws IOException {
+    private void streamRowsAndAssert(String parquetFile, List<String> expectedRowFiles) {
         Path file = corpusDir.resolve(parquetFile);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetFileReader reader = ParquetFileReader.open(source);
             int globalRow = 0;
             try (Stream<ParquetRecord> records =
                     reader.read(ALL_ROWS, Projection.ALL, Materializer.defaultRecord(), ReadOptions.DEFAULTS)) {
-                for (ParquetRecord record : (Iterable<ParquetRecord>) records::iterator) {
-                    assertStreamedRow(record, expectedRowFiles.get(globalRow), globalRow);
+                for (ParquetRecord row : (Iterable<ParquetRecord>) records::iterator) {
+                    assertStreamedRow(row, expectedRowFiles.get(globalRow), globalRow);
                     globalRow++;
                 }
             }
@@ -229,8 +229,8 @@ class ShreddedVariantReadConformanceIT {
         }
     }
 
-    private void assertStreamedRow(ParquetRecord record, String expectedRowFile, int globalRow) {
-        Object value = record.get(VAR_COLUMN);
+    private void assertStreamedRow(ParquetRecord row, String expectedRowFile, int globalRow) {
+        Object value = row.get(VAR_COLUMN);
         if (expectedRowFile == null) {
             assertThat(value).as("row %d is a null variant", globalRow).isNull();
             return;
@@ -242,21 +242,21 @@ class ShreddedVariantReadConformanceIT {
                 .isEqualTo(expected);
     }
 
-    private void streamEveryRow(String parquetFile) throws IOException {
+    private void streamEveryRow(String parquetFile) {
         Path file = corpusDir.resolve(parquetFile);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ParquetFileReader reader = ParquetFileReader.open(source);
             try (Stream<ParquetRecord> records =
                     reader.read(ALL_ROWS, Projection.ALL, Materializer.defaultRecord(), ReadOptions.DEFAULTS)) {
-                for (ParquetRecord record : (Iterable<ParquetRecord>) records::iterator) {
-                    forceVariantReconstruction(record);
+                for (ParquetRecord row : (Iterable<ParquetRecord>) records::iterator) {
+                    forceVariantReconstruction(row);
                 }
             }
         }
     }
 
-    private void forceVariantReconstruction(ParquetRecord record) {
-        Object value = record.get(VAR_COLUMN);
+    private void forceVariantReconstruction(ParquetRecord row) {
+        Object value = row.get(VAR_COLUMN);
         if (value instanceof Variant variant) {
             variant.serialize();
         }
@@ -331,7 +331,7 @@ class ShreddedVariantReadConformanceIT {
     private Set<String> parquetFilesReferencedByCases() throws IOException {
         return readCases(corpusDir).stream()
                 .map(testCase -> (String) testCase.get("parquet_file"))
-                .filter(parquetFile -> parquetFile != null)
+                .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
     }
 }

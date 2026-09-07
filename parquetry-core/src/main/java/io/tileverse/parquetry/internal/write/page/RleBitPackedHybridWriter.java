@@ -15,8 +15,6 @@
  */
 package io.tileverse.parquetry.internal.write.page;
 
-import java.io.IOException;
-
 /**
  * Shared RLE/bit-packed hybrid writer used by all encoders that emit RLE-Bit-Packed streams: level streams, dictionary
  * indices, and boolean RLE pages.
@@ -44,7 +42,7 @@ public final class RleBitPackedHybridWriter {
     private RleBitPackedHybridWriter() {}
 
     /** Encode {@code n} values of width {@code bitWidth} from {@code values} into {@code dst}. */
-    public static int write(int[] values, int n, int bitWidth, LittleEndianSink dst) throws IOException {
+    public static int write(int[] values, int n, int bitWidth, LittleEndianSink dst) {
         if (bitWidth < 0 || bitWidth > 32) {
             throw new IllegalArgumentException("bitWidth must be in [0, 32]; got " + bitWidth);
         }
@@ -82,7 +80,7 @@ public final class RleBitPackedHybridWriter {
      * makes a strict reader throw "Reading past RLE/BitPacking stream" when it reads the first value, because the run
      * header that declares the value count is missing.
      */
-    public static int writeZeroWidthRun(int n, LittleEndianSink dst) throws IOException {
+    public static int writeZeroWidthRun(int n, LittleEndianSink dst) {
         if (n == 0) {
             return 0;
         }

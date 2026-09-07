@@ -96,7 +96,9 @@ class UnshreddedVariantWriteConformanceIT {
     void settingNullOnAVariantChildPathIsRejected() {
         ParquetRecordBatchBuilder builder = ParquetRecordBatchBuilder.forSchema(variantSchema());
         builder.setInt(ColumnPath.of("id"), 1);
-        assertThatThrownBy(() -> builder.setNull(ColumnPath.of("v", "value")))
+        ColumnPath variantValue = ColumnPath.of("v", "value");
+
+        assertThatThrownBy(() -> builder.setNull(variantValue))
                 .isInstanceOf(ParquetWriteException.class)
                 .hasMessageContaining("Variant children are not addressable");
     }
@@ -110,9 +112,10 @@ class UnshreddedVariantWriteConformanceIT {
         ParquetMetadata footer = WriteConformanceSupport.readFooterViaParquetJava(file);
         MessageType messageType = footer.getFileMetaData().getSchema();
         String printed = messageType.toString();
-        assertThat(printed).contains("optional group v (VARIANT");
-        assertThat(printed).contains("required binary metadata");
-        assertThat(printed).contains("optional binary value");
+        assertThat(printed)
+                .contains("optional group v (VARIANT")
+                .contains("required binary metadata")
+                .contains("optional binary value");
 
         List<GenericRecord> rows = WriteConformanceSupport.readWithAvro(file);
         assertThat(rows).hasSize(authored.size() + 1);

@@ -210,10 +210,10 @@ class RleDictionaryPageDecoderTest {
         dst.setAtIndex(ParquetLayouts.INT32, 5, -1); // sentinel - must be left alone
         decoder.decodeIndicesInto(5, dst);
 
-        assertThat(dst.getAtIndex(ParquetLayouts.INT32, 0)).isEqualTo(0);
+        assertThat(dst.getAtIndex(ParquetLayouts.INT32, 0)).isZero();
         assertThat(dst.getAtIndex(ParquetLayouts.INT32, 1)).isEqualTo(1);
         assertThat(dst.getAtIndex(ParquetLayouts.INT32, 2)).isEqualTo(2);
-        assertThat(dst.getAtIndex(ParquetLayouts.INT32, 3)).isEqualTo(0);
+        assertThat(dst.getAtIndex(ParquetLayouts.INT32, 3)).isZero();
         assertThat(dst.getAtIndex(ParquetLayouts.INT32, 4)).isEqualTo(1);
         assertThat(dst.getAtIndex(ParquetLayouts.INT32, 5)).isEqualTo(-1);
         assertThat(decoder.next()).isEqualTo(30); // the cursor sits on the sixth index (2)

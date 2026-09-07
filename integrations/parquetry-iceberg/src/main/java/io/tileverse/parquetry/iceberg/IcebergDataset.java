@@ -597,8 +597,8 @@ final class IcebergDataset implements ParquetDataset {
             Reconciliation recon, Projection projection, IcebergFileSchema file, IcebergManifests.DataFileRef ref) {
         SequencedSet<Projection.Column> columns = new LinkedHashSet<>(recon.columns());
         if (rowLineage()) {
-            for (ColumnPath name : requestedLineageNames(projection)) {
-                columns.add(lineageColumn(name, file, ref));
+            for (ColumnPath lineageName : requestedLineageNames(projection)) {
+                columns.add(lineageColumn(lineageName, file, ref));
             }
         }
         return Projection.of(columns);

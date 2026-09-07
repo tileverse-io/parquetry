@@ -244,15 +244,14 @@ public final class NestedVectorAssembler {
             Set<ColumnPath> presentLeaves,
             Set<ColumnPath> hiddenLeaves) {
         for (SchemaNode child : group.children()) {
-            if (!(child instanceof SchemaNode.Group childGroup)) {
-                continue;
+            if (child instanceof SchemaNode.Group childGroup) {
+                List<String> childPath = concatPath(groupPath, child.name());
+                if (childGroup.repetition() == Repetition.REPEATED || isListOrMap(childGroup)) {
+                    markDescendantLeavesHidden(childGroup, childPath, presentLeaves, hiddenLeaves);
+                } else {
+                    hideRepeatedDescendantLeaves(childGroup, childPath, presentLeaves, hiddenLeaves);
+                }
             }
-            List<String> childPath = concatPath(groupPath, child.name());
-            if (childGroup.repetition() == Repetition.REPEATED || isListOrMap(childGroup)) {
-                markDescendantLeavesHidden(childGroup, childPath, presentLeaves, hiddenLeaves);
-                continue;
-            }
-            hideRepeatedDescendantLeaves(childGroup, childPath, presentLeaves, hiddenLeaves);
         }
     }
 

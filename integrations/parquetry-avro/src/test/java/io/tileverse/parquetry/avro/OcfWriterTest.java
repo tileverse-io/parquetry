@@ -38,9 +38,9 @@ class OcfWriterTest {
         AvroDatumEncoder datumEncoder = new AvroDatumEncoder();
         try (OcfWriter writer = new OcfWriter(sink, SCHEMA, "null", SYNC, 1)) {
             for (int value : new int[] {10, 20, 30}) {
-                AvroBinaryEncoder record = new AvroBinaryEncoder();
-                datumEncoder.encode(schema, Map.of("a", value), record);
-                writer.append(record.toByteArray());
+                AvroBinaryEncoder datum = new AvroBinaryEncoder();
+                datumEncoder.encode(schema, Map.of("a", value), datum);
+                writer.append(datum.toByteArray());
             }
         }
 
@@ -54,9 +54,9 @@ class OcfWriterTest {
         AvroDatumEncoder datumEncoder = new AvroDatumEncoder();
         try (OcfWriter writer = new OcfWriter(sink, SCHEMA, "deflate", SYNC, 1)) {
             for (int value : new int[] {1, 2, 3, 4, 5}) {
-                AvroBinaryEncoder record = new AvroBinaryEncoder();
-                datumEncoder.encode(schema, Map.of("a", value), record);
-                writer.append(record.toByteArray());
+                AvroBinaryEncoder datum = new AvroBinaryEncoder();
+                datumEncoder.encode(schema, Map.of("a", value), datum);
+                writer.append(datum.toByteArray());
             }
         }
 
@@ -66,7 +66,7 @@ class OcfWriterTest {
     private static List<Integer> readBackValues(byte[] bytes) {
         ByteRangeSource back = new InMemoryByteRangeSource(bytes);
         try (AvroDataFileReader reader = AvroDataFileReader.open(back)) {
-            return reader.records().map(record -> (Integer) record.get("a")).toList();
+            return reader.records().map(datum -> (Integer) datum.get("a")).toList();
         }
     }
 }

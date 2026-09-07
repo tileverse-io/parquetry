@@ -50,7 +50,11 @@ final class FileChannelByteRangeSource implements ByteRangeSource {
     private final long size;
     private final boolean ownsChannel;
     private final ReentrantLock reopenLock = new ReentrantLock();
+    // S3077: FileChannel is itself thread-safe and every swap happens under reopenLock; volatile only publishes the
+    // replacement handle to readers that raced on the stale one
+    @SuppressWarnings("java:S3077")
     private volatile FileChannel channel;
+
     private volatile boolean closed;
 
     private FileChannelByteRangeSource(
@@ -90,15 +94,7 @@ final class FileChannelByteRangeSource implements ByteRangeSource {
 
     @Override
     public int read(long offset, MemorySegment dst) {
-        if (offset < 0) {
-            throw new IllegalArgumentException("offset must be >= 0, got " + offset);
-        }
-        if (dst.isReadOnly()) {
-            throw new IllegalArgumentException("dst must be writable");
-        }
-        if (dst.byteSize() > Integer.MAX_VALUE) {
-            throw new IllegalArgumentException("dst.byteSize() must be <= Integer.MAX_VALUE, got " + dst.byteSize());
-        }
+        requireReadableRange(offset, dst);
         if (dst.byteSize() == 0) {
             return 0;
         }
@@ -117,15 +113,28 @@ final class FileChannelByteRangeSource implements ByteRangeSource {
                 }
                 total += read;
             } catch (IOException e) {
-                if (ownsChannel && !reopened && !closed && isRecoverable(e)) {
+                boolean retryAfterReopen = ownsChannel && !reopened && !closed && isRecoverable(e);
+                if (retryAfterReopen) {
                     reopen(current);
                     reopened = true;
-                    continue;
+                } else {
+                    throw new UncheckedIOException("Read failed at offset " + (offset + total), e);
                 }
-                throw new UncheckedIOException("Read failed at offset " + (offset + total), e);
             }
         }
         return total == 0 ? -1 : total;
+    }
+
+    private static void requireReadableRange(long offset, MemorySegment dst) {
+        if (offset < 0) {
+            throw new IllegalArgumentException("offset must be >= 0, got " + offset);
+        }
+        if (dst.isReadOnly()) {
+            throw new IllegalArgumentException("dst must be writable");
+        }
+        if (dst.byteSize() > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("dst.byteSize() must be <= Integer.MAX_VALUE, got " + dst.byteSize());
+        }
     }
 
     /**
@@ -170,7 +179,7 @@ final class FileChannelByteRangeSource implements ByteRangeSource {
     private static void closeQuietly(FileChannel channel) {
         try {
             channel.close();
-        } catch (IOException ignored) {
+        } catch (IOException _) {
             // closing a stale or already-closed channel is expected during reopen
         }
     }

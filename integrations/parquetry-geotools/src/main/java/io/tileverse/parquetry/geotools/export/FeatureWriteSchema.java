@@ -125,7 +125,7 @@ record FeatureWriteSchema(
         try {
             Integer code = CRS.lookupEpsgCode(crs, true);
             return code == null ? OptionalInt.empty() : OptionalInt.of(code);
-        } catch (FactoryException e) {
+        } catch (FactoryException _) {
             return OptionalInt.empty();
         }
     }
