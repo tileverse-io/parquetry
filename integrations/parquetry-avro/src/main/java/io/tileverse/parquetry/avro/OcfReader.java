@@ -24,9 +24,9 @@ import io.tileverse.parquetry.io.SegmentPool;
 
 /**
  * Reads the data blocks of an OCF file as a single-pass forward sequence of decompressed blocks, starting at the
- * header's first-block offset. Holds one block in memory at a time; the trailing sync marker after each block is
- * validated against the header's marker. One instance backs one record stream; the header itself is parsed once by
- * {@link OcfHeader#read(ByteRangeCursor)} and shared across streams.
+ * header's first-block offset. Holds one block plus the cursor's read-ahead window in memory at a time; the trailing
+ * sync marker after each block is validated against the header's marker. One instance backs one record stream; the
+ * header itself is parsed once by {@link OcfHeader#read(ByteRangeCursor)} and shared across streams.
  */
 final class OcfReader {
 
@@ -41,9 +41,13 @@ final class OcfReader {
         this.header = header;
     }
 
-    /** A fresh block sequence over {@code source}, positioned at the first data block after {@code header}. */
-    static OcfReader blocks(ByteRangeSource source, OcfHeader header) {
-        ByteRangeCursor cursor = new ByteRangeCursor(source, header.firstBlockOffset());
+    /**
+     * A fresh block sequence over {@code source}, positioned at the first data block after {@code header}.
+     * {@code leadingBytes} are the source's first bytes as already fetched; the sequence serves reads within them from
+     * memory and fetches only what lies beyond.
+     */
+    static OcfReader blocks(ByteRangeSource source, OcfHeader header, MemorySegment leadingBytes) {
+        ByteRangeCursor cursor = ByteRangeCursor.withPrefix(source, header.firstBlockOffset(), leadingBytes);
         return new OcfReader(cursor, header);
     }
 

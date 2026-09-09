@@ -95,12 +95,30 @@ class AvroDataFileReaderTest {
     }
 
     @Test
-    void doesNotReadSecondBlockUntilConsumed() {
-        OcfTestWriter writer = new OcfTestWriter()
+    void readsASmallFileWithASingleSourceRequest() {
+        byte[] ocf = new OcfTestWriter()
                 .schema(SCHEMA)
                 .codec("null")
                 .block(List.of(row(1, "a", 1.0, true)), false)
-                .block(List.of(row(2, "b", 2.0, false)), false);
+                .block(List.of(row(2, "b", 2.0, false)), false)
+                .block(List.of(row(3, "c", 3.0, true)), false)
+                .build();
+        RecordingByteRangeSource recording = new RecordingByteRangeSource(new InMemoryByteRangeSource(ocf));
+        try (AvroDataFileReader reader = AvroDataFileReader.open(recording)) {
+            assertThat(reader.records().map(r -> r.get("id")).toList()).containsExactly(1L, 2L, 3L);
+            assertThat(reader.records().map(r -> r.get("id")).toList()).containsExactly(1L, 2L, 3L);
+        }
+        assertThat(recording.ranges()).containsExactly(new RecordingByteRangeSource.Range(0, ocf.length));
+    }
+
+    @Test
+    void doesNotReadSecondBlockUntilConsumed() {
+        String blockFillingLabel = "x".repeat(2 * ByteRangeCursor.DEFAULT_WINDOW_SIZE);
+        OcfTestWriter writer = new OcfTestWriter()
+                .schema(SCHEMA)
+                .codec("null")
+                .block(List.of(row(1, blockFillingLabel, 1.0, true)), false)
+                .block(List.of(row(2, blockFillingLabel, 2.0, false)), false);
         byte[] ocf = writer.build();
         long firstBlockEnd = writer.firstBlockEnd();
         RecordingByteRangeSource recording = new RecordingByteRangeSource(new InMemoryByteRangeSource(ocf));
@@ -108,7 +126,7 @@ class AvroDataFileReaderTest {
             AvroRecord first = reader.records().findFirst().orElseThrow();
             assertThat(first.get("id")).isEqualTo(1L);
             assertThat(recording.maxReadEnd()).isLessThan(ocf.length);
-            assertThat(recording.maxReadEnd()).isLessThanOrEqualTo(firstBlockEnd);
+            assertThat(recording.maxReadEnd()).isLessThanOrEqualTo(firstBlockEnd + ByteRangeCursor.DEFAULT_WINDOW_SIZE);
         }
     }
 

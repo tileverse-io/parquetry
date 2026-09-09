@@ -41,17 +41,26 @@ public final class AvroDataFileReader implements AutoCloseable {
 
     private final ByteRangeSource source;
     private final OcfHeader header;
+
+    /**
+     * The source's leading bytes as fetched while parsing the header; every block sequence starts from them and fetches
+     * only what lies beyond, which reads a file no larger than the cursor window in a single request.
+     */
+    private final MemorySegment leadingBytes;
+
     private final AvroDatumDecoder datumDecoder = new AvroDatumDecoder();
 
-    private AvroDataFileReader(ByteRangeSource source, OcfHeader header) {
+    private AvroDataFileReader(ByteRangeSource source, OcfHeader header, MemorySegment leadingBytes) {
         this.source = source;
         this.header = header;
+        this.leadingBytes = leadingBytes;
     }
 
     /** Opens a reader over {@code source}, reading and validating the OCF header. */
     public static AvroDataFileReader open(ByteRangeSource source) {
-        OcfHeader header = OcfHeader.read(new ByteRangeCursor(source));
-        return new AvroDataFileReader(source, header);
+        ByteRangeCursor cursor = new ByteRangeCursor(source);
+        OcfHeader header = OcfHeader.read(cursor);
+        return new AvroDataFileReader(source, header, cursor.bufferedPrefix());
     }
 
     /** The embedded Avro write schema (typically a {@link AvroSchema.Record}). */
@@ -106,7 +115,7 @@ public final class AvroDataFileReader implements AutoCloseable {
     }
 
     private Stream<AvroRecord> recordStream(Function<AvroBinaryDecoder, AvroRecord> decodeOne) {
-        OcfReader blockReader = OcfReader.blocks(source, header);
+        OcfReader blockReader = OcfReader.blocks(source, header, leadingBytes);
         Spliterator<AvroRecord> spliterator = new BlockSpliterator(blockReader, decodeOne);
         return StreamSupport.stream(spliterator, false);
     }
