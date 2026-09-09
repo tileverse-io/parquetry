@@ -15,9 +15,7 @@
  */
 package io.tileverse.parquetry.iceberg;
 
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
@@ -91,20 +89,25 @@ final class IcebergMetadataResolver {
         return lastSlash < 0 ? location : location.substring(lastSlash + 1);
     }
 
-    private static String readUtf8(IcebergFileIO io, String location) {
+    /** Reads the whole text document at {@code location} as UTF-8. */
+    static String readUtf8(IcebergFileIO io, String location) {
         try (ByteRangeSource source = io.open(location)) {
             return readUtf8(source);
         }
     }
 
+    /**
+     * Reads the whole source into a heap buffer. The buffer is deliberately not thread-confined: a streaming storage
+     * backend fills it from its own I/O thread.
+     */
     private static String readUtf8(ByteRangeSource source) {
         long size = source.size();
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment segment = arena.allocate(size);
-            source.readFully(0, segment);
-            byte[] bytes = segment.toArray(ValueLayout.JAVA_BYTE);
-            return new String(bytes, StandardCharsets.UTF_8);
+        if (size > Integer.MAX_VALUE) {
+            throw new IcebergFormatException("metadata document too large: " + size + " bytes");
         }
+        byte[] bytes = new byte[(int) size];
+        source.readFully(0, MemorySegment.ofArray(bytes));
+        return new String(bytes, StandardCharsets.UTF_8);
     }
 
     private static String stripTrailingSlash(String value) {
