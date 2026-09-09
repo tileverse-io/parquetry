@@ -68,19 +68,6 @@
       <artifactId>parquet-avro</artifactId>
       <scope>test</scope>
     </dependency>
-    <!--
-      Pin com.fasterxml.jackson.core:jackson-annotations to 2.21 at test scope. Jackson 3
-      (tools.jackson jackson-databind 3.x) reuses the 2.x-versioned annotations artifact, and 2.21 is the version it
-      resolves in parquetry-core; the read path's LogicalType deserialization needs it. Without this pin the older
-      jackson-2 annotations (2.12.x/2.14.x) dragged in transitively by parquet-avro and hadoop-common would shadow it
-      by dependency proximity and break LogicalType deserialization at test time.
-    -->
-    <dependency>
-      <groupId>com.fasterxml.jackson.core</groupId>
-      <artifactId>jackson-annotations</artifactId>
-      <version>2.21</version>
-      <scope>test</scope>
-    </dependency>
     <dependency>
       <groupId>org.apache.hadoop</groupId>
       <artifactId>hadoop-common</artifactId>
