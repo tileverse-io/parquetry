@@ -284,7 +284,11 @@
         <plugin>
           <groupId>org.codehaus.mojo</groupId>
           <artifactId>flatten-maven-plugin</artifactId>
-          <version>1.6.0</version>
+          <version>1.8.0</version>
+          <configuration>
+            <updatePomFile>true</updatePomFile>
+            <flattenMode>resolveCiFriendliesOnly</flattenMode>
+          </configuration>
           <executions>
             <execution>
               <id>flatten</id>
@@ -292,10 +296,6 @@
                 <goal>flatten</goal>
               </goals>
               <phase>process-resources</phase>
-              <configuration>
-                <updatePomFile>true</updatePomFile>
-                <flattenMode>resolveCiFriendliesOnly</flattenMode>
-              </configuration>
             </execution>
             <execution>
               <id>flatten.clean</id>
