@@ -15,10 +15,6 @@
  */
 package io.tileverse.parquetry.iceberg;
 
-import java.lang.foreign.Arena;
-import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -190,7 +186,7 @@ public final class IcebergTableCatalog implements DatasetCatalog {
     static IcebergTableMetadata resolveMetadata(
             IcebergFileIO bootstrap, String physicalLocation, IcebergOptions options) {
         String metadataLocation = IcebergMetadataResolver.resolve(bootstrap, physicalLocation, options);
-        String json = readJson(bootstrap, metadataLocation);
+        String json = IcebergMetadataResolver.readUtf8(bootstrap, metadataLocation);
         return IcebergTableMetadata.read(json, options);
     }
 
@@ -232,18 +228,6 @@ public final class IcebergTableCatalog implements DatasetCatalog {
             stats.add(IcebergFileStats.from(ref, fields, partitionConstants));
         }
         return stats;
-    }
-
-    private static String readJson(IcebergFileIO io, String location) {
-        try (ByteRangeSource source = io.open(location)) {
-            long size = source.size();
-            try (Arena arena = Arena.ofConfined()) {
-                MemorySegment segment = arena.allocate(size);
-                source.readFully(0, segment);
-                byte[] bytes = segment.toArray(ValueLayout.JAVA_BYTE);
-                return new String(bytes, StandardCharsets.UTF_8);
-            }
-        }
     }
 
     private static String tableName(Path tableDir) {
