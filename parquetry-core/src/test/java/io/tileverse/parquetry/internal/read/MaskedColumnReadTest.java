@@ -87,7 +87,7 @@ class MaskedColumnReadTest {
                     throw new UnsupportedOperationException("bloom filters not used in this test");
                 }
             };
-            RowGroupChunks chunks = RowGroupChunks.of(rowGroup, schema, loader);
+            RowGroupChunks chunks = TestRowGroupChunks.of(footer, 0, schema, loader);
             RowGroupFetcher fetcher = TestFetchers.over(source, schema, schema, SegmentPool.getDefault());
             RowGroupSurvivor survivor = new RowGroupSurvivor(chunks, Optional.of(surviving), true);
             try (RowGroupFetch fetch =

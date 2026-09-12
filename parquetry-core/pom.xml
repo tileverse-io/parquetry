@@ -46,6 +46,20 @@
       <artifactId>parquetry-format</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- The CacheManager that the footer-metadata cache registers with under the cache's own name, alongside the
+         storage layer's range cache. That gives one place to read both caches' statistics and one invalidateAll
+         that drops both. Each cache keeps its own heap budget. Picked for that registry and for a slim dependency
+         tree: its only transitive dependency is Caffeine, which this module already declares below. Managed by the
+         tileverse BOM in the root POM. -->
+    <dependency>
+      <groupId>io.tileverse.storage</groupId>
+      <artifactId>tileverse-storage-core</artifactId>
+    </dependency>
+    <!-- Caffeine's Scheduler, which the footer cache sets to evict expired entries in an idle process. -->
+    <dependency>
+      <groupId>com.github.ben-manes.caffeine</groupId>
+      <artifactId>caffeine</artifactId>
+    </dependency>
     <dependency>
       <groupId>com.google.errorprone</groupId>
       <artifactId>error_prone_annotations</artifactId>

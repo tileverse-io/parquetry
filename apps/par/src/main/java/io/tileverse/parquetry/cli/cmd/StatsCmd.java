@@ -99,23 +99,19 @@ public final class StatsCmd implements Callable<Integer> {
         if (statsOpt.isPresent()) {
             Statistics stats = statsOpt.get();
             nullCount = stats.nullCount();
-            minStr = decodeMinMax(type, stats.minValue(), stats.min());
-            maxStr = decodeMinMax(type, stats.maxValue(), stats.max());
+            minStr = decodeBound(type, stats.preferredMin());
+            maxStr = decodeBound(type, stats.preferredMax());
         }
 
         return new ColumnStats(rgIndex, columnPath, type.name(), numValues, nullCount, minStr, maxStr);
     }
 
-    /**
-     * Picks the modern minValue/maxValue payload when present, falling back to the legacy min/max field. Newer parquet
-     * writers populate the modern fields; older writers use the legacy pair.
-     */
-    private String decodeMinMax(PhysicalType type, MemorySegment modern, MemorySegment legacy) {
-        MemorySegment chosen = (modern != MemorySegment.NULL) ? modern : legacy;
-        if (chosen == MemorySegment.NULL) {
+    /** Renders one PLAIN-encoded statistics bound for display, or {@code null} when the writer recorded none. */
+    private String decodeBound(PhysicalType type, MemorySegment bound) {
+        if (bound == MemorySegment.NULL) {
             return null;
         }
-        return StatsRenderer.decode(type, chosen);
+        return StatsRenderer.decode(type, bound);
     }
 
     private void renderStats(PrintWriter out, List<ColumnStats> stats) {

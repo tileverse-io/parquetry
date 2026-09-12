@@ -18,7 +18,7 @@ package io.tileverse.parquetry.internal.read;
 import java.util.List;
 import java.util.Optional;
 
-import io.tileverse.parquetry.format.ColumnMetaData;
+import io.tileverse.parquetry.format.CompressionCodec;
 import io.tileverse.parquetry.internal.read.page.DataPageRun;
 import io.tileverse.parquetry.internal.read.page.Dictionary;
 import io.tileverse.parquetry.io.SegmentPool;
@@ -41,7 +41,8 @@ import lombok.NonNull;
  * fetch returns the pooled segments to the {@link SegmentPool} when it is closed.
  *
  * @param path the leaf column path this chunk belongs to (file schema path)
- * @param metadata the on-disk {@link ColumnMetaData} for the chunk
+ * @param codec the compression applied to the chunk's page payloads
+ * @param numValues the number of values held by the whole chunk, nulls included
  * @param maxRepetitionLevel max repetition level computed from the file schema at this leaf
  * @param maxDefinitionLevel max definition level computed from the file schema at this leaf
  * @param dataPageRuns read-only views of the fetched stretches of the chunk's compressed data-page region, in file
@@ -50,7 +51,8 @@ import lombok.NonNull;
  */
 record FetchedColumnChunk(
         @NonNull ColumnPath path,
-        @NonNull ColumnMetaData metadata,
+        @NonNull CompressionCodec codec,
+        long numValues,
         int maxRepetitionLevel,
         int maxDefinitionLevel,
         @NonNull List<DataPageRun> dataPageRuns,

@@ -37,10 +37,7 @@ import io.tileverse.parquetry.columnar.BinaryVector;
 import io.tileverse.parquetry.columnar.DoubleVector;
 import io.tileverse.parquetry.columnar.IntVector;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
-import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.CompressionCodec;
-import io.tileverse.parquetry.format.Encoding;
-import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.internal.read.page.DataPageRun;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -359,7 +356,7 @@ class BatchRowGroupReaderTest {
     private static FetchedColumnChunk singlePageDoubleChunk(ColumnPath path, double[] values) throws IOException {
         byte[] payload = encodeDoublesLittleEndian(values);
         byte[] chunkBytes = encodeV1Page(values.length, payload, org.apache.parquet.format.Encoding.PLAIN);
-        return heapChunk(path, PhysicalType.DOUBLE, chunkBytes, values.length);
+        return heapChunk(path, chunkBytes, values.length);
     }
 
     /** Builds a {@link ParquetSchema} with one required BYTE_ARRAY leaf column, under a synthetic root group. */
@@ -377,7 +374,7 @@ class BatchRowGroupReaderTest {
     private static FetchedColumnChunk singlePageByteArrayChunk(ColumnPath path, byte[][] values) throws IOException {
         byte[] payload = encodePlainByteArrays(values);
         byte[] chunkBytes = encodeV1Page(values.length, payload, org.apache.parquet.format.Encoding.PLAIN);
-        return heapChunk(path, PhysicalType.BYTE_ARRAY, chunkBytes, values.length);
+        return heapChunk(path, chunkBytes, values.length);
     }
 
     private static byte[] encodePlainByteArrays(byte[][] rows) {
@@ -419,38 +416,22 @@ class BatchRowGroupReaderTest {
         return out.toByteArray();
     }
 
-    private static List<String> pathSegments(ColumnPath path) {
-        String[] segments = new String[path.numParts()];
-        for (int i = 0; i < segments.length; i++) {
-            segments[i] = path.part(i);
-        }
-        return List.of(segments);
-    }
-
     /**
      * Wraps {@code data} in a read-only heap {@link MemorySegment} and builds a {@link FetchedColumnChunk} around it.
-     * The chunk is uncompressed with maxRep=0, maxDef=0 (required column).
+     * The chunk is uncompressed with maxRep=0, maxDef=0 (required column). Its values are typed by the schema leaf used
+     * to open the reader, not by the chunk.
      */
     private static FetchedColumnChunk heapChunk(ColumnPath path, byte[] data, long numValues) {
-        return heapChunk(path, PhysicalType.INT32, data, numValues);
-    }
-
-    private static FetchedColumnChunk heapChunk(ColumnPath path, PhysicalType type, byte[] data, long numValues) {
         MemorySegment segment = MemorySegment.ofArray(data).asReadOnly();
 
-        ColumnMetaData meta = ColumnMetaData.builder()
-                .type(type)
-                .encodings(List.of(Encoding.PLAIN))
-                .pathInSchema(pathSegments(path))
-                .codec(CompressionCodec.UNCOMPRESSED)
-                .numValues(numValues)
-                .totalUncompressedSize((long) data.length)
-                .totalCompressedSize((long) data.length)
-                .dataPageOffset(0L)
-                .build();
-
         return new FetchedColumnChunk(
-                path, meta, /*maxRep*/ 0, /*maxDef*/ 0, List.of(new DataPageRun(segment, 0)), Optional.empty());
+                path,
+                CompressionCodec.UNCOMPRESSED,
+                numValues,
+                /*maxRep*/ 0,
+                /*maxDef*/ 0,
+                List.of(new DataPageRun(segment, 0)),
+                Optional.empty());
     }
 
     private static byte[] encodeInt32sLittleEndian(int[] values) {

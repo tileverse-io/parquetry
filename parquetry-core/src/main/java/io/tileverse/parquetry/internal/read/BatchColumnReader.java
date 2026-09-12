@@ -234,8 +234,8 @@ final class BatchColumnReader {
         this.columnPath = chunk.path();
         this.leaf = leaf;
         this.maxLevels = new LevelMaxima(chunk.maxRepetitionLevel(), chunk.maxDefinitionLevel());
-        this.codec = Compression.forWireCodec(chunk.metadata().codec());
-        this.totalValues = chunk.metadata().numValues();
+        this.codec = Compression.forWireCodec(chunk.codec());
+        this.totalValues = chunk.numValues();
         this.defBitWidth = LevelDecoder.computeBitWidth(maxLevels.maxDefinitionLevel());
         this.repBitWidth = LevelDecoder.computeBitWidth(maxLevels.maxRepetitionLevel());
         this.dictionary = chunk.dictionary();

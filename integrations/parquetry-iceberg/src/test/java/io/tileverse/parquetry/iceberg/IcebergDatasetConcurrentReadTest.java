@@ -195,7 +195,8 @@ class IcebergDatasetConcurrentReadTest {
                 metadata.formatVersion(),
                 IcebergNameMapping.empty(),
                 IcebergNestedSchema.of(null),
-                openOptions);
+                openOptions,
+                IcebergDataset.DEFAULT_MAX_MEMOIZED_FILES);
     }
 
     private static IcebergTableMetadata readMetadata(Path tableDir, IcebergFileIO io) {

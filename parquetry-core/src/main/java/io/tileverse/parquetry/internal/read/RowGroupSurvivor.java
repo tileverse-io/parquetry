@@ -18,7 +18,6 @@ package io.tileverse.parquetry.internal.read;
 import java.util.Optional;
 
 import io.tileverse.parquetry.filter.RowRanges;
-import io.tileverse.parquetry.format.RowGroup;
 
 import lombok.NonNull;
 
@@ -48,9 +47,14 @@ import lombok.NonNull;
 public record RowGroupSurvivor(
         @NonNull RowGroupChunks chunks, @NonNull Optional<RowRanges> survivingRows, boolean recordEvalRequired) {
 
-    /** The on-disk row group, including the per-column chunk metadata. */
-    public RowGroup rowGroup() {
-        return chunks.rowGroup();
+    /** The row group's position in file order. */
+    public int index() {
+        return chunks.rowGroupIndex();
+    }
+
+    /** The row group's total row count, before any narrowing. */
+    public long numRows() {
+        return chunks.numRows();
     }
 
     /**

@@ -27,13 +27,13 @@ import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.filter.explain.Tier;
-import io.tileverse.parquetry.format.Statistics;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 
 /**
- * Tier-1 (STATS) evaluator. Inspects a row group's per-column {@link Statistics} (min, max, nullCount) to decide
- * whether the row group can be eliminated, kept whole, or left for downstream tiers to refine.
+ * Tier-1 (STATS) evaluator. Inspects a row group's per-column statistics (min, max, null count) to decide whether the
+ * row group can be eliminated, kept whole, or left for downstream tiers to refine.
  *
  * <p>The evaluator assumes the predicate has already been run through {@code PredicateNormalizer}: {@code Not} is
  * pushed to leaves, {@code Always} is folded, and nested {@code And}/{@code Or} are flattened. It only ever returns
@@ -114,7 +114,7 @@ public final class StatsEvaluator {
      * bytes before delegating to the typed evaluator.
      *
      * @param predicate the normalized predicate
-     * @param columns lookup from column path to its stats (kind + Statistics)
+     * @param columns lookup from column path to its stats (kind + PLAIN-encoded bounds + null count)
      * @param rowCount total rows in the row group
      */
     public static PruningDecision evaluate(
@@ -126,22 +126,19 @@ public final class StatsEvaluator {
         return path -> columns.get(path).map(StatsEvaluator::summarize);
     }
 
-    /**
-     * Decodes one column's raw min/max statistic bytes (preferring the typed stats) into a typed {@link ColumnSummary}.
-     */
+    /** Decodes one column's PLAIN-encoded min/max statistic bytes into a typed {@link ColumnSummary}. */
     public static ColumnSummary summarize(FilterPipeline.ColumnStats cs) {
         PrimitiveKind kind = cs.kind();
-        MemorySegment minBytes =
-                preferLatest(cs.statistics().minValue(), cs.statistics().min());
-        MemorySegment maxBytes =
-                preferLatest(cs.statistics().maxValue(), cs.statistics().max());
-        Optional<Value> min = minBytes == MemorySegment.NULL
-                ? Optional.empty()
-                : StatisticsValueDecoder.decode(kind, cs.logicalType(), minBytes);
-        Optional<Value> max = maxBytes == MemorySegment.NULL
-                ? Optional.empty()
-                : StatisticsValueDecoder.decode(kind, cs.logicalType(), maxBytes);
-        return new ColumnSummary(kind, min, max, cs.statistics().nullCount());
+        Optional<LogicalType> logicalType = cs.logicalType();
+        Optional<Value> min = decodeBound(kind, logicalType, cs.minValue());
+        Optional<Value> max = decodeBound(kind, logicalType, cs.maxValue());
+        return new ColumnSummary(kind, min, max, cs.nullCount());
+    }
+
+    /** A bound not recorded by the writer, or one that the decoder cannot type, leaves that end of the range open. */
+    private static Optional<Value> decodeBound(
+            PrimitiveKind kind, Optional<LogicalType> logicalType, Optional<MemorySegment> bound) {
+        return bound.flatMap(bytes -> StatisticsValueDecoder.decode(kind, logicalType, bytes));
     }
 
     /**
@@ -375,11 +372,6 @@ public final class StatsEvaluator {
         long nullCount = cs.nullCount().orElse(-1L);
         return f.apply(
                 new DecodedRange(cs.kind(), cs.min().orElseThrow(), cs.max().orElseThrow(), nullCount));
-    }
-
-    /** Newer writers populate minValue/maxValue; older writers populate min/max. */
-    private static MemorySegment preferLatest(MemorySegment latest, MemorySegment legacy) {
-        return latest != MemorySegment.NULL ? latest : legacy;
     }
 
     /** Aggregate of a column's decoded min/max plus its null count (or {@code -1} if absent). */

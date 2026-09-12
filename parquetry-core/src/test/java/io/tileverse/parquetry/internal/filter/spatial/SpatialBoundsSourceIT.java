@@ -28,6 +28,8 @@ import org.junit.jupiter.api.Test;
 import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.ParquetFormat;
+import io.tileverse.parquetry.internal.footer.CompactFooter;
+import io.tileverse.parquetry.internal.footer.LeafIndex;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -66,7 +68,9 @@ class SpatialBoundsSourceIT {
             GeoParquetMetadata geo = GeoParquetMetadata.parse(geoJson);
 
             ParquetSchema schema = SchemaBuilder.build(footer.schema());
-            SpatialBoundsSource source = SpatialBoundsSource.of(footer, schema, Optional.of(geo));
+            LeafIndex leaves = LeafIndex.of(schema);
+            CompactFooter compact = CompactFooter.encode(footer, leaves);
+            SpatialBoundsSource source = SpatialBoundsSource.of(compact, leaves, schema, Optional.of(geo));
             assertThat(source)
                     .as(
                             "example.parquet has 'geo' bbox but no native stats / covering; dispatch lands on the JSON tier")

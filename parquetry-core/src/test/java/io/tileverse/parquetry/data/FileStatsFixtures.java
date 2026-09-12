@@ -19,6 +19,7 @@ import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.BitSet;
@@ -35,13 +36,14 @@ import io.tileverse.parquetry.columnar.LongVector;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.data.WriteOptions.GeoParquetMetadataMode;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 
-/** Writes small Parquet files through the columnar writer for {@link ParquetReaderFileStatsIT}. */
+/** Writes small Parquet files through the columnar writer for the file-statistics tests in this package. */
 final class FileStatsFixtures {
 
     private FileStatsFixtures() {}
@@ -110,6 +112,36 @@ final class FileStatsFixtures {
         return new DefaultParquetRecordBatch(schema, columns, points.length, Arena.ofShared());
     }
 
+    /**
+     * Writes a single-row-group file with one required UTF-8 string column, one row per entry of {@code values}. The
+     * writer records the lexicographically least and greatest entry as the column's min and max statistics.
+     */
+    static Path writeStringColumn(Path dir, String column, String[] values) throws Exception {
+        ParquetSchema schema = flatSchema(requiredString(column));
+        Path file = dir.resolve(column + ".parquet");
+        try (ParquetFileWriter writer = ParquetFileWriter.create(
+                        Files.newOutputStream(file),
+                        schema,
+                        WriteOptions.builder().tempDir(dir).build());
+                ParquetRecordBatch batch = stringBatch(schema, column, values)) {
+            writer.writeBatch(batch);
+        }
+        return file;
+    }
+
+    private static ParquetRecordBatch stringBatch(ParquetSchema schema, String column, String[] values) {
+        MemorySegment[] utf8 = new MemorySegment[values.length];
+        for (int i = 0; i < values.length; i++) {
+            utf8[i] = MemorySegment.ofArray(values[i].getBytes(StandardCharsets.UTF_8));
+        }
+        BitSet allValid = new BitSet(values.length);
+        allValid.set(0, values.length);
+        Validity validity = Validity.of(allValid, values.length);
+        Map<ColumnPath, ColumnVector> columns =
+                Map.of(ColumnPath.of(column), BinaryVector.materialized(utf8, validity));
+        return new DefaultParquetRecordBatch(schema, columns, values.length, Arena.ofShared());
+    }
+
     private static ParquetSchema flatSchema(SchemaNode.Primitive... leaves) {
         List<SchemaNode> children =
                 Stream.of(leaves).map(SchemaNode.class::cast).toList();
@@ -125,6 +157,16 @@ final class FileStatsFixtures {
     private static SchemaNode.Primitive requiredBinary(String name) {
         return new SchemaNode.Primitive(
                 name, Repetition.REQUIRED, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1);
+    }
+
+    private static SchemaNode.Primitive requiredString(String name) {
+        return new SchemaNode.Primitive(
+                name,
+                Repetition.REQUIRED,
+                PrimitiveKind.BYTE_ARRAY,
+                OptionalInt.empty(),
+                Optional.of(new LogicalType.StringType()),
+                -1);
     }
 
     private static byte[] wkbPoint(double x, double y) {

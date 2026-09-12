@@ -41,11 +41,8 @@ import io.tileverse.parquetry.columnar.BinaryVector;
 import io.tileverse.parquetry.columnar.IntVector;
 import io.tileverse.parquetry.columnar.ListVector;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
-import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.CompressionCodec;
-import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.LogicalType;
-import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.internal.read.page.DataPageRun;
 import io.tileverse.parquetry.internal.read.page.Dictionary;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -426,18 +423,14 @@ class PageSplitRowReadTest {
         byte[] chunkBuffer = concat(pages);
         long totalValues = totalValuesOf(pages);
         MemorySegment segment = MemorySegment.ofArray(chunkBuffer).asReadOnly();
-        ColumnMetaData meta = ColumnMetaData.builder()
-                .type(PhysicalType.INT32)
-                .encodings(List.of(Encoding.PLAIN))
-                .pathInSchema(List.of("items", "list", "element"))
-                .codec(CompressionCodec.UNCOMPRESSED)
-                .numValues(totalValues)
-                .totalUncompressedSize((long) chunkBuffer.length)
-                .totalCompressedSize((long) chunkBuffer.length)
-                .dataPageOffset(0L)
-                .build();
         return new FetchedColumnChunk(
-                ELEMENT, meta, MAX_REP, MAX_DEF, List.of(new DataPageRun(segment, 0)), Optional.empty());
+                ELEMENT,
+                CompressionCodec.UNCOMPRESSED,
+                totalValues,
+                MAX_REP,
+                MAX_DEF,
+                List.of(new DataPageRun(segment, 0)),
+                Optional.empty());
     }
 
     private static FetchedColumnChunk repeatedByteArrayChunk(byte[][] dictValues, byte[]... pages) {
@@ -445,18 +438,14 @@ class PageSplitRowReadTest {
         long totalValues = totalValuesOf(pages);
         Dictionary.BinaryDict dictionary = new Dictionary.BinaryDict(toSegments(dictValues));
         MemorySegment segment = MemorySegment.ofArray(chunkBuffer).asReadOnly();
-        ColumnMetaData meta = ColumnMetaData.builder()
-                .type(PhysicalType.BYTE_ARRAY)
-                .encodings(List.of(Encoding.RLE_DICTIONARY, Encoding.PLAIN))
-                .pathInSchema(List.of("items", "list", "element"))
-                .codec(CompressionCodec.UNCOMPRESSED)
-                .numValues(totalValues)
-                .totalUncompressedSize((long) chunkBuffer.length)
-                .totalCompressedSize((long) chunkBuffer.length)
-                .dataPageOffset(0L)
-                .build();
         return new FetchedColumnChunk(
-                ELEMENT, meta, MAX_REP, MAX_DEF, List.of(new DataPageRun(segment, 0)), Optional.of(dictionary));
+                ELEMENT,
+                CompressionCodec.UNCOMPRESSED,
+                totalValues,
+                MAX_REP,
+                MAX_DEF,
+                List.of(new DataPageRun(segment, 0)),
+                Optional.of(dictionary));
     }
 
     private static FetchedColumnChunk flatInt32Chunk(ColumnPath path, int[]... pages) throws IOException {
@@ -469,18 +458,14 @@ class PageSplitRowReadTest {
         }
         byte[] chunkBuffer = concat(pageBytes);
         MemorySegment segment = MemorySegment.ofArray(chunkBuffer).asReadOnly();
-        ColumnMetaData meta = ColumnMetaData.builder()
-                .type(PhysicalType.INT32)
-                .encodings(List.of(Encoding.PLAIN))
-                .pathInSchema(List.of(path.part(0)))
-                .codec(CompressionCodec.UNCOMPRESSED)
-                .numValues(totalValues)
-                .totalUncompressedSize((long) chunkBuffer.length)
-                .totalCompressedSize((long) chunkBuffer.length)
-                .dataPageOffset(0L)
-                .build();
         return new FetchedColumnChunk(
-                path, meta, /*maxRep*/ 0, /*maxDef*/ 0, List.of(new DataPageRun(segment, 0)), Optional.empty());
+                path,
+                CompressionCodec.UNCOMPRESSED,
+                totalValues,
+                /*maxRep*/ 0,
+                /*maxDef*/ 0,
+                List.of(new DataPageRun(segment, 0)),
+                Optional.empty());
     }
 
     /**

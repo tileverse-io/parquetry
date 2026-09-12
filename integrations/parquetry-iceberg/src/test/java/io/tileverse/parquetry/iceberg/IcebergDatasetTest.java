@@ -53,7 +53,8 @@ import io.tileverse.parquetry.testkit.TestCorpus;
 /**
  * Drives {@link IcebergDataset} through its per-file reconciliation: a file matching the table by field id reads
  * untouched (identity {@link Query}), while an evolved table schema reconciles the same data file into a renamed,
- * null-filled output shape and folds the predicate against the columns the file does not hold.
+ * null-filled output shape and folds the predicate against the columns that the file does not hold. Also covers the
+ * bound on the per-file source memo, which keeps a wide table from holding every visited file's footer metadata.
  */
 class IcebergDatasetTest {
 
@@ -63,6 +64,8 @@ class IcebergDatasetTest {
     Path tempDir;
 
     private final List<AutoCloseable> openResources = new ArrayList<>();
+
+    private final List<ReadCountingSource> countedSources = new ArrayList<>();
 
     @AfterEach
     void closeResources() throws Exception {
@@ -223,7 +226,45 @@ class IcebergDatasetTest {
         assertThat(dataset.count(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS)).isEqualTo(10_000L);
     }
 
+    @Test
+    void aTableWiderThanTheMemoBoundKeepsOnlyTheBound() {
+        int bound = 2;
+        IcebergDataset dataset = datasetBoundedTo(bound);
+
+        long counted = dataset.count(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
+        dataset.runPendingFileEvictions();
+
+        assertThat(counted).isEqualTo(10_000L);
+        assertThat(dataset.memoizedFileCount())
+                .as("visiting every data file leaves only the bound memoized")
+                .isEqualTo(bound);
+
+        countedSources.forEach(ReadCountingSource::resetReads);
+        assertThat(dataset.count(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS))
+                .as("a dropped file reopens and counts the same rows")
+                .isEqualTo(counted);
+        assertThat(readsSinceReset())
+                .as("every reopened file took its footer from the shared cache, reading no bytes again")
+                .isZero();
+    }
+
+    private int readsSinceReset() {
+        int reads = 0;
+        for (ReadCountingSource source : countedSources) {
+            reads += source.reads();
+        }
+        return reads;
+    }
+
+    private IcebergDataset datasetBoundedTo(int maxMemoizedFiles) {
+        return dataset(currentFields(), maxMemoizedFiles);
+    }
+
     private IcebergDataset datasetWithSchema(List<IcebergField> tableFields) {
+        return dataset(tableFields, IcebergDataset.DEFAULT_MAX_MEMOIZED_FILES);
+    }
+
+    private IcebergDataset dataset(List<IcebergField> tableFields, int maxMemoizedFiles) {
         Path root = TestCorpus.extractDirectory("iceberg-geo-testbed", tempDir.resolve(TABLE));
         Path tableDir = root.resolve(TABLE);
         IcebergFileIO bootstrap = StorageIcebergFileIO.owning(
@@ -240,8 +281,9 @@ class IcebergDatasetTest {
         List<ByteRangeSource> sources = new ArrayList<>(dataFiles.size());
         for (IcebergManifests.DataFileRef ref : dataFiles) {
             fileStats.add(IcebergFileStats.from(ref, currentFields, Map.of()));
-            ByteRangeSource source = io.open(ref.location());
+            ReadCountingSource source = new ReadCountingSource(io.open(ref.location()));
             openResources.add(source);
+            countedSources.add(source);
             sources.add(source);
         }
 
@@ -261,7 +303,8 @@ class IcebergDatasetTest {
                 metadata.formatVersion(),
                 IcebergNameMapping.empty(),
                 IcebergNestedSchema.of(null),
-                OpenOptions.DEFAULTS);
+                OpenOptions.DEFAULTS,
+                maxMemoizedFiles);
     }
 
     private static IcebergTableMetadata readMetadata(Path tableDir, IcebergFileIO io) {

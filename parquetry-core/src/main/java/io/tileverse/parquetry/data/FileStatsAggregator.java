@@ -21,7 +21,6 @@ import java.util.Optional;
 import java.util.Set;
 
 import io.tileverse.parquetry.filter.prune.FileStats;
-import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.internal.filter.FilterPipeline;
 import io.tileverse.parquetry.internal.filter.StatsEvaluator;
 import io.tileverse.parquetry.internal.filter.StatsEvaluator.ColumnSummary;
@@ -40,12 +39,13 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeometryColumns;
  */
 final class FileStatsAggregator {
 
-    private final FileMetaData footer;
+    private final SpatialBoundsSource spatialBounds;
     private final ParquetSchema fileSchema;
     private final Optional<GeoParquetMetadata> geoMetadata;
 
-    FileStatsAggregator(FileMetaData footer, ParquetSchema fileSchema, Optional<GeoParquetMetadata> geoMetadata) {
-        this.footer = footer;
+    FileStatsAggregator(
+            SpatialBoundsSource spatialBounds, ParquetSchema fileSchema, Optional<GeoParquetMetadata> geoMetadata) {
+        this.spatialBounds = spatialBounds;
         this.fileSchema = fileSchema;
         this.geoMetadata = geoMetadata;
     }
@@ -99,12 +99,8 @@ final class FileStatsAggregator {
     }
 
     private void addGeometryBounds(FileStats.Builder builder, Set<ColumnPath> geometryColumns) {
-        if (geometryColumns.isEmpty()) {
-            return;
-        }
-        SpatialBoundsSource bounds = SpatialBoundsSource.of(footer, fileSchema, geoMetadata);
         for (ColumnPath geometry : geometryColumns) {
-            bounds.fileBounds(geometry).ifPresent(box -> builder.geometryBounds(geometry, box));
+            spatialBounds.fileBounds(geometry).ifPresent(box -> builder.geometryBounds(geometry, box));
         }
     }
 }

@@ -47,7 +47,11 @@ import io.tileverse.storage.StorageEntry;
 import io.tileverse.storage.StorageFactory;
 import io.tileverse.storage.WriteOptions;
 
+import io.tileverse.parquetry.data.FooterMetadataCache;
+import io.tileverse.parquetry.dataset.OpenOptions;
+import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.testkit.TestCorpus;
 
 /**
  * Proves the logical-to-physical key mapping (the table location string is deliberately NOT the physical storage root),
@@ -97,6 +101,34 @@ class StorageIcebergFileIOTest {
         }
         try (ByteRangeSource b = io.open(entries.get(1))) {
             assertThat(b.size()).isEqualTo(4);
+        }
+    }
+
+    @Test
+    void aDataFileReopenedThroughTheIoReusesItsCachedFooter(@TempDir Path tempDir) {
+        Path tableDir =
+                TestCorpus.extractDirectory("iceberg-geo-testbed", tempDir).resolve("v2_flat_columns");
+        String root = withoutTrailingSlash(tableDir.toUri().toString());
+        String location =
+                tableDir.resolve("data").resolve("rome.parquet").toUri().toString();
+        FooterMetadataCache.clear();
+
+        try (StorageIcebergFileIO io = StorageIcebergFileIO.owning(StorageFactory.open(tableDir.toUri()), root)) {
+            try (ByteRangeSource first = io.open(location)) {
+                ParquetSource.open(first, OpenOptions.DEFAULTS);
+            }
+            try (ByteRangeSource reopened = io.open(location)) {
+                assertThat(reopened.sourceIdentifier())
+                        .as("the cache identity forwarded by the reopened source from its delegate")
+                        .isPresent();
+
+                ReadCountingSource counting = new ReadCountingSource(reopened);
+                ParquetSource.open(counting, OpenOptions.DEFAULTS);
+
+                assertThat(counting.reads())
+                        .as("reads performed by the reopen of an already-parsed data file")
+                        .isZero();
+            }
         }
     }
 
@@ -231,6 +263,10 @@ class StorageIcebergFileIOTest {
         public URI presignPut(String key, Duration ttl, PresignWriteOptions options) {
             throw new UnsupportedOperationException();
         }
+    }
+
+    private static String withoutTrailingSlash(String uri) {
+        return uri.endsWith("/") ? uri.substring(0, uri.length() - 1) : uri;
     }
 
     /** A reader that reports an empty blob and records an idempotent {@link #close()}. */

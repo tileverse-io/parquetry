@@ -38,7 +38,6 @@ import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.ParquetFormat;
-import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
@@ -123,12 +122,12 @@ class BatchFormObservabilityIT {
     }
 
     /** The fixture's footer plus the machinery to build a serial coordinator over it in a chosen batch form. */
-    private record Fixture(ParquetSchema schema, List<RowGroup> rowGroups) {
+    private record Fixture(ParquetSchema schema, FileMetaData footer) {
 
         static Fixture open(ByteRangeSource source) {
             FileMetaData footer = ParquetFormat.readFooter(source);
             ParquetSchema schema = SchemaBuilder.build(footer.schema());
-            return new Fixture(schema, footer.rowGroups());
+            return new Fixture(schema, footer);
         }
 
         ParallelDecodeCoordinator serialCoordinator(ByteRangeSource source, BatchForm form) {
@@ -160,8 +159,8 @@ class BatchFormObservabilityIT {
 
         private List<RowGroupSurvivor> survivors(ByteRangeSource source) {
             IndexSectionLoader loader = indexLoader(source);
-            return rowGroups.stream()
-                    .map(rg -> RowGroupSurvivor.full(RowGroupChunks.of(rg, schema, loader)))
+            return TestRowGroupChunks.allOf(footer, schema, loader).stream()
+                    .map(RowGroupSurvivor::full)
                     .toList();
         }
 

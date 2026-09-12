@@ -218,7 +218,7 @@ class MaskedScanRowGroupReaderTest {
     private int pageCount(Path file, ParquetSchema fileSchema, ColumnPath leaf) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             FileMetaData footer = ParquetFormat.readFooter(source);
-            RowGroupChunks chunks = RowGroupChunks.of(footer.rowGroups().get(0), fileSchema, indexLoader(source));
+            RowGroupChunks chunks = TestRowGroupChunks.of(footer, 0, fileSchema, indexLoader(source));
             return chunks.offsetIndex(leaf).orElseThrow().pageLocations().size();
         }
     }
@@ -588,7 +588,7 @@ class MaskedScanRowGroupReaderTest {
         assertThat(footer.rowGroups())
                 .as("the fixture holds a single row group")
                 .hasSize(1);
-        RowGroupChunks chunks = RowGroupChunks.of(footer.rowGroups().get(0), fileSchema, indexLoader(source));
+        RowGroupChunks chunks = TestRowGroupChunks.of(footer, 0, fileSchema, indexLoader(source));
         RowGroupFetcher fetcher = TestFetchers.over(source, fileSchema, fileSchema, pool);
         return new ReaderFixture(
                 fetcher, RowGroupSurvivor.full(chunks), offsetIndexes(fileSchema, chunks), chunks.numRows());

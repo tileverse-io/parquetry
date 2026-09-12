@@ -188,7 +188,7 @@ class MaskedPageSkipParityTest {
             FileMetaData footer = ParquetFormat.readFooter(source);
             RowGroup rowGroup = footer.rowGroups().get(0);
             OffsetIndex offsetIndex = loadOffsetIndex(source, rowGroup);
-            RowGroupChunks chunks = RowGroupChunks.of(rowGroup, schema, indexLoader(source));
+            RowGroupChunks chunks = TestRowGroupChunks.of(footer, 0, schema, indexLoader(source));
             RowGroupFetcher fetcher = TestFetchers.over(source, schema, schema, SegmentPool.getDefault());
             RowGroupSurvivor survivor = new RowGroupSurvivor(chunks, Optional.of(mask), true);
             try (RowGroupFetch fetch =

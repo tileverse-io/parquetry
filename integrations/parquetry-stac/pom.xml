@@ -41,6 +41,17 @@
       <artifactId>parquetry-tileverse-storage</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- The tileverse storage API read directly by the catalog, the dataset, and the STAC readers.
+         Managed by the tileverse BOM in the root POM. -->
+    <dependency>
+      <groupId>io.tileverse.storage</groupId>
+      <artifactId>tileverse-storage-core</artifactId>
+    </dependency>
+    <!-- Caffeine, the cache behind the bounded per-part memo. -->
+    <dependency>
+      <groupId>com.github.ben-manes.caffeine</groupId>
+      <artifactId>caffeine</artifactId>
+    </dependency>
     <dependency>
       <groupId>tools.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>

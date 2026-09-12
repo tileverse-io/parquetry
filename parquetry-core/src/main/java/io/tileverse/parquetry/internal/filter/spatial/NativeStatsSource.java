@@ -16,23 +16,22 @@
 package io.tileverse.parquetry.internal.filter.spatial;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalDouble;
 
 import io.tileverse.parquetry.format.BoundingBox;
-import io.tileverse.parquetry.format.ColumnChunk;
-import io.tileverse.parquetry.format.ColumnMetaData;
-import io.tileverse.parquetry.format.FileMetaData;
-import io.tileverse.parquetry.format.RowGroup;
+import io.tileverse.parquetry.internal.footer.ChunkMeta;
+import io.tileverse.parquetry.internal.footer.CompactFooter;
+import io.tileverse.parquetry.internal.footer.LeafIndex;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
- * {@link SpatialBoundsSource} backed by GeoParquet 2.0 native {@code GeospatialStatistics.bbox} carried inside each row
- * group's {@link ColumnMetaData}. Most precise of the three tiers: per-row-group bounds are exact, and the file bounds
- * are the union of those.
+ * {@link SpatialBoundsSource} backed by the GeoParquet 2.0 native {@code GeospatialStatistics.bbox} recorded for each
+ * column chunk. Most precise of the three tiers: per-row-group bounds are exact, and the file bounds are the union of
+ * those.
  *
  * <p>Construction precomputes both the per-row-group bboxes and the file-level union. Lookups are then a single map
  * read. Callers that need to refresh after a footer change must build a new instance.
@@ -49,11 +48,18 @@ final class NativeStatsSource implements SpatialBoundsSource {
     }
 
     /**
-     * Returns a {@code NativeStatsSource} when at least one row-group column metadata carries a native
-     * {@code geospatial_statistics.bbox}; otherwise empty so the dispatch falls through to the next tier.
+     * Returns a {@code NativeStatsSource} when at least one column chunk records a native
+     * {@code geospatial_statistics.bbox}; otherwise empty, which sends the dispatch on to the next tier.
+     *
+     * <p>A footer whose count of geospatial extents is zero is declined outright. That covers every plain Parquet file
+     * and every GeoParquet 1.x file whose writer recorded none, neither of which then pays for a walk across the chunk
+     * table.
      */
-    static Optional<SpatialBoundsSource> tryBuild(FileMetaData footer) {
-        Map<ColumnPath, List<Optional<BoundingBox>>> perRowGroup = collectPerRowGroupBoxes(footer);
+    static Optional<SpatialBoundsSource> tryBuild(CompactFooter footer, LeafIndex leaves) {
+        if (footer.geoExtentCount() == 0) {
+            return Optional.empty();
+        }
+        Map<ColumnPath, List<Optional<BoundingBox>>> perRowGroup = collectBoxesByColumn(footer, leaves);
         if (perRowGroup.isEmpty()) {
             return Optional.empty();
         }
@@ -75,49 +81,53 @@ final class NativeStatsSource implements SpatialBoundsSource {
         return byGroup.get(rowGroupIndex);
     }
 
+    /** One box per geometry column and row group with native statistics, plus that column's file-level union. */
+    @Override
+    public int retainedBoxCount() {
+        return fileLevel.size() + PerRowGroupBoxes.presentBoxes(perRowGroup);
+    }
+
     /**
-     * Walks every row group and records the {@link BoundingBox} (if any) for each column under
-     * {@code geospatial_statistics}. Columns with at least one row group that carries a bbox land in the result; the
-     * per-row-group list always has one slot per row group, with {@link Optional#empty()} for the misses.
+     * Records the {@link BoundingBox} (if any) of every leaf column in every row group. Only columns with at least one
+     * row-group bbox land in the result; their per-row-group list always has one slot per row group, with
+     * {@link Optional#empty()} for the misses.
      */
-    private static Map<ColumnPath, List<Optional<BoundingBox>>> collectPerRowGroupBoxes(FileMetaData footer) {
-        List<RowGroup> rowGroups = footer.rowGroups();
-        Map<ColumnPath, List<Optional<BoundingBox>>> perColumn = new LinkedHashMap<>();
-        for (int i = 0; i < rowGroups.size(); i++) {
-            for (ColumnChunk chunk : rowGroups.get(i).columns()) {
-                recordChunk(chunk, i, rowGroups.size(), perColumn);
+    private static Map<ColumnPath, List<Optional<BoundingBox>>> collectBoxesByColumn(
+            CompactFooter footer, LeafIndex leaves) {
+        Map<ColumnPath, List<Optional<BoundingBox>>> perColumn = new HashMap<>();
+        for (int leaf = 0; leaf < footer.leafCount(); leaf++) {
+            if (recordsAnyGeoExtent(footer, leaf)) {
+                perColumn.put(leaves.pathOf(leaf), boxesAcrossRowGroups(footer, leaf));
             }
         }
-        // Drop columns where no row group carried a bbox.
-        perColumn.entrySet().removeIf(e -> e.getValue().stream().allMatch(Optional::isEmpty));
         return perColumn;
     }
 
-    private static void recordChunk(
-            ColumnChunk chunk,
-            int rowGroupIndex,
-            int rowGroupCount,
-            Map<ColumnPath, List<Optional<BoundingBox>>> perColumn) {
-        Optional<ColumnMetaData> meta = chunk.metaData();
-        if (meta.isEmpty()) {
-            return;
+    /**
+     * Whether any row group records a geospatial extent for this leaf. Most leaves of a geo file are attribute columns
+     * with none, and answering from the chunk flags leaves their per-row-group list unallocated - one slot per row
+     * group, on a file whose row groups run to the tens of thousands.
+     */
+    private static boolean recordsAnyGeoExtent(CompactFooter footer, int leaf) {
+        for (int rowGroup = 0; rowGroup < footer.rowGroupCount(); rowGroup++) {
+            if (footer.recordsGeoExtent(rowGroup, leaf)) {
+                return true;
+            }
         }
-        ColumnMetaData m = meta.orElseThrow();
-        Optional<BoundingBox> bbox = m.geospatialStatistics().flatMap(s -> s.bbox());
-        if (bbox.isEmpty()) {
-            return;
-        }
-        ColumnPath path = ColumnPath.of(m.pathInSchema());
-        List<Optional<BoundingBox>> list = perColumn.computeIfAbsent(path, _ -> emptySlots(rowGroupCount));
-        list.set(rowGroupIndex, bbox);
+        return false;
     }
 
-    private static List<Optional<BoundingBox>> emptySlots(int count) {
-        List<Optional<BoundingBox>> list = new ArrayList<>(count);
-        for (int i = 0; i < count; i++) {
-            list.add(Optional.empty());
+    private static List<Optional<BoundingBox>> boxesAcrossRowGroups(CompactFooter footer, int leaf) {
+        List<Optional<BoundingBox>> boxes = new ArrayList<>(footer.rowGroupCount());
+        for (int rowGroup = 0; rowGroup < footer.rowGroupCount(); rowGroup++) {
+            boxes.add(boxAt(footer, rowGroup, leaf));
         }
-        return list;
+        return boxes;
+    }
+
+    private static Optional<BoundingBox> boxAt(CompactFooter footer, int rowGroup, int leaf) {
+        Optional<ChunkMeta> chunk = footer.chunkIfPresent(rowGroup, leaf);
+        return chunk.flatMap(ChunkMeta::geoExtent);
     }
 
     /**
@@ -127,7 +137,7 @@ final class NativeStatsSource implements SpatialBoundsSource {
      */
     private static Map<ColumnPath, BoundingBox> unionAcrossRowGroups(
             Map<ColumnPath, List<Optional<BoundingBox>>> perRowGroup) {
-        Map<ColumnPath, BoundingBox> result = new LinkedHashMap<>();
+        Map<ColumnPath, BoundingBox> result = HashMap.newHashMap(perRowGroup.size());
         perRowGroup.forEach((path, list) -> {
             BoundingBox acc = null;
             for (Optional<BoundingBox> slot : list) {
@@ -156,8 +166,8 @@ final class NativeStatsSource implements SpatialBoundsSource {
 
     /**
      * Element-wise min for two optional axes. When either side is absent, the other is preserved; when both are absent,
-     * the result is absent too. Z/M axes can appear on only some row groups and the file-level union must carry them
-     * whenever at least one row group did.
+     * the result is absent too. Z/M axes can appear on only some row groups and the file-level union must keep them
+     * whenever at least one row group recorded them.
      */
     private static OptionalDouble minOptional(OptionalDouble a, OptionalDouble b) {
         if (a.isEmpty()) {
