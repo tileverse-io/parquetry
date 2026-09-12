@@ -18,7 +18,8 @@ package io.tileverse.parquetry.internal.filter.spatial;
 import java.util.Optional;
 
 import io.tileverse.parquetry.format.BoundingBox;
-import io.tileverse.parquetry.format.FileMetaData;
+import io.tileverse.parquetry.internal.footer.CompactFooter;
+import io.tileverse.parquetry.internal.footer.LeafIndex;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
@@ -42,10 +43,10 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
  *       {@link Optional#empty()}.
  * </ul>
  *
- * <p>{@link #of(FileMetaData, ParquetSchema, Optional)} picks the most precise applicable backing for the file as a
- * whole. Native wins unconditionally. Then covering. Then geo JSON bbox. Else empty.
+ * <p>{@link #of(CompactFooter, LeafIndex, ParquetSchema, Optional)} picks the most precise applicable backing for the
+ * file as a whole. Native wins unconditionally. Then covering. Then geo JSON bbox. Else empty.
  *
- * <p>{@link BoundingBox#wrapsAntimeridian()} surfaces at this layer too: aggregators that take the union across files
+ * <p>{@link BoundingBox#wrapsAntimeridian()} applies at this layer too: aggregators that take the union across files
  * must split such a bbox into two non-wrapping pieces before joining. {@code SpatialBoundsSource} returns the bbox
  * exactly as it was written; it does not normalize.
  */
@@ -66,20 +67,28 @@ public sealed interface SpatialBoundsSource
     Optional<BoundingBox> rowGroupBounds(ColumnPath geometryColumn, int rowGroupIndex);
 
     /**
+     * How many {@link BoundingBox} instances are held by this source. Zero for a source that knows no bounds at all. A
+     * cache that retains a whole file's derived forms prices them by this count.
+     */
+    int retainedBoxCount();
+
+    /**
      * Picks the most precise applicable backing for {@code footer}.
      *
      * <p>Dispatch is intentionally file-wide rather than per-column: a file's writer is overwhelmingly likely to be
      * consistent across geometry columns, and a single chosen tier keeps the dispatch table small. A column that the
-     * chosen backing doesn't know about surfaces as {@link Optional#empty()} from both accessors - the caller can
-     * decide what to do with that.
+     * chosen backing doesn't know about reads as {@link Optional#empty()} from both accessors - the caller can decide
+     * what to do with that.
      */
-    static SpatialBoundsSource of(FileMetaData footer, ParquetSchema schema, Optional<GeoParquetMetadata> geo) {
-        Optional<SpatialBoundsSource> nativeSource = NativeStatsSource.tryBuild(footer);
+    static SpatialBoundsSource of(
+            CompactFooter footer, LeafIndex leaves, ParquetSchema schema, Optional<GeoParquetMetadata> geo) {
+        Optional<SpatialBoundsSource> nativeSource = NativeStatsSource.tryBuild(footer, leaves);
         if (nativeSource.isPresent()) {
             return nativeSource.orElseThrow();
         }
         if (geo.isPresent()) {
-            Optional<SpatialBoundsSource> covering = CoveringColumnSource.tryBuild(footer, schema, geo.orElseThrow());
+            Optional<SpatialBoundsSource> covering =
+                    CoveringColumnSource.tryBuild(footer, leaves, schema, geo.orElseThrow());
             if (covering.isPresent()) {
                 return covering.orElseThrow();
             }

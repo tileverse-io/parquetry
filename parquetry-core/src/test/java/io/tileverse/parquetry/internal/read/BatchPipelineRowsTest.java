@@ -43,7 +43,6 @@ import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.ParquetFormat;
-import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
@@ -222,15 +221,14 @@ class BatchPipelineRowsTest {
     }
 
     /** A written multi-row-group fixture plus the machinery to build a serial coordinator over it. */
-    private record Fixture(Path file, ParquetSchema schema, List<RowGroup> rowGroups, int rowGroupCount) {
+    private record Fixture(Path file, ParquetSchema schema, FileMetaData footer, int rowGroupCount) {
 
         static Fixture write(Path dir, int rows) throws IOException {
             Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(dir, rows);
             try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
                 FileMetaData footer = ParquetFormat.readFooter(source);
                 ParquetSchema schema = SchemaBuilder.build(footer.schema());
-                List<RowGroup> rowGroups = footer.rowGroups();
-                return new Fixture(file, schema, rowGroups, rowGroups.size());
+                return new Fixture(file, schema, footer, footer.rowGroups().size());
             }
         }
 
@@ -268,8 +266,8 @@ class BatchPipelineRowsTest {
 
         private List<RowGroupSurvivor> survivors(ByteRangeSource source, SurvivorMode mode) {
             IndexSectionLoader loader = indexLoader(source);
-            return rowGroups.stream()
-                    .map(rg -> mode.wrap(RowGroupChunks.of(rg, schema, loader)))
+            return TestRowGroupChunks.allOf(footer, schema, loader).stream()
+                    .map(mode::wrap)
                     .toList();
         }
 

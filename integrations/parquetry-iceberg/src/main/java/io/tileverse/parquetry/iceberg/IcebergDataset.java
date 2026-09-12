@@ -17,6 +17,7 @@ package io.tileverse.parquetry.iceberg;
 
 import java.io.InterruptedIOException;
 import java.io.UncheckedIOException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -32,6 +33,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.StructuredTaskScope;
 import java.util.stream.Stream;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.Scheduler;
 import com.google.errorprone.annotations.MustBeClosed;
 
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
@@ -77,8 +81,22 @@ import io.tileverse.parquetry.schema.ParquetSchema;
  * <p>The byte sources are pre-opened and owned by the {@link IcebergTableCatalog}; the per-query {@link ParquetSource}
  * borrows the survivor subset and never closes them. The dataset presents the table's current schema and reconciles
  * each data file's columns to it by Iceberg field id; a file whose schema already matches the table reads untouched.
+ *
+ * <p>A file's source is memoized, bounded to {@link #DEFAULT_MAX_MEMOIZED_FILES} files and to ten idle minutes. A table
+ * wider than that bound keeps the footer metadata of the files most recently queried rather than of every file ever
+ * read.
  */
 final class IcebergDataset implements ParquetDataset {
+
+    /**
+     * The largest number of data files memoized at once by one table. A table of several hundred files would otherwise
+     * keep the footer metadata of every file ever read for the catalog's lifetime. Dropping a file costs a reopen,
+     * which finds its footer in the shared footer-metadata cache rather than reading it again.
+     */
+    static final int DEFAULT_MAX_MEMOIZED_FILES = 128;
+
+    /** How long a memoized file outlives the last query to touch it. */
+    private static final Duration MEMO_EXPIRY = Duration.ofMinutes(10);
 
     /** The synthesized row-position column the reader produces; the delete predicate filters on it. */
     private static final ColumnPath ROW_POSITION = ColumnPath.of("_pos");
@@ -111,11 +129,14 @@ final class IcebergDataset implements ParquetDataset {
     private final IcebergNameMapping nameMapping;
     private final IcebergNestedSchema nestedSchema;
     private final OpenOptions openOptions;
-    private final Map<Integer, ParquetSource> perFileDatasets = new ConcurrentHashMap<>();
+    private final Cache<Integer, ParquetSource> memoizedFiles;
     private final Set<Integer> nestedValidated = ConcurrentHashMap.newKeySet();
 
-    // The catalog hands the dataset its fully resolved snapshot state in one place; these are cohesive fields, not a
-    // long argument list worth bundling into a parameter object.
+    /**
+     * A dataset over one snapshot whose file memo holds at most {@code maxMemoizedFiles} data files at once. The
+     * shipped bound is {@link #DEFAULT_MAX_MEMOIZED_FILES}.
+     */
+    // S107: the snapshot state resolved by the catalog and the memo bound arrive together from one place.
     @SuppressWarnings("java:S107")
     IcebergDataset(
             String name,
@@ -129,7 +150,8 @@ final class IcebergDataset implements ParquetDataset {
             int formatVersion,
             IcebergNameMapping nameMapping,
             IcebergNestedSchema nestedSchema,
-            OpenOptions openOptions) {
+            OpenOptions openOptions,
+            int maxMemoizedFiles) {
         this.name = Objects.requireNonNull(name, "name");
         this.snapshot = Objects.requireNonNull(snapshot, "snapshot");
         this.icebergSchema = Objects.requireNonNull(icebergSchema, "icebergSchema");
@@ -142,6 +164,20 @@ final class IcebergDataset implements ParquetDataset {
         this.nameMapping = Objects.requireNonNull(nameMapping, "nameMapping");
         this.nestedSchema = Objects.requireNonNull(nestedSchema, "nestedSchema");
         this.openOptions = Objects.requireNonNull(openOptions, "openOptions");
+        this.memoizedFiles = buildFileMemo(maxMemoizedFiles);
+    }
+
+    /**
+     * The bounded file memo. A dropped entry releases footer metadata and nothing else: the byte sources belong to the
+     * catalog, and a read in flight holds its own reference to the source, which outlives the entry. The scheduler
+     * matters for an idle table: without it an expired entry is dropped only when the next query touches the memo.
+     */
+    private static Cache<Integer, ParquetSource> buildFileMemo(int maxMemoizedFiles) {
+        return Caffeine.newBuilder()
+                .maximumSize(maxMemoizedFiles)
+                .expireAfterAccess(MEMO_EXPIRY)
+                .scheduler(Scheduler.systemScheduler())
+                .build();
     }
 
     /** Whether this table's format version has row lineage; the reserved names have no meaning below it. */
@@ -760,12 +796,25 @@ final class IcebergDataset implements ParquetDataset {
 
     /**
      * The single-file {@link ParquetSource} over the data file at {@code index}, parsed once and reused across queries
-     * and threads. {@code computeIfAbsent} gives one footer parse per index even under concurrent reads; the dataset
-     * borrows the catalog's shared source, which the catalog owns and closes.
+     * and threads while the memo holds it. The memo gives one footer parse per index even under concurrent reads; the
+     * dataset borrows the catalog's shared source, which the catalog owns and closes. A file dropped by the bound is
+     * opened again on its next query, reading its footer from the shared footer-metadata cache.
      */
     private ParquetSource perFile(int index) {
-        return perFileDatasets.computeIfAbsent(
-                index, i -> ParquetSource.open(new SurvivorFileset(sources, List.of(i)), openOptions));
+        return memoizedFiles.get(index, i -> ParquetSource.open(new SurvivorFileset(sources, List.of(i)), openOptions));
+    }
+
+    /** The number of data files currently held by the memo. Package-private for the test over the memo's bound. */
+    int memoizedFileCount() {
+        return (int) memoizedFiles.estimatedSize();
+    }
+
+    /**
+     * Applies the evictions already decided by the memo's bound. Package-private for tests: Caffeine defers eviction to
+     * a maintenance pass, and a test that has just crossed the bound must run that pass before reading the outcome.
+     */
+    void runPendingFileEvictions() {
+        memoizedFiles.cleanUp();
     }
 
     private int maxConcurrentFiles() {

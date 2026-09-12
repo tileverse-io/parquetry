@@ -68,4 +68,20 @@ public record Statistics(
         maxValue = Segments.readOnlyOrAbsent(maxValue);
         minValue = Segments.readOnlyOrAbsent(minValue);
     }
+
+    /**
+     * The minimum bound of these statistics: {@link #minValue()} when the writer recorded one, else the deprecated
+     * {@link #min()}. {@link MemorySegment#NULL} when the writer recorded neither.
+     */
+    public MemorySegment preferredMin() {
+        return minValue != MemorySegment.NULL ? minValue : min;
+    }
+
+    /**
+     * The maximum bound of these statistics: {@link #maxValue()} when the writer recorded one, else the deprecated
+     * {@link #max()}. {@link MemorySegment#NULL} when the writer recorded neither.
+     */
+    public MemorySegment preferredMax() {
+        return maxValue != MemorySegment.NULL ? maxValue : max;
+    }
 }

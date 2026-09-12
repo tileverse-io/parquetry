@@ -32,7 +32,6 @@ import io.tileverse.parquetry.filter.MatchAction;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
-import io.tileverse.parquetry.format.Statistics;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -164,24 +163,23 @@ class QuantifiedPushdownTest {
 
     private static FilterPipeline.ColumnStatsLookup statsLookup(String min, String max) {
         Map<ColumnPath, FilterPipeline.ColumnStats> map = new HashMap<>();
-        Statistics stats = Statistics.builder()
-                .nullCount(OptionalLong.of(0L))
-                .minValue(MemorySegment.ofArray(min.getBytes(StandardCharsets.UTF_8)))
-                .maxValue(MemorySegment.ofArray(max.getBytes(StandardCharsets.UTF_8)))
-                .build();
-        map.put(LEAF, new FilterPipeline.ColumnStats(PrimitiveKind.BYTE_ARRAY, stats));
+        map.put(LEAF, nullFreeStats(PrimitiveKind.BYTE_ARRAY, encodeUtf8(min), encodeUtf8(max)));
         return path -> Optional.ofNullable(map.get(path));
     }
 
     private static FilterPipeline.ColumnStatsLookup intStatsLookup(int min, int max) {
         Map<ColumnPath, FilterPipeline.ColumnStats> map = new HashMap<>();
-        Statistics stats = Statistics.builder()
-                .nullCount(OptionalLong.of(0L))
-                .minValue(encodeInt(min))
-                .maxValue(encodeInt(max))
-                .build();
-        map.put(INT_LEAF, new FilterPipeline.ColumnStats(PrimitiveKind.INT32, stats));
+        map.put(INT_LEAF, nullFreeStats(PrimitiveKind.INT32, encodeInt(min), encodeInt(max)));
         return path -> Optional.ofNullable(map.get(path));
+    }
+
+    private static FilterPipeline.ColumnStats nullFreeStats(PrimitiveKind kind, MemorySegment min, MemorySegment max) {
+        return new FilterPipeline.ColumnStats(
+                kind, Optional.of(min), Optional.of(max), OptionalLong.of(0L), Optional.empty());
+    }
+
+    private static MemorySegment encodeUtf8(String value) {
+        return MemorySegment.ofArray(value.getBytes(StandardCharsets.UTF_8)).asReadOnly();
     }
 
     private static MemorySegment encodeInt(int value) {

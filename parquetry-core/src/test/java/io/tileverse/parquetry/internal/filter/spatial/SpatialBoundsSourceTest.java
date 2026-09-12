@@ -25,8 +25,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.format.ColumnChunk;
@@ -38,6 +42,8 @@ import io.tileverse.parquetry.format.GeospatialStatistics;
 import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.format.Statistics;
+import io.tileverse.parquetry.internal.footer.CompactFooter;
+import io.tileverse.parquetry.internal.footer.LeafIndex;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -59,7 +65,7 @@ class SpatialBoundsSourceTest {
 
     @Test
     void emptyWhenNoNativeNoCoveringNoBbox() {
-        SpatialBoundsSource source = SpatialBoundsSource.of(footer(noStatsRowGroup()), schemaWithGeometry(), empty());
+        SpatialBoundsSource source = boundsSourceOf(footer(noStatsRowGroup()), schemaWithGeometry(), empty());
         assertThat(source)
                 .as("no usable bounds in any tier should fall through to EmptyBoundsSource")
                 .isInstanceOf(EmptyBoundsSource.class);
@@ -73,7 +79,7 @@ class SpatialBoundsSourceTest {
         BoundingBox rg1 = bbox(-90, 0, -50, 0);
         FileMetaData footer = footer(geometryRowGroupWithNative(rg0), geometryRowGroupWithNative(rg1));
 
-        SpatialBoundsSource source = SpatialBoundsSource.of(footer, schemaWithGeometry(), empty());
+        SpatialBoundsSource source = boundsSourceOf(footer, schemaWithGeometry(), empty());
         assertThat(source)
                 .as("native geospatial_statistics should win the dispatch")
                 .isInstanceOf(NativeStatsSource.class);
@@ -86,6 +92,24 @@ class SpatialBoundsSourceTest {
                 .contains(bbox(-180, 0, -100, 0));
     }
 
+    /**
+     * A file with no geospatial statistics at all is ruled out of the native tier by the count of geospatial entries in
+     * the packed footer, without a walk of the chunk table. The dispatch then moves on to the tier below.
+     */
+    @Test
+    void theNativeTierDeclinesAFooterWithoutGeospatialEntries() {
+        ParquetSchema schema = schemaWithGeometry();
+        LeafIndex leaves = LeafIndex.of(schema);
+        CompactFooter compact = CompactFooter.encode(footer(noStatsRowGroup()), leaves);
+
+        assertThat(compact.geoExtentCount())
+                .as("a footer with no geospatial statistics has no geo entries")
+                .isZero();
+        assertThat(NativeStatsSource.tryBuild(compact, leaves))
+                .as("the native tier declines a footer with no geo entries")
+                .isEmpty();
+    }
+
     @Test
     void coveringColumnsBeatGeoJsonBbox() {
         // Schema: geometry column + bbox sidecar columns xmin/xmax/ymin/ymax (4 separate top-level DOUBLE leaves).
@@ -93,7 +117,7 @@ class SpatialBoundsSourceTest {
         FileMetaData footer = footer(coveringRowGroup(0, 1, 2, 3), coveringRowGroup(10, 20, 30, 40));
         GeoParquetMetadata geo = geoWithCoveringAndFileBbox();
 
-        SpatialBoundsSource source = SpatialBoundsSource.of(footer, schema, of(geo));
+        SpatialBoundsSource source = boundsSourceOf(footer, schema, of(geo));
         assertThat(source)
                 .as("covering should outrank file-level geo JSON bbox")
                 .isInstanceOf(CoveringColumnSource.class);
@@ -106,11 +130,30 @@ class SpatialBoundsSourceTest {
                 .contains(bbox(0, 20, 2, 40));
     }
 
+    /**
+     * A GeoParquet 1.1 writer nests the four sidecar leaves under a {@code bbox} group, which is the shape met by the
+     * covering tier in the wild. Resolving those nested paths must read the same bounds as the top-level shape above.
+     */
+    @Test
+    void coveringResolvesSidecarLeavesNestedUnderABboxGroup() {
+        ParquetSchema schema = schemaWithGeometryAndNestedCovering();
+        FileMetaData footer = footer(nestedCoveringRowGroup(0, 1, 2, 3), nestedCoveringRowGroup(10, 20, 30, 40));
+        GeoParquetMetadata geo = geoWithNestedCovering();
+
+        SpatialBoundsSource source = boundsSourceOf(footer, schema, of(geo));
+        assertThat(source)
+                .as("nested sidecar leaves must still reach the covering tier")
+                .isInstanceOf(CoveringColumnSource.class);
+        assertThat(source.rowGroupBounds(GEOMETRY, 0)).contains(bbox(0, 1, 2, 3));
+        assertThat(source.rowGroupBounds(GEOMETRY, 1)).contains(bbox(10, 20, 30, 40));
+        assertThat(source.fileBounds(GEOMETRY)).contains(bbox(0, 20, 2, 40));
+    }
+
     @Test
     void geoJsonFileBboxUsedWhenNeitherNativeNorCoveringPresent() {
         FileMetaData footer = footer(noStatsRowGroup());
         GeoParquetMetadata geo = geoWithFileBboxOnly();
-        SpatialBoundsSource source = SpatialBoundsSource.of(footer, schemaWithGeometry(), of(geo));
+        SpatialBoundsSource source = boundsSourceOf(footer, schemaWithGeometry(), of(geo));
         assertThat(source)
                 .as("file-level geo JSON bbox is the last real tier")
                 .isInstanceOf(GeoJsonFileBoundsSource.class);
@@ -125,7 +168,7 @@ class SpatialBoundsSourceTest {
     @Test
     void rowGroupBoundsOutOfRangeReturnsEmpty() {
         FileMetaData footer = footer(geometryRowGroupWithNative(bbox(0, 1, 0, 1)));
-        SpatialBoundsSource source = SpatialBoundsSource.of(footer, schemaWithGeometry(), empty());
+        SpatialBoundsSource source = boundsSourceOf(footer, schemaWithGeometry(), empty());
         assertThat(source.rowGroupBounds(GEOMETRY, -1))
                 .as("negative row-group index should surface as empty, not throw")
                 .isEmpty();
@@ -137,7 +180,7 @@ class SpatialBoundsSourceTest {
     @Test
     void emptyForUnknownGeometryColumn() {
         FileMetaData footer = footer(geometryRowGroupWithNative(bbox(0, 1, 0, 1)));
-        SpatialBoundsSource source = SpatialBoundsSource.of(footer, schemaWithGeometry(), empty());
+        SpatialBoundsSource source = boundsSourceOf(footer, schemaWithGeometry(), empty());
         ColumnPath unknown = ColumnPath.of("not_a_geometry_column");
         assertThat(source.fileBounds(unknown))
                 .as("unknown column on a native source should surface as empty")
@@ -150,13 +193,50 @@ class SpatialBoundsSourceTest {
         BoundingBox wrap = bbox(170, -170, -10, 10); // xmin > xmax: wraps the antimeridian
         assertThat(wrap.wrapsAntimeridian()).isTrue();
         FileMetaData footer = footer(geometryRowGroupWithNative(wrap));
-        SpatialBoundsSource source = SpatialBoundsSource.of(footer, schemaWithGeometry(), empty());
+        SpatialBoundsSource source = boundsSourceOf(footer, schemaWithGeometry(), empty());
         assertThat(source.rowGroupBounds(GEOMETRY, 0))
                 .as("antimeridian-wrap bbox must round-trip verbatim; SpatialBoundsSource does not normalize")
                 .contains(wrap);
     }
 
+    /**
+     * A cache holding a file's bounds source has to know what it costs, and each tier holds a different number of boxes
+     * for the same file. Both per-row-group tiers hold one box per row group plus the file-level union; the two
+     * file-level tiers hold one box per geometry column; the fallback holds none.
+     */
+    @ParameterizedTest
+    @MethodSource
+    void eachTierReportsTheBoundingBoxesItHolds(SpatialBoundsSource source, int expected) {
+        assertThat(source.retainedBoxCount()).isEqualTo(expected);
+    }
+
+    static Stream<Arguments> eachTierReportsTheBoundingBoxesItHolds() {
+        FileMetaData nativeBoxes =
+                footer(geometryRowGroupWithNative(bbox(0, 1, 0, 1)), geometryRowGroupWithNative(bbox(10, 11, 10, 11)));
+        FileMetaData coveringBoxes = footer(coveringRowGroup(0, 1, 2, 3), coveringRowGroup(10, 20, 30, 40));
+        return Stream.of(
+                Arguments.of(boundsSourceOf(nativeBoxes, schemaWithGeometry(), empty()), 3),
+                Arguments.of(
+                        boundsSourceOf(
+                                coveringBoxes,
+                                schemaWithGeometryAndCoveringDoubles(),
+                                of(geoWithCoveringAndFileBbox())),
+                        3),
+                Arguments.of(
+                        boundsSourceOf(footer(noStatsRowGroup()), schemaWithGeometry(), of(geoWithFileBboxOnly())), 1),
+                Arguments.of(boundsSourceOf(footer(noStatsRowGroup()), schemaWithGeometry(), empty()), 0),
+                Arguments.of(new SuppliedBoundsSource(Map.of(GEOMETRY, bbox(-1, 1, -1, 1))), 1));
+    }
+
     // --- helpers ---
+
+    /** Encodes the synthetic wire footer into the planning form read by the dispatch. */
+    private static SpatialBoundsSource boundsSourceOf(
+            FileMetaData footer, ParquetSchema schema, Optional<GeoParquetMetadata> geo) {
+        LeafIndex leaves = LeafIndex.of(schema);
+        CompactFooter compact = CompactFooter.encode(footer, leaves);
+        return SpatialBoundsSource.of(compact, leaves, schema, geo);
+    }
 
     private static BoundingBox bbox(double xmin, double xmax, double ymin, double ymax) {
         return BoundingBox.builder().xmin(xmin).xmax(xmax).ymin(ymin).ymax(ymax).build();
@@ -190,6 +270,16 @@ class SpatialBoundsSourceTest {
                 columnChunk(doubleStatsMeta("ymax", ymax, ymax))));
     }
 
+    /** The same shape as {@link #coveringRowGroup}, with the four sidecar leaves nested under a {@code bbox} group. */
+    private static RowGroup nestedCoveringRowGroup(double xmin, double xmax, double ymin, double ymax) {
+        return rowGroup(List.of(
+                columnChunk(geometryMeta(empty())),
+                columnChunk(nestedDoubleStatsMeta("xmin", xmin)),
+                columnChunk(nestedDoubleStatsMeta("xmax", xmax)),
+                columnChunk(nestedDoubleStatsMeta("ymin", ymin)),
+                columnChunk(nestedDoubleStatsMeta("ymax", ymax))));
+    }
+
     private static RowGroup rowGroup(List<ColumnChunk> chunks) {
         return RowGroup.builder().columns(chunks).build();
     }
@@ -213,6 +303,14 @@ class SpatialBoundsSourceTest {
     }
 
     private static ColumnMetaData doubleStatsMeta(String name, double min, double max) {
+        return doubleStatsMeta(List.of(name), min, max);
+    }
+
+    private static ColumnMetaData nestedDoubleStatsMeta(String name, double value) {
+        return doubleStatsMeta(List.of("bbox", name), value, value);
+    }
+
+    private static ColumnMetaData doubleStatsMeta(List<String> path, double min, double max) {
         Statistics stats = Statistics.builder()
                 .minValue(littleEndianDouble(min))
                 .maxValue(littleEndianDouble(max))
@@ -220,7 +318,7 @@ class SpatialBoundsSourceTest {
         return ColumnMetaData.builder()
                 .type(PhysicalType.DOUBLE)
                 .encodings(List.of(Encoding.PLAIN))
-                .pathInSchema(List.of(name))
+                .pathInSchema(path)
                 .codec(CompressionCodec.UNCOMPRESSED)
                 .numValues(1L)
                 .totalUncompressedSize(8L)
@@ -250,6 +348,17 @@ class SpatialBoundsSourceTest {
                 -1));
     }
 
+    private static ParquetSchema schemaWithGeometryAndNestedCovering() {
+        SchemaNode.Group bbox = new SchemaNode.Group(
+                "bbox",
+                Repetition.OPTIONAL,
+                List.of(doubleLeaf("xmin"), doubleLeaf("xmax"), doubleLeaf("ymin"), doubleLeaf("ymax")),
+                empty(),
+                -1);
+        return new ParquetSchema(
+                new SchemaNode.Group("root", Repetition.REQUIRED, List.of(geometryLeaf(), bbox), empty(), -1));
+    }
+
     private static SchemaNode.Primitive geometryLeaf() {
         return new SchemaNode.Primitive(
                 "geometry", Repetition.OPTIONAL, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), empty(), -1);
@@ -273,6 +382,22 @@ class SpatialBoundsSourceTest {
                 .encoding(of("WKB"))
                 .geometryTypes(List.of("Polygon"))
                 .bbox(of(bbox(-180, 180, -90, 90)))
+                .covering(of(new Covering(bboxCovering)))
+                .build();
+        return new GeoParquetMetadata.V1_1("1.1.0", "geometry", Map.of("geometry", col));
+    }
+
+    private static GeoParquetMetadata geoWithNestedCovering() {
+        BboxCovering bboxCovering = new BboxCovering(
+                ColumnPath.of("bbox", "xmin"),
+                ColumnPath.of("bbox", "xmax"),
+                ColumnPath.of("bbox", "ymin"),
+                ColumnPath.of("bbox", "ymax"),
+                empty(),
+                empty());
+        GeoColumn col = GeoColumn.builder()
+                .encoding(of("WKB"))
+                .geometryTypes(List.of("Polygon"))
                 .covering(of(new Covering(bboxCovering)))
                 .build();
         return new GeoParquetMetadata.V1_1("1.1.0", "geometry", Map.of("geometry", col));

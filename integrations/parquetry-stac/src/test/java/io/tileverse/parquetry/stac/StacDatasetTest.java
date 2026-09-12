@@ -79,6 +79,20 @@ class StacDatasetTest {
     }
 
     @Test
+    void aCollectionOfAlreadyResolvedPartsRejectsAnEmptyPartList() {
+        try (ContainerStorages storages = new ContainerStorages(new Properties())) {
+            List<StacItemRef> noParts = List.of();
+            List<double[]> noBboxes = List.of();
+
+            assertThatThrownBy(() ->
+                            new StacDataset("buildings", "geometry", noParts, noBboxes, storages, OpenOptions.DEFAULTS))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("buildings")
+                    .hasMessageContaining("no GeoParquet data parts");
+        }
+    }
+
+    @Test
     void readingAHeterogeneousCollectionFailsLoud(@TempDir Path tempDir) throws Exception {
         Path dir = Files.createDirectories(tempDir.resolve("data"));
         Path part0 = dir.resolve("p0.parquet");

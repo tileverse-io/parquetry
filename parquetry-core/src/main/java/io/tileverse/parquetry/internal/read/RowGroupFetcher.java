@@ -21,12 +21,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
-import io.tileverse.parquetry.format.ColumnChunk;
-import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.PageLocation;
-import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.internal.footer.ChunkMeta;
 import io.tileverse.parquetry.internal.read.page.DataPageRun;
 import io.tileverse.parquetry.internal.read.page.PageRun;
 import io.tileverse.parquetry.internal.read.page.PageSelection;
@@ -92,7 +90,7 @@ public final class RowGroupFetcher {
         RowGroupChunks chunks = survivor.chunks();
         List<FetchUnit> units = new ArrayList<>();
         for (ColumnPath path : projectedSchema.leafColumns()) {
-            ColumnMetaData meta = requireMeta(chunks, path);
+            ChunkMeta meta = requireFetchableChunk(chunks, path);
             if (mask.isPresent()) {
                 addUnitsFor(units, path, meta, mask.orElseThrow());
             } else {
@@ -102,8 +100,8 @@ public final class RowGroupFetcher {
         return CoalescingFetchPlanner.plan(units, maxCoalesceGap, maxCoalescedSpan);
     }
 
-    private FetchUnit wholeChunkUnit(ColumnPath path, ColumnMetaData meta) {
-        return new FetchUnit(path, chunkStart(meta), chunkLength(meta, path), 0, false);
+    private FetchUnit wholeChunkUnit(ColumnPath path, ChunkMeta meta) {
+        return new FetchUnit(path, meta.chunkStart(), meta.totalCompressedSize(), 0, false);
     }
 
     /**
@@ -112,14 +110,14 @@ public final class RowGroupFetcher {
      * offset index, when the offset index locates any page outside the chunk's own byte extent, or when every page
      * survives (the degenerate case where the whole chunk IS the narrowed plan, trailing bytes included).
      */
-    private void addUnitsFor(List<FetchUnit> units, ColumnPath path, ColumnMetaData meta, RowMask mask) {
+    private void addUnitsFor(List<FetchUnit> units, ColumnPath path, ChunkMeta meta, RowMask mask) {
         OffsetIndex offsetIndex = mask.offsetIndexes().get(path);
         if (offsetIndex == null || offsetIndex.pageLocations().isEmpty()) {
             units.add(wholeChunkUnit(path, meta));
             return;
         }
-        long start = chunkStart(meta);
-        long chunkEnd = start + chunkLength(meta, path);
+        long start = meta.chunkStart();
+        long chunkEnd = start + meta.totalCompressedSize();
         if (locatesPagesOutsideChunk(offsetIndex, start, chunkEnd)) {
             units.add(wholeChunkUnit(path, meta));
             return;
@@ -231,7 +229,7 @@ public final class RowGroupFetcher {
         List<FetchedColumnChunk> columns = new ArrayList<>(plan.slices().size());
         for (ColumnPath path : projectedSchema.leafColumns()) {
             ColumnSlices slices = requireSlices(plan, path);
-            ColumnMetaData meta = requireMeta(chunks, path);
+            ChunkMeta meta = requireMeta(chunks, path);
             Optional<MemorySegment> dictionaryPrefix =
                     slices.dictionaryPrefix().map(slice -> segmentFor(slice, rangeSegments));
             List<DataPageRun> runs = dataPageRuns(slices, rangeSegments);
@@ -266,33 +264,32 @@ public final class RowGroupFetcher {
         return rangeSegments.get(slice.rangeIndex()).asSlice(slice.offsetWithinRange(), slice.length());
     }
 
-    private ColumnMetaData requireMeta(RowGroupChunks chunks, ColumnPath path) {
-        ColumnChunk chunk = chunks.chunk(path)
-                .orElseThrow(() -> new IllegalStateException("Row group does not contain column " + path.dot()));
-        return chunk.metaData()
-                .orElseThrow(() ->
-                        new ParquetFormatException("ColumnChunk for " + path.dot() + " is missing inline metaData"));
-    }
-
     /**
-     * The byte offset where the column chunk begins. A {@code dictionary_page_offset} only points at a real dictionary
-     * page when it is positive and precedes the first data page; some writers leave it unset or store a literal
-     * {@code 0} (which would otherwise point at the file's magic header). The chunk then starts at
-     * {@code data_page_offset}. This mirrors parquet-mr's {@code getStartingPos}.
+     * The chunk of {@code path}, proven spannable by a fetch. The compact footer addresses a chunk by ordinal and keeps
+     * no column names, which is why both failures below are raised here, where the column has one.
      */
-    private static long chunkStart(ColumnMetaData meta) {
-        long dataPageOffset = meta.dataPageOffset();
-        long dictionaryPageOffset = meta.dictionaryPageOffset().orElse(0L);
-        boolean dictionaryPagePrecedesData = dictionaryPageOffset > 0 && dictionaryPageOffset < dataPageOffset;
-        return dictionaryPagePrecedesData ? dictionaryPageOffset : dataPageOffset;
+    private static ChunkMeta requireFetchableChunk(RowGroupChunks chunks, ColumnPath path) {
+        ChunkMeta meta = requireMeta(chunks, path);
+        int rowGroupIndex = chunks.rowGroupIndex();
+        if (meta.compressedSizeBeyondRange()) {
+            throw new MalformedFileException(
+                    describe(rowGroupIndex, path) + " has a totalCompressedSize beyond the addressable range");
+        }
+        int size = meta.totalCompressedSize();
+        if (size <= 0) {
+            throw new MalformedFileException(
+                    describe(rowGroupIndex, path) + " has an unsupported totalCompressedSize " + size);
+        }
+        return meta;
     }
 
-    private static int chunkLength(ColumnMetaData meta, ColumnPath path) {
-        long size = meta.totalCompressedSize();
-        if (size <= 0 || size > Integer.MAX_VALUE) {
-            throw new MalformedFileException(
-                    "Column chunk for " + path.dot() + " has an unsupported totalCompressedSize " + size);
-        }
-        return (int) size;
+    private static ChunkMeta requireMeta(RowGroupChunks chunks, ColumnPath path) {
+        return chunks.chunk(path)
+                .orElseThrow(() -> new MalformedFileException(
+                        "Row group " + chunks.rowGroupIndex() + " does not contain column " + path.dot()));
+    }
+
+    private static String describe(int rowGroupIndex, ColumnPath path) {
+        return "Column chunk " + path.dot() + " in row group " + rowGroupIndex;
     }
 }

@@ -64,4 +64,10 @@ final class GeoJsonFileBoundsSource implements SpatialBoundsSource {
     public Optional<BoundingBox> rowGroupBounds(ColumnPath geometryColumn, int rowGroupIndex) {
         return Optional.empty();
     }
+
+    /** One box per geometry column: this tier knows file-level bounds and nothing per row group. */
+    @Override
+    public int retainedBoxCount() {
+        return fileLevel.size();
+    }
 }

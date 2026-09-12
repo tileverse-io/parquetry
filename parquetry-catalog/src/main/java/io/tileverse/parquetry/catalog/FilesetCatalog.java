@@ -29,6 +29,7 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Stream;
 
+import io.tileverse.parquetry.data.FooterMetadataCache;
 import io.tileverse.parquetry.dataset.DatasetCapabilities;
 import io.tileverse.parquetry.dataset.FilesetDataset;
 import io.tileverse.parquetry.dataset.GeoMetadataAggregator;
@@ -53,17 +54,18 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
  * listing (and {@link CatalogOptions#datasetName()}) alone, and a dataset is built, its footers fetched and decoded,
  * only when {@link #dataset(String)} first resolves it.
  *
- * <p>Resolving the merged dataset reads each file's footer once in a gather pass (schema, GeoParquet {@code geo}
- * metadata, row count, and Hive partition values), overlapping the fetches on virtual threads and dropping each decoded
- * footer after its metadata is extracted: a resolved dataset keeps only the compact per-file planning state, and
- * queries decode the surviving files' footers per call. From the gathered metadata the partition keys are bound
+ * <p>Resolving the merged dataset gathers every file's metadata in one pass (schema, GeoParquet {@code geo} metadata,
+ * row count, and Hive partition values), reading a footer only when {@link FooterMetadataCache} does not already hold
+ * that file's metadata, overlapping the fetches on virtual threads and dropping each decoded footer once its metadata
+ * is extracted: a resolved dataset keeps only the compact per-file planning state, and a query reopens the surviving
+ * files through that same cache. From the gathered metadata the partition keys are bound
  * ({@link HivePartitioning#bind}: a key matching a physical column prunes that column, a path-only key is synthesized
  * into an appended column), the per-file {@code geo} metadata is unioned ({@link GeoMetadataAggregator#aggregate}), and
  * one {@link FilesetDataset} is built with per-file partition {@link FileStats} for pruning.
  *
  * <p>Hive {@code key=value} segments are a physical-column pruning aid, never a dataset discriminator: the whole tree
- * is one dataset. The footer reads at merged-dataset resolution are the known scale ceiling, acceptable for moderate
- * file counts.
+ * is one dataset. The scale ceiling is the first resolution of a merged dataset, which pays one footer read for every
+ * file not yet in the cache; that is acceptable for moderate file counts.
  *
  * <p>The catalog owns the byte sources it opens and the {@link FileSource}; {@link #close()} releases both.
  */

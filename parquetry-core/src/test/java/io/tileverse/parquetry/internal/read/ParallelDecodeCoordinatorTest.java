@@ -208,7 +208,7 @@ class ParallelDecodeCoordinatorTest {
 
     /** A written multi-row-group fixture plus the machinery to build a coordinator over it. */
     private record Fixture(
-            Path file, ParquetSchema schema, List<RowGroup> rowGroups, List<Long> rowsPerRowGroup, int rowGroupCount) {
+            Path file, ParquetSchema schema, FileMetaData footer, List<Long> rowsPerRowGroup, int rowGroupCount) {
 
         static Fixture write(Path dir, int rows) throws IOException {
             Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(dir, rows);
@@ -218,7 +218,7 @@ class ParallelDecodeCoordinatorTest {
                 List<RowGroup> rowGroups = footer.rowGroups();
                 List<Long> rowsPerRowGroup =
                         rowGroups.stream().map(RowGroup::numRows).toList();
-                return new Fixture(file, schema, rowGroups, rowsPerRowGroup, rowGroups.size());
+                return new Fixture(file, schema, footer, rowsPerRowGroup, rowGroups.size());
             }
         }
 
@@ -252,8 +252,8 @@ class ParallelDecodeCoordinatorTest {
 
         private List<RowGroupSurvivor> survivors(ByteRangeSource source) {
             IndexSectionLoader loader = indexLoader(source);
-            return rowGroups.stream()
-                    .map(rg -> RowGroupSurvivor.full(RowGroupChunks.of(rg, schema, loader)))
+            return TestRowGroupChunks.allOf(footer, schema, loader).stream()
+                    .map(RowGroupSurvivor::full)
                     .toList();
         }
 

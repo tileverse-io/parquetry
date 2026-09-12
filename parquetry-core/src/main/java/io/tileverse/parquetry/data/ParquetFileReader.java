@@ -27,6 +27,7 @@ import java.util.SequencedSet;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongConsumer;
+import java.util.function.Supplier;
 import java.util.stream.Stream;
 
 import io.tileverse.parquetry.columnar.BatchMaterializer;
@@ -42,12 +43,8 @@ import io.tileverse.parquetry.filter.explain.RowGroupOutcome;
 import io.tileverse.parquetry.filter.explain.RowGroupPlan;
 import io.tileverse.parquetry.filter.prune.FileStats;
 import io.tileverse.parquetry.format.BoundingBox;
-import io.tileverse.parquetry.format.ColumnMetaData;
-import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.PageLocation;
-import io.tileverse.parquetry.format.ParquetFormat;
-import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.internal.filter.FilterPipeline;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.BloomFilterLookup;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnPageStatsLookup;
@@ -55,6 +52,9 @@ import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnStatsLookup;
 import io.tileverse.parquetry.internal.filter.spatial.BoundsAccumulator;
 import io.tileverse.parquetry.internal.filter.spatial.SpatialBoundsSource;
 import io.tileverse.parquetry.internal.filter.spatial.SpatialCoveringRewrite;
+import io.tileverse.parquetry.internal.footer.ChunkMeta;
+import io.tileverse.parquetry.internal.footer.CompactFooter;
+import io.tileverse.parquetry.internal.footer.LeafIndex;
 import io.tileverse.parquetry.internal.read.BatchForm;
 import io.tileverse.parquetry.internal.read.BatchPipeline;
 import io.tileverse.parquetry.internal.read.DecryptionKeyRetriever;
@@ -91,10 +91,17 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeometryColumns;
 import lombok.NonNull;
 
 /**
- * Read entry point for a single Parquet file. Opens the footer once via {@link #open(ByteRangeSource)}, caches the
- * decoded {@link FileMetaData}, the parquetry {@link ParquetSchema}, and the collapsed key/value metadata, and exposes
- * {@link #read read}, {@link #readBatches readBatches}, and {@link #explain explain} entry points that share that one
+ * Read entry point for a single Parquet file. {@link #open(ByteRangeSource)} reads the footer once, unless
+ * {@link FooterMetadataCache} already holds the file's metadata, and retains the forms derived from it. The
+ * {@link #read read}, {@link #readBatches readBatches}, and {@link #explain explain} entry points all share that one
  * footer.
+ *
+ * <p>The decoded wire records live only for the duration of the parse triggered by {@link #open open}, which derives
+ * every retained form from them and lets them go; the reader keeps a packed {@code CompactFooter} instead. A dataset of
+ * several hundred open files multiplies the footprint of a single reader, and the wire records are by far the heaviest
+ * part of a parsed footer. Reopening a file skips even that parse: {@link FooterMetadataCache} holds the derived forms
+ * - the packed footer, the schema, the leaf index, the GeoParquet metadata, the spatial bounds, the key/value metadata,
+ * and the row-group view - and every reader over one file shares all of them.
  *
  * <p>Instances are safe to share across threads. Cached footer, schema, and metadata are immutable; every
  * {@code read()} call allocates its own filter survivors, row-group prefetcher, and batch pipeline. The underlying
@@ -111,11 +118,13 @@ public final class ParquetFileReader {
     private static final Materializer<Boolean> DISCARD_MATERIALIZER = (_, _) -> Boolean.TRUE;
 
     private final ByteRangeSource source;
-    private final FileMetaData footer;
     private final ParquetSchema fileSchema;
+    private final CompactFooter compactFooter;
+    private final LeafIndex leafIndex;
     private final Map<String, String> keyValueMetadata;
     private final List<RowGroupSummary> rowGroupView;
     private final Optional<GeoParquetMetadata> geoMetadata;
+    private final SpatialBoundsSource spatialBounds;
     private final ParquetRuntime runtime;
     private final ReadResources readResources;
     private final SpatialReadGates spatialReadGates;
@@ -126,45 +135,60 @@ public final class ParquetFileReader {
 
     private ParquetFileReader(
             ByteRangeSource source,
-            FileMetaData footer,
-            ParquetSchema fileSchema,
-            Map<String, String> keyValueMetadata,
-            List<RowGroupSummary> rowGroupView,
+            FooterMetadata footerMetadata,
             ParquetRuntime runtime,
             Optional<DecryptionKeyRetriever> decryptionKeyRetriever) {
         this.source = source;
-        this.footer = footer;
-        this.fileSchema = fileSchema;
-        this.keyValueMetadata = keyValueMetadata;
-        this.rowGroupView = rowGroupView;
-        this.geoMetadata = FooterModel.parseGeoMetadata(keyValueMetadata);
+        this.fileSchema = footerMetadata.fileSchema();
+        this.compactFooter = footerMetadata.compactFooter();
+        this.leafIndex = footerMetadata.leafIndex();
+        this.keyValueMetadata = footerMetadata.keyValueMetadata();
+        this.rowGroupView = footerMetadata.rowGroups();
+        this.geoMetadata = footerMetadata.geoMetadata();
+        this.spatialBounds = footerMetadata.spatialBounds();
         this.runtime = runtime;
         this.readResources = new ReadResources(source, fileSchema, runtime);
-        this.spatialReadGates = new SpatialReadGates(footer, fileSchema, geoMetadata);
+        this.spatialReadGates = new SpatialReadGates(spatialBounds, fileSchema, geoMetadata);
         this.decryptionKeyRetriever = decryptionKeyRetriever;
     }
 
     /**
-     * Opens a reader against the default runtime, performing exactly one footer read against {@code source}. Equivalent
-     * to {@code open(source, ParquetRuntime.defaultRuntime(), Optional.empty())}.
+     * Opens a reader against the default runtime, reading {@code source}'s footer unless {@link FooterMetadataCache}
+     * already holds its metadata. Equivalent to {@code open(source, ParquetRuntime.defaultRuntime(),
+     * Optional.empty())}.
      */
     public static ParquetFileReader open(@NonNull ByteRangeSource source) {
         return open(source, ParquetRuntime.defaultRuntime(), Optional.empty());
     }
 
     /**
-     * Opens a reader bound to {@code runtime} for read resources, performing exactly one footer read against
-     * {@code source}. The {@code decryptionKeyRetriever} is held for an encrypted file.
+     * Opens a reader bound to {@code runtime} for read resources, reading {@code source}'s footer unless
+     * {@link FooterMetadataCache} already holds its metadata. The {@code decryptionKeyRetriever} is held for an
+     * encrypted file.
      */
     public static ParquetFileReader open(
             @NonNull ByteRangeSource source,
             @NonNull ParquetRuntime runtime,
             @NonNull Optional<DecryptionKeyRetriever> decryptionKeyRetriever) {
-        FileMetaData footer = ParquetFormat.readFooter(source);
-        Map<String, String> kvMetadata = FooterModel.collapseKeyValueMetadata(footer.keyValueMetadata());
-        ParquetSchema fileSchema = FooterModel.buildFileSchema(footer, kvMetadata);
-        List<RowGroupSummary> rgView = FooterModel.toRowGroupView(footer);
-        return new ParquetFileReader(source, footer, fileSchema, kvMetadata, rgView, runtime, decryptionKeyRetriever);
+        FooterMetadata footerMetadata = footerMetadataOf(source, decryptionKeyRetriever);
+        return new ParquetFileReader(source, footerMetadata, runtime, decryptionKeyRetriever);
+    }
+
+    /**
+     * The derived footer forms for {@code source}, served from the shared cache when the source names itself. Two kinds
+     * of open derive their own instead: one that received a decryption key, because metadata decrypted with a caller's
+     * key must not outlive the reader holding that key, and one over an unnamed source, which offers no stable identity
+     * to key on.
+     */
+    private static FooterMetadata footerMetadataOf(
+            ByteRangeSource source, Optional<DecryptionKeyRetriever> decryptionKeyRetriever) {
+        Supplier<FooterMetadata> loader = () -> FooterMetadata.parse(source);
+        if (decryptionKeyRetriever.isPresent()) {
+            return loader.get();
+        }
+        Optional<String> sourceId = source.sourceIdentifier();
+        return sourceId.map(id -> FooterMetadataCache.get(id, source.size(), loader))
+                .orElseGet(loader);
     }
 
     /** Returns the file schema, with GeoParquet 1.x logical-type annotations folded in. */
@@ -183,13 +207,37 @@ public final class ParquetFileReader {
     }
 
     /**
+     * The packed planning form of this file's footer, held in place of the decoded wire records. It is immutable and
+     * freely shareable between readers opened on the same file.
+     */
+    CompactFooter compactFooter() {
+        return compactFooter;
+    }
+
+    /**
+     * The mapping between this file's leaf columns and the ordinals addressing them in the packed planning footer.
+     * Derived once with that footer and shared between readers opened on the same file.
+     */
+    LeafIndex leafIndex() {
+        return leafIndex;
+    }
+
+    /**
+     * The most precise bounds tier applicable to this file, answering a geometry column's file-level and per-row-group
+     * extents. Derived once with the packed planning footer and shared between readers opened on the same file.
+     */
+    SpatialBoundsSource spatialBounds() {
+        return spatialBounds;
+    }
+
+    /**
      * The footer-aggregated prunable statistics for this file: per-column min/max/null-count combined across the file's
      * row groups, the geometry bounding box for each geometry column, and the record count. Reads only the cached
      * footer metadata, no page data. The result feeds {@link io.tileverse.parquetry.filter.prune.FilePruner} for
      * whole-file pruning, mirroring the Iceberg manifest-bounds path with the footer as the source.
      */
     public FileStats fileStats() {
-        return new FileStatsAggregator(footer, fileSchema, geoMetadata).aggregate(rowGroupChunks());
+        return new FileStatsAggregator(spatialBounds, fileSchema, geoMetadata).aggregate(rowGroupChunks());
     }
 
     /** Streams rows matching {@code predicate} under {@code projection}, materialized via the default record shape. */
@@ -361,9 +409,7 @@ public final class ParquetFileReader {
      * tier narrowed without qualifying for a mask still walks every row.
      */
     private static long rowsToScan(RowGroupSurvivor survivor, Optional<RowMask> decodeMask) {
-        return decodeMask
-                .map(mask -> mask.survivingRows().totalRows())
-                .orElseGet(() -> survivor.chunks().numRows());
+        return decodeMask.map(mask -> mask.survivingRows().totalRows()).orElseGet(survivor::numRows);
     }
 
     /**
@@ -747,16 +793,14 @@ public final class ParquetFileReader {
      * expose none.
      */
     private Optional<BoundingBox> unfilteredBounds(ColumnPath geometryColumn, ReadOptions options) {
-        SpatialBoundsSource spatialBounds = SpatialBoundsSource.of(footer, fileSchema, geoMetadata);
         Optional<BoundingBox> fileBox = spatialBounds.fileBounds(geometryColumn);
         if (fileBox.isPresent()) {
             return fileBox;
         }
-        return unionRowGroupBoundsAndScanTheRest(geometryColumn, spatialBounds, options);
+        return unionRowGroupBoundsAndScanTheRest(geometryColumn, options);
     }
 
-    private Optional<BoundingBox> unionRowGroupBoundsAndScanTheRest(
-            ColumnPath geometryColumn, SpatialBoundsSource spatialBounds, ReadOptions options) {
+    private Optional<BoundingBox> unionRowGroupBoundsAndScanTheRest(ColumnPath geometryColumn, ReadOptions options) {
         BoundsAccumulator accumulator = new BoundsAccumulator();
         List<RowGroupChunks> rowGroupChunks = rowGroupChunks();
         List<RowGroupSurvivor> boxLess = new ArrayList<>();
@@ -799,7 +843,6 @@ public final class ParquetFileReader {
             Predicate predicate, ColumnPath geometryColumn, ReadObservation observation) {
         ReadOptions options = observation.effectiveOptions();
         BoundsAccumulator accumulator = new BoundsAccumulator();
-        SpatialBoundsSource spatialBounds = SpatialBoundsSource.of(footer, fileSchema, geoMetadata);
         List<RowGroupChunks> rowGroupChunks = rowGroupChunks();
         List<RowPositionColumn> rowPositionRequests = rowPositionColumns(predicate);
         boolean observe = observing(options);
@@ -812,7 +855,7 @@ public final class ParquetFileReader {
                 wantsTimings,
                 observation::addPipelineNanos);
         List<ResidualGroup> residual =
-                unionMatchedAndCollectResidual(plan, rowGroupChunks, spatialBounds, geometryColumn, accumulator);
+                unionMatchedAndCollectResidual(plan, rowGroupChunks, geometryColumn, accumulator);
         scanResidualBounds(
                 residual,
                 plan,
@@ -841,7 +884,6 @@ public final class ParquetFileReader {
     private List<ResidualGroup> unionMatchedAndCollectResidual(
             ExplainPlan plan,
             List<RowGroupChunks> rowGroupChunks,
-            SpatialBoundsSource spatialBounds,
             ColumnPath geometryColumn,
             BoundsAccumulator accumulator) {
         List<ResidualGroup> residual = new ArrayList<>();
@@ -1210,10 +1252,10 @@ public final class ParquetFileReader {
      */
     private List<RowGroupChunks> rowGroupChunks(FetchAccumulator accumulator) {
         IndexSectionLoader loader = indexSectionLoader(accumulator);
-        List<RowGroup> rgs = footer.rowGroups();
-        List<RowGroupChunks> chunks = new ArrayList<>(rgs.size());
-        for (RowGroup rg : rgs) {
-            chunks.add(RowGroupChunks.of(rg, fileSchema, loader));
+        int rowGroupCount = compactFooter.rowGroupCount();
+        List<RowGroupChunks> chunks = new ArrayList<>(rowGroupCount);
+        for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
+            chunks.add(RowGroupChunks.of(compactFooter, rowGroupIndex, leafIndex, fileSchema, loader));
         }
         return chunks;
     }
@@ -1285,7 +1327,6 @@ public final class ParquetFileReader {
             ReadOptions options,
             List<ColumnPath> projectedLeaves,
             boolean rowPositionDeletes) {
-        SpatialBoundsSource spatialBounds = SpatialBoundsSource.of(footer, fileSchema, geoMetadata);
         Map<RowGroupChunks, Long> fileOffsets = rowPositionDeletes ? rowGroupFileOffsets(rowGroupChunks) : Map.of();
         List<FilterPipeline.RowGroupInputs> inputs = new ArrayList<>(rowGroupChunks.size());
         for (RowGroupChunks chunks : rowGroupChunks) {
@@ -1357,9 +1398,18 @@ public final class ParquetFileReader {
     private static long projectedCompressedBytes(RowGroupChunks chunks, List<ColumnPath> projectedLeaves) {
         long total = 0L;
         for (ColumnPath leaf : projectedLeaves) {
-            total += chunks.meta(leaf).map(ColumnMetaData::totalCompressedSize).orElse(0L);
+            total += chunks.chunk(leaf).map(ParquetFileReader::estimableBytes).orElse(0);
         }
         return total;
+    }
+
+    /**
+     * The bytes read by a fetch of {@code chunk}, counted toward the estimate alone. Any recorded length that no fetch
+     * can span - the unaddressable placeholder included - counts as nothing: an estimate short of the truth beats one
+     * dragged below zero.
+     */
+    private static int estimableBytes(ChunkMeta chunk) {
+        return Math.max(0, chunk.totalCompressedSize());
     }
 
     /**

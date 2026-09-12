@@ -44,4 +44,10 @@ public final class SuppliedBoundsSource implements SpatialBoundsSource {
     public Optional<BoundingBox> rowGroupBounds(ColumnPath geometryColumn, int rowGroupIndex) {
         return fileBounds(geometryColumn);
     }
+
+    /** Every row group of a column answers with that column's one supplied box, which is the only box held. */
+    @Override
+    public int retainedBoxCount() {
+        return fileBounds.size();
+    }
 }

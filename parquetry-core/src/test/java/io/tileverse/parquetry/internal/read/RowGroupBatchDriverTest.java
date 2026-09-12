@@ -36,10 +36,7 @@ import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.columnar.IntVector;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
-import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.CompressionCodec;
-import io.tileverse.parquetry.format.Encoding;
-import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.internal.read.page.DataPageRun;
 import io.tileverse.parquetry.io.SegmentPool.Pooled;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -159,27 +156,14 @@ class RowGroupBatchDriverTest {
     private static FetchedColumnChunk heapChunk(ColumnPath path, byte[] data, long numValues) {
         MemorySegment segment = MemorySegment.ofArray(data).asReadOnly();
 
-        ColumnMetaData meta = ColumnMetaData.builder()
-                .type(PhysicalType.INT32)
-                .encodings(List.of(Encoding.PLAIN))
-                .pathInSchema(pathSegments(path))
-                .codec(CompressionCodec.UNCOMPRESSED)
-                .numValues(numValues)
-                .totalUncompressedSize((long) data.length)
-                .totalCompressedSize((long) data.length)
-                .dataPageOffset(0L)
-                .build();
-
         return new FetchedColumnChunk(
-                path, meta, /*maxRep*/ 0, /*maxDef*/ 0, List.of(new DataPageRun(segment, 0)), Optional.empty());
-    }
-
-    private static List<String> pathSegments(ColumnPath path) {
-        String[] segments = new String[path.numParts()];
-        for (int i = 0; i < segments.length; i++) {
-            segments[i] = path.part(i);
-        }
-        return List.of(segments);
+                path,
+                CompressionCodec.UNCOMPRESSED,
+                numValues,
+                /*maxRep*/ 0,
+                /*maxDef*/ 0,
+                List.of(new DataPageRun(segment, 0)),
+                Optional.empty());
     }
 
     private static byte[] encodeInt32sLittleEndian(int[] values) {

@@ -46,12 +46,14 @@ import io.tileverse.parquetry.filter.RowRanges.Range;
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.ColumnMetaData;
+import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.PageLocation;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
+import io.tileverse.parquetry.internal.footer.ChunkMeta;
 import io.tileverse.parquetry.internal.read.page.DataPageRun;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
@@ -172,7 +174,8 @@ class PageNarrowedPlanTest {
     void malformedFirstDataPageOffsetFallsBackToWholeChunk() {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             Fixture fixture = Fixture.open(source);
-            OffsetIndex beforeTheChunk = withFirstPageOffset(fixture.offsetIndex(A), chunkStartOf(fixture.meta(A)) - 1);
+            OffsetIndex beforeTheChunk =
+                    withFirstPageOffset(fixture.offsetIndex(A), fixture.meta(A).chunkStart() - 1);
             RowMask mask = new RowMask(firstAndLastRows(), Map.of(A, beforeTheChunk, B, fixture.offsetIndex(B)));
 
             FetchPlan plan = fixture.plan(Optional.of(mask));
@@ -286,7 +289,7 @@ class PageNarrowedPlanTest {
             MemorySegment firstDataPage = fixture.readFirstDataPage(A, arena);
             List<DataPageRun> runs = List.of(new DataPageRun(firstDataPage, 0));
             Optional<MemorySegment> prefixThatIsReallyADataPage = Optional.of(firstDataPage);
-            ColumnMetaData meta = fixture.meta(A);
+            ChunkMeta meta = fixture.meta(A);
 
             assertThatThrownBy(() -> ColumnChunkSlicer.slice(prefixThatIsReallyADataPage, runs, meta, A, SCHEMA))
                     .isInstanceOf(MalformedFileException.class)
@@ -313,7 +316,7 @@ class PageNarrowedPlanTest {
     // Assertions
     // -------------------------------------------------------------------------
 
-    private static void assertWholeChunk(FetchPlan plan, ColumnMetaData meta, ColumnPath path) {
+    private static void assertWholeChunk(FetchPlan plan, ChunkMeta meta, ColumnPath path) {
         ColumnSlices slices = plan.slices().get(path);
         assertThat(slices.dictionaryPrefix())
                 .as("a whole-chunk column reaches its dictionary through the head of its single run, %s", path.dot())
@@ -321,13 +324,13 @@ class PageNarrowedPlanTest {
         assertThat(slices.runs()).as("whole-chunk column %s", path.dot()).hasSize(1);
         RunSlice run = slices.runs().get(0);
         assertThat(run.firstPageOrdinal()).isZero();
-        assertThat(run.length()).isEqualTo(Math.toIntExact(meta.totalCompressedSize()));
+        assertThat(run.length()).isEqualTo(meta.totalCompressedSize());
         assertThat(absoluteOffset(plan, run.rangeIndex(), run.offsetWithinRange()))
-                .isEqualTo(chunkStartOf(meta));
+                .isEqualTo(meta.chunkStart());
     }
 
     private static void assertDictionaryPrefix(FetchPlan plan, Fixture fixture, ColumnPath path) {
-        ColumnMetaData meta = fixture.meta(path);
+        ChunkMeta meta = fixture.meta(path);
         assertThat(meta.dictionaryPageOffset())
                 .as("the fixture's column %s must be dictionary-encoded for the prefix to exist", path.dot())
                 .isPresent();
@@ -335,8 +338,8 @@ class PageNarrowedPlanTest {
         long firstDataPageOffset =
                 fixture.offsetIndex(path).pageLocations().get(0).offset();
         assertThat(absoluteOffset(plan, prefix.rangeIndex(), prefix.offsetWithinRange()))
-                .isEqualTo(chunkStartOf(meta));
-        assertThat(prefix.length()).isEqualTo(Math.toIntExact(firstDataPageOffset - chunkStartOf(meta)));
+                .isEqualTo(meta.chunkStart());
+        assertThat(prefix.length()).isEqualTo(Math.toIntExact(firstDataPageOffset - meta.chunkStart()));
     }
 
     private static void assertPageFetched(FetchPlan plan, PageLocation page, ColumnPath path) {
@@ -373,21 +376,9 @@ class PageNarrowedPlanTest {
         return plan.ranges().get(rangeIndex).fileOffset() + offsetWithinRange;
     }
 
-    /**
-     * The chunk's first byte as the read path computes it: the dictionary page when the writer recorded a positive
-     * offset ahead of the first data page, the first data page otherwise.
-     */
-    private static long chunkStartOf(ColumnMetaData meta) {
-        long dictionaryPageOffset = meta.dictionaryPageOffset().orElse(0L);
-        if (dictionaryPageOffset > 0 && dictionaryPageOffset < meta.dataPageOffset()) {
-            return dictionaryPageOffset;
-        }
-        return meta.dataPageOffset();
-    }
-
     /** The byte just past the chunk's last, the exclusive end of the extent the read path trusts an offset index in. */
-    private static long chunkEndOf(ColumnMetaData meta) {
-        return chunkStartOf(meta) + meta.totalCompressedSize();
+    private static long chunkEndOf(ChunkMeta meta) {
+        return meta.chunkStart() + meta.totalCompressedSize();
     }
 
     // -------------------------------------------------------------------------
@@ -398,8 +389,9 @@ class PageNarrowedPlanTest {
     private record Fixture(ByteRangeSource source, RowGroup rowGroup, RowGroupChunks chunks, RowGroupFetcher fetcher) {
 
         static Fixture open(ByteRangeSource source) {
-            RowGroup rowGroup = ParquetFormat.readFooter(source).rowGroups().get(0);
-            RowGroupChunks chunks = RowGroupChunks.of(rowGroup, SCHEMA, indexLoader(source));
+            FileMetaData footer = ParquetFormat.readFooter(source);
+            RowGroup rowGroup = footer.rowGroups().get(0);
+            RowGroupChunks chunks = TestRowGroupChunks.of(footer, 0, SCHEMA, indexLoader(source));
             RowGroupFetcher fetcher = TestFetchers.over(
                     source,
                     SCHEMA,
@@ -411,8 +403,8 @@ class PageNarrowedPlanTest {
             return new Fixture(source, rowGroup, chunks, fetcher);
         }
 
-        ColumnMetaData meta(ColumnPath path) {
-            return chunks.meta(path).orElseThrow();
+        ChunkMeta meta(ColumnPath path) {
+            return chunks.chunk(path).orElseThrow();
         }
 
         OffsetIndex offsetIndex(ColumnPath path) {
@@ -458,7 +450,7 @@ class PageNarrowedPlanTest {
                     rowGroup.fileOffset(),
                     rowGroup.totalCompressedSize(),
                     rowGroup.ordinal());
-            return RowGroupSurvivor.full(RowGroupChunks.of(moved, SCHEMA, indexLoader(source)));
+            return RowGroupSurvivor.full(TestRowGroupChunks.of(moved, SCHEMA, indexLoader(source)));
         }
 
         /** Reads the bytes of {@code path}'s first data page (its header plus payload) into {@code arena}. */
@@ -471,7 +463,7 @@ class PageNarrowedPlanTest {
 
         /** Reads the bytes between {@code path}'s chunk start and its first data page: the dictionary page. */
         MemorySegment readDictionaryPrefix(ColumnPath path, Arena arena) {
-            long start = chunkStartOf(meta(path));
+            long start = meta(path).chunkStart();
             long firstDataPageOffset = offsetIndex(path).pageLocations().get(0).offset();
             MemorySegment prefix = arena.allocate(firstDataPageOffset - start);
             source.readFully(start, prefix);

@@ -15,21 +15,22 @@
  */
 package io.tileverse.parquetry.internal.read;
 
+import java.lang.foreign.MemorySegment;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 
-import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnIndex;
-import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.OffsetIndex;
-import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnBloom;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnPageStats;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnStats;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
+import io.tileverse.parquetry.internal.footer.ChunkMeta;
+import io.tileverse.parquetry.internal.footer.CompactFooter;
+import io.tileverse.parquetry.internal.footer.LeafIndex;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -38,59 +39,75 @@ import io.tileverse.parquetry.schema.SchemaNode;
 import lombok.NonNull;
 
 /**
- * An in-memory view over one {@link RowGroup} plus the file schema, built once per read call. It owns the
- * column-path-to-chunk index and the per-column metadata lookups the read path needs (primitive kind, flatness, the
- * inline statistics), and it memoizes the lazily-loaded index sections - a column's {@link OffsetIndex},
- * {@link ColumnIndex}, and bloom filter are each read at most once per call no matter how many pipeline stages ask.
+ * An in-memory view over one row group of a {@link CompactFooter} plus the file schema, built once per read call. It
+ * resolves a column path to that row group's chunk and serves the per-column metadata needed by the read path
+ * (primitive kind, flatness, the inline statistics), and it memoizes the lazily-loaded index sections - a column's
+ * {@link OffsetIndex}, {@link ColumnIndex}, and bloom filter are each read at most once per call no matter how many
+ * pipeline stages ask.
  *
- * <p>Construction is cheap and side-effect free (it builds the chunk index only). Index sections load on first access
- * through the injected {@link IndexSectionLoader}. A missing section, a non-primitive column, or a read failure all
- * degrade to {@link Optional#empty()}; the read still succeeds with that tier off for the column.
+ * <p>Construction is cheap and side-effect free. Index sections load on first access through the injected
+ * {@link IndexSectionLoader}. A missing section, a non-primitive column, or a read failure all degrade to
+ * {@link Optional#empty()}; the read still succeeds with that tier off for the column.
  *
  * <p>This view is confined to the calling thread. Index sections are loaded during filter evaluation and mask building,
- * both of which run on the consumer thread before decode workers start; the view carries no state touched by decode
+ * both of which run on the consumer thread before decode workers start; the view holds no state touched by decode
  * workers. A future change that loads sections from a worker thread would need to guard the memo.
  */
 public final class RowGroupChunks {
 
-    private final RowGroup rowGroup;
+    /** Passed to the loader when the footer records no bloom-filter length; the filter's header states its size. */
+    private static final int LENGTH_FROM_FILTER_HEADER = -1;
+
+    private final CompactFooter footer;
+    private final int rowGroupIndex;
+    private final LeafIndex leaves;
     private final ParquetSchema fileSchema;
     private final IndexSectionLoader loader;
-    private final Map<ColumnPath, ColumnChunk> chunkByPath;
 
     private final Map<ColumnPath, Optional<OffsetIndex>> offsetIndexMemo = new HashMap<>();
     private final Map<ColumnPath, Optional<ColumnIndex>> columnIndexMemo = new HashMap<>();
     private final Map<ColumnPath, Optional<ColumnPageStats>> pageStatsMemo = new HashMap<>();
     private final Map<ColumnPath, Optional<ColumnBloom>> bloomMemo = new HashMap<>();
 
-    private RowGroupChunks(RowGroup rowGroup, ParquetSchema fileSchema, IndexSectionLoader loader) {
-        this.rowGroup = rowGroup;
+    private RowGroupChunks(
+            CompactFooter footer,
+            int rowGroupIndex,
+            LeafIndex leaves,
+            ParquetSchema fileSchema,
+            IndexSectionLoader loader) {
+        this.footer = footer;
+        this.rowGroupIndex = rowGroupIndex;
+        this.leaves = leaves;
         this.fileSchema = fileSchema;
         this.loader = loader;
-        this.chunkByPath = indexChunksByPath(rowGroup);
     }
 
-    /** Builds the view; only the chunk index is computed eagerly. */
+    /** Builds the view over row group {@code rowGroupIndex}; nothing is read from the blob until a lookup asks. */
     public static RowGroupChunks of(
-            @NonNull RowGroup rowGroup, @NonNull ParquetSchema fileSchema, @NonNull IndexSectionLoader loader) {
-        return new RowGroupChunks(rowGroup, fileSchema, loader);
+            @NonNull CompactFooter footer,
+            int rowGroupIndex,
+            @NonNull LeafIndex leaves,
+            @NonNull ParquetSchema fileSchema,
+            @NonNull IndexSectionLoader loader) {
+        return new RowGroupChunks(footer, rowGroupIndex, leaves, fileSchema, loader);
     }
 
-    public RowGroup rowGroup() {
-        return rowGroup;
+    /** The row group's position in file order. */
+    public int rowGroupIndex() {
+        return rowGroupIndex;
     }
 
     public long numRows() {
-        return rowGroup.numRows();
+        return footer.numRows(rowGroupIndex);
     }
 
     /** The column chunk for {@code path}, or empty when the row group has no such column. */
-    public Optional<ColumnChunk> chunk(ColumnPath path) {
-        return Optional.ofNullable(chunkByPath.get(path));
-    }
-
-    public Optional<ColumnMetaData> meta(ColumnPath path) {
-        return chunk(path).flatMap(ColumnChunk::metaData);
+    public Optional<ChunkMeta> chunk(ColumnPath path) {
+        int leaf = leaves.ordinalOf(path);
+        if (leaf == LeafIndex.UNKNOWN) {
+            return Optional.empty();
+        }
+        return footer.chunkIfPresent(rowGroupIndex, leaf);
     }
 
     /** The primitive kind of {@code path}, or empty for non-primitive or unknown paths. */
@@ -114,16 +131,27 @@ public final class RowGroupChunks {
 
     /** Inline statistics for {@code path}, or empty when the column has none or maps to no primitive leaf. */
     public Optional<ColumnStats> stats(ColumnPath path) {
-        Optional<ColumnMetaData> maybeMeta = meta(path);
-        if (maybeMeta.isEmpty()) {
+        Optional<ChunkMeta> maybeChunk = chunk(path);
+        if (maybeChunk.isEmpty()) {
             return Optional.empty();
         }
-        ColumnMetaData columnMeta = maybeMeta.orElseThrow();
-        if (columnMeta.statistics().isEmpty()) {
+        ChunkMeta chunk = maybeChunk.orElseThrow();
+        Optional<MemorySegment> minValue = chunk.minValue();
+        Optional<MemorySegment> maxValue = chunk.maxValue();
+        OptionalLong nullCount = chunk.nullCount();
+        if (!hasStatistics(minValue, maxValue, nullCount)) {
             return Optional.empty();
         }
-        return primitiveKind(path)
-                .map(kind -> new ColumnStats(kind, columnMeta.statistics().orElseThrow(), logicalType(path)));
+        return primitiveKind(path).map(kind -> new ColumnStats(kind, minValue, maxValue, nullCount, logicalType(path)));
+    }
+
+    /**
+     * Whether the writer recorded anything readable by a pruning tier. A chunk with no null count and neither bound had
+     * no usable statistics on the wire either.
+     */
+    private static boolean hasStatistics(
+            Optional<MemorySegment> minValue, Optional<MemorySegment> maxValue, OptionalLong nullCount) {
+        return nullCount.isPresent() || minValue.isPresent() || maxValue.isPresent();
     }
 
     /** The memoized {@link OffsetIndex}, or empty when absent or unreadable. */
@@ -151,32 +179,32 @@ public final class RowGroupChunks {
     }
 
     private Optional<OffsetIndex> loadOffsetIndex(ColumnPath path) {
-        ColumnChunk chunk = chunkByPath.get(path);
-        if (chunk == null
-                || chunk.offsetIndexOffset().isEmpty()
-                || chunk.offsetIndexLength().isEmpty()) {
+        return chunk(path).flatMap(this::readOffsetIndex);
+    }
+
+    private Optional<OffsetIndex> readOffsetIndex(ChunkMeta chunk) {
+        OptionalLong offset = chunk.offsetIndexOffset();
+        if (offset.isEmpty()) {
             return Optional.empty();
         }
         try {
-            return Optional.of(loader.readOffsetIndex(
-                    chunk.offsetIndexOffset().getAsLong(),
-                    chunk.offsetIndexLength().getAsInt()));
+            return Optional.of(loader.readOffsetIndex(offset.getAsLong(), chunk.offsetIndexLength()));
         } catch (RuntimeException _) {
             return Optional.empty();
         }
     }
 
     private Optional<ColumnIndex> loadColumnIndex(ColumnPath path) {
-        ColumnChunk chunk = chunkByPath.get(path);
-        if (chunk == null
-                || chunk.columnIndexOffset().isEmpty()
-                || chunk.columnIndexLength().isEmpty()) {
+        return chunk(path).flatMap(this::readColumnIndex);
+    }
+
+    private Optional<ColumnIndex> readColumnIndex(ChunkMeta chunk) {
+        OptionalLong offset = chunk.columnIndexOffset();
+        if (offset.isEmpty()) {
             return Optional.empty();
         }
         try {
-            return Optional.of(loader.readColumnIndex(
-                    chunk.columnIndexOffset().getAsLong(),
-                    chunk.columnIndexLength().getAsInt()));
+            return Optional.of(loader.readColumnIndex(offset.getAsLong(), chunk.columnIndexLength()));
         } catch (RuntimeException _) {
             return Optional.empty();
         }
@@ -197,32 +225,24 @@ public final class RowGroupChunks {
     }
 
     private Optional<ColumnBloom> loadBloom(ColumnPath path) {
-        Optional<ColumnMetaData> maybeMeta = meta(path);
-        if (maybeMeta.isEmpty() || maybeMeta.orElseThrow().bloomFilterOffset().isEmpty()) {
-            return Optional.empty();
-        }
         Optional<PrimitiveKind> kind = primitiveKind(path);
         if (kind.isEmpty()) {
             return Optional.empty();
         }
-        ColumnMetaData columnMeta = maybeMeta.orElseThrow();
+        return chunk(path).flatMap(chunk -> readBloom(chunk, kind.orElseThrow(), logicalType(path)));
+    }
+
+    private Optional<ColumnBloom> readBloom(ChunkMeta chunk, PrimitiveKind kind, Optional<LogicalType> logicalType) {
+        OptionalLong offset = chunk.bloomFilterOffset();
+        if (offset.isEmpty()) {
+            return Optional.empty();
+        }
         try {
-            int length = columnMeta.bloomFilterLength().isPresent()
-                    ? Math.toIntExact(columnMeta.bloomFilterLength().getAsLong())
-                    : -1;
-            SplitBlockBloomFilter filter =
-                    loader.readBloom(columnMeta.bloomFilterOffset().getAsLong(), length);
-            return Optional.of(new ColumnBloom(kind.orElseThrow(), filter, logicalType(path)));
+            int length = chunk.bloomFilterLength().orElse(LENGTH_FROM_FILTER_HEADER);
+            SplitBlockBloomFilter filter = loader.readBloom(offset.getAsLong(), length);
+            return Optional.of(new ColumnBloom(kind, filter, logicalType));
         } catch (RuntimeException _) {
             return Optional.empty();
         }
-    }
-
-    private static Map<ColumnPath, ColumnChunk> indexChunksByPath(RowGroup rowGroup) {
-        Map<ColumnPath, ColumnChunk> index = new LinkedHashMap<>();
-        for (ColumnChunk chunk : rowGroup.columns()) {
-            chunk.metaData().ifPresent(meta -> index.put(ColumnPath.of(meta.pathInSchema()), chunk));
-        }
-        return index;
     }
 }

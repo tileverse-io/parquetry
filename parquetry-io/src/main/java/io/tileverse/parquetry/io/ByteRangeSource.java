@@ -21,6 +21,7 @@ import java.lang.foreign.MemorySegment;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * A thread-safe, positional, read-only byte source of known size. parquetry's single read dependency.
@@ -33,6 +34,20 @@ public interface ByteRangeSource extends AutoCloseable {
 
     /** Total byte length of the source; stable for the source's lifetime. */
     long size();
+
+    /**
+     * A stable name for the underlying object - typically its URI or absolute path - which parquetry pairs with
+     * {@link #size()} as the identity of the file's content when it caches metadata derived from it. Two sources over
+     * the same object return equal names; two sources over different objects do not. An implementation returns a name
+     * only when that name plus the length pins the content: an object rewritten in place to the same length under the
+     * same name would otherwise be served the metadata of its previous content.
+     *
+     * <p>Empty, the default, means the source cannot make that promise, and every reader opened over it derives its own
+     * metadata.
+     */
+    default Optional<String> sourceIdentifier() {
+        return Optional.empty();
+    }
 
     /**
      * Reads up to {@code dst.byteSize()} bytes starting at {@code offset} into {@code dst}, returning the number of

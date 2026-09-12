@@ -17,6 +17,7 @@ package io.tileverse.parquetry.tileverse;
 
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
+import java.util.Optional;
 import java.util.OptionalLong;
 
 import io.tileverse.storage.RangeReader;
@@ -46,6 +47,15 @@ final class RangeReaderByteRangeSource implements ByteRangeSource {
     @Override
     public long size() {
         return size;
+    }
+
+    /**
+     * The reader's own source identifier, typically the object's URI. A reader that declines to name its source leaves
+     * this adapter unnamed rather than failing the read.
+     */
+    @Override
+    public Optional<String> sourceIdentifier() {
+        return Optional.ofNullable(reader.getSourceIdentifier());
     }
 
     @Override

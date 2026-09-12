@@ -24,7 +24,6 @@ import java.util.Optional;
 import java.util.OptionalInt;
 
 import io.tileverse.parquetry.data.Compression;
-import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.DictionaryPageHeader;
 import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.PageHeader;
@@ -32,6 +31,7 @@ import io.tileverse.parquetry.format.PageType;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.format.PhysicalType;
+import io.tileverse.parquetry.internal.footer.ChunkMeta;
 import io.tileverse.parquetry.internal.read.page.DataPageRun;
 import io.tileverse.parquetry.internal.read.page.Dictionary;
 import io.tileverse.parquetry.internal.read.page.DictionaryDecoder;
@@ -65,7 +65,7 @@ final class ColumnChunkSlicer {
     static FetchedColumnChunk slice(
             Optional<MemorySegment> dictionaryPrefix,
             List<DataPageRun> runs,
-            ColumnMetaData meta,
+            ChunkMeta meta,
             ColumnPath path,
             ParquetSchema fileSchema)
             throws IOException {
@@ -98,13 +98,19 @@ final class ColumnChunkSlicer {
 
     private static FetchedColumnChunk chunkOf(
             ColumnPath path,
-            ColumnMetaData meta,
+            ChunkMeta meta,
             ParquetSchema fileSchema,
             List<DataPageRun> runs,
             Optional<Dictionary<?>> dictionary) {
         LevelMaxima maxima = fileSchema.maxLevels(path);
         return new FetchedColumnChunk(
-                path, meta, maxima.maxRepetitionLevel(), maxima.maxDefinitionLevel(), readOnly(runs), dictionary);
+                path,
+                meta.codec(),
+                meta.numValues(),
+                maxima.maxRepetitionLevel(),
+                maxima.maxDefinitionLevel(),
+                readOnly(runs),
+                dictionary);
     }
 
     /**
@@ -131,7 +137,7 @@ final class ColumnChunkSlicer {
      * the data pages reference.
      */
     private static Optional<Dictionary<?>> decodeDictionaryPrefix(
-            MemorySegment prefix, ColumnMetaData meta, ColumnPath path, ParquetSchema fileSchema) throws IOException {
+            MemorySegment prefix, ChunkMeta meta, ColumnPath path, ParquetSchema fileSchema) throws IOException {
         MemorySegmentInputStream stream = new MemorySegmentInputStream(prefix, 0L, prefix.byteSize());
         PageHeader header = readPageHeader(stream, path);
         if (header.type() != PageType.DICTIONARY_PAGE) {
@@ -158,15 +164,14 @@ final class ColumnChunkSlicer {
      * resulting {@link Dictionary} holds heap-resident Java values referenced from the {@link FetchedColumnChunk}.
      */
     private static DictionaryAndOffset maybeDecodeDictionary(
-            MemorySegment chunkSegment, ColumnMetaData meta, ColumnPath path, ParquetSchema fileSchema)
-            throws IOException {
+            MemorySegment chunkSegment, ChunkMeta meta, ColumnPath path, ParquetSchema fileSchema) throws IOException {
         if (chunkSegment.byteSize() == 0) {
             return NO_DICTIONARY;
         }
         MemorySegmentInputStream stream = new MemorySegmentInputStream(chunkSegment, 0L, chunkSegment.byteSize());
         PageHeader header = readPageHeader(stream, path);
         if (header.type() != PageType.DICTIONARY_PAGE) {
-            if (declaresRealDictionaryPage(meta)) {
+            if (meta.dictionaryPageOffset().isPresent()) {
                 throw new MalformedFileException("Column " + path.dot()
                         + " declares dictionaryPageOffset but its first page is not a dictionary page (type="
                         + header.type() + ")");
@@ -177,15 +182,6 @@ final class ColumnChunkSlicer {
     }
 
     /**
-     * Whether {@code dictionary_page_offset} points at a real dictionary page. Some writers store a literal {@code 0}
-     * for columns that have no dictionary; that value would point at the file's magic header rather than a page, and
-     * does not count as a declared dictionary page.
-     */
-    private static boolean declaresRealDictionaryPage(ColumnMetaData meta) {
-        return meta.dictionaryPageOffset().orElse(0L) > 0;
-    }
-
-    /**
      * Decodes the dictionary page whose header has already been read, given {@code headerEnd}, the offset of the first
      * payload byte within {@code chunkSegment}.
      */
@@ -193,7 +189,7 @@ final class ColumnChunkSlicer {
             MemorySegment chunkSegment,
             long headerEnd,
             PageHeader header,
-            ColumnMetaData meta,
+            ChunkMeta meta,
             ColumnPath path,
             ParquetSchema fileSchema)
             throws IOException {
@@ -223,7 +219,7 @@ final class ColumnChunkSlicer {
      * closed before this method returns.
      */
     private static Dictionary<?> decodeDictionary(
-            ColumnMetaData meta,
+            ChunkMeta meta,
             ColumnPath path,
             ParquetSchema fileSchema,
             DictionaryPageHeader dictHeader,

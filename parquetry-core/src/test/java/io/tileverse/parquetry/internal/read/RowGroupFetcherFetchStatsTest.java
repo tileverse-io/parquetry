@@ -33,7 +33,6 @@ import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.ParquetFormat;
-import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
@@ -100,8 +99,7 @@ class RowGroupFetcherFetchStatsTest {
 
     private static RowGroupSurvivor survivorFor(ByteRangeSource source, ParquetSchema schema) {
         FileMetaData footer = ParquetFormat.readFooter(source);
-        RowGroup rowGroup = footer.rowGroups().get(0);
-        RowGroupChunks chunks = RowGroupChunks.of(rowGroup, schema, indexLoaderNotUsed());
+        RowGroupChunks chunks = TestRowGroupChunks.of(footer, 0, schema, indexLoaderNotUsed());
         return RowGroupSurvivor.full(chunks);
     }
 

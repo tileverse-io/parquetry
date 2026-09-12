@@ -29,6 +29,7 @@ import com.google.errorprone.annotations.MustBeClosed;
 import io.tileverse.parquetry.columnar.BatchMaterializer;
 import io.tileverse.parquetry.columnar.OutputBatches;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
+import io.tileverse.parquetry.data.FooterMetadataCache;
 import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.RowGroupSummary;
@@ -76,7 +77,7 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
 public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.ParquetReader
         permits DefaultParquetSource {
 
-    /** Returns the file's schema as decoded at {@link #open(ByteRangeSource) open} time. */
+    /** Returns the file's schema, as decoded from its footer. */
     ParquetSchema schema();
 
     /**
@@ -374,8 +375,9 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
     }
 
     /**
-     * Opens a {@code ParquetSource} over {@code source}. Reads the footer (one positional read) and decodes the schema;
-     * subsequent {@code read} calls reuse both.
+     * Opens a {@code ParquetSource} over {@code source}, reading its footer in one positional read unless
+     * {@link FooterMetadataCache} already holds that file's metadata. Either way the schema and the planning form of
+     * the footer are in place when this returns, and every subsequent {@code read} call reuses them.
      *
      * <p>The returned {@code ParquetSource} does <em>not</em> own {@code source}; the caller closes it after the last
      * {@code read(...)} stream is closed.
@@ -411,10 +413,11 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
     }
 
     /**
-     * Opens a dataset over every file in {@code fileset}, in index order. Each file is opened immediately (its footer
-     * is read), with the footer reads of up to {@link ParquetRuntime#maxConcurrentFiles()} files overlapped on virtual
-     * threads; all files must agree on {@link ParquetSchema} by equality. The byte sources returned by
-     * {@link FilesetReader#openFile(int)} are borrowed; the caller owns and closes them.
+     * Opens a dataset over every file in {@code fileset}, in index order. Each file is opened immediately, reading its
+     * footer unless {@link FooterMetadataCache} already holds that file's metadata, with up to
+     * {@link ParquetRuntime#maxConcurrentFiles()} of those opens overlapped on virtual threads; all files must agree on
+     * {@link ParquetSchema} by equality. The byte sources returned by {@link FilesetReader#openFile(int)} are borrowed;
+     * the caller owns and closes them.
      *
      * @throws IllegalArgumentException if {@code fileset} reports zero files
      * @throws io.tileverse.parquetry.format.ParquetFormatException if any footer fails to conform to the spec

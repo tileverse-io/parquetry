@@ -20,18 +20,17 @@ import static io.tileverse.parquetry.format.ParquetLayouts.FLOAT;
 
 import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalDouble;
 
 import io.tileverse.parquetry.format.BoundingBox;
-import io.tileverse.parquetry.format.ColumnChunk;
-import io.tileverse.parquetry.format.ColumnMetaData;
-import io.tileverse.parquetry.format.FileMetaData;
-import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.format.Statistics;
+import io.tileverse.parquetry.internal.footer.ChunkMeta;
+import io.tileverse.parquetry.internal.footer.CompactFooter;
+import io.tileverse.parquetry.internal.footer.LeafIndex;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -43,7 +42,7 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 /**
  * {@link SpatialBoundsSource} backed by GeoParquet 1.1 {@code covering.bbox} sidecar columns. Each geometry column with
- * covering metadata declares four (or six) sibling numeric leaves whose per-row-group {@link Statistics} carry the
+ * covering metadata declares four (or six) sibling numeric leaves whose per-row-group {@link Statistics} give the
  * row-group bbox: the {@code xmin} column's stats.min is the row group's xmin, the {@code xmax} column's stats.max is
  * the row group's xmax, and so on.
  *
@@ -64,11 +63,12 @@ final class CoveringColumnSource implements SpatialBoundsSource {
 
     /**
      * Returns a {@code CoveringColumnSource} when at least one geometry column in {@code geo} has a usable covering
-     * (numeric sidecar leaves whose schema is resolvable and whose row groups carry at least one usable stats entry).
-     * Otherwise empty so the dispatch falls through.
+     * (numeric sidecar leaves whose schema is resolvable and whose row groups record at least one usable stats entry).
+     * Otherwise empty, which sends the dispatch on to the next tier.
      */
-    static Optional<SpatialBoundsSource> tryBuild(FileMetaData footer, ParquetSchema schema, GeoParquetMetadata geo) {
-        Map<ColumnPath, BboxAxes> axesByGeometry = resolveCoverings(schema, geo);
+    static Optional<SpatialBoundsSource> tryBuild(
+            CompactFooter footer, LeafIndex leaves, ParquetSchema schema, GeoParquetMetadata geo) {
+        Map<ColumnPath, BboxAxes> axesByGeometry = resolveCoverings(leaves, schema, geo);
         if (axesByGeometry.isEmpty()) {
             return Optional.empty();
         }
@@ -97,38 +97,57 @@ final class CoveringColumnSource implements SpatialBoundsSource {
         return byGroup.get(rowGroupIndex);
     }
 
+    /** One box per geometry column and row group with usable sidecar stats, plus that column's file-level union. */
+    @Override
+    public int retainedBoxCount() {
+        return fileLevel.size() + PerRowGroupBoxes.presentBoxes(perRowGroup);
+    }
+
     /**
      * Builds the {@link BboxAxes} entry for each geometry column whose {@link Covering} resolves cleanly against
      * {@code schema}. Columns without a covering, or whose sidecar paths don't resolve to primitive numeric leaves, are
      * skipped.
      */
-    private static Map<ColumnPath, BboxAxes> resolveCoverings(ParquetSchema schema, GeoParquetMetadata geo) {
-        Map<ColumnPath, BboxAxes> result = new LinkedHashMap<>();
-        geo.columns().forEach((columnName, geoColumn) -> resolveOne(schema, columnName, geoColumn, result));
+    private static Map<ColumnPath, BboxAxes> resolveCoverings(
+            LeafIndex leaves, ParquetSchema schema, GeoParquetMetadata geo) {
+        Map<ColumnPath, BboxAxes> result = HashMap.newHashMap(geo.columns().size());
+        geo.columns().forEach((columnName, geoColumn) -> resolveOne(leaves, schema, columnName, geoColumn, result));
         return result;
     }
 
     private static void resolveOne(
-            ParquetSchema schema, String columnName, GeoColumn geoColumn, Map<ColumnPath, BboxAxes> sink) {
+            LeafIndex leaves,
+            ParquetSchema schema,
+            String columnName,
+            GeoColumn geoColumn,
+            Map<ColumnPath, BboxAxes> sink) {
         Optional<BboxCovering> covering = geoColumn.covering().map(Covering::bbox);
         if (covering.isEmpty()) {
             return;
         }
         BboxCovering b = covering.orElseThrow();
-        Optional<PrimitiveKind> xminKind = primitiveKindAt(schema, b.xmin());
-        Optional<PrimitiveKind> xmaxKind = primitiveKindAt(schema, b.xmax());
-        Optional<PrimitiveKind> yminKind = primitiveKindAt(schema, b.ymin());
-        Optional<PrimitiveKind> ymaxKind = primitiveKindAt(schema, b.ymax());
-        if (xminKind.isEmpty() || xmaxKind.isEmpty() || yminKind.isEmpty() || ymaxKind.isEmpty()) {
+        Optional<AxisRef> xmin = axisRef(leaves, schema, b.xmin());
+        Optional<AxisRef> xmax = axisRef(leaves, schema, b.xmax());
+        Optional<AxisRef> ymin = axisRef(leaves, schema, b.ymin());
+        Optional<AxisRef> ymax = axisRef(leaves, schema, b.ymax());
+        if (xmin.isEmpty() || xmax.isEmpty() || ymin.isEmpty() || ymax.isEmpty()) {
             return;
         }
         sink.put(
                 ColumnPath.of(columnName),
-                new BboxAxes(
-                        new AxisRef(b.xmin(), xminKind.orElseThrow()),
-                        new AxisRef(b.xmax(), xmaxKind.orElseThrow()),
-                        new AxisRef(b.ymin(), yminKind.orElseThrow()),
-                        new AxisRef(b.ymax(), ymaxKind.orElseThrow())));
+                new BboxAxes(xmin.orElseThrow(), xmax.orElseThrow(), ymin.orElseThrow(), ymax.orElseThrow()));
+    }
+
+    /**
+     * Resolves one sidecar path to the leaf ordinal addressing its chunks plus the primitive kind needed to decode its
+     * stats. Empty when the schema declares no such primitive leaf.
+     */
+    private static Optional<AxisRef> axisRef(LeafIndex leaves, ParquetSchema schema, ColumnPath path) {
+        int ordinal = leaves.ordinalOf(path);
+        if (ordinal == LeafIndex.UNKNOWN) {
+            return Optional.empty();
+        }
+        return primitiveKindAt(schema, path).map(kind -> new AxisRef(ordinal, kind));
     }
 
     private static Optional<PrimitiveKind> primitiveKindAt(ParquetSchema schema, ColumnPath path) {
@@ -137,98 +156,67 @@ final class CoveringColumnSource implements SpatialBoundsSource {
     }
 
     /**
-     * For each geometry column with a resolvable covering, computes the per-row-group bbox by reading the four sidecar
-     * columns' {@link Statistics}. A row group that misses any of the four bounds surfaces as {@link Optional#empty()}
-     * for that slot.
+     * For each geometry column with a resolvable covering, computes the per-row-group bbox from the four sidecar
+     * columns' statistics. A row group that misses any of the four bounds gets {@link Optional#empty()} for that slot.
      */
     private static Map<ColumnPath, List<Optional<BoundingBox>>> buildPerRowGroupBoxes(
-            FileMetaData footer, Map<ColumnPath, BboxAxes> axesByGeometry) {
-        Map<ColumnPath, List<Optional<BoundingBox>>> result = new LinkedHashMap<>();
-        List<RowGroup> rowGroups = footer.rowGroups();
+            CompactFooter footer, Map<ColumnPath, BboxAxes> axesByGeometry) {
+        Map<ColumnPath, List<Optional<BoundingBox>>> result = HashMap.newHashMap(axesByGeometry.size());
+        int rowGroupCount = footer.rowGroupCount();
         axesByGeometry.forEach((geometryColumn, axes) -> {
-            List<Optional<BoundingBox>> perGroup = new ArrayList<>(rowGroups.size());
-            for (RowGroup rg : rowGroups) {
-                perGroup.add(buildBboxForRowGroup(rg, axes));
+            List<Optional<BoundingBox>> perGroup = new ArrayList<>(rowGroupCount);
+            for (int rowGroup = 0; rowGroup < rowGroupCount; rowGroup++) {
+                perGroup.add(buildBboxForRowGroup(footer, rowGroup, axes));
             }
             result.put(geometryColumn, perGroup);
         });
         return result;
     }
 
-    private static Optional<BoundingBox> buildBboxForRowGroup(RowGroup rg, BboxAxes axes) {
-        Map<ColumnPath, ColumnMetaData> byPath = indexColumnsInRowGroup(rg);
-        OptionalDouble xmin = statsMin(byPath, axes.xmin());
-        OptionalDouble xmax = statsMax(byPath, axes.xmax());
-        OptionalDouble ymin = statsMin(byPath, axes.ymin());
-        OptionalDouble ymax = statsMax(byPath, axes.ymax());
+    private static Optional<BoundingBox> buildBboxForRowGroup(CompactFooter footer, int rowGroup, BboxAxes axes) {
+        OptionalDouble xmin = statsMin(footer, rowGroup, axes.xmin());
+        OptionalDouble xmax = statsMax(footer, rowGroup, axes.xmax());
+        OptionalDouble ymin = statsMin(footer, rowGroup, axes.ymin());
+        OptionalDouble ymax = statsMax(footer, rowGroup, axes.ymax());
         if (xmin.isEmpty() || xmax.isEmpty() || ymin.isEmpty() || ymax.isEmpty()) {
             return Optional.empty();
         }
-        return Optional.of(new BoundingBox(
-                xmin.getAsDouble(),
-                xmax.getAsDouble(),
-                ymin.getAsDouble(),
-                ymax.getAsDouble(),
-                OptionalDouble.empty(),
-                OptionalDouble.empty(),
-                OptionalDouble.empty(),
-                OptionalDouble.empty()));
+        return Optional.of(BoundingBox.builder()
+                .xmin(xmin.getAsDouble())
+                .xmax(xmax.getAsDouble())
+                .ymin(ymin.getAsDouble())
+                .ymax(ymax.getAsDouble())
+                .build());
     }
 
-    private static Map<ColumnPath, ColumnMetaData> indexColumnsInRowGroup(RowGroup rg) {
-        Map<ColumnPath, ColumnMetaData> byPath = new LinkedHashMap<>();
-        for (ColumnChunk chunk : rg.columns()) {
-            chunk.metaData().ifPresent(m -> byPath.put(ColumnPath.of(m.pathInSchema()), m));
-        }
-        return byPath;
+    private static OptionalDouble statsMin(CompactFooter footer, int rowGroup, AxisRef axis) {
+        Optional<MemorySegment> min = chunkAt(footer, rowGroup, axis).flatMap(ChunkMeta::minValue);
+        return decodeDouble(axis.kind(), min);
     }
 
-    private static OptionalDouble statsMin(Map<ColumnPath, ColumnMetaData> byPath, AxisRef axis) {
-        ColumnMetaData m = byPath.get(axis.path());
-        if (m == null) {
-            return OptionalDouble.empty();
-        }
-        Optional<Statistics> stats = m.statistics();
-        if (stats.isEmpty()) {
-            return OptionalDouble.empty();
-        }
-        MemorySegment chosen = preferLatest(stats.get().minValue(), stats.get().min());
-        if (chosen == MemorySegment.NULL) {
-            return OptionalDouble.empty();
-        }
-        return decodeDouble(axis.kind(), chosen);
+    private static OptionalDouble statsMax(CompactFooter footer, int rowGroup, AxisRef axis) {
+        Optional<MemorySegment> max = chunkAt(footer, rowGroup, axis).flatMap(ChunkMeta::maxValue);
+        return decodeDouble(axis.kind(), max);
     }
 
-    private static OptionalDouble statsMax(Map<ColumnPath, ColumnMetaData> byPath, AxisRef axis) {
-        ColumnMetaData m = byPath.get(axis.path());
-        if (m == null) {
-            return OptionalDouble.empty();
-        }
-        Optional<Statistics> stats = m.statistics();
-        if (stats.isEmpty()) {
-            return OptionalDouble.empty();
-        }
-        MemorySegment chosen = preferLatest(stats.get().maxValue(), stats.get().max());
-        if (chosen == MemorySegment.NULL) {
-            return OptionalDouble.empty();
-        }
-        return decodeDouble(axis.kind(), chosen);
-    }
-
-    private static MemorySegment preferLatest(MemorySegment latest, MemorySegment legacy) {
-        return latest != MemorySegment.NULL ? latest : legacy;
+    private static Optional<ChunkMeta> chunkAt(CompactFooter footer, int rowGroup, AxisRef axis) {
+        return footer.chunkIfPresent(rowGroup, axis.leaf());
     }
 
     /**
      * Decodes a Parquet PLAIN-encoded min/max value as a {@code double}. The Parquet spec writes FLOAT / DOUBLE
-     * little-endian; other kinds (and short / malformed payloads) surface as empty so the row group's bbox stays
+     * little-endian; other kinds (and short / malformed payloads) decode as empty, which leaves the row group's bbox
      * unknown rather than wrong.
      */
-    private static OptionalDouble decodeDouble(PrimitiveKind kind, MemorySegment raw) {
-        long size = raw.byteSize();
+    private static OptionalDouble decodeDouble(PrimitiveKind kind, Optional<MemorySegment> raw) {
+        if (raw.isEmpty()) {
+            return OptionalDouble.empty();
+        }
+        MemorySegment value = raw.orElseThrow();
+        long size = value.byteSize();
         return switch (kind) {
-            case DOUBLE -> size >= 8 ? OptionalDouble.of(raw.get(DOUBLE, 0)) : OptionalDouble.empty();
-            case FLOAT -> size >= 4 ? OptionalDouble.of(raw.get(FLOAT, 0)) : OptionalDouble.empty();
+            case DOUBLE -> size >= 8 ? OptionalDouble.of(value.get(DOUBLE, 0)) : OptionalDouble.empty();
+            case FLOAT -> size >= 4 ? OptionalDouble.of(value.get(FLOAT, 0)) : OptionalDouble.empty();
             default -> OptionalDouble.empty();
         };
     }
@@ -236,7 +224,7 @@ final class CoveringColumnSource implements SpatialBoundsSource {
     /** See {@link NativeStatsSource} for the same union policy and rationale. */
     private static Map<ColumnPath, BoundingBox> unionAcrossRowGroups(
             Map<ColumnPath, List<Optional<BoundingBox>>> perRowGroup) {
-        Map<ColumnPath, BoundingBox> result = new LinkedHashMap<>();
+        Map<ColumnPath, BoundingBox> result = HashMap.newHashMap(perRowGroup.size());
         perRowGroup.forEach((path, list) -> {
             BoundingBox acc = null;
             for (Optional<BoundingBox> slot : list) {
@@ -252,21 +240,19 @@ final class CoveringColumnSource implements SpatialBoundsSource {
     }
 
     private static BoundingBox union(BoundingBox a, BoundingBox b) {
-        return new BoundingBox(
-                Math.min(a.xmin(), b.xmin()),
-                Math.max(a.xmax(), b.xmax()),
-                Math.min(a.ymin(), b.ymin()),
-                Math.max(a.ymax(), b.ymax()),
-                OptionalDouble.empty(),
-                OptionalDouble.empty(),
-                OptionalDouble.empty(),
-                OptionalDouble.empty());
+        return BoundingBox.builder()
+                .xmin(Math.min(a.xmin(), b.xmin()))
+                .xmax(Math.max(a.xmax(), b.xmax()))
+                .ymin(Math.min(a.ymin(), b.ymin()))
+                .ymax(Math.max(a.ymax(), b.ymax()))
+                .build();
     }
 
     /**
-     * Cached lookup carrier for one bbox sidecar column: its path and the primitive kind needed to decode its stats.
+     * Where one bbox sidecar column's stats are read from: the leaf ordinal addressing its chunks, and the primitive
+     * kind used to decode its min/max bytes.
      */
-    private record AxisRef(ColumnPath path, PrimitiveKind kind) {}
+    private record AxisRef(int leaf, PrimitiveKind kind) {}
 
     /**
      * The four axes of one geometry column's covering. Z is intentionally out of scope for the current covering tier.

@@ -15,10 +15,12 @@
  */
 package io.tileverse.parquetry.internal.filter;
 
+import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -32,7 +34,6 @@ import io.tileverse.parquetry.filter.explain.TierReasons;
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.OffsetIndex;
-import io.tileverse.parquetry.format.Statistics;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.filter.spatial.EmptyBoundsSource;
 import io.tileverse.parquetry.internal.filter.spatial.SpatialBoundsSource;
@@ -108,18 +109,22 @@ public final class FilterPipeline {
     }
 
     /**
-     * Per-column input to the statistics-tier filter evaluator: the column's primitive kind (so the evaluator knows how
-     * to decode the raw min/max bytes), its {@link Statistics} record from {@code ColumnMetaData}, and an optional
-     * logical type annotation (present when the file schema annotates the column, absent for plain physical columns).
-     * The logical type drives typed decoding of min/max bounds (e.g. INT64+Timestamp decodes to
+     * Per-column input to the statistics-tier filter evaluator: the column's primitive kind, the chunk's minimum and
+     * maximum bounds, how many of its values are null, and an optional logical type annotation (present when the file
+     * schema annotates the column, absent for plain physical columns). The kind tells the evaluator how to decode the
+     * bound bytes, and the logical type drives typed decoding (e.g. INT64 annotated as a timestamp decodes to
      * {@link io.tileverse.parquetry.filter.Value.TimestampVal} rather than a raw {@code LongVal}).
+     *
+     * <p>Each bound holds the PLAIN-encoded bytes that the pruning tiers compare against, and is empty when the writer
+     * recorded none. The two segments are read-only windows onto the footer form retained by the reader and stay valid
+     * for as long as that form lives.
      */
-    public record ColumnStats(PrimitiveKind kind, Statistics statistics, Optional<LogicalType> logicalType) {
-        /** Back-compat constructor for call sites that do not pass a logical type. */
-        public ColumnStats(PrimitiveKind kind, Statistics statistics) {
-            this(kind, statistics, Optional.empty());
-        }
-    }
+    public record ColumnStats(
+            PrimitiveKind kind,
+            Optional<MemorySegment> minValue,
+            Optional<MemorySegment> maxValue,
+            OptionalLong nullCount,
+            Optional<LogicalType> logicalType) {}
 
     /**
      * Per-column input to the COLUMN_INDEX-tier evaluator: the column's primitive kind plus its loaded

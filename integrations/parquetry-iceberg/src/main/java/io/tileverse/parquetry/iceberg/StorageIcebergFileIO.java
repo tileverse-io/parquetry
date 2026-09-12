@@ -20,6 +20,7 @@ import java.io.UncheckedIOException;
 import java.lang.foreign.MemorySegment;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 import io.tileverse.storage.RangeReader;
@@ -161,6 +162,17 @@ public final class StorageIcebergFileIO implements IcebergFileIO {
         @Override
         public long size() {
             return delegate.size();
+        }
+
+        /**
+         * The name given to the object by the underlying reader, which is what lets a data file reopened after its memo
+         * entry was dropped find its footer in the shared cache instead of reading it again. It names the physical
+         * object rather than the Iceberg location: two tables can record one logical location while their bytes live in
+         * different buckets, and their files must not answer to the same cache key.
+         */
+        @Override
+        public Optional<String> sourceIdentifier() {
+            return delegate.sourceIdentifier();
         }
 
         @Override

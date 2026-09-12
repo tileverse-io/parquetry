@@ -16,16 +16,12 @@
 package io.tileverse.parquetry.data;
 
 import java.util.ArrayList;
-import java.util.IdentityHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 
 import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.SpatialReadProbe;
 import io.tileverse.parquetry.format.BoundingBox;
-import io.tileverse.parquetry.format.FileMetaData;
-import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.internal.filter.spatial.SpatialBoundsSource;
 import io.tileverse.parquetry.internal.read.RowGroupGate;
 import io.tileverse.parquetry.internal.read.RowGroupSurvivor;
@@ -50,12 +46,11 @@ final class SpatialReadGates {
 
     private final Optional<ColumnPath> primaryGeometry;
     private final SpatialBoundsSource boundsSource;
-    private final Map<RowGroup, Integer> rowGroupIndices;
 
-    SpatialReadGates(FileMetaData footer, ParquetSchema fileSchema, Optional<GeoParquetMetadata> geoMetadata) {
+    SpatialReadGates(
+            SpatialBoundsSource boundsSource, ParquetSchema fileSchema, Optional<GeoParquetMetadata> geoMetadata) {
         this.primaryGeometry = GeometryColumns.primary(fileSchema, geoMetadata);
-        this.boundsSource = SpatialBoundsSource.of(footer, fileSchema, geoMetadata);
-        this.rowGroupIndices = indexByRowGroup(footer);
+        this.boundsSource = boundsSource;
     }
 
     /**
@@ -90,8 +85,7 @@ final class SpatialReadGates {
         ColumnPath geometry = primaryGeometry.orElseThrow();
         List<Optional<Bbox>> bounds = new ArrayList<>(survivors.size());
         for (RowGroupSurvivor survivor : survivors) {
-            int absoluteIndex = rowGroupIndices.get(survivor.rowGroup());
-            Optional<BoundingBox> box = boundsSource.rowGroupBounds(geometry, absoluteIndex);
+            Optional<BoundingBox> box = boundsSource.rowGroupBounds(geometry, survivor.index());
             bounds.add(box.map(SpatialReadGates::toBbox));
         }
         return bounds;
@@ -104,16 +98,6 @@ final class SpatialReadGates {
         Bbox box = bounds.orElseThrow();
         SpatialReadProbe.Decision decision = probe.probeRegion(box.minX(), box.minY(), box.maxX(), box.maxY());
         return decision instanceof SpatialReadProbe.Decision.Skip;
-    }
-
-    /** Maps each footer {@link RowGroup} instance to its absolute file-order index. */
-    private static Map<RowGroup, Integer> indexByRowGroup(FileMetaData footer) {
-        List<RowGroup> rowGroups = footer.rowGroups();
-        Map<RowGroup, Integer> indices = new IdentityHashMap<>(rowGroups.size());
-        for (int index = 0; index < rowGroups.size(); index++) {
-            indices.put(rowGroups.get(index), index);
-        }
-        return indices;
     }
 
     private static Bbox toBbox(BoundingBox box) {

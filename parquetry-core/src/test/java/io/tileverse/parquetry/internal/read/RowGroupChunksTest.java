@@ -76,9 +76,8 @@ class RowGroupChunksTest {
 
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             FileMetaData footer = ParquetFormat.readFooter(source);
-            RowGroup rowGroup = footer.rowGroups().get(0);
             CountingLoader loader = new CountingLoader(source);
-            RowGroupChunks chunks = RowGroupChunks.of(rowGroup, schema, loader);
+            RowGroupChunks chunks = TestRowGroupChunks.of(footer, 0, schema, loader);
 
             Optional<ColumnPageStats> first = chunks.pageStats(V);
             Optional<ColumnPageStats> second = chunks.pageStats(V);
@@ -151,7 +150,7 @@ class RowGroupChunksTest {
             }
         };
 
-        RowGroupChunks chunks = RowGroupChunks.of(rowGroup, schema, assertNotCalled);
+        RowGroupChunks chunks = TestRowGroupChunks.of(rowGroup, schema, assertNotCalled);
 
         assertThat(chunks.offsetIndex(V))
                 .as("offsetIndex should be empty when the chunk has no offsetIndexOffset")
@@ -219,7 +218,7 @@ class RowGroupChunksTest {
             }
         };
 
-        RowGroupChunks chunks = RowGroupChunks.of(rowGroup, schema, alwaysThrows);
+        RowGroupChunks chunks = TestRowGroupChunks.of(rowGroup, schema, alwaysThrows);
 
         assertThat(chunks.offsetIndex(V))
                 .as("offsetIndex should degrade to empty on loader failure")
@@ -282,7 +281,7 @@ class RowGroupChunksTest {
             }
         };
 
-        RowGroupChunks chunks = RowGroupChunks.of(rowGroup, schema, noop);
+        RowGroupChunks chunks = TestRowGroupChunks.of(rowGroup, schema, noop);
 
         assertThat(chunks.isFlat(V))
                 .as("a required (non-repeated) column should be considered flat")
@@ -296,8 +295,8 @@ class RowGroupChunksTest {
     }
 
     /**
-     * Verifies that a bloom-filter length that does not fit an int (a malformed file could record one) degrades to
-     * empty instead of letting the conversion overflow escape to the caller.
+     * Verifies that a bloom-filter length beyond the int range (a malformed file could record one) leaves the filter
+     * unreachable: the column's bloom tier reports empty and nothing goes looking for the filter.
      */
     @Test
     void bloomLengthOverflowDegradesToEmpty() {
@@ -339,14 +338,14 @@ class RowGroupChunksTest {
 
             @Override
             public SplitBlockBloomFilter readBloom(long offset, int length) {
-                throw new AssertionError("the length conversion should fail before the loader is reached");
+                throw new AssertionError("an unreachable bloom filter must not be read");
             }
         };
 
-        RowGroupChunks chunks = RowGroupChunks.of(rowGroup, schema, assertBloomNotReached);
+        RowGroupChunks chunks = TestRowGroupChunks.of(rowGroup, schema, assertBloomNotReached);
 
         assertThat(chunks.bloom(V))
-                .as("an out-of-range bloom-filter length should degrade to empty, not throw")
+                .as("a bloom-filter length beyond the int range leaves the column with no readable filter")
                 .isEmpty();
     }
 

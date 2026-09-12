@@ -33,7 +33,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
  * branch and goes straight to {@code pool}, preserving each test's pool accounting; the disk-spill arm exists but is
  * never reached.
  */
-final class TestFetchers {
+public final class TestFetchers {
 
     private static final long AMPLE_FETCH_BUDGET = 1L << 30;
     private static final long AMPLE_DISK_BUDGET = 1L << 30;
@@ -42,7 +42,7 @@ final class TestFetchers {
 
     private TestFetchers() {}
 
-    static RowGroupFetcher over(
+    public static RowGroupFetcher over(
             ByteRangeSource source, ParquetSchema fileSchema, ParquetSchema projectedSchema, SegmentPool pool) {
         return over(source, fileSchema, projectedSchema, pool, FetchAccumulator.NONE);
     }

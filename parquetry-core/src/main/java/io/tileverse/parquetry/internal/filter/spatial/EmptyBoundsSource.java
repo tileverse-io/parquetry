@@ -43,4 +43,10 @@ public enum EmptyBoundsSource implements SpatialBoundsSource {
     public Optional<BoundingBox> rowGroupBounds(ColumnPath geometryColumn, int rowGroupIndex) {
         return Optional.empty();
     }
+
+    /** None: this tier knows no bounds to hold. */
+    @Override
+    public int retainedBoxCount() {
+        return 0;
+    }
 }

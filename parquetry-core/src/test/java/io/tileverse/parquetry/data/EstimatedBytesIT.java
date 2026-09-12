@@ -18,9 +18,14 @@ package io.tileverse.parquetry.data;
 import static io.tileverse.parquetry.filter.Pred.col;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -35,6 +40,11 @@ import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
+import io.tileverse.parquetry.format.ColumnChunk;
+import io.tileverse.parquetry.format.ColumnMetaData;
+import io.tileverse.parquetry.format.FileMetaData;
+import io.tileverse.parquetry.format.ParquetFormat;
+import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -106,6 +116,107 @@ class EstimatedBytesIT {
                     .as("an eliminated row group contributes no bytes to the estimate")
                     .isLessThan(noElimination);
         }
+    }
+
+    /**
+     * A chunk whose recorded length is beyond the addressable range can never be fetched, and the footer records it as
+     * a placeholder rather than a byte count. Counting that placeholder would pull the estimate below the bytes
+     * actually fetched by a read, hence the column contributes nothing and the estimate stays an honest lower bound.
+     */
+    @Test
+    void aChunkLengthBeyondTheAddressableRangeCountsAsNoBytes(@TempDir Path tmp) throws Exception {
+        Path file = writeThreeRowGroups(tmp);
+        long dropped = firstChunkCompressedSize(file);
+        Path unfetchable = withFirstChunkLengthBeyondRange(file, tmp);
+
+        assertThat(fullScanEstimateOf(unfetchable))
+                .as("the unfetchable column drops out of the estimate rather than subtracting from it")
+                .isEqualTo(fullScanEstimateOf(file) - dropped);
+    }
+
+    private static long fullScanEstimateOf(Path file) {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            return ParquetFileReader.open(source)
+                    .explain(MATCH_ALL, Projection.ALL, ReadOptions.DEFAULTS)
+                    .estimatedBytesRead();
+        }
+    }
+
+    private static long firstChunkCompressedSize(Path file) {
+        return firstChunkMetaData(footerOf(file)).totalCompressedSize();
+    }
+
+    /** The same file, its first column chunk claiming a length that no fetch can address. */
+    private static Path withFirstChunkLengthBeyondRange(Path file, Path tmp) throws IOException {
+        FileMetaData footer = footerOf(file);
+        ColumnMetaData first = firstChunkMetaData(footer);
+        ColumnMetaData unfetchable = ColumnMetaData.builder()
+                .type(first.type())
+                .encodings(first.encodings())
+                .pathInSchema(first.pathInSchema())
+                .codec(first.codec())
+                .numValues(first.numValues())
+                .totalUncompressedSize(first.totalUncompressedSize())
+                .totalCompressedSize(Integer.MAX_VALUE + 1L)
+                .dataPageOffset(first.dataPageOffset())
+                .build();
+        return writeWithFooter(file, tmp, withFirstChunkReplaced(footer, unfetchable));
+    }
+
+    private static ColumnMetaData firstChunkMetaData(FileMetaData footer) {
+        return footer.rowGroups().getFirst().columns().getFirst().metaData().orElseThrow();
+    }
+
+    private static FileMetaData withFirstChunkReplaced(FileMetaData footer, ColumnMetaData replacement) {
+        RowGroup first = footer.rowGroups().getFirst();
+        List<ColumnChunk> columns = new ArrayList<>(first.columns());
+        columns.set(0, ColumnChunk.builder().metaData(Optional.of(replacement)).build());
+        List<RowGroup> rowGroups = new ArrayList<>(footer.rowGroups());
+        rowGroups.set(
+                0,
+                RowGroup.builder()
+                        .columns(columns)
+                        .numRows(first.numRows())
+                        .totalByteSize(first.totalByteSize())
+                        .totalCompressedSize(first.totalCompressedSize())
+                        .build());
+        return FileMetaData.builder()
+                .version(footer.version())
+                .schema(footer.schema())
+                .numRows(footer.numRows())
+                .rowGroups(rowGroups)
+                .keyValueMetadata(footer.keyValueMetadata())
+                .createdBy(footer.createdBy())
+                .build();
+    }
+
+    private static FileMetaData footerOf(Path file) {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            return ParquetFormat.readFooter(source);
+        }
+    }
+
+    /** Copies {@code file} up to its footer and re-frames it around {@code footer}: thrift, length, tail magic. */
+    private static Path writeWithFooter(Path file, Path tmp, FileMetaData footer) throws IOException {
+        byte[] original = Files.readAllBytes(file);
+        int originalFooterLength = ByteBuffer.wrap(original, original.length - 8, 4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .getInt();
+        int dataEnd = original.length - 8 - originalFooterLength;
+        byte[] encoded = ParquetFormat.toBytes(footer);
+        byte[] trailer = ByteBuffer.allocate(8)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .putInt(encoded.length)
+                .put("PAR1".getBytes(StandardCharsets.US_ASCII))
+                .array();
+
+        Path patched = tmp.resolve("unfetchable-chunk.parquet");
+        try (OutputStream out = Files.newOutputStream(patched)) {
+            out.write(original, 0, dataEnd);
+            out.write(encoded);
+            out.write(trailer);
+        }
+        return patched;
     }
 
     private static Path writeThreeRowGroups(Path tmp) throws Exception {

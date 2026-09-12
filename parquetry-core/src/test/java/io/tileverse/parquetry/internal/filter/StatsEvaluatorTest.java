@@ -23,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.lang.foreign.MemorySegment;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
@@ -35,7 +36,6 @@ import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.format.LogicalType;
-import io.tileverse.parquetry.format.Statistics;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 
@@ -45,112 +45,112 @@ class StatsEvaluatorTest {
 
     @Test
     void eqValueAboveMaxIsEliminated() {
-        FilterPipeline.ColumnStatsLookup cols = single("year", PrimitiveKind.INT32, intStats(2010, 2020, 0));
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, 0));
         PruningDecision d = StatsEvaluator.evaluate(col("year").eq(2030), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
     }
 
     @Test
     void eqValueBelowMinIsEliminated() {
-        FilterPipeline.ColumnStatsLookup cols = single("year", PrimitiveKind.INT32, intStats(2010, 2020, 0));
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, 0));
         PruningDecision d = StatsEvaluator.evaluate(col("year").eq(2000), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
     }
 
     @Test
     void eqValueWithinRangeIsInconclusive() {
-        FilterPipeline.ColumnStatsLookup cols = single("year", PrimitiveKind.INT32, intStats(2010, 2020, 0));
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, 0));
         PruningDecision d = StatsEvaluator.evaluate(col("year").eq(2015), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.Inconclusive.class);
     }
 
     @Test
     void eqSingleDistinctValueWithoutNullsPassesAll() {
-        FilterPipeline.ColumnStatsLookup cols = single("year", PrimitiveKind.INT32, intStats(2020, 2020, 0));
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2020, 2020, 0));
         PruningDecision d = StatsEvaluator.evaluate(col("year").eq(2020), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
     }
 
     @Test
     void notEqValueOutsideRangePassesAll() {
-        FilterPipeline.ColumnStatsLookup cols = single("year", PrimitiveKind.INT32, intStats(2010, 2020, 0));
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, 0));
         PruningDecision d = StatsEvaluator.evaluate(col("year").notEq(2030), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
     }
 
     @Test
     void notEqSingleDistinctMatchingValueIsEliminated() {
-        FilterPipeline.ColumnStatsLookup cols = single("year", PrimitiveKind.INT32, intStats(2020, 2020, 0));
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2020, 2020, 0));
         PruningDecision d = StatsEvaluator.evaluate(col("year").notEq(2020), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
     }
 
     @Test
     void ltAboveMaxPassesAll() {
-        FilterPipeline.ColumnStatsLookup cols = single("year", PrimitiveKind.INT32, intStats(2010, 2020, 0));
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, 0));
         PruningDecision d = StatsEvaluator.evaluate(col("year").lt(2030), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
     }
 
     @Test
     void ltAtMinIsEliminated() {
-        FilterPipeline.ColumnStatsLookup cols = single("year", PrimitiveKind.INT32, intStats(2010, 2020, 0));
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, 0));
         PruningDecision d = StatsEvaluator.evaluate(col("year").lt(2010), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
     }
 
     @Test
     void ltEqAtMinPassesAll() {
-        FilterPipeline.ColumnStatsLookup cols = single("year", PrimitiveKind.INT32, intStats(2010, 2010, 0));
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2010, 0));
         PruningDecision d = StatsEvaluator.evaluate(col("year").ltEq(2010), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
     }
 
     @Test
     void gtAtMaxIsEliminated() {
-        FilterPipeline.ColumnStatsLookup cols = single("year", PrimitiveKind.INT32, intStats(2010, 2020, 0));
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, 0));
         PruningDecision d = StatsEvaluator.evaluate(col("year").gt(2020), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
     }
 
     @Test
     void gtEqAboveMaxIsEliminated() {
-        FilterPipeline.ColumnStatsLookup cols = single("year", PrimitiveKind.INT32, intStats(2010, 2020, 0));
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, 0));
         PruningDecision d = StatsEvaluator.evaluate(col("year").gtEq(2030), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
     }
 
     @Test
     void inWithAllValuesOutsideRangeIsEliminated() {
-        FilterPipeline.ColumnStatsLookup cols = single("year", PrimitiveKind.INT32, intStats(2010, 2020, 0));
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, 0));
         PruningDecision d = StatsEvaluator.evaluate(col("year").inInts(2030, 2040), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
     }
 
     @Test
     void inWithOneValueInsideRangeIsInconclusive() {
-        FilterPipeline.ColumnStatsLookup cols = single("year", PrimitiveKind.INT32, intStats(2010, 2020, 0));
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, 0));
         PruningDecision d = StatsEvaluator.evaluate(col("year").inInts(2015, 2030), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.Inconclusive.class);
     }
 
     @Test
     void isNullWithNullCountZeroIsEliminated() {
-        FilterPipeline.ColumnStatsLookup cols = single("year", PrimitiveKind.INT32, intStats(2010, 2020, 0));
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, 0));
         PruningDecision d = StatsEvaluator.evaluate(col("year").isNull(), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
     }
 
     @Test
     void isNullWithAllNullsPassesAll() {
-        FilterPipeline.ColumnStatsLookup cols = single("year", PrimitiveKind.INT32, intStats(2010, 2020, ROW_COUNT));
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, ROW_COUNT));
         PruningDecision d = StatsEvaluator.evaluate(col("year").isNull(), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
     }
 
     @Test
     void isNotNullWithAllNullsIsEliminated() {
-        FilterPipeline.ColumnStatsLookup cols = single("year", PrimitiveKind.INT32, intStats(2010, 2020, ROW_COUNT));
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, ROW_COUNT));
         PruningDecision d = StatsEvaluator.evaluate(col("year").isNotNull(), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
     }
@@ -164,16 +164,16 @@ class StatsEvaluatorTest {
 
     @Test
     void missingMinMaxYieldsNotApplied() {
-        Statistics noBounds =
-                Statistics.builder().nullCount(OptionalLong.of(0L)).build();
-        FilterPipeline.ColumnStatsLookup cols = single("year", PrimitiveKind.INT32, noBounds);
+        FilterPipeline.ColumnStats noBounds = new FilterPipeline.ColumnStats(
+                PrimitiveKind.INT32, Optional.empty(), Optional.empty(), OptionalLong.of(0L), Optional.empty());
+        FilterPipeline.ColumnStatsLookup cols = single("year", noBounds);
         PruningDecision d = StatsEvaluator.evaluate(col("year").eq(2020), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
     }
 
     @Test
     void andEliminatesIfAnyChildEliminates() {
-        FilterPipeline.ColumnStatsLookup cols = single("year", PrimitiveKind.INT32, intStats(2010, 2020, 0));
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, 0));
         Predicate p = col("year").eq(2030).and(col("year").eq(2015));
         PruningDecision d = StatsEvaluator.evaluate(p, cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
@@ -181,7 +181,7 @@ class StatsEvaluatorTest {
 
     @Test
     void orEliminatesOnlyIfAllChildrenEliminate() {
-        FilterPipeline.ColumnStatsLookup cols = single("year", PrimitiveKind.INT32, intStats(2010, 2020, 0));
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, 0));
         Predicate p = col("year").eq(2030).or(col("year").eq(2040));
         PruningDecision d = StatsEvaluator.evaluate(p, cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
@@ -189,7 +189,7 @@ class StatsEvaluatorTest {
 
     @Test
     void orWithOnePassingChildPassesAll() {
-        FilterPipeline.ColumnStatsLookup cols = single("year", PrimitiveKind.INT32, intStats(2020, 2020, 0));
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2020, 2020, 0));
         Predicate p = col("year").eq(2020).or(col("year").eq(2030));
         PruningDecision d = StatsEvaluator.evaluate(p, cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
@@ -216,30 +216,28 @@ class StatsEvaluatorTest {
 
     @Test
     void doubleColumnLtPrunes() {
-        FilterPipeline.ColumnStatsLookup cols = single("price", PrimitiveKind.DOUBLE, doubleStats(1.0, 5.0, 0));
+        FilterPipeline.ColumnStatsLookup cols = single("price", doubleStats(1.0, 5.0, 0));
         PruningDecision d = StatsEvaluator.evaluate(col("price").lt(0.5), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
     }
 
     @Test
     void stringColumnEqInRange() {
-        FilterPipeline.ColumnStatsLookup cols =
-                single("name", PrimitiveKind.BYTE_ARRAY, binaryStats("alpha", "omega", 0));
+        FilterPipeline.ColumnStatsLookup cols = single("name", binaryStats("alpha", "omega", 0));
         PruningDecision d = StatsEvaluator.evaluate(col("name").eq("mango"), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.Inconclusive.class);
     }
 
     @Test
     void stringColumnEqBelowRangeIsEliminated() {
-        FilterPipeline.ColumnStatsLookup cols =
-                single("name", PrimitiveKind.BYTE_ARRAY, binaryStats("delta", "omega", 0));
+        FilterPipeline.ColumnStatsLookup cols = single("name", binaryStats("delta", "omega", 0));
         PruningDecision d = StatsEvaluator.evaluate(col("name").eq("alpha"), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
     }
 
     @Test
     void gtNotProvenAllMatchWhenColumnHasNulls() {
-        FilterPipeline.ColumnStatsLookup cols = single("year", PrimitiveKind.INT32, intStats(2010, 2020, 3));
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, 3));
         PruningDecision d = StatsEvaluator.evaluate(col("year").gt(2000), cols, ROW_COUNT);
         // the guard routes this to NotApplied, not PassedAll
         assertThat(d).isNotInstanceOf(PruningDecision.PassedAll.class);
@@ -247,21 +245,21 @@ class StatsEvaluatorTest {
 
     @Test
     void gtProvenAllMatchWhenNoNulls() {
-        FilterPipeline.ColumnStatsLookup cols = single("year", PrimitiveKind.INT32, intStats(2010, 2020, 0));
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, 0));
         PruningDecision d = StatsEvaluator.evaluate(col("year").gt(2000), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
     }
 
     @Test
     void gtProvenAllMatchForLongColumnWithoutNulls() {
-        FilterPipeline.ColumnStatsLookup cols = single("epoch", PrimitiveKind.INT64, longStats(2010L, 2020L, 0));
+        FilterPipeline.ColumnStatsLookup cols = single("epoch", longStats(2010L, 2020L, 0));
         PruningDecision d = StatsEvaluator.evaluate(col("epoch").gt(2000L), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
     }
 
     @Test
     void doubleComparisonNeverProvenAllMatch() {
-        FilterPipeline.ColumnStatsLookup cols = single("price", PrimitiveKind.DOUBLE, doubleStats(10.0, 20.0, 0));
+        FilterPipeline.ColumnStatsLookup cols = single("price", doubleStats(10.0, 20.0, 0));
         PruningDecision d = StatsEvaluator.evaluate(col("price").gt(5.0), cols, ROW_COUNT);
         // the guard routes this to NotApplied, not PassedAll
         assertThat(d).isNotInstanceOf(PruningDecision.PassedAll.class);
@@ -328,36 +326,26 @@ class StatsEvaluatorTest {
     private static FilterPipeline.ColumnStatsLookup singleTimestamp(String name, LocalDateTime min, LocalDateTime max) {
         long minMicros = TemporalValues.toEpochUnit(min, LogicalType.TimeUnit.MICROS);
         long maxMicros = TemporalValues.toEpochUnit(max, LogicalType.TimeUnit.MICROS);
-        Statistics stats = Statistics.builder()
-                .nullCount(OptionalLong.of(0L))
-                .minValue(encodeLong(minMicros))
-                .maxValue(encodeLong(maxMicros))
-                .build();
         LogicalType logicalType = new LogicalType.Timestamp(true, LogicalType.TimeUnit.MICROS);
-        return single(name, PrimitiveKind.INT64, stats, logicalType);
+        FilterPipeline.ColumnStats stats =
+                annotatedStats(PrimitiveKind.INT64, encodeLong(minMicros), encodeLong(maxMicros), logicalType);
+        return single(name, stats);
     }
 
     private static FilterPipeline.ColumnStatsLookup singleDecimal(
             String name, int unscaledMin, int unscaledMax, int scale) {
-        Statistics stats = Statistics.builder()
-                .nullCount(OptionalLong.of(0L))
-                .minValue(encodeSignedFlba(unscaledMin))
-                .maxValue(encodeSignedFlba(unscaledMax))
-                .build();
         LogicalType logicalType = new LogicalType.Decimal(scale, 9);
-        return single(name, PrimitiveKind.FIXED_LEN_BYTE_ARRAY, stats, logicalType);
+        FilterPipeline.ColumnStats stats = annotatedStats(
+                PrimitiveKind.FIXED_LEN_BYTE_ARRAY,
+                encodeSignedFlba(unscaledMin),
+                encodeSignedFlba(unscaledMax),
+                logicalType);
+        return single(name, stats);
     }
 
-    private static FilterPipeline.ColumnStatsLookup single(
-            String name, PrimitiveKind kind, Statistics stats, LogicalType logicalType) {
+    private static FilterPipeline.ColumnStatsLookup single(String name, FilterPipeline.ColumnStats stats) {
         Map<ColumnPath, FilterPipeline.ColumnStats> map = new HashMap<>();
-        map.put(ColumnPath.of(name), new FilterPipeline.ColumnStats(kind, stats, Optional.of(logicalType)));
-        return path -> Optional.ofNullable(map.get(path));
-    }
-
-    private static FilterPipeline.ColumnStatsLookup single(String name, PrimitiveKind kind, Statistics stats) {
-        Map<ColumnPath, FilterPipeline.ColumnStats> map = new HashMap<>();
-        map.put(ColumnPath.of(name), new FilterPipeline.ColumnStats(kind, stats));
+        map.put(ColumnPath.of(name), stats);
         return path -> Optional.ofNullable(map.get(path));
     }
 
@@ -365,36 +353,38 @@ class StatsEvaluatorTest {
         return path -> Optional.empty();
     }
 
-    private static Statistics intStats(int min, int max, long nullCount) {
-        return Statistics.builder()
-                .nullCount(OptionalLong.of(nullCount))
-                .maxValue(encodeInt(max))
-                .minValue(encodeInt(min))
-                .build();
+    private static FilterPipeline.ColumnStats intStats(int min, int max, long nullCount) {
+        return plainStats(PrimitiveKind.INT32, encodeInt(min), encodeInt(max), nullCount);
     }
 
-    private static Statistics longStats(long min, long max, long nullCount) {
-        return Statistics.builder()
-                .nullCount(OptionalLong.of(nullCount))
-                .maxValue(encodeLong(max))
-                .minValue(encodeLong(min))
-                .build();
+    private static FilterPipeline.ColumnStats longStats(long min, long max, long nullCount) {
+        return plainStats(PrimitiveKind.INT64, encodeLong(min), encodeLong(max), nullCount);
     }
 
-    private static Statistics doubleStats(double min, double max, long nullCount) {
-        return Statistics.builder()
-                .nullCount(OptionalLong.of(nullCount))
-                .maxValue(encodeDouble(max))
-                .minValue(encodeDouble(min))
-                .build();
+    private static FilterPipeline.ColumnStats doubleStats(double min, double max, long nullCount) {
+        return plainStats(PrimitiveKind.DOUBLE, encodeDouble(min), encodeDouble(max), nullCount);
     }
 
-    private static Statistics binaryStats(String min, String max, long nullCount) {
-        return Statistics.builder()
-                .nullCount(OptionalLong.of(nullCount))
-                .maxValue(MemorySegment.ofArray(max.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
-                .minValue(MemorySegment.ofArray(min.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
-                .build();
+    private static FilterPipeline.ColumnStats binaryStats(String min, String max, long nullCount) {
+        return plainStats(PrimitiveKind.BYTE_ARRAY, encodeUtf8(min), encodeUtf8(max), nullCount);
+    }
+
+    /** Bounds on a column with no logical type annotation. */
+    private static FilterPipeline.ColumnStats plainStats(
+            PrimitiveKind kind, MemorySegment min, MemorySegment max, long nullCount) {
+        return new FilterPipeline.ColumnStats(
+                kind, Optional.of(min), Optional.of(max), OptionalLong.of(nullCount), Optional.empty());
+    }
+
+    /** Bounds on a null-free column annotated with {@code logicalType}, which drives typed decoding. */
+    private static FilterPipeline.ColumnStats annotatedStats(
+            PrimitiveKind kind, MemorySegment min, MemorySegment max, LogicalType logicalType) {
+        return new FilterPipeline.ColumnStats(
+                kind, Optional.of(min), Optional.of(max), OptionalLong.of(0L), Optional.of(logicalType));
+    }
+
+    private static MemorySegment encodeUtf8(String v) {
+        return MemorySegment.ofArray(v.getBytes(StandardCharsets.UTF_8)).asReadOnly();
     }
 
     private static MemorySegment encodeInt(int v) {

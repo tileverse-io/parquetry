@@ -36,6 +36,8 @@ import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.internal.filter.SpatialBoundsEvaluator;
 import io.tileverse.parquetry.internal.filter.spatial.SpatialBoundsSource;
+import io.tileverse.parquetry.internal.footer.CompactFooter;
+import io.tileverse.parquetry.internal.footer.LeafIndex;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -103,7 +105,10 @@ class SpatialPredicateTest {
 
     private static SpatialBoundsSource boundsForGeometryBbox(BoundingBox geometryBbox) {
         FileMetaData footer = footer(geometryRowGroupWithNative(geometryBbox));
-        return SpatialBoundsSource.of(footer, schemaWithGeometry(), empty());
+        ParquetSchema schema = schemaWithGeometry();
+        LeafIndex leaves = LeafIndex.of(schema);
+        CompactFooter compact = CompactFooter.encode(footer, leaves);
+        return SpatialBoundsSource.of(compact, leaves, schema, empty());
     }
 
     private static BoundingBox bbox(double xmin, double xmax, double ymin, double ymax) {

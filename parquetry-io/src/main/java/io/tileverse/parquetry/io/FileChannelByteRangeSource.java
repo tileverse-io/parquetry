@@ -24,6 +24,7 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -47,6 +48,7 @@ final class FileChannelByteRangeSource implements ByteRangeSource {
 
     private final Path path;
     private final ChannelOpener opener;
+    private final String realPath;
     private final long size;
     private final boolean ownsChannel;
     private final ReentrantLock reopenLock = new ReentrantLock();
@@ -64,6 +66,23 @@ final class FileChannelByteRangeSource implements ByteRangeSource {
         this.channel = channel;
         this.size = size;
         this.ownsChannel = ownsChannel;
+        this.realPath = realPathOf(path);
+    }
+
+    /**
+     * Where {@code path} lands on the filesystem, with every symbolic link and relative segment resolved, as text. Null
+     * when there is no path to resolve, or when the filesystem declines to resolve it, which leaves the source unnamed
+     * rather than named by a path that another file can answer to.
+     */
+    private static String realPathOf(Path path) {
+        if (path == null) {
+            return null;
+        }
+        try {
+            return path.toRealPath().toString();
+        } catch (IOException _) {
+            return null;
+        }
     }
 
     static FileChannelByteRangeSource owning(Path path) {
@@ -90,6 +109,17 @@ final class FileChannelByteRangeSource implements ByteRangeSource {
     @Override
     public long size() {
         return size;
+    }
+
+    /**
+     * Where the file lands on the filesystem, with every symbolic link and relative segment resolved. One file gets one
+     * name however the caller spelled the path to it, and two files never get the same name. Resolved once, when the
+     * source opens the file. Empty for a borrowed channel, which has no path of its own, and for a file whose real path
+     * the filesystem declined to resolve.
+     */
+    @Override
+    public Optional<String> sourceIdentifier() {
+        return Optional.ofNullable(realPath);
     }
 
     @Override

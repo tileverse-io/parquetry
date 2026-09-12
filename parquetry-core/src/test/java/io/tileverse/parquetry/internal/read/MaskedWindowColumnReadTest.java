@@ -555,7 +555,7 @@ class MaskedWindowColumnReadTest {
             throws Exception {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             FileMetaData footer = ParquetFormat.readFooter(source);
-            RowGroupChunks chunks = RowGroupChunks.of(footer.rowGroups().get(0), schema, indexLoader(source));
+            RowGroupChunks chunks = TestRowGroupChunks.of(footer, 0, schema, indexLoader(source));
             RowGroupFetcher fetcher = TestFetchers.over(source, schema, schema, SegmentPool.getDefault());
             RowGroupSurvivor survivor = RowGroupSurvivor.full(chunks);
             try (RowGroupFetch fetch =

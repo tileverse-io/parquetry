@@ -54,6 +54,10 @@ public final class StatisticsValueDecoder {
      * Decodes {@code raw} to a {@link Value} using {@code kind} for the physical layout and {@code logicalType} for the
      * semantic type. Returns empty only for kinds that have no statistics path (INT96) or for segments too short to
      * hold the required bytes.
+     *
+     * <p>The decoded value shares no memory with {@code raw}. Callers keep a bound long after the form that it was read
+     * from has been released: a catalog holds one min and one max per file column for the lifetime of its store, while
+     * the packed footer behind them is cached and evicted on its own schedule.
      */
     public static Optional<Value> decode(PrimitiveKind kind, Optional<LogicalType> logicalType, MemorySegment raw) {
         long size = raw.byteSize();
@@ -64,7 +68,7 @@ public final class StatisticsValueDecoder {
             case FLOAT -> size >= 4 ? Optional.of(new Value.FloatVal(raw.get(FLOAT, 0))) : Optional.empty();
             case DOUBLE -> size >= 8 ? Optional.of(new Value.DoubleVal(raw.get(DOUBLE, 0))) : Optional.empty();
             case FIXED_LEN_BYTE_ARRAY -> decodeFlba(logicalType, raw);
-            case BYTE_ARRAY -> Optional.of(new Value.BinaryVal(raw));
+            case BYTE_ARRAY -> Optional.of(binaryCopyOf(raw));
             // INT96 is a legacy 12-byte timestamp with no defined statistics ordering; skip it.
             case INT96 -> Optional.empty();
         };
@@ -90,6 +94,15 @@ public final class StatisticsValueDecoder {
             }
             return Optional.of(new Value.DecimalVal(DecimalValues.toBigDecimal(raw, scale)));
         }
-        return Optional.of(new Value.BinaryVal(raw));
+        return Optional.of(binaryCopyOf(raw));
+    }
+
+    /**
+     * A binary bound over this decoder's own copy of {@code raw}. The copy lets the memory behind {@code raw} - a
+     * packed footer, a column index page - be released while a caller still holds the bound.
+     */
+    private static Value binaryCopyOf(MemorySegment raw) {
+        byte[] bytes = raw.toArray(JAVA_BYTE);
+        return new Value.BinaryVal(MemorySegment.ofArray(bytes));
     }
 }

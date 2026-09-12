@@ -171,7 +171,8 @@ public final class IcebergTableCatalog implements DatasetCatalog {
                     metadata.formatVersion(),
                     nameMapping,
                     metadata.nestedSchema(),
-                    OpenOptions.DEFAULTS);
+                    OpenOptions.DEFAULTS,
+                    IcebergDataset.DEFAULT_MAX_MEMOIZED_FILES);
             return new IcebergTableCatalog(tableName, dataset, opened, io);
         } catch (RuntimeException failure) {
             RuntimeException cleanup = closeAll(opened, io);

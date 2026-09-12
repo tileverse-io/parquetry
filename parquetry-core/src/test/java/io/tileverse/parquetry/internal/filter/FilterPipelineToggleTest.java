@@ -34,7 +34,6 @@ import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.filter.explain.RowGroupOutcome;
 import io.tileverse.parquetry.filter.explain.Tier;
-import io.tileverse.parquetry.format.Statistics;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -101,17 +100,14 @@ class FilterPipelineToggleTest {
         return inputs(intStats(2010, 2030));
     }
 
-    private static FilterPipeline.RowGroupInputs inputs(Statistics yearStats) {
+    private static FilterPipeline.RowGroupInputs inputs(FilterPipeline.ColumnStats yearStats) {
         return new FilterPipeline.RowGroupInputs(
-                1000,
-                statsOf("year", PrimitiveKind.INT32, yearStats),
-                FilterPipeline.noDictionaryLookup(),
-                noPageIndex());
+                1000, statsOf("year", yearStats), FilterPipeline.noDictionaryLookup(), noPageIndex());
     }
 
-    private static FilterPipeline.ColumnStatsLookup statsOf(String name, PrimitiveKind kind, Statistics stats) {
+    private static FilterPipeline.ColumnStatsLookup statsOf(String name, FilterPipeline.ColumnStats stats) {
         Map<ColumnPath, FilterPipeline.ColumnStats> map = new HashMap<>();
-        map.put(ColumnPath.of(name), new FilterPipeline.ColumnStats(kind, stats));
+        map.put(ColumnPath.of(name), stats);
         return path -> Optional.ofNullable(map.get(path));
     }
 
@@ -119,12 +115,13 @@ class FilterPipelineToggleTest {
         return path -> Optional.empty();
     }
 
-    private static Statistics intStats(int min, int max) {
-        return Statistics.builder()
-                .nullCount(OptionalLong.of(0))
-                .maxValue(encodeInt(max))
-                .minValue(encodeInt(min))
-                .build();
+    private static FilterPipeline.ColumnStats intStats(int min, int max) {
+        return new FilterPipeline.ColumnStats(
+                PrimitiveKind.INT32,
+                Optional.of(encodeInt(min)),
+                Optional.of(encodeInt(max)),
+                OptionalLong.of(0),
+                Optional.empty());
     }
 
     private static MemorySegment encodeInt(int v) {
