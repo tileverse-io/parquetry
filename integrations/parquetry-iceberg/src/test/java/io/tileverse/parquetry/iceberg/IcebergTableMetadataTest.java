@@ -18,10 +18,15 @@ package io.tileverse.parquetry.iceberg;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -58,11 +63,9 @@ class IcebergTableMetadataTest {
         Path json = root.resolve("v3_geometry/metadata/v1.metadata.json");
         IcebergTableMetadata metadata = IcebergTableMetadata.read(Files.readString(json));
 
-        Optional<ParquetCrs> crs84 = ParquetCrs.reference("OGC:CRS84");
         assertThat(metadata.fields())
                 .containsExactly(
-                        new IcebergField(1, "id", "string", false),
-                        new IcebergField(2, "geom", "geometry", false, Optional.empty(), crs84, Optional.empty()));
+                        new IcebergField(1, "id", "string", false), new IcebergField(2, "geom", "geometry", false));
         assertThat(metadata.fields().get(1).isGeometry()).isTrue();
         assertThat(metadata.fields().get(1).isGeography()).isFalse();
     }
@@ -76,22 +79,21 @@ class IcebergTableMetadataTest {
         IcebergTableMetadata metadata = IcebergTableMetadata.read(json);
 
         IcebergField shape = metadata.fields().get(0);
-        assertThat(shape.type()).isEqualTo("geography");
         assertThat(shape.isGeography()).isTrue();
-        assertThat(shape.crs()).isEqualTo(ParquetCrs.reference("OGC:CRS84"));
-        assertThat(shape.geographyAlgorithm()).isEqualTo(Optional.of(EdgeInterpolationAlgorithm.KARNEY));
+        assertThat(shape.type())
+                .isEqualTo(new IcebergType.GeographyType(
+                        ParquetCrs.reference("OGC:CRS84"), Optional.of(EdgeInterpolationAlgorithm.KARNEY)));
     }
 
     @Test
-    void readsGeometryInitialDefaultAgainstTheBareKind() {
+    void rejectsAGeometryInitialDefault() {
         String json = metadataWithFields("""
                 {"id": 1, "name": "g", "required": false, "type": "geometry(EPSG:3857)", "initial-default": "x"}
                 """);
 
         assertThatThrownBy(() -> IcebergTableMetadata.read(json))
                 .isInstanceOf(IcebergFormatException.class)
-                .hasMessageContaining("geometry")
-                .hasMessageNotContaining("EPSG:3857");
+                .hasMessageContaining("geometry");
     }
 
     @Test
@@ -295,7 +297,7 @@ class IcebergTableMetadataTest {
     }
 
     @Test
-    void rejectsColumnDefaultOfUnsupportedType() {
+    void rejectsAMalformedTypeToken() {
         String json = metadataWithFields("""
                 {"id": 1, "name": "amount", "type": "decimal", "initial-default": "1.50"}
                 """);
@@ -304,6 +306,57 @@ class IcebergTableMetadataTest {
                 .isInstanceOf(IcebergFormatException.class)
                 .hasMessageContaining("amount")
                 .hasMessageContaining("decimal");
+    }
+
+    @Test
+    void parsesDefaultsOfEveryScalarType() {
+        String json = metadataWithFields("""
+                {"id": 1, "name": "dec", "type": "decimal(9, 2)", "initial-default": "14.20"},
+                {"id": 2, "name": "ts", "type": "timestamp", "initial-default": "2020-02-03T04:05:06.000007"},
+                {"id": 3, "name": "tstz", "type": "timestamptz", "initial-default": "2020-02-03T04:05:06.000007+00:00"},
+                {"id": 4, "name": "t", "type": "time", "initial-default": "12:34:56.000789"},
+                {"id": 5, "name": "u", "type": "uuid", "initial-default": "f79c3e09-677c-4bbd-a479-3f349cb785e7"},
+                {"id": 6, "name": "bin", "type": "binary", "initial-default": "0AFF"},
+                {"id": 7, "name": "fx", "type": "fixed[2]", "initial-default": "0102"}
+                """);
+        IcebergTableMetadata metadata = IcebergTableMetadata.read(json);
+
+        List<IcebergField> fields = metadata.fields();
+        LocalDateTime stamp = LocalDateTime.of(2020, 2, 3, 4, 5, 6, 7_000);
+        assertThat(fields.get(0).initialDefault()).contains(new Value.DecimalVal(new BigDecimal("14.20")));
+        assertThat(fields.get(1).initialDefault()).contains(new Value.TimestampVal(stamp, false));
+        assertThat(fields.get(2).initialDefault()).contains(new Value.TimestampVal(stamp, true));
+        assertThat(fields.get(3).initialDefault()).contains(new Value.TimeVal(LocalTime.of(12, 34, 56, 789_000)));
+        assertThat(fields.get(4).initialDefault())
+                .contains(new Value.UuidVal(UUID.fromString("f79c3e09-677c-4bbd-a479-3f349cb785e7")));
+        assertThat(fields.get(5).initialDefault()).get().isInstanceOf(Value.BinaryVal.class);
+        assertThat(fields.get(6).initialDefault()).get().isInstanceOf(Value.BinaryVal.class);
+    }
+
+    @Test
+    void rejectsAnInitialDefaultOnANestedField() {
+        String json = metadataWithFields("""
+                {"id": 1, "name": "id", "type": "long", "required": true},
+                {"id": 2, "name": "bbox", "required": false, "initial-default": {"xmin": 0.0},
+                 "type": {"type": "struct", "fields": [
+                   {"id": 5, "name": "xmin", "required": false, "type": "double"}
+                 ]}}
+                """);
+
+        assertThatThrownBy(() -> IcebergTableMetadata.read(json))
+                .isInstanceOf(IcebergFormatException.class)
+                .hasMessageContaining("bbox");
+    }
+
+    @Test
+    void rejectsANanosecondTimestampDefault() {
+        String json = metadataWithFields("""
+                {"id": 1, "name": "ts", "type": "timestamp_ns", "initial-default": "2020-02-03T04:05:06.000000007"}
+                """);
+
+        assertThatThrownBy(() -> IcebergTableMetadata.read(json))
+                .isInstanceOf(IcebergFormatException.class)
+                .hasMessageContaining("nanosecond");
     }
 
     @Test

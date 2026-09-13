@@ -15,6 +15,7 @@
  */
 package io.tileverse.parquetry.iceberg;
 
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -23,11 +24,14 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
 
+import io.tileverse.parquetry.format.EdgeInterpolationAlgorithm;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.UuidConverter;
+import io.tileverse.parquetry.schema.geo.ParquetCrs;
 
 /**
  * The Iceberg table's current schema, presented as a Parquet schema for reads.
@@ -103,64 +107,74 @@ final class IcebergSchema {
     private static SchemaNode.Primitive leafOf(IcebergField field) {
         PrimitiveMapping mapping = mappingFor(field.type());
         Repetition repetition = field.required() ? Repetition.REQUIRED : Repetition.OPTIONAL;
-        Optional<LogicalType> logicalType = geoLogicalType(field).or(mapping::logicalType);
         return new SchemaNode.Primitive(
-                field.name(), repetition, mapping.kind(), mapping.typeLength(), logicalType, field.fieldId());
+                field.name(), repetition, mapping.kind(), mapping.typeLength(), mapping.logicalType(), field.fieldId());
     }
 
-    private static Optional<LogicalType> geoLogicalType(IcebergField field) {
-        return switch (field.type()) {
-            case "geometry" -> Optional.of(new LogicalType.Geometry(field.crs()));
-            case "geography" -> Optional.of(new LogicalType.Geography(field.crs(), field.geographyAlgorithm()));
-            default -> Optional.empty();
-        };
-    }
-
-    private static PrimitiveMapping mappingFor(String icebergType) {
-        return switch (icebergType) {
-            case "int" -> new PrimitiveMapping(PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty());
-            case "long" -> new PrimitiveMapping(PrimitiveKind.INT64, OptionalInt.empty(), Optional.empty());
-            case "float" -> new PrimitiveMapping(PrimitiveKind.FLOAT, OptionalInt.empty(), Optional.empty());
-            case "double" -> new PrimitiveMapping(PrimitiveKind.DOUBLE, OptionalInt.empty(), Optional.empty());
-            case "boolean" -> new PrimitiveMapping(PrimitiveKind.BOOLEAN, OptionalInt.empty(), Optional.empty());
-            case "date" ->
-                new PrimitiveMapping(PrimitiveKind.INT32, OptionalInt.empty(), Optional.of(new LogicalType.DateType()));
-            case "string" ->
-                new PrimitiveMapping(
-                        PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.of(new LogicalType.StringType()));
-            case "binary" -> new PrimitiveMapping(PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty());
-            case "geometry", "geography" ->
-                new PrimitiveMapping(PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty());
-            case "uuid" ->
+    private static PrimitiveMapping mappingFor(IcebergType type) {
+        return switch (type) {
+            case IcebergType.BoolType _ -> plain(PrimitiveKind.BOOLEAN);
+            case IcebergType.IntType _ -> plain(PrimitiveKind.INT32);
+            case IcebergType.LongType _ -> plain(PrimitiveKind.INT64);
+            case IcebergType.FloatType _ -> plain(PrimitiveKind.FLOAT);
+            case IcebergType.DoubleType _ -> plain(PrimitiveKind.DOUBLE);
+            case IcebergType.DateType _ -> annotated(PrimitiveKind.INT32, new LogicalType.DateType());
+            case IcebergType.StringType _ -> annotated(PrimitiveKind.BYTE_ARRAY, new LogicalType.StringType());
+            case IcebergType.BinaryType _ -> plain(PrimitiveKind.BYTE_ARRAY);
+            case IcebergType.UuidType _ ->
                 new PrimitiveMapping(
                         PrimitiveKind.FIXED_LEN_BYTE_ARRAY,
-                        OptionalInt.of(16),
+                        OptionalInt.of(UuidConverter.BYTES),
                         Optional.of(new LogicalType.UuidType()));
-            case "timestamp" ->
-                new PrimitiveMapping(
-                        PrimitiveKind.INT64,
-                        OptionalInt.empty(),
-                        Optional.of(new LogicalType.Timestamp(false, LogicalType.TimeUnit.MICROS)));
-            case "timestamptz" ->
-                new PrimitiveMapping(
-                        PrimitiveKind.INT64,
-                        OptionalInt.empty(),
-                        Optional.of(new LogicalType.Timestamp(true, LogicalType.TimeUnit.MICROS)));
-            case "timestamp_ns" ->
-                new PrimitiveMapping(
-                        PrimitiveKind.INT64,
-                        OptionalInt.empty(),
-                        Optional.of(new LogicalType.Timestamp(false, LogicalType.TimeUnit.NANOS)));
-            case "timestamptz_ns" ->
-                new PrimitiveMapping(
-                        PrimitiveKind.INT64,
-                        OptionalInt.empty(),
-                        Optional.of(new LogicalType.Timestamp(true, LogicalType.TimeUnit.NANOS)));
-            case "unknown" ->
-                new PrimitiveMapping(
-                        PrimitiveKind.INT32, OptionalInt.empty(), Optional.of(new LogicalType.UnknownType()));
-            default -> throw new IcebergFormatException("unsupported Iceberg field type: " + icebergType);
+            case IcebergType.TimestampType(boolean adjustToUtc, LogicalType.TimeUnit unit) ->
+                annotated(PrimitiveKind.INT64, new LogicalType.Timestamp(adjustToUtc, unit));
+            case IcebergType.TimeType _ ->
+                annotated(PrimitiveKind.INT64, new LogicalType.Time(false, LogicalType.TimeUnit.MICROS));
+            case IcebergType.DecimalType(int precision, int scale) -> decimalMapping(precision, scale);
+            case IcebergType.FixedType(int length) ->
+                new PrimitiveMapping(PrimitiveKind.FIXED_LEN_BYTE_ARRAY, OptionalInt.of(length), Optional.empty());
+            case IcebergType.GeometryType(Optional<ParquetCrs> crs) ->
+                annotated(PrimitiveKind.BYTE_ARRAY, new LogicalType.Geometry(crs));
+            case IcebergType.GeographyType(Optional<ParquetCrs> crs, Optional<EdgeInterpolationAlgorithm> algorithm) ->
+                annotated(PrimitiveKind.BYTE_ARRAY, new LogicalType.Geography(crs, algorithm));
+            case IcebergType.UnknownType _ -> annotated(PrimitiveKind.INT32, new LogicalType.UnknownType());
         };
+    }
+
+    private static PrimitiveMapping plain(PrimitiveKind kind) {
+        return new PrimitiveMapping(kind, OptionalInt.empty(), Optional.empty());
+    }
+
+    private static PrimitiveMapping annotated(PrimitiveKind kind, LogicalType logicalType) {
+        return new PrimitiveMapping(kind, OptionalInt.empty(), Optional.of(logicalType));
+    }
+
+    /** Iceberg's writer stores a decimal in the narrowest Parquet type that holds its precision. */
+    private static PrimitiveMapping decimalMapping(int precision, int scale) {
+        LogicalType.Decimal logicalType = new LogicalType.Decimal(scale, precision);
+        if (precision <= 9) {
+            return annotated(PrimitiveKind.INT32, logicalType);
+        }
+        if (precision <= 18) {
+            return annotated(PrimitiveKind.INT64, logicalType);
+        }
+        return new PrimitiveMapping(
+                PrimitiveKind.FIXED_LEN_BYTE_ARRAY,
+                OptionalInt.of(decimalByteLength(precision)),
+                Optional.of(logicalType));
+    }
+
+    /**
+     * The smallest byte count whose signed two's-complement range holds every unscaled value of {@code precision}
+     * digits: Iceberg's canonical FIXED_LEN_BYTE_ARRAY length for a decimal column.
+     */
+    static int decimalByteLength(int precision) {
+        BigInteger largest = BigInteger.TEN.pow(precision).subtract(BigInteger.ONE);
+        int length = 1;
+        while (BigInteger.ONE.shiftLeft(8 * length - 1).subtract(BigInteger.ONE).compareTo(largest) < 0) {
+            length++;
+        }
+        return length;
     }
 
     private record PrimitiveMapping(PrimitiveKind kind, OptionalInt typeLength, Optional<LogicalType> logicalType) {}

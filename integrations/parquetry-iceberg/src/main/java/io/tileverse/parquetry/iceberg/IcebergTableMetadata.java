@@ -15,8 +15,6 @@
  */
 package io.tileverse.parquetry.iceberg;
 
-import java.time.LocalDate;
-import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -207,58 +205,48 @@ final class IcebergTableMetadata {
         }
         JsonNode type = fieldNode.get("type");
         if (type == null || !type.isString()) {
+            rejectNestedInitialDefault(fieldNode);
             return Optional.empty();
         }
         int id = requiredInt(fieldNode, "id");
         String name = requiredString(fieldNode, "name");
         boolean required = optionalBoolean(fieldNode, "required");
-        String typeName = type.stringValue();
-        if (IcebergGeometryType.isGeometryToken(typeName)) {
-            IcebergGeometryType geometryType = IcebergGeometryType.parse(typeName);
-            String baseKind = geometryType.baseKind();
-            Optional<Value> geoInitialDefault = initialDefault(fieldNode, baseKind, name);
-            return Optional.of(new IcebergField(
-                    id, name, baseKind, required, geoInitialDefault, geometryType.crs(), geometryType.algorithm()));
-        }
-        Optional<Value> initialDefault = initialDefault(fieldNode, typeName, name);
-        return Optional.of(new IcebergField(id, name, typeName, required, initialDefault));
+        IcebergType icebergType = parsedType(type.stringValue(), name);
+        Optional<Value> initialDefault = initialDefault(fieldNode, icebergType, name);
+        return Optional.of(new IcebergField(id, name, icebergType, required, initialDefault));
     }
 
     /**
-     * Reads a field's {@code initial-default} from Iceberg's JSON single-value serialization. A {@code date} default is
-     * an ISO {@code YYYY-MM-DD} string (not epoch days); numeric and boolean defaults are JSON scalars. An unsupported
-     * type fails fast rather than dropping the default and reading the column as null.
+     * A nested field's default cannot be honored while nested members are read by name; dropping it silently would read
+     * the column as null where the table declares a value.
      */
-    private static Optional<Value> initialDefault(JsonNode fieldNode, String type, String name) {
+    private static void rejectNestedInitialDefault(JsonNode fieldNode) {
+        JsonNode defaultNode = fieldNode.get("initial-default");
+        if (defaultNode != null && !defaultNode.isNull()) {
+            throw new IcebergFormatException(
+                    "initial-default on nested field %s is not supported".formatted(requiredString(fieldNode, "name")));
+        }
+    }
+
+    /**
+     * Parses a field's type token, naming the field when the token is malformed. The token alone does not identify the
+     * column in a table that declares several columns of the same type.
+     */
+    private static IcebergType parsedType(String token, String fieldName) {
+        try {
+            return IcebergType.parse(token);
+        } catch (IcebergFormatException e) {
+            throw new IcebergFormatException("field %s: %s".formatted(fieldName, e.getMessage()), e);
+        }
+    }
+
+    /** Reads a field's {@code initial-default} from Iceberg's JSON single-value serialization. */
+    private static Optional<Value> initialDefault(JsonNode fieldNode, IcebergType type, String name) {
         JsonNode defaultNode = fieldNode.get("initial-default");
         if (defaultNode == null || defaultNode.isNull()) {
             return Optional.empty();
         }
-        return Optional.of(decodeInitialDefault(type, defaultNode, name));
-    }
-
-    private static Value decodeInitialDefault(String type, JsonNode node, String name) {
-        return switch (type) {
-            case "int" -> new Value.IntVal(node.intValue());
-            case "long" -> new Value.LongVal(node.longValue());
-            case "float" -> new Value.FloatVal((float) node.doubleValue());
-            case "double" -> new Value.DoubleVal(node.doubleValue());
-            case "boolean" -> new Value.BoolVal(node.booleanValue());
-            case "date" -> new Value.DateVal(parseDate(node.stringValue(), name));
-            case "string" -> new Value.StringVal(node.stringValue());
-            default ->
-                throw new IcebergFormatException(
-                        "cannot read initial-default for field %s of unsupported type %s".formatted(name, type));
-        };
-    }
-
-    private static LocalDate parseDate(String text, String name) {
-        try {
-            return LocalDate.parse(text);
-        } catch (DateTimeParseException e) {
-            throw new IcebergFormatException(
-                    "initial-default for date field %s is not an ISO date: %s".formatted(name, text), e);
-        }
+        return Optional.of(IcebergScalarValues.fromJson(type, defaultNode, name));
     }
 
     private static boolean optionalBoolean(JsonNode node, String field) {

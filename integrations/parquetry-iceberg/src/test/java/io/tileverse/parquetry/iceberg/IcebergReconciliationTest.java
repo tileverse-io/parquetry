@@ -18,6 +18,8 @@ package io.tileverse.parquetry.iceberg;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.math.BigDecimal;
+import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -261,13 +263,37 @@ class IcebergReconciliationTest {
     }
 
     @Test
-    void failsWhenAnAddedFieldHasAnUnsupportedNullType() {
-        IcebergSchema table = tableOf(field(2, "n", "long"), field(3, "blob", "binary"));
+    void failsWhenAnAddedGeometryFieldNeedsANullColumn() {
+        IcebergSchema table = tableOf(field(2, "n", "long"), field(3, "geom", "geometry"));
         IcebergFileSchema file = IcebergFileSchema.of(fileSchema(leaf("n", PrimitiveKind.INT64, 2)));
 
         assertThatThrownBy(() -> IcebergReconciliation.reconcile(table, file, NO_PARTITIONS))
                 .isInstanceOf(IcebergFormatException.class)
-                .hasMessageContaining("blob");
+                .hasMessageContaining("geom");
+    }
+
+    @Test
+    void injectsNullForAnAddedBinaryDecimalAndTimeColumn() {
+        IcebergSchema table = tableOf(
+                field(1, "id", "long"),
+                field(2, "blob", "binary"),
+                field(3, "amount", "decimal(9, 2)"),
+                field(4, "t", "time"));
+        IcebergFileSchema file = IcebergFileSchema.of(fileSchema(leaf("id", PrimitiveKind.INT64, 1)));
+
+        List<Projection.Column> columns = List.copyOf(
+                IcebergReconciliation.reconcile(table, file, NO_PARTITIONS).columns());
+
+        assertThat(columns.get(0)).isEqualTo(new Projection.Column.Physical(ColumnPath.of("id"), ColumnPath.of("id")));
+        assertThat(columns.get(1))
+                .isInstanceOfSatisfying(
+                        Projection.Column.Null.class,
+                        nul -> assertThat(nul.typeOf()).isInstanceOf(Value.BinaryVal.class));
+        assertThat(columns.get(2))
+                .isEqualTo(new Projection.Column.Null(
+                        ColumnPath.of("amount"), new Value.DecimalVal(BigDecimal.valueOf(0L, 2))));
+        assertThat(columns.get(3))
+                .isEqualTo(new Projection.Column.Null(ColumnPath.of("t"), new Value.TimeVal(LocalTime.MIDNIGHT)));
     }
 
     private static IcebergSchema tableOf(IcebergField... fields) {

@@ -128,7 +128,7 @@ final class IcebergSchemaEvolution {
         node.put("id", field.fieldId());
         node.put("name", field.name());
         node.put("required", field.required());
-        node.put("type", field.type());
+        node.put("type", field.type().token());
         field.initialDefault().ifPresent(value -> putInitialDefault(node, value));
         return node;
     }

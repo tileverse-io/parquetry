@@ -19,6 +19,7 @@ import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.lang.foreign.MemorySegment;
+import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Map;
@@ -92,22 +93,41 @@ class IcebergFileStatsTest {
     }
 
     @Test
-    void skipsColumnBoundWithUnsupportedTypeWithoutFailing() {
+    void skipsAMalformedColumnBoundWithoutFailing() {
         IcebergManifests.DataFileRef ref = new IcebergManifests.DataFileRef(
                 "s3://bucket/data/file-0.parquet",
                 42L,
                 1L,
                 null,
-                Map.of(VAL_FIELD_ID, leLong(VAL_LOWER)),
-                Map.of(VAL_FIELD_ID, leLong(VAL_UPPER)),
+                Map.of(VAL_FIELD_ID, MemorySegment.ofArray(new byte[0])),
+                Map.of(VAL_FIELD_ID, MemorySegment.ofArray(new byte[0])),
                 Map.of(),
                 Map.of());
-
-        List<IcebergField> fields = List.of(new IcebergField(VAL_FIELD_ID, "amount", "decimal", false));
+        List<IcebergField> fields = List.of(new IcebergField(VAL_FIELD_ID, "flag", "boolean", false));
 
         FileStats stats = IcebergFileStats.from(ref, fields, Map.of());
 
-        assertThat(stats.columns()).doesNotContainKey(ColumnPath.of("amount"));
+        assertThat(stats.columns()).doesNotContainKey(ColumnPath.of("flag"));
+    }
+
+    @Test
+    void decodesADecimalBoundAtTheFieldScale() {
+        IcebergManifests.DataFileRef ref = new IcebergManifests.DataFileRef(
+                "s3://bucket/data/file-0.parquet",
+                42L,
+                1L,
+                null,
+                Map.of(VAL_FIELD_ID, MemorySegment.ofArray(new byte[] {(byte) 0xfd, (byte) 0x8f})),
+                Map.of(VAL_FIELD_ID, MemorySegment.ofArray(new byte[] {0x02, (byte) 0xee})),
+                Map.of(),
+                Map.of());
+        List<IcebergField> fields = List.of(new IcebergField(VAL_FIELD_ID, "amount", "decimal(9, 2)", false));
+
+        FileStats stats = IcebergFileStats.from(ref, fields, Map.of());
+
+        ColumnStatistics amount = stats.columns().get(ColumnPath.of("amount"));
+        assertThat(amount.min()).contains(new Value.DecimalVal(new BigDecimal("-6.25")));
+        assertThat(amount.max()).contains(new Value.DecimalVal(new BigDecimal("7.50")));
     }
 
     @Test

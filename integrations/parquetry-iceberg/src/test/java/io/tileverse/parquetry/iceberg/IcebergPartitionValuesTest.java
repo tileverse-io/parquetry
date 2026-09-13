@@ -18,10 +18,15 @@ package io.tileverse.parquetry.iceberg;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.ZoneOffset;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
@@ -89,11 +94,31 @@ class IcebergPartitionValuesTest {
     }
 
     @Test
-    void failsFastOnAnUnsupportedIdentitySourceType() {
+    void failsFastOnAnUnconvertiblePartitionValue() {
         IcebergPartitionSpec spec = spec(new IcebergField(2, "blob", "binary", true), "identity");
         Map<Integer, Object> tuple = Map.of(1000, "x");
         assertThatThrownBy(() -> IcebergPartitionValues.constantsFor(spec, tuple))
                 .isInstanceOf(IcebergFormatException.class)
                 .hasMessageContaining("blob");
+    }
+
+    @Test
+    void convertsUuidDecimalTimestampAndTimeIdentityValues() {
+        UUID uuid = UUID.fromString("f79c3e09-677c-4bbd-a479-3f349cb785e7");
+        assertThat(IcebergPartitionValues.constantsFor(
+                        spec(new IcebergField(2, "u", "uuid", true), "identity"), Map.of(1000, uuid)))
+                .containsEntry(2, new Value.UuidVal(uuid));
+        assertThat(IcebergPartitionValues.constantsFor(
+                        spec(new IcebergField(2, "dec", "decimal(9, 2)", true), "identity"),
+                        Map.of(1000, new BigDecimal("1.25"))))
+                .containsEntry(2, new Value.DecimalVal(new BigDecimal("1.25")));
+        LocalDateTime stamp = LocalDateTime.of(2024, 6, 15, 12, 30, 45, 123_456_000);
+        assertThat(IcebergPartitionValues.constantsFor(
+                        spec(new IcebergField(2, "ts", "timestamp", true), "identity"),
+                        Map.of(1000, stamp.toInstant(ZoneOffset.UTC))))
+                .containsEntry(2, new Value.TimestampVal(stamp, false));
+        assertThat(IcebergPartitionValues.constantsFor(
+                        spec(new IcebergField(2, "t", "time", true), "identity"), Map.of(1000, LocalTime.NOON)))
+                .containsEntry(2, new Value.TimeVal(LocalTime.NOON));
     }
 }

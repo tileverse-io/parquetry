@@ -119,7 +119,7 @@ final class IcebergFileStats {
 
     private static Optional<Value> decode(IcebergField field, MemorySegment bytes) {
         try {
-            return Optional.of(IcebergBounds.decodeValue(field.type(), bytes));
+            return Optional.of(IcebergScalarValues.fromBound(field.type(), bytes));
         } catch (IcebergFormatException _) {
             // Any bound we cannot decode (an unsupported type or a malformed payload) is skipped: pruning is
             // best-effort and never blocks a read. The column simply contributes nothing to pruning.

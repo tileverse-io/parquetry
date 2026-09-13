@@ -15,12 +15,10 @@
  */
 package io.tileverse.parquetry.iceberg;
 
-import java.time.LocalDate;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Optional;
 import java.util.SequencedSet;
-import java.util.UUID;
 
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Value;
@@ -140,31 +138,13 @@ final class IcebergReconciliation {
     }
 
     private static Projection.Column injectNullColumn(IcebergField field) {
-        return new Projection.Column.Null(ColumnPath.of(field.name()), nullTypeOf(field));
+        Value archetype = IcebergScalarValues.nullValue(field.type(), field.name());
+        return new Projection.Column.Null(ColumnPath.of(field.name()), archetype);
     }
 
     private static boolean isSanctionedWidening(PrimitiveKind fileKind, PrimitiveKind expectedKind) {
         boolean intToLong = fileKind == PrimitiveKind.INT32 && expectedKind == PrimitiveKind.INT64;
         boolean floatToDouble = fileKind == PrimitiveKind.FLOAT && expectedKind == PrimitiveKind.DOUBLE;
         return intToLong || floatToDouble;
-    }
-
-    private static Value nullTypeOf(IcebergField field) {
-        return switch (field.type()) {
-            case "int" -> new Value.IntVal(0);
-            case "long" -> new Value.LongVal(0L);
-            case "float" -> new Value.FloatVal(0f);
-            case "double" -> new Value.DoubleVal(0d);
-            case "boolean" -> new Value.BoolVal(false);
-            case "date" -> new Value.DateVal(LocalDate.EPOCH);
-            case "string" -> new Value.StringVal("");
-            // The value is ignored; only its kind selects the all-null vector.
-            case "uuid" -> new Value.UuidVal(new UUID(0L, 0L));
-            case "timestamp", "timestamptz", "timestamp_ns", "timestamptz_ns" -> new Value.LongVal(0L);
-            case "unknown" -> new Value.IntVal(0);
-            default ->
-                throw new IcebergFormatException("cannot inject a null column for added field %s of unsupported type %s"
-                        .formatted(field.name(), field.type()));
-        };
     }
 }
