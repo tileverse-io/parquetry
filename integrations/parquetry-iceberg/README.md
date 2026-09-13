@@ -34,15 +34,15 @@ clear message rather than returning wrong rows. The `Spec` column notes the Iceb
 | Feature | Spec | Status | Notes |
 | --- | --- | --- | --- |
 | Presented schema = the table's current schema | v1+ | Full | from the metadata, not the first data file's footer |
-| Primitive types | v1+ | Full | boolean, int, long, float, double, date, string, uuid, binary, ... |
+| Primitive types | v1+ | Full | boolean, int, long, float, double, date, time, timestamp / timestamptz / timestamp_ns / timestamptz_ns, string, uuid, binary, fixed, decimal (stored as INT32, INT64, or fixed-length bytes by precision; all three read and filter) |
 | Native geometry / geography | v3 | Full | Parquet `Geometry` logical type, WKB; CRS parsed from the Iceberg type token (`OGC:CRS84` default) and presented on the geometry logical type |
 | Variant | v3 | Partial | decoded by the core engine; no Iceberg-specific fixture yet |
 | Nested struct / list / map | v1+ | Partial | read by name; a data file whose nested field ids disagree with the table (a nested rename or id reassignment) now fails loud instead of misreading; full field-id reconciliation within nesting is Planned (the main conformance gap) |
 | Field-id reconciliation, top-level | v1+ | Full | rename, add (reads as null), drop, reorder |
 | Type promotion `int`->`long`, `float`->`double` | v1+ | Full | filters correctly on a promoted column |
-| Type promotion `decimal` precision widening | v1+ | Planned | `int`->`long` and `float`->`double` work; decimal widening does not yet |
-| Added column of `binary` / `geometry` / `geography` | v1+/v3 | Planned | added scalar columns read as null; these fail fast |
-| Column default values | v3 | Full | an added column's `initial-default` reads back for files written before the column existed (primitive types: `int`/`long`/`float`/`double`/`boolean`/`date`/`string`); a non-primitive default fails fast |
+| Type promotion `decimal` precision widening | v1+ | Full | value-preserving at a fixed scale, across the INT32, INT64, and fixed-length encodings used by writers for a decimal; a data file whose decimal scale, temporal unit, or fixed length disagrees with the table is rejected |
+| Added column of `geometry` / `geography` | v3 | Planned | an added geometry column cannot be null-filled yet; every other added scalar column reads as null |
+| Column default values | v3 | Full | an added column's `initial-default` reads back for every scalar type (a nanosecond-timestamp default is rejected at open until constant columns present the table unit); a default on a nested field is rejected at open |
 | Name mapping for id-less files | v1+ | Full | `schema.name-mapping.default` honored; implicit current-schema mapping when the property is absent |
 
 ### Reads and pruning
@@ -52,10 +52,10 @@ clear message rather than returning wrong rows. The `Spec` column notes the Iceb
 | Full scan and count | v1+ | Full | |
 | Record-level predicate filtering | v1+ | Full | |
 | Bounding-box spatial predicates | v3 | Full | evaluated record-by-record through the engine's spatial contract |
-| Manifest-bound file pruning (L3) | v1+ | Full | scalar bounds (`int`/`long`/`float`/`double`/`boolean`/`date`/`string`/`uuid`) + geometry bounds (`packed_xy`, `wkb_point`) |
+| Manifest-bound file pruning (L3) | v1+ | Full | every scalar type's manifest bounds + geometry bounds (`packed_xy`, `wkb_point`) |
 | Partition-value file pruning | v1+ | Full | an equality or range on an identity-partition column skips whole files before opening them |
 | Transform-partition pruning (`days`/`bucket`/`truncate`/...) | v1+ | Planned | a predicate on a transform's source column does not yet prune by partition; only identity-partition values prune |
-| Manifest bounds for `timestamp`/`time`/`decimal`/`fixed`/`binary` | v1+ | Planned | a predicate on these does not prune; the file is kept and filtered |
+| Manifest bounds for `timestamp`/`time`/`decimal`/`fixed`/`binary` | v1+ | Full | a predicate on any scalar column prunes by its manifest bounds |
 | Row-group pruning inside a file (L4) | v1+ | Full | the engine's per-row-group tiers run on every kept file; a disjoint row group is skipped from the file's native geometry bounds or column statistics, when the writer recorded them |
 | Dataset-level explain / analyze | - | Full | reports the file dimension: files kept/skipped, each skip reason, each kept file's row-group plan |
 | Column projection on an evolved file | v1+ | Partial | an evolved file presents every table field |
@@ -66,10 +66,10 @@ clear message rather than returning wrong rows. The `Spec` column notes the Iceb
 | Feature | Spec | Status | Notes |
 | --- | --- | --- | --- |
 | Copy-on-write tables | v1+ | Full | |
-| Merge-on-read: positional + equality deletes | v2 | Full | applied during the scan; a delete applies only to the data files its sequence number covers |
+| Merge-on-read: positional + equality deletes | v2 | Full | applied during the scan; a delete applies only to the data files covered by its sequence number; equality keys of any scalar type |
 | Merge-on-read: deletion vectors | v3 | Full | Puffin-serialized roaring bitmaps; a deletion vector supersedes positional deletes for its data file |
 | Row lineage (`_row_id`, `_last_updated_sequence_number`) | v3 | Full | projected by name; absent from the schema and the default read. A materialized cell keeps its stored value; a null cell falls back to `first_row_id` + position (`_row_id`) or the file's data sequence number. Below v3 the reserved names are ordinary columns |
-| Partitioned tables | v1+ | Full | identity-partition value reconstruction, transform partitions read as-is, partition-value file pruning; `decimal`/`timestamp` partition source types fail fast |
+| Partitioned tables | v1+ | Full | identity-partition value reconstruction for every scalar type, transform partitions read as-is, partition-value file pruning |
 
 ## Spatial grading (CARTO iceberg-geo-testbed)
 

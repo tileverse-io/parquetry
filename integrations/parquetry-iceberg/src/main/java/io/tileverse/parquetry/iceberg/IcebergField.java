@@ -19,50 +19,41 @@ import java.util.Objects;
 import java.util.Optional;
 
 import io.tileverse.parquetry.filter.Value;
-import io.tileverse.parquetry.format.EdgeInterpolationAlgorithm;
-import io.tileverse.parquetry.schema.geo.ParquetCrs;
 
 /**
- * One field of an Iceberg table schema: its field id, column name, primitive type string, whether the field is required
- * (non-nullable), its {@code initial-default} value when the schema declares one (v3 column defaults), and - for a
- * geometry/geography field - the coordinate reference system and geography edge-interpolation algorithm parsed from the
- * Iceberg type token.
+ * One field of an Iceberg table schema: its field id, column name, parsed {@link IcebergType}, whether the field is
+ * required (non-nullable), and its {@code initial-default} value when the schema declares one (v3 column defaults).
  *
  * <p>The {@code initialDefault} reads back for an added column that a data file written before the column existed does
- * not contain; an empty optional means the absent column reads as null. {@code crs} is empty for a non-geometry field
- * and for a geometry/geography token whose CRS is absent or unclassifiable; {@code geographyAlgorithm} is present only
- * for a geography token that declares an edge-interpolation algorithm and is empty otherwise.
+ * not contain; an empty optional means the absent column reads as null. A parameterized type (a decimal's precision and
+ * scale, a fixed type's length, a timestamp's unit, a geometry's CRS) keeps its parameters on the type.
  */
-record IcebergField(
-        int fieldId,
-        String name,
-        String type,
-        boolean required,
-        Optional<Value> initialDefault,
-        Optional<ParquetCrs> crs,
-        Optional<EdgeInterpolationAlgorithm> geographyAlgorithm) {
+record IcebergField(int fieldId, String name, IcebergType type, boolean required, Optional<Value> initialDefault) {
 
     public IcebergField {
         Objects.requireNonNull(name, "name");
         Objects.requireNonNull(type, "type");
         Objects.requireNonNull(initialDefault, "initialDefault");
-        Objects.requireNonNull(crs, "crs");
-        Objects.requireNonNull(geographyAlgorithm, "geographyAlgorithm");
     }
 
-    IcebergField(int fieldId, String name, String type, boolean required, Optional<Value> initialDefault) {
-        this(fieldId, name, type, required, initialDefault, Optional.empty(), Optional.empty());
-    }
-
-    IcebergField(int fieldId, String name, String type, boolean required) {
+    IcebergField(int fieldId, String name, IcebergType type, boolean required) {
         this(fieldId, name, type, required, Optional.empty());
     }
 
+    /** Parses {@code typeToken} through {@link IcebergType#parse}, for a caller holding the serialized token. */
+    IcebergField(int fieldId, String name, String typeToken, boolean required) {
+        this(fieldId, name, IcebergType.parse(typeToken), required);
+    }
+
+    IcebergField(int fieldId, String name, String typeToken, boolean required, Optional<Value> initialDefault) {
+        this(fieldId, name, IcebergType.parse(typeToken), required, initialDefault);
+    }
+
     public boolean isGeometry() {
-        return "geometry".equals(type) || "geography".equals(type);
+        return type instanceof IcebergType.GeometryType || type instanceof IcebergType.GeographyType;
     }
 
     public boolean isGeography() {
-        return "geography".equals(type);
+        return type instanceof IcebergType.GeographyType;
     }
 }

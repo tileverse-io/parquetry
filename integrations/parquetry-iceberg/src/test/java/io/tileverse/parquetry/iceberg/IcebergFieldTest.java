@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.iceberg;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.Optional;
 
@@ -27,20 +28,30 @@ import io.tileverse.parquetry.schema.geo.ParquetCrs;
 class IcebergFieldTest {
 
     @Test
-    void defaultsGeoComponentsToEmpty() {
-        IcebergField field = new IcebergField(1, "g", "geometry", false);
+    void parsesTheTokenThroughTheConvenienceConstructor() {
+        IcebergField field = new IcebergField(1, "amount", "decimal(9, 2)", false);
+        assertThat(field.type()).isEqualTo(new IcebergType.DecimalType(9, 2));
         assertThat(field.initialDefault()).isEmpty();
-        assertThat(field.crs()).isEmpty();
-        assertThat(field.geographyAlgorithm()).isEmpty();
     }
 
     @Test
-    void exposesGeoComponentsFromFullConstructor() {
-        Optional<ParquetCrs> crs = Optional.of(new ParquetCrs.AuthorityCode("EPSG", "3857"));
-        Optional<EdgeInterpolationAlgorithm> algorithm = Optional.of(EdgeInterpolationAlgorithm.KARNEY);
-        IcebergField field = new IcebergField(2, "h", "geography", false, Optional.empty(), crs, algorithm);
-        assertThat(field.crs()).isEqualTo(crs);
-        assertThat(field.geographyAlgorithm()).isEqualTo(algorithm);
-        assertThat(field.isGeography()).isTrue();
+    void reportsGeometryAndGeographyFromTheType() {
+        IcebergField geometry = new IcebergField(1, "g", "geometry(EPSG:3857)", false);
+        assertThat(geometry.isGeometry()).isTrue();
+        assertThat(geometry.isGeography()).isFalse();
+
+        IcebergField geography = new IcebergField(2, "h", "geography(OGC:CRS84, karney)", false);
+        assertThat(geography.isGeometry()).isTrue();
+        assertThat(geography.isGeography()).isTrue();
+        assertThat(geography.type())
+                .isEqualTo(new IcebergType.GeographyType(
+                        ParquetCrs.reference("OGC:CRS84"), Optional.of(EdgeInterpolationAlgorithm.KARNEY)));
+    }
+
+    @Test
+    void rejectsAnUnsupportedTokenAtConstruction() {
+        assertThatThrownBy(() -> new IcebergField(1, "v", "variant", false))
+                .isInstanceOf(IcebergFormatException.class)
+                .hasMessageContaining("variant");
     }
 }

@@ -1,0 +1,5 @@
+scalar-types-gen/target/
+scalar-types-gen/work/
+scalar-types-gen/cp.txt
+.venv/
+*.log

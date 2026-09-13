@@ -21,6 +21,9 @@ import java.lang.foreign.MemorySegment;
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.LocalTime;
+import java.util.Collections;
+import java.util.List;
+import java.util.function.Function;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -38,9 +41,10 @@ import io.tileverse.parquetry.testkit.TestCorpus;
 
 /**
  * End-to-end read, filter, and STATS-prune coverage for decimal and time scalar types, exercised on a project-authored
- * fixture ({@code parquetry/scalar_types.parquet}).
+ * fixture ({@code parquetry/scalar_types.parquet}) and on the integer-backed decimal files of the
+ * {@code parquet-testing} corpus.
  *
- * <p>The fixture has four columns and four rows:
+ * <p>The project-authored fixture has four columns and four rows:
  *
  * <ul>
  *   <li>{@code dec_small} - FIXED_LEN_BYTE_ARRAY(4), Decimal(9, 2): -3.00, 1.50, 4.00, 5.00
@@ -60,6 +64,10 @@ import io.tileverse.parquetry.testkit.TestCorpus;
  *
  * <p>The signed-ordering test proves that the comparison uses two's-complement SIGNED order, not unsigned byte order:
  * -3.00 is the smallest value in the file, and an unsigned byte comparison would misplace it at the top.
+ *
+ * <p>Two further tests cover the integer-backed decimal encodings on the {@code parquet-testing} corpus files
+ * {@code int32_decimal.parquet} and {@code int64_decimal.parquet}, where the cells hold the unscaled value as a plain
+ * INT32 or INT64. Their expectations come from each file's own unfiltered read, not from memorized values.
  */
 class ScalarTypeReadIT {
 
@@ -69,6 +77,8 @@ class ScalarTypeReadIT {
     private static final ColumnPath DEC_BIG = ColumnPath.of("dec_big");
     private static final ColumnPath T_MICROS = ColumnPath.of("t_micros");
     private static final ColumnPath FX = ColumnPath.of("fx");
+
+    private static final ColumnPath VALUE = ColumnPath.of("value");
 
     @TempDir
     Path tempDir;
@@ -182,7 +192,76 @@ class ScalarTypeReadIT {
                 .isEqualTo(1L);
     }
 
+    // --- Integer-backed decimals (parquet-testing corpus, column "value", scale 2) ---
+
+    @Test
+    void int32DecimalFiltersAgreeWithTheUnfilteredRead() {
+        assertDecimalFiltersMatchOracle(
+                "parquet-testing/data/int32_decimal.parquet", 2, row -> BigDecimal.valueOf(row.getInt(VALUE), 2));
+    }
+
+    @Test
+    void int64DecimalFiltersAgreeWithTheUnfilteredRead() {
+        assertDecimalFiltersMatchOracle(
+                "parquet-testing/data/int64_decimal.parquet", 2, row -> BigDecimal.valueOf(row.getLong(VALUE), 2));
+    }
+
     // --- Helper methods ---
+
+    /**
+     * Asserts that filtering {@code fixture} on its decimal column agrees, count for count, with applying the same
+     * comparison to the values of an unfiltered read of the same file.
+     */
+    private void assertDecimalFiltersMatchOracle(
+            String fixture, int scale, Function<ParquetRecord, BigDecimal> decode) {
+        Path file = TestCorpus.extractFile(fixture, tempDir);
+        List<BigDecimal> values = readAll(file, decode);
+        assertThat(values).as("the fixture must hold decoded values").isNotEmpty();
+        BigDecimal min = Collections.min(values);
+        BigDecimal max = Collections.max(values);
+        BigDecimal pivot = values.get(values.size() / 2);
+
+        long expectedGt = values.stream().filter(v -> v.compareTo(pivot) > 0).count();
+        long expectedLtEq = values.stream().filter(v -> v.compareTo(pivot) <= 0).count();
+        long expectedEq = values.stream().filter(v -> v.compareTo(pivot) == 0).count();
+        assertThat(expectedGt)
+                .as("the pivot must leave rows on both sides, or the filters prove nothing")
+                .isPositive();
+        assertThat(expectedLtEq)
+                .as("the pivot must leave rows on both sides, or the filters prove nothing")
+                .isPositive();
+        assertThat(countRows(file, new Predicate.Gt(VALUE, new Value.DecimalVal(pivot))))
+                .isEqualTo(expectedGt);
+        assertThat(countRows(file, new Predicate.LtEq(VALUE, new Value.DecimalVal(pivot))))
+                .isEqualTo(expectedLtEq);
+        assertThat(countRows(file, new Predicate.Eq(VALUE, new Value.DecimalVal(pivot))))
+                .isEqualTo(expectedEq);
+        // A query at another scale takes the exact BigDecimal path and must agree with the fast path.
+        assertThat(countRows(file, new Predicate.Gt(VALUE, new Value.DecimalVal(pivot.setScale(scale + 2)))))
+                .isEqualTo(expectedGt);
+        assertThat(countRows(file, new Predicate.Lt(VALUE, new Value.DecimalVal(min))))
+                .isZero();
+
+        Predicate aboveMax = new Predicate.Gt(VALUE, new Value.DecimalVal(max.add(BigDecimal.ONE)));
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+            ExplainPlan plan = reader.explain(aboveMax, Projection.ALL, ReadOptions.DEFAULTS);
+            assertThat(plan.rowGroups())
+                    .as("STATS must eliminate every row group for a query above the column max")
+                    .isNotEmpty()
+                    .allMatch(rowGroup -> rowGroup.outcome() == RowGroupOutcome.ELIMINATED);
+        }
+    }
+
+    private static List<BigDecimal> readAll(Path file, Function<ParquetRecord, BigDecimal> decode) {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+            try (Stream<ParquetRecord> rows =
+                    reader.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
+                return rows.filter(row -> !row.isNull(VALUE)).map(decode).toList();
+            }
+        }
+    }
 
     private static long countRows(Path file, Predicate predicate) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {

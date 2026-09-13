@@ -15,7 +15,6 @@
  */
 package io.tileverse.parquetry.iceberg;
 
-import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
@@ -124,27 +123,12 @@ final class IcebergEqualityDeletes {
         if (row.isNull(path)) {
             return null;
         }
-        return decode(row, path, column.icebergType());
-    }
-
-    private static Value decode(ParquetRecord row, ColumnPath path, String icebergType) {
-        return switch (icebergType) {
-            case "int" -> new Value.IntVal(row.getInt(path));
-            case "long" -> new Value.LongVal(row.getLong(path));
-            case "float" -> new Value.FloatVal(row.getFloat(path));
-            case "double" -> new Value.DoubleVal(row.getDouble(path));
-            case "boolean" -> new Value.BoolVal(row.getBoolean(path));
-            case "date" -> new Value.DateVal(LocalDate.ofEpochDay(row.getInt(path)));
-            case "string" -> new Value.StringVal(row.getString(path));
-            default ->
-                throw new IcebergFormatException("cannot read equality delete column %s of unsupported type %s"
-                        .formatted(path.dot(), icebergType));
-        };
+        return IcebergScalarValues.fromCell(column.icebergType(), row, path);
     }
 
     /**
      * One equality field to read from a delete file: the table column it maps to, the field's Iceberg type, and the
      * field's physical path within the delete file.
      */
-    private record EqualityColumn(ColumnPath tableColumn, String icebergType, ColumnPath physicalPath) {}
+    private record EqualityColumn(ColumnPath tableColumn, IcebergType icebergType, ColumnPath physicalPath) {}
 }

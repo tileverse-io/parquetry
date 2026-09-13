@@ -62,7 +62,7 @@ class IcebergSchemaTest {
         SchemaNode.Primitive geom = (SchemaNode.Primitive) children.get(2);
         assertThat(geom.fieldId()).isEqualTo(7);
         assertThat(geom.kind()).isEqualTo(PrimitiveKind.BYTE_ARRAY);
-        assertThat(geom.logicalType()).contains(new LogicalType.Geometry(Optional.empty()));
+        assertThat(geom.logicalType()).contains(new LogicalType.Geometry(IcebergType.DEFAULT_GEO_CRS));
     }
 
     @Test
@@ -77,7 +77,10 @@ class IcebergSchemaTest {
                 new IcebergField(7, "g", "string", false),
                 new IcebergField(8, "h", "binary", false),
                 new IcebergField(9, "i", "geometry", false),
-                new IcebergField(10, "j", "geography", false)));
+                new IcebergField(10, "j", "geography", false),
+                new IcebergField(11, "k", "decimal(9, 2)", false),
+                new IcebergField(12, "l", "time", false),
+                new IcebergField(13, "m", "fixed[7]", false)));
 
         List<SchemaNode> children = schema.parquetSchema().root().children();
         assertThat(kindOf(children, 0)).isEqualTo(PrimitiveKind.INT32);
@@ -95,8 +98,20 @@ class IcebergSchemaTest {
         assertThat(kindOf(children, 7)).isEqualTo(PrimitiveKind.BYTE_ARRAY);
         assertThat(logicalOf(children, 7)).isEmpty();
 
-        assertThat(logicalOf(children, 8)).contains(new LogicalType.Geometry(Optional.empty()));
-        assertThat(logicalOf(children, 9)).contains(new LogicalType.Geography(Optional.empty(), Optional.empty()));
+        assertThat(logicalOf(children, 8)).contains(new LogicalType.Geometry(IcebergType.DEFAULT_GEO_CRS));
+        assertThat(logicalOf(children, 9))
+                .contains(new LogicalType.Geography(IcebergType.DEFAULT_GEO_CRS, Optional.empty()));
+
+        SchemaNode.Primitive decimal = (SchemaNode.Primitive) children.get(10);
+        assertThat(decimal.kind()).isEqualTo(PrimitiveKind.INT32);
+        assertThat(decimal.typeLength()).isEmpty();
+        assertThat(decimal.logicalType()).contains(new LogicalType.Decimal(2, 9));
+        assertThat(kindOf(children, 11)).isEqualTo(PrimitiveKind.INT64);
+        assertThat(logicalOf(children, 11)).contains(new LogicalType.Time(false, TimeUnit.MICROS));
+        SchemaNode.Primitive fixed = (SchemaNode.Primitive) children.get(12);
+        assertThat(fixed.kind()).isEqualTo(PrimitiveKind.FIXED_LEN_BYTE_ARRAY);
+        assertThat(fixed.typeLength()).hasValue(7);
+        assertThat(fixed.logicalType()).isEmpty();
     }
 
     @Test
@@ -138,15 +153,12 @@ class IcebergSchemaTest {
         Optional<ParquetCrs> crs84 = ParquetCrs.reference("OGC:CRS84");
         assertThat(crs84).isPresent();
         IcebergSchema schema = IcebergSchema.of(List.of(
-                new IcebergField(1, "g", "geometry", false, Optional.empty(), crs84, Optional.empty()),
+                new IcebergField(1, "g", new IcebergType.GeometryType(crs84), false),
                 new IcebergField(
                         2,
                         "h",
-                        "geography",
-                        false,
-                        Optional.empty(),
-                        crs84,
-                        Optional.of(EdgeInterpolationAlgorithm.KARNEY))));
+                        new IcebergType.GeographyType(crs84, Optional.of(EdgeInterpolationAlgorithm.KARNEY)),
+                        false)));
 
         List<SchemaNode> children = schema.parquetSchema().root().children();
         assertThat(logicalOf(children, 0)).contains(new LogicalType.Geometry(crs84));
@@ -155,11 +167,41 @@ class IcebergSchemaTest {
     }
 
     @Test
-    void rejectsUnmappedType() {
-        List<IcebergField> unmapped = List.of(new IcebergField(1, "amount", "decimal", false));
-        assertThatThrownBy(() -> IcebergSchema.of(unmapped))
+    void rejectsAnUnsupportedTypeTokenAtFieldConstruction() {
+        assertThatThrownBy(() -> new IcebergField(1, "v", "variant", false))
                 .isInstanceOf(IcebergFormatException.class)
-                .hasMessageContaining("decimal");
+                .hasMessageContaining("variant");
+    }
+
+    @Test
+    void mapsDecimalsToTheNarrowestTypeForTheirPrecision() {
+        IcebergSchema schema = IcebergSchema.of(List.of(
+                new IcebergField(1, "a", "decimal(9, 2)", false),
+                new IcebergField(2, "b", "decimal(10, 0)", false),
+                new IcebergField(3, "c", "decimal(18, 3)", false),
+                new IcebergField(4, "d", "decimal(19, 0)", false),
+                new IcebergField(5, "e", "decimal(38, 10)", false)));
+        List<SchemaNode> children = schema.parquetSchema().root().children();
+        assertThat(kindOf(children, 0)).isEqualTo(PrimitiveKind.INT32);
+        assertThat(kindOf(children, 1)).isEqualTo(PrimitiveKind.INT64);
+        assertThat(kindOf(children, 2)).isEqualTo(PrimitiveKind.INT64);
+        assertThat(kindOf(children, 3)).isEqualTo(PrimitiveKind.FIXED_LEN_BYTE_ARRAY);
+        assertThat(((SchemaNode.Primitive) children.get(3)).typeLength()).hasValue(9);
+        assertThat(((SchemaNode.Primitive) children.get(4)).typeLength()).hasValue(16);
+        assertThat(logicalOf(children, 4)).contains(new LogicalType.Decimal(10, 38));
+    }
+
+    @Test
+    void decimalByteLengthFollowsIcebergsPrecisionTable() {
+        assertThat(IcebergSchema.decimalByteLength(1)).isEqualTo(1);
+        assertThat(IcebergSchema.decimalByteLength(2)).isEqualTo(1);
+        assertThat(IcebergSchema.decimalByteLength(3)).isEqualTo(2);
+        assertThat(IcebergSchema.decimalByteLength(9)).isEqualTo(4);
+        assertThat(IcebergSchema.decimalByteLength(10)).isEqualTo(5);
+        assertThat(IcebergSchema.decimalByteLength(18)).isEqualTo(8);
+        assertThat(IcebergSchema.decimalByteLength(19)).isEqualTo(9);
+        assertThat(IcebergSchema.decimalByteLength(20)).isEqualTo(9);
+        assertThat(IcebergSchema.decimalByteLength(38)).isEqualTo(16);
     }
 
     @Test

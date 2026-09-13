@@ -24,6 +24,7 @@ import java.util.BitSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.IntPredicate;
+import java.util.function.IntToLongFunction;
 
 import io.tileverse.parquetry.filter.GeometryFilter;
 import io.tileverse.parquetry.filter.Predicate;
@@ -255,14 +256,20 @@ public final class VectorizedPredicateEvaluator {
         // them into a single loop driven by a shared lambda.
         switch (vec) {
             case IntVector iv -> {
-                for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
-                    if (accept.test(ValueComparison.compareInt(iv.getInt(r), v))) {
-                        out.set(r);
+                if (v instanceof Value.DecimalVal(BigDecimal query)) {
+                    integerDecimalMask(iv::getInt, validity, query, decimalScale(batch, col), accept, out);
+                } else {
+                    for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
+                        if (accept.test(ValueComparison.compareInt(iv.getInt(r), v))) {
+                            out.set(r);
+                        }
                     }
                 }
             }
             case LongVector lv -> {
-                if (v instanceof Value.TimestampVal || v instanceof Value.TimeVal) {
+                if (v instanceof Value.DecimalVal(BigDecimal query)) {
+                    integerDecimalMask(lv::getLong, validity, query, decimalScale(batch, col), accept, out);
+                } else if (v instanceof Value.TimestampVal || v instanceof Value.TimeVal) {
                     long query = temporalQueryUnit(v, batch, col);
                     for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
                         if (accept.test(Long.compare(lv.getLong(r), query))) {
@@ -380,6 +387,34 @@ public final class VectorizedPredicateEvaluator {
         for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
             if (accept.test(
                     DecimalValues.toBigDecimal(fixed.get(r), columnScale).compareTo(query))) {
+                out.set(r);
+            }
+        }
+    }
+
+    // An INT32 or INT64 decimal cell holds the unscaled value at the column scale. A query at that scale whose
+    // unscaled value fits a signed long compares as two longs; any other query compares exactly through BigDecimal.
+    // The bitLength() < 64 guard admits exactly [-2^63, 2^63-1] and keeps an oversized query from truncating and
+    // flipping the comparison sign.
+    private static void integerDecimalMask(
+            IntToLongFunction unscaledAt,
+            Validity validity,
+            BigDecimal query,
+            int columnScale,
+            IntPredicate accept,
+            BitSet out) {
+        if (query.scale() == columnScale && query.unscaledValue().bitLength() < 64) {
+            long queryUnscaled = query.unscaledValue().longValue();
+            for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
+                if (accept.test(Long.compare(unscaledAt.applyAsLong(r), queryUnscaled))) {
+                    out.set(r);
+                }
+            }
+            return;
+        }
+        for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
+            if (accept.test(
+                    BigDecimal.valueOf(unscaledAt.applyAsLong(r), columnScale).compareTo(query))) {
                 out.set(r);
             }
         }

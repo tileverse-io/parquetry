@@ -17,6 +17,7 @@ package io.tileverse.parquetry.internal.filter;
 
 import static io.tileverse.parquetry.filter.Pred.col;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigDecimal;
@@ -355,6 +356,97 @@ class PredicateNormalizerTest {
         PredicateNormalizer.validate(p, schema);
     }
 
+    @Test
+    void validateAcceptsDecimalValOnInt32AndInt64DecimalColumns() {
+        // Iceberg stores a decimal of up to 9 digits as INT32 and one of up to 18 digits as INT64; both hold the
+        // unscaled value as a plain integer and must accept a decimal comparison.
+        ParquetSchema int32 = singleColumnWithLogicalType("amount", PrimitiveKind.INT32, new LogicalType.Decimal(2, 9));
+        ParquetSchema int64 =
+                singleColumnWithLogicalType("amount", PrimitiveKind.INT64, new LogicalType.Decimal(2, 18));
+        Predicate p = new Predicate.Eq(ColumnPath.of("amount"), new Value.DecimalVal(new BigDecimal("12.34")));
+        assertThatCode(() -> PredicateNormalizer.validate(p, int32)).doesNotThrowAnyException();
+        assertThatCode(() -> PredicateNormalizer.validate(p, int64)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void validateRejectsPlainIntegerValuesOnIntegerBackedDecimalColumns() {
+        // An integer-backed decimal cell holds an unscaled value; a plain integer query has no defined meaning
+        // against it, and its bounds decode as decimals. Rejecting it loudly beats pruning on a comparison that
+        // the tiers cannot agree on.
+        ParquetSchema int32 = singleColumnWithLogicalType("amount", PrimitiveKind.INT32, new LogicalType.Decimal(2, 9));
+        ParquetSchema int64 =
+                singleColumnWithLogicalType("amount", PrimitiveKind.INT64, new LogicalType.Decimal(2, 18));
+        Predicate plainInt = new Predicate.Lt(ColumnPath.of("amount"), new Value.IntVal(5));
+        Predicate plainLong = new Predicate.Gt(ColumnPath.of("amount"), new Value.LongVal(5L));
+        assertThatThrownBy(() -> PredicateNormalizer.validate(plainInt, int32))
+                .isInstanceOf(ParquetSchemaException.class)
+                .hasMessageContaining("amount");
+        assertThatThrownBy(() -> PredicateNormalizer.validate(plainLong, int64))
+                .isInstanceOf(ParquetSchemaException.class)
+                .hasMessageContaining("amount");
+    }
+
+    @Test
+    void validateRejectsDecimalValOnAnUnannotatedInt32Column() {
+        // Without the Decimal annotation the column has no scale, and the integer cells are plain integers.
+        ParquetSchema schema = singleColumn("amount", PrimitiveKind.INT32);
+        Predicate p = new Predicate.Eq(ColumnPath.of("amount"), new Value.DecimalVal(new BigDecimal("12.34")));
+        assertThatThrownBy(() -> PredicateNormalizer.validate(p, schema))
+                .isInstanceOf(ParquetSchemaException.class)
+                .hasMessageContaining("amount");
+    }
+
+    @Test
+    void validateRejectsDecimalValOnAByteArrayDecimalColumn() {
+        // Parquet allows a variable-length binary decimal; no decode path in the reader handles one.
+        ParquetSchema schema =
+                singleColumnWithLogicalType("amount", PrimitiveKind.BYTE_ARRAY, new LogicalType.Decimal(2, 9));
+        Predicate p = new Predicate.Eq(ColumnPath.of("amount"), new Value.DecimalVal(new BigDecimal("12.34")));
+        assertThatThrownBy(() -> PredicateNormalizer.validate(p, schema))
+                .isInstanceOf(ParquetSchemaException.class)
+                .hasMessageContaining("amount");
+    }
+
+    @Test
+    void validateRejectsDecimalValUnderQuantifiedOnAnInt32DecimalLeaf() {
+        // The per-cell quantified helper compares boxed cells without the column scale; an integer-backed
+        // decimal cell would compare as a plain integer there, hence the loud rejection.
+        ParquetSchema schema =
+                repeatedColumnWithLogicalType("amounts", PrimitiveKind.INT32, new LogicalType.Decimal(2, 9));
+        Predicate p = new Predicate.Quantified(
+                MatchAction.ANY,
+                new Predicate.Gt(ColumnPath.of("amounts"), new Value.DecimalVal(new BigDecimal("1.00"))));
+        assertThatThrownBy(() -> PredicateNormalizer.validate(p, schema))
+                .isInstanceOf(ParquetSchemaException.class)
+                .hasMessageContaining("amounts");
+    }
+
+    @Test
+    void validateRejectsDecimalValInAnInListUnderQuantifiedOnAnInt32DecimalLeaf() {
+        // An In list reaches the same per-cell comparison as a Gt or an Eq and must keep the same boundary.
+        ParquetSchema schema =
+                repeatedColumnWithLogicalType("amounts", PrimitiveKind.INT32, new LogicalType.Decimal(2, 9));
+        Predicate p = new Predicate.Quantified(
+                MatchAction.ANY,
+                new Predicate.In(ColumnPath.of("amounts"), List.of(new Value.DecimalVal(new BigDecimal("1.00")))));
+        assertThatThrownBy(() -> PredicateNormalizer.validate(p, schema))
+                .isInstanceOf(ParquetSchemaException.class)
+                .hasMessageContaining("amounts");
+    }
+
+    @Test
+    void validateRejectsDecimalValUnderQuantifiedOnAFixedLenByteArrayDecimalLeaf() {
+        // A fixed-length decimal cell reaches the per-cell comparison as raw bytes, and no comparison is defined
+        // between that shape and a decimal query: it would report equal and the quantifier would answer from that.
+        ParquetSchema schema = repeatedFlbaColumnWithLogicalType("amounts", 4, new LogicalType.Decimal(2, 9));
+        Predicate p = new Predicate.Quantified(
+                MatchAction.ANY,
+                new Predicate.Gt(ColumnPath.of("amounts"), new Value.DecimalVal(new BigDecimal("1.00"))));
+        assertThatThrownBy(() -> PredicateNormalizer.validate(p, schema))
+                .isInstanceOf(ParquetSchemaException.class)
+                .hasMessageContaining("amounts");
+    }
+
     @ParameterizedTest(name = "{0}")
     @MethodSource("barePredicatesOverRepeatedLeaf")
     void validateRejectsBarePredicateOnListDescendantLeaf(String label, Predicate bare) {
@@ -490,6 +582,27 @@ class PredicateNormalizerTest {
                 Optional.empty(),
                 -1);
         return new ParquetSchema(root);
+    }
+
+    /** A repeated primitive leaf annotated with a logical type, directly under the root. */
+    private static ParquetSchema repeatedColumnWithLogicalType(
+            String name, PrimitiveKind kind, LogicalType logicalType) {
+        SchemaNode.Primitive leaf = new SchemaNode.Primitive(
+                name, Repetition.REPEATED, kind, OptionalInt.empty(), Optional.of(logicalType), -1);
+        return schemaOf(leaf);
+    }
+
+    /** A repeated fixed-length binary leaf annotated with a logical type, directly under the root. */
+    private static ParquetSchema repeatedFlbaColumnWithLogicalType(
+            String name, int typeLength, LogicalType logicalType) {
+        SchemaNode.Primitive leaf = new SchemaNode.Primitive(
+                name,
+                Repetition.REPEATED,
+                PrimitiveKind.FIXED_LEN_BYTE_ARRAY,
+                OptionalInt.of(typeLength),
+                Optional.of(logicalType),
+                -1);
+        return schemaOf(leaf);
     }
 
     private static ParquetSchema singleColumn(String name, PrimitiveKind kind) {

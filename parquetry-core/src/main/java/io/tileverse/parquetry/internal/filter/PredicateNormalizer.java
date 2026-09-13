@@ -53,7 +53,8 @@ public final class PredicateNormalizer {
 
     /**
      * Throws {@link ParquetSchemaException} if {@code p} references a column not in {@code schema}, a group column, a
-     * multi-valued column compared without a quantifier, or a value type incompatible with the column's primitive kind.
+     * multi-valued column compared without a quantifier, or a value type incompatible with the column's primitive kind
+     * and logical type.
      */
     public static void validate(Predicate p, ParquetSchema schema) {
         validate(p, schema, LeafPosition.BARE);
@@ -79,6 +80,7 @@ public final class PredicateNormalizer {
             case Predicate.In(ColumnPath col, List<Value> values) -> {
                 SchemaNode.Primitive prim = requireComparableColumn(col, schema, position);
                 for (Value v : values) {
+                    requireQuantifiableDecimal(col, prim, v, position);
                     requireCompatible(col, prim, v);
                 }
             }
@@ -236,6 +238,7 @@ public final class PredicateNormalizer {
 
     private static void checkLeafColumn(ColumnPath path, ParquetSchema schema, Value v, LeafPosition position) {
         SchemaNode.Primitive prim = requireComparableColumn(path, schema, position);
+        requireQuantifiableDecimal(path, prim, v, position);
         requireCompatible(path, prim, v);
     }
 
@@ -268,17 +271,52 @@ public final class PredicateNormalizer {
         return p;
     }
 
+    /**
+     * Rejects a decimal comparison under a quantifier, whatever the column's encoding. The per-cell comparison behind
+     * {@link Predicate.Quantified} sees one boxed cell with no access to the column scale: an integer-backed decimal
+     * reaches it as a bare unscaled integer and a fixed-length decimal as raw bytes, and no comparison is defined
+     * between either shape and a decimal query. Without this rejection the undefined comparison reports every cell as
+     * equal to the query, and the quantifier answers from that: an equality would match every row and an inequality
+     * none.
+     */
+    private static void requireQuantifiableDecimal(
+            ColumnPath path, SchemaNode.Primitive prim, Value v, LeafPosition position) {
+        if (position != LeafPosition.QUANTIFIED) {
+            return;
+        }
+        if (!(v instanceof Value.DecimalVal) || !isDecimalColumn(prim)) {
+            return;
+        }
+        throw new ParquetSchemaException("Column " + path.dot()
+                + " is a decimal; a decimal comparison under Predicate.Quantified has no access to the column scale"
+                + " and cannot be evaluated per element");
+    }
+
     private static void requireCompatible(ColumnPath path, SchemaNode.Primitive prim, Value v) {
         if (!isCompatible(prim, v)) {
             throw new ParquetSchemaException("Value of type " + v.getClass().getSimpleName()
-                    + " is not compatible with column " + path.dot() + " of type " + prim.kind());
+                    + " is not compatible with column " + path.dot() + " of type " + prim.kind()
+                    + annotationSuffix(prim));
         }
+    }
+
+    /** The column's logical type as a message fragment, empty when the column has no annotation. */
+    private static String annotationSuffix(SchemaNode.Primitive prim) {
+        return prim.logicalType()
+                .map(logicalType -> " annotated " + logicalType)
+                .orElse("");
     }
 
     // S7475 (bare _ in nested record patterns) is informational only - palantirJavaFormat 2.90 cannot
     // parse the bare-underscore form Sonar suggests; see memory feedback-palantir-unnamed-pattern.
     @SuppressWarnings("java:S7475")
     private static boolean isCompatible(SchemaNode.Primitive prim, Value v) {
+        // An integer-backed decimal cell holds an unscaled value and its statistics decode as decimals; a plain
+        // integer or date query would compare against the unscaled cells at record level while the pruning tiers
+        // see decimal bounds, and the two would disagree. Only a decimal query reads such a column correctly.
+        if (isIntegerBackedDecimal(prim)) {
+            return v instanceof Value.DecimalVal;
+        }
         PrimitiveKind kind = prim.kind();
         return switch (v) {
             case Value.BoolVal _ -> kind == PrimitiveKind.BOOLEAN;
@@ -303,9 +341,29 @@ public final class PredicateNormalizer {
         };
     }
 
+    /**
+     * Whether {@code prim} holds decimal cells that the reader can compare numerically: an INT32 or INT64 column holds
+     * the unscaled value as a plain integer (how Iceberg stores a decimal of up to eighteen digits), and a fixed-length
+     * binary column holds it as signed big-endian bytes. A BYTE_ARRAY decimal, which Parquet permits, has no decode
+     * path here and stays rejected.
+     */
     private static boolean isDecimalColumn(SchemaNode.Primitive prim) {
-        return prim.kind() == PrimitiveKind.FIXED_LEN_BYTE_ARRAY
-                && prim.logicalType().orElse(null) instanceof LogicalType.Decimal;
+        return isIntegerBackedDecimal(prim) || isFixedLengthDecimal(prim);
+    }
+
+    /** Whether {@code prim} holds a decimal as the unscaled integer of an INT32 or INT64 cell. */
+    private static boolean isIntegerBackedDecimal(SchemaNode.Primitive prim) {
+        boolean integerKind = prim.kind() == PrimitiveKind.INT32 || prim.kind() == PrimitiveKind.INT64;
+        return integerKind && hasDecimalAnnotation(prim);
+    }
+
+    /** Whether {@code prim} holds a decimal as the signed big-endian bytes of a fixed-length cell. */
+    private static boolean isFixedLengthDecimal(SchemaNode.Primitive prim) {
+        return prim.kind() == PrimitiveKind.FIXED_LEN_BYTE_ARRAY && hasDecimalAnnotation(prim);
+    }
+
+    private static boolean hasDecimalAnnotation(SchemaNode.Primitive prim) {
+        return prim.logicalType().orElse(null) instanceof LogicalType.Decimal;
     }
 
     // S7475: palantirJavaFormat 2.90 cannot parse bare _ in nested record patterns; see memory

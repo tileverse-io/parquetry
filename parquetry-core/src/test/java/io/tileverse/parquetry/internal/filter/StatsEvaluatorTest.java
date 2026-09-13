@@ -321,6 +321,72 @@ class StatsEvaluatorTest {
         assertThat(d).isNotInstanceOf(PruningDecision.Eliminated.class);
     }
 
+    @Test
+    void int32DecimalLtBelowMinIsEliminated() {
+        // column range [-3.00, 5.00] at scale 2, stored as the unscaled integers [-300, 500]
+        FilterPipeline.ColumnStatsLookup cols = singleInt32Decimal("amount", -300, 500, 2);
+        // Lt(-9.00): every column value is >= -3.00 > -9.00 - Lt(-9.00) matches no row.
+        Predicate p = new Predicate.Lt(ColumnPath.of("amount"), new Value.DecimalVal(BigDecimal.valueOf(-900, 2)));
+        PruningDecision d = StatsEvaluator.evaluate(p, cols, ROW_COUNT);
+        assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void int32DecimalEqWithinRangeIsInconclusive() {
+        // column range [-3.00, 5.00] at scale 2, stored as the unscaled integers [-300, 500]
+        FilterPipeline.ColumnStatsLookup cols = singleInt32Decimal("amount", -300, 500, 2);
+        // 1.00 is within [-3.00, 5.00]; the row group cannot be ruled out. Bounds decoded as plain integers
+        // would read the range as [-300, 500] and wrongly eliminate a query of 1.00.
+        Predicate p = new Predicate.Eq(ColumnPath.of("amount"), new Value.DecimalVal(BigDecimal.valueOf(100, 2)));
+        PruningDecision d = StatsEvaluator.evaluate(p, cols, ROW_COUNT);
+        assertThat(d).isNotInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void int64DecimalGtAboveMaxIsEliminated() {
+        // column range [-3.00, 5.00] at scale 2, stored as the unscaled integers [-300, 500]
+        FilterPipeline.ColumnStatsLookup cols = singleInt64Decimal("amount", -300L, 500L, 2);
+        // Gt(9.00): every column value is <= 5.00 < 9.00 - Gt(9.00) matches no row.
+        Predicate p = new Predicate.Gt(ColumnPath.of("amount"), new Value.DecimalVal(BigDecimal.valueOf(900, 2)));
+        PruningDecision d = StatsEvaluator.evaluate(p, cols, ROW_COUNT);
+        assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void int32DecimalEqAboveMaxIsEliminated() {
+        // column range [-3.00, 5.00] at scale 2, stored as the unscaled integers [-300, 500]
+        FilterPipeline.ColumnStatsLookup cols = singleInt32Decimal("amount", -300, 500, 2);
+        // Eq(9.00): 9.00 exceeds the column max of 5.00 and matches no row. This discriminates the typed
+        // decimal path: bounds left as plain integers have no comparison against a decimal query and would
+        // decline to prune.
+        Predicate p = new Predicate.Eq(ColumnPath.of("amount"), new Value.DecimalVal(BigDecimal.valueOf(900, 2)));
+        PruningDecision d = StatsEvaluator.evaluate(p, cols, ROW_COUNT);
+        assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void int32DecimalGtWithinRangeIsNotEliminated() {
+        // column range [-3.00, 5.00] at scale 2, stored as the unscaled integers [-300, 500]
+        FilterPipeline.ColumnStatsLookup cols = singleInt32Decimal("amount", -300, 500, 2);
+        // Gt(4.00): 4.00 < 5.00, rows above 4.00 may exist; the row group must not be eliminated. This
+        // discriminates the typed decimal path: bounds left as plain integers read the query as equal to max
+        // and would wrongly eliminate.
+        Predicate p = new Predicate.Gt(ColumnPath.of("amount"), new Value.DecimalVal(BigDecimal.valueOf(400, 2)));
+        PruningDecision d = StatsEvaluator.evaluate(p, cols, ROW_COUNT);
+        assertThat(d).isNotInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void int64DecimalLtWithinRangeIsNotEliminated() {
+        // column range [-3.00, 5.00] at scale 2, stored as the unscaled integers [-300, 500]
+        FilterPipeline.ColumnStatsLookup cols = singleInt64Decimal("amount", -300L, 500L, 2);
+        // Lt(4.00): -3.00 < 4.00, rows below 4.00 exist; the row group must not be eliminated. Bounds left as
+        // plain integers read the query as equal to min and would wrongly eliminate.
+        Predicate p = new Predicate.Lt(ColumnPath.of("amount"), new Value.DecimalVal(BigDecimal.valueOf(400, 2)));
+        PruningDecision d = StatsEvaluator.evaluate(p, cols, ROW_COUNT);
+        assertThat(d).isNotInstanceOf(PruningDecision.Eliminated.class);
+    }
+
     // --- helpers ---
 
     private static FilterPipeline.ColumnStatsLookup singleTimestamp(String name, LocalDateTime min, LocalDateTime max) {
@@ -340,6 +406,22 @@ class StatsEvaluatorTest {
                 encodeSignedFlba(unscaledMin),
                 encodeSignedFlba(unscaledMax),
                 logicalType);
+        return single(name, stats);
+    }
+
+    private static FilterPipeline.ColumnStatsLookup singleInt32Decimal(
+            String name, int unscaledMin, int unscaledMax, int scale) {
+        LogicalType logicalType = new LogicalType.Decimal(scale, 9);
+        FilterPipeline.ColumnStats stats =
+                annotatedStats(PrimitiveKind.INT32, encodeInt(unscaledMin), encodeInt(unscaledMax), logicalType);
+        return single(name, stats);
+    }
+
+    private static FilterPipeline.ColumnStatsLookup singleInt64Decimal(
+            String name, long unscaledMin, long unscaledMax, int scale) {
+        LogicalType logicalType = new LogicalType.Decimal(scale, 18);
+        FilterPipeline.ColumnStats stats =
+                annotatedStats(PrimitiveKind.INT64, encodeLong(unscaledMin), encodeLong(unscaledMax), logicalType);
         return single(name, stats);
     }
 

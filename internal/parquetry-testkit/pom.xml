@@ -66,6 +66,7 @@
           <include>iceberg-deletes/deletion-vectors/**</include>
           <include>iceberg-row-lineage/fresh/**</include>
           <include>iceberg-row-lineage/materialized/**</include>
+          <include>iceberg-scalar-types/scalars/**</include>
         </includes>
         <excludes>
           <exclude>**/.git</exclude>

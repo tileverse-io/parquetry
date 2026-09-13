@@ -17,9 +17,11 @@ package io.tileverse.parquetry.iceberg;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.lang.foreign.ValueLayout;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -128,7 +130,7 @@ final class IcebergSchemaEvolution {
         node.put("id", field.fieldId());
         node.put("name", field.name());
         node.put("required", field.required());
-        node.put("type", field.type());
+        node.put("type", field.type().token());
         field.initialDefault().ifPresent(value -> putInitialDefault(node, value));
         return node;
     }
@@ -143,6 +145,15 @@ final class IcebergSchemaEvolution {
             case Value.BoolVal v -> node.put("initial-default", v.value());
             case Value.DateVal v -> node.put("initial-default", v.value().toString());
             case Value.StringVal v -> node.put("initial-default", v.value());
+            case Value.DecimalVal v -> node.put("initial-default", v.value().toPlainString());
+            case Value.TimestampVal v ->
+                node.put("initial-default", v.value().toString() + (v.adjustedToUTC() ? "+00:00" : ""));
+            case Value.TimeVal v -> node.put("initial-default", v.value().toString());
+            case Value.UuidVal v -> node.put("initial-default", v.value().toString());
+            case Value.BinaryVal v ->
+                node.put(
+                        "initial-default",
+                        HexFormat.of().withUpperCase().formatHex(v.value().toArray(ValueLayout.JAVA_BYTE)));
             default -> throw new IllegalArgumentException("unsupported default value: " + value);
         }
     }

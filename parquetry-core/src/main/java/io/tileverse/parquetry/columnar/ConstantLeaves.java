@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.columnar;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.OptionalInt;
 
@@ -59,11 +60,25 @@ public final class ConstantLeaves {
             case Value.DecimalVal(BigDecimal v) ->
                 new LeafType(
                         PrimitiveKind.FIXED_LEN_BYTE_ARRAY,
-                        Optional.of(new LogicalType.Decimal(v.scale(), Math.max(1, v.precision()))));
+                        Optional.of(new LogicalType.Decimal(v.scale(), leafPrecisionOf(v))));
             case Value.TimeVal _ ->
                 new LeafType(
                         PrimitiveKind.INT64, Optional.of(new LogicalType.Time(false, LogicalType.TimeUnit.MICROS)));
-            default -> throw new IllegalArgumentException("unsupported constant column value " + value);
+            case Value.BinaryVal _ -> new LeafType(PrimitiveKind.BYTE_ARRAY, Optional.empty());
+            case Value.TimestampVal(LocalDateTime _, boolean adjustedToUtc) ->
+                new LeafType(
+                        PrimitiveKind.INT64,
+                        Optional.of(new LogicalType.Timestamp(adjustedToUtc, LogicalType.TimeUnit.MICROS)));
         };
+    }
+
+    /**
+     * The smallest precision a Parquet decimal leaf may declare for {@code value}. Parquet requires {@code 0 <= scale
+     * <= precision}, while {@link BigDecimal#precision()} counts only the digits that the value spells out: a zero or a
+     * small fraction such as {@code 0.05} reports precision 1 at scale 2, and a leaf declaring that pair would be
+     * illegal and would fail an Arrow export of the column.
+     */
+    private static int leafPrecisionOf(BigDecimal value) {
+        return Math.max(value.precision(), value.scale());
     }
 }
