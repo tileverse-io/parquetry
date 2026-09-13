@@ -16,10 +16,11 @@
 package io.tileverse.parquetry.columnar;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.lang.foreign.MemorySegment;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -106,6 +107,14 @@ class ConstantLeavesTest {
     }
 
     @Test
+    void zeroValuedDecimalLeafKeepsPrecisionAtLeastItsScale() {
+        // BigDecimal reports precision 1 for a zero at any scale, and Parquet requires 0 <= scale <= precision.
+        ConstantLeaves.LeafType leaf =
+                ConstantLeaves.kindAndLogicalType(new Value.DecimalVal(BigDecimal.valueOf(0L, 2)));
+        assertThat(leaf.logicalType()).contains(new LogicalType.Decimal(2, 2));
+    }
+
+    @Test
     void timeLeafIsInt64WithTimeLogicalType() {
         ConstantLeaves.LeafType leaf = ConstantLeaves.kindAndLogicalType(new Value.TimeVal(LocalTime.NOON));
         assertThat(leaf.kind()).isEqualTo(PrimitiveKind.INT64);
@@ -113,10 +122,17 @@ class ConstantLeavesTest {
     }
 
     @Test
-    void unsupportedValueIsRejectedTheSameWayTheOldSwitchRejectedIt() {
-        Value unsupported = new Value.BinaryVal(java.lang.foreign.MemorySegment.ofArray(new byte[] {1}));
-        assertThatThrownBy(() -> ConstantLeaves.primitiveFor("c", unsupported, 7))
-                .isInstanceOf(IllegalArgumentException.class);
+    void binaryValMapsToByteArray() {
+        assertKindAndLogicalType(
+                new Value.BinaryVal(MemorySegment.ofArray(new byte[0])), PrimitiveKind.BYTE_ARRAY, Optional.empty());
+    }
+
+    @Test
+    void timestampValMapsToInt64MicrosWithItsAdjustment() {
+        assertKindAndLogicalType(
+                new Value.TimestampVal(LocalDateTime.of(2020, 1, 1, 0, 0), true),
+                PrimitiveKind.INT64,
+                Optional.of(new LogicalType.Timestamp(true, LogicalType.TimeUnit.MICROS)));
     }
 
     private static void assertKindAndLogicalType(
