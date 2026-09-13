@@ -359,27 +359,35 @@ public final class RowGroupWriter implements AutoCloseable {
         return new RowGroupFlushResult(rowGroup, totalCompressed, dictionaryBytes, artifacts);
     }
 
+    /**
+     * Seals the column chunk and releases its temp file channel right away; the consolidation copy opens its own read
+     * channel. Releasing here rather than at garbage collection keeps the writer's file descriptors bounded and lets
+     * filesystems that defer the unlink of an open file (SMB, Windows) drop the temp entry as soon as it is deleted.
+     */
     private static ColumnChunkResult finishChunk(LeafBinding binding) {
         try {
-            return binding.writer.finishChunk();
+            ColumnChunkResult result = binding.writer.finishChunk();
+            binding.writer.close();
+            return result;
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to finish column chunk " + binding.path.dot(), e);
         }
     }
 
+    /**
+     * Releases every column writer and deletes its temp file. Both steps are idempotent, which lets close run after a
+     * complete flush, after a flush that failed part-way, or without any flush at all.
+     */
     @Override
     public void close() {
         if (closed) {
             return;
         }
         closed = true;
-        if (flushed) {
-            return;
-        }
         RuntimeException firstFailure = null;
         for (LeafBinding binding : leaves) {
             try {
-                discardUnflushedWriter(binding);
+                releaseLeaf(binding);
             } catch (RuntimeException e) {
                 if (firstFailure == null) {
                     firstFailure = e;
@@ -456,11 +464,11 @@ public final class RowGroupWriter implements AutoCloseable {
         return new OffsetIndex(shifted, offsetIndex.unencodedByteArrayDataBytes());
     }
 
-    private void discardUnflushedWriter(LeafBinding binding) {
+    private void releaseLeaf(LeafBinding binding) {
         try {
             binding.writer.close();
         } catch (ParquetWriteException _) {
-            /* writer held pending values; the explicit close throws but we still want temp-file cleanup */
+            /* an unflushed writer holding pending values rejects the close; the temp file still needs deleting */
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to close column writer for " + binding.path.dot(), e);
         } finally {
