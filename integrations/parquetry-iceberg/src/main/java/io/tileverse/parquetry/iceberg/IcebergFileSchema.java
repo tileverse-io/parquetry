@@ -20,6 +20,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -60,7 +61,7 @@ final class IcebergFileSchema {
     }
 
     /** A top-level column of the file, located by its physical path and described by its physical type. */
-    record FileColumn(ColumnPath path, PrimitiveKind kind, Optional<LogicalType> logicalType) {}
+    record FileColumn(ColumnPath path, PrimitiveKind kind, Optional<LogicalType> logicalType, OptionalInt typeLength) {}
 
     /**
      * Indexes the top-level primitive leaves of {@code fileSchema} by Iceberg field id, resolving id-less leaves
@@ -126,7 +127,7 @@ final class IcebergFileSchema {
     }
 
     private static FileColumn toFileColumn(SchemaNode.Primitive leaf) {
-        return new FileColumn(ColumnPath.of(leaf.name()), leaf.kind(), leaf.logicalType());
+        return new FileColumn(ColumnPath.of(leaf.name()), leaf.kind(), leaf.logicalType(), leaf.typeLength());
     }
 
     /**

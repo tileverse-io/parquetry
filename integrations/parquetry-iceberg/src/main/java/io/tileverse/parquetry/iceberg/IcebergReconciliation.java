@@ -18,13 +18,16 @@ package io.tileverse.parquetry.iceberg;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.SequencedSet;
 
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Value;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.iceberg.IcebergFileSchema.FileColumn;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.PrimitiveKind;
+import io.tileverse.parquetry.schema.UuidConverter;
 
 /**
  * Matches one Iceberg data file's columns back to the table's current schema by field id.
@@ -37,8 +40,10 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
  * <p>Known limitations: drops are honored only when reconciliation is otherwise triggered (a file that differs from the
  * table by a pure drop takes the pass-through path and keeps the extra column, acceptable because real evolved tables
  * combine changes); reconciliation assumes top-level field ids are unique (Iceberg guarantees this, and
- * {@link IcebergFileSchema} resolves a duplicate id last-wins); decimal widening and date-to-timestamp promotions are
- * deferred until the widening substrate supports them.
+ * {@link IcebergFileSchema} resolves a duplicate id last-wins); a decimal reads through its physical column in any of
+ * its three encodings and widens in precision freely (the value is scale-bound, not kind-bound), while a decimal scale,
+ * temporal unit, or fixed or uuid length that disagrees with the table fails loud, as does a file column annotated as a
+ * decimal or a temporal type under a table field that declares neither; date-to-timestamp promotion is deferred.
  */
 final class IcebergReconciliation {
 
@@ -89,8 +94,9 @@ final class IcebergReconciliation {
         }
         FileColumn fileColumn = column.get();
         boolean sameName = fileColumn.path().name().equals(field.name());
-        boolean sameKind = fileColumn.kind() == IcebergSchema.kindOf(field);
-        return sameName && sameKind;
+        return sameName
+                && kindAgrees(field, fileColumn)
+                && parameterMismatch(field, fileColumn).isEmpty();
     }
 
     private static SequencedSet<Projection.Column> presentTableFields(
@@ -124,10 +130,15 @@ final class IcebergReconciliation {
         return injectNullColumn(field);
     }
 
+    /**
+     * Presents one file column as the table declares it. The type parameters are checked ahead of the kind dispatch: a
+     * sanctioned widening must not admit a column whose scale, unit, or length disagrees with the table.
+     */
     private static Projection.Column presentExistingColumn(IcebergField field, FileColumn fileColumn) {
+        requireParameterAgreement(field, fileColumn);
         ColumnPath name = ColumnPath.of(field.name());
         PrimitiveKind expectedKind = IcebergSchema.kindOf(field);
-        if (fileColumn.kind() == expectedKind) {
+        if (kindAgrees(field, fileColumn)) {
             return new Projection.Column.Physical(name, fileColumn.path());
         }
         if (isSanctionedWidening(fileColumn.kind(), expectedKind)) {
@@ -146,5 +157,112 @@ final class IcebergReconciliation {
         boolean intToLong = fileKind == PrimitiveKind.INT32 && expectedKind == PrimitiveKind.INT64;
         boolean floatToDouble = fileKind == PrimitiveKind.FLOAT && expectedKind == PrimitiveKind.DOUBLE;
         return intToLong || floatToDouble;
+    }
+
+    /**
+     * The file's kind is the table's, or the column is a decimal in any of its three physical encodings: Iceberg's
+     * writer stores up to nine digits as INT32 and up to eighteen as INT64, other writers store every decimal as
+     * fixed-length bytes, and the unscaled value is the same in each. The produced column keeps the file's encoding.
+     */
+    private static boolean kindAgrees(IcebergField field, FileColumn fileColumn) {
+        if (fileColumn.kind() == IcebergSchema.kindOf(field)) {
+            return true;
+        }
+        return field.type() instanceof IcebergType.DecimalType && isDecimalEncoding(fileColumn);
+    }
+
+    private static boolean isDecimalEncoding(FileColumn fileColumn) {
+        boolean integerOrFixed =
+                switch (fileColumn.kind()) {
+                    case INT32, INT64, FIXED_LEN_BYTE_ARRAY -> true;
+                    default -> false;
+                };
+        return integerOrFixed && fileColumn.logicalType().orElse(null) instanceof LogicalType.Decimal;
+    }
+
+    private static void requireParameterAgreement(IcebergField field, FileColumn fileColumn) {
+        Optional<String> mismatch = parameterMismatch(field, fileColumn);
+        if (mismatch.isPresent()) {
+            throw new IcebergFormatException("cannot reconcile field %s: %s".formatted(field.name(), mismatch.get()));
+        }
+    }
+
+    /**
+     * Why the file column's type parameters disagree with the table type, or empty when they agree. Iceberg never
+     * changes a decimal's scale, a temporal unit, or a fixed length through evolution; a disagreement marks a
+     * non-conforming file, and reading it at the table's parameters would return wrong values. Precision may differ
+     * freely: a widened decimal keeps the unscaled value stored in the file, whatever width holds it.
+     */
+    private static Optional<String> parameterMismatch(IcebergField field, FileColumn fileColumn) {
+        return switch (field.type()) {
+            case IcebergType.DecimalType(int _, int scale) -> decimalMismatch(fileColumn, scale);
+            case IcebergType.TimestampType(boolean _, LogicalType.TimeUnit unit) -> timestampMismatch(fileColumn, unit);
+            case IcebergType.TimeType _ -> timeMismatch(fileColumn);
+            case IcebergType.FixedType(int length) -> fixedMismatch(fileColumn, length);
+            case IcebergType.UuidType _ -> fixedMismatch(fileColumn, UuidConverter.BYTES);
+            // No other Iceberg type declares a parameter of its own, and none of them admits a file column that
+            // claims one.
+            default -> annotationMismatch(fileColumn, field.type());
+        };
+    }
+
+    /**
+     * Why a file column annotated as a decimal, a timestamp, or a time cannot present a table type that declares no
+     * such parameter, or empty when the file column claims no such annotation. Statistics decode through the file's own
+     * annotation, while a predicate is validated against the bare integer that the table presents; the pruning tiers
+     * would then compare two unrelated value kinds, find them equal, and keep row groups that match nothing.
+     */
+    private static Optional<String> annotationMismatch(FileColumn fileColumn, IcebergType tableType) {
+        return parameterizedAnnotation(fileColumn)
+                .map(annotation -> "file column is annotated as %s but the table declares %s"
+                        .formatted(annotation, tableType.token()));
+    }
+
+    /** How to name the file column's decimal or temporal annotation, absent when the column claims neither. */
+    private static Optional<String> parameterizedAnnotation(FileColumn fileColumn) {
+        return switch (fileColumn.logicalType().orElse(null)) {
+            case LogicalType.Decimal _ -> Optional.of("a decimal");
+            case LogicalType.Timestamp _ -> Optional.of("a timestamp");
+            case LogicalType.Time _ -> Optional.of("a time");
+            case null, default -> Optional.empty();
+        };
+    }
+
+    private static Optional<String> decimalMismatch(FileColumn fileColumn, int scale) {
+        if (fileColumn.logicalType().orElse(null) instanceof LogicalType.Decimal(int fileScale, int _)) {
+            return fileScale == scale
+                    ? Optional.empty()
+                    : Optional.of("file decimal scale %d differs from the table scale %d".formatted(fileScale, scale));
+        }
+        return Optional.of("file column is not annotated as a decimal");
+    }
+
+    private static Optional<String> timestampMismatch(FileColumn fileColumn, LogicalType.TimeUnit unit) {
+        if (fileColumn.logicalType().orElse(null)
+                instanceof LogicalType.Timestamp(boolean _, LogicalType.TimeUnit fileUnit)) {
+            return fileUnit == unit
+                    ? Optional.empty()
+                    : Optional.of("file timestamp unit %s differs from the table unit %s".formatted(fileUnit, unit));
+        }
+        return Optional.of("file column is not annotated as a timestamp");
+    }
+
+    private static Optional<String> timeMismatch(FileColumn fileColumn) {
+        if (fileColumn.logicalType().orElse(null)
+                instanceof LogicalType.Time(boolean _, LogicalType.TimeUnit fileUnit)) {
+            return fileUnit == LogicalType.TimeUnit.MICROS
+                    ? Optional.empty()
+                    : Optional.of("file time unit %s differs from the table unit MICROS".formatted(fileUnit));
+        }
+        return Optional.of("file column is not annotated as a time");
+    }
+
+    private static Optional<String> fixedMismatch(FileColumn fileColumn, int length) {
+        OptionalInt fileLength = fileColumn.typeLength();
+        if (fileLength.isPresent() && fileLength.getAsInt() == length) {
+            return Optional.empty();
+        }
+        String fileToken = fileLength.isPresent() ? String.valueOf(fileLength.getAsInt()) : "(absent)";
+        return Optional.of("file fixed length %s differs from the table length %d".formatted(fileToken, length));
     }
 }
