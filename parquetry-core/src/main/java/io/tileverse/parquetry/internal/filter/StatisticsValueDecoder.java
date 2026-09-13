@@ -22,6 +22,7 @@ import static io.tileverse.parquetry.format.ParquetLayouts.INT64;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 import java.lang.foreign.MemorySegment;
+import java.math.BigDecimal;
 import java.util.Optional;
 
 import io.tileverse.parquetry.filter.Value;
@@ -35,6 +36,8 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
  * <ul>
  *   <li>INT64 + {@link LogicalType.Timestamp} decodes to {@link Value.TimestampVal} at the column's time unit.
  *   <li>INT64 + {@link LogicalType.Time} decodes to {@link Value.TimeVal} at the column's time unit.
+ *   <li>INT32 or INT64 + {@link LogicalType.Decimal} decodes to a {@link Value.DecimalVal} of the unscaled integer at
+ *       the column's scale.
  *   <li>FIXED_LEN_BYTE_ARRAY + {@link LogicalType.Decimal} decodes to {@link Value.DecimalVal} at the column's scale,
  *       interpreting the bytes as a signed big-endian two's-complement integer.
  * </ul>
@@ -63,7 +66,7 @@ public final class StatisticsValueDecoder {
         long size = raw.byteSize();
         return switch (kind) {
             case BOOLEAN -> size >= 1 ? Optional.of(new Value.BoolVal(raw.get(JAVA_BYTE, 0) != 0)) : Optional.empty();
-            case INT32 -> size >= 4 ? Optional.of(new Value.IntVal(raw.get(INT32, 0))) : Optional.empty();
+            case INT32 -> size >= 4 ? decodeInt32(logicalType, raw.get(INT32, 0)) : Optional.empty();
             case INT64 -> size >= 8 ? decodeInt64(logicalType, raw.get(INT64, 0)) : Optional.empty();
             case FLOAT -> size >= 4 ? Optional.of(new Value.FloatVal(raw.get(FLOAT, 0))) : Optional.empty();
             case DOUBLE -> size >= 8 ? Optional.of(new Value.DoubleVal(raw.get(DOUBLE, 0))) : Optional.empty();
@@ -74,8 +77,18 @@ public final class StatisticsValueDecoder {
         };
     }
 
+    private static Optional<Value> decodeInt32(Optional<LogicalType> logicalType, int value) {
+        if (logicalType.orElse(null) instanceof LogicalType.Decimal(int scale, int _)) {
+            return Optional.of(new Value.DecimalVal(BigDecimal.valueOf(value, scale)));
+        }
+        return Optional.of(new Value.IntVal(value));
+    }
+
     private static Optional<Value> decodeInt64(Optional<LogicalType> logicalType, long value) {
         LogicalType leaf = logicalType.orElse(null);
+        if (leaf instanceof LogicalType.Decimal(int scale, int _)) {
+            return Optional.of(new Value.DecimalVal(BigDecimal.valueOf(value, scale)));
+        }
         if (leaf instanceof LogicalType.Timestamp(boolean adjusted, LogicalType.TimeUnit unit)) {
             return Optional.of(new Value.TimestampVal(TemporalValues.toLocalDateTime(value, unit), adjusted));
         }
