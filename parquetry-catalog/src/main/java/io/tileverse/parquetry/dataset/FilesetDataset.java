@@ -15,8 +15,6 @@
  */
 package io.tileverse.parquetry.dataset;
 
-import java.io.InterruptedIOException;
-import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -26,7 +24,7 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.SequencedSet;
 import java.util.Set;
-import java.util.concurrent.StructuredTaskScope;
+import java.util.function.IntFunction;
 import java.util.stream.Stream;
 
 import com.google.errorprone.annotations.MustBeClosed;
@@ -42,6 +40,7 @@ import io.tileverse.parquetry.filter.ConstantFolding;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Query;
+import io.tileverse.parquetry.filter.SpatialReadProbe;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
@@ -61,10 +60,10 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
  * A {@link GeoParquetDataset} composed from one or many same-schema Parquet files. Before each query it prunes files
  * whose Hive partition value cannot match the predicate (the same {@link FilePruner} path the Iceberg backend uses, fed
  * from path values as exact statistics) and reads only the survivors. The dataset keeps only compact per-file planning
- * state (schema, partition values, footer-derived {@link FileStats}): each query opens readers over the surviving
- * files' byte sources and lets their decoded footers go with the query. A one-file dataset is the exception - it keeps
- * the {@link ParquetSource} the catalog's gather pass already parsed, since re-decoding a single large footer per query
- * would cost more than it retains.
+ * state (schema, partition values, footer-derived {@link FileStats}): each query opens a surviving file's reader when
+ * its read reaches that file, at most {@code maxConcurrentFiles} at a time, and lets the reader go when the file is
+ * drained. A one-file dataset is the exception - it keeps the {@link ParquetSource} the catalog's gather pass already
+ * parsed, since re-decoding a single large footer per query would cost more than it retains.
  */
 public final class FilesetDataset implements GeoParquetDataset {
 
@@ -82,6 +81,12 @@ public final class FilesetDataset implements GeoParquetDataset {
     private final Optional<BoundingBox> aggregatedBounds;
     private final OpenOptions openOptions;
 
+    /**
+     * Builds a dataset over the given files. The files behind {@code sources} must agree on {@code fileSchema} by
+     * equality; the catalog verifies this when it gathers them, and a dataset built directly must be given files that
+     * already agree. {@code singleFile} holds the source already parsed by the gather pass, and is present exactly for
+     * a one-file dataset.
+     */
     // The construction inputs are cohesive dataset state the catalog resolves in one place, not a long argument
     // list worth bundling into a parameter object.
     @SuppressWarnings("java:S107")
@@ -208,49 +213,40 @@ public final class FilesetDataset implements GeoParquetDataset {
     }
 
     /**
-     * The exact bounds of the {@code predicate}-matching rows across the survivor files, each file visited on its own
-     * virtual thread and folded into one shared accumulator. Before a file runs the engine, its footer geometry box is
-     * tested against the bounds accumulated so far, and a file those bounds already cover is skipped: a box already
-     * enclosed extends the extent by nothing. A file whose footer records no geometry box always runs the engine. A
-     * failure in any file cancels the rest.
+     * The exact bounds of the {@code predicate}-matching rows across the survivor files, at most
+     * {@code maxConcurrentFiles} files bounded at once, each folded into one shared accumulator. Before a file runs the
+     * engine, its footer geometry box is tested against the bounds accumulated so far, and a file those bounds already
+     * cover is skipped: a box already enclosed extends the extent by nothing. A file whose footer records no geometry
+     * box always runs the engine. A failure in any file cancels the rest.
      */
     private Optional<BoundingBox> boundsOfSurvivors(List<Integer> survivors, Predicate predicate, ReadOptions options) {
         if (survivors.isEmpty()) {
             return Optional.empty();
         }
         BoundsAccumulator accumulator = new BoundsAccumulator();
-        try (StructuredTaskScope<Void, Void> scope = StructuredTaskScope.open()) {
-            for (int index : survivors) {
-                scope.fork(() -> foldOneFileBounds(index, predicate, options, accumulator));
-            }
-            scope.join();
-            return accumulator.snapshot();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            InterruptedIOException interrupted = new InterruptedIOException("Interrupted while bounding dataset rows");
-            interrupted.initCause(e);
-            throw new UncheckedIOException(interrupted);
-        } catch (StructuredTaskScope.FailedException e) {
-            throw asUnchecked(e.getCause());
-        }
+        SurvivorFanOut.forEach(
+                survivors.size(),
+                dense -> foldOneFileBounds(survivors.get(dense), predicate, options, accumulator),
+                maxConcurrentFiles());
+        return accumulator.snapshot();
     }
 
     /**
      * Folds one survivor file's matching-row bounds into the shared accumulator. The predicate folds against the file's
      * synthetic partition constants exactly as its reads fold it, through the same {@link #oneFileQuery} the reads use;
      * a file whose folded query is always false contributes nothing. A file whose footer geometry box the accumulated
-     * bounds already cover is skipped before the engine runs. Runs on a fan-out virtual thread.
+     * bounds already cover is skipped before the engine runs. Runs on a fan-out virtual thread, or on the calling
+     * thread when there is a single survivor.
      */
-    private Void foldOneFileBounds(int index, Predicate predicate, ReadOptions options, BoundsAccumulator accumulator) {
+    private void foldOneFileBounds(int index, Predicate predicate, ReadOptions options, BoundsAccumulator accumulator) {
         Query query = oneFileQuery(index, predicate, Projection.ALL);
         if (query == null) {
-            return null;
+            return;
         }
         if (accumulatedBoundsCoverFooter(index, accumulator)) {
-            return null;
+            return;
         }
         openFile(index).bounds(query, options).ifPresent(accumulator::union);
-        return null;
     }
 
     /**
@@ -274,180 +270,54 @@ public final class FilesetDataset implements GeoParquetDataset {
                 .map(primary -> ColumnPath.of(primary.split("\\.")));
     }
 
-    /**
-     * Rethrows a per-file bounds failure with the type a sequential visit would have thrown. The engine's per-file
-     * bounds declares no checked exception: the cause is a {@link RuntimeException} or an {@link Error}, with anything
-     * else falling back to {@link IllegalStateException}.
-     */
-    private static RuntimeException asUnchecked(Throwable cause) {
-        if (cause instanceof RuntimeException runtime) {
-            return runtime;
-        }
-        if (cause instanceof Error error) {
-            throw error;
-        }
-        return new IllegalStateException("Bounding a dataset file failed", cause);
-    }
-
     @Override
     @MustBeClosed
     public Stream<ParquetRecord> read(Predicate predicate, Projection projection, ReadOptions options) {
-        if (!referencesSynthetic(predicate, projection)) {
-            return readAllFiles(predicate, projection, options);
-        }
-        return readSurvivors(predicate, projection, options);
+        return read(predicate, projection, Materializer.defaultRecord(), options);
     }
 
     /**
-     * Reads batches shaped by {@code predicate} and {@code projection}, appending any projected synthetic columns as
-     * constant columns per file. Mirrors {@link #read(Predicate, Projection, ReadOptions)} at the batch level for
-     * batch-oriented consumers (such as the Arrow bridge).
-     */
-    @Override
-    @MustBeClosed
-    public Stream<ParquetRecordBatch> readBatches(Predicate predicate, Projection projection, ReadOptions options) {
-        if (!referencesSynthetic(predicate, projection)) {
-            return readAllFileBatches(predicate, projection, options);
-        }
-        return readSurvivorBatches(predicate, projection, options);
-    }
-
-    /**
-     * The materializer read path does not yet synthesize path-only partition columns; a query referencing a synthetic
-     * column throws {@link UnsupportedOperationException}. Use {@link #read(Predicate, Projection, ReadOptions)} for
-     * synthesized columns.
+     * Reads the rows of the files surviving {@code predicate}, materialized through {@code materializer}, with any
+     * projected synthetic column presented per file as a constant. Without a probe the survivors drain concurrently, up
+     * to {@code maxConcurrentFiles} at once, each file opened by the producer that drains it (a single survivor is
+     * opened and drained on the calling thread); a spatial-decimation probe pins the files to one thread, visited one
+     * at a time in the order of their geometry boxes and each opened only when the previous one is drained. Either way
+     * a file's reader lives as long as its own stream.
      */
     @Override
     @MustBeClosed
     public <T> Stream<T> read(
             Predicate predicate, Projection projection, Materializer<T> materializer, ReadOptions options) {
-        if (referencesSynthetic(predicate, projection)) {
-            throw new UnsupportedOperationException(
-                    "the materializer read path does not yet support synthesized partition columns; use read(predicate, projection, options)");
-        }
-        ParquetSource query = surviving(predicate);
-        if (query == null) {
-            return Stream.empty();
-        }
-        return query.read(predicate, projection, materializer, options);
-    }
-
-    /**
-     * {@inheritDoc}
-     *
-     * <p>A file whose folded predicate is always true contributes the record count the gather pass recorded for it - no
-     * file is opened. Only files with a real residual predicate are read.
-     */
-    @Override
-    public long count(Predicate predicate, ReadOptions options) {
-        long total = 0L;
-        List<Integer> needRead = new ArrayList<>();
-        for (int index : pruneSurvivors(predicate)) {
-            Predicate residual = residualFor(index, predicate);
-            if (residual.equals(Predicate.ALWAYS_TRUE)) {
-                total += partitionStats.get(index).recordCount();
-            } else if (!residual.equals(Predicate.ALWAYS_FALSE)) {
-                needRead.add(index);
-            }
-        }
-        if (needRead.isEmpty()) {
-            return total;
-        }
-        if (referencesSynthetic(predicate, Projection.ALL)) {
-            return total + countSyntheticSurvivors(needRead, predicate, options);
-        }
-        return total + sourceOver(needRead).count(predicate, options);
-    }
-
-    /**
-     * Counts the files whose folded predicate kept a real residual, each on its own virtual thread: a synthetic-column
-     * predicate folds differently per file, keeping the files' counts separate, and the per-file footer decodes overlap
-     * the same way every other survivor fan-out in this class does. A failure in any file cancels the rest.
-     */
-    private long countSyntheticSurvivors(List<Integer> needRead, Predicate predicate, ReadOptions options) {
-        try (StructuredTaskScope<Long, Void> scope = StructuredTaskScope.open()) {
-            List<StructuredTaskScope.Subtask<Long>> counts = new ArrayList<>(needRead.size());
-            for (int index : needRead) {
-                counts.add(scope.fork(() -> openFile(index).count(residualFor(index, predicate), options)));
-            }
-            scope.join();
-            long total = 0L;
-            for (StructuredTaskScope.Subtask<Long> count : counts) {
-                total += count.get();
-            }
-            return total;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            InterruptedIOException interrupted = new InterruptedIOException("Interrupted while counting dataset rows");
-            interrupted.initCause(e);
-            throw new UncheckedIOException(interrupted);
-        } catch (StructuredTaskScope.FailedException e) {
-            throw asUnchecked(e.getCause());
-        }
-    }
-
-    /** A source over the files at {@code indices}: the retained parsed source for a one-file dataset, else fresh. */
-    private ParquetSource sourceOver(List<Integer> indices) {
-        if (singleFile != null) {
-            return singleFile;
-        }
-        return ParquetSource.open(new SurvivorFileset(sources, indices), openOptions);
-    }
-
-    @MustBeClosed
-    private Stream<ParquetRecord> readAllFiles(Predicate predicate, Projection projection, ReadOptions options) {
-        ParquetSource query = surviving(predicate);
-        if (query == null) {
-            return Stream.empty();
-        }
-        return query.read(predicate, projection, options);
-    }
-
-    @MustBeClosed
-    private Stream<ParquetRecordBatch> readAllFileBatches(
-            Predicate predicate, Projection projection, ReadOptions options) {
-        ParquetSource query = surviving(predicate);
-        if (query == null) {
-            return Stream.empty();
-        }
-        return query.readBatches(Query.of(predicate, projection), options);
-    }
-
-    /**
-     * Reads the synthesized rows of the files surviving {@code predicate}, draining the survivors concurrently. A
-     * spatial-decimation probe pins the per-file visit order onto a single thread, which the fan-out would break; a
-     * probe read therefore keeps the sequential per-file composition. Otherwise each survivor's records ride its
-     * columnar batches across the fan-out and flatten to rows on the consuming thread. Each one-file stream's resources
-     * close with the composed stream.
-     */
-    @MustBeClosed
-    private Stream<ParquetRecord> readSurvivors(Predicate predicate, Projection projection, ReadOptions options) {
         List<Integer> survivors = pruneSurvivors(predicate);
         if (survivors.isEmpty()) {
             return Stream.empty();
         }
-        if (options.spatialReadProbe().isPresent()) {
-            return ConcurrentSurvivorReads.sequential(
-                    survivors.size(), dense -> readOneFile(survivors.get(dense), predicate, projection, options));
+        Optional<SpatialReadProbe> probe = options.spatialReadProbe();
+        if (probe.isPresent()) {
+            return visitSequentially(
+                    survivors,
+                    probe.orElseThrow(),
+                    index -> readOneFile(index, predicate, projection, materializer, options));
         }
         return ConcurrentSurvivorReads.records(
                 survivors.size(),
                 dense -> readOneFileBatches(survivors.get(dense), predicate, projection, options),
+                materializer,
                 maxConcurrentFiles());
     }
 
-    /**
-     * The batch analogue of {@link #readSurvivors}: the survivors' augmented batches, fanned out or kept sequential.
-     */
+    /** The batch analogue of {@link #read(Predicate, Projection, Materializer, ReadOptions)}. */
+    @Override
     @MustBeClosed
-    private Stream<ParquetRecordBatch> readSurvivorBatches(
-            Predicate predicate, Projection projection, ReadOptions options) {
+    public Stream<ParquetRecordBatch> readBatches(Predicate predicate, Projection projection, ReadOptions options) {
         List<Integer> survivors = pruneSurvivors(predicate);
         if (survivors.isEmpty()) {
             return Stream.empty();
         }
-        if (options.spatialReadProbe().isPresent()) {
-            return survivors.stream().flatMap(index -> readOneFileBatches(index, predicate, projection, options));
+        Optional<SpatialReadProbe> probe = options.spatialReadProbe();
+        if (probe.isPresent()) {
+            return visitSequentially(
+                    survivors, probe.orElseThrow(), index -> readOneFileBatches(index, predicate, projection, options));
         }
         return ConcurrentSurvivorReads.batches(
                 survivors.size(),
@@ -455,18 +325,35 @@ public final class FilesetDataset implements GeoParquetDataset {
                 maxConcurrentFiles());
     }
 
-    private int maxConcurrentFiles() {
-        return openOptions.runtime().maxConcurrentFiles();
+    /**
+     * Visits the survivors one at a time in the order of their footer geometry boxes, opening each file's stream only
+     * when the previous one is drained and skipping a file whose whole box {@code probe} reports as already painted.
+     * {@code readOneFile} yields one survivor's stream; the sequential concatenation calls it only after the previous
+     * file ended, and the gate is consulted right before that call, by which point the probe has seen the previous
+     * file's paint.
+     */
+    @MustBeClosed
+    private <S> Stream<S> visitSequentially(
+            List<Integer> survivors, SpatialReadProbe probe, IntFunction<Stream<S>> readOneFile) {
+        SpatialFileVisit visit = SpatialFileVisit.plan(survivors, this::footerStatsBox, probe);
+        List<Integer> order = visit.order();
+        return ConcurrentSurvivorReads.sequential(order.size(), dense -> {
+            int index = order.get(dense);
+            if (visit.skips(index)) {
+                return Stream.empty();
+            }
+            return readOneFile.apply(index);
+        });
     }
 
     @MustBeClosed
-    private Stream<ParquetRecord> readOneFile(
-            int index, Predicate predicate, Projection projection, ReadOptions options) {
+    private <T> Stream<T> readOneFile(
+            int index, Predicate predicate, Projection projection, Materializer<T> materializer, ReadOptions options) {
         Query query = oneFileQuery(index, predicate, projection);
         if (query == null) {
             return Stream.empty();
         }
-        return openFile(index).read(query, options);
+        return openFile(index).read(query, materializer, options);
     }
 
     @MustBeClosed
@@ -477,6 +364,44 @@ public final class FilesetDataset implements GeoParquetDataset {
             return Stream.empty();
         }
         return openFile(index).readBatches(query, options);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>A file whose folded predicate is always true contributes the record count the gather pass recorded for it - no
+     * file is opened. The files with a real residual predicate are counted at most {@code maxConcurrentFiles} at a
+     * time, each opened by its own task; a single file to count is opened on the calling thread.
+     */
+    @Override
+    public long count(Predicate predicate, ReadOptions options) {
+        long recorded = 0L;
+        List<FileToCount> needRead = new ArrayList<>();
+        for (int index : pruneSurvivors(predicate)) {
+            Predicate residual = residualFor(index, predicate);
+            if (residual.equals(Predicate.ALWAYS_TRUE)) {
+                recorded += partitionStats.get(index).recordCount();
+            } else if (!residual.equals(Predicate.ALWAYS_FALSE)) {
+                needRead.add(new FileToCount(index, residual));
+            }
+        }
+        if (needRead.isEmpty()) {
+            return recorded;
+        }
+        long counted = SurvivorFanOut.sum(
+                needRead.size(), dense -> countOneFile(needRead.get(dense), options), maxConcurrentFiles());
+        return recorded + counted;
+    }
+
+    /** A survivor whose count needs a read, with the predicate left over after folding that file's constants. */
+    private record FileToCount(int index, Predicate residual) {}
+
+    private long countOneFile(FileToCount file, ReadOptions options) {
+        return openFile(file.index()).count(file.residual(), options);
+    }
+
+    private int maxConcurrentFiles() {
+        return openOptions.runtime().maxConcurrentFiles();
     }
 
     /**
@@ -555,20 +480,37 @@ public final class FilesetDataset implements GeoParquetDataset {
     }
 
     /**
-     * The physical column projection: {@link Projection#ALL} unchanged, else the named columns minus synthetic ones.
-     * When every requested column is synthetic the physical set is empty; the batch reader derives the row count from
-     * decoded columns and would emit no rows. Project one cheap physical leaf instead so each file row is enumerated
-     * and the synthetic constants are appended to it.
+     * The projection of what a file physically holds: {@link Projection#ALL} unchanged, else the requested columns with
+     * this dataset's synthetic (path-only) ones removed.
      */
     private Projection physicalProjection(Projection projection) {
-        if (projectedNames(projection).isEmpty()) {
-            return Projection.ALL;
+        return switch (projection) {
+            case Projection.All _ -> Projection.ALL;
+            case Projection.Of(SequencedSet<Projection.Column> columns) -> withoutSyntheticColumns(projection, columns);
+        };
+    }
+
+    /**
+     * {@code projection} minus the columns naming a synthetic partition value, returned unchanged when it names none. A
+     * projection of nothing but synthetic columns leaves an empty physical set; the batch reader derives the row count
+     * from the decoded columns and would emit no rows. Project one cheap physical leaf instead, which enumerates every
+     * file row for the synthetic constants to be appended to.
+     */
+    private Projection withoutSyntheticColumns(Projection projection, SequencedSet<Projection.Column> columns) {
+        Set<ColumnPath> synthetic = partitioning.syntheticPaths();
+        SequencedSet<Projection.Column> physical = new LinkedHashSet<>();
+        for (Projection.Column column : columns) {
+            if (!synthetic.contains(column.name())) {
+                physical.add(column);
+            }
         }
-        List<ColumnPath> physical = presentedPhysicalColumns(projection);
         if (physical.isEmpty()) {
             return rowEnumerationProjection();
         }
-        return Projection.ofPhysical(physical);
+        if (physical.size() == columns.size()) {
+            return projection;
+        }
+        return Projection.of(physical);
     }
 
     /** A projection of a single physical leaf, used to drive row enumeration when only synthetic columns are read. */
@@ -591,35 +533,6 @@ public final class FilesetDataset implements GeoParquetDataset {
             }
         }
         return result;
-    }
-
-    /**
-     * Whether {@code predicate} or {@code projection} references a synthetic (path-only) column. Only then does a read
-     * fold per file and append constants; otherwise the all-files fast path stays.
-     */
-    private boolean referencesSynthetic(Predicate predicate, Projection projection) {
-        if (!partitioning.hasSynthetic()) {
-            return false;
-        }
-        return projectionNamesSynthetic(projection) || predicateNamesSynthetic(predicate);
-    }
-
-    private boolean projectionNamesSynthetic(Projection projection) {
-        Optional<Set<ColumnPath>> names = projectedNames(projection);
-        return names.isEmpty() || intersectsSynthetic(names.get());
-    }
-
-    private boolean predicateNamesSynthetic(Predicate predicate) {
-        return intersectsSynthetic(Predicate.columns(predicate));
-    }
-
-    private boolean intersectsSynthetic(Set<ColumnPath> columns) {
-        for (ColumnPath synthetic : partitioning.syntheticPaths()) {
-            if (columns.contains(synthetic)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     @Override
@@ -667,29 +580,16 @@ public final class FilesetDataset implements GeoParquetDataset {
     }
 
     /**
-     * The source over the files surviving {@code predicate}, or null when all prune. A one-file dataset reuses its
-     * retained parsed source; a multi-file dataset opens fresh readers over the survivors, whose decoded footers go
-     * with the query.
-     */
-    private ParquetSource surviving(Predicate predicate) {
-        List<Integer> survivors = pruneSurvivors(predicate);
-        if (survivors.isEmpty()) {
-            return null;
-        }
-        return sourceOver(survivors);
-    }
-
-    /**
      * A {@link ParquetSource} over the one file at {@code index}: the retained parsed source for a one-file dataset,
-     * else a fresh open whose decoded footer goes with the caller. The dataset borrows the catalog's shared byte
-     * source, which the catalog owns and closes; repeated opens re-decode the footer, riding whatever byte caching the
-     * source provides.
+     * else a fresh open over the catalog's shared byte source, whose footer comes from the shared footer-metadata cache
+     * (a hit rebuilds nothing; a miss reads and parses the footer and the cache retains it under its own bound). The
+     * source lives as long as the stream or task that it serves.
      */
     private ParquetSource openFile(int index) {
         if (singleFile != null) {
             return singleFile;
         }
-        return ParquetSource.open(new SurvivorFileset(sources, List.of(index)), openOptions);
+        return ParquetSource.open(sources.get(index), openOptions);
     }
 
     private List<Integer> pruneSurvivors(Predicate predicate) {
@@ -710,19 +610,5 @@ public final class FilesetDataset implements GeoParquetDataset {
     private static Optional<BoundingBox> primaryBbox(GeoParquetMetadata geo) {
         GeoColumn primary = geo.columns().get(geo.primaryColumn());
         return primary == null ? Optional.empty() : primary.bbox();
-    }
-
-    /** A {@link FilesetReader} over a dense slice of the catalog's pre-opened sources. The sources are borrowed. */
-    private record SurvivorFileset(List<ByteRangeSource> sources, List<Integer> survivorIndices)
-            implements FilesetReader {
-        @Override
-        public ByteRangeSource openFile(int index) {
-            return sources.get(survivorIndices.get(index));
-        }
-
-        @Override
-        public int fileCount() {
-            return survivorIndices.size();
-        }
     }
 }

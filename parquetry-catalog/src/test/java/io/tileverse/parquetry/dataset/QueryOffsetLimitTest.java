@@ -18,7 +18,6 @@ package io.tileverse.parquetry.dataset;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
 
@@ -38,7 +37,7 @@ import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
  * Pins {@link Query} offset/limit: it returns exactly the window {@code read(predicate).skip(offset).limit(limit)}
- * would, in natural read order, across batch boundaries and across files, with no empty batch on an exhausted window.
+ * would, in natural read order, across batch boundaries, with no empty batch on an exhausted window.
  */
 class QueryOffsetLimitTest {
 
@@ -121,45 +120,6 @@ class QueryOffsetLimitTest {
             assertThat(source.count(windowed, SMALL_BATCHES))
                     .as("count is predicate-only and ignores the read-shaping window")
                     .isEqualTo(ROWS);
-        }
-    }
-
-    /**
-     * A windowed read over a two-file dataset returns the file-order slice. The reference is built from single-file
-     * reads concatenated in fileset order, not from an unwindowed read of the two-file source: a windowless multi-file
-     * read has no defined row order, whereas the window contract is defined against survivor (file) order.
-     */
-    @Test
-    void offsetAndLimitSpanFiles(@TempDir Path tmp) throws Exception {
-        Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(tmp, ROWS);
-        try (ByteRangeSource first = TestParquetFiles.openRangeReader(file);
-                ByteRangeSource second = TestParquetFiles.openRangeReader(file)) {
-            ParquetSource source = ParquetSource.open(TestFilesets.of(List.of(first, second)));
-
-            // File-order reference: file one's rows then file two's rows (both are the same file read on its own).
-            List<Double> fileOrder = new ArrayList<>();
-            fileOrder.addAll(singleFileValues(file));
-            fileOrder.addAll(singleFileValues(file));
-            assertThat(fileOrder).hasSize(2 * ROWS);
-
-            // Window straddles the file boundary: starts inside file one, ends inside file two.
-            Query windowed = Query.builder(Predicate.ALWAYS_TRUE, Projection.ALL)
-                    .offset(ROWS - 50)
-                    .limit(100)
-                    .build();
-            List<Double> window = windowValues(source, windowed);
-
-            assertThat(window).isEqualTo(fileOrder.subList(ROWS - 50, ROWS - 50 + 100));
-        }
-    }
-
-    /** Reads {@code file} as its own single-reader source (which never fans out), yielding its values in file order. */
-    private static List<Double> singleFileValues(Path file) {
-        try (ByteRangeSource bytes = TestParquetFiles.openRangeReader(file)) {
-            ParquetSource single = ParquetSource.open(bytes);
-            try (Stream<ParquetRecord> rows = single.read(Predicate.ALWAYS_TRUE, Projection.ALL, SMALL_BATCHES)) {
-                return rows.map(row -> row.getDouble(VALUE)).toList();
-            }
         }
     }
 

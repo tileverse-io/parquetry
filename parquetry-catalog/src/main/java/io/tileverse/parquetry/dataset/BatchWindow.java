@@ -26,11 +26,10 @@ import io.tileverse.parquetry.columnar.ParquetRecordBatch;
  * until the limit, and slices the one batch the limit straddles before finishing. At most two batches are ever sliced
  * per whole read; the rest pass through or are skipped.
  *
- * <p>The window runs as a stateful {@link Gatherer} so it sees the cross-file batch stream as one sequence: applied
- * inside the {@code readBatches(Query)} default, virtual dispatch makes it wrap each multi-file dataset's cross-file
- * concatenation, and a single outermost counter spans every file. Finishing early returns {@code false} from the
- * integrator, which stops pulling; closing the result stream then tears down the in-flight file and the lazy per-file
- * concatenation never opens the next one.
+ * <p>The window is a stateful {@link Gatherer} over one file's filtered batch stream, applied inside the
+ * {@code readBatches(Query)} default before the output selection. One counter therefore spans the whole stream.
+ * Finishing early returns {@code false} from the integrator, which stops pulling batches; closing the result stream
+ * then tears down the in-flight read.
  *
  * <p>A batch skipped before the offset is closed here (the window owns each batch it pulls). A sliced batch's view owns
  * the batch it slices; batches never pulled are closed by the upstream stream's {@code onClose} when the read stream is

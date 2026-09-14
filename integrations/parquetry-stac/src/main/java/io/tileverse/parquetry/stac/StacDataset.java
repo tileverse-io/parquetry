@@ -16,7 +16,6 @@
 package io.tileverse.parquetry.stac;
 
 import java.io.IOException;
-import java.io.InterruptedIOException;
 import java.io.UncheckedIOException;
 import java.net.URI;
 import java.time.Duration;
@@ -29,7 +28,6 @@ import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.StructuredTaskScope;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -54,6 +52,7 @@ import io.tileverse.parquetry.dataset.DatasetCapabilities.FileStatsSource;
 import io.tileverse.parquetry.dataset.GeoParquetDataset;
 import io.tileverse.parquetry.dataset.OpenOptions;
 import io.tileverse.parquetry.dataset.ParquetSource;
+import io.tileverse.parquetry.dataset.SurvivorFanOut;
 import io.tileverse.parquetry.dataset.explain.DatasetExplainPlan;
 import io.tileverse.parquetry.dataset.explain.FileExplain;
 import io.tileverse.parquetry.dataset.explain.Outcome;
@@ -458,10 +457,11 @@ public final class StacDataset implements GeoParquetDataset {
     }
 
     /**
-     * The exact bounds of the {@code predicate}-matching rows across the survivor parts, each part visited on its own
-     * virtual thread and folded into one shared accumulator. Before a part opens, its cheap item box is tested against
-     * the bounds accumulated so far, and a part those bounds already cover is skipped: a box already enclosed extends
-     * the extent by nothing. A part with no item box always runs the engine. A failure in any part cancels the rest.
+     * The exact bounds of the {@code predicate}-matching rows across the survivor parts, folded into one shared
+     * accumulator with at most {@code maxConcurrentFiles} parts bounded at once. Before a part opens, its cheap item
+     * box is tested against the bounds accumulated so far, and a part those bounds already cover is skipped: a box
+     * already enclosed extends the extent by nothing. A part with no item box always runs the engine. A failure in any
+     * part cancels the rest.
      */
     private Optional<BoundingBox> boundsOfSurvivors(List<Integer> survivors, Predicate predicate, ReadOptions options) {
         if (survivors.isEmpty()) {
@@ -469,41 +469,31 @@ public final class StacDataset implements GeoParquetDataset {
         }
         ParquetSchema representative = schema();
         BoundsAccumulator accumulator = new BoundsAccumulator();
-        try (StructuredTaskScope<Void, Void> scope = StructuredTaskScope.open()) {
-            for (int index : survivors) {
-                scope.fork(() -> foldOnePartBounds(index, predicate, options, accumulator, representative));
-            }
-            scope.join();
-            return accumulator.snapshot();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            InterruptedIOException interrupted =
-                    new InterruptedIOException("Interrupted while bounding collection rows");
-            interrupted.initCause(e);
-            throw new UncheckedIOException(interrupted);
-        } catch (StructuredTaskScope.FailedException e) {
-            throw asUnchecked(e.getCause());
-        }
+        SurvivorFanOut.forEach(
+                survivors.size(),
+                dense -> foldOnePartBounds(survivors.get(dense), predicate, options, accumulator, representative),
+                maxConcurrentFiles());
+        return accumulator.snapshot();
     }
 
     /**
      * Folds one survivor part's matching-row bounds into the shared accumulator. STAC folds no per-part predicate: the
      * original predicate visits each part unchanged. A part whose cheap pre-open item box the accumulated bounds
-     * already cover is skipped before the part opens. Runs on a fan-out virtual thread.
+     * already cover is skipped before the part opens. Runs on a fan-out virtual thread, or on the calling thread when
+     * there is a single survivor.
      */
-    private Void foldOnePartBounds(
+    private void foldOnePartBounds(
             int index,
             Predicate predicate,
             ReadOptions options,
             BoundsAccumulator accumulator,
             ParquetSchema representative) {
         if (itemBoxCovered(index, accumulator)) {
-            return null;
+            return;
         }
         try (PartLease lease = acquirePart(index)) {
             checkedPart(lease, index, representative).bounds(predicate, options).ifPresent(accumulator::union);
         }
-        return null;
     }
 
     /**
@@ -540,21 +530,6 @@ public final class StacDataset implements GeoParquetDataset {
 
     private Optional<BoundingBox> itemBox(int index) {
         return fileStats().get(index).geometryBounds().values().stream().findFirst();
-    }
-
-    /**
-     * Rethrows a per-part bounds failure with the type a sequential visit would have thrown. The engine's per-part
-     * bounds declares no checked exception: the cause is a {@link RuntimeException} or an {@link Error}, with anything
-     * else falling back to {@link IllegalStateException}.
-     */
-    private static RuntimeException asUnchecked(Throwable cause) {
-        if (cause instanceof RuntimeException runtime) {
-            return runtime;
-        }
-        if (cause instanceof Error error) {
-            throw error;
-        }
-        return new IllegalStateException("Bounding a collection part failed", cause);
     }
 
     @Override
@@ -606,8 +581,9 @@ public final class StacDataset implements GeoParquetDataset {
         }
         ParquetSchema representative = schema();
         if (options.spatialReadProbe().isPresent()) {
-            return survivors.stream()
-                    .flatMap(index -> readOnePartBatches(index, representative, predicate, projection, options));
+            return ConcurrentSurvivorReads.sequential(
+                    survivors.size(),
+                    dense -> readOnePartBatches(survivors.get(dense), representative, predicate, projection, options));
         }
         return ConcurrentSurvivorReads.batches(
                 survivors.size(),
@@ -673,11 +649,10 @@ public final class StacDataset implements GeoParquetDataset {
             return 0L;
         }
         ParquetSchema representative = schema();
-        long total = 0L;
-        for (int index : survivors) {
-            total += countOnePart(index, representative, predicate, options);
-        }
-        return total;
+        return SurvivorFanOut.sum(
+                survivors.size(),
+                dense -> countOnePart(survivors.get(dense), representative, predicate, options),
+                maxConcurrentFiles());
     }
 
     private long countOnePart(int index, ParquetSchema representative, Predicate predicate, ReadOptions options) {
@@ -746,11 +721,10 @@ public final class StacDataset implements GeoParquetDataset {
 
     /**
      * The leased part's {@link ParquetSource}, its schema validated against the collection's {@code representative}
-     * schema before the part is read. STAC reads each part as its own single-file source and concatenates the rows,
-     * which bypasses the engine's multi-file schema check; a part whose columns differ from the representative would
-     * otherwise yield wrong rows. The check runs as each part is opened for reading, not up front, and a
-     * {@code limit(1)} read therefore does not open every survivor's footer. A mismatch throws
-     * {@link StacFormatException} before the part's rows are emitted, naming the item.
+     * schema before the part is read. STAC reads each part as its own single-file source and concatenates the rows;
+     * concatenating a part whose columns differ from the representative would yield wrong rows. The check runs as each
+     * part is opened for reading, not up front, and a {@code limit(1)} read therefore does not open every survivor's
+     * footer. A mismatch throws {@link StacFormatException} before the part's rows are emitted, naming the item.
      *
      * <p>Equality is exact: a part with extra or missing columns is rejected, not read as a superset. That is
      * deliberate - reading parts with drifting schemas as if homogeneous silently corrupts rows, and a loud failure is

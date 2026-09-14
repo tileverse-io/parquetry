@@ -30,13 +30,13 @@ import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
- * The read operations shared by the two dataset facades in this package: the physical multi-file reader
- * ({@link ParquetSource}) and the catalog dataset ({@link ParquetDataset}). Both expose the same predicate-filtered
- * record reads, the same columnar batch read, and the same metadata-only count. Naming that common contract lets a
- * consumer read either one without knowing which it holds.
+ * The read operations shared by the two dataset facades in this package: the single-file reader ({@link ParquetSource})
+ * and the catalog dataset ({@link ParquetDataset}). Both expose the same predicate-filtered record reads, the same
+ * columnar batch read, and the same metadata-only count. Naming that common contract lets a consumer read either one
+ * without knowing which it holds.
  *
  * <p>The explain methods stay out of this contract because the two facades return different plan types, as do the
- * physical reader's file-level methods (row groups, file statistics, key/value metadata, and the query-shaped
+ * single-file reader's file-level methods (row groups, file statistics, key/value metadata, and the query-shaped
  * overloads).
  */
 public interface ParquetReader {

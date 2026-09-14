@@ -30,15 +30,17 @@ import io.tileverse.parquetry.record.ParquetRecord;
  * predicate and drains up to {@code maxConcurrentFiles} of them at once, merging their elements into one pull-based
  * stream. This is the read-shaped convenience over {@link ConcurrentFileMerge}: the datasets pass a per-file opener
  * that returns that file's columnar batches, and the fan-out either delivers those batches or flattens them to rows on
- * the consuming thread.
+ * the consuming thread. A single survivor has nothing to overlap with: its opener runs on the calling thread inside the
+ * read call and its stream is returned as is, which means a failure to open it propagates from the call itself rather
+ * than from the first pull.
  *
  * <p>The transported element is always a whole {@link ParquetRecordBatch}, which owns its data across the
  * producer-to-consumer hand-off; the row views a batch holds are batch-lifetime flyweights and never cross a thread
  * boundary. The record overload therefore fans the batches out and flattens each to rows through
  * {@link BatchRows#rows}, which materializes row by row on the consuming thread and closes a batch only when the stream
- * advances past it. Emission is unordered, the maximum-overlap default: these datasets present no windowed
- * (offset/limit) read, and no caller depends on a file-ordered sequence. A read that must preserve a deterministic
- * visit order (a spatial-decimation probe) composes {@link #sequential} instead and does not reach the fan-out.
+ * advances past it. Batches are emitted as the files produce them; no dataset read depends on a file-ordered sequence.
+ * A read that must preserve a deterministic visit order (a spatial-decimation probe) composes {@link #sequential}
+ * instead and does not reach the fan-out.
  *
  * <p>{@code openFile} receives a dense index in {@code [0, fileCount)}; a dataset maps it to the survivor it drains.
  * Returning {@link Stream#empty()} for a file the dataset skips after pruning is normal and merges as an empty file.
@@ -67,17 +69,13 @@ public final class ConcurrentSurvivorReads {
 
     /**
      * Fans the survivor files out as columnar batches, merged in arrival order. Closing the returned stream cancels the
-     * producers and closes every batch the consumer never received.
+     * producers and closes every batch not yet received by the consumer. A single file is opened on the calling thread
+     * and its batch stream returned as is.
      */
     @MustBeClosed
     public static Stream<ParquetRecordBatch> batches(
             int fileCount, IntFunction<Stream<ParquetRecordBatch>> openFile, int maxConcurrentFiles) {
-        return ConcurrentFileMerge.stream(
-                fileCount,
-                openFile,
-                ParquetRecordBatch::close,
-                maxConcurrentFiles,
-                ConcurrentFileMerge.Emission.UNORDERED);
+        return ConcurrentFileMerge.stream(fileCount, openFile, ParquetRecordBatch::close, maxConcurrentFiles);
     }
 
     /** Convenience for the canonical {@link ParquetRecord} record fan-out. */

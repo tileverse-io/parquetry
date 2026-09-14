@@ -16,10 +16,8 @@
 package io.tileverse.parquetry.dataset;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
-import java.util.List;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -41,19 +39,6 @@ class ParquetSourceFileStatsTest {
 
             assertThat(stats.recordCount()).isEqualTo(3);
             assertThat(stats.columns()).containsKey(ColumnPath.of("pop"));
-        }
-    }
-
-    @Test
-    void multiFileDatasetRejectsFileStats(@TempDir Path dir) throws Exception {
-        Path a = FlatLongParquet.writeIntFile(dir.resolve("a.parquet"), "pop", new long[] {1, 2});
-        Path b = FlatLongParquet.writeIntFile(dir.resolve("b.parquet"), "pop", new long[] {3, 4});
-        try (ByteRangeSource sa = ByteRangeSource.ofFile(a);
-                ByteRangeSource sb = ByteRangeSource.ofFile(b)) {
-            FilesetReader fileset = TestFilesets.of(List.of(sa, sb));
-            ParquetSource source = ParquetSource.open(fileset);
-
-            assertThatThrownBy(source::fileStats).isInstanceOf(UnsupportedOperationException.class);
         }
     }
 }

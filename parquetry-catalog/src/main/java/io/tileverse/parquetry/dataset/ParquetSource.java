@@ -16,7 +16,6 @@
 package io.tileverse.parquetry.dataset;
 
 import java.nio.channels.FileChannel;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,6 +26,7 @@ import java.util.stream.Stream;
 import com.google.errorprone.annotations.MustBeClosed;
 
 import io.tileverse.parquetry.columnar.BatchMaterializer;
+import io.tileverse.parquetry.columnar.BatchRows;
 import io.tileverse.parquetry.columnar.OutputBatches;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.data.FooterMetadataCache;
@@ -49,13 +49,13 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 
 /**
- * Public facade for reading one or many Parquet files that share the same schema.
+ * The read facade over one Parquet file.
  *
- * <p>A {@code ParquetSource} is the entry point to the parquetry read pipeline. The {@link #open(ByteRangeSource)}
- * factory opens a one-file dataset over the supplied {@link ByteRangeSource}; a future release will add factories for
- * partitioned datasets where every file agrees on {@link ParquetSchema} by equality. Concurrent {@code read()} calls on
- * a shared instance are safe; each call constructs its own column readers, filter-pipeline state, and single-use
- * {@link io.tileverse.parquetry.internal.read.BatchPipeline} stream.
+ * <p>{@link #open(ByteRangeSource)} reads the footer once (or takes it from {@link FooterMetadataCache}) and every
+ * {@code read}, {@code count}, {@code bounds} and {@code explain} call shares it. A dataset of many files is a
+ * {@link ParquetDataset}, assembled by the catalogs in {@code io.tileverse.parquetry.catalog}. Concurrent
+ * {@code read()} calls on a shared instance are safe; each call constructs its own column readers, filter-pipeline
+ * state, and single-use {@link io.tileverse.parquetry.internal.read.BatchPipeline} stream.
  *
  * <p>The default {@link #read()} overload reads every record through the canonical {@link ParquetRecord} materializer
  * with no predicate or projection. The expressive overloads expose predicate push-down (via the 5-tier filter
@@ -90,9 +90,8 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
     List<RowGroupSummary> rowGroups();
 
     /**
-     * The footer-aggregated prunable statistics for this dataset's single file. Defined only for a one-file dataset; a
-     * multi-file dataset has no single file aggregate and throws {@link UnsupportedOperationException} (consistent with
-     * {@code explain}).
+     * The footer-aggregated prunable statistics for this file: per-column min/max/null-count combined across the row
+     * groups, the geometry bounding box per geometry column, and the record count.
      */
     FileStats fileStats();
 
@@ -175,8 +174,7 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
     @MustBeClosed
     default Stream<ParquetRecordBatch> readBatches(Query query, ReadOptions options) {
         Predicate pushed = lowerToPhysicalColumns(query);
-        Stream<ParquetRecordBatch> produced =
-                asDefaultSource().readBatches(pushed, query.projection(), options, emissionFor(query));
+        Stream<ParquetRecordBatch> produced = readBatches(pushed, query.projection(), options);
         Stream<ParquetRecordBatch> windowed = applyWindow(produced, query.offset(), query.limit());
         if (query.outputColumns().isEmpty()) {
             return windowed;
@@ -187,8 +185,7 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
     /**
      * Applies the offset/limit window to the produced batch stream before the output selection, leaving the identity
      * window (offset 0, no limit) untouched. Windowing before the selection keeps the slice over the produced filtered
-     * batches, never re-selecting an already-selected batch's columns. Applied here in the default, virtual dispatch
-     * makes the window span each multi-file dataset's cross-file batch concatenation.
+     * batches, never re-selecting an already-selected batch's columns.
      */
     private static Stream<ParquetRecordBatch> applyWindow(
             Stream<ParquetRecordBatch> batches, long offset, OptionalLong limit) {
@@ -227,67 +224,51 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
     }
 
     /**
-     * Reads records shaped by {@code query}, applying its ordered output shape when one is present.
-     *
-     * <p>The identity case (empty output) delegates to {@link #read(Predicate, Projection, ReadOptions)}. The shaped
-     * case builds records from {@link #readBatches(Query, ReadOptions)}, which applies {@code query.predicate()}
-     * exactly: each batch it emits already holds only matching rows. Output shaping then renames, reorders, or injects
-     * columns over those rows without ever dropping one. Both cases therefore return exactly the rows that satisfy
-     * {@code query.predicate()}.
-     *
-     * <p>That exactness holds when record-level filtering is enabled (the default). With
-     * {@code ReadOptions.useRecordLevelFilter()} disabled the read is pushdown-only, consistent with
-     * {@link #read(Predicate, Projection, ReadOptions)}.
+     * Reads records shaped by {@code query} through the canonical record materializer; see {@link #read(Query,
+     * Materializer, ReadOptions)} for the identity and shaped cases and the exactness of the predicate.
      */
     @MustBeClosed
     default Stream<ParquetRecord> read(Query query, ReadOptions options) {
-        if (query.outputColumns().isEmpty()) {
-            Stream<ParquetRecord> rows = asDefaultSource()
-                    .read(
-                            lowerToPhysicalColumns(query),
-                            query.projection(),
-                            Materializer.defaultRecord(),
-                            options,
-                            emissionFor(query));
-            return applyRowWindow(rows, query.offset(), query.limit());
-        }
-        return readBatches(query, options).flatMap(ConstantColumnBatches::rows);
+        return read(query, Materializer.defaultRecord(), options);
     }
 
     /**
-     * Applies the offset/limit window to a row stream, leaving the identity window untouched. The identity-output
-     * {@code read(Query)} path materializes rows directly rather than through {@link #readBatches(Query, ReadOptions)},
-     * so it windows at the row level here; the shaped path inherits the batch-level window from {@code readBatches}.
-     * {@link Stream#limit(long)} short-circuits the lazy per-file concatenation; files past the limit are never opened,
-     * the same outcome the batch window's early finish gives.
+     * Reads records shaped by {@code query}, materializing each through {@code materializer}. The identity case (no
+     * output shape) reads through {@link #read(Predicate, Projection, Materializer, ReadOptions)} with the predicate
+     * lowered to physical names, then applies the offset/limit window to the rows. The shaped case builds rows from
+     * {@link #readBatches(Query, ReadOptions)}, whose batches already present the output shape and the window, and
+     * hands each row to {@code materializer} with the batch's projected schema, which describes the columns held by the
+     * row.
+     *
+     * <p>Both cases return exactly the rows that satisfy {@code query.predicate()}: the batches of the shaped case are
+     * already filtered exactly, and output shaping only renames, reorders, or injects columns over those rows without
+     * ever dropping one. That exactness holds when record-level filtering is enabled (the default). With
+     * {@code ReadOptions.useRecordLevelFilter()} disabled the read is pushdown-only, consistent with
+     * {@link #read(Predicate, Projection, Materializer, ReadOptions)}.
      */
-    private static Stream<ParquetRecord> applyRowWindow(Stream<ParquetRecord> rows, long offset, OptionalLong limit) {
+    @MustBeClosed
+    default <T> Stream<T> read(Query query, Materializer<T> materializer, ReadOptions options) {
+        if (query.outputColumns().isEmpty()) {
+            Stream<T> rows = read(lowerToPhysicalColumns(query), query.projection(), materializer, options);
+            return applyRowWindow(rows, query.offset(), query.limit());
+        }
+        return BatchRows.rows(readBatches(query, options), materializer);
+    }
+
+    /**
+     * Applies the offset/limit window to a row stream, leaving the identity window untouched. Both row overloads of
+     * {@code read(Query, ...)} reach this through {@link #read(Query, Materializer, ReadOptions)}: their
+     * identity-output case materializes rows directly rather than through {@link #readBatches(Query, ReadOptions)} and
+     * takes its window here at the row level, while the shaped case inherits the batch-level window from
+     * {@code readBatches}. {@link Stream#limit(long)} short-circuits the read lazily, leaving the pages past the limit
+     * undecoded, which matches the early finish of the batch window.
+     */
+    private static <T> Stream<T> applyRowWindow(Stream<T> rows, long offset, OptionalLong limit) {
         if (offset == 0 && limit.isEmpty()) {
             return rows;
         }
-        Stream<ParquetRecord> windowed = offset == 0 ? rows : rows.skip(offset);
+        Stream<T> windowed = offset == 0 ? rows : rows.skip(offset);
         return limit.isPresent() ? windowed.limit(limit.getAsLong()) : windowed;
-    }
-
-    /**
-     * The fan-out emission order {@code query} requires. A query with an offset or a limit reads a definite prefix of
-     * the matching rows, meaningful only over a deterministic order; its multi-file merge therefore emits in survivor
-     * (file) order, matching the sequence a single-file-at-a-time read would produce. A windowless query keeps the
-     * maximum-overlap unordered emission.
-     */
-    private static ConcurrentFileMerge.Emission emissionFor(Query query) {
-        boolean windowed = query.offset() != 0 || query.limit().isPresent();
-        return windowed ? ConcurrentFileMerge.Emission.SURVIVOR_ORDER : ConcurrentFileMerge.Emission.UNORDERED;
-    }
-
-    /**
-     * Narrows this source to its sole implementation. {@code ParquetSource} is sealed to permit
-     * {@link DefaultParquetSource} alone, which makes the cast total. It reaches the package-private, emission-aware
-     * read overloads the public interface does not expose, letting the windowed entry points ask for survivor-order
-     * emission.
-     */
-    private DefaultParquetSource asDefaultSource() {
-        return (DefaultParquetSource) this;
     }
 
     /**
@@ -348,7 +329,7 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
     /**
      * Runs the filter pipeline and then a count-style drain of {@code predicate}, returning the {@link ExplainPlan}
      * annotated with the execution stats that drain actually produced. Use this to compare planned pruning against
-     * measured work. Single-file only; throws {@link UnsupportedOperationException} on a multi-file dataset.
+     * measured work.
      */
     ExplainPlan explainAnalyze(Predicate predicate, Projection projection, ReadOptions options);
 
@@ -356,11 +337,10 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
      * Counts the rows matching {@code predicate} without assembling any record.
      *
      * <p>{@link Predicate.Always} (the no-predicate {@link #count()} and the always-false case) is answered from
-     * row-group metadata alone, decoding no column. For every other predicate the dataset delegates to each file's
-     * reader, which runs the filter pipeline over metadata: row groups and pages ruled out by statistics are pruned, a
-     * row group whose statistics prove every row matches contributes its row count with no decode, and only the
-     * remaining row groups decode the predicate's columns to count the matches columnar. Records are never assembled
-     * and the geometry column is never materialized.
+     * row-group metadata alone, decoding no column. For every other predicate the reader runs the filter pipeline over
+     * metadata: row groups and pages ruled out by statistics are pruned, a row group whose statistics prove every row
+     * matches contributes its row count with no decode, and only the remaining row groups decode the predicate's
+     * columns to count the matches columnar. Records are never assembled and the geometry column is never materialized.
      */
     long count(Predicate predicate, ReadOptions options);
 
@@ -369,7 +349,7 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
         return count(predicate, ReadOptions.DEFAULTS);
     }
 
-    /** Counts every row in the dataset. */
+    /** Counts every row in the file. */
     default long count() {
         return count(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
     }
@@ -396,7 +376,7 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
     static ParquetSource open(ByteRangeSource source, OpenOptions options) {
         ParquetFileReader fileReader =
                 ParquetFileReader.open(source, options.runtime(), options.decryptionKeyRetriever());
-        return new DefaultParquetSource(List.of(fileReader), options.runtime().maxConcurrentFiles());
+        return new DefaultParquetSource(fileReader);
     }
 
     /**
@@ -410,34 +390,5 @@ public sealed interface ParquetSource extends io.tileverse.parquetry.dataset.Par
     /** Same as {@link #open(FileChannel)}, binding read resources from {@code options}. */
     static ParquetSource open(FileChannel channel, OpenOptions options) {
         return open(ByteRangeSource.ofChannel(channel), options);
-    }
-
-    /**
-     * Opens a dataset over every file in {@code fileset}, in index order. Each file is opened immediately, reading its
-     * footer unless {@link FooterMetadataCache} already holds that file's metadata, with up to
-     * {@link ParquetRuntime#maxConcurrentFiles()} of those opens overlapped on virtual threads; all files must agree on
-     * {@link ParquetSchema} by equality. The byte sources returned by {@link FilesetReader#openFile(int)} are borrowed;
-     * the caller owns and closes them.
-     *
-     * @throws IllegalArgumentException if {@code fileset} reports zero files
-     * @throws io.tileverse.parquetry.format.ParquetFormatException if any footer fails to conform to the spec
-     * @throws java.io.UncheckedIOException if any source fails to deliver bytes
-     */
-    static ParquetSource open(FilesetReader fileset) {
-        return open(fileset, OpenOptions.DEFAULTS);
-    }
-
-    /** Same as {@link #open(FilesetReader)}, binding read resources from {@code options}. */
-    static ParquetSource open(FilesetReader fileset, OpenOptions options) {
-        int fileCount = fileset.fileCount();
-        if (fileCount <= 0) {
-            throw new IllegalArgumentException("fileset must contain at least one file");
-        }
-        List<ByteRangeSource> sources = new ArrayList<>(fileCount);
-        for (int index = 0; index < fileCount; index++) {
-            sources.add(fileset.openFile(index));
-        }
-        List<ParquetFileReader> readers = DefaultParquetSource.openReaders(sources, options);
-        return new DefaultParquetSource(readers, options.runtime().maxConcurrentFiles());
     }
 }
