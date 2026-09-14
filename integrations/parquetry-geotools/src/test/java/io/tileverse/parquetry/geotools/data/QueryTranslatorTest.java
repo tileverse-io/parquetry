@@ -18,6 +18,9 @@ package io.tileverse.parquetry.geotools.data;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -36,9 +39,12 @@ import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Value;
+import io.tileverse.parquetry.format.LogicalType;
+import io.tileverse.parquetry.format.LogicalType.TimeUnit;
 import io.tileverse.parquetry.geotools.data.FeatureTypeMapper.AttributeMapping;
 import io.tileverse.parquetry.geotools.data.FeatureTypeMapper.Mapping;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.PrimitiveKind;
 
 class QueryTranslatorTest {
 
@@ -55,6 +61,26 @@ class QueryTranslatorTest {
                 new AttributeMapping("geom", ColumnPath.of("geometry"), true, Point.class),
                 new AttributeMapping("name", ColumnPath.of("name"), false, String.class),
                 new AttributeMapping("pop", ColumnPath.of("pop"), false, Long.class));
+        return new Mapping(ft, attrs);
+    }
+
+    /** The base mapping plus a UTC timestamp attribute stored as microseconds since the epoch. */
+    private static Mapping mappingWithTimestamp() {
+        SimpleFeatureTypeBuilder b = new SimpleFeatureTypeBuilder();
+        b.setName("t");
+        b.add("geom", Point.class);
+        b.add("stamp", Instant.class);
+        SimpleFeatureType ft = b.buildFeatureType();
+        List<AttributeMapping> attrs = List.of(
+                new AttributeMapping("geom", ColumnPath.of("geometry"), true, Point.class),
+                new AttributeMapping(
+                        "stamp",
+                        ColumnPath.of("stamp"),
+                        false,
+                        Instant.class,
+                        null,
+                        Optional.of(new LogicalType.Timestamp(true, TimeUnit.MICROS)),
+                        PrimitiveKind.INT64));
         return new Mapping(ft, attrs);
     }
 
@@ -173,6 +199,17 @@ class QueryTranslatorTest {
         Query q = new Query("t", FF.greater(FF.property("pop"), FF.literal(10)));
         QueryTranslator.TranslatedQuery t = new QueryTranslator(mapping()).translate(q);
         assertThat(t.predicate()).isEqualTo(Pred.col(ColumnPath.of("pop")).gt(10L));
+        assertThat(t.postFilter()).isEqualTo(Filter.INCLUDE);
+    }
+
+    @Test
+    void temporalFilterOnATimestampAttributeHasNoResidual() {
+        LocalDateTime noon = LocalDateTime.of(2024, 6, 15, 12, 30, 45);
+        Filter after = FF.after(FF.property("stamp"), FF.literal(noon.toInstant(ZoneOffset.UTC)));
+        QueryTranslator.TranslatedQuery t =
+                new QueryTranslator(mappingWithTimestamp()).translate(new Query("t", after));
+        assertThat(t.predicate())
+                .isEqualTo(new Predicate.Gt(ColumnPath.of("stamp"), new Value.TimestampVal(noon, true)));
         assertThat(t.postFilter()).isEqualTo(Filter.INCLUDE);
     }
 
