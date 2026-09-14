@@ -18,15 +18,17 @@ package io.tileverse.parquetry.geotools.data;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.ZoneOffset;
 
 import io.tileverse.parquetry.format.LogicalType.TimeUnit;
 
 /**
  * Converts a raw Parquet temporal encoding to its {@code java.time} value for a GeoTools attribute. A DATE column is
- * days since the Unix epoch; a TIMESTAMP column is a signed count of {@link TimeUnit} ticks since the epoch. Splitting
- * that count into whole seconds and a non-negative nanosecond remainder with
- * {@link Math#floorDiv}/{@link Math#floorMod} keeps pre-1970 (negative) values exact.
+ * days since the Unix epoch; a TIMESTAMP column is a signed count of {@link TimeUnit} ticks since the epoch; a TIME
+ * column is a count of {@link TimeUnit} ticks since midnight. Splitting a timestamp count into whole seconds and a
+ * non-negative nanosecond remainder with {@link Math#floorDiv}/{@link Math#floorMod} keeps pre-1970 (negative) values
+ * exact.
  */
 final class TemporalValues {
 
@@ -51,6 +53,11 @@ final class TemporalValues {
         long seconds = Math.floorDiv(value, ticksPerSecond);
         long nanoOfSecond = Math.floorMod(value, ticksPerSecond) * nanosPerTick(unit);
         return LocalDateTime.ofEpochSecond(seconds, (int) nanoOfSecond, ZoneOffset.UTC);
+    }
+
+    /** The time of day named by a TIME value: a count of {@code unit} ticks since midnight. */
+    static LocalTime toLocalTime(long value, TimeUnit unit) {
+        return LocalTime.ofNanoOfDay(value * nanosPerTick(unit));
     }
 
     private static long ticksPerSecond(TimeUnit unit) {

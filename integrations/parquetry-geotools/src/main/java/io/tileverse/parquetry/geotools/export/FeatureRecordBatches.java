@@ -21,6 +21,7 @@ import java.math.BigInteger;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -302,7 +303,10 @@ public final class FeatureRecordBatches {
             }
         }
 
-        /** Stages a date or timestamp {@code value}: dates as epoch days, timestamps as epoch microseconds. */
+        /**
+         * Stages a date, timestamp or time {@code value}: dates as epoch days, timestamps as epoch microseconds, times
+         * as microseconds since midnight.
+         */
         private static void setTemporalScalar(
                 ParquetRecordBatchBuilder builder, ColumnPath path, Class<?> binding, Object value) {
             if (binding == LocalDate.class) {
@@ -313,6 +317,8 @@ public final class FeatureRecordBatches {
                 builder.setLong(path, toEpochMicros(((LocalDateTime) value).toInstant(ZoneOffset.UTC)));
             } else if (binding == Instant.class) {
                 builder.setLong(path, toEpochMicros((Instant) value));
+            } else if (binding == LocalTime.class) {
+                builder.setLong(path, ((LocalTime) value).toNanoOfDay() / 1_000L);
             } else if (binding == java.sql.Timestamp.class || binding == java.util.Date.class) {
                 builder.setLong(path, toEpochMicros(((java.util.Date) value).toInstant()));
             } else {

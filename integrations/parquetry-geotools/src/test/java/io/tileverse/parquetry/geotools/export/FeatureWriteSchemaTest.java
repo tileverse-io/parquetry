@@ -23,6 +23,7 @@ import java.math.BigInteger;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -100,7 +101,11 @@ class FeatureWriteSchemaTest {
                 Arguments.of(
                         LocalDateTime.class,
                         PrimitiveKind.INT64,
-                        Optional.of(new LogicalType.Timestamp(false, TimeUnit.MICROS))));
+                        Optional.of(new LogicalType.Timestamp(false, TimeUnit.MICROS))),
+                Arguments.of(
+                        LocalTime.class,
+                        PrimitiveKind.INT64,
+                        Optional.of(new LogicalType.Time(false, TimeUnit.MICROS))));
     }
 
     @Test
