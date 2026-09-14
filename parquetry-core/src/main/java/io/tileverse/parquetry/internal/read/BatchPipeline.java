@@ -17,7 +17,6 @@ package io.tileverse.parquetry.internal.read;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.lang.foreign.MemorySegment;
 import java.util.BitSet;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
@@ -254,11 +253,10 @@ public final class BatchPipeline {
     }
 
     private static void foldRowBounds(BinaryVector geometry, int row, BoundsAccumulator accumulator) {
-        MemorySegment wkb = geometry.get(row);
-        if (wkb == null) {
+        Bbox envelope = geometry.read(row, WkbEnvelope::compute);
+        if (envelope == null) {
             return;
         }
-        Bbox envelope = WkbEnvelope.compute(wkb);
         accumulator.unionXy(envelope.minX(), envelope.minY(), envelope.maxX(), envelope.maxY());
     }
 

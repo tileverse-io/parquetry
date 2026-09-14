@@ -88,6 +88,7 @@ smoke). CI splits the two phases into `make build-benchmarks` and
 | `SpatialPruningBenchmark` | Row-group pruning benefit of spatially clustered GeoParquet data. A parquetry-written file holds native per-row-group geometry bounding boxes; a `bboxIntersects` query skips row groups whose bbox is disjoint from the query only when the data is spatially clustered. `CLUSTERED` writes each row group into a distinct grid tile -- the query hits two of sixteen row groups; `SHUFFLED` randomises row order, making every row group's bbox span the full extent and forcing record-level WKB evaluation on every row. The `geometrySize` axis adds `LARGE` (2000-vertex dense ring) to expose how WKB-walk cost scales with vertex count on the unclusterd arm. | `layout` (`CLUSTERED` one row group per grid tile; `SHUFFLED` every bbox spans the full extent), `geometrySize` (`SMALL` 5-point rectangle; `LARGE` 2000-vertex ring) |
 | `SpatialGateBenchmark` | Cost of the exact geometry gate (`GeometryFilter`) in isolation, with no geometry engine. All rows are inside the query bbox, making the pruning tier a no-op; the gate alone controls which rows materialise. `gate=off` reads with a plain bbox predicate -- every candidate row decodes all output columns. `gate=on` applies the synthetic `GeometryFilter` -- rows the gate rejects never decode their wide output columns. The `passRate` axis (HIGH ~90 %, LOW ~10 %) sets how many rows pass; `width` (4 or 16 extra INT32 columns) scales per-row materialisation cost; `geometrySize` scales the WKB decode in the gate itself. | `gate` (`off`/`on`), `passRate` (`HIGH`/`LOW`), `width` (`4`/`16`), `geometrySize` (`SMALL`/`LARGE`) |
 | `WkbReadBenchmark` | Head-to-head decode cost of two WKB-to-JTS readers over one representative geometry per (shape, size): `JTS_PACKED` is JTS's own `WKBReader` over a packed-coordinate `GeometryFactory` (the production-realistic baseline, fed a `byte[]`); `CUSTOM` is `MemorySegmentWkbReader`, which reads straight from a read-only `MemorySegment` onto packed sequences with one bulk copy per ring. The time gap is the headline (the custom reader is roughly an order of magnitude faster on dense geometries); per-op allocation is near-parity on LARGE because the packed `double[]` backing both readers create dominates. Run with `-prof gc` to read `gc.alloc.rate.norm`. | `shape` (`POINT`/`LINESTRING`/`POLYGON`/`MULTIPOLYGON`), `geometrySize` (`SMALL` ~12 vertices; `LARGE` ~2000), `reader` (`JTS_PACKED`/`CUSTOM`) |
+| `WkbEnvelopeBenchmark` | Per-geometry cost of the WKB envelope paths a read pays on every row, over a batch-shaped fixture (one backing segment holding 1,024 building-like WKB values addressed per row by offset and length, the shape in which a decoded page reaches the decimation gate and the bbox predicate). `compute` is the decimation gate's full 2D envelope; `computeThroughBatchedCaller` is the same envelope at the gate's own call depth, through the `BinaryView` handed to it by a vector, and guards the inlining budget on which the walk depends; `matchesDecidedAtFirstVertex` is a whole-world `BboxIntersects`, the bbox predicate's production shape, decided at the first vertex and therefore the fixed per-call cost; `matchesFullWalk` is a `BboxCoveredBy` with every geometry inside the box, the relation that walks every vertex; `read` is `MemorySegmentWkbReader`, the materializer's path, which must not regress. The defaults pin the buildings point; pass the other values with `-p`. The reported time is per geometry. | `vertices` (`12`; also `5`/`40`/`200`), `shape` (`POLYGON`; also `MULTIPOLYGON`), `byteOrder` (`LE`; also `BE`), `memory` (`NATIVE`; also `HEAP`) |
 | `JtsSpatialFilterBenchmark` | End-to-end cost of three query strategies using the real JTS geometry engine and a non-axis-aligned diamond query polygon whose bbox over-selects. `BBOX_ONLY` reads all bbox-candidates (coarse superset); `IN_CORE_GATE` pushes `JtsGeometryFilter.intersects` into the read pipeline and avoids materialising the other columns of rows the exact JTS test rejects; `APP_SIDE_FILTER` reads with `BBOX_ONLY` (full materialization of all candidates) and then re-applies the exact JTS test in the stream. `IN_CORE_GATE` and `APP_SIDE_FILTER` return the same exact rows; `BBOX_ONLY` returns a superset. The `layout` axis shows row-group pruning effectiveness; `selectivity` (HIGH small diamond, LOW large diamond) scales how many rows the exact test rejects; `geometrySize` scales per-row WKB decode cost; `output` (`WKB`/`JTS`) selects whether the geometry output column is kept as raw bytes or parsed into a JTS `Geometry` (the JTS-minus-WKB gap on `IN_CORE_GATE` is the surviving rows' output parse, bounding what reusing the gate's decoded geometry as output would save). | `mode` (`BBOX_ONLY`/`IN_CORE_GATE`/`APP_SIDE_FILTER`), `layout` (`CLUSTERED`/`SHUFFLED`), `selectivity` (`HIGH`/`LOW`), `geometrySize` (`SMALL`/`LARGE`), `output` (`WKB`/`JTS`) |
 | `CountBenchmark` | The optimized `ParquetFileReader.count(predicate)` path against the `read(predicate).count()` baseline over a sorted `id INT64 + value DOUBLE` table of several row groups. The two `@Benchmark` methods (`optimizedCount`, `readCountBaseline`) form the optimized-vs-baseline axis; the `path` parameter selects how the count resolves. `ALWAYS_TRUE` sums per-row-group counts from metadata; `MATCHED` (`id >= 0`, sorted non-null) proves every row group matches and again counts from metadata; `ELIMINATED` (`id` above every group's max) prunes all row groups; `RESIDUAL` (`id > rows / 2`) forces record-level evaluation on the undecided middle groups; `IS_NOT_NULL` settles from the metadata null counts. COMPARISON, SPATIAL, IS_NULL, and PARTIAL paths are deferred: they need non-sorted, nullable, or geometry fixtures that do not exist, and this class does not cover them. | `path` (`ALWAYS_TRUE`/`MATCHED`/`ELIMINATED`/`RESIDUAL`/`IS_NOT_NULL`) |
 | `FetchSpillBenchmark` | The resident-memory cost of reading a large-row-group file under a deliberately tiny fetch budget. A mandatory fetch buffers a whole row group; pinning the fetch budget tiny (via `ResourceLimits.fixed`, whose derived budget is ten percent of the stated memory) forces every mandatory fetch off pooled native RAM and onto a mapped on-disk file (reclaimable page cache). The signal is peak resident set size (RSS), reported as the `peakRssKib` secondary counter: the `concurrency x row-group-span` overflow lands on reclaimable mmap rather than anonymous RAM. RSS is read from the OS with `ps` because file-backed mappings are invisible to the JVM's heap and allocation counters; it includes the JVM's own resident baseline (heap, metaspace, code cache), which dominates a small smoke fixture. This is a sizing tool, not a correctness check. | `concurrency` (`1`/`2`/`4`, overlapping reads per op) |
@@ -124,6 +125,69 @@ byte-stream-split each add ~7-8 ms of decode; variable-length `BINARY_PLAIN` is 
 `BINARY_DICTIONARY` (index decode beats re-parsing length-prefixed bytes); and on the fixed-width PLAIN path `nullable`
 roughly triples the time, the cost of the null-positioning spread and the validity bitmap over the all-valid live-page
 slice.
+
+## WKB envelope baseline
+
+The reference point for `WkbEnvelopeBenchmark`: ns per geometry (lower is faster), one fork, 3 x 2 s warmup and
+5 x 2 s measurement, on a dev host (Temurin 25.0.2). Re-measure on the target host before drawing conclusions. The
+"before" column is the envelope walking coordinates through layouts held in mutable fields (the generic VarHandle
+path on every ordinate); the "after" column is the shared WKB cursor, whose ordinate accessors read the segment
+through a constant layout, called by a flat walk from a caller that hands over the value's window in the batch's
+backing segment. A change to the envelope or the reader is compared against the "after" column.
+
+| method | fixture | before (ns/geometry) | after (ns/geometry) |
+|--------|---------|----------------------|---------------------|
+| `compute` | 12 vertices, polygon, LE, native | 176.6 | 15.8 |
+| `compute` | 12 vertices, polygon, BE, native | 181.0 | 18.8 |
+| `compute` | 12 vertices, polygon, LE, heap | 181.1 | 16.3 |
+| `compute` | 200 vertices, polygon, LE, native | 2326.3 | 252.9 |
+| `computeThroughBatchedCaller` | 12 vertices, polygon, LE, native | n/a | 16.4 |
+| `computeThroughBatchedCaller` | 200 vertices, polygon, LE, native | n/a | 318.2 |
+| `matchesDecidedAtFirstVertex` | 12 vertices, polygon, LE, native | 37.8 | 3.7 |
+| `matchesFullWalk` | 12 vertices, polygon, LE, native | 160.7 | 16.6 |
+| `read` | 12 vertices, polygon, LE, native | 16.3 | 17.8 |
+| `read` | 200 vertices, polygon, LE, native | 130.2 | 129.3 |
+
+Three "after" rows are too imprecise to compare against closely: `matchesDecidedAtFirstVertex` at the pinned point
+(3.670 +/- 0.582, 16 percent), which is expected of a benchmark whose whole cost is one call's fixed overhead, and
+both `read` rows (17.801 +/- 1.588 at 12 vertices, 8.9 percent; 129.308 +/- 7.553 at 200 vertices, 5.8 percent).
+The two 200-vertex rows of `compute` and `computeThroughBatchedCaller` belong to the wider run-to-run spread of the
+paragraph below. Within one run `computeThroughBatchedCaller` measured 318.2 +/- 30.7, 9.7 percent. The remaining
+five rows hold within five percent, 4.8 percent at worst. Two "before" rows are looser still:
+`matchesDecidedAtFirstVertex` measured 37.8 +/- 33.2 and `compute` at 200 vertices 2326.3 +/- 424.9, an 18 percent
+spread.
+
+The 200-vertex fixture also moves more between runs than within one. Over three runs of one session `compute`
+measured 252.9, 312.6 and 286.3, and `computeThroughBatchedCaller` 318.2 and 239.9, against within-run errors of
+3 to 10 percent. On that fixture only a move of more than about 20 percent means anything, and the two arms are
+indistinguishable there; the pinned point is the row to compare against.
+
+`read` at 12 vertices is the one row that moved the wrong way, 16.301 +/- 0.337 before against 17.801 +/- 1.588
+after. The intervals overlap, which leaves the difference unestablished by this run; an earlier A/B put it at about
+1 ns and attributed it to the JTS reader sharing the cursor with the envelope rather than owning a private one.
+It stays parked and unresolved. At 200 vertices the reader is unchanged.
+
+The inlining depth of the walk is what separates the two columns as much as the constant layouts do. The coordinate
+read ends in the JDK's layout access, whose innermost alignment check compiles to a plain load only when the JIT
+inlines it; one extra call frame anywhere between the caller's loop and the ordinate accessor pushes that check past
+the depth limit and turns every ordinate into a real call, which measured 59 ns instead of 16 at the pinned point.
+`computeThroughBatchedCaller` is the guard on that: it reads every row through the same `BinaryView` method
+reference held by the decimation gate, two frames below the row loop, which is the gate's own call depth. A score
+near `compute`'s means the gate is on the fast path (16.4 against 16.2 in the same run); a score several times
+higher means a frame was added between the row loop and the ordinate accessor.
+
+### Access-style exploration (measured once on 2026-09-14, walkers not kept)
+
+Three throwaway walkers folded the same rings through different coordinate access, to bound what the mutable-layout
+walk costs. At the pinned point `compute` took 176.6 ns through the old mutable-layout cursor, 18.4 ns reading the
+segment directly through constant layouts, 22.4 ns bulk-copying each run into a reusable scratch array, and 37.8 ns
+through a `ByteBuffer` view; at 200 vertices 2326.3 / 382.8 / 376.9 / 435.3. The shipped cursor reads directly
+through constant layouts, which the big-endian arm decides: the direct read holds at 20.8 ns while the bulk copy
+jumps to 63.4 ns, because a copy through a byte-swapping layout cannot take the bulk path. On a heap-backed segment
+both match their native counterparts (19.8 and 23.1 ns). Whether the bulk copy is still a lever for large geometries
+is not settled by these numbers: the shipped walk runs 200-vertex polygons in 252.9 ns against the exploration folds'
+382.8 and 376.9, but those walkers ran one frame deeper, through an `EnvelopeWalker` field, and one frame is worth up
+to 4x on this path. Read the comparison as indicative only.
 
 ## Fetch-spill characterization
 

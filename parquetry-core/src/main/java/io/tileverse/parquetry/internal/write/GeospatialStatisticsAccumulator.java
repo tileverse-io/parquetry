@@ -24,7 +24,12 @@ import java.util.TreeSet;
 
 import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.format.GeospatialStatistics;
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.internal.filter.spatial.WkbEnvelope;
+import io.tileverse.parquetry.internal.wkb.CoordinateRun;
+import io.tileverse.parquetry.internal.wkb.Dimensions;
+import io.tileverse.parquetry.internal.wkb.WkbCursor;
+import io.tileverse.parquetry.internal.wkb.WkbTypeCode;
 
 import lombok.NonNull;
 
@@ -32,9 +37,9 @@ import lombok.NonNull;
  * Per-geometry-column accumulator that walks WKB payloads to expand a running bounding box (X, Y, optional Z, optional
  * M) and to record the set of WKB geometry type codes observed.
  *
- * <p>The structural WKB walk lives in {@link WkbEnvelope}; this accumulator implements {@link WkbEnvelope.Visitor} to
- * expand its extents as coordinates stream through. No intermediate byte array is materialized and no JTS dependency is
- * introduced here.
+ * <p>The wire-level walk lives in {@link WkbCursor} and {@link WkbEnvelope} drives it; this accumulator implements
+ * {@link WkbEnvelope.Visitor} to expand its extents one coordinate run at a time. No intermediate byte array is
+ * materialized and no JTS dependency is introduced here.
  *
  * <p>{@link #finish()} returns the assembled {@link GeospatialStatistics}: the bounding box is absent when no
  * coordinates were observed, and the geometry-type set is absent when no payload was supplied. Z and M extents are
@@ -60,31 +65,44 @@ public final class GeospatialStatisticsAccumulator implements WkbEnvelope.Visito
     private final TreeSet<Integer> geospatialTypes = new TreeSet<>();
 
     /**
-     * Walks the WKB payload at {@code wkb}, expanding the running bounding box for every coordinate it carries and
+     * Walks the WKB payload at {@code wkb}, expanding the running bounding box over every coordinate in it and
      * recording the geometry's type code. Callers retain ownership of the segment; the accumulator only reads from it.
+     *
+     * <p>Only the seven base geometry kinds are accepted. A geometry outside them (CIRCULARSTRING, CURVEPOLYGON, TIN,
+     * TRIANGLE and the other type codes above {@link WkbTypeCode#GEOMETRYCOLLECTION}) is rejected even though it is
+     * well-formed WKB: the walk cannot follow its body, and its extents would never reach the bounding box.
+     *
+     * @throws MalformedFileException when the payload is not valid WKB, or when its type code is not one of the seven
+     *     base kinds
      */
     public void update(@NonNull MemorySegment wkb) {
         WkbEnvelope.walk(wkb, this);
     }
 
     @Override
-    public void geometryType(int rawType) {
-        geospatialTypes.add(rawType);
+    public void geometryType(int isoType) {
+        geospatialTypes.add(isoType);
     }
 
-    // S3516: the boolean is the walk-callback continue flag; this accumulator visits every coordinate and never aborts
+    // S3516: the boolean is the walk-callback continue flag; this accumulator visits every run and never aborts
     @Override
     @SuppressWarnings("java:S3516")
-    public boolean coordinate(double x, double y, double z, double m, boolean hasZ, boolean hasM) {
-        if (Double.isNaN(x) || Double.isNaN(y)) {
-            return true; // POINT EMPTY and other degenerate coordinates have no real location
-        }
-        expandXY(x, y);
-        if (hasZ) {
-            expandZ(z);
-        }
-        if (hasM) {
-            expandM(m);
+    public boolean run(CoordinateRun run) {
+        Dimensions dimensions = run.dimensions();
+        int size = run.size();
+        for (int i = 0; i < size; i++) {
+            double x = run.x(i);
+            double y = run.y(i);
+            if (Double.isNaN(x) || Double.isNaN(y)) {
+                continue; // POINT EMPTY and other degenerate coordinates have no real location
+            }
+            expandXY(x, y);
+            if (dimensions.hasZ()) {
+                expandZ(run.z(i));
+            }
+            if (dimensions.hasM()) {
+                expandM(run.m(i));
+            }
         }
         return true;
     }

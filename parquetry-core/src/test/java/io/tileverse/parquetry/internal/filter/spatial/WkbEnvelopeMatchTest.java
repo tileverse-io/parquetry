@@ -52,6 +52,20 @@ class WkbEnvelopeMatchTest {
     }
 
     @Test
+    void windowFormDecidesTheRelationAtItsOffsetWithoutASlice() {
+        MemorySegment value = Wkb.fromWkt("POLYGON ((0 0, 5 0, 5 5, 0 5, 0 0))"); // square [0,5]x[0,5]
+        byte[] padded = new byte[7 + (int) value.byteSize() + 5];
+        MemorySegment.copy(value, 0L, MemorySegment.ofArray(padded), 7L, value.byteSize());
+        MemorySegment backing = MemorySegment.ofArray(padded).asReadOnly();
+        long length = value.byteSize();
+
+        assertThat(WkbEnvelope.matches(intersects(4, 4, 9, 9), backing, 7L, length))
+                .isTrue();
+        assertThat(WkbEnvelope.matches(intersects(6, 6, 9, 9), backing, 7L, length))
+                .isFalse();
+    }
+
+    @Test
     void containsTrueWhenGeometryBboxEnclosesQuery() {
         String wkt = "POLYGON ((0 0, 20 0, 20 20, 0 20, 0 0))";
         MemorySegment poly = Wkb.fromWkt(wkt);
