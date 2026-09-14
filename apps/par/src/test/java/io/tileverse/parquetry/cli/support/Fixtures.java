@@ -168,6 +168,57 @@ public final class Fixtures {
     }
 
     /**
+     * A GeoParquet schema with {@code id}, {@code geometry}, and a hand-made REQUIRED {@code extent} group of four
+     * FLOAT leaves that mirrors each row's bounding box.
+     */
+    public static ParquetSchema geoCitiesWithExtentSchema() {
+        SchemaNode.Primitive id = primitive("id", Repetition.REQUIRED, PrimitiveKind.INT32, Optional.empty());
+        SchemaNode.Primitive geometry =
+                primitive("geometry", Repetition.REQUIRED, PrimitiveKind.BYTE_ARRAY, Optional.empty());
+        List<SchemaNode> extentLeaves = List.of(
+                primitive("xmin", Repetition.REQUIRED, PrimitiveKind.FLOAT, Optional.empty()),
+                primitive("ymin", Repetition.REQUIRED, PrimitiveKind.FLOAT, Optional.empty()),
+                primitive("xmax", Repetition.REQUIRED, PrimitiveKind.FLOAT, Optional.empty()),
+                primitive("ymax", Repetition.REQUIRED, PrimitiveKind.FLOAT, Optional.empty()));
+        SchemaNode.Group extent =
+                new SchemaNode.Group("extent", Repetition.REQUIRED, extentLeaves, Optional.empty(), -1);
+        SchemaNode.Group root = new SchemaNode.Group(
+                "schema", Repetition.REQUIRED, List.of(id, geometry, extent), Optional.empty(), -1);
+        return new ParquetSchema(root);
+    }
+
+    /**
+     * Writes the geo cities with the {@code extent} group declared as the geometry's bbox covering. A covering named
+     * anything but {@code bbox} can only come from a forwarded declaration, which tells a kept declaration apart from a
+     * covering derived by the writer on its own.
+     */
+    public static void writeGeoCitiesWithExtentCovering(Path file) throws Exception {
+        ParquetSchema schema = geoCitiesWithExtentSchema();
+        WriteOptions options = WriteOptions.builder()
+                .tempDir(file.toAbsolutePath().getParent())
+                .crsEpsg("geometry", 4326)
+                .existingBboxCovering("geometry", "extent.xmin", "extent.ymin", "extent.xmax", "extent.ymax")
+                .build();
+        try (OutputStream out = Files.newOutputStream(file);
+                ParquetFileWriter writer = ParquetFileWriter.create(out, schema, options)) {
+            ParquetRecordBatchBuilder appender = writer.appender();
+            geoCityWithExtent(appender, 1, -60.65, -32.94);
+            geoCityWithExtent(appender, 2, -64.18, -31.42);
+            appender.flush();
+        }
+    }
+
+    private static void geoCityWithExtent(ParquetRecordBatchBuilder appender, int id, double lon, double lat) {
+        appender.setInt(ID, id);
+        appender.setBinary(GEOMETRY, MemorySegment.ofArray(wkbPoint(lon, lat)));
+        appender.setFloat(ColumnPath.of("extent", "xmin"), (float) lon);
+        appender.setFloat(ColumnPath.of("extent", "ymin"), (float) lat);
+        appender.setFloat(ColumnPath.of("extent", "xmax"), (float) lon);
+        appender.setFloat(ColumnPath.of("extent", "ymax"), (float) lat);
+        appender.endRow();
+    }
+
+    /**
      * The vertical line's longitude, and the one coordinate in the fixture that float32 cannot hold exactly. A FLOAT
      * bbox covering rounds it outward, covering a strip of longitude the geometry does not reach, which is what tells
      * an answer read off the covering columns apart from one that tests the geometry.

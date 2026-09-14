@@ -301,12 +301,12 @@ public final class ParquetFileWriter implements AutoCloseable {
     }
 
     /**
-     * When a covering is active, fails loudly if the batch lacks the geometry column the covering is derived from, or
-     * if that column is not binary WKB. A clear message naming the column beats an opaque failure deep inside
-     * derivation.
+     * When the plan derives a covering, fails loudly if the batch lacks the geometry column from which the covering is
+     * derived, or if that column is not binary WKB. A clear message naming the column beats an opaque failure deep
+     * inside derivation.
      */
     private void requireGeometryColumnForCovering(ParquetRecordBatch batch) {
-        if (!covering.active()) {
+        if (!covering.derivesColumns()) {
             return;
         }
         ColumnPath geometryColumn = covering.geometryColumn();
@@ -559,7 +559,7 @@ public final class ParquetFileWriter implements AutoCloseable {
         List<SchemaElement> elements = SchemaElementWriter.flatten(schema);
         List<KeyValue> keyValueMetadata = buildKeyValueMetadata();
         FileMetaData footer = FileMetaData.builder()
-                .version(1)
+                .version(footerFormatVersion())
                 .schema(elements)
                 .numRows(totalRows)
                 .rowGroups(completedRowGroups)
@@ -574,14 +574,25 @@ public final class ParquetFileWriter implements AutoCloseable {
     }
 
     /**
+     * The Parquet format version declared in the footer: 2 for a file written with the 2.0 page format, 1 for the 1.1
+     * page format. The Parquet thrift FileMetaData.version field records which format profile the file was written to.
+     */
+    private int footerFormatVersion() {
+        if (options.parquetVersion() == WriteOptions.ParquetVersion.V2_0) {
+            return 2;
+        }
+        return 1;
+    }
+
+    /**
      * Builds the file's key/value metadata: the caller's {@link WriteOptions#keyValueMetadata()} entries followed by
-     * the writer-managed GeoParquet 1.x {@code "geo"} entry, emitted when at least one geospatial column was written.
+     * the writer-managed GeoParquet {@code "geo"} entry, emitted when at least one geospatial column was written.
      */
     private List<KeyValue> buildKeyValueMetadata() {
         List<KeyValue> entries = new ArrayList<>();
         options.keyValueMetadata().forEach((key, value) -> entries.add(new KeyValue(key, Optional.of(value))));
         Optional<BboxCoveringPlan> coveringForMetadata = covering.active() ? Optional.of(covering) : Optional.empty();
-        Optional<String> geoJson = geoWriter.v1JsonPayload(schema, geoSummaries, coveringForMetadata);
+        Optional<String> geoJson = geoWriter.geoJsonPayload(schema, geoSummaries, coveringForMetadata);
         if (geoJson.isPresent()) {
             entries.add(new KeyValue(GEO_KEY, geoJson));
         }

@@ -109,13 +109,14 @@ Connection settings for the source come from these options (when not using ambie
 | `--gcs-project <project>` | Google Cloud project id. |
 | `--endpoint <url>` | Service endpoint override for S3, GCS, and Azure (e.g. `http://localhost:9000` for MinIO, `http://localhost:4443` for fake-gcs-server). |
 
-`cp` writes a new Parquet file to a local path or a cloud URI, regenerating GeoParquet metadata on the destination and
-forwarding other key-value metadata. A destination ending in `/` (or an existing local directory) writes the source
-filename inside it. The destination has its own connection options mirroring the source ones, prefixed `--dst-`
-(`--dst-provider`, `--dst-region`, `--dst-access-key`, `--dst-secret-key`, `--dst-path-style`, `--dst-anonymous`,
-`--dst-gcs-project`, `--dst-endpoint`), plus `-f`/`--overwrite` to replace an existing destination. This lets `cp`
-move data between two different stores in one command. The writer's working files go to the system temporary
-directory; `--temp-dir <dir>` points them elsewhere, for example when that volume is small or read-only.
+`cp` writes a new Parquet file to a local path or a cloud URI, regenerating GeoParquet metadata on the destination (the
+source's bbox covering declaration is kept when the covering columns are copied) and forwarding other key-value
+metadata. A destination ending in `/` (or an existing local directory) writes the source filename inside it. The
+destination has its own connection options mirroring the source ones, prefixed `--dst-` (`--dst-provider`,
+`--dst-region`, `--dst-access-key`, `--dst-secret-key`, `--dst-path-style`, `--dst-anonymous`, `--dst-gcs-project`,
+`--dst-endpoint`), plus `-f`/`--overwrite` to replace an existing destination. This lets `cp` move data between two
+different stores in one command. The writer's working files go to the system temporary directory; `--temp-dir <dir>`
+points them elsewhere, for example when that volume is small or read-only.
 
 The write path currently handles flat columns (primitives, including WKB geometry); copying a file whose schema
 contains nested list/map/struct or Variant columns is not yet supported and fails with a clear error.

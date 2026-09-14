@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.data.WriteOptions.CoveringMode;
+import io.tileverse.parquetry.data.WriteOptions.ExistingBboxCovering;
 import io.tileverse.parquetry.data.WriteOptions.GeoParquetMetadataMode;
 
 class WriteOptionsCoveringTest {
@@ -55,5 +56,42 @@ class WriteOptionsCoveringTest {
                 .bboxCovering(CoveringMode.NONE)
                 .build();
         assertThat(options.bboxCovering()).contains(CoveringMode.NONE);
+    }
+
+    @Test
+    void existingBboxCoveringDefaultsToUnset() {
+        assertThat(WriteOptions.defaults().existingBboxCovering()).isEmpty();
+    }
+
+    @Test
+    void existingBboxCoveringRecordsTheDeclaredPaths() {
+        WriteOptions options = WriteOptions.builder()
+                .existingBboxCovering("geometry", "bbox.xmin", "bbox.ymin", "bbox.xmax", "bbox.ymax")
+                .build();
+
+        assertThat(options.existingBboxCovering())
+                .contains(new ExistingBboxCovering("geometry", "bbox.xmin", "bbox.ymin", "bbox.xmax", "bbox.ymax"));
+    }
+
+    @Test
+    void existingCoveringTogetherWithADerivedModeIsRejected() {
+        WriteOptions.Builder builder = WriteOptions.builder()
+                .bboxCovering(CoveringMode.AUTO)
+                .existingBboxCovering("geometry", "bbox.xmin", "bbox.ymin", "bbox.xmax", "bbox.ymax");
+
+        assertThatThrownBy(builder::build)
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("existingBboxCovering");
+    }
+
+    @Test
+    void existingCoveringUnderV2OnlyIsRejected() {
+        WriteOptions.Builder builder = WriteOptions.builder()
+                .geoParquetMetadata(GeoParquetMetadataMode.V2_0_ONLY)
+                .existingBboxCovering("geometry", "bbox.xmin", "bbox.ymin", "bbox.xmax", "bbox.ymax");
+
+        assertThatThrownBy(builder::build)
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("V2_0_ONLY");
     }
 }

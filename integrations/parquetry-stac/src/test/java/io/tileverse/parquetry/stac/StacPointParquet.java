@@ -35,13 +35,18 @@ import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.GeoParquetMetadataMode;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 
-/** Writes a flat single geometry-column GeoParquet 2.0 file of 2D points, the fixture for STAC pruning tests. */
+/**
+ * Writes flat single geometry-column Parquet files of 2D points, the fixture for STAC pruning tests. Each writer method
+ * selects which GeoParquet metadata lands in the file: the 1.1 geo document, the native 2.0 annotation with statistics,
+ * both, or the native annotation alone with no geo document.
+ */
 final class StacPointParquet {
 
     private StacPointParquet() {}
@@ -57,6 +62,26 @@ final class StacPointParquet {
                 .geoParquetMetadata(mode)
                 .crsEpsg(column, 4326)
                 .build();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
+            writer.writeBatch(pointBatch(schema, column, points));
+        }
+        return file;
+    }
+
+    /**
+     * Writes {@code points} as a flat, single geometry-column Parquet file at {@code file} whose leaf is annotated with
+     * the native {@code GEOMETRY} logical type: the file records geospatial statistics for that leaf and holds no
+     * {@code "geo"} key-value document. This is the shape produced by a Parquet-native geometry writer without
+     * GeoParquet metadata: the leaf is annotated up front and no CRS is configured. Without a configured CRS the writer
+     * has no geometry column to describe in a geo document.
+     *
+     * @return {@code file}, for caller convenience
+     */
+    static Path writePointsWithoutGeoMetadata(Path file, String column, double[][] points) throws Exception {
+        ColumnPath geometry = ColumnPath.of(column);
+        ParquetSchema schema = flatGeometrySchema(column)
+                .withLogicalTypes(Map.of(geometry, new LogicalType.Geometry(Optional.empty())));
+        WriteOptions options = WriteOptions.builder().tempDir(file.getParent()).build();
         try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             writer.writeBatch(pointBatch(schema, column, points));
         }

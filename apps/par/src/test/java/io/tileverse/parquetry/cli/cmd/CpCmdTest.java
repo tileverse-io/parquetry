@@ -22,6 +22,7 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -31,6 +32,9 @@ import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.storage.RangeReader;
 import io.tileverse.storage.Storage;
@@ -52,6 +56,8 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.geo.geoparquet.BboxCovering;
+import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 import io.tileverse.parquetry.testkit.TestCorpus;
 import io.tileverse.parquetry.tileverse.ByteRangeSources;
 
@@ -462,6 +468,114 @@ class CpCmdTest {
         assertThat(rowCount(dst)).isEqualTo(2L);
     }
 
+    /**
+     * The shape of an Overture copy: the source has the writer's own derived {@code bbox} group, declared as its
+     * covering. The copy must declare the same covering over the copied leaves instead of giving up because a column
+     * named {@code bbox} already exists.
+     */
+    @Test
+    void copyKeepsTheSourceBboxCoveringDeclaration(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("geo-cities.parquet");
+        Path dst = dir.resolve("copy.parquet");
+        Fixtures.writeGeoCities(src);
+
+        int code = Par.newCommandLine().execute("cp", src.toString(), dst.toString());
+        assertThat(code).isZero();
+
+        BboxCovering covering = coveringOf(dst);
+        assertThat(covering.xmin()).isEqualTo(ColumnPath.of("bbox", "xmin"));
+        assertThat(covering.ymin()).isEqualTo(ColumnPath.of("bbox", "ymin"));
+        assertThat(covering.xmax()).isEqualTo(ColumnPath.of("bbox", "xmax"));
+        assertThat(covering.ymax()).isEqualTo(ColumnPath.of("bbox", "ymax"));
+        assertThat(leafPaths(dst))
+                .containsExactly("id", "geometry", "bbox.xmin", "bbox.xmax", "bbox.ymin", "bbox.ymax");
+    }
+
+    @Test
+    void copyForwardsACoveringDeclaredOverCustomLeaves(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("geo-cities-extent.parquet");
+        Path dst = dir.resolve("copy.parquet");
+        Fixtures.writeGeoCitiesWithExtentCovering(src);
+
+        int code = Par.newCommandLine().execute("cp", src.toString(), dst.toString());
+        assertThat(code).isZero();
+
+        BboxCovering covering = coveringOf(dst);
+        assertThat(covering.xmin()).isEqualTo(ColumnPath.of("extent", "xmin"));
+        assertThat(covering.ymin()).isEqualTo(ColumnPath.of("extent", "ymin"));
+        assertThat(covering.xmax()).isEqualTo(ColumnPath.of("extent", "xmax"));
+        assertThat(covering.ymax()).isEqualTo(ColumnPath.of("extent", "ymax"));
+        assertThat(leafPaths(dst))
+                .containsExactly("id", "geometry", "extent.xmin", "extent.ymin", "extent.xmax", "extent.ymax");
+    }
+
+    /**
+     * With the covering leaves projected away there is no declaration to forward, and the writer's default policy
+     * derives its own FLOAT {@code bbox} covering for the copy.
+     */
+    @Test
+    void projectionDroppingTheCoveringLeavesForwardsNoDeclaration(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("geo-cities-extent.parquet");
+        Path dst = dir.resolve("copy.parquet");
+        Fixtures.writeGeoCitiesWithExtentCovering(src);
+
+        int code = Par.newCommandLine().execute("cp", src.toString(), dst.toString(), "--columns", "id,geometry");
+        assertThat(code).isZero();
+
+        BboxCovering covering = coveringOf(dst);
+        assertThat(covering.xmin()).isEqualTo(ColumnPath.of("bbox", "xmin"));
+        assertThat(leafPaths(dst))
+                .containsExactly("id", "geometry", "bbox.xmin", "bbox.xmax", "bbox.ymin", "bbox.ymax");
+    }
+
+    /**
+     * The condition under which a source declaration reaches the copy: every covering leaf must be in the written
+     * schema as a FLOAT or DOUBLE column. The writer rejects a declaration over anything else at open time, and cp
+     * falls back to the default covering policy rather than failing the copy over it.
+     */
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("coveringLeafCases")
+    void aCoveringIsForwardedOnlyOverNumericLeavesPresentInTheCopy(
+            String caseName, ParquetSchema writeSchema, boolean forwarded) {
+        BboxCovering covering = new BboxCovering(
+                ColumnPath.of("bbox", "xmin"),
+                ColumnPath.of("bbox", "xmax"),
+                ColumnPath.of("bbox", "ymin"),
+                ColumnPath.of("bbox", "ymax"),
+                Optional.empty(),
+                Optional.empty());
+
+        assertThat(CpCmd.coveringLeavesCopied(writeSchema, covering)).isEqualTo(forwarded);
+    }
+
+    private static Stream<Arguments> coveringLeafCases() {
+        List<String> allLeaves = List.of("xmin", "xmax", "ymin", "ymax");
+        List<String> withoutYmax = List.of("xmin", "xmax", "ymin");
+        List<PrimitiveKind> allFloat =
+                List.of(PrimitiveKind.FLOAT, PrimitiveKind.FLOAT, PrimitiveKind.FLOAT, PrimitiveKind.FLOAT);
+        List<PrimitiveKind> ymaxIsInt =
+                List.of(PrimitiveKind.FLOAT, PrimitiveKind.FLOAT, PrimitiveKind.FLOAT, PrimitiveKind.INT32);
+        return Stream.of(
+                Arguments.of("four FLOAT leaves", bboxSchema(allLeaves, allFloat), true),
+                Arguments.of("ymax dropped by the projection", bboxSchema(withoutYmax, allFloat.subList(0, 3)), false),
+                Arguments.of("ymax declared over an INT32 column", bboxSchema(allLeaves, ymaxIsInt), false));
+    }
+
+    /**
+     * Builds a schema whose REQUIRED {@code bbox} group holds one leaf per name, typed by the kind at the same index.
+     */
+    private static ParquetSchema bboxSchema(List<String> leafNames, List<PrimitiveKind> kinds) {
+        List<SchemaNode> leaves = new ArrayList<>();
+        for (int i = 0; i < leafNames.size(); i++) {
+            leaves.add(new SchemaNode.Primitive(
+                    leafNames.get(i), Repetition.REQUIRED, kinds.get(i), OptionalInt.empty(), Optional.empty(), -1));
+        }
+        SchemaNode.Group bbox = new SchemaNode.Group("bbox", Repetition.REQUIRED, leaves, Optional.empty(), -1);
+        SchemaNode.Group root =
+                new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(bbox), Optional.empty(), -1);
+        return new ParquetSchema(root);
+    }
+
     /** Runs {@code cat <file>} and returns its stdout split into lines, for a renderer-based round-trip comparison. */
     private static List<String> catLines(Path file) {
         StringWriter buffer = new StringWriter();
@@ -480,6 +594,24 @@ class CpCmdTest {
                     source.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 return rows.count();
             }
+        }
+    }
+
+    private static BboxCovering coveringOf(Path file) throws Exception {
+        try (Storage storage = StorageFactory.open(file.getParent().toUri());
+                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
+            ParquetSource source = ParquetSource.open(ByteRangeSources.from(reader));
+            GeoParquetMetadata geo =
+                    GeoParquetMetadata.parse(source.keyValueMetadata().get("geo"));
+            return geo.columns().get("geometry").covering().orElseThrow().bbox();
+        }
+    }
+
+    private static List<String> leafPaths(Path file) throws Exception {
+        try (Storage storage = StorageFactory.open(file.getParent().toUri());
+                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
+            ParquetSource source = ParquetSource.open(ByteRangeSources.from(reader));
+            return source.schema().leafColumns().stream().map(ColumnPath::dot).toList();
         }
     }
 
