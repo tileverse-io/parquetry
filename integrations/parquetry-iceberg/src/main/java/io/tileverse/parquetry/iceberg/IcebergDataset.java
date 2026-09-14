@@ -15,8 +15,6 @@
  */
 package io.tileverse.parquetry.iceberg;
 
-import java.io.InterruptedIOException;
-import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -30,7 +28,6 @@ import java.util.OptionalLong;
 import java.util.SequencedSet;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.StructuredTaskScope;
 import java.util.stream.Stream;
 
 import com.github.benmanes.caffeine.cache.Cache;
@@ -44,10 +41,10 @@ import io.tileverse.parquetry.dataset.CatalogSnapshot;
 import io.tileverse.parquetry.dataset.ConcurrentSurvivorReads;
 import io.tileverse.parquetry.dataset.DatasetCapabilities;
 import io.tileverse.parquetry.dataset.DatasetCapabilities.FileStatsSource;
-import io.tileverse.parquetry.dataset.FilesetReader;
 import io.tileverse.parquetry.dataset.OpenOptions;
 import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.dataset.ParquetSource;
+import io.tileverse.parquetry.dataset.SurvivorFanOut;
 import io.tileverse.parquetry.dataset.explain.DatasetExplainPlan;
 import io.tileverse.parquetry.dataset.explain.FileExplain;
 import io.tileverse.parquetry.dataset.explain.Outcome;
@@ -74,13 +71,13 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 /**
  * A {@link ParquetDataset} over one Iceberg table at a pinned snapshot. Before each query the dataset prunes the
  * snapshot's data files by their manifest bounds: a file whose statistics prove no row can match the predicate is
- * skipped, and the query opens a {@link ParquetSource} over only the survivors. Pruning is pure work-avoidance;
- * survivors are still filtered at row-group and record level during the read. The result is identical to scanning every
- * file.
+ * skipped, and the query opens a {@link ParquetSource} over each survivor as the read reaches it. Pruning is pure
+ * work-avoidance; survivors are still filtered at row-group and record level during the read. The result is identical
+ * to scanning every file.
  *
- * <p>The byte sources are pre-opened and owned by the {@link IcebergTableCatalog}; the per-query {@link ParquetSource}
- * borrows the survivor subset and never closes them. The dataset presents the table's current schema and reconciles
- * each data file's columns to it by Iceberg field id; a file whose schema already matches the table reads untouched.
+ * <p>The byte sources are pre-opened and owned by the {@link IcebergTableCatalog}; the per-file {@link ParquetSource}
+ * borrows one of them and never closes it. The dataset presents the table's current schema and reconciles each data
+ * file's columns to it by Iceberg field id; a file whose schema already matches the table reads untouched.
  *
  * <p>A file's source is memoized, bounded to {@link #DEFAULT_MAX_MEMOIZED_FILES} files and to ten idle minutes. A table
  * wider than that bound keeps the footer metadata of the files most recently queried rather than of every file ever
@@ -247,7 +244,9 @@ final class IcebergDataset implements ParquetDataset {
             return Stream.empty();
         }
         if (options.spatialReadProbe().isPresent()) {
-            return survivors.stream().flatMap(index -> readOneFileBatches(index, predicate, projection, options));
+            return ConcurrentSurvivorReads.sequential(
+                    survivors.size(),
+                    dense -> readOneFileBatches(survivors.get(dense), predicate, projection, options));
         }
         return ConcurrentSurvivorReads.batches(
                 survivors.size(),
@@ -298,12 +297,7 @@ final class IcebergDataset implements ParquetDataset {
                 maxConcurrentFiles());
     }
 
-    /**
-     * The materializer read of one survivor. A pass-through file reads natively, applying the materializer in the
-     * engine. A reconciled file reads reconciled (table-named) records through the {@link Query} path and applies the
-     * materializer per record against that record's own reconciled schema, which describes the columns the record
-     * holds.
-     */
+    /** The materializer read of one survivor, shaped by its folded query. */
     @MustBeClosed
     private <T> Stream<T> readOneFile(
             int index, Predicate predicate, Projection projection, Materializer<T> materializer, ReadOptions options) {
@@ -311,15 +305,7 @@ final class IcebergDataset implements ParquetDataset {
         if (query == null) {
             return Stream.empty();
         }
-        if (isReconciled(query)) {
-            return perFile(index).read(query, options).map(row -> materializer.materialize(row.schema(), row));
-        }
-        return perFile(index).read(query.predicate(), query.projection(), materializer, options);
-    }
-
-    /** A reconciled read presents the table's produce set (renames, null-fills, constants); a pass-through does not. */
-    private static boolean isReconciled(Query query) {
-        return query.projection() instanceof Projection.Of of && of.needsShaping();
+        return perFile(index).read(query, materializer, options);
     }
 
     @Override
@@ -328,20 +314,26 @@ final class IcebergDataset implements ParquetDataset {
         if (survivors.isEmpty()) {
             return 0L;
         }
-        long total = 0L;
-        for (int index : survivors) {
-            Query query = oneFileQuery(index, predicate, Projection.ALL);
-            if (query != null) {
-                total += perFile(index).count(query, options);
-            }
+        return SurvivorFanOut.sum(
+                survivors.size(),
+                dense -> countOneFile(survivors.get(dense), predicate, options),
+                maxConcurrentFiles());
+    }
+
+    /** The matching-row count of one survivor data file; zero when its folded query is always false. */
+    private long countOneFile(int index, Predicate predicate, ReadOptions options) {
+        Query query = oneFileQuery(index, predicate, Projection.ALL);
+        if (query == null) {
+            return 0L;
         }
-        return total;
+        return perFile(index).count(query, options);
     }
 
     /**
      * The exact bounds of the {@code predicate}-matching rows over the primary geometry column. No cheap geometry
      * aggregate exists: the manifest records only conservative per-file boxes. Every call, unfiltered or not, visits
-     * the survivor files. Each file is bounded on its own virtual thread and folded into one shared accumulator.
+     * the survivor files, with at most {@code maxConcurrentFiles} bounded at once and each result folded into one
+     * shared accumulator.
      */
     @Override
     public Optional<BoundingBox> bounds(Predicate predicate, ReadOptions options) {
@@ -369,30 +361,22 @@ final class IcebergDataset implements ParquetDataset {
     }
 
     /**
-     * Folds each survivor's exact per-file bounds into one shared accumulator across a fan-out. Before a file runs the
-     * engine, its footer geometry box is tested against the bounds accumulated so far, and a file those bounds already
-     * cover is skipped: a box already enclosed extends the extent by nothing. A file whose footer records no geometry
-     * box always runs the engine. A failure in any file cancels the rest.
+     * Folds each survivor's exact per-file bounds into one shared accumulator across a fan-out, with at most
+     * {@code maxConcurrentFiles} files bounded at once. Before a file runs the engine, its footer geometry box is
+     * tested against the bounds accumulated so far, and a file those bounds already cover is skipped: a box already
+     * enclosed extends the extent by nothing. A file whose footer records no geometry box always runs the engine. A
+     * failure in any file cancels the rest.
      */
     private Optional<BoundingBox> boundsOfSurvivors(List<Integer> survivors, Predicate predicate, ReadOptions options) {
         if (survivors.isEmpty()) {
             return Optional.empty();
         }
         BoundsAccumulator accumulator = new BoundsAccumulator();
-        try (StructuredTaskScope<Void, Void> scope = StructuredTaskScope.open()) {
-            for (int index : survivors) {
-                scope.fork(() -> foldOneFileBounds(index, predicate, options, accumulator));
-            }
-            scope.join();
-            return accumulator.snapshot();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            InterruptedIOException interrupted = new InterruptedIOException("Interrupted while bounding dataset rows");
-            interrupted.initCause(e);
-            throw new UncheckedIOException(interrupted);
-        } catch (StructuredTaskScope.FailedException e) {
-            throw asUnchecked(e.getCause());
-        }
+        SurvivorFanOut.forEach(
+                survivors.size(),
+                dense -> foldOneFileBounds(survivors.get(dense), predicate, options, accumulator),
+                maxConcurrentFiles());
+        return accumulator.snapshot();
     }
 
     /**
@@ -400,18 +384,17 @@ final class IcebergDataset implements ParquetDataset {
      * same {@link #oneFileQuery} the reads use: field-id reconciliation, partition constants, and delete predicates
      * ANDed in. A merge-on-read deleted row therefore never contributes, and a file whose folded query is always false
      * contributes nothing. A file whose footer geometry box the accumulated bounds already cover is skipped before the
-     * engine runs. Runs on a fan-out virtual thread.
+     * engine runs. Runs on a fan-out virtual thread, or on the calling thread when there is a single survivor.
      */
-    private Void foldOneFileBounds(int index, Predicate predicate, ReadOptions options, BoundsAccumulator accumulator) {
+    private void foldOneFileBounds(int index, Predicate predicate, ReadOptions options, BoundsAccumulator accumulator) {
         Query query = oneFileQuery(index, predicate, Projection.ALL);
         if (query == null) {
-            return null;
+            return;
         }
         if (accumulatedBoundsCoverFooter(index, accumulator)) {
-            return null;
+            return;
         }
         perFile(index).bounds(query, options).ifPresent(accumulator::union);
-        return null;
     }
 
     /**
@@ -429,21 +412,6 @@ final class IcebergDataset implements ParquetDataset {
         }
         BoundingBox footerBox = footerBounds.values().iterator().next();
         return accumulator.covers(footerBox);
-    }
-
-    /**
-     * Rethrows a per-file bounds failure with the type a sequential visit would have thrown. The engine's per-file
-     * bounds declares no checked exception: the cause is a {@link RuntimeException} or an {@link Error}, with anything
-     * else falling back to {@link IllegalStateException}.
-     */
-    private static RuntimeException asUnchecked(Throwable cause) {
-        if (cause instanceof RuntimeException runtime) {
-            return runtime;
-        }
-        if (cause instanceof Error error) {
-            throw error;
-        }
-        return new IllegalStateException("Bounding a dataset file failed", cause);
     }
 
     @Override
@@ -801,7 +769,7 @@ final class IcebergDataset implements ParquetDataset {
      * opened again on its next query, reading its footer from the shared footer-metadata cache.
      */
     private ParquetSource perFile(int index) {
-        return memoizedFiles.get(index, i -> ParquetSource.open(new SurvivorFileset(sources, List.of(i)), openOptions));
+        return memoizedFiles.get(index, i -> ParquetSource.open(sources.get(i), openOptions));
     }
 
     /** The number of data files currently held by the memo. Package-private for the test over the memo's bound. */
@@ -819,25 +787,5 @@ final class IcebergDataset implements ParquetDataset {
 
     private int maxConcurrentFiles() {
         return openOptions.runtime().maxConcurrentFiles();
-    }
-
-    /**
-     * A {@link FilesetReader} over a dense slice of the catalog's pre-opened sources. Dense index {@code i} maps to the
-     * shared source at {@code survivorIndices.get(i)}. The sources are borrowed; closing the per-query dataset's
-     * streams never closes them.
-     */
-    private record SurvivorFileset(List<ByteRangeSource> sources, List<Integer> survivorIndices)
-            implements FilesetReader {
-
-        @Override
-        public ByteRangeSource openFile(int index) {
-            int sharedIndex = survivorIndices.get(index);
-            return sources.get(sharedIndex);
-        }
-
-        @Override
-        public int fileCount() {
-            return survivorIndices.size();
-        }
     }
 }

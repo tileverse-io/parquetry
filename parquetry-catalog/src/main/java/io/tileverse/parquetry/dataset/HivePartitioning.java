@@ -48,7 +48,7 @@ import io.tileverse.parquetry.schema.SchemaNode;
  * its type is inferred from the path values across all files ({@link PartitionTypeInference#inferConsistent}), and the
  * dataset presents an appended column the reader fills with the file's path value as a constant.
  * {@link #syntheticLeaves} yields those appended schema leaves and {@link #constantsFor} the per-file constant output
- * columns; both agree with what {@link ConstantColumnBatches} produces for the same constant value.
+ * columns; both agree with the constant leaf materialized into a shaped batch for the same value.
  *
  * <p>A bound key whose path value cannot be parsed against its physical column type (an unparseable number, Hive's
  * null- partition sentinel, an unsupported physical kind) contributes no statistic; pruning simply does not apply to

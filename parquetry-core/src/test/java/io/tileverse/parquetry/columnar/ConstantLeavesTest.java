@@ -35,9 +35,9 @@ import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
- * Pins the shared {@code Value}-to-leaf mapping to the exact results the two former synthesis switches (the
- * materialized batch leaf in {@code ConstantColumnBatches} and the advertised schema leaf in {@code HivePartitioning})
- * produced for each value.
+ * Pins the shared {@code Value}-to-leaf mapping to the exact results produced for each value by the two former
+ * synthesis switches (the constant leaf materialized into a shaped batch and the advertised schema leaf in
+ * {@code HivePartitioning}).
  */
 class ConstantLeavesTest {
 

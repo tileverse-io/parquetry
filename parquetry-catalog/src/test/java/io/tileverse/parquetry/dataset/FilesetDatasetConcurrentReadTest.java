@@ -25,7 +25,6 @@ import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -37,7 +36,6 @@ import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
-import io.tileverse.parquetry.filter.prune.FileStats;
 import io.tileverse.parquetry.internal.read.TestParquetFiles;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.LocalFileSource;
@@ -46,7 +44,6 @@ import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.runtime.FetchBudget;
 import io.tileverse.parquetry.runtime.ParquetRuntime;
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
  * Covers the survivor fan-out on {@link FilesetDataset}'s synthetic-column path: a read that projects a path-only Hive
@@ -207,42 +204,10 @@ class FilesetDatasetConcurrentReadTest {
             List<ByteRangeSource> sources, List<String> regions, OpenOptions openOptions) {
         List<Map<String, String>> perFilePartitions =
                 regions.stream().map(region -> Map.of("region", region)).toList();
-        ParquetSchema unifiedSchema = null;
-        List<FileStats> footerStats = new ArrayList<>(sources.size());
-        for (ByteRangeSource source : sources) {
-            ParquetSource one = ParquetSource.open(source, openOptions);
-            if (unifiedSchema == null) {
-                unifiedSchema = one.schema();
-            }
-            footerStats.add(one.fileStats());
-        }
-        HivePartitioning partitioning = HivePartitioning.bind(perFilePartitions, unifiedSchema);
-        ParquetSchema augmentedSchema = unifiedSchema.withAppendedLeaves(partitioning.syntheticLeaves());
-        List<FileStats> stats = new ArrayList<>(sources.size());
-        for (int i = 0; i < sources.size(); i++) {
-            FileStats footer = footerStats.get(i);
-            FileStats hive = partitioning.fileStats(perFilePartitions.get(i), footer.recordCount());
-            stats.add(footer.withOverrides(hive));
-        }
         List<String> locations = regions.stream()
                 .map(region -> "region=" + region + "/f.parquet")
                 .toList();
-        FilesetDataset.PartitionContext context =
-                new FilesetDataset.PartitionContext(augmentedSchema, partitioning, perFilePartitions, stats);
-        DatasetCapabilities capabilities = DatasetCapabilities.builder()
-                .fileStats(DatasetCapabilities.FileStatsSource.FOOTER_AGGREGATE)
-                .partitionModel(DatasetCapabilities.PartitionModel.HIVE_PATH)
-                .build();
-        return new FilesetDataset(
-                "regions",
-                unifiedSchema,
-                Optional.empty(),
-                context,
-                sources,
-                locations,
-                capabilities,
-                Optional.empty(),
-                openOptions);
+        return TestFilesetDatasets.over("regions", sources, perFilePartitions, locations, openOptions);
     }
 
     private static List<ByteRangeSource> openSources(List<Path> files) {

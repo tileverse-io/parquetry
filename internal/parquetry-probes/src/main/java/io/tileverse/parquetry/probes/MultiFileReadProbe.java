@@ -31,9 +31,10 @@ import io.tileverse.storage.StorageFactory;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ReadOptions;
-import io.tileverse.parquetry.dataset.FilesetReader;
+import io.tileverse.parquetry.dataset.ConcurrentSurvivorReads;
 import io.tileverse.parquetry.dataset.OpenOptions;
 import io.tileverse.parquetry.dataset.ParquetSource;
+import io.tileverse.parquetry.dataset.SurvivorFanOut;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
@@ -41,25 +42,24 @@ import io.tileverse.parquetry.runtime.ParquetRuntime;
 import io.tileverse.parquetry.tileverse.ByteRangeSources;
 
 /**
- * Measures the wall-clock cost of reading N remote Parquet files, either one file at a time or through one multi-file
- * {@link ParquetSource}. Runs against a latency-injecting HTTP server standing in for object storage; the files are
- * expected at {@code <baseUrl>/f000.parquet} ... {@code f{N-1}.parquet}. Every file is fetched through
- * tileverse-storage exactly as {@link ParquetryReadEngine} opens a remote source, with the same Parquet-tuned cache
- * configuration (caching on, block alignment off).
+ * Measures the wall-clock cost of reading N remote Parquet files, either one file at a time or through the shared
+ * per-file fan-out. Runs against a latency-injecting HTTP server standing in for object storage; the files are expected
+ * at {@code <baseUrl>/f000.parquet} ... {@code f{N-1}.parquet}. Every file is fetched through tileverse-storage exactly
+ * as {@link ParquetryReadEngine} opens a remote source, with the same Parquet-tuned cache configuration (caching on,
+ * block alignment off).
  *
  * <h2>Pipelines</h2>
  *
  * <ul>
  *   <li>{@code perFile}: N independent single-file reads, each opened, driven, and closed before the next begins, over
- *       a fresh storage handle per file. The client-side baseline: what a caller that does not use the multi-file
- *       source pays. Inherently width-independent; setting {@code probe.maxConcurrentFiles} with this pipeline is
- *       rejected to keep results unambiguous.
- *   <li>{@code fileset}: the per-file sources are assembled into one {@link FilesetReader} and opened as one
- *       {@link ParquetSource} whose runtime overrides only {@code maxConcurrentFiles}. Footer opens overlap up to K and
- *       the drain fans out through the concurrent merge. Timing is decomposed into build (probe-side storage client
- *       construction, serial), open (footer reads), read, and close, exposing where the wall goes. A run at {@code K=1}
- *       is the engine path with the fan-out width collapsed - its parity with {@code perFile} is the no-overhead
- *       regression signal for the merge machinery.
+ *       a fresh storage handle per file. The client-side baseline: what a caller that drives one file at a time pays.
+ *       Inherently width-independent; setting {@code probe.maxConcurrentFiles} with this pipeline is rejected to keep
+ *       results unambiguous.
+ *   <li>{@code fileset}: the per-file sources are drained through the shared survivor fan-out, each file opened by the
+ *       producer that drains it, width = {@code probe.maxConcurrentFiles}; footer opens overlap inside the fan-out.
+ *       Timing is decomposed into build (probe-side storage client construction, serial), read, and close, exposing
+ *       where the wall goes. A run at {@code K=1} is the engine path with the fan-out width collapsed - its parity with
+ *       {@code perFile} is the no-overhead regression signal for the merge machinery.
  * </ul>
  *
  * <h2>Modes</h2>
@@ -86,7 +86,7 @@ public final class MultiFileReadProbe {
 
     private MultiFileReadProbe() {}
 
-    /** How the N files are combined: independent single-file reads, or one multi-file source. */
+    /** How the N files are combined: independent single-file reads, or the shared per-file fan-out. */
     private enum Pipeline {
         PER_FILE("perFile"),
         FILESET("fileset");
@@ -126,10 +126,10 @@ public final class MultiFileReadProbe {
     }
 
     /** The measured phases of one fileset run; all timings in nanoseconds. */
-    private record RunResult(long rows, long buildNanos, long openNanos, long readNanos, long closeNanos) {
+    private record RunResult(long rows, long buildNanos, long readNanos, long closeNanos) {
 
         long totalNanos() {
-            return buildNanos + openNanos + readNanos + closeNanos;
+            return buildNanos + readNanos + closeNanos;
         }
     }
 
@@ -205,14 +205,13 @@ public final class MultiFileReadProbe {
 
         double totalMillis = result.totalNanos() / 1_000_000.0;
         IO.println(
-                "pipeline=fileset mode=%s K=%d N=%d totalMs=%.1f buildMs=%.1f openMs=%.1f readMs=%.1f closeMs=%.1f msPerFile=%.2f rows=%d"
+                "pipeline=fileset mode=%s K=%d N=%d totalMs=%.1f buildMs=%.1f readMs=%.1f closeMs=%.1f msPerFile=%.2f rows=%d"
                         .formatted(
                                 mode.label(),
                                 maxConcurrentFiles,
                                 fileCount,
                                 totalMillis,
                                 result.buildNanos() / 1_000_000.0,
-                                result.openNanos() / 1_000_000.0,
                                 result.readNanos() / 1_000_000.0,
                                 result.closeNanos() / 1_000_000.0,
                                 totalMillis / fileCount,
@@ -220,9 +219,9 @@ public final class MultiFileReadProbe {
     }
 
     /**
-     * Builds the N per-file sources, opens them as one dataset bound to a runtime that overrides only
-     * {@code maxConcurrentFiles}, drives the mode's read, then closes every handle. Each phase is timed separately; the
-     * sum is the end-to-end wall a caller pays, comparable to the perFile pipeline's total.
+     * Builds the N per-file sources, opens each file inside the task that drains it (the shared fan-out, width
+     * {@code maxConcurrentFiles}), then closes every handle; build, read and close are timed separately. The sum is the
+     * end-to-end wall a caller pays, comparable to the perFile pipeline's total.
      */
     private static RunResult runFilesetOnce(String baseUrl, int fileCount, Mode mode, int maxConcurrentFiles) {
         List<Storage> storages = new ArrayList<>(fileCount);
@@ -233,19 +232,24 @@ public final class MultiFileReadProbe {
             buildSources(baseUrl, fileCount, storages, rangeReaders, sources);
             long buildNanos = System.nanoTime() - buildStart;
 
-            long openStart = System.nanoTime();
             ParquetRuntime runtime = ParquetRuntime.defaultRuntime().withMaxConcurrentFiles(maxConcurrentFiles);
             OpenOptions options = OpenOptions.builder().runtime(runtime).build();
-            ParquetSource source = ParquetSource.open(filesetOf(sources), options);
-            long openNanos = System.nanoTime() - openStart;
 
             long readStart = System.nanoTime();
             long rows =
                     switch (mode) {
-                        case COUNT -> source.count(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
+                        case COUNT ->
+                            SurvivorFanOut.sum(
+                                    sources.size(),
+                                    index -> openFile(sources, index, options)
+                                            .count(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS),
+                                    maxConcurrentFiles);
                         case DRAIN ->
-                            drainBatches(
-                                    source.readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS));
+                            drainBatches(ConcurrentSurvivorReads.batches(
+                                    sources.size(),
+                                    index -> openFile(sources, index, options)
+                                            .readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS),
+                                    maxConcurrentFiles));
                     };
             long readNanos = System.nanoTime() - readStart;
 
@@ -253,7 +257,7 @@ public final class MultiFileReadProbe {
             closeAll(sources, rangeReaders, storages);
             long closeNanos = System.nanoTime() - closeStart;
 
-            return new RunResult(rows, buildNanos, openNanos, readNanos, closeNanos);
+            return new RunResult(rows, buildNanos, readNanos, closeNanos);
         } catch (RuntimeException e) {
             closeAll(sources, rangeReaders, storages);
             throw e;
@@ -277,18 +281,9 @@ public final class MultiFileReadProbe {
         }
     }
 
-    private static FilesetReader filesetOf(List<ByteRangeSource> sources) {
-        return new FilesetReader() {
-            @Override
-            public ByteRangeSource openFile(int index) {
-                return sources.get(index);
-            }
-
-            @Override
-            public int fileCount() {
-                return sources.size();
-            }
-        };
+    /** The single-file source over {@code sources[index]}, opened by the task that drains or counts it. */
+    private static ParquetSource openFile(List<ByteRangeSource> sources, int index, OpenOptions options) {
+        return ParquetSource.open(sources.get(index), options);
     }
 
     private static void closeAll(

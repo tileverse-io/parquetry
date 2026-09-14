@@ -15,14 +15,8 @@
  */
 package io.tileverse.parquetry.dataset;
 
-import java.util.ArrayDeque;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Iterator;
-import java.util.Map;
 import java.util.NoSuchElementException;
-import java.util.Queue;
-import java.util.Set;
 import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.concurrent.BlockingQueue;
@@ -52,37 +46,31 @@ import lombok.NonNull;
  * the row-group decode hand-off does; flyweight row views must never cross. {@code discardElement} releases an element
  * the consumer never received (for batches, {@code ParquetRecordBatch::close}).
  *
- * <p>{@link Emission#UNORDERED} emits elements as any file produces them, the maximum-overlap default.
- * {@link Emission#SURVIVOR_ORDER} emits file 0's elements, then file 1's, and holds later files' ready elements in a
- * reorder buffer; the per-producer permit bounds that buffer at {@code 2 * K} elements while later files keep producing
- * ahead. A file's failure is rethrown at the consumer: immediately when unordered, at that file's emission turn when
- * ordered, which preserves sequential equivalence for windowed reads.
+ * <p>Elements are emitted as any file produces them; two reads of the same files may interleave differently. A file's
+ * failure is rethrown at the consumer at the pull that dequeues its marker.
  */
 final class ConcurrentFileMerge {
 
-    /** Undelivered elements one producer may have in flight; bounds queue plus reorder buffer at 2 * K. */
+    /** Undelivered elements that one producer may have in flight; bounds the queue at 2 * K. */
     private static final int PER_PRODUCER_PERMITS = 2;
 
     private static final long POLL_MILLIS = 50L;
 
     private ConcurrentFileMerge() {}
 
-    enum Emission {
-        UNORDERED,
-        SURVIVOR_ORDER
-    }
-
     /**
      * Merges {@code fileCount} per-file streams into one. {@code openFile} runs on a producer virtual thread; the
      * per-file stream is opened, drained, and closed there. The returned stream must be closed.
+     *
+     * <p>A single file is opened on the calling thread and its stream returned as is; the fan-out exists only for two
+     * or more files. Nothing is ever undelivered on that path, which leaves the discard hook unused.
      */
     @MustBeClosed
     static <T> Stream<T> stream(
             int fileCount,
             @NonNull IntFunction<Stream<T>> openFile,
             @NonNull Consumer<T> discardElement,
-            int maxConcurrentFiles,
-            @NonNull Emission emission) {
+            int maxConcurrentFiles) {
         if (fileCount < 0) {
             throw new IllegalArgumentException("fileCount must be >= 0, got " + fileCount);
         }
@@ -92,7 +80,10 @@ final class ConcurrentFileMerge {
         if (fileCount == 0) {
             return Stream.empty();
         }
-        MergeSession<T> session = new MergeSession<>(fileCount, openFile, discardElement, maxConcurrentFiles, emission);
+        if (fileCount == 1) {
+            return openFile.apply(0);
+        }
+        MergeSession<T> session = new MergeSession<>(fileCount, openFile, discardElement, maxConcurrentFiles);
         session.start();
         Spliterator<T> spliterator =
                 Spliterators.spliteratorUnknownSize(session, Spliterator.ORDERED | Spliterator.NONNULL);
@@ -120,7 +111,6 @@ final class ConcurrentFileMerge {
         private final IntFunction<Stream<T>> openFile;
         private final Consumer<T> discardElement;
         private final int producerCount;
-        private final Emission emission;
 
         private final BlockingQueue<Item<T>> queue;
         private final AtomicInteger nextFileToClaim = new AtomicInteger();
@@ -129,25 +119,16 @@ final class ConcurrentFileMerge {
         private final StructuredTaskScope<Void, Void> scope;
 
         // Consumer-side state; touched only by the consumer thread.
-        private final Map<Integer, Queue<Item.Element<T>>> reorderBuffer = new HashMap<>();
-        private final Map<Integer, Throwable> pendingFailures = new HashMap<>();
-        private final Set<Integer> endedFiles = new HashSet<>();
-        private int emissionCursor;
         private int endedCount;
         private T lookahead;
         private boolean exhausted;
 
         MergeSession(
-                int fileCount,
-                IntFunction<Stream<T>> openFile,
-                Consumer<T> discardElement,
-                int maxConcurrentFiles,
-                Emission emission) {
+                int fileCount, IntFunction<Stream<T>> openFile, Consumer<T> discardElement, int maxConcurrentFiles) {
             this.fileCount = fileCount;
             this.openFile = openFile;
             this.discardElement = discardElement;
             this.producerCount = Math.min(maxConcurrentFiles, fileCount);
-            this.emission = emission;
             // Elements are permit-bounded at PER_PRODUCER_PERMITS per producer; end/failure markers are one per
             // file. The queue is sized to hold everything, which keeps marker enqueue non-blocking.
             this.queue = new LinkedBlockingQueue<>(producerCount * PER_PRODUCER_PERMITS + fileCount);
@@ -240,7 +221,7 @@ final class ConcurrentFileMerge {
             if (exhausted) {
                 return false;
             }
-            T next = emission == Emission.UNORDERED ? pullUnordered() : pullSurvivorOrder();
+            T next = pull();
             if (next == null) {
                 exhausted = true;
                 return false;
@@ -260,7 +241,7 @@ final class ConcurrentFileMerge {
         }
 
         /** Emits elements in arrival order; a failure emerges at the pull that dequeues it. */
-        private T pullUnordered() {
+        private T pull() {
             while (endedCount < fileCount) {
                 Item<T> item = takeQuietly();
                 switch (item) {
@@ -273,68 +254,6 @@ final class ConcurrentFileMerge {
                 }
             }
             return null;
-        }
-
-        /**
-         * Emits file {@code emissionCursor}'s elements, buffering later files' arrivals. Buffered elements hold their
-         * producer's permit until delivered, which bounds the buffer at the permit total. A buffered failure emerges
-         * only when its file becomes current, matching what a sequential read would have delivered first.
-         */
-        private T pullSurvivorOrder() {
-            while (emissionCursor < fileCount) {
-                T buffered = deliverBuffered();
-                if (buffered != null) {
-                    return buffered;
-                }
-                if (currentFileDone()) {
-                    continue;
-                }
-                Item<T> item = takeQuietly();
-                switch (item) {
-                    case Item.Element<T> element -> {
-                        if (element.file() == emissionCursor) {
-                            element.permit().release();
-                            return element.value();
-                        }
-                        reorderBuffer
-                                .computeIfAbsent(element.file(), _ -> new ArrayDeque<>())
-                                .add(element);
-                    }
-                    case Item.FileEnd<T>(int file) -> endedFiles.add(file);
-                    case Item.FileFailed<T>(int file, Throwable cause) -> pendingFailures.put(file, cause);
-                }
-            }
-            return null;
-        }
-
-        /** The current file's next buffered element, or {@code null} when none is buffered. */
-        private T deliverBuffered() {
-            Queue<Item.Element<T>> buffered = reorderBuffer.get(emissionCursor);
-            if (buffered == null || buffered.isEmpty()) {
-                return null;
-            }
-            Item.Element<T> element = buffered.poll();
-            element.permit().release();
-            return element.value();
-        }
-
-        /**
-         * Advances the emission cursor past the current file when it has ended, rethrowing its failure at exactly this
-         * point. Returns {@code true} when the cursor advanced.
-         */
-        private boolean currentFileDone() {
-            Throwable failure = pendingFailures.get(emissionCursor);
-            if (failure != null) {
-                throw unwrapped(failure);
-            }
-            boolean bufferedRemain = reorderBuffer.containsKey(emissionCursor)
-                    && !reorderBuffer.get(emissionCursor).isEmpty();
-            if (!bufferedRemain && endedFiles.contains(emissionCursor)) {
-                reorderBuffer.remove(emissionCursor);
-                emissionCursor++;
-                return true;
-            }
-            return false;
         }
 
         private Item<T> takeQuietly() {
@@ -364,10 +283,10 @@ final class ConcurrentFileMerge {
         @Override
         public void close() {
             cancelled.set(true);
-            drainAndDiscard();
+            drainQueueAndDiscard();
             joinScopeQuietly();
             scope.close();
-            drainAndDiscard();
+            drainQueueAndDiscard();
             if (lookahead != null) {
                 discardQuietly(lookahead);
                 lookahead = null;
@@ -392,18 +311,6 @@ final class ConcurrentFileMerge {
                 discardItem(item);
                 item = queue.poll();
             }
-        }
-
-        private void drainAndDiscard() {
-            drainQueueAndDiscard();
-            for (Queue<Item.Element<T>> buffered : reorderBuffer.values()) {
-                Item.Element<T> element = buffered.poll();
-                while (element != null) {
-                    discardItem(element);
-                    element = buffered.poll();
-                }
-            }
-            reorderBuffer.clear();
         }
 
         private void discardItem(Item<T> item) {

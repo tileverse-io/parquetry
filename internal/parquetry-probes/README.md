@@ -43,9 +43,10 @@ and inflates close-path timings.)
 
 Reads `<baseUrl>/f000.parquet` .. `f{N-1}.parquet`. Two pipelines:
 `pipeline=perFile` (N independent single-file reads, the client-side
-baseline; rejects `probe.maxConcurrentFiles`) and `pipeline=fileset` (one
-`ParquetSource` over all N files, fan-out width = `probe.maxConcurrentFiles`,
-phase-decomposed output: build/open/read/close). `mode=count` is footer-only;
+baseline; rejects `probe.maxConcurrentFiles`) and `pipeline=fileset` (the
+shared survivor fan-out over N single-file sources, each opened by the
+producer that drains it, fan-out width = `probe.maxConcurrentFiles`,
+phase-decomposed output: build/read/close). `mode=count` is footer-only;
 `mode=drain` reads every column of every batch. `fileset` at `K=1` vs
 `perFile` is the merge's no-overhead regression check.
 

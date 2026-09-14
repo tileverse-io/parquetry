@@ -112,10 +112,9 @@ try (FileSource source = LocalFileSource.directory(dir, "*.parquet");
 
 ## Relationship to the core engine
 
-`ParquetSource` sits directly above the single-file `io.tileverse.parquetry.data.ParquetFileReader`. A one-file dataset
-opens through `ParquetSource.open(ByteRangeSource)`; a multi-file dataset opens through
-`ParquetSource.open(FilesetReader)`, where `FilesetReader` is the seam an implementation satisfies to supply per-file
-byte sources by index (the Iceberg backend builds one over a snapshot's surviving data files). Runtime wiring (the
+`ParquetSource` sits directly above the single-file `io.tileverse.parquetry.data.ParquetFileReader` and reads exactly
+one file, opened through `ParquetSource.open(ByteRangeSource)`. Many files are a `ParquetDataset`: it plans the
+surviving files itself and opens a `ParquetSource` over each one as a read reaches it. Runtime wiring (the
 shared `ParquetRuntime`, an optional decryption key) is bound once through `OpenOptions`; per-query policy stays in
 `ReadOptions`.
 

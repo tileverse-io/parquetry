@@ -41,7 +41,7 @@
       <artifactId>parquetry-core</artifactId>
       <version>${project.version}</version>
     </dependency>
-    <!-- The multi-file concurrent-read probe opens a ParquetSource over a FilesetReader (io.tileverse.parquetry.dataset). -->
+    <!-- The multi-file concurrent-read probe drives the shared survivor fan-out (io.tileverse.parquetry.dataset). -->
     <dependency>
       <groupId>io.tileverse.parquetry</groupId>
       <artifactId>parquetry-catalog</artifactId>
