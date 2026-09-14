@@ -402,6 +402,9 @@ public final class ParquetFileWriter implements AutoCloseable {
      * Finishes the file: force-flushes the current row group when non-empty, places the GeoParquet metadata, writes the
      * footer, footer length, and trailing magic, then deletes the temp directory. The sink is left open; the caller
      * commits by closing the sink after this returns successfully.
+     *
+     * <p>On an interrupted thread the close is a cancellation, not a commit: nothing more reaches the sink, the temp
+     * directory is deleted, and an {@link UncheckedIOException} wrapping an {@link InterruptedIOException} reports it.
      */
     @Override
     public void close() {
@@ -414,6 +417,7 @@ public final class ParquetFileWriter implements AutoCloseable {
             return;
         }
         try {
+            checkInterrupt();
             flushActiveAppender();
             finishLastRowGroup();
             writeFooter();

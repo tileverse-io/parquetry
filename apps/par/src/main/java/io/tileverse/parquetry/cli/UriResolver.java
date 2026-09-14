@@ -26,6 +26,7 @@ import java.util.Properties;
 import io.tileverse.storage.RangeReader;
 import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
+import io.tileverse.storage.StorageOutputStream;
 import io.tileverse.storage.WriteOptions;
 
 import io.tileverse.parquetry.io.ByteRangeSource;
@@ -102,11 +103,11 @@ public final class UriResolver {
     public static final class OpenSink implements AutoCloseable {
 
         private final Storage storage;
-        private final OutputStream out;
+        private final StorageOutputStream out;
         private boolean committed;
         private boolean closed;
 
-        OpenSink(Storage storage, OutputStream out) {
+        OpenSink(Storage storage, StorageOutputStream out) {
             this.storage = storage;
             this.out = out;
         }
@@ -119,7 +120,7 @@ public final class UriResolver {
          * Commits the write: closes the stream (which makes the destination visible), then closes the storage. Call
          * only after the writer has successfully finalized the file.
          */
-        public void commit() throws IOException {
+        public synchronized void commit() throws IOException {
             if (closed) {
                 return;
             }
@@ -133,20 +134,21 @@ public final class UriResolver {
         }
 
         /**
-         * Aborts the write: closes the storage without committing the stream, leaving no visible destination object or
-         * file. Best-effort and idempotent.
+         * Aborts the write: discards the staged output and closes the storage, leaving no visible destination object or
+         * file and no staging file behind. Best-effort and idempotent.
          */
-        public void abort() {
+        public synchronized void abort() {
             if (closed) {
                 return;
             }
             closed = true;
+            out.abort();
             closeQuietly(storage);
         }
 
         /** Defaults to {@link #abort()} so an unwinding try-with-resources never commits a footerless destination. */
         @Override
-        public void close() {
+        public synchronized void close() {
             if (committed) {
                 return;
             }
@@ -211,7 +213,7 @@ public final class UriResolver {
         try {
             requireWritable(storage, dst);
             failIfDestinationExists(storage, target.key(), dst, overwrite);
-            OutputStream out = storage.openOutputStream(target.key(), writeOptions(overwrite));
+            StorageOutputStream out = storage.openOutputStream(target.key(), writeOptions(overwrite));
             return new OpenSink(storage, out);
         } catch (RuntimeException e) {
             closeQuietly(storage);

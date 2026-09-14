@@ -19,36 +19,37 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.lang.foreign.MemorySegment;
-import java.nio.ByteBuffer;
-import java.nio.channels.Channels;
-import java.nio.channels.WritableByteChannel;
+import java.lang.foreign.ValueLayout;
 
 /**
  * A {@link ByteSink} backed by an {@link OutputStream}, appending sequentially. The stream is OWNED: {@link #close()}
  * closes it, which commits an object-storage upload whose backing stream commits on close. Not thread-safe; one writer
  * at a time.
+ *
+ * <p>Bytes go straight to the stream, never through {@link java.nio.channels.Channels#newChannel(OutputStream)}: that
+ * adapter is an interruptible channel which closes its stream when the writing thread is interrupted, and for a stream
+ * that commits on close that would turn a cancelled write into a commit.
  */
 final class OutputStreamByteSink implements ByteSink {
 
+    private static final int COPY_CHUNK_BYTES = 64 * 1024;
+
     private final OutputStream out;
-
-    // channel wraps out and owns nothing extra; closing out is sufficient (closing channel would close out early).
-    private final WritableByteChannel channel;
-
     private long position;
     private boolean closed;
 
     OutputStreamByteSink(OutputStream out) {
         this.out = out;
-        this.channel = Channels.newChannel(out);
     }
 
     @Override
     public void write(MemorySegment src) {
-        ByteBuffer buffer = src.asByteBuffer();
+        byte[] chunk = new byte[(int) Math.min(COPY_CHUNK_BYTES, src.byteSize())];
         try {
-            while (buffer.hasRemaining()) {
-                channel.write(buffer);
+            for (long offset = 0; offset < src.byteSize(); offset += chunk.length) {
+                int length = (int) Math.min(chunk.length, src.byteSize() - offset);
+                MemorySegment.copy(src, ValueLayout.JAVA_BYTE, offset, chunk, 0, length);
+                out.write(chunk, 0, length);
             }
         } catch (IOException e) {
             throw new UncheckedIOException("Write failed at position " + position, e);

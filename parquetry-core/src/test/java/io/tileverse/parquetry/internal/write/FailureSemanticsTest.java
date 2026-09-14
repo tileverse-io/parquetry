@@ -47,6 +47,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.testsupport.ByteArrayByteSink;
 
 /**
  * The fault is injected through the output sink rather than the row data: an {@link ExplodingChannel} throws once
@@ -225,6 +226,31 @@ class FailureSemanticsTest {
         int firstSize = sink.writtenBytes().length;
         writer.close();
         assertThat(sink.writtenBytes()).hasSize(firstSize);
+    }
+
+    /**
+     * Closing on an interrupted thread is a cancelled write, not a commit: no footer reaches the sink, the temp
+     * directory is removed, and the caller learns that nothing was finalized.
+     */
+    @Test
+    void closeOnAnInterruptedThreadWritesNoFooterAndCleansTemp() throws Exception {
+        ParquetSchema schema = flatSchema(requiredInt32("id"), requiredInt32("count"));
+        WriteOptions options = options().build();
+        long tempCountBefore = countParquetryDirs();
+        ByteArrayByteSink sink = new ByteArrayByteSink();
+        ParquetFileWriter writer = ParquetFileWriter.create(sink, schema, options);
+
+        Thread.currentThread().interrupt();
+        try {
+            assertThatThrownBy(writer::close)
+                    .isInstanceOf(UncheckedIOException.class)
+                    .hasCauseInstanceOf(InterruptedIOException.class);
+        } finally {
+            Thread.interrupted();
+        }
+
+        assertThat(sink.size()).as("only the leading magic reached the sink").isEqualTo(4);
+        assertThat(countParquetryDirs()).isEqualTo(tempCountBefore);
     }
 
     // --- helpers ---

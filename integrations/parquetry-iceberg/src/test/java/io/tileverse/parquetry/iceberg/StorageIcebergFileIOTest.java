@@ -18,7 +18,6 @@ package io.tileverse.parquetry.iceberg;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.io.OutputStream;
 import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -45,6 +44,7 @@ import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageCapabilities;
 import io.tileverse.storage.StorageEntry;
 import io.tileverse.storage.StorageFactory;
+import io.tileverse.storage.StorageOutputStream;
 import io.tileverse.storage.WriteOptions;
 
 import io.tileverse.parquetry.data.FooterMetadataCache;
@@ -225,7 +225,7 @@ class StorageIcebergFileIOTest {
         }
 
         @Override
-        public OutputStream openOutputStream(String key, WriteOptions options) {
+        public StorageOutputStream openOutputStream(String key, WriteOptions options) {
             throw new UnsupportedOperationException();
         }
 

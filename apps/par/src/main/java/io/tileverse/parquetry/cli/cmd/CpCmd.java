@@ -27,6 +27,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
+import io.tileverse.parquetry.cli.CopyShutdownHook;
 import io.tileverse.parquetry.cli.DstStorageOptions;
 import io.tileverse.parquetry.cli.GlobalOptions;
 import io.tileverse.parquetry.cli.StorageOptions;
@@ -156,10 +157,13 @@ public final class CpCmd implements Callable<Integer> {
         WriteOptions writeOptions = buildWriteOptions(writeSchema, tempDir, sourceKeyValue, rowGroupSize);
         long limit = options.limit == null ? Long.MAX_VALUE : options.limit;
         Query query = buildQuery(predicate, projection, limit);
-        try (UriResolver.OpenSink sink =
-                UriResolver.openForWrite(dst, sourceFileName, overwrite, dstStorage.toProperties())) {
+        UriResolver.OpenSink sink = UriResolver.openForWrite(dst, sourceFileName, overwrite, dstStorage.toProperties());
+        CopyShutdownHook hook = CopyShutdownHook.install(Thread.currentThread(), sink);
+        try (sink) {
             writeAndFinalize(source, writeSchema, query, writeOptions, rowGroupSize, sink);
             sink.commit();
+        } finally {
+            hook.copyUnwound();
         }
     }
 
