@@ -19,8 +19,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
+import java.math.BigDecimal;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.ZoneOffset;
+import java.util.Date;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Stream;
 
@@ -49,9 +59,12 @@ import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Value;
+import io.tileverse.parquetry.format.LogicalType;
+import io.tileverse.parquetry.format.LogicalType.TimeUnit;
 import io.tileverse.parquetry.geotools.data.FeatureTypeMapper.AttributeMapping;
 import io.tileverse.parquetry.geotools.data.FeatureTypeMapper.Mapping;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.ResolvedColumn;
 
 class FilterToPredicateTest {
@@ -67,6 +80,14 @@ class FilterToPredicateTest {
         b.add("score", Double.class);
         b.add("active", Boolean.class);
         b.add("guid", UUID.class);
+        b.add("amount", BigDecimal.class);
+        b.add("bigamount", BigDecimal.class);
+        b.add("day", LocalDate.class);
+        b.add("stamp", Instant.class);
+        b.add("local", LocalDateTime.class);
+        b.add("clock", LocalTime.class);
+        b.add("clock32", LocalTime.class);
+        b.add("blob", byte[].class);
         SimpleFeatureType ft = b.buildFeatureType();
         List<AttributeMapping> attrs = List.of(
                 new AttributeMapping("geom", ColumnPath.of("geometry"), true, Point.class),
@@ -74,7 +95,71 @@ class FilterToPredicateTest {
                 new AttributeMapping("pop", ColumnPath.of("pop"), false, Long.class),
                 new AttributeMapping("score", ColumnPath.of("score"), false, Double.class),
                 new AttributeMapping("active", ColumnPath.of("active"), false, Boolean.class),
-                new AttributeMapping("guid", ColumnPath.of("guid"), false, UUID.class));
+                new AttributeMapping("guid", ColumnPath.of("guid"), false, UUID.class),
+                new AttributeMapping(
+                        "amount",
+                        ColumnPath.of("amount"),
+                        false,
+                        BigDecimal.class,
+                        null,
+                        Optional.of(new LogicalType.Decimal(2, 9)),
+                        PrimitiveKind.INT32),
+                new AttributeMapping(
+                        "bigamount",
+                        ColumnPath.of("bigamount"),
+                        false,
+                        BigDecimal.class,
+                        null,
+                        Optional.of(new LogicalType.Decimal(3, 20)),
+                        PrimitiveKind.FIXED_LEN_BYTE_ARRAY),
+                new AttributeMapping(
+                        "day",
+                        ColumnPath.of("day"),
+                        false,
+                        LocalDate.class,
+                        null,
+                        Optional.of(new LogicalType.DateType()),
+                        PrimitiveKind.INT32),
+                new AttributeMapping(
+                        "stamp",
+                        ColumnPath.of("stamp"),
+                        false,
+                        Instant.class,
+                        null,
+                        Optional.of(new LogicalType.Timestamp(true, TimeUnit.MICROS)),
+                        PrimitiveKind.INT64),
+                new AttributeMapping(
+                        "local",
+                        ColumnPath.of("local"),
+                        false,
+                        LocalDateTime.class,
+                        null,
+                        Optional.of(new LogicalType.Timestamp(false, TimeUnit.MILLIS)),
+                        PrimitiveKind.INT64),
+                new AttributeMapping(
+                        "clock",
+                        ColumnPath.of("clock"),
+                        false,
+                        LocalTime.class,
+                        null,
+                        Optional.of(new LogicalType.Time(false, TimeUnit.MICROS)),
+                        PrimitiveKind.INT64),
+                new AttributeMapping(
+                        "clock32",
+                        ColumnPath.of("clock32"),
+                        false,
+                        LocalTime.class,
+                        null,
+                        Optional.of(new LogicalType.Time(false, TimeUnit.MILLIS)),
+                        PrimitiveKind.INT32),
+                new AttributeMapping(
+                        "blob",
+                        ColumnPath.of("blob"),
+                        false,
+                        byte[].class,
+                        null,
+                        Optional.empty(),
+                        PrimitiveKind.BYTE_ARRAY));
         return new Mapping(ft, attrs);
     }
 
@@ -213,6 +298,151 @@ class FilterToPredicateTest {
                 .isEqualTo(Filter.INCLUDE);
         assertThat(translator().translate(FF.isNull(FF.property("name"))).residual())
                 .isEqualTo(Filter.INCLUDE);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("pushedScalarComparisons")
+    void pushesAComparisonOnEveryScalarBinding(String name, Filter f, Predicate expected) {
+        FilterToPredicate.Result r = translator().translate(f);
+        assertThat(r.predicate()).isEqualTo(expected);
+        assertThat(r.residual()).isEqualTo(Filter.INCLUDE);
+    }
+
+    private static Stream<Arguments> pushedScalarComparisons() {
+        LocalDateTime noon = LocalDateTime.of(2024, 6, 15, 12, 30, 45, 123_000_000);
+        Instant noonUtc = noon.toInstant(ZoneOffset.UTC);
+        return Stream.of(
+                Arguments.of(
+                        "decimal gt from a double literal",
+                        FF.greater(FF.property("amount"), FF.literal(2.5)),
+                        new Predicate.Gt(ColumnPath.of("amount"), new Value.DecimalVal(new BigDecimal("2.5")))),
+                Arguments.of(
+                        "decimal eq from a text literal at another scale",
+                        FF.equals(FF.property("amount"), FF.literal("1.250")),
+                        new Predicate.Eq(ColumnPath.of("amount"), new Value.DecimalVal(new BigDecimal("1.250")))),
+                Arguments.of(
+                        "fixed-length decimal lt from a BigDecimal literal",
+                        FF.less(FF.property("bigamount"), FF.literal(new BigDecimal("123456789012345.678"))),
+                        new Predicate.Lt(
+                                ColumnPath.of("bigamount"),
+                                new Value.DecimalVal(new BigDecimal("123456789012345.678")))),
+                Arguments.of(
+                        "date gtEq from a text literal",
+                        FF.greaterOrEqual(FF.property("day"), FF.literal("2024-01-05")),
+                        new Predicate.GtEq(ColumnPath.of("day"), new Value.DateVal(LocalDate.of(2024, 1, 5)))),
+                Arguments.of(
+                        "date eq from a Date literal",
+                        FF.equals(FF.property("day"), FF.literal(Date.from(noonUtc))),
+                        new Predicate.Eq(ColumnPath.of("day"), new Value.DateVal(LocalDate.of(2024, 6, 15)))),
+                Arguments.of(
+                        "utc timestamp gt from an Instant literal",
+                        FF.greater(FF.property("stamp"), FF.literal(noonUtc)),
+                        new Predicate.Gt(ColumnPath.of("stamp"), new Value.TimestampVal(noon, true))),
+                Arguments.of(
+                        "utc timestamp lt from a Date literal",
+                        FF.less(FF.property("stamp"), FF.literal(Date.from(noonUtc))),
+                        new Predicate.Lt(ColumnPath.of("stamp"), new Value.TimestampVal(noon, true))),
+                Arguments.of(
+                        "utc timestamp eq from a zone-less LocalDateTime literal read at UTC",
+                        FF.equals(FF.property("stamp"), FF.literal(noon)),
+                        new Predicate.Eq(ColumnPath.of("stamp"), new Value.TimestampVal(noon, true))),
+                Arguments.of(
+                        "local timestamp gtEq from an Instant literal read at UTC",
+                        FF.greaterOrEqual(FF.property("local"), FF.literal(noonUtc)),
+                        new Predicate.GtEq(ColumnPath.of("local"), new Value.TimestampVal(noon, false))),
+                Arguments.of(
+                        "local timestamp notEq from an offset text literal",
+                        FF.notEqual(FF.property("local"), FF.literal("2024-06-15T14:30:45.123+02:00")),
+                        new Predicate.NotEq(ColumnPath.of("local"), new Value.TimestampVal(noon, false))),
+                Arguments.of(
+                        "time ltEq from a LocalTime literal",
+                        FF.lessOrEqual(FF.property("clock"), FF.literal(LocalTime.of(5, 30, 15, 250_000_000))),
+                        new Predicate.LtEq(
+                                ColumnPath.of("clock"), new Value.TimeVal(LocalTime.of(5, 30, 15, 250_000_000)))),
+                Arguments.of(
+                        "time gt from a text literal",
+                        FF.greater(FF.property("clock"), FF.literal("05:30:15.25")),
+                        new Predicate.Gt(
+                                ColumnPath.of("clock"), new Value.TimeVal(LocalTime.of(5, 30, 15, 250_000_000)))));
+    }
+
+    /**
+     * A binary column pushes equality and inequality alone, and the pushed value holds a copy of the literal's bytes.
+     * {@link Value.BinaryVal} wraps a {@link MemorySegment}, whose equality is backing-array identity rather than
+     * content, hence the assertion on the bytes themselves.
+     */
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("pushedBinaryComparisons")
+    void pushesEqualityOnABinaryColumn(String name, Filter f, Class<? extends Predicate> expectedComparison) {
+        FilterToPredicate.Result r = translator().translate(f);
+        assertThat(r.residual()).isEqualTo(Filter.INCLUDE);
+        assertThat(r.predicate()).isInstanceOf(expectedComparison);
+        BinaryComparison pushed = binaryComparisonOf(r.predicate());
+        assertThat(pushed.column()).isEqualTo(ColumnPath.of("blob"));
+        assertThat(pushed.value().toArray(ValueLayout.JAVA_BYTE)).containsExactly(new byte[] {1, 2, 3});
+    }
+
+    private static Stream<Arguments> pushedBinaryComparisons() {
+        byte[] bytes = {1, 2, 3};
+        return Stream.of(
+                Arguments.of("binary eq", FF.equals(FF.property("blob"), FF.literal(bytes)), Predicate.Eq.class),
+                Arguments.of(
+                        "binary notEq", FF.notEqual(FF.property("blob"), FF.literal(bytes)), Predicate.NotEq.class));
+    }
+
+    /** The column and the literal bytes of a pushed binary comparison. */
+    private record BinaryComparison(ColumnPath column, MemorySegment value) {}
+
+    private static BinaryComparison binaryComparisonOf(Predicate predicate) {
+        return switch (predicate) {
+            case Predicate.Eq(ColumnPath column, Value.BinaryVal(MemorySegment bytes)) ->
+                new BinaryComparison(column, bytes);
+            case Predicate.NotEq(ColumnPath column, Value.BinaryVal(MemorySegment bytes)) ->
+                new BinaryComparison(column, bytes);
+            default -> throw new AssertionError("not a binary equality comparison: " + predicate);
+        };
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("residualScalarComparisons")
+    void keepsAnUnpushableScalarComparisonResidual(String name, Filter f) {
+        FilterToPredicate.Result r = translator().translate(f);
+        assertThat(r.predicate()).isEqualTo((Predicate) Predicate.ALWAYS_TRUE);
+        assertThat(r.residual()).isEqualTo(f);
+    }
+
+    private static Stream<Arguments> residualScalarComparisons() {
+        return Stream.of(
+                Arguments.of(
+                        "timestamp literal finer than the micros column",
+                        FF.greater(
+                                FF.property("stamp"),
+                                FF.literal(LocalDateTime.of(2024, 6, 15, 12, 30, 45, 123_456_789)))),
+                Arguments.of(
+                        "timestamp literal finer than the millis column",
+                        FF.greater(
+                                FF.property("local"),
+                                FF.literal(LocalDateTime.of(2024, 6, 15, 12, 30, 45, 123_456_000)))),
+                Arguments.of(
+                        "time literal finer than the micros column",
+                        FF.greater(FF.property("clock"), FF.literal(LocalTime.of(5, 30, 15, 250_000_001)))),
+                Arguments.of(
+                        "time on an INT32 column", FF.greater(FF.property("clock32"), FF.literal(LocalTime.of(5, 30)))),
+                Arguments.of("unparseable date text", FF.equals(FF.property("day"), FF.literal("yesterday"))),
+                Arguments.of("unparseable decimal text", FF.equals(FF.property("amount"), FF.literal("twelve"))),
+                Arguments.of("binary ordering", FF.less(FF.property("blob"), FF.literal(new byte[] {1}))),
+                Arguments.of("binary from a text literal", FF.equals(FF.property("blob"), FF.literal("010203"))));
+    }
+
+    @Test
+    void betweenOnADateColumnPushesBothBounds() {
+        Filter f = FF.between(FF.property("day"), FF.literal("2024-01-04"), FF.literal("2024-01-06"));
+        FilterToPredicate.Result r = translator().translate(f);
+        assertThat(r.predicate())
+                .isEqualTo(Pred.and(
+                        new Predicate.GtEq(ColumnPath.of("day"), new Value.DateVal(LocalDate.of(2024, 1, 4))),
+                        new Predicate.LtEq(ColumnPath.of("day"), new Value.DateVal(LocalDate.of(2024, 1, 6)))));
+        assertThat(r.residual()).isEqualTo(Filter.INCLUDE);
     }
 
     private static final GeometryFactory GF = new GeometryFactory();

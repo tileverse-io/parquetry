@@ -15,6 +15,14 @@
  */
 package io.tileverse.parquetry.geotools.data;
 
+import static io.tileverse.parquetry.internal.filter.TemporalValues.fitsUnit;
+
+import java.lang.foreign.MemorySegment;
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -64,6 +72,7 @@ import io.tileverse.parquetry.geotools.data.FeatureTypeMapper.AttributeMapping;
 import io.tileverse.parquetry.geotools.data.FeatureTypeMapper.Mapping;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.ResolvedColumn;
 import io.tileverse.parquetry.schema.SchemaNode;
 
@@ -278,7 +287,7 @@ final class FilterToPredicate {
             return Optional.empty();
         }
         Leaf column = leaf.get();
-        return build(column.path(), column.binding(), op, value.get()).map(predicate -> column.quantify(predicate, f));
+        return build(column, op, value.get()).map(predicate -> column.quantify(predicate, f));
     }
 
     private Optional<Predicate> between(PropertyIsBetween f) {
@@ -289,8 +298,8 @@ final class FilterToPredicate {
             return Optional.empty();
         }
         Leaf column = leaf.get();
-        Optional<Predicate> low = build(column.path(), column.binding(), Op.GTE, lo.get());
-        Optional<Predicate> high = build(column.path(), column.binding(), Op.LTE, hi.get());
+        Optional<Predicate> low = build(column, Op.GTE, lo.get());
+        Optional<Predicate> high = build(column, Op.LTE, hi.get());
         if (low.isEmpty() || high.isEmpty()) {
             return Optional.empty();
         }
@@ -364,7 +373,9 @@ final class FilterToPredicate {
         }
     }
 
-    private Optional<Predicate> build(ColumnPath p, Class<?> binding, Op op, Object rawValue) {
+    private Optional<Predicate> build(Leaf column, Op op, Object rawValue) {
+        ColumnPath p = column.path();
+        Class<?> binding = column.binding();
         if (binding == Integer.class) {
             return buildInteger(p, op, rawValue);
         }
@@ -385,6 +396,21 @@ final class FilterToPredicate {
         }
         if (binding == UUID.class) {
             return buildUuid(p, op, rawValue);
+        }
+        if (binding == BigDecimal.class) {
+            return buildDecimal(p, op, rawValue);
+        }
+        if (binding == LocalDate.class) {
+            return buildDate(p, op, rawValue);
+        }
+        if (binding == Instant.class || binding == LocalDateTime.class) {
+            return buildTimestamp(column, op, rawValue);
+        }
+        if (binding == LocalTime.class) {
+            return buildTime(column, op, rawValue);
+        }
+        if (binding == byte[].class) {
+            return buildBinary(p, op, rawValue);
         }
         return Optional.empty();
     }
@@ -451,6 +477,94 @@ final class FilterToPredicate {
         return parseUuid(rawValue.toString()).map(parsed -> Pred.col(p).eq(parsed));
     }
 
+    private static Optional<Predicate> buildDecimal(ColumnPath p, Op op, Object rawValue) {
+        BigDecimal v = Converters.convert(rawValue, BigDecimal.class);
+        if (v == null) {
+            return Optional.empty();
+        }
+        return ordered(p, op, new Value.DecimalVal(v));
+    }
+
+    private static Optional<Predicate> buildDate(ColumnPath p, Op op, Object rawValue) {
+        LocalDate v = Converters.convert(rawValue, LocalDate.class);
+        if (v == null) {
+            return Optional.empty();
+        }
+        return ordered(p, op, new Value.DateVal(v));
+    }
+
+    private static Optional<Predicate> buildTimestamp(Leaf column, Op op, Object rawValue) {
+        boolean adjustedToUtc = column.binding() == Instant.class;
+        return timestampLiteral(column, rawValue)
+                .flatMap(v -> ordered(column.path(), op, new Value.TimestampVal(v, adjustedToUtc)));
+    }
+
+    private static Optional<Predicate> buildTime(Leaf column, Op op, Object rawValue) {
+        return timeLiteral(column, rawValue).flatMap(v -> ordered(column.path(), op, new Value.TimeVal(v)));
+    }
+
+    // Only equality and inequality push: a byte-order comparison has no defined meaning for a GeoTools byte[]
+    // attribute, and a text literal names no particular byte encoding. Both stay residual.
+    private static Optional<Predicate> buildBinary(ColumnPath p, Op op, Object rawValue) {
+        if (!(rawValue instanceof byte[] bytes) || (op != Op.EQ && op != Op.NEQ)) {
+            return Optional.empty();
+        }
+        Value.BinaryVal v =
+                new Value.BinaryVal(MemorySegment.ofArray(bytes.clone()).asReadOnly());
+        return ordered(p, op, v);
+    }
+
+    /**
+     * The timestamp literal as the UTC wall-clock value stored by the column, or empty when the literal does not
+     * convert or is finer than the column unit. A value finer than the unit is rejected by the engine rather than
+     * truncated, hence such a comparison stays residual.
+     */
+    private static Optional<LocalDateTime> timestampLiteral(Leaf column, Object rawValue) {
+        LocalDateTime v = Converters.convert(rawValue, LocalDateTime.class);
+        if (v == null) {
+            return Optional.empty();
+        }
+        Optional<LogicalType.TimeUnit> unit = timestampUnit(column);
+        if (unit.isEmpty() || !fitsUnit(v.getNano(), unit.get())) {
+            return Optional.empty();
+        }
+        return Optional.of(v);
+    }
+
+    /**
+     * The time literal, or empty when it does not convert or is finer than the column unit. A TIME column outside INT64
+     * is excluded too: the engine decodes a time cell from an INT64 count since midnight alone.
+     */
+    private static Optional<LocalTime> timeLiteral(Leaf column, Object rawValue) {
+        LocalTime v = Converters.convert(rawValue, LocalTime.class);
+        if (v == null || column.kind() != PrimitiveKind.INT64) {
+            return Optional.empty();
+        }
+        Optional<LogicalType.TimeUnit> unit = timeUnit(column);
+        if (unit.isEmpty() || !fitsUnit(v.toNanoOfDay(), unit.get())) {
+            return Optional.empty();
+        }
+        return Optional.of(v);
+    }
+
+    /** The unit of a TIMESTAMP column, or empty when the column has no timestamp annotation. */
+    private static Optional<LogicalType.TimeUnit> timestampUnit(Leaf column) {
+        LogicalType logicalType = column.logicalType().orElse(null);
+        if (logicalType instanceof LogicalType.Timestamp(boolean _, LogicalType.TimeUnit unit)) {
+            return Optional.of(unit);
+        }
+        return Optional.empty();
+    }
+
+    /** The unit of a TIME column, or empty when the column has no time annotation. */
+    private static Optional<LogicalType.TimeUnit> timeUnit(Leaf column) {
+        LogicalType logicalType = column.logicalType().orElse(null);
+        if (logicalType instanceof LogicalType.Time(boolean _, LogicalType.TimeUnit unit)) {
+            return Optional.of(unit);
+        }
+        return Optional.empty();
+    }
+
     /** True when {@code rawValue} converts to {@code converted} without loss (no fractional part dropped). */
     private static boolean isLossless(Object rawValue, double converted) {
         Double asDouble = Converters.convert(rawValue, Double.class);
@@ -495,11 +609,30 @@ final class FilterToPredicate {
                 });
     }
 
+    /** The comparison predicate over an already-typed value, for the bindings with no primitive builder. */
+    private static Optional<Predicate> ordered(ColumnPath p, Op op, Value v) {
+        return Optional.of(
+                switch (op) {
+                    case EQ -> new Predicate.Eq(p, v);
+                    case NEQ -> new Predicate.NotEq(p, v);
+                    case LT -> new Predicate.Lt(p, v);
+                    case LTE -> new Predicate.LtEq(p, v);
+                    case GT -> new Predicate.Gt(p, v);
+                    case GTE -> new Predicate.GtEq(p, v);
+                });
+    }
+
     /**
-     * A column a comparison can build against: its physical path, its Java binding for literal coercion, and whether it
-     * is a repeated (list/map element) leaf that an existential quantifier must aggregate over.
+     * A column against which a comparison builds: its physical path, its Java binding for literal coercion, whether it
+     * is a repeated (list/map element) leaf that an existential quantifier must aggregate over, and the physical kind
+     * plus logical type annotation that decide how a decimal or temporal literal encodes.
      */
-    private record Leaf(ColumnPath path, Class<?> binding, boolean repeated) {
+    private record Leaf(
+            ColumnPath path,
+            Class<?> binding,
+            boolean repeated,
+            PrimitiveKind kind,
+            Optional<LogicalType> logicalType) {
 
         /** Wraps {@code leaf} in the filter's match-action quantifier when this column is repeated; else returns it. */
         Predicate quantify(Predicate leaf, Filter filter) {
@@ -522,7 +655,8 @@ final class FilterToPredicate {
         String propertyName = name.getPropertyName();
         AttributeMapping topLevel = attributesByName.get(propertyName);
         if (isPlainScalar(topLevel)) {
-            return Optional.of(new Leaf(topLevel.path(), topLevel.binding(), false));
+            return Optional.of(
+                    new Leaf(topLevel.path(), topLevel.binding(), false, topLevel.kind(), topLevel.logicalType()));
         }
         return resolveNestedLeaf(propertyName);
     }
@@ -543,16 +677,16 @@ final class FilterToPredicate {
             return Optional.empty();
         }
         ResolvedColumn column = resolved.get();
-        Optional<Class<?>> binding = leafBinding(column);
-        return binding.map(b -> new Leaf(column.physical(), b, column.isRepeated()));
+        Optional<LogicalType> logicalType = logicalTypeOf(column);
+        Optional<Class<?>> binding = FeatureTypeMapper.resolveBinding(column.kind(), logicalType);
+        return binding.map(b -> new Leaf(column.physical(), b, column.isRepeated(), column.kind(), logicalType));
     }
 
-    /** The Java binding for the resolved leaf, picking String vs byte[] for a BYTE_ARRAY leaf from its logical type. */
-    private Optional<Class<?>> leafBinding(ResolvedColumn column) {
-        Optional<LogicalType> logicalType = schema.find(column.physical())
+    /** The logical type annotating the resolved leaf's primitive node, or empty when the node has none. */
+    private Optional<LogicalType> logicalTypeOf(ResolvedColumn column) {
+        return schema.find(column.physical())
                 .filter(SchemaNode.Primitive.class::isInstance)
                 .flatMap(node -> ((SchemaNode.Primitive) node).logicalType());
-        return FeatureTypeMapper.resolveBinding(column.kind(), logicalType);
     }
 
     /** Splits a property name on the ECQL slash form and the dotted programmatic form into a logical column path. */
