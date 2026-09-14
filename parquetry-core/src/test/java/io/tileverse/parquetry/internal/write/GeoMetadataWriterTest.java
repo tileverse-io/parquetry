@@ -58,7 +58,7 @@ class GeoMetadataWriterTest {
                 (SchemaNode.Primitive) enriched.find(ColumnPath.of("geometry")).orElseThrow();
         assertThat(geomLeaf.logicalType().orElseThrow()).isInstanceOf(LogicalType.Geometry.class);
 
-        Optional<String> json = writer.v1JsonPayload(enriched, summaries("geometry", polygonSummary()));
+        Optional<String> json = writer.geoJsonPayload(enriched, summaries("geometry", polygonSummary()));
         assertThat(json).isPresent();
         GeoParquetMetadata parsed = GeoParquetMetadata.parse(json.orElseThrow());
         assertThat(parsed).isInstanceOf(GeoParquetMetadata.V1_1.class);
@@ -85,13 +85,13 @@ class GeoMetadataWriterTest {
                 .as("V1_1_ONLY must not annotate the schema with v2 logical types")
                 .isEmpty();
 
-        Optional<String> json = writer.v1JsonPayload(enriched, summaries("geometry", polygonSummary()));
+        Optional<String> json = writer.geoJsonPayload(enriched, summaries("geometry", polygonSummary()));
         assertThat(json).isPresent();
         assertThat(json.orElseThrow()).contains("\"version\":\"1.1.0\"");
     }
 
     @Test
-    void v2OnlyModeEmitsLogicalTypesAndSkipsJson() {
+    void v2OnlyModeEmitsLogicalTypesAndA20GeoDocument() {
         WriteOptions options = WriteOptions.builder()
                 .geoParquetMetadata(GeoParquetMetadataMode.V2_0_ONLY)
                 .crsEpsg("geometry", 4326)
@@ -104,8 +104,20 @@ class GeoMetadataWriterTest {
                 (SchemaNode.Primitive) enriched.find(ColumnPath.of("geometry")).orElseThrow();
         assertThat(geomLeaf.logicalType().orElseThrow()).isInstanceOf(LogicalType.Geometry.class);
 
-        Optional<String> json = writer.v1JsonPayload(enriched, summaries("geometry", polygonSummary()));
-        assertThat(json).as("V2_0_ONLY must skip the v1.1 KV blob").isEmpty();
+        Optional<String> json = writer.geoJsonPayload(enriched, summaries("geometry", polygonSummary()));
+        assertThat(json).as("the GeoParquet 2.0 spec requires the geo key").isPresent();
+        GeoParquetMetadata parsed = GeoParquetMetadata.parse(json.orElseThrow());
+        assertThat(parsed).isInstanceOf(GeoParquetMetadata.V2.class);
+        assertThat(parsed.version()).isEqualTo("2.0.0");
+        assertThat(parsed.primaryColumn()).isEqualTo("geometry");
+        GeoColumn col = parsed.columns().get("geometry");
+        assertThat(col.encoding()).contains("WKB");
+        assertThat(col.geometryTypes()).containsExactly("Polygon");
+        assertThat(col.bbox()).isPresent();
+        assertThat(col.crs().orElseThrow()).isInstanceOf(GeographicCRS.class);
+        assertThat(col.covering())
+                .as("2.0 column metadata has no covering field")
+                .isEmpty();
     }
 
     @Test
@@ -125,7 +137,7 @@ class GeoMetadataWriterTest {
             assertThat(leaf.logicalType().orElseThrow()).isInstanceOf(LogicalType.Geometry.class);
         }
 
-        Optional<String> json = writer.v1JsonPayload(
+        Optional<String> json = writer.geoJsonPayload(
                 enriched,
                 Map.of(ColumnPath.of("geometry"), polygonSummary(), ColumnPath.of("centroid"), pointSummary()));
         GeoParquetMetadata parsed = GeoParquetMetadata.parse(json.orElseThrow());
@@ -146,7 +158,7 @@ class GeoMetadataWriterTest {
 
         BoundingBox union = bbox(-10.0, -5.0, 0.0, 5.0).build();
         GeoColumnSummary summary = GeoColumnSummary.wkb(Optional.of(union), List.of(3));
-        Optional<String> json = writer.v1JsonPayload(schema, Map.of(ColumnPath.of("geometry"), summary));
+        Optional<String> json = writer.geoJsonPayload(schema, Map.of(ColumnPath.of("geometry"), summary));
         GeoParquetMetadata parsed = GeoParquetMetadata.parse(json.orElseThrow());
         BoundingBox parsedBbox = parsed.columns().get("geometry").bbox().orElseThrow();
         assertThat(parsedBbox.xmin()).isEqualTo(-10.0);
@@ -164,7 +176,7 @@ class GeoMetadataWriterTest {
         GeoMetadataWriter writer = new GeoMetadataWriter(options);
 
         assertThat(writer.applyV2LogicalTypes(schema)).isEqualTo(schema);
-        assertThat(writer.v1JsonPayload(schema, Map.of())).isEmpty();
+        assertThat(writer.geoJsonPayload(schema, Map.of())).isEmpty();
     }
 
     @Test
@@ -178,7 +190,7 @@ class GeoMetadataWriterTest {
         ParquetSchema schema = flatSchema(requiredBinary("geometry"));
         GeoMetadataWriter writer = new GeoMetadataWriter(options);
 
-        String json = writer.v1JsonPayload(schema, summaries("geometry", polygonSummary()))
+        String json = writer.geoJsonPayload(schema, summaries("geometry", polygonSummary()))
                 .orElseThrow();
         GeoParquetMetadata parsed = GeoParquetMetadata.parse(json);
         CoordinateReferenceSystem reparsed =
@@ -200,7 +212,7 @@ class GeoMetadataWriterTest {
         BboxCoveringPlan plan = BboxCoveringPlan.resolve(options, logical, writer);
 
         Optional<String> json =
-                writer.v1JsonPayload(plan.writtenSchema(), summaries("geometry", polygonSummary()), Optional.of(plan));
+                writer.geoJsonPayload(plan.writtenSchema(), summaries("geometry", polygonSummary()), Optional.of(plan));
 
         GeoParquetMetadata parsed = GeoParquetMetadata.parse(json.orElseThrow());
         BboxCovering covering =
@@ -220,7 +232,8 @@ class GeoMetadataWriterTest {
         ParquetSchema schema = flatSchema(requiredBinary("geometry"));
         GeoMetadataWriter writer = new GeoMetadataWriter(options);
 
-        Optional<String> json = writer.v1JsonPayload(schema, summaries("geometry", polygonSummary()), Optional.empty());
+        Optional<String> json =
+                writer.geoJsonPayload(schema, summaries("geometry", polygonSummary()), Optional.empty());
 
         GeoParquetMetadata parsed = GeoParquetMetadata.parse(json.orElseThrow());
         assertThat(parsed.columns().get("geometry").covering()).isEmpty();

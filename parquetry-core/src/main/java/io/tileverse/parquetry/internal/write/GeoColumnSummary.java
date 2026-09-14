@@ -23,7 +23,7 @@ import io.tileverse.parquetry.format.BoundingBox;
 import lombok.NonNull;
 
 /**
- * Per-geometry-column summary fed to {@link GeoMetadataWriter#v1JsonPayload}.
+ * Per-geometry-column summary fed to {@link GeoMetadataWriter#geoJsonPayload}.
  *
  * <p>Aggregated by the dataset-level writer across every row group's
  * {@link io.tileverse.parquetry.format.GeospatialStatistics}: the file-level bbox is the union of every chunk's bbox,

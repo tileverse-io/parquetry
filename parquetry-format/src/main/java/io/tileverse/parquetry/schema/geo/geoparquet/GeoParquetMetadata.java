@@ -34,8 +34,8 @@ import tools.jackson.databind.json.JsonMapper;
  *   <li>{@link V1_0} - 1.0.0 (oldest live producers; no {@code covering}).
  *   <li>{@link V1_1} - 1.1.0 and the 1.1.0+p1 errata variant (adds {@code covering}, {@code orientation},
  *       {@code epoch}).
- *   <li>{@link V2} - 2.0.0-dev and 2.0.0; native logical-type companion (still carries {@code geometry_types},
- *       {@code bbox}, {@code covering} per column).
+ *   <li>{@link V2} - 2.0.0-dev and 2.0.0; native logical-type companion with {@code geometry_types} and {@code bbox}
+ *       per column. The reader also accepts a {@code covering} entry, although the 2.0 schema does not define one.
  * </ul>
  *
  * <p>Polymorphic dispatch is driven by the JSON {@code "version"} field via {@link GeoParquetMetadataDeserializer}.
@@ -102,8 +102,9 @@ public sealed interface GeoParquetMetadata
 
     /**
      * GeoParquet 2.0-dev / 2.0 metadata. The native GEOMETRY / GEOGRAPHY logical-type annotations on individual columns
-     * carry the CRS and algorithm; the {@code "geo"} JSON parsed here still carries {@code geometry_types},
-     * {@code bbox}, and {@code covering} per column for downstream consumers.
+     * hold the CRS and algorithm. The {@code "geo"} JSON parsed here has {@code geometry_types} and {@code bbox} per
+     * column for downstream consumers. The reader also accepts a {@code covering} entry, although the 2.0 schema does
+     * not define one.
      */
     @JsonIgnoreProperties(ignoreUnknown = true)
     record V2(

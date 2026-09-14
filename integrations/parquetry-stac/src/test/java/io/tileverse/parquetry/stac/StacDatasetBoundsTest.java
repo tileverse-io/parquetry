@@ -119,7 +119,7 @@ class StacDatasetBoundsTest {
 
     @Test
     void boundsLessMetadataStillVisitsFiles() throws Exception {
-        StacDataset dataset = dataset(GeoParquetMetadataMode.V2_0_ONLY);
+        StacDataset dataset = datasetWithoutGeoMetadata();
 
         assertThat(dataset.geoMetadata())
                 .as("the parts have native statistics but no geo metadata document")
@@ -258,11 +258,24 @@ class StacDatasetBoundsTest {
     }
 
     private StacDataset dataset(GeoParquetMetadataMode mode, Optional<BoundingBox> collectionBounds) throws Exception {
+        PartWriter partWriter = (file, points) -> StacPointParquet.writePoints(file, GEOMETRY, mode, points);
+        return dataset(mode.name(), partWriter, collectionBounds);
+    }
+
+    /** Parts with the native GEOMETRY type and statistics but no geo document at all. */
+    private StacDataset datasetWithoutGeoMetadata() throws Exception {
+        PartWriter partWriter =
+                (file, points) -> StacPointParquet.writePointsWithoutGeoMetadata(file, GEOMETRY, points);
+        return dataset("native-only", partWriter, Optional.empty());
+    }
+
+    private StacDataset dataset(String label, PartWriter partWriter, Optional<BoundingBox> collectionBounds)
+            throws Exception {
         List<StacItemRef> refs = new ArrayList<>(POINTS_PER_PART.length);
         List<double[]> bboxes = new ArrayList<>(POINTS_PER_PART.length);
         for (int part = 0; part < POINTS_PER_PART.length; part++) {
-            Path file = tempDir.resolve(mode.name() + "-part-" + part + ".parquet");
-            StacPointParquet.writePoints(file, GEOMETRY, mode, POINTS_PER_PART[part]);
+            Path file = tempDir.resolve(label + "-part-" + part + ".parquet");
+            partWriter.write(file, POINTS_PER_PART[part]);
             refs.add(new StacItemRef("part-" + part, file.toUri().toString()));
             bboxes.add(ITEM_BBOXES[part].clone());
         }
@@ -270,6 +283,11 @@ class StacDatasetBoundsTest {
                 new StacDataset("points", GEOMETRY, refs, bboxes, collectionBounds, storages, fanOutOptions());
         openedDatasets.add(dataset);
         return dataset;
+    }
+
+    @FunctionalInterface
+    private interface PartWriter {
+        void write(Path file, double[][] points) throws Exception;
     }
 
     private static OpenOptions fanOutOptions() {

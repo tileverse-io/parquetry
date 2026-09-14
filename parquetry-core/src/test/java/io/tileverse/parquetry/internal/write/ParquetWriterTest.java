@@ -228,6 +228,31 @@ class ParquetWriterTest {
     }
 
     @Test
+    void footerDeclaresFormatVersion2ForTheDefaultPageFormat() throws Exception {
+        ParquetSchema schema = flatSchema(requiredInt32("id"));
+        WriteOptions options = options().build();
+        Path parquetFile = tempDir.resolve("v2-footer.parquet");
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
+            writeRow(writer, schema, Map.of(ColumnPath.of("id"), 1));
+        }
+
+        assertThat(footerVersion(parquetFile)).isEqualTo(2);
+    }
+
+    @Test
+    void footerDeclaresFormatVersion1ForTheV11PageFormat() throws Exception {
+        ParquetSchema schema = flatSchema(requiredInt32("id"));
+        WriteOptions options =
+                options().parquetVersion(WriteOptions.ParquetVersion.V1_1).build();
+        Path parquetFile = tempDir.resolve("v1-footer.parquet");
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(parquetFile), schema, options)) {
+            writeRow(writer, schema, Map.of(ColumnPath.of("id"), 1));
+        }
+
+        assertThat(footerVersion(parquetFile)).isEqualTo(1);
+    }
+
+    @Test
     void footerCarriesCallerKeyValueMetadataAlongsideGeo() throws Exception {
         ParquetSchema schema = flatSchema(requiredBinary("geometry"), requiredInt32("id"));
         WriteOptions options = options()
@@ -323,6 +348,13 @@ class ParquetWriterTest {
             }
         }
         return ids;
+    }
+
+    private static int footerVersion(Path file) {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            return io.tileverse.parquetry.format.ParquetFormat.readFooter(source)
+                    .version();
+        }
     }
 
     private static List<Integer> rangeBoxed(int from, int to) {

@@ -47,6 +47,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.geo.geoparquet.BboxCovering;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
@@ -115,7 +116,7 @@ class GeoMetadataWriteTest {
     }
 
     @Test
-    void v2OnlyModeOmitsGeoKvAndEmitsLogicalType() throws Exception {
+    void v2OnlyModeWritesA20GeoDocumentAndTheLogicalType() throws Exception {
         ParquetSchema schema = flatSchema(requiredBinary("geometry"));
         WriteOptions options = options()
                 .geoParquetMetadata(GeoParquetMetadataMode.V2_0_ONLY)
@@ -125,8 +126,11 @@ class GeoMetadataWriteTest {
         writePointFile(file, schema, options, 0.0, 0.0);
 
         FileMetaData footer = readFooter(file);
-        Optional<String> geo = lookupKv(footer, "geo");
-        assertThat(geo).as("V2_0_ONLY must not write the v1.1 geo KV blob").isEmpty();
+        String geoJson = geoJsonOrThrow(footer);
+        assertThat(geoJson).contains("\"version\":\"2.0.0\"");
+        GeoParquetMetadata parsed = GeoParquetMetadata.parse(geoJson);
+        assertThat(parsed).isInstanceOf(GeoParquetMetadata.V2.class);
+        assertThat(parsed.columns().get("geometry").covering()).isEmpty();
 
         SchemaElement geometryElement = footerElementByName(footer, "geometry");
         assertThat(geometryElement.logicalType().orElseThrow()).isInstanceOf(LogicalType.Geometry.class);
@@ -210,6 +214,44 @@ class GeoMetadataWriteTest {
         assertThat(crs.getClass()).isEqualTo(expected.getClass());
     }
 
+    @Test
+    void existingCoveringIsDeclaredWithoutAddingColumns() throws Exception {
+        List<SchemaNode> extentLeaves =
+                List.of(requiredFloat("xmin"), requiredFloat("ymin"), requiredFloat("xmax"), requiredFloat("ymax"));
+        SchemaNode.Group extent =
+                new SchemaNode.Group("extent", Repetition.REQUIRED, extentLeaves, Optional.empty(), -1);
+        SchemaNode.Group root = new SchemaNode.Group(
+                "schema", Repetition.REQUIRED, List.of(requiredBinary("geometry"), extent), Optional.empty(), -1);
+        ParquetSchema schema = new ParquetSchema(root);
+        WriteOptions options = options()
+                .geoParquetMetadata(GeoParquetMetadataMode.V1_1_ONLY)
+                .crsEpsg("geometry", 4326)
+                .existingBboxCovering("geometry", "extent.xmin", "extent.ymin", "extent.xmax", "extent.ymax")
+                .build();
+        Map<ColumnPath, Object> row = Map.of(
+                ColumnPath.of("geometry"), MemorySegment.ofArray(wkbPoint(1.0, 2.0)),
+                ColumnPath.of("extent", "xmin"), 1.0f,
+                ColumnPath.of("extent", "ymin"), 2.0f,
+                ColumnPath.of("extent", "xmax"), 1.0f,
+                ColumnPath.of("extent", "ymax"), 2.0f);
+        Path file = tempDir.resolve("existing-covering.parquet");
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
+            writer.writeBatch(WriteFixtures.batch(schema, List.of(row)));
+        }
+
+        FileMetaData footer = readFooter(file);
+        GeoParquetMetadata parsed = GeoParquetMetadata.parse(geoJsonOrThrow(footer));
+        BboxCovering covering =
+                parsed.columns().get("geometry").covering().orElseThrow().bbox();
+        assertThat(covering.xmin()).isEqualTo(ColumnPath.of("extent", "xmin"));
+        assertThat(covering.ymin()).isEqualTo(ColumnPath.of("extent", "ymin"));
+        assertThat(covering.xmax()).isEqualTo(ColumnPath.of("extent", "xmax"));
+        assertThat(covering.ymax()).isEqualTo(ColumnPath.of("extent", "ymax"));
+        List<String> elementNames =
+                footer.schema().stream().map(SchemaElement::name).toList();
+        assertThat(elementNames).contains("extent").doesNotContain("bbox");
+    }
+
     // --- helpers ---
 
     private WriteOptions.Builder options() {
@@ -265,6 +307,11 @@ class GeoMetadataWriteTest {
     private static SchemaNode.Primitive requiredInt32(String name) {
         return new SchemaNode.Primitive(
                 name, Repetition.REQUIRED, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
+    }
+
+    private static SchemaNode.Primitive requiredFloat(String name) {
+        return new SchemaNode.Primitive(
+                name, Repetition.REQUIRED, PrimitiveKind.FLOAT, OptionalInt.empty(), Optional.empty(), -1);
     }
 
     private static SchemaNode.Primitive requiredBinary(String name) {

@@ -19,8 +19,10 @@ import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.regex.Matcher;
@@ -46,6 +48,8 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.geo.geoparquet.BboxCovering;
+import io.tileverse.parquetry.schema.geo.geoparquet.Covering;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeometryColumns;
@@ -331,7 +335,8 @@ public final class CpCmd implements Callable<Integer> {
      * Re-declares the source's geometry columns that survive the projection, letting the writer regenerate the
      * GeoParquet footer block for the output. The block must be regenerated rather than copied: its bounding box and
      * geometry types are derived from the rows actually written (which a filter or projection may narrow), and a
-     * geometry column dropped by the projection must leave no dangling entry behind.
+     * geometry column dropped by the projection must leave no dangling entry behind. The primary column's bbox covering
+     * declaration is the one part of the block forwarded as-is, see {@link #forwardCovering}.
      */
     private static void collectGeometryColumns(
             WriteOptions.Builder builder, ParquetSchema writeSchema, Map<String, String> sourceKeyValue) {
@@ -349,7 +354,60 @@ public final class CpCmd implements Callable<Integer> {
             // as geometry.
             CoordinateReferenceSystem crs = column.getValue().crs().orElseGet(CoordinateReferenceSystems::ogcCrs84);
             builder.crs(columnName, crs);
+            if (columnName.equals(geo.primaryColumn())) {
+                forwardCovering(builder, writeSchema, columnName, column.getValue());
+            }
         }
+    }
+
+    /**
+     * Keeps the source's bbox covering declaration for {@code columnName} when the copy still holds all four covering
+     * leaves as FLOAT or DOUBLE columns. The leaves themselves are copied like any other column; only the declaration
+     * needs forwarding, and a declared covering stops the writer from deriving a second one. When a projection drops
+     * one of the leaves, or the source declares its covering over a column of another type, no declaration is forwarded
+     * and the writer's default covering policy applies to the copy. The writer declares one covering per file, hence
+     * only the primary geometry column's declaration is forwarded. Only the four planar extrema are forwarded; a
+     * source's {@code zmin} and {@code zmax} covering paths are not declared on the copy.
+     */
+    private static void forwardCovering(
+            WriteOptions.Builder builder, ParquetSchema writeSchema, String columnName, GeoColumn column) {
+        Optional<BboxCovering> covering = column.covering().map(Covering::bbox);
+        if (covering.isEmpty()) {
+            return;
+        }
+        BboxCovering bbox = covering.orElseThrow();
+        if (!coveringLeavesCopied(writeSchema, bbox)) {
+            return;
+        }
+        builder.existingBboxCovering(
+                columnName,
+                bbox.xmin().dot(),
+                bbox.ymin().dot(),
+                bbox.xmax().dot(),
+                bbox.ymax().dot());
+    }
+
+    /**
+     * Tells whether the copy holds every leaf of {@code covering} as a column accepted by the writer for a covering
+     * declaration: each of the four paths must resolve in {@code writeSchema} to a FLOAT or DOUBLE leaf. Both a
+     * projection that drops one of the leaves and a source declaration over a column of another type answer false,
+     * which leaves the copy to the writer's default covering policy instead of aborting the write.
+     */
+    static boolean coveringLeavesCopied(ParquetSchema writeSchema, BboxCovering covering) {
+        List<ColumnPath> leaves = List.of(covering.xmin(), covering.ymin(), covering.xmax(), covering.ymax());
+        return leaves.stream().allMatch(leaf -> isFloatingPointLeaf(writeSchema, leaf));
+    }
+
+    private static boolean isFloatingPointLeaf(ParquetSchema writeSchema, ColumnPath path) {
+        Optional<SchemaNode> node = writeSchema.find(path);
+        if (node.isEmpty()) {
+            return false;
+        }
+        if (!(node.orElseThrow() instanceof SchemaNode.Primitive leaf)) {
+            return false;
+        }
+        PrimitiveKind kind = leaf.kind();
+        return kind == PrimitiveKind.FLOAT || kind == PrimitiveKind.DOUBLE;
     }
 
     private static boolean survivesProjection(ParquetSchema writeSchema, String columnName) {

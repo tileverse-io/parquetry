@@ -198,7 +198,8 @@ public final class FeatureRecordBatches {
                 base.tempDir(),
                 base.writeObserver(),
                 base.writeObserverCadenceRows(),
-                base.bboxCovering());
+                base.bboxCovering(),
+                base.existingBboxCovering());
     }
 
     /**

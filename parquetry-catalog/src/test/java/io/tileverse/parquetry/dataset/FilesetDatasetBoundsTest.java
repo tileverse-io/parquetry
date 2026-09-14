@@ -101,8 +101,7 @@ class FilesetDatasetBoundsTest {
         // the bounds must come from scanning, not report empty.
         for (int i = 0; i < REGIONS.size(); i++) {
             Path dir = Files.createDirectories(root.resolve("region=" + REGIONS.get(i)));
-            PointParquet.writePoints(
-                    dir.resolve("points.parquet"), "geometry", GeoParquetMetadataMode.V2_0_ONLY, POINTS_PER_REGION[i]);
+            PointParquet.writePointsWithoutGeoMetadata(dir.resolve("points.parquet"), "geometry", POINTS_PER_REGION[i]);
         }
         try (FilesetCatalog catalog =
                 FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {

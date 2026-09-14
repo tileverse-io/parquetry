@@ -41,34 +41,38 @@ import tools.jackson.core.JsonGenerator;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Emits GeoParquet metadata in the two flavours parquetry supports.
+ * Emits GeoParquet metadata in the flavours supported by parquetry.
  *
- * <p>The v1.1 flavour is a JSON document keyed under {@code "geo"} in the footer's {@code key_value_metadata}; the v2.0
+ * <p>The 1.1 flavour is a JSON document keyed under {@code "geo"} in the footer's {@code key_value_metadata}. The 2.0
  * flavour is a {@link LogicalType.Geometry} / {@link LogicalType.Geography} annotation on the geometry column's
- * primitive leaf. Mode {@link GeoParquetMetadataMode#DUAL_V1_1_AND_V2_0} emits both for maximum reader compatibility;
- * {@link GeoParquetMetadataMode#V1_1_ONLY} emits only the JSON; {@link GeoParquetMetadataMode#V2_0_ONLY} emits only the
- * logical-type annotations.
+ * primitive leaf together with a {@code "geo"} document declaring version 2.0.0, which the 2.0 spec requires. Mode
+ * {@link GeoParquetMetadataMode#DUAL_V1_1_AND_V2_0} emits the logical types and a 1.1.0 document for maximum reader
+ * compatibility; {@link GeoParquetMetadataMode#V1_1_ONLY} emits only the 1.1.0 document;
+ * {@link GeoParquetMetadataMode#V2_0_ONLY} emits the logical types and a 2.0.0 document.
  *
  * <p>The set of geometry columns is taken from {@link WriteOptions#crs()}: every column path with a CRS configured is
  * treated as a geometry column. The writer does not infer geometry-ness from the schema's existing logical types -- the
  * user opts in by configuring a CRS for that column.
  *
  * <p>{@link #applyV2LogicalTypes} returns a copy of the schema with {@link LogicalType.Geometry} attached to every
- * configured column, carrying its typed PROJJSON CRS (the spec default OGC:CRS84 is implied by an empty CRS, so we
- * always include the CRS explicitly so downstream readers see a complete annotation).
+ * configured column, each annotation holding its typed PROJJSON CRS. An empty CRS implies the spec default OGC:CRS84;
+ * the writer includes the CRS explicitly to give downstream readers a complete annotation.
  *
- * <p>{@link #v1JsonPayload} produces the JSON document that lands as the value side of the {@code "geo"} KV entry. The
- * shape mirrors GeoParquet 1.1: a {@code "version"} field, a {@code "primary_column"} pointing at the first geometry
- * column in schema order, and a {@code "columns"} object with one entry per geometry column carrying the WKB encoding,
- * the typed CRS as PROJJSON, the list of WKB geometry-type names, the bounding box, and {@code "edges": "planar"} by
- * default. The bbox is omitted when the per-column summary recorded no observations.
+ * <p>{@link #geoJsonPayload} produces the JSON document that lands as the value side of the {@code "geo"} KV entry. The
+ * shape is shared by both versions: a {@code "version"} field, a {@code "primary_column"} pointing at the first
+ * geometry column in schema order, and a {@code "columns"} object with one entry per geometry column holding the WKB
+ * encoding, the typed CRS as PROJJSON, the list of WKB geometry-type names, the bounding box, and {@code "edges":
+ * "planar"} by default. The bbox is omitted when the per-column summary recorded no observations.
  */
 public final class GeoMetadataWriter {
 
-    /** GeoParquet 1.1 spec version embedded in the JSON document. */
-    private static final String GEOPARQUET_VERSION = "1.1.0";
+    /** GeoParquet spec version embedded in the JSON document under the 1.1 metadata modes. */
+    private static final String GEOPARQUET_1_1_VERSION = "1.1.0";
 
-    /** Default edge interpolation for {@link LogicalType.Geometry} columns under GeoParquet 1.1. */
+    /** GeoParquet spec version embedded in the JSON document under {@link GeoParquetMetadataMode#V2_0_ONLY}. */
+    private static final String GEOPARQUET_2_0_VERSION = "2.0.0";
+
+    /** Default edge interpolation for a geometry column, written into every geo document. */
     private static final String PLANAR_EDGES = "planar";
 
     private static final JsonMapper MAPPER =
@@ -85,8 +89,8 @@ public final class GeoMetadataWriter {
      * {@link WriteOptions#crs()}.
      *
      * <p>Returns the input schema unchanged when {@link WriteOptions#geoParquetMetadata()} is
-     * {@link GeoParquetMetadataMode#V1_1_ONLY} or no geometry columns are configured: the v1.1 KV blob carries the CRS
-     * on its own, and emitting redundant logical types would mislead a v1-only reader into thinking the file is a v2
+     * {@link GeoParquetMetadataMode#V1_1_ONLY} or no geometry columns are configured: the v1.1 KV blob holds the CRS on
+     * its own, and emitting redundant logical types would mislead a v1-only reader into thinking the file is a v2
      * native GeoParquet.
      */
     public ParquetSchema applyV2LogicalTypes(@NonNull ParquetSchema schema) {
@@ -113,33 +117,34 @@ public final class GeoMetadataWriter {
     }
 
     /**
-     * Returns the v1.1 KV JSON payload with no covering declaration. Equivalent to {@link #v1JsonPayload(ParquetSchema,
-     * Map, Optional)} with an empty covering.
+     * Returns the {@code "geo"} JSON document with no covering declaration. Equivalent to
+     * {@link #geoJsonPayload(ParquetSchema, Map, Optional)} with an empty covering.
      */
-    public Optional<String> v1JsonPayload(
+    public Optional<String> geoJsonPayload(
             @NonNull ParquetSchema schema, @NonNull Map<ColumnPath, GeoColumnSummary> perColumnSummaries) {
-        return v1JsonPayload(schema, perColumnSummaries, Optional.empty());
+        return geoJsonPayload(schema, perColumnSummaries, Optional.empty());
     }
 
     /**
-     * Returns the v1.1 KV JSON payload, or {@link Optional#empty()} when the configured mode is
-     * {@link GeoParquetMetadataMode#V2_0_ONLY} or no geometry columns are configured.
+     * Returns the {@code "geo"} JSON document, or {@link Optional#empty()} when no geometry column is configured. The
+     * document declares version 1.1.0 under {@link GeoParquetMetadataMode#DUAL_V1_1_AND_V2_0} and
+     * {@link GeoParquetMetadataMode#V1_1_ONLY}, and version 2.0.0 under {@link GeoParquetMetadataMode#V2_0_ONLY}, whose
+     * spec requires the key.
      *
      * @param schema the schema as it appears in the footer (after {@link #applyV2LogicalTypes}); only used to determine
      *     which configured CRS columns are present and to fix the {@code primary_column} to the first geometry leaf in
      *     schema order
      * @param perColumnSummaries dataset-level aggregates per configured geometry column; missing entries fall back to
      *     an empty summary (bbox absent, no geometry types observed)
-     * @param covering the active bbox covering plan, present when the write derives a covering for its geometry column;
-     *     empty when no covering is written. The declaration is emitted only on the plan's geometry column.
+     * @param covering the active bbox covering plan, present when the write derives or declares a covering for its
+     *     geometry column; empty when no covering is written. The declaration is emitted only on the plan's geometry
+     *     column and never under {@code V2_0_ONLY}: 2.0 column metadata has no covering field, and {@link WriteOptions}
+     *     rejects a covering request or declaration in that mode.
      */
-    public Optional<String> v1JsonPayload(
+    public Optional<String> geoJsonPayload(
             @NonNull ParquetSchema schema,
             @NonNull Map<ColumnPath, GeoColumnSummary> perColumnSummaries,
             @NonNull Optional<BboxCoveringPlan> covering) {
-        if (options.geoParquetMetadata() == GeoParquetMetadataMode.V2_0_ONLY) {
-            return Optional.empty();
-        }
         List<ColumnPath> geoColumns = orderedGeoColumns(schema);
         if (geoColumns.isEmpty()) {
             return Optional.empty();
@@ -165,7 +170,7 @@ public final class GeoMetadataWriter {
         StringWriter sink = new StringWriter();
         try (JsonGenerator gen = MAPPER.createGenerator(sink)) {
             gen.writeStartObject();
-            gen.writeStringProperty("version", GEOPARQUET_VERSION);
+            gen.writeStringProperty("version", versionForMode());
             gen.writeStringProperty("primary_column", primaryColumnName(geoColumns.get(0)));
 
             gen.writeName("columns");
@@ -179,6 +184,13 @@ public final class GeoMetadataWriter {
             gen.writeEndObject();
         }
         return sink.toString();
+    }
+
+    private String versionForMode() {
+        if (options.geoParquetMetadata() == GeoParquetMetadataMode.V2_0_ONLY) {
+            return GEOPARQUET_2_0_VERSION;
+        }
+        return GEOPARQUET_1_1_VERSION;
     }
 
     private void writeColumnObject(
@@ -218,8 +230,8 @@ public final class GeoMetadataWriter {
     }
 
     /**
-     * Declares the derived {@code bbox} covering per GeoParquet 1.1: a {@code covering.bbox} object mapping each of the
-     * four extrema to the two-part path of its sidecar column. The spec order is xmin, ymin, xmax, ymax.
+     * Declares the {@code bbox} covering per GeoParquet 1.1, derived or existing: a {@code covering.bbox} object
+     * mapping each of the four extrema to the path of its sidecar column. The spec order is xmin, ymin, xmax, ymax.
      */
     private static void writeCovering(JsonGenerator gen, BboxCoveringPlan plan) {
         gen.writeName("covering");
