@@ -17,9 +17,12 @@ package io.tileverse.parquetry.internal.write;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.ByteArrayInputStream;
 import java.lang.foreign.MemorySegment;
+import java.lang.management.ManagementFactory;
+import java.lang.management.OperatingSystemMXBean;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -35,6 +38,8 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import com.sun.management.UnixOperatingSystemMXBean;
 
 import io.tileverse.parquetry.columnar.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.columnar.IntVector;
@@ -58,6 +63,7 @@ import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.ByteSink;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.runtime.ComputeExecutor;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -281,6 +287,97 @@ class RowGroupWriterTest {
         assertThat(listTempFiles())
                 .as("close without flushTo must delete every per-column temp file it created")
                 .isEmpty();
+    }
+
+    /**
+     * A flushed row group holds no file descriptor: each column writer's temp file channel is released at flush rather
+     * than left to garbage collection. On a filesystem that defers the unlink of an open file (SMB, Windows) an
+     * unreleased channel keeps the deleted entry alive, and the writer's temp directory can then not be removed.
+     */
+    @Test
+    void flushReleasesEveryColumnTempFileHandle() {
+        UnixOperatingSystemMXBean os = unixOperatingSystemOrSkip();
+        ParquetSchema schema = flatSchema(requiredInt32("a"), requiredInt32("b"));
+        WriteOptions options = options().build();
+        writeOneRowGroup(schema, options);
+        long baseline = os.getOpenFileDescriptorCount();
+
+        RowGroupWriter rgw = new RowGroupWriter(options, schema, tempDir);
+        rgw.appendBatch(WriteFixtures.batch(schema, rowsOfAB(10)));
+        assertThat(os.getOpenFileDescriptorCount())
+                .as("an accumulating row group holds its temp files open")
+                .isGreaterThan(baseline);
+
+        rgw.flushTo(new ByteArrayByteSink());
+        assertThat(os.getOpenFileDescriptorCount())
+                .as("a flushed row group holds no temp file open")
+                .isEqualTo(baseline);
+        rgw.close();
+    }
+
+    /**
+     * A flush that fails part-way leaves columns whose temp files were not consolidated. Close must still delete them
+     * and release their channels even though the row group counts as flushed.
+     */
+    @Test
+    void closeAfterFailedFlushDeletesRemainingTempFiles() throws Exception {
+        ParquetSchema schema = flatSchema(requiredInt32("a"), requiredInt32("b"));
+        WriteOptions options = options().build();
+        RowGroupWriter rgw = new RowGroupWriter(options, schema, tempDir);
+        rgw.appendBatch(WriteFixtures.batch(schema, rowsOfAB(10)));
+
+        ByteSink rejecting = new RejectingByteSink();
+        assertThatThrownBy(() -> rgw.flushTo(rejecting)).isInstanceOf(IllegalStateException.class);
+        rgw.close();
+
+        assertThat(listTempFiles())
+                .as("close after a failed flush must delete every temp file not yet consolidated")
+                .isEmpty();
+    }
+
+    /**
+     * The first flush in a JVM loads codec and format classes whose jar files stay open afterwards; running one full
+     * row group beforehand keeps that out of a file-descriptor measurement.
+     */
+    private void writeOneRowGroup(ParquetSchema schema, WriteOptions options) {
+        try (RowGroupWriter rgw = new RowGroupWriter(options, schema, tempDir)) {
+            rgw.appendBatch(WriteFixtures.batch(schema, rowsOfAB(10)));
+            rgw.flushTo(new ByteArrayByteSink());
+        }
+    }
+
+    private static List<Map<ColumnPath, Object>> rowsOfAB(int count) {
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            rows.add(Map.of(ColumnPath.of("a"), i, ColumnPath.of("b"), i + 1));
+        }
+        return rows;
+    }
+
+    private static UnixOperatingSystemMXBean unixOperatingSystemOrSkip() {
+        OperatingSystemMXBean os = ManagementFactory.getOperatingSystemMXBean();
+        assumeTrue(
+                os instanceof UnixOperatingSystemMXBean, "the open file descriptor count is observable on Unix only");
+        return (UnixOperatingSystemMXBean) os;
+    }
+
+    /** A sink whose every write fails, interrupting a flush after the first column chunk is finished. */
+    private static final class RejectingByteSink implements ByteSink {
+
+        @Override
+        public void write(MemorySegment src) {
+            throw new IllegalStateException("sink rejects every write");
+        }
+
+        @Override
+        public long position() {
+            return 0L;
+        }
+
+        @Override
+        public void close() {
+            // nothing held
+        }
     }
 
     /**

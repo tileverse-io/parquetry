@@ -114,7 +114,8 @@ forwarding other key-value metadata. A destination ending in `/` (or an existing
 filename inside it. The destination has its own connection options mirroring the source ones, prefixed `--dst-`
 (`--dst-provider`, `--dst-region`, `--dst-access-key`, `--dst-secret-key`, `--dst-path-style`, `--dst-anonymous`,
 `--dst-gcs-project`, `--dst-endpoint`), plus `-f`/`--overwrite` to replace an existing destination. This lets `cp`
-move data between two different stores in one command.
+move data between two different stores in one command. The writer's working files go to the system temporary
+directory; `--temp-dir <dir>` points them elsewhere, for example when that volume is small or read-only.
 
 The write path currently handles flat columns (primitives, including WKB geometry); copying a file whose schema
 contains nested list/map/struct or Variant columns is not yet supported and fails with a clear error.

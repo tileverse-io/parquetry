@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.function.IntSupplier;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -167,6 +168,55 @@ class CpCmdTest {
         int code = Par.newCommandLine().execute("cp", src.toString(), dst.toString(), "-f");
         assertThat(code).isZero();
         assertThat(rowCount(dst)).isEqualTo(4L);
+    }
+
+    /**
+     * The writer's working files go to the system temporary directory by default, never beside a local destination: a
+     * destination on a network mount would otherwise pay a temp write and a read back over the wire per column chunk.
+     * Pointing the JVM at a temporary directory that does not exist makes the default placement observable.
+     */
+    @Test
+    void spillsWorkingFilesToTheSystemTempDirByDefault(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("cities.parquet");
+        Path dst = Files.createDirectory(dir.resolve("out")).resolve("cities.parquet");
+        Fixtures.writeCities(src);
+        Path missingTempDir = dir.resolve("no-such-tmp");
+
+        StringWriter err = new StringWriter();
+        int code = withSystemTempDir(missingTempDir, () -> {
+            CommandLine cmd = Par.newCommandLine();
+            cmd.setErr(new PrintWriter(err));
+            return cmd.execute("cp", src.toString(), dst.toString());
+        });
+
+        assertThat(code).isNotZero();
+        assertThat(err.toString()).contains(missingTempDir.toString());
+    }
+
+    @Test
+    void tempDirFlagOverridesTheSystemTempDir(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("cities.parquet");
+        Path dst = dir.resolve("cities-copy.parquet");
+        Fixtures.writeCities(src);
+        Path spill = Files.createDirectory(dir.resolve("spill"));
+
+        int code = withSystemTempDir(
+                dir.resolve("no-such-tmp"),
+                () -> Par.newCommandLine()
+                        .execute("cp", src.toString(), dst.toString(), "--temp-dir", spill.toString()));
+
+        assertThat(code).isZero();
+        assertThat(dst).exists();
+    }
+
+    private static int withSystemTempDir(Path tempDir, IntSupplier action) {
+        String previous = System.getProperty("java.io.tmpdir");
+        System.setProperty("java.io.tmpdir", tempDir.toString());
+        try {
+            return action.getAsInt();
+        } finally {
+            System.setProperty("java.io.tmpdir", previous);
+        }
     }
 
     @Test

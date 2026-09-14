@@ -75,6 +75,12 @@ public final class CpCmd implements Callable<Integer> {
             description = "Overwrite an existing destination.")
     private boolean overwrite;
 
+    @Option(
+            names = "--temp-dir",
+            paramLabel = "<dir>",
+            description = "Directory for the writer's working files. Default: the system temporary directory.")
+    private Path tempDir;
+
     @Mixin
     private GlobalOptions options;
 
@@ -147,8 +153,7 @@ public final class CpCmd implements Callable<Integer> {
             Map<String, String> sourceKeyValue)
             throws IOException {
         WriteOptions.RowGroupSize rowGroupSize = resolveRowGroupSize();
-        WriteOptions writeOptions =
-                buildWriteOptions(writeSchema, writerTempDir(sourceFileName), sourceKeyValue, rowGroupSize);
+        WriteOptions writeOptions = buildWriteOptions(writeSchema, tempDir, sourceKeyValue, rowGroupSize);
         long limit = options.limit == null ? Long.MAX_VALUE : options.limit;
         Query query = buildQuery(predicate, projection, limit);
         try (UriResolver.OpenSink sink =
@@ -211,23 +216,17 @@ public final class CpCmd implements Callable<Integer> {
     }
 
     /**
-     * Where the writer spills working files. A local destination uses its own directory; a remote destination has no
-     * local parent, and the system temporary directory is used instead.
+     * Writer options for the copy. A {@code null} temp dir keeps the writer's default, the system temporary directory.
      */
-    private Path writerTempDir(String sourceFileName) {
-        URI destinationUri = UriResolver.resolvedUri(dst, sourceFileName);
-        if ("file".equals(destinationUri.getScheme())) {
-            return Path.of(destinationUri).getParent();
-        }
-        return Path.of(System.getProperty("java.io.tmpdir"));
-    }
-
     private static WriteOptions buildWriteOptions(
             ParquetSchema writeSchema,
             Path tempDir,
             Map<String, String> sourceKeyValue,
             WriteOptions.RowGroupSize rowGroupSize) {
-        WriteOptions.Builder builder = WriteOptions.builder().tempDir(tempDir);
+        WriteOptions.Builder builder = WriteOptions.builder();
+        if (tempDir != null) {
+            builder.tempDir(tempDir);
+        }
         if (rowGroupSize != null) {
             builder.rowGroupSize(rowGroupSize);
         }
