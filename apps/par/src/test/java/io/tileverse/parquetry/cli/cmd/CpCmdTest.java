@@ -209,6 +209,27 @@ class CpCmdTest {
         assertThat(dst).exists();
     }
 
+    /**
+     * A copy that fails after the destination was opened leaves no staged output beside it: the abort path discards the
+     * storage's staging file rather than leaving a {@code .tmp-*.part} behind. The failure is a temp-dir path that is a
+     * plain file, which the writer rejects on every platform once the destination is already open.
+     */
+    @Test
+    void failedCopyLeavesNoStagedOutputBesideTheDestination(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("cities.parquet");
+        Path dst = Files.createDirectory(dir.resolve("out")).resolve("cities.parquet");
+        Fixtures.writeCities(src);
+        Path notADirectory = Files.writeString(dir.resolve("not-a-directory"), "");
+
+        int code = Par.newCommandLine()
+                .execute("cp", src.toString(), dst.toString(), "--temp-dir", notADirectory.toString());
+
+        assertThat(code).isNotZero();
+        try (Stream<Path> entries = Files.list(dst.getParent())) {
+            assertThat(entries).isEmpty();
+        }
+    }
+
     private static int withSystemTempDir(Path tempDir, IntSupplier action) {
         String previous = System.getProperty("java.io.tmpdir");
         System.setProperty("java.io.tmpdir", tempDir.toString());

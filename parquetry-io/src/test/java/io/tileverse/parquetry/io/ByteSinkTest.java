@@ -222,4 +222,32 @@ class ByteSinkTest {
             closeCount++;
         }
     }
+
+    /**
+     * A sink over an OutputStream must never close that stream on its own: closing is the caller's commit. The JDK's
+     * interruptible channels close their target when the writing thread is interrupted, which would turn a cancelled
+     * write into a commit.
+     */
+    @Test
+    void outputStreamSinkWritesOnAnInterruptedThreadWithoutClosingTheStream() {
+        CloseTrackingStream out = new CloseTrackingStream();
+        ByteSink sink = ByteSink.ofOutputStream(out);
+        Thread.currentThread().interrupt();
+        try {
+            sink.write(MemorySegment.ofArray(new byte[] {1, 2, 3}));
+        } finally {
+            Thread.interrupted();
+        }
+        assertThat(out.closed).isFalse();
+        assertThat(out.toByteArray()).containsExactly(1, 2, 3);
+    }
+
+    private static final class CloseTrackingStream extends ByteArrayOutputStream {
+        boolean closed;
+
+        @Override
+        public void close() {
+            closed = true;
+        }
+    }
 }
