@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.internal.write;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
@@ -27,6 +28,7 @@ import org.locationtech.jts.io.ByteOrderValues;
 
 import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.format.GeospatialStatistics;
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.testsupport.Wkb;
 
 class GeospatialStatisticsAccumulatorTest {
@@ -340,10 +342,22 @@ class GeospatialStatisticsAccumulatorTest {
         assertThat(stats.geospatialTypes()).isEmpty();
     }
 
+    @Test
+    void curveGeometryIsRejectedEvenThoughItIsWellFormedWkb() {
+        // A CIRCULARSTRING header (type code 8). The walk cannot follow its body, and skipping it would record a type
+        // code whose extents never reached the bounding box.
+        MemorySegment circularString = new WkbWriter(ByteOrder.LITTLE_ENDIAN, 8).toSegment();
+        GeospatialStatisticsAccumulator acc = new GeospatialStatisticsAccumulator();
+
+        assertThatThrownBy(() -> acc.update(circularString))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("Unsupported WKB geometry type: 8");
+    }
+
     /**
-     * Minimal hand-rolled WKB builder, retained only to produce ISO PointZ / PointM / PointZM fixtures (type codes 1001
-     * / 2001 / 3001). JTS's WKBWriter encodes Z/M via EWKB high-bit flags and cannot emit the ISO {@code +1000}
-     * type-code offsets the reader and accumulator dispatch on.
+     * Minimal hand-rolled WKB builder for the header forms outside JTS's writer: the ISO PointZ / PointM / PointZM type
+     * codes (1001 / 2001 / 3001), and the curve type codes above GEOMETRYCOLLECTION. JTS's WKBWriter encodes Z/M
+     * through EWKB high-bit flags and emits no ISO {@code +1000} type-code offset.
      */
     private static final class WkbWriter {
 

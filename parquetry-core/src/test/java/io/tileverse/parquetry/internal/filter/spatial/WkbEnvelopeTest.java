@@ -16,16 +16,20 @@
 package io.tileverse.parquetry.internal.filter.spatial;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.junit.jupiter.api.Test;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.io.ByteOrderValues;
 
 import io.tileverse.parquetry.filter.Bbox;
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.testsupport.Wkb;
 
 class WkbEnvelopeTest {
@@ -210,24 +214,45 @@ class WkbEnvelopeTest {
     }
 
     @Test
-    void xyWalkVisitsEveryCoordinate() {
-        int[] count = {0};
-        WkbEnvelope.walk(Wkb.fromWkt("LINESTRING (0 0, 10 5, 20 0)"), (WkbEnvelope.XyVisitor) (x, y) -> {
-            count[0]++;
+    void walkReportsOneRunPerRing() {
+        List<Integer> sizes = new ArrayList<>();
+        WkbEnvelope.walk(Wkb.fromWkt("POLYGON ((0 0, 10 0, 10 8, 0 8, 0 0), (2 2, 4 2, 4 4, 2 2))"), run -> {
+            sizes.add(run.size());
             return true;
         });
 
-        assertThat(count[0]).isEqualTo(3);
+        assertThat(sizes).containsExactly(5, 4);
     }
 
     @Test
-    void xyWalkStopsEarlyWhenVisitorReturnsFalse() {
-        int[] count = {0};
-        WkbEnvelope.walk(Wkb.fromWkt("LINESTRING (0 0, 10 5, 20 0)"), (WkbEnvelope.XyVisitor) (x, y) -> {
-            count[0]++;
+    void walkStopsAtTheRunWhoseVisitorReturnsFalse() {
+        int[] runs = {0};
+        WkbEnvelope.walk(Wkb.fromWkt("MULTILINESTRING ((0 0, 5 5), (-1 -2, 10 20), (3 3, 4 4))"), run -> {
+            runs[0]++;
             return false;
         });
 
-        assertThat(count[0]).isEqualTo(1);
+        assertThat(runs[0]).isEqualTo(1);
+    }
+
+    @Test
+    void windowFormReadsTheValueAtItsOffsetWithoutASlice() {
+        MemorySegment value = Wkb.fromWkt("POLYGON ((0 0, 10 0, 10 8, 0 8, 0 0))");
+        byte[] padded = new byte[7 + (int) value.byteSize() + 5];
+        MemorySegment.copy(value, 0L, MemorySegment.ofArray(padded), 7L, value.byteSize());
+        MemorySegment backing = MemorySegment.ofArray(padded).asReadOnly();
+
+        Bbox env = WkbEnvelope.compute(backing, 7L, value.byteSize());
+
+        assertThat(env).isEqualTo(WkbEnvelope.compute(value));
+    }
+
+    @Test
+    void truncatedValueThrowsInsteadOfReadingPastItsLength() {
+        MemorySegment value = Wkb.fromWkt("LINESTRING (0 0, 10 5, 20 0)");
+        long withoutTheLastOrdinate = value.byteSize() - Double.BYTES;
+
+        assertThatThrownBy(() -> WkbEnvelope.compute(value, 0L, withoutTheLastOrdinate))
+                .isInstanceOf(MalformedFileException.class);
     }
 }

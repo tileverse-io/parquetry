@@ -462,8 +462,10 @@ public final class VectorizedPredicateEvaluator {
         BitSet out = new BitSet(rowCount);
         if (vec instanceof BinaryVector wkb) {
             BitSet candidates = candidateRows(vec.validity(), restriction);
+            BinaryView<Boolean> relation =
+                    (backing, offset, length) -> WkbEnvelope.matches(spatial, backing, offset, length);
             for (int r = candidates.nextSetBit(0); r >= 0; r = candidates.nextSetBit(r + 1)) {
-                boolean hit = WkbEnvelope.matches(spatial, wkb.get(r));
+                boolean hit = Boolean.TRUE.equals(wkb.read(r, relation));
                 if (hit != negated) {
                     out.set(r);
                 }

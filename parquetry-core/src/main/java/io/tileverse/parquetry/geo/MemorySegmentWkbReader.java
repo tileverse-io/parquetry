@@ -15,14 +15,7 @@
  */
 package io.tileverse.parquetry.geo;
 
-import static java.lang.foreign.ValueLayout.JAVA_BYTE;
-import static java.lang.foreign.ValueLayout.JAVA_DOUBLE_UNALIGNED;
-import static java.lang.foreign.ValueLayout.JAVA_INT_UNALIGNED;
-import static java.nio.ByteOrder.BIG_ENDIAN;
-import static java.nio.ByteOrder.LITTLE_ENDIAN;
-
 import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
 
 import org.locationtech.jts.geom.CoordinateSequence;
 import org.locationtech.jts.geom.Geometry;
@@ -36,14 +29,18 @@ import org.locationtech.jts.geom.impl.PackedCoordinateSequence;
 import org.locationtech.jts.geom.impl.PackedCoordinateSequenceFactory;
 
 import io.tileverse.parquetry.format.MalformedFileException;
+import io.tileverse.parquetry.internal.wkb.CoordinateRun;
+import io.tileverse.parquetry.internal.wkb.Dimensions;
+import io.tileverse.parquetry.internal.wkb.WkbCursor;
+import io.tileverse.parquetry.internal.wkb.WkbTypeCode;
 
 /**
  * Thread-safe WKB-to-JTS reader that reads directly from a {@link MemorySegment} onto packed coordinate sequences,
  * without {@code WKBReader}, {@code InStream}, or any intermediate {@code byte[]} copy; state-free per call.
  *
  * <p>The reader holds only an immutable {@link GeometryFactory} (default backed by
- * {@link PackedCoordinateSequenceFactory}); all cursor state lives in locals of {@link #read(MemorySegment)}, hence one
- * instance is safe to share across threads.
+ * {@link PackedCoordinateSequenceFactory}); all walk state lives in a per-call {@link WkbCursor}, hence one instance is
+ * safe to share across threads.
  *
  * <p>The decode walks the WKB structure exactly as the wire format mandates: a leading byte-order byte (0x00
  * big-endian, 0x01 little-endian) at the start of each geometry, followed by a 4-byte type code in the declared byte
@@ -58,34 +55,6 @@ import io.tileverse.parquetry.format.MalformedFileException;
  * {@code double[]}, with no per-coordinate loop, no {@code Coordinate} allocation, and no {@code byte[]} copy.
  */
 public final class MemorySegmentWkbReader {
-
-    private static final ValueLayout.OfInt INT_LE = JAVA_INT_UNALIGNED.withOrder(LITTLE_ENDIAN);
-    private static final ValueLayout.OfInt INT_BE = JAVA_INT_UNALIGNED.withOrder(BIG_ENDIAN);
-    private static final ValueLayout.OfDouble DOUBLE_LE = JAVA_DOUBLE_UNALIGNED.withOrder(LITTLE_ENDIAN);
-    private static final ValueLayout.OfDouble DOUBLE_BE = JAVA_DOUBLE_UNALIGNED.withOrder(BIG_ENDIAN);
-
-    private static final byte WKB_BIG_ENDIAN = 0x00;
-    private static final byte WKB_LITTLE_ENDIAN = 0x01;
-
-    private static final int TYPE_POINT = 1;
-    private static final int TYPE_LINESTRING = 2;
-    private static final int TYPE_POLYGON = 3;
-    private static final int TYPE_MULTIPOINT = 4;
-    private static final int TYPE_MULTILINESTRING = 5;
-    private static final int TYPE_MULTIPOLYGON = 6;
-    private static final int TYPE_GEOMETRYCOLLECTION = 7;
-
-    private static final int Z_OFFSET = 1000;
-    private static final int M_OFFSET = 2000;
-    private static final int ZM_OFFSET = 3000;
-
-    private static final int EWKB_FLAG_Z = 0x80000000;
-    private static final int EWKB_FLAG_M = 0x40000000;
-    private static final int EWKB_FLAG_SRID = 0x20000000;
-    private static final int EWKB_FLAG_MASK = EWKB_FLAG_Z | EWKB_FLAG_M | EWKB_FLAG_SRID;
-
-    /** Smallest on-wire size of one nested geometry: the byte-order byte plus the 4-byte type code. */
-    private static final int MIN_GEOMETRY_BYTES = Byte.BYTES + Integer.BYTES;
 
     private static final GeometryFactory DEFAULT_FACTORY = new GeometryFactory(new PackedCoordinateSequenceFactory());
 
@@ -132,7 +101,7 @@ public final class MemorySegmentWkbReader {
      */
     public Geometry read(MemorySegment backing, long offset, long length) {
         try {
-            Cursor cursor = new Cursor(backing, offset, length);
+            WkbCursor cursor = new WkbCursor(backing, offset, length);
             return readGeometry(cursor);
         } catch (RuntimeException e) {
             throw new MalformedFileException("Failed to decode WKB geometry: " + e.getMessage(), e);
@@ -140,27 +109,24 @@ public final class MemorySegmentWkbReader {
     }
 
     /**
-     * Reads one geometry at the cursor's current position. The cursor advances past the byte-order byte, the type code,
-     * any EWKB SRID, and every coordinate belonging to the geometry (recursing through containers). An EWKB SRID is
-     * stamped on the result via {@link Geometry#setSRID(int)}, which JTS propagates to a collection's members; plain
-     * WKB leaves the default SRID of 0.
+     * Reads one geometry at the cursor's current position: its header, then its coordinates, recursing through
+     * containers. An EWKB SRID is stamped on the result via {@link Geometry#setSRID(int)} and on every member of a
+     * collection; plain WKB leaves the default SRID of 0.
      */
-    private Geometry readGeometry(Cursor cursor) {
-        cursor.resetByteOrder();
-        int rawType = cursor.readInt();
-        Dimensions dims = dimensionsFor(rawType);
-        int baseType = baseType(rawType);
-        int srid = ((rawType & EWKB_FLAG_SRID) != 0) ? cursor.readInt() : 0;
+    private Geometry readGeometry(WkbCursor cursor) {
+        cursor.readHeader();
+        int srid = cursor.srid();
+        Dimensions dims = cursor.headerDimensions();
         Geometry geometry =
-                switch (baseType) {
-                    case TYPE_POINT -> readPoint(cursor, dims);
-                    case TYPE_LINESTRING -> readLineString(cursor, dims);
-                    case TYPE_POLYGON -> readPolygon(cursor, dims);
-                    case TYPE_MULTIPOINT -> readMultiPoint(cursor);
-                    case TYPE_MULTILINESTRING -> readMultiLineString(cursor);
-                    case TYPE_MULTIPOLYGON -> readMultiPolygon(cursor);
-                    case TYPE_GEOMETRYCOLLECTION -> readGeometryCollection(cursor);
-                    default -> throw new IllegalArgumentException("Unsupported WKB geometry type: " + baseType);
+                switch (cursor.baseType()) {
+                    case WkbTypeCode.POINT -> readPoint(cursor, dims);
+                    case WkbTypeCode.LINESTRING -> readLineString(cursor, dims);
+                    case WkbTypeCode.POLYGON -> readPolygon(cursor, dims);
+                    case WkbTypeCode.MULTIPOINT -> readMultiPoint(cursor);
+                    case WkbTypeCode.MULTILINESTRING -> readMultiLineString(cursor);
+                    case WkbTypeCode.MULTIPOLYGON -> readMultiPolygon(cursor);
+                    case WkbTypeCode.GEOMETRYCOLLECTION -> readGeometryCollection(cursor);
+                    default -> throw new MalformedFileException("Unsupported WKB geometry type: " + cursor.baseType());
                 };
         if (srid != 0) {
             stampSrid(geometry, srid);
@@ -183,7 +149,7 @@ public final class MemorySegmentWkbReader {
         }
     }
 
-    private Point readPoint(Cursor cursor, Dimensions dims) {
+    private Point readPoint(WkbCursor cursor, Dimensions dims) {
         CoordinateSequence seq = readCoordinates(cursor, 1, dims);
         if (isEmptyPoint(seq)) {
             return geometryFactory.createPoint();
@@ -191,8 +157,8 @@ public final class MemorySegmentWkbReader {
         return geometryFactory.createPoint(seq);
     }
 
-    private LineString readLineString(Cursor cursor, Dimensions dims) {
-        int numPoints = cursor.readInt();
+    private LineString readLineString(WkbCursor cursor, Dimensions dims) {
+        int numPoints = cursor.readCount(dims.count() * Double.BYTES);
         if (numPoints == 0) {
             return geometryFactory.createLineString();
         }
@@ -200,12 +166,11 @@ public final class MemorySegmentWkbReader {
         return geometryFactory.createLineString(seq);
     }
 
-    private Polygon readPolygon(Cursor cursor, Dimensions dims) {
-        int numRings = cursor.readInt();
+    private Polygon readPolygon(WkbCursor cursor, Dimensions dims) {
+        int numRings = cursor.readCount(Integer.BYTES);
         if (numRings == 0) {
             return geometryFactory.createPolygon();
         }
-        cursor.requireCount(numRings, Integer.BYTES);
         LinearRing shell = readRing(cursor, dims);
         LinearRing[] holes = new LinearRing[numRings - 1];
         for (int i = 0; i < holes.length; i++) {
@@ -214,15 +179,14 @@ public final class MemorySegmentWkbReader {
         return geometryFactory.createPolygon(shell, holes);
     }
 
-    private LinearRing readRing(Cursor cursor, Dimensions dims) {
-        int numPoints = cursor.readInt();
+    private LinearRing readRing(WkbCursor cursor, Dimensions dims) {
+        int numPoints = cursor.readCount(dims.count() * Double.BYTES);
         CoordinateSequence seq = readCoordinates(cursor, numPoints, dims);
         return geometryFactory.createLinearRing(seq);
     }
 
-    private Geometry readMultiPoint(Cursor cursor) {
-        int numElements = cursor.readInt();
-        cursor.requireCount(numElements, MIN_GEOMETRY_BYTES);
+    private Geometry readMultiPoint(WkbCursor cursor) {
+        int numElements = cursor.readCount(WkbCursor.MIN_GEOMETRY_BYTES);
         Point[] points = new Point[numElements];
         for (int i = 0; i < numElements; i++) {
             points[i] = (Point) readGeometry(cursor);
@@ -230,9 +194,8 @@ public final class MemorySegmentWkbReader {
         return geometryFactory.createMultiPoint(points);
     }
 
-    private Geometry readMultiLineString(Cursor cursor) {
-        int numElements = cursor.readInt();
-        cursor.requireCount(numElements, MIN_GEOMETRY_BYTES);
+    private Geometry readMultiLineString(WkbCursor cursor) {
+        int numElements = cursor.readCount(WkbCursor.MIN_GEOMETRY_BYTES);
         LineString[] lines = new LineString[numElements];
         for (int i = 0; i < numElements; i++) {
             lines[i] = (LineString) readGeometry(cursor);
@@ -240,9 +203,8 @@ public final class MemorySegmentWkbReader {
         return geometryFactory.createMultiLineString(lines);
     }
 
-    private Geometry readMultiPolygon(Cursor cursor) {
-        int numElements = cursor.readInt();
-        cursor.requireCount(numElements, MIN_GEOMETRY_BYTES);
+    private Geometry readMultiPolygon(WkbCursor cursor) {
+        int numElements = cursor.readCount(WkbCursor.MIN_GEOMETRY_BYTES);
         Polygon[] polygons = new Polygon[numElements];
         for (int i = 0; i < numElements; i++) {
             polygons[i] = (Polygon) readGeometry(cursor);
@@ -250,9 +212,8 @@ public final class MemorySegmentWkbReader {
         return geometryFactory.createMultiPolygon(polygons);
     }
 
-    private Geometry readGeometryCollection(Cursor cursor) {
-        int numElements = cursor.readInt();
-        cursor.requireCount(numElements, MIN_GEOMETRY_BYTES);
+    private Geometry readGeometryCollection(WkbCursor cursor) {
+        int numElements = cursor.readCount(WkbCursor.MIN_GEOMETRY_BYTES);
         Geometry[] elements = new Geometry[numElements];
         for (int i = 0; i < numElements; i++) {
             elements[i] = readGeometry(cursor);
@@ -261,16 +222,14 @@ public final class MemorySegmentWkbReader {
     }
 
     /**
-     * Reads {@code numPoints} coordinates of the given dimensions into a packed sequence with one bulk copy. The
-     * {@code numPoints * dim} doubles are contiguous in the segment and land directly in the backing array; the cursor
-     * advances past every copied byte.
+     * Reads {@code numPoints} coordinates of the given dimensions into a packed sequence with one bulk copy: the run's
+     * doubles are contiguous in the segment and land directly in the array that backs the sequence.
      */
-    private CoordinateSequence readCoordinates(Cursor cursor, int numPoints, Dimensions dims) {
-        int dimension = dims.dimension();
-        cursor.requireCount(numPoints, dimension * Double.BYTES);
-        double[] packed = new double[numPoints * dimension];
-        cursor.copyDoubles(packed);
-        return new PackedCoordinateSequence.Double(packed, dimension, dims.measures());
+    private CoordinateSequence readCoordinates(WkbCursor cursor, int numPoints, Dimensions dims) {
+        CoordinateRun run = cursor.run(numPoints);
+        double[] packed = new double[numPoints * dims.count()];
+        run.copyTo(packed);
+        return new PackedCoordinateSequence.Double(packed, dims.count(), dims.measures());
     }
 
     /** A WKB {@code POINT EMPTY} encodes a single coordinate whose ordinates are all NaN; JTS emits an empty point. */
@@ -279,163 +238,5 @@ public final class MemorySegmentWkbReader {
             return false;
         }
         return Double.isNaN(seq.getX(0)) && Double.isNaN(seq.getY(0));
-    }
-
-    /**
-     * Whether a type code uses the EWKB encoding. EWKB sets one or more of the three high-bit flags (bits 29-31); ISO
-     * type codes are small positive ints that never reach those bits, hence a high-bit-set test distinguishes the two
-     * encodings unambiguously.
-     */
-    private static boolean isEwkb(int rawType) {
-        return (rawType & EWKB_FLAG_MASK) != 0;
-    }
-
-    private static Dimensions dimensionsFor(int rawType) {
-        if (isEwkb(rawType)) {
-            boolean hasZ = (rawType & EWKB_FLAG_Z) != 0;
-            boolean hasM = (rawType & EWKB_FLAG_M) != 0;
-            if (hasZ && hasM) {
-                return Dimensions.ZM;
-            }
-            if (hasZ) {
-                return Dimensions.Z;
-            }
-            if (hasM) {
-                return Dimensions.M;
-            }
-            return Dimensions.XY;
-        }
-        if (rawType >= ZM_OFFSET) {
-            return Dimensions.ZM;
-        }
-        if (rawType >= M_OFFSET) {
-            return Dimensions.M;
-        }
-        if (rawType >= Z_OFFSET) {
-            return Dimensions.Z;
-        }
-        return Dimensions.XY;
-    }
-
-    private static int baseType(int rawType) {
-        if (isEwkb(rawType)) {
-            return rawType & ~EWKB_FLAG_MASK;
-        }
-        if (rawType >= ZM_OFFSET) {
-            return rawType - ZM_OFFSET;
-        }
-        if (rawType >= M_OFFSET) {
-            return rawType - M_OFFSET;
-        }
-        if (rawType >= Z_OFFSET) {
-            return rawType - Z_OFFSET;
-        }
-        return rawType;
-    }
-
-    /**
-     * Cursor over one WKB value bounded to {@code [offset, offset + length)} of the backing segment. Every read is
-     * checked against that bound and a truncated or length-violating value throws instead of reading past its end into
-     * adjacent bytes. Tracks the current byte-order context (each contained geometry can flip the order) and the
-     * running read offset. Confined to one {@link #read(MemorySegment, long, long)} call.
-     */
-    private static final class Cursor {
-
-        private final MemorySegment segment;
-        private final long limit;
-        private long offset;
-
-        private ValueLayout.OfInt intLayout;
-        private ValueLayout.OfDouble doubleLayout;
-
-        Cursor(MemorySegment segment, long offset, long length) {
-            this.segment = segment;
-            this.offset = offset;
-            this.limit = offset + length;
-        }
-
-        private long remaining() {
-            return limit - offset;
-        }
-
-        /** Rejects a read that would pass the value's end - a truncated value rather than reading adjacent bytes. */
-        private void requireRemaining(long bytes) {
-            if (bytes > remaining()) {
-                throw new IndexOutOfBoundsException("WKB value is truncated: need " + bytes
-                        + " more byte(s) but the value has " + remaining() + " remaining");
-            }
-        }
-
-        /**
-         * Rejects a declared element count that cannot fit in the value's remaining bytes; {@code minBytesPerElement}
-         * is the smallest on-wire size of one element. Bounds the allocation a count drives before it is made, which
-         * stops a garbage count read from a malformed value from forcing a huge array.
-         */
-        void requireCount(int count, int minBytesPerElement) {
-            if (count < 0 || (long) count * minBytesPerElement > remaining()) {
-                throw new IndexOutOfBoundsException(
-                        "WKB element count " + count + " exceeds the value's remaining " + remaining() + " byte(s)");
-            }
-        }
-
-        /** Reads the byte-order byte at the cursor and sets the int/double layouts; called before each geometry. */
-        void resetByteOrder() {
-            requireRemaining(Byte.BYTES);
-            byte order = segment.get(JAVA_BYTE, offset++);
-            switch (order) {
-                case WKB_LITTLE_ENDIAN -> {
-                    intLayout = INT_LE;
-                    doubleLayout = DOUBLE_LE;
-                }
-                case WKB_BIG_ENDIAN -> {
-                    intLayout = INT_BE;
-                    doubleLayout = DOUBLE_BE;
-                }
-                default ->
-                    throw new IllegalArgumentException(
-                            "Invalid WKB byte-order byte: 0x" + Integer.toHexString(order & 0xff));
-            }
-        }
-
-        int readInt() {
-            requireRemaining(Integer.BYTES);
-            int value = segment.get(intLayout, offset);
-            offset += Integer.BYTES;
-            return value;
-        }
-
-        /** Bulk-copies {@code dst.length} doubles in the current byte order, advancing past every copied byte. */
-        void copyDoubles(double[] dst) {
-            requireRemaining((long) dst.length * Double.BYTES);
-            MemorySegment.copy(segment, doubleLayout, offset, dst, 0, dst.length);
-            offset += (long) dst.length * Double.BYTES;
-        }
-    }
-
-    /**
-     * Whether a WKB type code includes Z and / or M ordinates per coordinate, and the resulting packed
-     * {@code (dimension, measures)} pair: XY -> (2, 0), XYZ -> (3, 0), XYM -> (3, 1), XYZM -> (4, 1).
-     */
-    private enum Dimensions {
-        XY(2, 0),
-        Z(3, 0),
-        M(3, 1),
-        ZM(4, 1);
-
-        private final int dimension;
-        private final int measures;
-
-        Dimensions(int dimension, int measures) {
-            this.dimension = dimension;
-            this.measures = measures;
-        }
-
-        int dimension() {
-            return dimension;
-        }
-
-        int measures() {
-            return measures;
-        }
     }
 }

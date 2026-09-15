@@ -40,8 +40,8 @@ import io.tileverse.parquetry.schema.ColumnPath;
  */
 public final class SpatialDecimationGate {
 
-    private static final BinaryView<Bbox> ENVELOPE =
-            (backing, offset, length) -> WkbEnvelope.compute(backing.asSlice(offset, length));
+    /** Reads a survivor's 2D envelope in place from the geometry vector's backing segment. */
+    private static final BinaryView<Bbox> ENVELOPE = WkbEnvelope::compute;
 
     private final ColumnPath geometryColumn;
     private final SpatialReadProbe probe;
