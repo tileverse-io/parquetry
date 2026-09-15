@@ -15,9 +15,11 @@
  */
 package io.tileverse.parquetry.geotools.data;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -41,6 +43,7 @@ import io.tileverse.parquetry.geo.MemorySegmentWkbReader;
 import io.tileverse.parquetry.geotools.data.FeatureTypeMapper.AttributeMapping;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.PrimitiveKind;
 
 /**
  * Streams a {@link ParquetDataset} and builds one {@link SimpleFeature} per row.
@@ -104,7 +107,8 @@ final class DatasetFeatureReader implements FeatureReader<SimpleFeatureType, Sim
     /**
      * The GeoTools attribute value for {@code attr} on this row: a decoded {@link Geometry} for geometry columns, an
      * owned, batch-independent value for nested columns (struct/list/map, translated by {@link NestedValues}), an owned
-     * {@code String} for text, a {@link UUID} for a UUID column, an owned {@code byte[]} for other binary, a boxed
+     * {@code String} for text, a {@link UUID} for a UUID column, an owned {@code byte[]} for other binary, the
+     * {@code java.time} or {@link BigDecimal} value of an annotated column (see {@link ScalarAttributeValues}), a boxed
      * primitive otherwise, or {@code null} for a null cell.
      */
     private Object attributeValue(ParquetRecord row, AttributeMapping attr) {
@@ -132,22 +136,68 @@ final class DatasetFeatureReader implements FeatureReader<SimpleFeatureType, Sim
             return TemporalValues.toLocalDate(row.getInt(path));
         }
         if (binding == Instant.class) {
-            return TemporalValues.toInstant(row.getLong(path), timeUnit(attr));
+            return TemporalValues.toInstant(row.getLong(path), temporalUnit(attr));
         }
         if (binding == LocalDateTime.class) {
-            return TemporalValues.toLocalDateTime(row.getLong(path), timeUnit(attr));
+            return TemporalValues.toLocalDateTime(row.getLong(path), temporalUnit(attr));
+        }
+        if (binding == BigDecimal.class) {
+            return decimalValue(row, attr);
+        }
+        if (binding == LocalTime.class) {
+            return timeValue(row, attr);
         }
         return row.get(path);
     }
 
-    /** The time unit of a timestamp attribute, read from the leaf's TIMESTAMP logical type. */
-    private static LogicalType.TimeUnit timeUnit(AttributeMapping attr) {
+    /** The decimal value of a DECIMAL attribute, read from its column's physical encoding at the column's scale. */
+    private static BigDecimal decimalValue(ParquetRecord row, AttributeMapping attr) {
+        ColumnPath path = attr.path();
+        int scale = decimalScale(attr);
+        return switch (attr.kind()) {
+            case INT32 -> ScalarAttributeValues.decimal(row.getInt(path), scale);
+            case INT64 -> ScalarAttributeValues.decimal(row.getLong(path), scale);
+            case FIXED_LEN_BYTE_ARRAY -> fixedLengthDecimal(row, path, scale);
+            default ->
+                throw new IllegalStateException("decimal attribute on an unsupported column kind: " + attr.name());
+        };
+    }
+
+    /** The decimal held by a fixed-length cell, decoded from its big-endian two's-complement bytes at {@code scale}. */
+    private static BigDecimal fixedLengthDecimal(ParquetRecord row, ColumnPath path, int scale) {
+        return row.readBinary(
+                path,
+                (backing, offset, length) -> ScalarAttributeValues.decimal(backing.asSlice(offset, length), scale));
+    }
+
+    /** The time-of-day value of a TIME attribute, read from its column's physical encoding in the column's unit. */
+    private static LocalTime timeValue(ParquetRecord row, AttributeMapping attr) {
+        ColumnPath path = attr.path();
+        long value = attr.kind() == PrimitiveKind.INT32 ? row.getInt(path) : row.getLong(path);
+        return ScalarAttributeValues.time(value, attr.kind(), temporalUnit(attr));
+    }
+
+    /** The scale of a decimal attribute, read from the leaf's DECIMAL logical type. */
+    private static int decimalScale(AttributeMapping attr) {
+        LogicalType logical = attr.logicalType()
+                .orElseThrow(() -> new IllegalStateException("decimal attribute has no logical type: " + attr.name()));
+        if (logical instanceof LogicalType.Decimal(int scale, int _)) {
+            return scale;
+        }
+        throw new IllegalStateException("decimal attribute is not annotated as a decimal: " + attr.name());
+    }
+
+    /** The time unit of a temporal attribute, read from the leaf's TIME or TIMESTAMP logical type. */
+    private static LogicalType.TimeUnit temporalUnit(AttributeMapping attr) {
         LogicalType logical = attr.logicalType()
                 .orElseThrow(() -> new IllegalStateException("temporal attribute has no logical type: " + attr.name()));
         if (logical instanceof LogicalType.Timestamp timestamp) {
             return timestamp.unit();
         }
-        throw new IllegalStateException("temporal attribute is not a timestamp: " + attr.name());
+        if (logical instanceof LogicalType.Time time) {
+            return time.unit();
+        }
+        throw new IllegalStateException("temporal attribute is not a time or timestamp: " + attr.name());
     }
 
     /** Decodes the geometry column in place from the record's WKB and stamps the column's EPSG SRID when resolved. */

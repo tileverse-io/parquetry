@@ -15,9 +15,11 @@
  */
 package io.tileverse.parquetry.geotools.data;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -69,8 +71,10 @@ final class FeatureTypeMapper {
     /**
      * One mapped attribute: its feature-type local name, the parquet path it reads from, whether it is a geometry
      * attribute, the Java binding class, - for {@code STRUCT}/{@code LIST}/{@code MAP} attributes - the nested
-     * value-object shape ({@code null} for scalar and geometry attributes), and - for a temporal attribute - the source
-     * Parquet logical type the reader consults to pick the time unit ({@link Optional#empty()} otherwise).
+     * value-object shape ({@code null} for scalar and geometry attributes), and - for a scalar attribute - the source
+     * Parquet logical type ({@link Optional#empty()} otherwise) plus the physical kind of its leaf column ({@code null}
+     * otherwise). The reader consults the last two to reconstruct a decimal at the column scale and a temporal value in
+     * the column unit; the filter push-down consults them to encode a literal in the column's own storage form.
      */
     record AttributeMapping(
             String name,
@@ -78,16 +82,19 @@ final class FeatureTypeMapper {
             boolean geometry,
             Class<?> binding,
             NestedType nestedType,
-            Optional<LogicalType> logicalType) {
+            Optional<LogicalType> logicalType,
+            PrimitiveKind kind) {
 
-        /** Convenience for a scalar or geometry attribute, which has no nested type and no temporal logical type. */
+        /**
+         * Convenience for a scalar or geometry attribute with no nested type, no logical type, and no recorded kind.
+         */
         AttributeMapping(String name, ColumnPath path, boolean geometry, Class<?> binding) {
-            this(name, path, geometry, binding, null, Optional.empty());
+            this(name, path, geometry, binding, null, Optional.empty(), null);
         }
 
-        /** Convenience for a nested attribute, which has no temporal logical type. */
+        /** Convenience for a nested attribute, which has no logical type and no recorded kind. */
         AttributeMapping(String name, ColumnPath path, boolean geometry, Class<?> binding, NestedType nestedType) {
-            this(name, path, geometry, binding, nestedType, Optional.empty());
+            this(name, path, geometry, binding, nestedType, Optional.empty(), null);
         }
     }
 
@@ -229,7 +236,7 @@ final class FeatureTypeMapper {
         }
         String attrName = path.dot();
         ftb.add(attrName, binding.get());
-        return Optional.of(new AttributeMapping(attrName, path, false, binding.get(), null, logical));
+        return Optional.of(new AttributeMapping(attrName, path, false, binding.get(), null, logical, kind));
     }
 
     /**
@@ -422,18 +429,58 @@ final class FeatureTypeMapper {
         boolean isString = logical.map(FeatureTypeMapper::isStringLogicalType).orElse(false);
         boolean isUuid = logical.map(lt -> lt instanceof LogicalType.UuidType).orElse(false);
         boolean isDate = logical.map(lt -> lt instanceof LogicalType.DateType).orElse(false);
+        boolean isDecimal = logical.map(lt -> lt instanceof LogicalType.Decimal).orElse(false);
+        boolean isTime = logical.map(lt -> lt instanceof LogicalType.Time).orElse(false);
         Optional<Class<?>> timestampBinding = logical.flatMap(FeatureTypeMapper::timestampBinding);
         return switch (kind) {
             case BOOLEAN -> Optional.of(Boolean.class);
-            case INT32 -> Optional.of(isDate ? LocalDate.class : Integer.class);
-            case INT64 -> timestampBinding.or(() -> Optional.of(Long.class));
+            case INT32 -> Optional.of(int32Binding(isDate, isDecimal, isTime));
+            case INT64 -> Optional.of(int64Binding(timestampBinding, isDecimal, isTime));
             case FLOAT -> Optional.of(Float.class);
             case DOUBLE -> Optional.of(Double.class);
+            // A Decimal-annotated BYTE_ARRAY stays raw bytes: core decodes no variable-length decimal, and no
+            // writer of interest emits one.
             case BYTE_ARRAY -> Optional.of(isString ? String.class : byte[].class);
-            case FIXED_LEN_BYTE_ARRAY -> Optional.of(isUuid ? UUID.class : byte[].class);
+            case FIXED_LEN_BYTE_ARRAY -> Optional.of(fixedLengthBinding(isUuid, isDecimal));
             // INT96 is a deprecated Impala timestamp with no standard Java binding; skip it.
             case INT96 -> Optional.empty();
         };
+    }
+
+    private static Class<?> int32Binding(boolean isDate, boolean isDecimal, boolean isTime) {
+        if (isDate) {
+            return LocalDate.class;
+        }
+        if (isDecimal) {
+            return BigDecimal.class;
+        }
+        if (isTime) {
+            return LocalTime.class;
+        }
+        return Integer.class;
+    }
+
+    private static Class<?> int64Binding(Optional<Class<?>> timestampBinding, boolean isDecimal, boolean isTime) {
+        if (timestampBinding.isPresent()) {
+            return timestampBinding.get();
+        }
+        if (isDecimal) {
+            return BigDecimal.class;
+        }
+        if (isTime) {
+            return LocalTime.class;
+        }
+        return Long.class;
+    }
+
+    private static Class<?> fixedLengthBinding(boolean isUuid, boolean isDecimal) {
+        if (isUuid) {
+            return UUID.class;
+        }
+        if (isDecimal) {
+            return BigDecimal.class;
+        }
+        return byte[].class;
     }
 
     /**

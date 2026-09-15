@@ -27,6 +27,7 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -102,6 +103,7 @@ class GeoParquetExporterIT {
             assertThat(nullRowRead.getAttribute("uuid")).isNull();
             assertThat(nullRowRead.getAttribute("instant")).isNull();
             assertThat(nullRowRead.getAttribute("localDateTime")).isNull();
+            assertThat(nullRowRead.getAttribute("time")).isNull();
         }
     }
 
@@ -123,6 +125,7 @@ class GeoParquetExporterIT {
         assertThat(actual.getAttribute("date")).isEqualTo(expected.getAttribute("date"));
         assertThat(actual.getAttribute("instant")).isEqualTo(expected.getAttribute("instant"));
         assertThat(actual.getAttribute("localDateTime")).isEqualTo(expected.getAttribute("localDateTime"));
+        assertThat(actual.getAttribute("time")).isEqualTo(expected.getAttribute("time"));
     }
 
     @Test
@@ -339,6 +342,7 @@ class GeoParquetExporterIT {
         typeBuilder.add("date", LocalDate.class);
         typeBuilder.add("instant", Instant.class);
         typeBuilder.add("localDateTime", LocalDateTime.class);
+        typeBuilder.add("time", LocalTime.class);
         return typeBuilder.buildFeatureType();
     }
 
@@ -360,6 +364,7 @@ class GeoParquetExporterIT {
             builder.add(nullRow ? null : LocalDate.of(2020, 1, i + 1));
             builder.add(nullRow ? null : Instant.ofEpochSecond(1_700_000_000L + i, i * 1000L));
             builder.add(nullRow ? null : LocalDateTime.of(2021, 6, 15, 10, 30, i, i * 1000));
+            builder.add(nullRow ? null : LocalTime.of(14, 45, i, i * 1000));
             features.add(builder.buildFeature("f-" + i));
         }
         return features;

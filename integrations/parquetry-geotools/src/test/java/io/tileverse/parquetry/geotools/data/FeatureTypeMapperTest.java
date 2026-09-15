@@ -18,15 +18,18 @@ package io.tileverse.parquetry.geotools.data;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 import org.geotools.api.feature.simple.SimpleFeatureType;
 import org.geotools.api.feature.type.AttributeDescriptor;
@@ -38,6 +41,9 @@ import org.geotools.data.nested.NestedType.StructType;
 import org.geotools.referencing.CRS;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.Point;
 
@@ -128,6 +134,54 @@ class FeatureTypeMapperTest {
         Optional<Class<?>> binding =
                 FeatureTypeMapper.resolveBinding(PrimitiveKind.INT32, Optional.of(new LogicalType.DateType()));
         assertThat(binding).hasValue(LocalDate.class);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("decimalEncodings")
+    void bindsADecimalOfAnyEncodingToBigDecimal(String name, PrimitiveKind kind) {
+        Optional<Class<?>> binding = FeatureTypeMapper.resolveBinding(kind, Optional.of(new LogicalType.Decimal(2, 9)));
+        assertThat(binding).hasValue(BigDecimal.class);
+    }
+
+    private static Stream<Arguments> decimalEncodings() {
+        return Stream.of(
+                Arguments.of("INT32", PrimitiveKind.INT32),
+                Arguments.of("INT64", PrimitiveKind.INT64),
+                Arguments.of("FIXED_LEN_BYTE_ARRAY", PrimitiveKind.FIXED_LEN_BYTE_ARRAY));
+    }
+
+    @Test
+    void keepsAByteArrayDecimalAsBytes() {
+        Optional<Class<?>> binding =
+                FeatureTypeMapper.resolveBinding(PrimitiveKind.BYTE_ARRAY, Optional.of(new LogicalType.Decimal(2, 9)));
+        assertThat(binding).hasValue(byte[].class);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("timeEncodings")
+    void bindsATimeToLocalTime(String name, PrimitiveKind kind, TimeUnit unit) {
+        Optional<Class<?>> binding =
+                FeatureTypeMapper.resolveBinding(kind, Optional.of(new LogicalType.Time(false, unit)));
+        assertThat(binding).hasValue(LocalTime.class);
+    }
+
+    private static Stream<Arguments> timeEncodings() {
+        return Stream.of(
+                Arguments.of("INT32 millis", PrimitiveKind.INT32, TimeUnit.MILLIS),
+                Arguments.of("INT64 micros", PrimitiveKind.INT64, TimeUnit.MICROS),
+                Arguments.of("INT64 nanos", PrimitiveKind.INT64, TimeUnit.NANOS));
+    }
+
+    @Test
+    void scalarMappingRecordsThePhysicalKind() {
+        ParquetSchema schema = schemaWithDecimalAmount();
+
+        FeatureTypeMapper.Mapping mapping = FeatureTypeMapper.map("t", null, schema, Optional.empty(), null);
+
+        AttributeMapping amount = attribute(mapping, "amount");
+        assertThat(amount.binding()).isEqualTo(BigDecimal.class);
+        assertThat(amount.kind()).isEqualTo(PrimitiveKind.INT32);
+        assertThat(amount.logicalType()).contains(new LogicalType.Decimal(2, 9));
     }
 
     @Test
@@ -302,6 +356,19 @@ class FeatureTypeMapperTest {
         assertThat(CRS.lookupEpsgCode(crs, false))
                 .as("an EPSG:3857 native crs reference resolves to EPSG:3857 through the registry")
                 .isEqualTo(3857);
+    }
+
+    private static ParquetSchema schemaWithDecimalAmount() {
+        SchemaNode.Primitive amount = new SchemaNode.Primitive(
+                "amount",
+                Repetition.OPTIONAL,
+                PrimitiveKind.INT32,
+                OptionalInt.empty(),
+                Optional.of(new LogicalType.Decimal(2, 9)),
+                -1);
+        SchemaNode.Group root =
+                new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(amount), Optional.empty(), -1);
+        return new ParquetSchema(root);
     }
 
     private static ParquetSchema schemaWithNativeGeometryCrs(ParquetCrs crs) {

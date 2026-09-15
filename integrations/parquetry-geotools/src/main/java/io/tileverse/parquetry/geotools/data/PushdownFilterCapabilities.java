@@ -28,6 +28,20 @@ import org.geotools.api.filter.spatial.Intersects;
 import org.geotools.api.filter.spatial.Overlaps;
 import org.geotools.api.filter.spatial.Touches;
 import org.geotools.api.filter.spatial.Within;
+import org.geotools.api.filter.temporal.After;
+import org.geotools.api.filter.temporal.AnyInteracts;
+import org.geotools.api.filter.temporal.Before;
+import org.geotools.api.filter.temporal.Begins;
+import org.geotools.api.filter.temporal.BegunBy;
+import org.geotools.api.filter.temporal.During;
+import org.geotools.api.filter.temporal.EndedBy;
+import org.geotools.api.filter.temporal.Ends;
+import org.geotools.api.filter.temporal.Meets;
+import org.geotools.api.filter.temporal.MetBy;
+import org.geotools.api.filter.temporal.OverlappedBy;
+import org.geotools.api.filter.temporal.TContains;
+import org.geotools.api.filter.temporal.TEquals;
+import org.geotools.api.filter.temporal.TOverlaps;
 import org.geotools.filter.Capabilities;
 
 /**
@@ -54,6 +68,7 @@ final class PushdownFilterCapabilities {
         capabilities.addType(PropertyIsNull.class);
         capabilities.addType(Id.class);
         addSpatialOperators(capabilities);
+        addTemporalOperators(capabilities);
         return capabilities;
     }
 
@@ -68,5 +83,27 @@ final class PushdownFilterCapabilities {
         capabilities.addType(Disjoint.class);
         capabilities.addType(Equals.class);
         capabilities.addType(DWithin.class);
+    }
+
+    /**
+     * Declares every temporal operator, including the ones never satisfied by an instant attribute:
+     * {@link FilterToPredicate} lowers those to a predicate matching no row, which prunes the read rather than leaving
+     * GeoTools to evaluate the operator over every feature.
+     */
+    private static void addTemporalOperators(Capabilities capabilities) {
+        capabilities.addType(After.class);
+        capabilities.addType(AnyInteracts.class);
+        capabilities.addType(Before.class);
+        capabilities.addType(Begins.class);
+        capabilities.addType(BegunBy.class);
+        capabilities.addType(During.class);
+        capabilities.addType(EndedBy.class);
+        capabilities.addType(Ends.class);
+        capabilities.addType(Meets.class);
+        capabilities.addType(MetBy.class);
+        capabilities.addType(OverlappedBy.class);
+        capabilities.addType(TContains.class);
+        capabilities.addType(TEquals.class);
+        capabilities.addType(TOverlaps.class);
     }
 }

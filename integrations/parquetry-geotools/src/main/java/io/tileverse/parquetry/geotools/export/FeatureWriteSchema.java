@@ -20,6 +20,7 @@ import java.math.BigInteger;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.LinkedHashMap;
@@ -221,7 +222,9 @@ record FeatureWriteSchema(
      * The scalar binding table this class inverts from {@code FeatureTypeMapper#resolveBinding} (in
      * {@code io.tileverse.parquetry.geotools.data}): every Java type a scalar attribute may bind to, mapped to its
      * Parquet physical kind and logical-type annotation. {@code Short} and {@code Byte} widen to {@code INT32};
-     * {@link BigInteger} widens to {@code INT64}; {@link BigDecimal} widens (lossily) to {@code DOUBLE}.
+     * {@link BigInteger} widens to {@code INT64}; {@link BigDecimal} widens (lossily) to {@code DOUBLE}, because a bare
+     * {@code BigDecimal} binding declares neither precision nor scale, and a DECIMAL leaf requires both. A decimal
+     * column read by the store therefore exports as a double.
      */
     private static Map<Class<?>, ScalarShape> buildScalarShapes() {
         Map<Class<?>, ScalarShape> shapes = new LinkedHashMap<>();
@@ -256,6 +259,9 @@ record FeatureWriteSchema(
         shapes.put(
                 LocalDateTime.class,
                 ScalarShape.annotated(PrimitiveKind.INT64, new LogicalType.Timestamp(false, TimeUnit.MICROS)));
+        shapes.put(
+                LocalTime.class,
+                ScalarShape.annotated(PrimitiveKind.INT64, new LogicalType.Time(false, TimeUnit.MICROS)));
         return Map.copyOf(shapes);
     }
 }

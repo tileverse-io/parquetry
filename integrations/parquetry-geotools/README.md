@@ -90,6 +90,31 @@ DataStore store = DataStoreFinder.getDataStore(params);
 Secret parameters (keys, tokens, passwords) are masked in the GeoServer store
 form. See the `parquetry-geoserver` module for the provider-driven edit panel.
 
+## Scalar bindings
+
+| Parquet column | Java binding |
+| --- | --- |
+| BOOLEAN, INT32, INT64, FLOAT, DOUBLE | `Boolean`, `Integer`, `Long`, `Float`, `Double` |
+| INT32 `DATE` | `LocalDate` |
+| INT64 `TIMESTAMP`, UTC-adjusted / zone-less | `Instant` / `LocalDateTime` |
+| INT32 or INT64 `TIME` | `LocalTime` |
+| INT32, INT64, or fixed-length `DECIMAL` | `BigDecimal` at the column scale |
+| BYTE_ARRAY string / other | `String` / `byte[]` |
+| fixed-length `UUID` / other | `UUID` / `byte[]` |
+
+A zone-less value is UTC wall-clock time everywhere: a `LocalDateTime` attribute
+compares against an `Instant` literal at UTC, and a filter literal without an
+offset is read at UTC. The store registers a GeoTools converter for the
+java.time bindings, which makes `Date`, ISO-8601 text, and OGC temporal
+literals usable in filters and lets GeoTools evaluate a residual filter on
+such an attribute in memory (at millisecond precision; the pushed path keeps
+the column's precision).
+
+On export the GeoParquet exporter writes a `LocalTime` attribute as an INT64
+`TIME` column at microseconds and a `BigDecimal` attribute as a plain `DOUBLE`,
+because a bare `BigDecimal` binding declares no precision and no scale, and a
+DECIMAL leaf requires both.
+
 ## Query pushdown
 
 `GeoParquetFeatureSource` translates a GeoTools `Query` (`QueryTranslator`,
@@ -105,8 +130,24 @@ form. See the `parquetry-geoserver` module for the provider-driven edit panel.
   between them. A spatial literal whose CRS differs from the dataset's native CRS
   is rejected.
 - **Attribute filters** push comparisons, `BETWEEN`, `IS NULL`, and
-  `AND` / `OR` / `NOT` where the column type supports them (`Pred`). Anything not
-  pushable (`LIKE`, functions, temporal ranges) becomes the residual filter.
+  `AND` / `OR` / `NOT` on every scalar binding: numbers, strings, booleans,
+  uuids (equality), `BigDecimal`, `LocalDate`, `Instant`, `LocalDateTime`,
+  `LocalTime`, and `byte[]` (equality). A temporal literal finer than the
+  column's unit and anything not pushable (`LIKE`, functions) become the
+  residual filter. An equality on a `byte[]` attribute pushes as a comparison
+  of the bytes' content, where GeoTools' own in-memory evaluation reads an
+  array attribute as multi-valued and applies the filter's match action byte
+  by byte, matching under the default `ANY` as soon as one byte is shared: a
+  `byte[]` equality left to the residual filter therefore answers more loosely
+  than the pushed one.
+- **Temporal filters** (`AFTER`, `BEFORE`, `DURING`, `TEQUALS`, `BEGINS`,
+  `ENDS`, `ANYINTERACTS`, and the other OGC temporal operators) push on a
+  timestamp attribute, reduced to comparisons against the instant or the
+  period bounds exactly as GeoTools evaluates them. GeoTools' own in-memory
+  evaluation of a temporal operator compares at millisecond precision, while
+  the pushed predicate compares at the column's precision: a filter on a
+  nanosecond or microsecond timestamp column can therefore answer differently
+  in memory than pushed.
 - **Projection** (`canRetype`): only the requested attributes plus any the
   residual filter needs are decoded; the columnar read never materializes columns
   a query does not use.

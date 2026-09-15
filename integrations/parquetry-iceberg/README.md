@@ -34,7 +34,7 @@ clear message rather than returning wrong rows. The `Spec` column notes the Iceb
 | Feature | Spec | Status | Notes |
 | --- | --- | --- | --- |
 | Presented schema = the table's current schema | v1+ | Full | from the metadata, not the first data file's footer |
-| Primitive types | v1+ | Full | boolean, int, long, float, double, date, time, timestamp / timestamptz / timestamp_ns / timestamptz_ns, string, uuid, binary, fixed, decimal (stored as INT32, INT64, or fixed-length bytes by precision; all three read and filter) |
+| Primitive types | v1+ | Full | boolean, int, long, float, double, date, time, timestamp / timestamptz / timestamp_ns / timestamptz_ns, string, uuid, binary, fixed, decimal (stored as INT32, INT64, or fixed-length bytes by precision; all three read and filter); through the GeoTools store a decimal binds to `BigDecimal` and a time to `LocalTime`, and comparisons and temporal operators on every scalar type push down |
 | Native geometry / geography | v3 | Full | Parquet `Geometry` logical type, WKB; CRS parsed from the Iceberg type token (`OGC:CRS84` default) and presented on the geometry logical type |
 | Variant | v3 | Partial | decoded by the core engine; no Iceberg-specific fixture yet |
 | Nested struct / list / map | v1+ | Partial | read by name; a data file whose nested field ids disagree with the table (a nested rename or id reassignment) now fails loud instead of misreading; full field-id reconciliation within nesting is Planned (the main conformance gap) |
