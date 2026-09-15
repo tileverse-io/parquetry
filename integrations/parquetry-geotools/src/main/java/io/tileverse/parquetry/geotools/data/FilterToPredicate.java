@@ -15,8 +15,6 @@
  */
 package io.tileverse.parquetry.geotools.data;
 
-import static io.tileverse.parquetry.internal.filter.TemporalValues.fitsUnit;
-
 import java.lang.foreign.MemorySegment;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -24,7 +22,6 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -39,7 +36,6 @@ import org.geotools.api.filter.BinaryComparisonOperator;
 import org.geotools.api.filter.Filter;
 import org.geotools.api.filter.FilterFactory;
 import org.geotools.api.filter.Id;
-import org.geotools.api.filter.MultiValuedFilter;
 import org.geotools.api.filter.Not;
 import org.geotools.api.filter.Or;
 import org.geotools.api.filter.PropertyIsBetween;
@@ -55,31 +51,15 @@ import org.geotools.api.filter.expression.Literal;
 import org.geotools.api.filter.expression.PropertyName;
 import org.geotools.api.filter.identity.Identifier;
 import org.geotools.api.filter.spatial.BinarySpatialOperator;
-import org.geotools.api.filter.temporal.After;
-import org.geotools.api.filter.temporal.AnyInteracts;
-import org.geotools.api.filter.temporal.Before;
-import org.geotools.api.filter.temporal.Begins;
-import org.geotools.api.filter.temporal.BegunBy;
 import org.geotools.api.filter.temporal.BinaryTemporalOperator;
-import org.geotools.api.filter.temporal.During;
-import org.geotools.api.filter.temporal.EndedBy;
-import org.geotools.api.filter.temporal.Ends;
-import org.geotools.api.filter.temporal.Meets;
-import org.geotools.api.filter.temporal.MetBy;
-import org.geotools.api.filter.temporal.OverlappedBy;
-import org.geotools.api.filter.temporal.TContains;
-import org.geotools.api.filter.temporal.TEquals;
-import org.geotools.api.filter.temporal.TOverlaps;
 import org.geotools.api.geometry.BoundingBox;
 import org.geotools.api.referencing.crs.CoordinateReferenceSystem;
-import org.geotools.api.temporal.Period;
 import org.geotools.factory.CommonFactoryFinder;
 import org.geotools.referencing.CRS;
 import org.geotools.util.Converters;
 import org.locationtech.jts.geom.Geometry;
 
 import io.tileverse.parquetry.filter.Bbox;
-import io.tileverse.parquetry.filter.MatchAction;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Value;
@@ -89,7 +69,6 @@ import io.tileverse.parquetry.geotools.data.FeatureTypeMapper.AttributeMapping;
 import io.tileverse.parquetry.geotools.data.FeatureTypeMapper.Mapping;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
-import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.ResolvedColumn;
 import io.tileverse.parquetry.schema.SchemaNode;
 
@@ -332,166 +311,18 @@ final class FilterToPredicate {
     }
 
     /**
-     * Reduces a temporal operator on a timestamp attribute to comparisons on that attribute, following the position
-     * rules by which GeoTools evaluates the operator: an attribute value is an instant, and against an instant literal
-     * or the bounds of a period literal each operator either compares the attribute with one bound or can never hold.
-     * The attribute may sit on either side of the operator.
-     *
-     * <p>Three cases are left to the residual filter. A date or a time attribute, because GeoTools evaluates these
-     * operators on instants while such an attribute converts to a date or a time. A repeated (list or map element)
-     * leaf, because GeoTools evaluates a temporal operator on a list-valued attribute as false: its evaluation ignores
-     * the match action, and a list converts to no temporal primitive. Pushing a per-element reading would answer a
-     * question that the caller did not ask. An operator outside the fourteen types declared by
-     * {@link PushdownFilterCapabilities}, whose position rules are unknown here.
+     * Resolves the operands of a temporal operator, with the attribute on either side, and reduces the operator through
+     * {@link TemporalPredicates}.
      */
     private Optional<Predicate> temporal(BinaryTemporalOperator f) {
         Optional<Leaf> leftLeaf = leafColumn(f.getExpression1());
         boolean attributeFirst = leftLeaf.isPresent();
         Optional<Leaf> leaf = attributeFirst ? leftLeaf : leafColumn(f.getExpression2());
         Optional<Object> value = literal(attributeFirst ? f.getExpression2() : f.getExpression1());
-        if (leaf.isEmpty() || value.isEmpty() || !isSingleValuedTimestamp(leaf.get())) {
+        if (leaf.isEmpty() || value.isEmpty()) {
             return Optional.empty();
         }
-        Leaf column = leaf.get();
-        Object rawValue = value.get();
-        if (rawValue instanceof Period period) {
-            Optional<PeriodRelation> relation = periodRelation(f, attributeFirst);
-            if (relation.isEmpty()) {
-                return Optional.empty();
-            }
-            return relation.get().toPredicate(column, period);
-        }
-        Optional<LocalDateTime> at = timestampLiteral(column, rawValue);
-        if (at.isEmpty()) {
-            return Optional.empty();
-        }
-        return instantRelation(f, attributeFirst, column, at.get());
-    }
-
-    /**
-     * True when the column holds one timestamp per row, which is the only attribute shape on which these operators
-     * reduce.
-     */
-    private static boolean isSingleValuedTimestamp(Leaf column) {
-        Class<?> binding = column.binding();
-        boolean timestamp = binding == Instant.class || binding == LocalDateTime.class;
-        return timestamp && !column.repeated();
-    }
-
-    /**
-     * The comparison for {@code f} against an instant literal, matching no row in a position never taken by an instant,
-     * or empty for an operator outside the fourteen temporal types.
-     */
-    private static Optional<Predicate> instantRelation(
-            BinaryTemporalOperator f, boolean attributeFirst, Leaf column, LocalDateTime at) {
-        ColumnPath path = column.path();
-        Value.TimestampVal value = new Value.TimestampVal(at, column.binding() == Instant.class);
-        return switch (f) {
-            case After _ -> Optional.of(attributeFirst ? new Predicate.Gt(path, value) : new Predicate.Lt(path, value));
-            case Before _ ->
-                Optional.of(attributeFirst ? new Predicate.Lt(path, value) : new Predicate.Gt(path, value));
-            case TEquals _, AnyInteracts _ -> Optional.of(new Predicate.Eq(path, value));
-            case Begins _,
-                    BegunBy _,
-                    During _,
-                    EndedBy _,
-                    Ends _,
-                    Meets _,
-                    MetBy _,
-                    OverlappedBy _,
-                    TContains _,
-                    TOverlaps _ -> Optional.of(Predicate.ALWAYS_FALSE);
-            default -> Optional.empty();
-        };
-    }
-
-    /**
-     * How an instant attribute must relate to the bounds of a period literal for {@code f} to hold, or empty for an
-     * operator outside the fourteen temporal types.
-     */
-    private static Optional<PeriodRelation> periodRelation(BinaryTemporalOperator f, boolean attributeFirst) {
-        if (attributeFirst) {
-            return attributeFirstRelation(f);
-        }
-        return literalFirstRelation(f);
-    }
-
-    private static Optional<PeriodRelation> attributeFirstRelation(BinaryTemporalOperator f) {
-        return switch (f) {
-            case After _ -> Optional.of(PeriodRelation.AFTER_END);
-            case Before _ -> Optional.of(PeriodRelation.BEFORE_BEGIN);
-            case During _ -> Optional.of(PeriodRelation.STRICTLY_INSIDE);
-            case Begins _ -> Optional.of(PeriodRelation.AT_BEGIN);
-            case Ends _ -> Optional.of(PeriodRelation.AT_END);
-            case AnyInteracts _ -> Optional.of(PeriodRelation.INSIDE_OR_AT_BOUNDS);
-            case BegunBy _, EndedBy _, Meets _, MetBy _, OverlappedBy _, TContains _, TEquals _, TOverlaps _ ->
-                Optional.of(PeriodRelation.NEVER);
-            default -> Optional.empty();
-        };
-    }
-
-    private static Optional<PeriodRelation> literalFirstRelation(BinaryTemporalOperator f) {
-        return switch (f) {
-            case After _ -> Optional.of(PeriodRelation.BEFORE_BEGIN);
-            case Before _ -> Optional.of(PeriodRelation.AFTER_END);
-            case TContains _ -> Optional.of(PeriodRelation.STRICTLY_INSIDE);
-            case BegunBy _ -> Optional.of(PeriodRelation.AT_BEGIN);
-            case EndedBy _ -> Optional.of(PeriodRelation.AT_END);
-            case AnyInteracts _ -> Optional.of(PeriodRelation.INSIDE_OR_AT_BOUNDS);
-            case Begins _, During _, Ends _, Meets _, MetBy _, OverlappedBy _, TEquals _, TOverlaps _ ->
-                Optional.of(PeriodRelation.NEVER);
-            default -> Optional.empty();
-        };
-    }
-
-    /** The relation of an instant attribute to a period literal, as comparisons against the period's bounds. */
-    private enum PeriodRelation {
-        AFTER_END,
-        BEFORE_BEGIN,
-        STRICTLY_INSIDE,
-        AT_BEGIN,
-        AT_END,
-        INSIDE_OR_AT_BOUNDS,
-        NEVER;
-
-        /** The comparisons on {@code column} for which this relation holds, or empty when a bound does not convert. */
-        Optional<Predicate> toPredicate(Leaf column, Period period) {
-            if (this == NEVER) {
-                return Optional.of(Predicate.ALWAYS_FALSE);
-            }
-            Optional<LocalDateTime> beginAt = boundLiteral(column, period.getBeginning());
-            Optional<LocalDateTime> endAt = boundLiteral(column, period.getEnding());
-            if (beginAt.isEmpty() || endAt.isEmpty()) {
-                return Optional.empty();
-            }
-            boolean adjustedToUtc = column.binding() == Instant.class;
-            Value.TimestampVal begin = new Value.TimestampVal(beginAt.get(), adjustedToUtc);
-            Value.TimestampVal end = new Value.TimestampVal(endAt.get(), adjustedToUtc);
-            ColumnPath path = column.path();
-            return Optional.of(
-                    switch (this) {
-                        case AFTER_END -> new Predicate.Gt(path, end);
-                        case BEFORE_BEGIN -> new Predicate.Lt(path, begin);
-                        case STRICTLY_INSIDE -> Pred.and(new Predicate.Gt(path, begin), new Predicate.Lt(path, end));
-                        case AT_BEGIN -> new Predicate.Eq(path, begin);
-                        case AT_END -> new Predicate.Eq(path, end);
-                        case INSIDE_OR_AT_BOUNDS ->
-                            Pred.and(new Predicate.GtEq(path, begin), new Predicate.LtEq(path, end));
-                        case NEVER -> Predicate.ALWAYS_FALSE;
-                    });
-        }
-
-        /**
-         * A period bound as the UTC wall-clock value stored by {@code column}, or empty when the bound is absent or
-         * holds a position with no date reading. A period literal of any shape leaves the translator without throwing.
-         */
-        private static Optional<LocalDateTime> boundLiteral(Leaf column, org.geotools.api.temporal.Instant bound) {
-            if (bound == null || bound.getPosition() == null) {
-                return Optional.empty();
-            }
-            Date date = bound.getPosition().getDate();
-            return timestampLiteral(column, date);
-        }
+        return TemporalPredicates.reduce(f, attributeFirst, leaf.get(), value.get());
     }
 
     private Optional<Predicate> bbox(org.geotools.api.filter.spatial.BBOX f) {
@@ -676,12 +507,12 @@ final class FilterToPredicate {
 
     private static Optional<Predicate> buildTimestamp(Leaf column, Op op, Object rawValue) {
         boolean adjustedToUtc = column.binding() == Instant.class;
-        return timestampLiteral(column, rawValue)
+        return column.timestampLiteral(rawValue)
                 .flatMap(v -> ordered(column.path(), op, new Value.TimestampVal(v, adjustedToUtc)));
     }
 
     private static Optional<Predicate> buildTime(Leaf column, Op op, Object rawValue) {
-        return timeLiteral(column, rawValue).flatMap(v -> ordered(column.path(), op, new Value.TimeVal(v)));
+        return column.timeLiteral(rawValue).flatMap(v -> ordered(column.path(), op, new Value.TimeVal(v)));
     }
 
     // Only equality and inequality push: a byte-order comparison has no defined meaning for a GeoTools byte[]
@@ -693,58 +524,6 @@ final class FilterToPredicate {
         Value.BinaryVal v =
                 new Value.BinaryVal(MemorySegment.ofArray(bytes.clone()).asReadOnly());
         return ordered(p, op, v);
-    }
-
-    /**
-     * The timestamp literal as the UTC wall-clock value stored by the column, or empty when the literal does not
-     * convert or is finer than the column unit. A value finer than the unit is rejected by the engine rather than
-     * truncated, hence such a comparison stays residual. A TIMESTAMP column outside INT64 is excluded too: a timestamp
-     * attribute binds on an INT64 column alone.
-     */
-    private static Optional<LocalDateTime> timestampLiteral(Leaf column, Object rawValue) {
-        LocalDateTime v = Converters.convert(rawValue, LocalDateTime.class);
-        if (v == null || column.kind() != PrimitiveKind.INT64) {
-            return Optional.empty();
-        }
-        Optional<LogicalType.TimeUnit> unit = timestampUnit(column);
-        if (unit.isEmpty() || !fitsUnit(v.getNano(), unit.get())) {
-            return Optional.empty();
-        }
-        return Optional.of(v);
-    }
-
-    /**
-     * The time literal, or empty when it does not convert or is finer than the column unit. A TIME column outside INT64
-     * is excluded too: the engine decodes a time cell from an INT64 count since midnight alone.
-     */
-    private static Optional<LocalTime> timeLiteral(Leaf column, Object rawValue) {
-        LocalTime v = Converters.convert(rawValue, LocalTime.class);
-        if (v == null || column.kind() != PrimitiveKind.INT64) {
-            return Optional.empty();
-        }
-        Optional<LogicalType.TimeUnit> unit = timeUnit(column);
-        if (unit.isEmpty() || !fitsUnit(v.toNanoOfDay(), unit.get())) {
-            return Optional.empty();
-        }
-        return Optional.of(v);
-    }
-
-    /** The unit of a TIMESTAMP column, or empty when the column has no timestamp annotation. */
-    private static Optional<LogicalType.TimeUnit> timestampUnit(Leaf column) {
-        LogicalType logicalType = column.logicalType().orElse(null);
-        if (logicalType instanceof LogicalType.Timestamp(boolean _, LogicalType.TimeUnit unit)) {
-            return Optional.of(unit);
-        }
-        return Optional.empty();
-    }
-
-    /** The unit of a TIME column, or empty when the column has no time annotation. */
-    private static Optional<LogicalType.TimeUnit> timeUnit(Leaf column) {
-        LogicalType logicalType = column.logicalType().orElse(null);
-        if (logicalType instanceof LogicalType.Time(boolean _, LogicalType.TimeUnit unit)) {
-            return Optional.of(unit);
-        }
-        return Optional.empty();
     }
 
     /** True when {@code rawValue} converts to {@code converted} without loss (no fractional part dropped). */
@@ -805,27 +584,6 @@ final class FilterToPredicate {
     }
 
     /**
-     * A column against which a comparison builds: its physical path, its Java binding for literal coercion, whether it
-     * is a repeated (list/map element) leaf that an existential quantifier must aggregate over, and the physical kind
-     * plus logical type annotation that decide how a decimal or temporal literal encodes.
-     */
-    private record Leaf(
-            ColumnPath path,
-            Class<?> binding,
-            boolean repeated,
-            PrimitiveKind kind,
-            Optional<LogicalType> logicalType) {
-
-        /** Wraps {@code leaf} in the filter's match-action quantifier when this column is repeated; else returns it. */
-        Predicate quantify(Predicate leaf, Filter filter) {
-            if (repeated) {
-                return new Predicate.Quantified(matchAction(filter), leaf);
-            }
-            return leaf;
-        }
-    }
-
-    /**
      * Resolves the comparison operand to a buildable {@link Leaf}. A plain top-level scalar attribute uses the existing
      * attribute mapping; any other property (a slash- or dot-separated nested path) is resolved against the schema as a
      * nested leaf. Empty when the operand is not a property, names a geometry attribute, or does not resolve.
@@ -874,18 +632,6 @@ final class FilterToPredicate {
     /** Splits a property name on the ECQL slash form and the dotted programmatic form into a logical column path. */
     private static ColumnPath logicalPath(String propertyName) {
         return ColumnPath.of(propertyName.split("[/.]"));
-    }
-
-    /** Maps the GeoTools match action of a multi-valued filter to its parquetry equivalent; defaults to ANY. */
-    private static MatchAction matchAction(Filter filter) {
-        if (!(filter instanceof MultiValuedFilter multiValued)) {
-            return MatchAction.ANY;
-        }
-        return switch (multiValued.getMatchAction()) {
-            case ALL -> MatchAction.ALL;
-            case ONE -> MatchAction.ONE;
-            case ANY -> MatchAction.ANY;
-        };
     }
 
     private Optional<AttributeMapping> property(Expression e) {
