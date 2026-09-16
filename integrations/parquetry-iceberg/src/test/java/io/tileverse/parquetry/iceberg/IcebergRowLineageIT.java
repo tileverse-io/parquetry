@@ -51,8 +51,14 @@ import io.tileverse.parquetry.testkit.TestCorpus;
  * {@code _row_id} base 5 is recovered only by cumulative within-manifest inheritance) and a per-file
  * data-sequence-number boundary (files a and b at sequence 1, file c at sequence 2). The {@code materialized} table
  * stores {@code _row_id} physically for only some of one file's rows (a mix of stored and null cells); the per-row
- * coalesce keeps a stored cell and falls back to the computed value for a null cell. Every expected value comes from
- * Apache Iceberg's own reader.
+ * coalesce keeps a stored cell and falls back to the computed value for a null cell.
+ *
+ * <p>The {@code evolved} table puts its two data files on opposite sides of a schema evolution, which renamed a column
+ * and added one. Its legacy file ({@code id} 200..204) therefore reconciles against the current schema rather than
+ * passing through, and a projection naming a lineage column over that file is the reconciled lineage path. Its evolved
+ * file ({@code id} 205..209) materializes BOTH reserved columns, with the stored cells staggered: {@code _row_id} at
+ * odd within-file positions and {@code _last_updated_sequence_number} at even ones, which leaves no row taking a stored
+ * value for both. Every expected value comes from Apache Iceberg's own reader.
  */
 class IcebergRowLineageIT {
 
@@ -62,6 +68,18 @@ class IcebergRowLineageIT {
     private static final long FRESH_ROW_COUNT = 15L;
     private static final long ID_TO_ROW_ID_OFFSET = 100L;
     private static final long LAST_FILE_A_B_ID = 109L;
+    private static final ColumnPath AMOUNT = ColumnPath.of("amount");
+    private static final ColumnPath LABEL = ColumnPath.of("label");
+    private static final Projection LINEAGE_COLUMNS =
+            Projection.ofPhysical(List.of(ID, ROW_ID, LAST_UPDATED_SEQUENCE_NUMBER));
+    private static final long EVOLVED_ROW_COUNT = 10L;
+    private static final long FIRST_LEGACY_ID = 200L;
+    private static final long FIRST_EVOLVED_ID = 205L;
+    private static final long LEGACY_SEQUENCE_NUMBER = 1L;
+    private static final long EVOLVED_SEQUENCE_NUMBER = 2L;
+    private static final long EVOLVED_ROW_ID_BASE = 5L;
+    private static final long STORED_ROW_ID_BASE = 1000L;
+    private static final long STORED_SEQUENCE_BASE = 7000L;
 
     @TempDir
     Path tempDir;
@@ -199,12 +217,71 @@ class IcebergRowLineageIT {
         });
     }
 
+    @Test
+    void synthesizesLineageOnTheReconciledPathOfAnEvolvedFile() {
+        withEvolved(dataset -> {
+            Predicate legacyFile = new Predicate.Lt(ID, new Value.LongVal(FIRST_EVOLVED_ID));
+
+            List<ParquetRecord> rows = read(dataset, legacyFile, LINEAGE_COLUMNS);
+
+            assertThat(rows).hasSize(5);
+            assertThat(rows).allSatisfy(row -> {
+                // This file was written before the rename and the added column, hence every one of its rows reaches
+                // the reader through reconciliation rather than pass-through. Its lineage is fully synthesized: the
+                // file's base 0 plus the within-file position, and the sequence number of the commit that appended it.
+                long id = row.getLong(ID);
+                assertThat(row.getLong(ROW_ID)).isEqualTo(id - FIRST_LEGACY_ID);
+                assertThat(row.getLong(LAST_UPDATED_SEQUENCE_NUMBER)).isEqualTo(LEGACY_SEQUENCE_NUMBER);
+            });
+        });
+    }
+
+    @Test
+    void coalescesBothMaterializedLineageColumnsPerRow() {
+        withEvolved(dataset -> {
+            Predicate evolvedFile = new Predicate.GtEq(ID, new Value.LongVal(FIRST_EVOLVED_ID));
+
+            List<ParquetRecord> rows = read(dataset, evolvedFile, LINEAGE_COLUMNS);
+
+            assertThat(rows).hasSize(5);
+            assertThat(rows).allSatisfy(row -> {
+                long id = row.getLong(ID);
+                assertThat(row.getLong(ROW_ID)).isEqualTo(storedOrSynthesizedRowId(id));
+                assertThat(row.getLong(LAST_UPDATED_SEQUENCE_NUMBER)).isEqualTo(storedOrSynthesizedSequence(id));
+            });
+        });
+    }
+
+    @Test
+    void presentsTheEvolvedSchemaForAFileWrittenBeforeIt() {
+        withEvolved(dataset -> {
+            List<ParquetRecord> rows = read(dataset, Projection.ALL);
+
+            assertThat(leafNames(dataset.schema())).containsExactly("id", "amount", "label");
+            assertThat(rows).hasSize((int) EVOLVED_ROW_COUNT);
+            assertThat(rows).allSatisfy(row -> {
+                assertThat(leafNames(row.schema())).doesNotContain("_row_id", "_last_updated_sequence_number");
+                // The legacy file stores this column under its old name; the table presents it by field id.
+                assertThat(row.getDouble(AMOUNT)).isEqualTo(row.getLong(ID) * 1.5);
+            });
+            List<Long> unnamed = rows.stream()
+                    .filter(row -> row.isNull(LABEL))
+                    .map(row -> row.getLong(ID))
+                    .toList();
+            assertThat(unnamed).containsExactly(200L, 201L, 202L, 203L, 204L);
+        });
+    }
+
     private void withFresh(Consumer<ParquetDataset> assertions) {
         withTable("iceberg-row-lineage/fresh", "fresh", assertions);
     }
 
     private void withMaterialized(Consumer<ParquetDataset> assertions) {
         withTable("iceberg-row-lineage/materialized", "materialized", assertions);
+    }
+
+    private void withEvolved(Consumer<ParquetDataset> assertions) {
+        withTable("iceberg-row-lineage/evolved", "evolved", assertions);
     }
 
     private void withTable(String resource, String name, Consumer<ParquetDataset> assertions) {
@@ -234,6 +311,26 @@ class IcebergRowLineageIT {
 
     private static Set<Long> rowIdsOf(List<ParquetRecord> rows) {
         return rows.stream().map(row -> row.getLong(ROW_ID)).collect(Collectors.toCollection(TreeSet::new));
+    }
+
+    /** Odd within-file positions of the evolved file store a row id; even ones fall back to the base plus position. */
+    private static long storedOrSynthesizedRowId(long id) {
+        long position = id - FIRST_EVOLVED_ID;
+        boolean stored = position % 2 == 1;
+        if (stored) {
+            return STORED_ROW_ID_BASE + position;
+        }
+        return EVOLVED_ROW_ID_BASE + position;
+    }
+
+    /** The staggered half: even positions store a sequence number, odd ones fall back to the file's own. */
+    private static long storedOrSynthesizedSequence(long id) {
+        long position = id - FIRST_EVOLVED_ID;
+        boolean stored = position % 2 == 0;
+        if (stored) {
+            return STORED_SEQUENCE_BASE + position;
+        }
+        return EVOLVED_SEQUENCE_NUMBER;
     }
 
     private static Set<Long> rowIdRange(long startInclusive, long count) {

@@ -28,6 +28,11 @@ Currently produced:
   the `_row_id` column as a nullable column with a mix of stored and null cells,
   exercising per-row coalesce (a stored cell wins; a null cell resolves to the
   file base plus position).
+- `evolved/` - a v3 table whose two data files sit on opposite sides of a schema
+  evolution. The first predates the evolution and reconciles on read with fully
+  synthesized lineage; the second is written against the evolved schema and
+  materializes BOTH reserved lineage columns, with the two mixes staggered
+  against each other.
 
 ## Toolchain
 
@@ -215,3 +220,80 @@ document as `v1.metadata.json` and drops `version-hint.text` and the Hadoop
 
 `materialized-gen/target/`, `materialized-gen/work/`, and
 `materialized-gen/cp.txt` are regeneration scratch and are not committed.
+
+## What `evolved/` contains
+
+A `format-version=3`, unpartitioned table whose schema evolves between its two
+commits, which puts one data file on each side of the evolution:
+
+- schema 0 is `events(id long required, value double)`; commit 1 (data sequence
+  number 1) appends the legacy file under it: ids 200..204, `value = id * 1.5`,
+  `first_row_id` base 0, no materialized lineage column;
+- the schema then evolves to `events(id long required, amount double, label
+  string)`. The rename keeps field id 2, and `label` is a new field id 3. A
+  schema update writes a metadata document without a snapshot, which is why the
+  two data commits keep sequence numbers 1 and 2;
+- commit 2 (data sequence number 2) appends the evolved file: ids 205..209,
+  `amount = id * 1.5`, `label = "row-" + id`, `first_row_id` base 5, written
+  against a schema that adds BOTH reserved lineage fields as nullable columns.
+
+The legacy file is short of `label` and names field 2 `value`. A reader must
+therefore reconcile it against the current schema rather than pass it through.
+That is the
+read path this fixture exists to pin: a projection naming a lineage column over a
+reconciled file.
+
+The two materialized mixes are staggered on purpose. `_row_id` stores a value at
+ODD within-file positions; `_last_updated_sequence_number` stores one at EVEN
+positions. No row takes a stored value for both columns, and no row falls back
+for both. A reader that confuses the two columns therefore disagrees with the
+oracle on every row of the evolved file.
+
+| id  | _row_id | _last_updated_sequence_number | data file | _row_id cell | _last_updated cell | note                                  |
+|-----|---------|-------------------------------|-----------|--------------|--------------------|---------------------------------------|
+| 200 | 0       | 1                             | legacy    | (no column)  | (no column)        | reconciled, fully synthesized         |
+| 201 | 1       | 1                             | legacy    | (no column)  | (no column)        | reconciled, fully synthesized         |
+| 202 | 2       | 1                             | legacy    | (no column)  | (no column)        | reconciled, fully synthesized         |
+| 203 | 3       | 1                             | legacy    | (no column)  | (no column)        | reconciled, fully synthesized         |
+| 204 | 4       | 1                             | legacy    | (no column)  | (no column)        | reconciled, fully synthesized         |
+| 205 | 5       | 7000                          | evolved   | null         | 7000               | base 5 + pos 0; stored sequence wins  |
+| 206 | 1001    | 2                             | evolved   | 1001         | null               | stored row id wins; sequence from file|
+| 207 | 7       | 7002                          | evolved   | null         | 7002               | base 5 + pos 2; stored sequence wins  |
+| 208 | 1003    | 2                             | evolved   | 1003         | null               | stored row id wins; sequence from file|
+| 209 | 9       | 7004                          | evolved   | null         | 7004               | base 5 + pos 4; stored sequence wins  |
+
+The physical `_row_id` column of the evolved file is `[null, 1001, null, 1003,
+null]` and its `_last_updated_sequence_number` column is `[7000, null, 7002,
+null, 7004]`. As with the other two tables, the manifest
+`data_file.first_row_id` is NULL and the bases come from the manifest-list
+`ManifestFile.first_row_id` (0 and 5); the metadata records `next-row-id: 10`.
+
+### Regenerate
+
+```bash
+cd internal/parquetry-testkit/fixtures-gen/iceberg-row-lineage/evolved-gen
+
+# 1. Build the raw warehouse with the Iceberg Java API (Java 17).
+#    Writes ./work/warehouse/events (absolute generation paths), prints the live
+#    ids and the evolved schema, and reads each file's per-row lineage through
+#    the coalesce path.
+JAVA_HOME=/Users/groldan/.sdkman/candidates/java/17.0.17-tem \
+  /Users/groldan/.sdkman/candidates/maven/current/bin/mvn -q -e compile exec:java \
+  -Dexec.mainClass=rowlineagegen.EvolvedRowLineageFixtureGenerator \
+  -Dexec.jvmArgs="--add-opens java.base/java.nio=ALL-UNNAMED --add-opens java.base/sun.nio.ch=ALL-UNNAMED"
+
+# 2. Normalize paths and vendor into
+#    src/main/resources/iceberg-row-lineage/evolved.
+#    Reuses the iceberg-deletes venv (system pyarrow + fastavro):
+cd ..
+../iceberg-deletes/.venv/bin/python normalize_and_vendor_evolved.py
+```
+
+`normalize_and_vendor_evolved.py` mirrors the sibling scripts against the logical
+root `file:///iceberg-row-lineage/evolved`. Keeping only the current metadata
+document also keeps the evolution: that document holds both schemas and points
+`current-schema-id` at the evolved one, which is what makes the legacy file
+reconcile on read.
+
+`evolved-gen/target/`, `evolved-gen/work/`, and `evolved-gen/cp.txt` are
+regeneration scratch and are not committed.

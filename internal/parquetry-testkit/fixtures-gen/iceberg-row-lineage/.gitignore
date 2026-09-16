@@ -4,3 +4,6 @@ fresh-gen/cp.txt
 materialized-gen/target/
 materialized-gen/work/
 materialized-gen/cp.txt
+evolved-gen/target/
+evolved-gen/work/
+evolved-gen/cp.txt
