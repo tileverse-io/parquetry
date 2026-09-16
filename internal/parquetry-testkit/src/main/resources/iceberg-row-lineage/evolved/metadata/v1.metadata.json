@@ -1,0 +1,161 @@
+{
+  "format-version": 3,
+  "table-uuid": "1a84c46e-d182-4a1a-acbb-949a9cb31e01",
+  "location": "file:///iceberg-row-lineage/evolved",
+  "last-sequence-number": 2,
+  "last-updated-ms": 1789521668500,
+  "last-column-id": 3,
+  "current-schema-id": 1,
+  "schemas": [
+    {
+      "type": "struct",
+      "schema-id": 0,
+      "fields": [
+        {
+          "id": 1,
+          "name": "id",
+          "required": true,
+          "type": "long"
+        },
+        {
+          "id": 2,
+          "name": "value",
+          "required": false,
+          "type": "double"
+        }
+      ]
+    },
+    {
+      "type": "struct",
+      "schema-id": 1,
+      "fields": [
+        {
+          "id": 1,
+          "name": "id",
+          "required": true,
+          "type": "long"
+        },
+        {
+          "id": 2,
+          "name": "amount",
+          "required": false,
+          "type": "double"
+        },
+        {
+          "id": 3,
+          "name": "label",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    }
+  ],
+  "default-spec-id": 0,
+  "partition-specs": [
+    {
+      "spec-id": 0,
+      "fields": []
+    }
+  ],
+  "last-partition-id": 999,
+  "default-sort-order-id": 0,
+  "sort-orders": [
+    {
+      "order-id": 0,
+      "fields": []
+    }
+  ],
+  "properties": {
+    "write.metadata.compression-codec": "none",
+    "write.parquet.compression-codec": "uncompressed"
+  },
+  "current-snapshot-id": 4593608173383504874,
+  "next-row-id": 10,
+  "refs": {
+    "main": {
+      "snapshot-id": 4593608173383504874,
+      "type": "branch"
+    }
+  },
+  "snapshots": [
+    {
+      "sequence-number": 1,
+      "snapshot-id": 8689282163797350336,
+      "timestamp-ms": 1789521668366,
+      "summary": {
+        "operation": "append",
+        "manifests-created": "1",
+        "manifests-kept": "0",
+        "manifests-replaced": "0",
+        "added-data-files": "1",
+        "added-records": "5",
+        "added-files-size": "732",
+        "changed-partition-count": "1",
+        "total-records": "5",
+        "total-files-size": "732",
+        "total-data-files": "1",
+        "total-delete-files": "0",
+        "total-position-deletes": "0",
+        "total-equality-deletes": "0",
+        "iceberg-version": "Apache Iceberg 1.11.0 (commit 6976e020b894f6a6777704df2b8c4458cb291ae9)"
+      },
+      "manifest-list": "file:///iceberg-row-lineage/evolved/metadata/snap-8689282163797350336-1-07601699-1090-45de-9a24-a71842884924.avro",
+      "schema-id": 0,
+      "first-row-id": 0,
+      "added-rows": 5
+    },
+    {
+      "sequence-number": 2,
+      "snapshot-id": 4593608173383504874,
+      "parent-snapshot-id": 8689282163797350336,
+      "timestamp-ms": 1789521668500,
+      "summary": {
+        "operation": "append",
+        "manifests-created": "1",
+        "manifests-kept": "1",
+        "manifests-replaced": "0",
+        "added-data-files": "1",
+        "added-records": "5",
+        "added-files-size": "1743",
+        "changed-partition-count": "1",
+        "total-records": "10",
+        "total-files-size": "2475",
+        "total-data-files": "2",
+        "total-delete-files": "0",
+        "total-position-deletes": "0",
+        "total-equality-deletes": "0",
+        "iceberg-version": "Apache Iceberg 1.11.0 (commit 6976e020b894f6a6777704df2b8c4458cb291ae9)"
+      },
+      "manifest-list": "file:///iceberg-row-lineage/evolved/metadata/snap-4593608173383504874-1-0be47350-1fb1-49c2-a837-4df92f53e23a.avro",
+      "schema-id": 1,
+      "first-row-id": 5,
+      "added-rows": 5
+    }
+  ],
+  "statistics": [],
+  "partition-statistics": [],
+  "snapshot-log": [
+    {
+      "timestamp-ms": 1789521668366,
+      "snapshot-id": 8689282163797350336
+    },
+    {
+      "timestamp-ms": 1789521668500,
+      "snapshot-id": 4593608173383504874
+    }
+  ],
+  "metadata-log": [
+    {
+      "timestamp-ms": 1789521667796,
+      "metadata-file": "file:///iceberg-row-lineage/evolved/metadata/v1.metadata.json"
+    },
+    {
+      "timestamp-ms": 1789521668371,
+      "metadata-file": "file:///iceberg-row-lineage/evolved/metadata/v2.metadata.json"
+    },
+    {
+      "timestamp-ms": 1789521668403,
+      "metadata-file": "file:///iceberg-row-lineage/evolved/metadata/v3.metadata.json"
+    }
+  ]
+}
