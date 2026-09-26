@@ -20,7 +20,6 @@ import java.io.UncheckedIOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -34,18 +33,22 @@ import lombok.NonNull;
 /**
  * Overlaps upcoming row-group fetches with the current row group's decode. The consumer pulls row groups in order via
  * {@link #take(int)}; before returning row group {@code n} the prefetcher tries to submit fetches for the next
- * {@code prefetchDepth} survivors on a per-read virtual-thread executor, gated by a shared {@link FetchBudget} and a
+ * {@code prefetchDepth} survivors on a per-read virtual-thread executor, under a shared {@link FetchBudget} and a
  * per-read concurrency permit. When the budget or a permit is unavailable a row group is fetched inline on the calling
  * (decode) thread - the never-break serial fallback.
  *
- * <p>The current row group's fetch is mandatory and is never gated by the budget; speculative prefetches are. The
- * per-read concurrency permit is released when a fetch task completes (buffer filled); the budget bytes are released
- * when the resulting {@link RowGroupFetch} is closed (after decode).
+ * <p>Each row group is planned through the read's {@link RowGroupPlans} at the moment its fetch plan is built, on the
+ * consumer thread. A row group dropped by its plan is never fetched: the window records it as submitted and moves on.
+ * Every other row group fetches under the plan's fetch mask, which skips the pages outside the planned rows.
+ *
+ * <p>The current row group's fetch is mandatory and never waits on the budget; speculative prefetches do. The per-read
+ * concurrency permit is released when a fetch task completes (buffer filled); the budget bytes are released when the
+ * resulting {@link RowGroupFetch} is closed (after decode).
  */
 public final class RowGroupPrefetcher implements AutoCloseable {
 
     private final List<RowGroupSurvivor> survivors;
-    private final List<Optional<RowMask>> masks;
+    private final RowGroupPlans plans;
     private final RowGroupFetcher fetcher;
     private final FetchBudget budget;
     private final ExecutorService executor;
@@ -58,38 +61,38 @@ public final class RowGroupPrefetcher implements AutoCloseable {
 
     public RowGroupPrefetcher(
             @NonNull List<RowGroupSurvivor> survivors,
-            @NonNull List<Optional<RowMask>> masks,
+            @NonNull RowGroupPlans plans,
             @NonNull RowGroupFetcher fetcher,
             @NonNull FetchBudget budget,
             @NonNull ExecutorService executor,
             int prefetchDepth,
             int maxConcurrentFetchesPerRead) {
-        this(survivors, masks, fetcher, budget, executor, prefetchDepth, maxConcurrentFetchesPerRead, false);
+        this(survivors, plans, fetcher, budget, executor, prefetchDepth, maxConcurrentFetchesPerRead, false);
     }
 
     /**
      * Same as the seven-argument constructor, additionally timing each fetch when {@code wantsTimings} is on: every
      * {@link RowGroupFetch} then reports its {@code fetchNanos}. When off (the default), no fetch reads the clock.
      *
-     * @param masks one fetch-side page-skip mask per survivor, in survivor order; an empty entry fetches that row
-     *     group's chunks whole
+     * @param plans the read's per-row-group plans: which survivors are dropped before any fetch, and the fetch-side
+     *     page-skip mask of each one, empty for a survivor whose chunks are fetched whole
      */
     @SuppressWarnings("java:S107") // internal prefetcher wiring: the parameters are cohesive collaborators of one read
     public RowGroupPrefetcher(
             @NonNull List<RowGroupSurvivor> survivors,
-            @NonNull List<Optional<RowMask>> masks,
+            @NonNull RowGroupPlans plans,
             @NonNull RowGroupFetcher fetcher,
             @NonNull FetchBudget budget,
             @NonNull ExecutorService executor,
             int prefetchDepth,
             int maxConcurrentFetchesPerRead,
             boolean wantsTimings) {
-        if (masks.size() != survivors.size()) {
-            throw new IllegalArgumentException("Expected one fetch mask per survivor, got " + masks.size()
-                    + " masks for " + survivors.size() + " survivors");
+        if (plans.size() != survivors.size()) {
+            throw new IllegalArgumentException("Expected one plan per survivor, got " + plans.size() + " plans for "
+                    + survivors.size() + " survivors");
         }
         this.survivors = List.copyOf(survivors);
-        this.masks = List.copyOf(masks);
+        this.plans = plans;
         this.fetcher = fetcher;
         this.budget = budget;
         this.executor = executor;
@@ -115,12 +118,16 @@ public final class RowGroupPrefetcher implements AutoCloseable {
     private void submitWindowAhead(int currentIndex) {
         int target = Math.min(survivors.size() - 1, currentIndex + prefetchDepth);
         for (int next = Math.max(highestSubmitted + 1, currentIndex + 1); next <= target; next++) {
+            if (plans.dropped(next)) {
+                highestSubmitted = Math.max(highestSubmitted, next);
+                continue;
+            }
             trySubmit(next);
         }
     }
 
     private void trySubmit(int index) {
-        FetchPlan plan = fetcher.planFor(survivors.get(index), masks.get(index));
+        FetchPlan plan = fetcher.planFor(survivors.get(index), plans.fetchMask(index));
         long span = plan.totalBytes();
         if (!budget.tryReserve(span)) {
             return;
@@ -151,7 +158,7 @@ public final class RowGroupPrefetcher implements AutoCloseable {
 
     private RowGroupFetch fetchInline(int index) throws IOException {
         RowGroupSurvivor survivor = survivors.get(index);
-        FetchPlan plan = fetcher.planFor(survivor, masks.get(index));
+        FetchPlan plan = fetcher.planFor(survivor, plans.fetchMask(index));
         return fetcher.fetch(survivor, plan, BudgetReservation.NONE, wantsTimings);
     }
 

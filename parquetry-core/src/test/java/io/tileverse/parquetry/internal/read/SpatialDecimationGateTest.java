@@ -64,18 +64,18 @@ class SpatialDecimationGateTest {
     }
 
     @Test
-    void replaceIsRejectedUntilOutputSubstitutionIsSupported() {
+    void substituteIsRejectedAtRowLevel() {
         ParquetRecordBatch batch = pointBatch(new double[][] {{0, 0}}, "1");
         BitSet survivors = new BitSet();
         survivors.set(0);
 
-        SpatialReadProbe probe = (minX, minY, maxX, maxY) -> Decision.replace(new Object());
+        SpatialReadProbe probe = (minX, minY, maxX, maxY) -> Decision.substitute();
 
         SpatialDecimationGate gate = new SpatialDecimationGate(GEOM, probe);
 
         assertThatThrownBy(() -> gate.narrow(batch, survivors))
                 .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessageContaining("Replace");
+                .hasMessageContaining("Substitute");
     }
 
     @Test

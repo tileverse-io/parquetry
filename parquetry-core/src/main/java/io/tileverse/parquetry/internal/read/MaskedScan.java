@@ -15,7 +15,6 @@
  */
 package io.tileverse.parquetry.internal.read;
 
-import java.util.List;
 import java.util.Set;
 
 import io.tileverse.parquetry.filter.Predicate;
@@ -25,26 +24,20 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import lombok.NonNull;
 
 /**
- * Immutable per-read inputs that switch {@link ParallelDecodeCoordinator} onto the masked scan decode path.
- *
- * <p>{@link #predicate} and {@link #filterLeaves} apply to every row group; {@link #rowsToScan} holds the rows each row
- * group's masked walk must cover, indexed parallel to the coordinator's survivor list, which the driver proves its
- * window walk against.
+ * Immutable per-read inputs that switch {@link ParallelDecodeCoordinator} onto the masked scan decode path. All three
+ * apply to every row group of the read; the rows covered by each row group's masked walk come from the read's
+ * {@link RowGroupPlans}.
  *
  * @param predicate the normalized predicate evaluated per window
- * @param filterLeaves the physical leaf columns the predicate reads
- * @param outputSchema the schema the emitted batches expose (the caller's projection)
- * @param rowsToScan the rows each row group's masked walk must cover - the surviving rows where a column-index row mask
- *     narrows the group, the row group's own row count otherwise - parallel to the coordinator's survivors
+ * @param filterLeaves the physical leaf columns read by the predicate
+ * @param outputSchema the schema exposed by the emitted batches (the caller's projection)
  */
 public record MaskedScan(
         @NonNull Predicate predicate,
         @NonNull Set<ColumnPath> filterLeaves,
-        @NonNull ParquetSchema outputSchema,
-        @NonNull List<Long> rowsToScan) {
+        @NonNull ParquetSchema outputSchema) {
 
     public MaskedScan {
         filterLeaves = Set.copyOf(filterLeaves);
-        rowsToScan = List.copyOf(rowsToScan);
     }
 }

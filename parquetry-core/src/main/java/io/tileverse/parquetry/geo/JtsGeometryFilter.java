@@ -22,6 +22,7 @@ import java.util.function.Predicate;
 
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.Geometry;
+import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.prep.PreparedGeometry;
 import org.locationtech.jts.geom.prep.PreparedGeometryFactory;
 
@@ -41,6 +42,12 @@ import io.tileverse.parquetry.schema.ColumnPath;
  * {@link #disjoint} has no sound bbox lowering and returns {@link Optional#empty()}, causing the reader to scan every
  * row without bbox pruning.
  *
+ * <p>Region answer: {@link #coversRegion} tells the reader when a whole box of candidates passes the relation without
+ * decoding any of them. {@link #intersects} and {@link #coveredBy} answer {@code true} when the query covers the box,
+ * because both relations accept a candidate that touches the query boundary. {@link #within} demands the box inside the
+ * query interior: a candidate on the query boundary is covered by the query but is not within it. Every other relation
+ * leaves the question open and has each candidate tested.
+ *
  * <p>Thread safety: instances are thread-safe. {@link PreparedGeometry} is documented thread-safe for concurrent use
  * after construction, and {@link #decode} delegates to a shared thread-safe reader. The factories that do not use
  * {@link PreparedGeometry} ({@link #equalsExact} and {@link #dwithin}) capture the query as an unmodified reference;
@@ -51,11 +58,20 @@ public final class JtsGeometryFilter implements GeometryFilter<Geometry> {
     private final ColumnPath column;
     private final Predicate<Geometry> matcher;
     private final Optional<Spatial> lowering;
+    private final Predicate<Geometry> regionCoverer;
+    private final GeometryFactory geometryFactory;
 
-    private JtsGeometryFilter(ColumnPath column, Predicate<Geometry> matcher, Optional<Spatial> lowering) {
+    private JtsGeometryFilter(
+            ColumnPath column,
+            Predicate<Geometry> matcher,
+            Optional<Spatial> lowering,
+            Predicate<Geometry> regionCoverer,
+            GeometryFactory geometryFactory) {
         this.column = column;
         this.matcher = matcher;
         this.lowering = lowering;
+        this.regionCoverer = regionCoverer;
+        this.geometryFactory = geometryFactory;
     }
 
     // --- factories ---
@@ -66,7 +82,8 @@ public final class JtsGeometryFilter implements GeometryFilter<Geometry> {
      */
     public static JtsGeometryFilter intersects(ColumnPath column, Geometry query) {
         PreparedGeometry pg = PreparedGeometryFactory.prepare(query);
-        return new JtsGeometryFilter(column, pg::intersects, bboxIntersects(column, query));
+        return new JtsGeometryFilter(
+                column, pg::intersects, bboxIntersects(column, query), pg::covers, query.getFactory());
     }
 
     /**
@@ -75,7 +92,8 @@ public final class JtsGeometryFilter implements GeometryFilter<Geometry> {
      */
     public static JtsGeometryFilter touches(ColumnPath column, Geometry query) {
         PreparedGeometry pg = PreparedGeometryFactory.prepare(query);
-        return new JtsGeometryFilter(column, pg::touches, bboxIntersects(column, query));
+        return new JtsGeometryFilter(
+                column, pg::touches, bboxIntersects(column, query), neverCovers(), query.getFactory());
     }
 
     /**
@@ -84,7 +102,8 @@ public final class JtsGeometryFilter implements GeometryFilter<Geometry> {
      */
     public static JtsGeometryFilter crosses(ColumnPath column, Geometry query) {
         PreparedGeometry pg = PreparedGeometryFactory.prepare(query);
-        return new JtsGeometryFilter(column, pg::crosses, bboxIntersects(column, query));
+        return new JtsGeometryFilter(
+                column, pg::crosses, bboxIntersects(column, query), neverCovers(), query.getFactory());
     }
 
     /**
@@ -93,7 +112,8 @@ public final class JtsGeometryFilter implements GeometryFilter<Geometry> {
      */
     public static JtsGeometryFilter overlaps(ColumnPath column, Geometry query) {
         PreparedGeometry pg = PreparedGeometryFactory.prepare(query);
-        return new JtsGeometryFilter(column, pg::overlaps, bboxIntersects(column, query));
+        return new JtsGeometryFilter(
+                column, pg::overlaps, bboxIntersects(column, query), neverCovers(), query.getFactory());
     }
 
     /**
@@ -107,7 +127,12 @@ public final class JtsGeometryFilter implements GeometryFilter<Geometry> {
     public static JtsGeometryFilter contains(ColumnPath column, Geometry query) {
         PreparedGeometry pg = PreparedGeometryFactory.prepare(query);
         // candidate contains query <=> pg(query).within(candidate)
-        return new JtsGeometryFilter(column, pg::within, bboxLowering(column, query, Spatial.BboxContains::new));
+        return new JtsGeometryFilter(
+                column,
+                pg::within,
+                bboxLowering(column, query, Spatial.BboxContains::new),
+                neverCovers(),
+                query.getFactory());
     }
 
     /**
@@ -120,7 +145,12 @@ public final class JtsGeometryFilter implements GeometryFilter<Geometry> {
     public static JtsGeometryFilter covers(ColumnPath column, Geometry query) {
         PreparedGeometry pg = PreparedGeometryFactory.prepare(query);
         // candidate covers query <=> pg(query).coveredBy(candidate)
-        return new JtsGeometryFilter(column, pg::coveredBy, bboxLowering(column, query, Spatial.BboxContains::new));
+        return new JtsGeometryFilter(
+                column,
+                pg::coveredBy,
+                bboxLowering(column, query, Spatial.BboxContains::new),
+                neverCovers(),
+                query.getFactory());
     }
 
     /**
@@ -133,7 +163,12 @@ public final class JtsGeometryFilter implements GeometryFilter<Geometry> {
     public static JtsGeometryFilter within(ColumnPath column, Geometry query) {
         PreparedGeometry pg = PreparedGeometryFactory.prepare(query);
         // candidate within query <=> pg(query).contains(candidate)
-        return new JtsGeometryFilter(column, pg::contains, bboxLowering(column, query, Spatial.BboxCoveredBy::new));
+        return new JtsGeometryFilter(
+                column,
+                pg::contains,
+                bboxLowering(column, query, Spatial.BboxCoveredBy::new),
+                pg::containsProperly,
+                query.getFactory());
     }
 
     /**
@@ -146,7 +181,12 @@ public final class JtsGeometryFilter implements GeometryFilter<Geometry> {
     public static JtsGeometryFilter coveredBy(ColumnPath column, Geometry query) {
         PreparedGeometry pg = PreparedGeometryFactory.prepare(query);
         // candidate coveredBy query <=> pg(query).covers(candidate)
-        return new JtsGeometryFilter(column, pg::covers, bboxLowering(column, query, Spatial.BboxCoveredBy::new));
+        return new JtsGeometryFilter(
+                column,
+                pg::covers,
+                bboxLowering(column, query, Spatial.BboxCoveredBy::new),
+                pg::covers,
+                query.getFactory());
     }
 
     /**
@@ -155,7 +195,7 @@ public final class JtsGeometryFilter implements GeometryFilter<Geometry> {
      */
     public static JtsGeometryFilter disjoint(ColumnPath column, Geometry query) {
         PreparedGeometry pg = PreparedGeometryFactory.prepare(query);
-        return new JtsGeometryFilter(column, pg::disjoint, Optional.empty());
+        return new JtsGeometryFilter(column, pg::disjoint, Optional.empty(), neverCovers(), query.getFactory());
     }
 
     /**
@@ -166,7 +206,9 @@ public final class JtsGeometryFilter implements GeometryFilter<Geometry> {
         return new JtsGeometryFilter(
                 column,
                 candidate -> candidate.equalsExact(query),
-                bboxLowering(column, query, Spatial.BboxEquals::new));
+                bboxLowering(column, query, Spatial.BboxEquals::new),
+                neverCovers(),
+                query.getFactory());
     }
 
     /**
@@ -177,7 +219,9 @@ public final class JtsGeometryFilter implements GeometryFilter<Geometry> {
         return new JtsGeometryFilter(
                 column,
                 candidate -> candidate.isWithinDistance(query, distance),
-                bboxIntersectsExpanded(column, query, distance));
+                bboxIntersectsExpanded(column, query, distance),
+                neverCovers(),
+                query.getFactory());
     }
 
     // --- GeometryFilter implementation ---
@@ -202,7 +246,26 @@ public final class JtsGeometryFilter implements GeometryFilter<Geometry> {
         return matcher.test(geometry);
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>A JTS envelope sorts its constructor arguments, which turns an inverted box into an ordinary one and answers
+     * for that box instead of reporting the argument as unusable. The caller's guard on the precondition is what keeps
+     * such a box from reaching here.
+     */
+    @Override
+    public boolean coversRegion(double minX, double minY, double maxX, double maxY) {
+        Envelope box = new Envelope(minX, maxX, minY, maxY);
+        Geometry boxGeometry = geometryFactory.toGeometry(box);
+        return regionCoverer.test(boxGeometry);
+    }
+
     // --- private helpers ---
+
+    /** The region answer of a relation with no sound whole-box acceptance: every candidate is tested. */
+    private static Predicate<Geometry> neverCovers() {
+        return box -> false;
+    }
 
     /**
      * Builds a {@link Spatial.BboxIntersects} lowering from the query's envelope. Used for symmetric relations

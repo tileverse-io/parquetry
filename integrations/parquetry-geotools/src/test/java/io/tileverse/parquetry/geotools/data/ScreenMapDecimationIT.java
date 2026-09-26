@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.geotools.data;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 
 import java.lang.foreign.MemorySegment;
 import java.nio.file.Files;
@@ -61,6 +62,12 @@ import io.tileverse.parquetry.schema.SchemaNode;
  * Every point in cell {@code c} lies in the world unit {@code [c, c + 1)} on X. With an identity world-to-screen
  * transform and one world unit per pixel ({@code setSpans(1.0, 1.0)}), each cell's points fall into the same pixel and
  * different cells fall into different pixels, hence the decimated read returns exactly one feature per cell.
+ *
+ * <p>A geometry-only query over a file whose pages hold one cell each takes a substitute per page: the page's
+ * statistics box is sub-pixel and every row within it satisfies the unfiltered query, hence one pixel-sized feature
+ * stands for the whole page. The {@code id} column is the feature id column, which a substitute replaces with a
+ * synthetic identity, hence a query for the geometry and the id substitutes as well. A query for the {@code weight}
+ * attribute keeps the row-by-row path.
  */
 class ScreenMapDecimationIT {
 
@@ -68,9 +75,12 @@ class ScreenMapDecimationIT {
     private static final int POINTS_PER_CELL = 4;
     private static final int TOTAL_POINTS = CELLS * POINTS_PER_CELL;
 
+    /** A page limit above the row count, which writes every row of the file into a single page per column. */
+    private static final int ALL_ROWS_IN_ONE_PAGE = 8192;
+
     @Test
     void readWithoutTheHintReturnsEveryPoint(@TempDir Path dir) throws Exception {
-        try (CatalogDataStore store = pointStore(dir)) {
+        try (CatalogDataStore store = pointStore(dir, ALL_ROWS_IN_ONE_PAGE)) {
             CatalogFeatureSource fs = (CatalogFeatureSource) store.getFeatureSource("points");
 
             int seen = count(fs.getReader(new Query("points")));
@@ -81,7 +91,7 @@ class ScreenMapDecimationIT {
 
     @Test
     void readWithTheScreenMapHintCollapsesToOnePointPerPaintedPixel(@TempDir Path dir) throws Exception {
-        try (CatalogDataStore store = pointStore(dir)) {
+        try (CatalogDataStore store = pointStore(dir, ALL_ROWS_IN_ONE_PAGE)) {
             CatalogFeatureSource fs = (CatalogFeatureSource) store.getFeatureSource("points");
 
             Query query = new Query("points");
@@ -93,8 +103,90 @@ class ScreenMapDecimationIT {
         }
     }
 
-    private static CatalogDataStore pointStore(Path dir) throws Exception {
-        Path file = writePointFile(dir);
+    @Test
+    void aGeometryOnlyQueryOverSubPixelPagesEmitsOneSubstitutePerCell(@TempDir Path dir) throws Exception {
+        try (CatalogDataStore store = pointStore(dir, POINTS_PER_CELL)) {
+            CatalogFeatureSource fs = (CatalogFeatureSource) store.getFeatureSource("points");
+            Query query = new Query("points");
+            query.setPropertyNames(List.of("geometry"));
+            query.getHints().put(Hints.SCREENMAP, oneWorldUnitPerPixelScreenMap());
+
+            List<SimpleFeature> features = collect(fs.getReader(query));
+
+            // Each covering page holds the four points of one cell, at x = cell + 0.0, 0.1, 0.2, 0.3: the page box is
+            // sub-pixel and proven inside the unfiltered query, hence one substitute per cell at the box midpoint,
+            // x = cell + 0.15, where no row lies.
+            assertThat(features).hasSize(CELLS);
+            for (int cell = 0; cell < CELLS; cell++) {
+                Geometry geometry = (Geometry) features.get(cell).getDefaultGeometry();
+                assertThat(geometry).isInstanceOf(Point.class);
+                assertThat(geometry.getCoordinate().x).isCloseTo(cell + 0.15, within(1e-6));
+                assertThat(geometry.getCoordinate().y).isCloseTo(10.0 + cell, within(1e-6));
+            }
+        }
+    }
+
+    @Test
+    void aQueryForTheGeometryAndTheFeatureIdColumnAlsoSubstitutes(@TempDir Path dir) throws Exception {
+        try (CatalogDataStore store = pointStore(dir, POINTS_PER_CELL)) {
+            CatalogFeatureSource fs = (CatalogFeatureSource) store.getFeatureSource("points");
+            Query query = new Query("points");
+            query.setPropertyNames(List.of("id", "geometry"));
+            query.getHints().put(Hints.SCREENMAP, oneWorldUnitPerPixelScreenMap());
+
+            List<SimpleFeature> features = collect(fs.getReader(query));
+
+            assertThat(features).hasSize(CELLS);
+            for (int cell = 0; cell < CELLS; cell++) {
+                SimpleFeature feature = features.get(cell);
+                Geometry geometry = (Geometry) feature.getDefaultGeometry();
+                assertThat(geometry.getCoordinate().x)
+                        .as("the midpoint of the page box")
+                        .isCloseTo(cell + 0.15, within(1e-6));
+                assertThat(feature.getAttribute("id"))
+                        .as("a substitute stands for no row and takes a synthetic identity")
+                        .isNull();
+            }
+        }
+    }
+
+    @Test
+    void aQueryThatNeedsAnAttributeStillEmitsRealRows(@TempDir Path dir) throws Exception {
+        try (CatalogDataStore store = pointStore(dir, POINTS_PER_CELL)) {
+            CatalogFeatureSource fs = (CatalogFeatureSource) store.getFeatureSource("points");
+            Query query = new Query("points");
+            query.setPropertyNames(List.of("weight", "geometry"));
+            query.getHints().put(Hints.SCREENMAP, oneWorldUnitPerPixelScreenMap());
+
+            List<SimpleFeature> features = collect(fs.getReader(query));
+
+            assertThat(features).hasSize(CELLS);
+            for (int cell = 0; cell < CELLS; cell++) {
+                SimpleFeature feature = features.get(cell);
+                assertThat(feature.getAttribute("weight"))
+                        .as("a real row with its weight")
+                        .isEqualTo(weightOf(cell * POINTS_PER_CELL));
+                Geometry geometry = (Geometry) feature.getDefaultGeometry();
+                assertThat(geometry.getCoordinate().x)
+                        .as("the first row of the cell")
+                        .isCloseTo(cell, within(1e-6));
+            }
+        }
+    }
+
+    private static List<SimpleFeature> collect(FeatureReader<SimpleFeatureType, SimpleFeature> reader)
+            throws Exception {
+        List<SimpleFeature> features = new ArrayList<>();
+        try (reader) {
+            while (reader.hasNext()) {
+                features.add(reader.next());
+            }
+        }
+        return features;
+    }
+
+    private static CatalogDataStore pointStore(Path dir, int pageValueLimit) throws Exception {
+        Path file = writePointFile(dir, pageValueLimit);
         FilesetCatalog catalog = FilesetCatalog.open(
                 LocalFileSource.file(file),
                 CatalogOptions.builder().datasetName("points").build());
@@ -125,15 +217,20 @@ class ScreenMapDecimationIT {
         return n;
     }
 
-    private static Path writePointFile(Path dir) throws Exception {
+    private static Path writePointFile(Path dir, int pageValueLimit) throws Exception {
         ParquetSchema schema = geometrySchema();
-        WriteOptions options =
-                WriteOptions.builder().tempDir(dir).crsEpsg("geometry", 4326).build();
+        WriteOptions options = WriteOptions.builder()
+                .tempDir(dir)
+                .crsEpsg("geometry", 4326)
+                .pageValueLimit(pageValueLimit)
+                .build();
         Path file = dir.resolve("points.parquet");
         try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             ParquetRecordBatchBuilder appender = writer.appender(TOTAL_POINTS);
+            long id = 0;
             for (double[] point : pointsClusteredByCell()) {
-                appendPoint(appender, point[0], point[1]);
+                appendPoint(appender, id, point[0], point[1]);
+                id++;
             }
             appender.flush();
         }
@@ -153,9 +250,16 @@ class ScreenMapDecimationIT {
         return points;
     }
 
-    private static void appendPoint(ParquetRecordBatchBuilder appender, double x, double y) {
-        appender.setBinary(0, pointWkb(x, y));
+    private static void appendPoint(ParquetRecordBatchBuilder appender, long id, double x, double y) {
+        appender.setLong(0, id);
+        appender.setDouble(1, weightOf(id));
+        appender.setBinary(2, pointWkb(x, y));
         appender.endRow();
+    }
+
+    /** The plain attribute of the row with the given id, which no substitute can stand in for. */
+    private static double weightOf(long id) {
+        return id * 10.0;
     }
 
     private static MemorySegment pointWkb(double x, double y) {
@@ -167,10 +271,14 @@ class ScreenMapDecimationIT {
     }
 
     private static ParquetSchema geometrySchema() {
+        SchemaNode.Primitive id = new SchemaNode.Primitive(
+                "id", Repetition.REQUIRED, PrimitiveKind.INT64, OptionalInt.empty(), Optional.empty(), -1);
+        SchemaNode.Primitive weight = new SchemaNode.Primitive(
+                "weight", Repetition.REQUIRED, PrimitiveKind.DOUBLE, OptionalInt.empty(), Optional.empty(), -1);
         SchemaNode.Primitive geometry = new SchemaNode.Primitive(
                 "geometry", Repetition.REQUIRED, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1);
-        SchemaNode.Group root =
-                new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(geometry), Optional.empty(), -1);
+        SchemaNode.Group root = new SchemaNode.Group(
+                "schema", Repetition.REQUIRED, List.of(id, weight, geometry), Optional.empty(), -1);
         return new ParquetSchema(root);
     }
 }

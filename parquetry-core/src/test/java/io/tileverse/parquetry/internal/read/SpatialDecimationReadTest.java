@@ -34,6 +34,8 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ParquetFileWriter;
@@ -41,6 +43,7 @@ import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
+import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.SpatialReadProbe;
@@ -48,6 +51,7 @@ import io.tileverse.parquetry.filter.SpatialReadProbe.Decision;
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.FileMetaData;
+import io.tileverse.parquetry.format.PageLocation;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
@@ -60,13 +64,16 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.testkit.TestCorpus;
+import io.tileverse.parquetry.testsupport.CellProbe;
+import io.tileverse.parquetry.testsupport.RecordingByteRangeSource;
 import io.tileverse.parquetry.testsupport.Wkb;
 
 /**
  * Reads GeoParquet point files through a {@link SpatialReadProbe} and asserts how each decimation tier responds. The
  * leaf tier keeps the first point seen per integer-X cell; the row-group tier drops a whole group whose cell an earlier
- * group already painted, before its bytes are fetched; and without a probe the read is inert, returning every row. Each
- * tier owns its fixture; the row-reading and cell-extraction helpers are shared.
+ * group already painted, before its bytes are fetched; the page tier substitutes one sub-pixel page per cell and drops
+ * the rest before fetch; and without a probe the read is inert, returning every row. Each tier owns its fixture; the
+ * row-reading and cell-extraction helpers are shared.
  */
 class SpatialDecimationReadTest {
 
@@ -238,7 +245,7 @@ class SpatialDecimationReadTest {
             for (int group = 0; group < groupSpans.size(); group++) {
                 ByteSpan span = groupSpans.get(group);
                 boolean firstGroupInCell = group % GROUPS_PER_CELL == 0;
-                assertThat(spy.readAnyByteIn(span))
+                assertThat(spy.readAnyByteIn(span.start(), span.end()))
                         .as("row group %d (bytes [%d, %d)) fetched", group, span.start(), span.end())
                         .isEqualTo(firstGroupInCell);
             }
@@ -306,52 +313,150 @@ class SpatialDecimationReadTest {
         private long chunkStartOffset(ColumnMetaData meta) {
             return meta.dictionaryPageOffset().orElse(meta.dataPageOffset());
         }
+    }
 
-        private record ByteSpan(long start, long end) {}
+    /**
+     * The page tier over a file whose every integer-X cell fills two geometry pages: the plan of a row group
+     * substitutes one sub-pixel page per cell and drops the rest before fetch, hence no row of the file is emitted at
+     * all. A recording byte source proves that no geometry page is ever read.
+     */
+    @Nested
+    class PageTier {
+
+        private static final ColumnPath ID = ColumnPath.of("id");
+        private static final int ROWS_PER_GROUP = 16;
+        private static final int ROWS_PER_PAGE = 4;
+        private static final int ROWS_PER_CELL = 8;
+        private static final int GROUPS = 2;
+
+        @ParameterizedTest(name = "decode ahead = {0}")
+        @ValueSource(ints = {0, 2})
+        void substitutesEverySubPixelPageAndNeverReadsAGeometryPage(int ahead) throws Exception {
+            Path file = writeTwoPagesPerCell();
+            List<ByteSpan> geometryPages = everyGeometryPage(file);
+
+            RecordingByteRangeSource spy = new RecordingByteRangeSource(ByteRangeSource.ofFile(file));
+            ParquetRuntime runtime = ParquetRuntime.builder()
+                    .maxCoalesceGap(0)
+                    .maxDecodeAhead(ahead)
+                    .prefetchDepth(ahead)
+                    .build();
+            try (spy) {
+                ParquetFileReader reader = ParquetFileReader.open(spy, runtime, Optional.empty());
+                CellProbe probe = new CellProbe();
+                ReadOptions decimating =
+                        ReadOptions.builder().spatialReadProbe(probe).build();
+
+                spy.reset();
+                List<Integer> survivingCells = readIntegerXCells(reader, coveringEverything(), decimating);
+
+                assertThat(survivingCells)
+                        .as("every page is substituted; no row is emitted")
+                        .isEmpty();
+                assertThat(probe.substitutes())
+                        .as("the first page of each cell substitutes, the second finds the cell painted")
+                        .isEqualTo(GROUPS * ROWS_PER_GROUP / ROWS_PER_CELL);
+                assertThat(probe.painted()).containsExactlyInAnyOrderElementsOf(everyCellInRowOrder());
+                for (int page = 0; page < geometryPages.size(); page++) {
+                    ByteSpan span = geometryPages.get(page);
+                    assertThat(spy.readAnyByteIn(span.start(), span.end()))
+                            .as("geometry page %d was fetched", page)
+                            .isFalse();
+                }
+            }
+        }
+
+        /** The one integer-X cell of each substituted page, in file order. */
+        private List<Integer> everyCellInRowOrder() {
+            List<Integer> cells = new ArrayList<>();
+            for (int group = 0; group < GROUPS; group++) {
+                for (int cell = 0; cell < ROWS_PER_GROUP / ROWS_PER_CELL; cell++) {
+                    cells.add(group * 10 + cell);
+                }
+            }
+            return cells;
+        }
 
         /**
-         * A {@link ByteRangeSource} that delegates to a backing source and records the offset and length of every read,
-         * letting the test prove that a skipped row group's bytes were never fetched.
+         * Writes {@link #GROUPS} row groups of {@link #ROWS_PER_GROUP} points in pages of {@link #ROWS_PER_PAGE}, with
+         * the rows of each integer-X cell filling two consecutive pages. Group {@code g} occupies cells {@code g * 10}
+         * and {@code g * 10 + 1}, far enough apart that no two groups share a cell.
          */
-        private static final class RecordingByteRangeSource implements ByteRangeSource {
-
-            private final ByteRangeSource delegate;
-            private final List<long[]> reads = new ArrayList<>();
-
-            RecordingByteRangeSource(ByteRangeSource delegate) {
-                this.delegate = delegate;
-            }
-
-            @Override
-            public long size() {
-                return delegate.size();
-            }
-
-            @Override
-            public int read(long offset, MemorySegment dst) {
-                reads.add(new long[] {offset, dst.byteSize()});
-                return delegate.read(offset, dst);
-            }
-
-            @Override
-            public void close() {
-                delegate.close();
-            }
-
-            void reset() {
-                reads.clear();
-            }
-
-            boolean readAnyByteIn(ByteSpan span) {
-                for (long[] read : reads) {
-                    long readStart = read[0];
-                    long readEnd = read[0] + read[1];
-                    if (readStart < span.end() && span.start() < readEnd) {
-                        return true;
+        private Path writeTwoPagesPerCell() throws Exception {
+            ParquetSchema schema = idAndGeometrySchema();
+            WriteOptions options = WriteOptions.builder()
+                    .tempDir(tempDir)
+                    .crsEpsg("geometry", 4326)
+                    .rowGroupSize(RowGroupSize.rows(ROWS_PER_GROUP))
+                    .pageValueLimit(ROWS_PER_PAGE)
+                    .build();
+            Path file = tempDir.resolve("two-pages-per-cell.parquet");
+            try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
+                ParquetRecordBatchBuilder appender = writer.appender(ROWS_PER_GROUP);
+                long id = 0;
+                for (int group = 0; group < GROUPS; group++) {
+                    for (int row = 0; row < ROWS_PER_GROUP; row++) {
+                        double x = group * 10 + row / ROWS_PER_CELL + 0.1 * (row % ROWS_PER_CELL);
+                        appendPoint(appender, schema, id, x);
+                        id++;
                     }
                 }
-                return false;
+                appender.flush();
             }
+            return file;
+        }
+
+        private void appendPoint(ParquetRecordBatchBuilder appender, ParquetSchema schema, long id, double x) {
+            Map<ColumnPath, Object> values = new HashMap<>(2);
+            values.put(ID, id);
+            values.put(GEOMETRY, Wkb.fromWkt("POINT (" + x + " 0.5)"));
+            WriteFixtures.appendRow(appender, schema, values);
+        }
+
+        /** The byte span of every geometry data page of every row group, in file order. */
+        private List<ByteSpan> everyGeometryPage(Path file) {
+            try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+                FileMetaData footer = ParquetFormat.readFooter(source);
+                List<ByteSpan> spans = new ArrayList<>();
+                for (RowGroup rowGroup : footer.rowGroups()) {
+                    for (PageLocation location : geometryPages(source, rowGroup)) {
+                        spans.add(new ByteSpan(location.offset(), location.offset() + location.compressedPageSize()));
+                    }
+                }
+                return spans;
+            }
+        }
+
+        private List<PageLocation> geometryPages(ByteRangeSource source, RowGroup rowGroup) {
+            for (ColumnChunk chunk : rowGroup.columns()) {
+                ColumnMetaData meta = chunk.metaData().orElseThrow();
+                if (!GEOMETRY.equals(ColumnPath.of(meta.pathInSchema()))) {
+                    continue;
+                }
+                long offset = chunk.offsetIndexOffset().orElseThrow();
+                int length = chunk.offsetIndexLength().orElseThrow();
+                return ParquetFormat.readOffsetIndex(source, offset, length).pageLocations();
+            }
+            throw new IllegalStateException("the fixture row group has no geometry column chunk");
+        }
+
+        private Predicate coveringEverything() {
+            return new Predicate.Spatial.BboxIntersects(GEOMETRY, Bbox.of2d(-1, -1, 100, 2));
+        }
+
+        private ParquetSchema idAndGeometrySchema() {
+            SchemaNode.Primitive id = new SchemaNode.Primitive(
+                    "id", Repetition.REQUIRED, PrimitiveKind.INT64, OptionalInt.empty(), Optional.empty(), -1);
+            SchemaNode.Primitive geometry = new SchemaNode.Primitive(
+                    "geometry",
+                    Repetition.REQUIRED,
+                    PrimitiveKind.BYTE_ARRAY,
+                    OptionalInt.empty(),
+                    Optional.empty(),
+                    -1);
+            SchemaNode.Group root =
+                    new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(id, geometry), Optional.empty(), -1);
+            return new ParquetSchema(root);
         }
     }
 
@@ -393,6 +498,9 @@ class SpatialDecimationReadTest {
         }
     }
 
+    /** A half-open byte span of the file under test. */
+    private record ByteSpan(long start, long end) {}
+
     private static long rowCount(ParquetFileReader reader, ReadOptions options) {
         try (Stream<ParquetRecord> rows = reader.read(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
             return rows.count();
@@ -400,8 +508,12 @@ class SpatialDecimationReadTest {
     }
 
     private static List<Integer> readIntegerXCells(ParquetFileReader reader, ReadOptions options) {
+        return readIntegerXCells(reader, Predicate.ALWAYS_TRUE, options);
+    }
+
+    private static List<Integer> readIntegerXCells(ParquetFileReader reader, Predicate predicate, ReadOptions options) {
         List<Integer> cells = new ArrayList<>();
-        try (Stream<ParquetRecord> rows = reader.read(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
+        try (Stream<ParquetRecord> rows = reader.read(predicate, Projection.ALL, options)) {
             rows.forEach(row -> cells.add(integerXCellOf(row)));
         }
         return cells;

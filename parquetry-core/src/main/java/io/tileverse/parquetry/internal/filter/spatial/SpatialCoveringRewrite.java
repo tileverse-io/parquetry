@@ -163,8 +163,7 @@ public final class SpatialCoveringRewrite {
      * {@code bbox} struct that GeoParquet 1.0 writers (Overture, GDAL) emit without declaring it. The geo metadata map
      * is keyed by the geometry column's name, matching how the rest of the reader looks it up.
      */
-    private static Optional<BboxCovering> coveringFor(
-            ColumnPath geometryColumn, ParquetSchema schema, GeoParquetMetadata geo) {
+    static Optional<BboxCovering> coveringFor(ColumnPath geometryColumn, ParquetSchema schema, GeoParquetMetadata geo) {
         GeoColumn geoColumn = geo.columns().get(geometryColumn.dot());
         if (geoColumn == null) {
             return Optional.empty();

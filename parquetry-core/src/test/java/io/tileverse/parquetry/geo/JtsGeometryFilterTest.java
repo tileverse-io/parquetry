@@ -19,8 +19,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.lang.foreign.MemorySegment;
 import java.util.Optional;
+import java.util.stream.Stream;
 
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.io.ParseException;
 import org.locationtech.jts.io.WKBWriter;
@@ -392,5 +397,111 @@ class JtsGeometryFilterTest {
         assertThat(filter.column())
                 .as("column() should return the column path passed to the factory")
                 .isEqualTo(COL);
+    }
+
+    // --- coversRegion ---
+
+    @Nested
+    class CoversRegion {
+
+        private static final Geometry SQUARE = wkt("POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))");
+
+        @Test
+        void intersectsCoversABoxInsideTheQuery() {
+            JtsGeometryFilter filter = JtsGeometryFilter.intersects(COL, SQUARE);
+
+            assertThat(filter.coversRegion(2, 2, 4, 4))
+                    .as("a box inside the query is covered by it, hence every geometry in the box intersects it")
+                    .isTrue();
+        }
+
+        @Test
+        void intersectsCoversABoxTouchingTheQueryBoundary() {
+            JtsGeometryFilter filter = JtsGeometryFilter.intersects(COL, SQUARE);
+
+            assertThat(filter.coversRegion(0, 0, 4, 4))
+                    .as("intersects accepts boundary points, hence a box on the query boundary is covered")
+                    .isTrue();
+        }
+
+        @Test
+        void intersectsDoesNotCoverABoxReachingOutside() {
+            JtsGeometryFilter filter = JtsGeometryFilter.intersects(COL, SQUARE);
+
+            assertThat(filter.coversRegion(8, 8, 12, 12))
+                    .as("a box reaching outside the query holds geometries that miss it")
+                    .isFalse();
+        }
+
+        @Test
+        void intersectsTellsAWideBoxFromATallOne() {
+            Geometry wideRectangle = wkt("POLYGON ((0 0, 20 0, 20 10, 0 10, 0 0))");
+            JtsGeometryFilter filter = JtsGeometryFilter.intersects(COL, wideRectangle);
+
+            assertThat(filter.coversRegion(12, 2, 18, 8))
+                    .as("a wide box inside a wide query is covered")
+                    .isTrue();
+            assertThat(filter.coversRegion(2, 12, 8, 18))
+                    .as("the same bounds exchanged between x and y reach above the query")
+                    .isFalse();
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("degenerateBoxesInsideTheQuery")
+        void intersectsCoversADegenerateBoxInside(String shape, double minX, double minY, double maxX, double maxY) {
+            JtsGeometryFilter filter = JtsGeometryFilter.intersects(COL, SQUARE);
+
+            assertThat(filter.coversRegion(minX, minY, maxX, maxY))
+                    .as("a box collapsed to a %s inside the query is still covered", shape)
+                    .isTrue();
+        }
+
+        static Stream<Arguments> degenerateBoxesInsideTheQuery() {
+            return Stream.of(
+                    Arguments.of("point", 5.0, 5.0, 5.0, 5.0),
+                    Arguments.of("vertical line", 5.0, 2.0, 5.0, 8.0),
+                    Arguments.of("horizontal line", 2.0, 5.0, 8.0, 5.0));
+        }
+
+        @Test
+        void withinCoversOnlyABoxInsideTheInterior() {
+            JtsGeometryFilter filter = JtsGeometryFilter.within(COL, SQUARE);
+
+            assertThat(filter.coversRegion(2, 2, 4, 4))
+                    .as("a box inside the query interior holds only geometries that are within the query")
+                    .isTrue();
+            assertThat(filter.coversRegion(0, 0, 4, 4))
+                    .as("a box on the boundary holds points that are not within the query")
+                    .isFalse();
+        }
+
+        @Test
+        void coveredByCoversABoxTouchingTheBoundary() {
+            JtsGeometryFilter filter = JtsGeometryFilter.coveredBy(COL, SQUARE);
+
+            assertThat(filter.coversRegion(0, 0, 4, 4))
+                    .as("coveredBy accepts boundary points, hence a box on the query boundary is covered")
+                    .isTrue();
+        }
+
+        @ParameterizedTest
+        @MethodSource("relationsWithoutARegionAnswer")
+        void otherRelationsNeverCover(JtsGeometryFilter filter) {
+            assertThat(filter.coversRegion(2, 2, 4, 4))
+                    .as("a relation with no sound whole-box acceptance must leave the question open")
+                    .isFalse();
+        }
+
+        static Stream<JtsGeometryFilter> relationsWithoutARegionAnswer() {
+            return Stream.of(
+                    JtsGeometryFilter.touches(COL, SQUARE),
+                    JtsGeometryFilter.crosses(COL, SQUARE),
+                    JtsGeometryFilter.overlaps(COL, SQUARE),
+                    JtsGeometryFilter.contains(COL, SQUARE),
+                    JtsGeometryFilter.covers(COL, SQUARE),
+                    JtsGeometryFilter.disjoint(COL, SQUARE),
+                    JtsGeometryFilter.equalsExact(COL, SQUARE),
+                    JtsGeometryFilter.dwithin(COL, SQUARE, 1.0));
+        }
     }
 }

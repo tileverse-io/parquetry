@@ -132,8 +132,8 @@ class BatchFormObservabilityIT {
 
         ParallelDecodeCoordinator serialCoordinator(ByteRangeSource source, BatchForm form) {
             List<RowGroupSurvivor> survivors = survivors(source);
-            RowGroupPrefetcher prefetcher = prefetcher(source, survivors);
-            List<Optional<RowMask>> masks = Collections.nCopies(survivors.size(), Optional.empty());
+            RowGroupPlans plans = unplannedPlans(survivors);
+            RowGroupPrefetcher prefetcher = prefetcher(source, survivors, plans);
             List<Boolean> recordEvalRequired =
                     survivors.stream().map(RowGroupSurvivor::recordEvalRequired).toList();
             return new ParallelDecodeCoordinator(
@@ -148,7 +148,7 @@ class BatchFormObservabilityIT {
                     schema,
                     schema,
                     OptionalInt.empty(),
-                    masks,
+                    plans,
                     recordEvalRequired,
                     Optional.empty(),
                     form,
@@ -164,11 +164,17 @@ class BatchFormObservabilityIT {
                     .toList();
         }
 
-        private RowGroupPrefetcher prefetcher(ByteRangeSource source, List<RowGroupSurvivor> survivors) {
+        private RowGroupPlans unplannedPlans(List<RowGroupSurvivor> survivors) {
+            return RowGroupPlans.unplanned(
+                    survivors, Collections.nCopies(survivors.size(), Optional.empty()), /*pageNarrowedFetch*/ true);
+        }
+
+        private RowGroupPrefetcher prefetcher(
+                ByteRangeSource source, List<RowGroupSurvivor> survivors, RowGroupPlans plans) {
             RowGroupFetcher fetcher = TestFetchers.over(source, schema, schema, SegmentPool.create());
             return new RowGroupPrefetcher(
                     survivors,
-                    Collections.nCopies(survivors.size(), Optional.empty()),
+                    plans,
                     fetcher,
                     FetchBudget.defaultBudget(),
                     newFetchExecutor(),

@@ -28,6 +28,7 @@ import org.geotools.api.data.Query;
 import org.geotools.api.feature.simple.SimpleFeature;
 import org.geotools.api.feature.simple.SimpleFeatureType;
 import org.geotools.api.feature.type.AttributeDescriptor;
+import org.geotools.api.feature.type.GeometryDescriptor;
 import org.geotools.api.filter.Filter;
 import org.geotools.data.FilteringFeatureReader;
 import org.geotools.data.MaxFeatureReader;
@@ -38,12 +39,14 @@ import org.geotools.data.util.ScreenMap;
 import org.geotools.feature.simple.SimpleFeatureTypeBuilder;
 import org.geotools.geometry.jts.ReferencedEnvelope;
 import org.geotools.util.factory.Hints;
+import org.locationtech.jts.geom.Geometry;
 
 import io.tileverse.parquetry.catalog.DatasetCatalog;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.GeoParquetDataset;
 import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.format.BoundingBox;
+import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 /**
@@ -202,6 +205,7 @@ final class CatalogFeatureSource extends ContentFeatureSource {
 
         SimpleFeatureType readType = readType(m, t);
         List<FeatureTypeMapper.AttributeMapping> readAttributes = attributesFor(m, readType);
+        Optional<ScreenMapReadProbe> probe = screenMapProbe(query, t, m, readAttributes);
 
         FeatureReader<SimpleFeatureType, SimpleFeature> reader = new DatasetFeatureReader(
                 readType,
@@ -211,7 +215,8 @@ final class CatalogFeatureSource extends ContentFeatureSource {
                 t.predicate(),
                 t.readProjection(),
                 m.fidAttribute(),
-                readOptionsFor(query, t));
+                readOptionsFor(probe),
+                probe);
 
         if (t.postFilter() != Filter.INCLUDE) {
             reader = new FilteringFeatureReader<>(reader, t.postFilter());
@@ -226,23 +231,73 @@ final class CatalogFeatureSource extends ContentFeatureSource {
     }
 
     /**
-     * The read options for this query. When the renderer attaches a {@link Hints#SCREENMAP} and the query pushes down
-     * fully (no residual filter remains), the read runs through a {@link ScreenMapReadProbe} that decimates redundant
-     * features per painted pixel inside the core read. Otherwise the read uses the default options.
+     * The renderer's ScreenMap probe for this query, present when the renderer attached a {@link Hints#SCREENMAP} and
+     * the query pushes down fully (no residual filter remains). The probe decimates redundant features per painted
+     * pixel inside the core read. A read that decodes the primary geometry alone, or with the feature id column, gets a
+     * probe that also substitutes a sub-pixel unit proven inside the query by one pixel-sized shape, fetching nothing
+     * of it; any other read gets a probe that never substitutes, because a substitute has no attribute values.
      *
      * <p>The probe is withheld when a residual filter remains because the probe paints during the core read, before the
      * residual {@link FilteringFeatureReader} runs. A painted feature later rejected by the residual would leave its
      * pixel painted but empty and wrongly skip a valid later feature in that pixel. With no residual the renderer's
      * pushed query selects exactly the output features, which makes painting safe.
      */
-    private static ReadOptions readOptionsFor(Query query, QueryTranslator.TranslatedQuery t) {
+    private Optional<ScreenMapReadProbe> screenMapProbe(
+            Query query,
+            QueryTranslator.TranslatedQuery t,
+            FeatureTypeMapper.Mapping m,
+            List<FeatureTypeMapper.AttributeMapping> readAttributes) {
         Object hint = query.getHints().get(Hints.SCREENMAP);
-        if (hint instanceof ScreenMap screenMap && t.postFilter() == Filter.INCLUDE) {
-            return ReadOptions.builder()
-                    .spatialReadProbe(new ScreenMapReadProbe(screenMap))
-                    .build();
+        if (!(hint instanceof ScreenMap screenMap) || t.postFilter() != Filter.INCLUDE) {
+            return Optional.empty();
         }
-        return ReadOptions.DEFAULTS;
+        if (geometryOnly(m, readAttributes)) {
+            return Optional.of(new ScreenMapReadProbe(screenMap, substituteShapeClass()));
+        }
+        return Optional.of(new ScreenMapReadProbe(screenMap));
+    }
+
+    private static ReadOptions readOptionsFor(Optional<ScreenMapReadProbe> probe) {
+        if (probe.isEmpty()) {
+            return ReadOptions.DEFAULTS;
+        }
+        return ReadOptions.builder().spatialReadProbe(probe.orElseThrow()).build();
+    }
+
+    /**
+     * Whether the read decodes the primary geometry alone, or the primary geometry and the feature id column: the only
+     * reads that a substitute, which has no attribute values, can stand in for.
+     */
+    static boolean geometryOnly(FeatureTypeMapper.Mapping m, List<FeatureTypeMapper.AttributeMapping> readAttributes) {
+        GeometryDescriptor defaultGeometry = m.featureType().getGeometryDescriptor();
+        if (defaultGeometry == null) {
+            return false;
+        }
+        String geometryName = defaultGeometry.getLocalName();
+        Optional<String> fidName = m.fidAttribute().map(FeatureTypeMapper.AttributeMapping::name);
+        boolean holdsGeometry = false;
+        for (FeatureTypeMapper.AttributeMapping attr : readAttributes) {
+            if (attr.name().equals(geometryName)) {
+                holdsGeometry = true;
+                continue;
+            }
+            boolean isFid = fidName.isPresent() && fidName.orElseThrow().equals(attr.name());
+            if (!isFid) {
+                return false;
+            }
+        }
+        return holdsGeometry;
+    }
+
+    /** The geometry family of a substitute, from the GeoParquet geometry types declared for the primary column. */
+    private Class<? extends Geometry> substituteShapeClass() {
+        ParquetDataset ds = dataset();
+        Optional<GeoParquetMetadata> geo =
+                ds instanceof GeoParquetDataset geoDataset ? geoDataset.geoMetadata() : Optional.empty();
+        List<String> declaredTypes = geo.map(metadata -> metadata.columns().get(metadata.primaryColumn()))
+                .map(GeoColumn::geometryTypes)
+                .orElse(List.of());
+        return SubstituteShapes.familyOf(declaredTypes);
     }
 
     /**

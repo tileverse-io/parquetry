@@ -31,8 +31,8 @@ import io.tileverse.parquetry.schema.ColumnPath;
 /**
  * Decimates a decoded batch's post-filter survivors by consulting a {@link SpatialReadProbe} with each survivor's
  * geometry envelope, in ascending physical-row order. A {@code Skip} clears the survivor bit; {@code Keep} and
- * {@code Descend} leave it set. A {@code Replace} decision is rejected: substituting a probe-supplied representative
- * geometry for a row's decoded geometry is not yet supported on the read path.
+ * {@code Descend} leave it set. A {@code Substitute} decision is rejected: it answers a coarse unit, never a single
+ * row.
  *
  * <p>The probe is stateful and single-threaded: it accumulates paint state across rows (for example, which pixels a
  * renderer has already covered), which is why rows are visited in physical-row order on one thread. One instance serves
@@ -82,9 +82,9 @@ public final class SpatialDecimationGate {
             case Decision.Keep _, Decision.Descend _ -> {
                 // Both leave the survivor bit set; Descend behaves as Keep at the leaf, the finest level.
             }
-            case Decision.Replace _ ->
+            case Decision.Substitute _ ->
                 throw new UnsupportedOperationException(
-                        "spatial Replace output substitution is not yet supported on the read path");
+                        "a single row cannot be substituted: Substitute answers a coarse unit only");
         }
     }
 }
