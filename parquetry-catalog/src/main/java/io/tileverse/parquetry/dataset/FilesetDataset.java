@@ -35,6 +35,7 @@ import io.tileverse.parquetry.dataset.explain.DatasetExplainPlan;
 import io.tileverse.parquetry.dataset.explain.FileExplain;
 import io.tileverse.parquetry.dataset.explain.Outcome;
 import io.tileverse.parquetry.dataset.explain.Totals;
+import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.ConstantColumn;
 import io.tileverse.parquetry.filter.ConstantFolding;
 import io.tileverse.parquetry.filter.Predicate;
@@ -47,7 +48,9 @@ import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.filter.prune.FilePruner;
 import io.tileverse.parquetry.filter.prune.FileStats;
 import io.tileverse.parquetry.format.BoundingBox;
+import io.tileverse.parquetry.internal.filter.PredicateNormalizer;
 import io.tileverse.parquetry.internal.filter.spatial.BoundsAccumulator;
+import io.tileverse.parquetry.internal.filter.spatial.UnitAcceptance;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -281,8 +284,9 @@ public final class FilesetDataset implements GeoParquetDataset {
      * projected synthetic column presented per file as a constant. Without a probe the survivors drain concurrently, up
      * to {@code maxConcurrentFiles} at once, each file opened by the producer that drains it (a single survivor is
      * opened and drained on the calling thread); a spatial-decimation probe pins the files to one thread, visited one
-     * at a time in the order of their geometry boxes and each opened only when the previous one is drained. Either way
-     * a file's reader lives as long as its own stream.
+     * at a time in the order of their geometry boxes, each opened only when the previous one is drained, and a file
+     * whose box the probe covers or stands in for is never opened. Either way a file's reader lives as long as its own
+     * stream.
      */
     @Override
     @MustBeClosed
@@ -297,6 +301,7 @@ public final class FilesetDataset implements GeoParquetDataset {
             return visitSequentially(
                     survivors,
                     probe.orElseThrow(),
+                    predicate,
                     index -> readOneFile(index, predicate, projection, materializer, options));
         }
         return ConcurrentSurvivorReads.records(
@@ -306,7 +311,11 @@ public final class FilesetDataset implements GeoParquetDataset {
                 maxConcurrentFiles());
     }
 
-    /** The batch analogue of {@link #read(Predicate, Projection, Materializer, ReadOptions)}. */
+    /**
+     * The batch analogue of {@link #read(Predicate, Projection, Materializer, ReadOptions)}. With a probe the file
+     * visit may drop a file substituted by the probe, and a batch stream has no place for that substitute: a
+     * substituting probe is meant for the row read.
+     */
     @Override
     @MustBeClosed
     public Stream<ParquetRecordBatch> readBatches(Predicate predicate, Projection projection, ReadOptions options) {
@@ -317,7 +326,10 @@ public final class FilesetDataset implements GeoParquetDataset {
         Optional<SpatialReadProbe> probe = options.spatialReadProbe();
         if (probe.isPresent()) {
             return visitSequentially(
-                    survivors, probe.orElseThrow(), index -> readOneFileBatches(index, predicate, projection, options));
+                    survivors,
+                    probe.orElseThrow(),
+                    predicate,
+                    index -> readOneFileBatches(index, predicate, projection, options));
         }
         return ConcurrentSurvivorReads.batches(
                 survivors.size(),
@@ -327,15 +339,16 @@ public final class FilesetDataset implements GeoParquetDataset {
 
     /**
      * Visits the survivors one at a time in the order of their footer geometry boxes, opening each file's stream only
-     * when the previous one is drained and skipping a file whose whole box {@code probe} reports as already painted.
-     * {@code readOneFile} yields one survivor's stream; the sequential concatenation calls it only after the previous
-     * file ended, and the gate is consulted right before that call, by which point the probe has seen the previous
-     * file's paint.
+     * when the previous one is drained and skipping a file whose whole box {@code probe} reports as already painted or
+     * stands in for with a substitute of its own. {@code readOneFile} yields one survivor's stream; the sequential
+     * concatenation calls it only after the previous file ended, and the gate is consulted right before that call, by
+     * which point the probe has seen the previous file's paint.
      */
     @MustBeClosed
     private <S> Stream<S> visitSequentially(
-            List<Integer> survivors, SpatialReadProbe probe, IntFunction<Stream<S>> readOneFile) {
-        SpatialFileVisit visit = SpatialFileVisit.plan(survivors, this::footerStatsBox, probe);
+            List<Integer> survivors, SpatialReadProbe probe, Predicate predicate, IntFunction<Stream<S>> readOneFile) {
+        SpatialFileVisit.Acceptance acceptance = fileAcceptance(predicate);
+        SpatialFileVisit visit = SpatialFileVisit.plan(survivors, this::footerStatsBox, probe, acceptance);
         List<Integer> order = visit.order();
         return ConcurrentSurvivorReads.sequential(order.size(), dense -> {
             int index = order.get(dense);
@@ -344,6 +357,23 @@ public final class FilesetDataset implements GeoParquetDataset {
             }
             return readOneFile.apply(index);
         });
+    }
+
+    /**
+     * Proves a file inside {@code predicate} from its footer box alone: the normalized predicate, before any covering
+     * rewrite, accepts the box for the declared primary geometry column. Without a declared primary column no file is
+     * accepted, and a predicate on a partition column, which the per-file query folds later, is an attribute comparison
+     * that acceptance answers false for.
+     */
+    private SpatialFileVisit.Acceptance fileAcceptance(Predicate predicate) {
+        Optional<ColumnPath> primary = declaredPrimaryColumn();
+        if (primary.isEmpty()) {
+            return box -> false;
+        }
+        Predicate normalized = PredicateNormalizer.normalize(predicate);
+        ColumnPath geometry = primary.orElseThrow();
+        return box ->
+                UnitAcceptance.accepts(normalized, geometry, Bbox.of2d(box.xmin(), box.ymin(), box.xmax(), box.ymax()));
     }
 
     @MustBeClosed

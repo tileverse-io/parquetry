@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.dataset;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -48,6 +49,12 @@ class SpatialFileVisitTest {
         }
     };
 
+    /** No file box is ever proven inside the query. */
+    private static final SpatialFileVisit.Acceptance NEVER_ACCEPTS = box -> false;
+
+    /** Every file box is proven inside the query. */
+    private static final SpatialFileVisit.Acceptance ALWAYS_ACCEPTS = box -> true;
+
     @Test
     void ordersSurvivorsAscendingByTheirBoxesMinimumCorner() {
         IntFunction<Optional<BoundingBox>> boxes = boxesOf(Map.of(
@@ -55,7 +62,7 @@ class SpatialFileVisitTest {
                 1, box2d(0, 3, 1, 4),
                 2, box2d(0, 0, 1, 1)));
 
-        SpatialFileVisit visit = SpatialFileVisit.plan(List.of(0, 1, 2), boxes, NEVER_SKIPS);
+        SpatialFileVisit visit = SpatialFileVisit.plan(List.of(0, 1, 2), boxes, NEVER_SKIPS, NEVER_ACCEPTS);
 
         assertThat(visit.order()).containsExactly(2, 1, 0);
     }
@@ -64,14 +71,15 @@ class SpatialFileVisitTest {
     void boxLessFilesSortLastKeepingTheirRelativeOrder() {
         IntFunction<Optional<BoundingBox>> boxes = boxesOf(Map.of(1, box2d(1, 1, 2, 2)));
 
-        SpatialFileVisit visit = SpatialFileVisit.plan(List.of(0, 1, 2, 3), boxes, NEVER_SKIPS);
+        SpatialFileVisit visit = SpatialFileVisit.plan(List.of(0, 1, 2, 3), boxes, NEVER_SKIPS, NEVER_ACCEPTS);
 
         assertThat(visit.order()).containsExactly(1, 0, 2, 3);
     }
 
     @Test
     void planningNoSurvivorsYieldsAnEmptyOrder() {
-        SpatialFileVisit visit = SpatialFileVisit.plan(List.of(), index -> Optional.empty(), NEVER_SKIPS);
+        SpatialFileVisit visit =
+                SpatialFileVisit.plan(List.of(), index -> Optional.empty(), NEVER_SKIPS, NEVER_ACCEPTS);
 
         assertThat(visit.order()).isEmpty();
     }
@@ -91,7 +99,7 @@ class SpatialFileVisitTest {
             }
         };
 
-        SpatialFileVisit visit = SpatialFileVisit.plan(List.of(0, 1), boxes, coversSeven);
+        SpatialFileVisit visit = SpatialFileVisit.plan(List.of(0, 1), boxes, coversSeven, NEVER_ACCEPTS);
 
         assertThat(visit.skips(1)).isTrue();
         assertThat(visit.skips(0)).isFalse();
@@ -99,7 +107,8 @@ class SpatialFileVisitTest {
 
     @Test
     void neverSkipsABoxLessFile() {
-        SpatialFileVisit visit = SpatialFileVisit.plan(List.of(0), index -> Optional.empty(), SKIPS_EVERY_REGION);
+        SpatialFileVisit visit =
+                SpatialFileVisit.plan(List.of(0), index -> Optional.empty(), SKIPS_EVERY_REGION, NEVER_ACCEPTS);
 
         assertThat(visit.skips(0)).isFalse();
     }
@@ -110,7 +119,7 @@ class SpatialFileVisitTest {
         assertThat(wrapping.wrapsAntimeridian()).isTrue();
         IntFunction<Optional<BoundingBox>> boxes = boxesOf(Map.of(0, wrapping));
 
-        SpatialFileVisit visit = SpatialFileVisit.plan(List.of(0), boxes, SKIPS_EVERY_REGION);
+        SpatialFileVisit visit = SpatialFileVisit.plan(List.of(0), boxes, SKIPS_EVERY_REGION, NEVER_ACCEPTS);
 
         assertThat(visit.skips(0)).isFalse();
         assertThat(visit.order()).containsExactly(0);
@@ -133,11 +142,106 @@ class SpatialFileVisitTest {
         };
         IntFunction<Optional<BoundingBox>> boxes = boxesOf(Map.of(3, box2d(-1, -2, 3, 4)));
 
-        SpatialFileVisit visit = SpatialFileVisit.plan(List.of(3), boxes, recording);
+        SpatialFileVisit visit = SpatialFileVisit.plan(List.of(3), boxes, recording, NEVER_ACCEPTS);
         visit.skips(3);
 
         assertThat(consulted).hasSize(1);
         assertThat(consulted.get(0)).containsExactly(-1, -2, 3, 4);
+    }
+
+    @Test
+    void anAcceptedFileIsConsultedThroughTheAcceptedRegionAnswer() {
+        List<String> consultations = new ArrayList<>();
+        SpatialReadProbe recording = new SpatialReadProbe() {
+            @Override
+            public Decision probe(double minX, double minY, double maxX, double maxY) {
+                return Decision.keep();
+            }
+
+            @Override
+            public Decision probeRegion(double minX, double minY, double maxX, double maxY) {
+                consultations.add("region");
+                return Decision.descend();
+            }
+
+            @Override
+            public Decision probeAcceptedRegion(double minX, double minY, double maxX, double maxY) {
+                consultations.add("accepted");
+                return Decision.descend();
+            }
+        };
+        IntFunction<Optional<BoundingBox>> boxes = boxesOf(Map.of(0, box2d(0, 0, 1, 1), 1, box2d(5, 5, 6, 6)));
+        SpatialFileVisit.Acceptance insideBelowTwo = box -> box.xmax() < 2;
+
+        SpatialFileVisit visit = SpatialFileVisit.plan(List.of(0, 1), boxes, recording, insideBelowTwo);
+        visit.skips(0);
+        visit.skips(1);
+
+        assertThat(consultations).containsExactly("accepted", "region");
+    }
+
+    @Test
+    void aSubstitutedFileIsSkipped() {
+        SpatialReadProbe substituting = new SpatialReadProbe() {
+            @Override
+            public Decision probe(double minX, double minY, double maxX, double maxY) {
+                return Decision.keep();
+            }
+
+            @Override
+            public Decision probeAcceptedRegion(double minX, double minY, double maxX, double maxY) {
+                return Decision.substitute();
+            }
+        };
+        IntFunction<Optional<BoundingBox>> boxes = boxesOf(Map.of(0, box2d(0, 0, 1, 1)));
+
+        SpatialFileVisit visit = SpatialFileVisit.plan(List.of(0), boxes, substituting, ALWAYS_ACCEPTS);
+
+        assertThat(visit.skips(0)).as("the probe stood in for the whole file").isTrue();
+    }
+
+    @Test
+    void aFileNotAcceptedIsNeverOfferedForSubstitution() {
+        SpatialReadProbe substituting = new SpatialReadProbe() {
+            @Override
+            public Decision probe(double minX, double minY, double maxX, double maxY) {
+                return Decision.keep();
+            }
+
+            @Override
+            public Decision probeAcceptedRegion(double minX, double minY, double maxX, double maxY) {
+                return Decision.substitute();
+            }
+        };
+        IntFunction<Optional<BoundingBox>> boxes = boxesOf(Map.of(0, box2d(0, 0, 1, 1)));
+
+        SpatialFileVisit visit = SpatialFileVisit.plan(List.of(0), boxes, substituting, NEVER_ACCEPTS);
+
+        assertThat(visit.skips(0))
+                .as("the read-only answer descends by default")
+                .isFalse();
+    }
+
+    @Test
+    void rejectsASubstituteAnsweredToTheReadOnlyConsultation() {
+        SpatialReadProbe substitutesUnprovenFiles = new SpatialReadProbe() {
+            @Override
+            public Decision probe(double minX, double minY, double maxX, double maxY) {
+                return Decision.keep();
+            }
+
+            @Override
+            public Decision probeRegion(double minX, double minY, double maxX, double maxY) {
+                return Decision.substitute();
+            }
+        };
+        IntFunction<Optional<BoundingBox>> boxes = boxesOf(Map.of(0, box2d(0, 0, 1, 1)));
+
+        SpatialFileVisit visit = SpatialFileVisit.plan(List.of(0), boxes, substitutesUnprovenFiles, NEVER_ACCEPTS);
+
+        assertThatThrownBy(() -> visit.skips(0))
+                .isInstanceOf(UnsupportedOperationException.class)
+                .hasMessageContaining("Substitute");
     }
 
     private static IntFunction<Optional<BoundingBox>> boxesOf(Map<Integer, BoundingBox> boxes) {
