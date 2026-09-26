@@ -15,46 +15,74 @@
  */
 package io.tileverse.parquetry.geotools.data;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.OptionalLong;
 
 import org.geotools.api.referencing.operation.TransformException;
 import org.geotools.data.util.ScreenMap;
 import org.geotools.data.util.ScreenMapCells;
 import org.locationtech.jts.geom.Envelope;
+import org.locationtech.jts.geom.Geometry;
+import org.locationtech.jts.geom.GeometryFactory;
 
 import io.tileverse.parquetry.filter.SpatialReadProbe;
 
 /**
- * Adapts a GeoTools {@link ScreenMap} to the {@link SpatialReadProbe} consulted during a spatial read. The ScreenMap is
- * a packed one-bit-per-pixel image of the screen; this probe uses it to drop features that fall into a pixel already
- * painted by an earlier feature, which keeps overview-zoom renders cheap over dense data.
+ * Adapts the renderer's {@link ScreenMap} to the spatial read probe. Rows are decimated as the map itself decimates a
+ * feature: a sub-pixel row paints the cell holding its midpoint and is kept when that cell was unpainted. A coarse unit
+ * of which only the bounds are known is skipped when it is sub-pixel and every cell touched by its box is painted. That
+ * skip is exact under a world-to-screen transform of scale and translation: each row of the unit would land in one of
+ * those cells and the per-row gate would drop it. Under a rotation or a reprojection a dropped row lands at most one
+ * cell away from a painted one. A coarse unit proven to hold at least one geometry, every non-null geometry of which
+ * satisfies the query, is, when this probe was built with a substitute shape, treated as the shapefile reader treats
+ * one sub-pixel record: keyed on its midpoint cell, dropped when that cell is painted, and otherwise substituted by one
+ * pixel-sized shape of the given family centred on its box, which paints the cell and is handed to the reader through
+ * {@link #pollSubstitute()}. A probe built without a substitute shape answers the accepted consultation exactly as the
+ * read-only one, for a read that needs attribute values not provided by a substitute.
  *
- * <p>The two consultations honor the probe's read-only-versus-painting split. The per-row {@link #probe} is the only
- * one allowed to paint: it marks a sub-pixel cell occupied through {@link ScreenMap#checkAndSet(Envelope)}. The coarse
- * {@link #probeRegion} is read-only: it inspects the paint state and never mutates it, because a coarse unit's
- * individual rows have not been emitted yet and painting their shared cell would drop every one of them and leave the
- * cell empty.
- *
- * <p>A coarse unit names a cell only when its whole bounding box lies in that one cell, rather than taking the cell of
- * its centre point. Every row of such a unit then falls in the named cell, which is what makes a painted answer exact
- * for each of those rows.
- *
- * <p>The wrapped ScreenMap is mutable paint state. This probe is single-use and single-threaded and must not be shared
- * across concurrent reads.
+ * <p>Single-use and single-threaded, as the SPI requires: the plan that consults it and the reader that drains it run
+ * on the consumer thread of one read.
  */
 public final class ScreenMapReadProbe implements SpatialReadProbe {
 
-    private final ScreenMap screenMap;
+    private static final GeometryFactory SHAPES = new GeometryFactory();
 
+    private final ScreenMap screenMap;
+    private final Optional<Class<? extends Geometry>> substituteShape;
+    private final Deque<Geometry> substitutes = new ArrayDeque<>();
+    private int substitutesEmitted;
+
+    /**
+     * A probe that decimates rows and skips covered units but never substitutes a unit.
+     *
+     * @param screenMap the renderer's map, shared with the renderer, which paints nothing of its own once it has handed
+     *     the map over
+     */
     public ScreenMapReadProbe(ScreenMap screenMap) {
         this.screenMap = Objects.requireNonNull(screenMap, "screenMap");
+        this.substituteShape = Optional.empty();
     }
 
     /**
-     * Per-row consultation. A bounding box bigger than a pixel is decoded and drawn in full. A sub-pixel bounding box
-     * is dropped when its cell is already painted; otherwise this paints the cell and keeps the row. A transform
-     * failure falls back to decoding the row.
+     * A probe that additionally stands in for an accepted sub-pixel unit with one pixel-sized shape.
+     *
+     * @param screenMap the renderer's map, shared with the renderer, which paints nothing of its own once it has handed
+     *     the map over
+     * @param substituteShape the geometry family of the substitutes emitted by this probe for an accepted sub-pixel
+     *     unit
+     */
+    public ScreenMapReadProbe(ScreenMap screenMap, Class<? extends Geometry> substituteShape) {
+        this.screenMap = Objects.requireNonNull(screenMap, "screenMap");
+        Objects.requireNonNull(substituteShape, "substituteShape");
+        this.substituteShape = Optional.of(substituteShape);
+    }
+
+    /**
+     * Per-row gate: a bounding box larger than a pixel is kept; a sub-pixel box is kept only when it paints a fresh
+     * pixel. A transform failure keeps the row.
      */
     @Override
     public Decision probe(double minX, double minY, double maxX, double maxY) {
@@ -71,26 +99,86 @@ public final class ScreenMapReadProbe implements SpatialReadProbe {
     }
 
     /**
-     * Coarse consultation over a file, row group, or page. Read-only. A unit whose box does not lie in one screen cell
-     * cannot be pre-skipped: it spans several cells, or it straddles a cell boundary and its rows may land on either
-     * side of that boundary. A one-cell unit is skipped only when that cell is painted. Never paints. A transform
-     * failure recurses into the unit.
+     * Coarse consultation over a file, row group, or page. Read-only. A sub-pixel unit is skipped only when every cell
+     * touched by its box is painted: each of its rows lands in one of those cells and the per-row gate would drop it.
+     * That reasoning is exact under a world-to-screen transform of scale and translation; under a rotation or a
+     * reprojection a dropped row lands at most one cell away from a painted one. A unit larger than a pixel, or one
+     * with an unpainted touched cell, descends. Never paints. A transform failure recurses into the unit.
      */
     @Override
     public Decision probeRegion(double minX, double minY, double maxX, double maxY) {
-        OptionalLong cell = cellHolding(minX, minY, maxX, maxY);
-        if (cell.isEmpty()) {
+        Envelope env = envelope(minX, minY, maxX, maxY);
+        if (!screenMap.canSimplify(env)) {
             return Decision.descend();
         }
-        if (ScreenMapCells.isPainted(screenMap, cell.getAsLong())) {
-            return Decision.skip();
+        long[] touched = touchedCells(env);
+        if (touched.length == 0) {
+            return Decision.descend();
         }
-        return Decision.descend();
+        for (long cell : touched) {
+            if (!ScreenMapCells.isPainted(screenMap, cell)) {
+                return Decision.descend();
+            }
+        }
+        return Decision.skip();
     }
 
-    private OptionalLong cellHolding(double minX, double minY, double maxX, double maxY) {
+    /**
+     * Consultation over a unit proven inside the query. Without a substitute shape, the read-only answer. With one, a
+     * sub-pixel unit whose midpoint cell is on screen is dropped when that cell is painted, and is otherwise
+     * substituted: the cell is painted now and one pixel-sized shape centred on the unit's box is queued for the
+     * reader. A unit larger than a pixel, or whose midpoint cell is off screen (the map would never paint it and would
+     * keep every row in it), descends.
+     */
+    @Override
+    public Decision probeAcceptedRegion(double minX, double minY, double maxX, double maxY) {
+        if (substituteShape.isEmpty()) {
+            return probeRegion(minX, minY, maxX, maxY);
+        }
+        Envelope env = envelope(minX, minY, maxX, maxY);
+        if (!screenMap.canSimplify(env)) {
+            return Decision.descend();
+        }
+        OptionalLong midpoint = midpointCell(env);
+        if (midpoint.isEmpty() || !ScreenMapCells.isOnScreen(screenMap, midpoint.getAsLong())) {
+            return Decision.descend();
+        }
+        long cell = midpoint.getAsLong();
+        if (ScreenMapCells.isPainted(screenMap, cell)) {
+            return Decision.skip();
+        }
+        screenMap.set(ScreenMapCells.x(cell), ScreenMapCells.y(cell), true);
+        substitutes.add(screenMap.getSimplifiedShape(minX, minY, maxX, maxY, SHAPES, substituteShape.orElseThrow()));
+        substitutesEmitted++;
+        return Decision.substitute();
+    }
+
+    /** Whether a substitute is waiting to be emitted. */
+    public boolean hasSubstitute() {
+        return !substitutes.isEmpty();
+    }
+
+    /** The oldest waiting substitute, removed from the queue; {@code null} when none is waiting. */
+    public Geometry pollSubstitute() {
+        return substitutes.poll();
+    }
+
+    /** How many units this probe substituted since it was created. */
+    public int substitutesEmitted() {
+        return substitutesEmitted;
+    }
+
+    private long[] touchedCells(Envelope env) {
         try {
-            return ScreenMapCells.cellHolding(screenMap, envelope(minX, minY, maxX, maxY));
+            return ScreenMapCells.touchedCells(screenMap, env);
+        } catch (TransformException _) {
+            return new long[0];
+        }
+    }
+
+    private OptionalLong midpointCell(Envelope env) {
+        try {
+            return ScreenMapCells.midpointCell(screenMap, env);
         } catch (TransformException _) {
             return OptionalLong.empty();
         }

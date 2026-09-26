@@ -31,6 +31,7 @@ import java.util.stream.Stream;
 import org.geotools.api.data.FeatureReader;
 import org.geotools.api.feature.simple.SimpleFeature;
 import org.geotools.api.feature.simple.SimpleFeatureType;
+import org.geotools.api.feature.type.GeometryDescriptor;
 import org.geotools.feature.simple.SimpleFeatureBuilder;
 import org.locationtech.jts.geom.Geometry;
 
@@ -50,6 +51,9 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
  *
  * <p>Each row is the lazy {@link ParquetRecord} view: attributes are pulled by typed accessor as the feature is built,
  * and geometry columns decode in place from the record's WKB with no intermediate map or per-value slice.
+ *
+ * <p>When the read runs through a substituting {@link ScreenMapReadProbe}, the substitutes queued by it are emitted
+ * ahead of the next row, as features holding only their geometry.
  */
 final class DatasetFeatureReader implements FeatureReader<SimpleFeatureType, SimpleFeature> {
 
@@ -61,6 +65,8 @@ final class DatasetFeatureReader implements FeatureReader<SimpleFeatureType, Sim
     private final MemorySegmentWkbReader wkbReader = new MemorySegmentWkbReader();
     private final Stream<ParquetRecord> stream;
     private final Iterator<ParquetRecord> rows;
+    private final Optional<ScreenMapReadProbe> probe;
+    private final Optional<AttributeMapping> primaryGeometry;
     private long syntheticId;
 
     @SuppressWarnings("java:S107") // cohesive read collaborators; a parameter object would only relocate the arity
@@ -72,11 +78,14 @@ final class DatasetFeatureReader implements FeatureReader<SimpleFeatureType, Sim
             Predicate predicate,
             Projection projection,
             Optional<AttributeMapping> fidAttribute,
-            ReadOptions options) {
+            ReadOptions options,
+            Optional<ScreenMapReadProbe> probe) {
         this.featureType = readType;
         this.attributes = attributes;
         this.geometrySrids = geometrySrids;
         this.fidAttribute = fidAttribute;
+        this.probe = probe;
+        this.primaryGeometry = primaryGeometryOf(readType, attributes);
         this.builder = new SimpleFeatureBuilder(readType);
         this.stream = dataset.read(predicate, projection, options);
         this.rows = stream.iterator();
@@ -87,13 +96,27 @@ final class DatasetFeatureReader implements FeatureReader<SimpleFeatureType, Sim
         return featureType;
     }
 
+    /**
+     * A substitute is next when the probe holds one; else the next row. The probe fills its queue while the row stream
+     * plans ahead of the rows emitted by it, and the last files of a dataset may be substituted while the stream looks
+     * for its next row, hence the queue is read again after the stream reports its end.
+     */
     @Override
     public boolean hasNext() {
-        return rows.hasNext();
+        if (hasPendingSubstitute()) {
+            return true;
+        }
+        if (rows.hasNext()) {
+            return true;
+        }
+        return hasPendingSubstitute();
     }
 
     @Override
     public SimpleFeature next() {
+        if (hasPendingSubstitute()) {
+            return substituteFeature(probe.orElseThrow().pollSubstitute());
+        }
         if (!rows.hasNext()) {
             throw new NoSuchElementException();
         }
@@ -102,6 +125,41 @@ final class DatasetFeatureReader implements FeatureReader<SimpleFeatureType, Sim
             builder.set(attr.name(), attributeValue(row, attr));
         }
         return builder.buildFeature(featureId(row));
+    }
+
+    private boolean hasPendingSubstitute() {
+        return probe.isPresent() && probe.orElseThrow().hasSubstitute();
+    }
+
+    /**
+     * One feature standing for a whole sub-pixel unit: the probe's pixel-sized shape as the primary geometry, stamped
+     * with the column's SRID like a decoded one, every other attribute null, and a sequence id.
+     */
+    private SimpleFeature substituteFeature(Geometry shape) {
+        AttributeMapping geometry = primaryGeometry.orElseThrow(
+                () -> new IllegalStateException("a substitute needs the primary geometry in the read type"));
+        Integer srid = geometrySrids.get(geometry.path());
+        if (srid != null) {
+            shape.setSRID(srid);
+        }
+        builder.set(geometry.name(), shape);
+        return builder.buildFeature(Long.toString(syntheticId++));
+    }
+
+    /** The attribute mapping of the read type's default geometry, when the read decodes it. */
+    private static Optional<AttributeMapping> primaryGeometryOf(
+            SimpleFeatureType readType, List<AttributeMapping> attributes) {
+        GeometryDescriptor descriptor = readType.getGeometryDescriptor();
+        if (descriptor == null) {
+            return Optional.empty();
+        }
+        String name = descriptor.getLocalName();
+        for (AttributeMapping attr : attributes) {
+            if (attr.geometry() && attr.name().equals(name)) {
+                return Optional.of(attr);
+            }
+        }
+        return Optional.empty();
     }
 
     /**

@@ -24,36 +24,48 @@ import org.junit.jupiter.api.Test;
 import org.locationtech.jts.geom.Envelope;
 
 /**
- * Pins the cell identity given to an envelope by a ScreenMap. The map covers pixels [0, 256) on both axes with an
- * identity transform and one world unit per pixel, as in {@code ScreenMapReadProbeTest}.
+ * Pins the cells named by a ScreenMap for an envelope. The map covers pixels [0, 256) on both axes with an identity
+ * transform and one world unit per pixel, as in {@code ScreenMapReadProbeTest}.
  */
 class ScreenMapCellsTest {
 
     @Test
-    void anEnvelopeInsideOneCellNamesThatCell() throws Exception {
+    void midpointCellIsTheCellCheckAndSetMarks() throws Exception {
         ScreenMap map = newMap();
+        Envelope envelope = new Envelope(10.2, 10.8, 20.1, 20.9);
 
-        OptionalLong cell = ScreenMapCells.cellHolding(map, new Envelope(10.2, 10.8, 20.1, 20.9));
+        OptionalLong cell = ScreenMapCells.midpointCell(map, envelope);
 
         assertThat(cell).isPresent();
         assertThat(ScreenMapCells.x(cell.getAsLong())).isEqualTo(10);
         assertThat(ScreenMapCells.y(cell.getAsLong())).isEqualTo(20);
+        map.checkAndSet(envelope);
+        assertThat(ScreenMapCells.isPainted(map, cell.getAsLong())).isTrue();
     }
 
     @Test
-    void aSubPixelEnvelopeStraddlingACellBoundaryNamesNoCell() throws Exception {
+    void aStraddlingEnvelopeHasItsMidpointCellOnOneSide() throws Exception {
+        OptionalLong cell = ScreenMapCells.midpointCell(newMap(), new Envelope(10.7, 11.3, 20.1, 20.5));
+
+        assertThat(cell).isPresent();
+        assertThat(ScreenMapCells.x(cell.getAsLong())).isEqualTo(11);
+        assertThat(ScreenMapCells.y(cell.getAsLong())).isEqualTo(20);
+    }
+
+    @Test
+    void touchedCellsNamesEveryCellUnderTheCorners() throws Exception {
         ScreenMap map = newMap();
 
-        assertThat(ScreenMapCells.cellHolding(map, new Envelope(10.7, 11.3, 20.1, 20.5)))
-                .isEmpty();
-        assertThat(ScreenMapCells.cellHolding(map, new Envelope(10.1, 10.5, 20.7, 21.3)))
-                .isEmpty();
-    }
-
-    @Test
-    void anEnvelopeWiderThanAPixelNamesNoCell() throws Exception {
-        assertThat(ScreenMapCells.cellHolding(newMap(), new Envelope(10, 12, 20, 20.5)))
-                .isEmpty();
+        assertThat(ScreenMapCells.touchedCells(map, new Envelope(10.2, 10.8, 20.1, 20.9)))
+                .containsExactly(ScreenMapCells.pack(10, 20));
+        assertThat(ScreenMapCells.touchedCells(map, new Envelope(10.7, 11.3, 20.1, 20.5)))
+                .containsExactlyInAnyOrder(ScreenMapCells.pack(10, 20), ScreenMapCells.pack(11, 20));
+        assertThat(ScreenMapCells.touchedCells(map, new Envelope(10.7, 11.3, 20.7, 21.3)))
+                .containsExactlyInAnyOrder(
+                        ScreenMapCells.pack(10, 20),
+                        ScreenMapCells.pack(11, 20),
+                        ScreenMapCells.pack(10, 21),
+                        ScreenMapCells.pack(11, 21));
     }
 
     @Test
@@ -61,10 +73,12 @@ class ScreenMapCellsTest {
         ScreenMap map = new ScreenMap(0, 0, 256, 256);
         map.setTransform(new AffineTransform2D(Double.NaN, 0, 0, 1, 0, 0));
         map.setSpans(1.0, 1.0);
+        Envelope envelope = new Envelope(10.2, 10.8, 20.1, 20.9);
 
-        assertThat(ScreenMapCells.cellHolding(map, new Envelope(10.2, 10.8, 20.1, 20.9)))
+        assertThat(ScreenMapCells.midpointCell(map, envelope))
                 .as("a non-finite screen coordinate must not truncate to cell (0, 0)")
                 .isEmpty();
+        assertThat(ScreenMapCells.touchedCells(map, envelope)).isEmpty();
     }
 
     @Test

@@ -16,10 +16,16 @@
 package io.tileverse.parquetry.geotools.data;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 
 import org.geotools.data.util.ScreenMap;
 import org.geotools.referencing.operation.transform.AffineTransform2D;
 import org.junit.jupiter.api.Test;
+import org.locationtech.jts.geom.Geometry;
+import org.locationtech.jts.geom.LineString;
+import org.locationtech.jts.geom.MultiPolygon;
+import org.locationtech.jts.geom.Point;
+import org.locationtech.jts.geom.Polygon;
 
 import io.tileverse.parquetry.filter.SpatialReadProbe.Decision;
 
@@ -81,7 +87,7 @@ class ScreenMapReadProbeTest {
     }
 
     @Test
-    void coarseConsultationDescendsWhenTheBoxStraddlesTwoCellsEvenIfOneIsPainted() {
+    void coarseConsultationDescendsWhenAStraddlingBoxTouchesAnUnpaintedCell() {
         ScreenMapReadProbe probe = newProbe();
 
         probe.probe(10.5, 20.5, 10.5, 20.5);
@@ -89,11 +95,105 @@ class ScreenMapReadProbeTest {
         assertThat(probe.probeRegion(10.7, 20.1, 11.3, 20.5)).isEqualTo(Decision.descend());
     }
 
+    @Test
+    void coarseConsultationSkipsAStraddlingBoxWhenEveryTouchedCellIsPainted() {
+        ScreenMapReadProbe probe = newProbe();
+        probe.probe(10.5, 20.5, 10.5, 20.5);
+        probe.probe(11.5, 20.5, 11.5, 20.5);
+
+        assertThat(probe.probeRegion(10.7, 20.1, 11.3, 20.5))
+                .as("every row of the box would land in a painted cell")
+                .isEqualTo(Decision.skip());
+    }
+
+    @Test
+    void anAcceptedSubPixelUnitInAnUnpaintedCellIsSubstitutedAndPaintsIt() {
+        ScreenMapReadProbe probe = substitutingProbe(Polygon.class);
+
+        Decision decision = probe.probeAcceptedRegion(10.2, 20.2, 10.4, 20.4);
+
+        assertThat(decision).isEqualTo(Decision.substitute());
+        assertThat(probe.hasSubstitute()).isTrue();
+        Geometry shape = probe.pollSubstitute();
+        assertThat(shape).isInstanceOf(Polygon.class);
+        assertThat(shape.getEnvelopeInternal().centre().x).isCloseTo(10.3, within(1e-9));
+        assertThat(shape.getEnvelopeInternal().centre().y).isCloseTo(20.3, within(1e-9));
+        assertThat(shape.getEnvelopeInternal().getWidth()).as("one pixel wide").isCloseTo(1.0, within(1e-9));
+        assertThat(probe.hasSubstitute()).isFalse();
+        assertThat(probe.substitutesEmitted()).isEqualTo(1);
+        assertThat(probe.probe(10.5, 20.5, 10.5, 20.5))
+                .as("the substitute painted the cell; a later row there is dropped")
+                .isEqualTo(Decision.skip());
+        assertThat(probe.probeAcceptedRegion(10.6, 20.6, 10.8, 20.8))
+                .as("a later accepted unit in the painted cell is skipped, not substituted")
+                .isEqualTo(Decision.skip());
+        assertThat(probe.substitutesEmitted()).isEqualTo(1);
+    }
+
+    @Test
+    void aStraddlingAcceptedUnitIsKeyedOnItsMidpointCell() {
+        ScreenMapReadProbe probe = substitutingProbe(Polygon.class);
+
+        Decision decision = probe.probeAcceptedRegion(10.7, 20.1, 11.3, 20.5);
+
+        assertThat(decision).isEqualTo(Decision.substitute());
+        assertThat(probe.probe(11.5, 20.5, 11.5, 20.5))
+                .as("the midpoint cell (11, 20) is painted")
+                .isEqualTo(Decision.skip());
+        assertThat(probe.probe(10.5, 20.5, 10.5, 20.5))
+                .as("the other touched cell is not")
+                .isEqualTo(Decision.keep());
+    }
+
+    @Test
+    void aProbeWithoutASubstituteShapeNeverSubstitutes() {
+        ScreenMapReadProbe probe = newProbe();
+
+        assertThat(probe.probeAcceptedRegion(10.2, 20.2, 10.4, 20.4)).isEqualTo(Decision.descend());
+        assertThat(probe.hasSubstitute()).isFalse();
+        probe.probe(10.5, 20.5, 10.5, 20.5);
+        assertThat(probe.probeAcceptedRegion(10.2, 20.2, 10.4, 20.4))
+                .as("the read-only answer still skips a painted cell")
+                .isEqualTo(Decision.skip());
+    }
+
+    @Test
+    void anAcceptedUnitOffScreenOrLargerThanAPixelDescends() {
+        ScreenMapReadProbe probe = substitutingProbe(Polygon.class);
+
+        assertThat(probe.probeAcceptedRegion(300.2, 20.2, 300.4, 20.4)).isEqualTo(Decision.descend());
+        assertThat(probe.probeAcceptedRegion(10, 20, 15, 25)).isEqualTo(Decision.descend());
+        assertThat(probe.hasSubstitute()).isFalse();
+    }
+
+    @Test
+    void theSubstituteFollowsTheShapeFamily() {
+        ScreenMapReadProbe points = substitutingProbe(Point.class);
+        ScreenMapReadProbe lines = substitutingProbe(LineString.class);
+        ScreenMapReadProbe multiPolygons = substitutingProbe(MultiPolygon.class);
+
+        points.probeAcceptedRegion(10.2, 20.2, 10.4, 20.4);
+        lines.probeAcceptedRegion(10.2, 20.2, 10.4, 20.4);
+        multiPolygons.probeAcceptedRegion(10.2, 20.2, 10.4, 20.4);
+
+        assertThat(points.pollSubstitute()).isInstanceOf(Point.class);
+        assertThat(lines.pollSubstitute()).isInstanceOf(LineString.class);
+        assertThat(multiPolygons.pollSubstitute()).isInstanceOf(MultiPolygon.class);
+    }
+
+    private static ScreenMapReadProbe substitutingProbe(Class<? extends Geometry> shape) {
+        return new ScreenMapReadProbe(newScreenMap(), shape);
+    }
+
     private static ScreenMapReadProbe newProbe() {
+        return new ScreenMapReadProbe(newScreenMap());
+    }
+
+    private static ScreenMap newScreenMap() {
         ScreenMap screenMap = new ScreenMap(0, 0, 256, 256);
         AffineTransform2D identity = new AffineTransform2D(1, 0, 0, 1, 0, 0);
         screenMap.setTransform(identity);
         screenMap.setSpans(1.0, 1.0);
-        return new ScreenMapReadProbe(screenMap);
+        return screenMap;
     }
 }

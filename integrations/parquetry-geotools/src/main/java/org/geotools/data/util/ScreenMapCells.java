@@ -16,49 +16,65 @@
 package org.geotools.data.util;
 
 import java.util.OptionalLong;
+import java.util.stream.LongStream;
 
 import org.geotools.api.referencing.operation.TransformException;
 import org.locationtech.jts.geom.Envelope;
 
 /**
- * Names the pixel cell of a {@link ScreenMap} in which a world envelope lies, as
- * {@link ScreenMap#checkAndSet(Envelope)} does: a world point goes through the map's world-to-screen transform and
- * truncates to integer screen coordinates. This class lives in the ScreenMap's own package because that transform is a
- * package-private field of the ScreenMap; nothing else of its internals is read. A cell is packed into one {@code long}
- * key.
+ * Names the pixel cells of a {@link ScreenMap} touched by a world envelope, as {@link ScreenMap#checkAndSet(Envelope)}
+ * names the cell marked by it: a world point goes through the map's world-to-screen transform and truncates to integer
+ * screen coordinates. This class lives in the ScreenMap's own package because that transform is a package-private field
+ * of the ScreenMap; nothing else of its internals is read. A cell is packed into one {@code long} key.
  */
 public final class ScreenMapCells {
+
+    private static final long[] NO_CELLS = new long[0];
 
     private ScreenMapCells() {}
 
     /**
-     * The one cell holding every point of {@code envelope}: present only when the envelope is sub-pixel by the map's
-     * spans and all four of its corners truncate to the same cell. An envelope straddling a cell boundary has no such
-     * cell, even when it is narrower than a pixel. A corner sent by the transform to a non-finite screen coordinate
-     * also leaves the envelope with no cell.
-     *
-     * <p>The four-corner test is exact for a linear world-to-screen transform: a cell is convex and the image of the
-     * envelope lies in the convex hull of its four corner images, hence every point of the envelope lands in the cell
-     * that its corners land in. A transform that includes a reprojection is only locally linear, and the image of a
-     * sub-pixel envelope can bulge past the corner cell by far less than a pixel. Every claim made on this answer rests
-     * on that premise.
+     * The cell that {@link ScreenMap#checkAndSet(Envelope)} marks for {@code envelope}: the one holding its midpoint.
+     * Empty when the map has no transform, or when the transform sends the midpoint to a non-finite screen coordinate.
      */
-    public static OptionalLong cellHolding(ScreenMap map, Envelope envelope) throws TransformException {
-        if (map.mt == null || !map.canSimplify(envelope)) {
+    public static OptionalLong midpointCell(ScreenMap map, Envelope envelope) throws TransformException {
+        if (map.mt == null) {
             return OptionalLong.empty();
+        }
+        double midX = (envelope.getMinX() + envelope.getMaxX()) / 2;
+        double midY = (envelope.getMinY() + envelope.getMaxY()) / 2;
+        return cellOf(map, midX, midY);
+    }
+
+    /**
+     * The distinct cells named by the four corners of {@code envelope}, at most four. The caller passes an envelope
+     * narrower than one pixel on both axes, as {@link ScreenMap#canSimplify(Envelope)} reports it; the coverage bound
+     * below holds under that precondition alone.
+     *
+     * <p>Take a world-to-screen transform built from a scale and a translation, the renderer's usual case. The screen
+     * image of a sub-pixel envelope is then an axis-aligned rectangle shorter and narrower than one pixel, hence it
+     * spans at most two cell columns and at most two cell rows. Those columns and rows are the ones named by its
+     * corners, and the four corner cells are exactly the cells overlapped by the image: every point of the envelope
+     * lands in one of them. A transform with a rotation, or one with a reprojection, is only locally of that form, and
+     * the image of a sub-pixel envelope can then reach one cell outside the four, always adjacent to them.
+     *
+     * <p>Empty when the map has no transform, or when a corner lands on a non-finite screen coordinate.
+     */
+    public static long[] touchedCells(ScreenMap map, Envelope envelope) throws TransformException {
+        if (map.mt == null) {
+            return NO_CELLS;
         }
         OptionalLong lowerLeft = cellOf(map, envelope.getMinX(), envelope.getMinY());
-        OptionalLong upperRight = cellOf(map, envelope.getMaxX(), envelope.getMaxY());
         OptionalLong lowerRight = cellOf(map, envelope.getMaxX(), envelope.getMinY());
         OptionalLong upperLeft = cellOf(map, envelope.getMinX(), envelope.getMaxY());
-        if (lowerLeft.isEmpty()) {
-            return OptionalLong.empty();
+        OptionalLong upperRight = cellOf(map, envelope.getMaxX(), envelope.getMaxY());
+        if (lowerLeft.isEmpty() || lowerRight.isEmpty() || upperLeft.isEmpty() || upperRight.isEmpty()) {
+            return NO_CELLS;
         }
-        boolean oneCell = lowerLeft.equals(upperRight) && lowerLeft.equals(lowerRight) && lowerLeft.equals(upperLeft);
-        if (oneCell) {
-            return lowerLeft;
-        }
-        return OptionalLong.empty();
+        return LongStream.of(
+                        lowerLeft.getAsLong(), lowerRight.getAsLong(), upperLeft.getAsLong(), upperRight.getAsLong())
+                .distinct()
+                .toArray();
     }
 
     /** Whether {@code cell} is painted. An off-screen cell reads as unpainted, as the map itself reports it. */
@@ -89,11 +105,11 @@ public final class ScreenMapCells {
         return ((long) x << 32) | (y & 0xFFFFFFFFL);
     }
 
-    static int x(long cell) {
+    public static int x(long cell) {
         return (int) (cell >> 32);
     }
 
-    static int y(long cell) {
+    public static int y(long cell) {
         return (int) cell;
     }
 
