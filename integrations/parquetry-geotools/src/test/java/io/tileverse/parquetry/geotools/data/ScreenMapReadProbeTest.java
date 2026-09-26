@@ -80,6 +80,15 @@ class ScreenMapReadProbeTest {
         assertThat(region).isEqualTo(Decision.skip());
     }
 
+    @Test
+    void coarseConsultationDescendsWhenTheBoxStraddlesTwoCellsEvenIfOneIsPainted() {
+        ScreenMapReadProbe probe = newProbe();
+
+        probe.probe(10.5, 20.5, 10.5, 20.5);
+
+        assertThat(probe.probeRegion(10.7, 20.1, 11.3, 20.5)).isEqualTo(Decision.descend());
+    }
+
     private static ScreenMapReadProbe newProbe() {
         ScreenMap screenMap = new ScreenMap(0, 0, 256, 256);
         AffineTransform2D identity = new AffineTransform2D(1, 0, 0, 1, 0, 0);

@@ -16,23 +16,29 @@
 package io.tileverse.parquetry.geotools.data;
 
 import java.util.Objects;
+import java.util.OptionalLong;
 
 import org.geotools.api.referencing.operation.TransformException;
 import org.geotools.data.util.ScreenMap;
+import org.geotools.data.util.ScreenMapCells;
 import org.locationtech.jts.geom.Envelope;
 
 import io.tileverse.parquetry.filter.SpatialReadProbe;
 
 /**
  * Adapts a GeoTools {@link ScreenMap} to the {@link SpatialReadProbe} consulted during a spatial read. The ScreenMap is
- * a packed one-bit-per-pixel image of the screen; this probe uses it to drop features that fall into a pixel an earlier
- * feature already painted, which keeps overview-zoom renders cheap over dense data.
+ * a packed one-bit-per-pixel image of the screen; this probe uses it to drop features that fall into a pixel already
+ * painted by an earlier feature, which keeps overview-zoom renders cheap over dense data.
  *
  * <p>The two consultations honor the probe's read-only-versus-painting split. The per-row {@link #probe} is the only
  * one allowed to paint: it marks a sub-pixel cell occupied through {@link ScreenMap#checkAndSet(Envelope)}. The coarse
- * {@link #probeRegion} is read-only: it inspects the paint state through {@link ScreenMap#get(Envelope)} and never
- * mutates it, because a coarse unit's individual rows have not been emitted yet and painting their shared cell would
- * drop every one of them and leave the cell empty.
+ * {@link #probeRegion} is read-only: it inspects the paint state and never mutates it, because a coarse unit's
+ * individual rows have not been emitted yet and painting their shared cell would drop every one of them and leave the
+ * cell empty.
+ *
+ * <p>A coarse unit names a cell only when its whole bounding box lies in that one cell, rather than taking the cell of
+ * its centre point. Every row of such a unit then falls in the named cell, which is what makes a painted answer exact
+ * for each of those rows.
  *
  * <p>The wrapped ScreenMap is mutable paint state. This probe is single-use and single-threaded and must not be shared
  * across concurrent reads.
@@ -65,21 +71,28 @@ public final class ScreenMapReadProbe implements SpatialReadProbe {
     }
 
     /**
-     * Coarse consultation over a file, row group, or page. Read-only: a unit bigger than a pixel spans many cells and
-     * cannot be pre-skipped, and a sub-pixel unit is skipped only when its cell is already painted by earlier rows.
-     * Never paints. A transform failure recurses into the unit.
+     * Coarse consultation over a file, row group, or page. Read-only. A unit whose box does not lie in one screen cell
+     * cannot be pre-skipped: it spans several cells, or it straddles a cell boundary and its rows may land on either
+     * side of that boundary. A one-cell unit is skipped only when that cell is painted. Never paints. A transform
+     * failure recurses into the unit.
      */
     @Override
     public Decision probeRegion(double minX, double minY, double maxX, double maxY) {
-        Envelope env = envelope(minX, minY, maxX, maxY);
-        if (!screenMap.canSimplify(env)) {
+        OptionalLong cell = cellHolding(minX, minY, maxX, maxY);
+        if (cell.isEmpty()) {
             return Decision.descend();
         }
+        if (ScreenMapCells.isPainted(screenMap, cell.getAsLong())) {
+            return Decision.skip();
+        }
+        return Decision.descend();
+    }
+
+    private OptionalLong cellHolding(double minX, double minY, double maxX, double maxY) {
         try {
-            boolean alreadyPainted = screenMap.get(env);
-            return alreadyPainted ? Decision.skip() : Decision.descend();
+            return ScreenMapCells.cellHolding(screenMap, envelope(minX, minY, maxX, maxY));
         } catch (TransformException _) {
-            return Decision.descend();
+            return OptionalLong.empty();
         }
     }
 

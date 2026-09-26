@@ -31,11 +31,9 @@ class SpatialReadProbeTest {
     }
 
     @Test
-    void replaceHoldsTheGeometryItIsGiven() {
-        Object geometry = new Object();
-        Decision decision = Decision.replace(geometry);
-        assertThat(decision).isInstanceOf(Decision.Replace.class);
-        assertThat(((Decision.Replace) decision).geometry()).isSameAs(geometry);
+    void substituteIsASharedSingleton() {
+        assertThat(Decision.substitute()).isSameAs(Decision.substitute());
+        assertThat(Decision.substitute()).isInstanceOf(Decision.Substitute.class);
     }
 
     @Test
@@ -49,5 +47,24 @@ class SpatialReadProbeTest {
     void probeRegionDefaultsToDescend() {
         SpatialReadProbe leafOnly = (minX, minY, maxX, maxY) -> Decision.skip();
         assertThat(leafOnly.probeRegion(0, 0, 100, 100)).isSameAs(Decision.descend());
+    }
+
+    @Test
+    void probeAcceptedRegionDefaultsToTheReadOnlyRegionAnswer() {
+        SpatialReadProbe descending = (minX, minY, maxX, maxY) -> Decision.keep();
+        assertThat(descending.probeAcceptedRegion(0, 0, 1, 1)).isEqualTo(Decision.descend());
+
+        SpatialReadProbe skipping = new SpatialReadProbe() {
+            @Override
+            public Decision probe(double minX, double minY, double maxX, double maxY) {
+                return Decision.keep();
+            }
+
+            @Override
+            public Decision probeRegion(double minX, double minY, double maxX, double maxY) {
+                return Decision.skip();
+            }
+        };
+        assertThat(skipping.probeAcceptedRegion(0, 0, 1, 1)).isEqualTo(Decision.skip());
     }
 }

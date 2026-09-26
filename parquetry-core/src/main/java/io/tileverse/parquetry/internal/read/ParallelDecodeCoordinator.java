@@ -65,7 +65,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     private final ParquetSchema projectedSchema;
     private final ParquetSchema fileSchema;
     private final OptionalInt batchSizeCap;
-    private final List<Optional<RowMask>> rowMasks;
+    private final RowGroupPlans plans;
     private final List<Boolean> recordEvalRequired;
     private final Optional<MaskedScan> maskedScan;
     private final BatchForm batchForm;
@@ -92,7 +92,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
             @NonNull ParquetSchema projectedSchema,
             @NonNull ParquetSchema fileSchema,
             @NonNull OptionalInt batchSizeCap,
-            @NonNull List<Optional<RowMask>> rowMasks,
+            @NonNull RowGroupPlans plans,
             @NonNull List<Boolean> recordEvalRequired,
             @NonNull Optional<MaskedScan> maskedScan,
             @NonNull BatchForm batchForm,
@@ -110,7 +110,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
         this.projectedSchema = projectedSchema;
         this.fileSchema = fileSchema;
         this.batchSizeCap = batchSizeCap;
-        this.rowMasks = List.copyOf(rowMasks);
+        this.plans = plans;
         this.recordEvalRequired = List.copyOf(recordEvalRequired);
         this.maskedScan = maskedScan;
         this.batchForm = batchForm;
@@ -143,18 +143,18 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     }
 
     /**
-     * Advances past any leading survivor row groups the gate skips, in strict file order on the consumer thread. By the
-     * time the gate sees position {@code nextToConsume} every earlier group has been fully drained and painted by the
-     * leaf tier, hence its bounds test reads correct accumulated coverage; the skip is monotone, and dropping a group
-     * the speculation already decoded is safe. A skipped group performs no fetch and no decode: any speculatively
-     * decoded entry is discarded, and {@code nextToSubmit} is advanced past it to keep {@link #submitAhead()} from
-     * fetching it. When no gate is wired this is a pure no-op with no allocation.
+     * Advances past any leading survivor row groups dropped before consumption, in strict file order on the consumer
+     * thread. Two questions decide it, in this order. The spatial plan of the group answers first, at the point where
+     * its fetch plan would be built. The gate answers second, as the late check: by then every earlier group has been
+     * fully drained and painted by the leaf tier, hence its bounds test reads correct accumulated coverage.
+     *
+     * <p>Both answers are monotone, and discarding a group already decoded by the speculation is safe. A skipped group
+     * performs no fetch and no decode: any speculatively decoded entry is closed, and {@code nextToSubmit} is advanced
+     * past it to keep {@link #submitAhead()} from fetching it. With unplanned plans and no gate this is a pure no-op
+     * with no allocation.
      */
     private void skipPaintedGroups() {
-        if (rowGroupGate == null) {
-            return;
-        }
-        while (nextToConsume < size && rowGroupGate.skip(nextToConsume)) {
+        while (nextToConsume < size && (plans.dropped(nextToConsume) || gateSkips(nextToConsume))) {
             DecodedRowGroup speculativelyDecoded = window.remove(nextToConsume);
             if (speculativelyDecoded != null) {
                 speculativelyDecoded.close();
@@ -164,8 +164,17 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
         }
     }
 
+    private boolean gateSkips(int position) {
+        return rowGroupGate != null && rowGroupGate.skip(position);
+    }
+
     private void submitAhead() throws IOException {
         while (window.size() < maxDecodeAheadPerRead && nextToSubmit < size) {
+            // Speculating over a dropped row group would fetch the very bytes that its plan decided not to read.
+            if (plans.dropped(nextToSubmit)) {
+                nextToSubmit++;
+                continue;
+            }
             if (!decodeExecutor.tryAcquire()) {
                 return;
             }
@@ -187,7 +196,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     @SuppressWarnings("java:S2095")
     private DecodedRowGroup submitSpeculative(RowGroupFetch fetch, int index) {
         boolean wantsTimings = observation.wantsTimings();
-        RowGroupBatchDriver driver = buildDriver(fetch, rowMasks.get(index), index);
+        RowGroupBatchDriver driver = buildDriver(fetch, plans.decodeMask(index), index);
         BatchHandoff handoff = new BatchHandoff(HANDOFF_CAPACITY);
         BatchSpillStore spillStore =
                 new BatchSpillStore(spillDir, diskBudget, projectedSchema, observation.spillAccumulator());
@@ -214,7 +223,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     private DecodedRowGroup decodeInline(int index) throws IOException {
         RowGroupFetch fetch = prefetcher.take(index);
         nextToSubmit = Math.max(nextToSubmit, index + 1);
-        RowGroupBatchDriver driver = buildDriver(fetch, rowMasks.get(index), index);
+        RowGroupBatchDriver driver = buildDriver(fetch, plans.decodeMask(index), index);
         return new DecodedRowGroup(
                 new InlineBatchSource(driver, observation.wantsTimings()),
                 evalRequiredFor(index),
@@ -262,7 +271,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
                 mask,
                 batchForm,
                 rowPositionFor(index),
-                scan.rowsToScan().get(index));
+                plans.rowsToScan(index));
         return new MaskedScanRowGroupDriver(fetch, reader);
     }
 

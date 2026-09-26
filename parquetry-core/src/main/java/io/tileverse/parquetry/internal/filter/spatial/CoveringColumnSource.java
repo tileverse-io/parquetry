@@ -208,7 +208,7 @@ final class CoveringColumnSource implements SpatialBoundsSource {
      * little-endian; other kinds (and short / malformed payloads) decode as empty, which leaves the row group's bbox
      * unknown rather than wrong.
      */
-    private static OptionalDouble decodeDouble(PrimitiveKind kind, Optional<MemorySegment> raw) {
+    static OptionalDouble decodeDouble(PrimitiveKind kind, Optional<MemorySegment> raw) {
         if (raw.isEmpty()) {
             return OptionalDouble.empty();
         }

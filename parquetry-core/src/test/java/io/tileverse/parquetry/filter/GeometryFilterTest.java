@@ -101,6 +101,15 @@ class GeometryFilterTest {
     }
 
     @Test
+    void coversRegionDefaultsToFalse() {
+        GeometryFilter<double[]> filter = insideUnitBox();
+
+        assertThat(filter.coversRegion(0, 0, 1, 1))
+                .as("a filter that does not answer the region question leaves it open")
+                .isFalse();
+    }
+
+    @Test
     void predicateFactoryProducesGeometryFilterPredicate() {
         GeometryFilter<double[]> filter = insideUnitBox();
 

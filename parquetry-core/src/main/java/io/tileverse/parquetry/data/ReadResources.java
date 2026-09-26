@@ -16,7 +16,6 @@
 package io.tileverse.parquetry.data;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
@@ -31,13 +30,17 @@ import io.tileverse.parquetry.internal.read.ParallelDecodeCoordinator;
 import io.tileverse.parquetry.internal.read.ParallelDecodeCoordinator.DecodeObservation;
 import io.tileverse.parquetry.internal.read.RowGroupFetcher;
 import io.tileverse.parquetry.internal.read.RowGroupGate;
+import io.tileverse.parquetry.internal.read.RowGroupPlanner;
+import io.tileverse.parquetry.internal.read.RowGroupPlans;
 import io.tileverse.parquetry.internal.read.RowGroupPrefetcher;
 import io.tileverse.parquetry.internal.read.RowGroupSurvivor;
 import io.tileverse.parquetry.internal.read.RowMask;
+import io.tileverse.parquetry.internal.read.RowMasks;
 import io.tileverse.parquetry.internal.read.RowPositionSynthesis;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.observe.FetchAccumulator;
 import io.tileverse.parquetry.runtime.ParquetRuntime;
+import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
@@ -74,11 +77,11 @@ final class ReadResources {
             FetchAccumulator accumulator,
             DecodeObservation observation,
             List<RowPositionSynthesis> rowPositions,
-            Optional<RowGroupGate> rowGroupGate) {
-        List<Optional<RowMask>> fetchMasks =
-                options.usePageNarrowedFetch() ? decodeMasks : Collections.nCopies(survivors.size(), Optional.empty());
+            Optional<RowGroupGate> rowGroupGate,
+            Optional<RowGroupPlanner> planner) {
+        RowGroupPlans plans = newPlans(survivors, projectedSchema, decodeMasks, options, planner);
         RowGroupPrefetcher prefetcher =
-                newPrefetcher(survivors, fetchMasks, projectedSchema, accumulator, observation.wantsTimings());
+                newPrefetcher(survivors, plans, projectedSchema, accumulator, observation.wantsTimings());
         List<Boolean> recordEvalRequired = recordEvalFlagsFor(survivors);
         DecodeBufferAllocator decodeBufferAllocator = newDecodeBufferAllocator();
         return new ParallelDecodeCoordinator(
@@ -93,7 +96,7 @@ final class ReadResources {
                 projectedSchema,
                 fileSchema,
                 options.batchSize(),
-                decodeMasks,
+                plans,
                 recordEvalRequired,
                 maskedScan,
                 batchForm,
@@ -103,15 +106,45 @@ final class ReadResources {
     }
 
     /**
+     * The read's per-row-group plans, shared by the prefetcher and the decode coordinator. Without a spatial planner
+     * they are the filter pipeline's decode masks and nothing is dropped.
+     */
+    private RowGroupPlans newPlans(
+            List<RowGroupSurvivor> survivors,
+            ParquetSchema projectedSchema,
+            List<Optional<RowMask>> decodeMasks,
+            ReadOptions options,
+            Optional<RowGroupPlanner> planner) {
+        boolean pageNarrowedFetch = options.usePageNarrowedFetch();
+        if (planner.isEmpty()) {
+            return RowGroupPlans.unplanned(survivors, decodeMasks, pageNarrowedFetch);
+        }
+        RowGroupPlans.NarrowedMaskFactory maskFactory = narrowedMaskFactory(projectedSchema);
+        return RowGroupPlans.planned(survivors, decodeMasks, pageNarrowedFetch, planner.orElseThrow(), maskFactory);
+    }
+
+    /**
+     * Builds the mask that narrows a row group to the rows decided by its plan. The schema is the read's scan schema,
+     * which covers the filter columns as well as the output ones: a filter column is fetched and decoded with the rest,
+     * hence its leaves must be masked to the same rows as theirs. Only a flat scan whose every leaf exposes an offset
+     * index can be masked; any other scan gets no mask, and its row group reads as the filter pipeline left it.
+     */
+    private RowGroupPlans.NarrowedMaskFactory narrowedMaskFactory(ParquetSchema scanSchema) {
+        List<ColumnPath> scanLeaves = scanSchema.leafColumns();
+        if (!RowMasks.allFlat(fileSchema, scanLeaves)) {
+            return (_, _) -> Optional.empty();
+        }
+        return (survivor, rows) -> RowMasks.maskFor(survivor.chunks(), rows, scanLeaves);
+    }
+
+    /**
      * Builds the coalescing fetcher and the prefetch pipeline for one read. The prefetcher owns a fresh per-read
      * virtual-thread executor; closing the returned stream cascades to {@link RowGroupPrefetcher#close()}, which shuts
      * the executor down. No executor outlives the read.
-     *
-     * @param masks one fetch-side page-skip mask per survivor, in survivor order
      */
     private RowGroupPrefetcher newPrefetcher(
             List<RowGroupSurvivor> survivors,
-            List<Optional<RowMask>> masks,
+            RowGroupPlans plans,
             ParquetSchema projectedSchema,
             FetchAccumulator accumulator,
             boolean wantsTimings) {
@@ -132,7 +165,7 @@ final class ReadResources {
         try {
             return new RowGroupPrefetcher(
                     survivors,
-                    masks,
+                    plans,
                     fetcher,
                     runtime.fetchBudget(),
                     executor,

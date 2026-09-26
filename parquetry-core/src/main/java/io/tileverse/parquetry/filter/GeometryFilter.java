@@ -80,4 +80,18 @@ public interface GeometryFilter<T> {
         }
         return Optional.empty();
     }
+
+    /**
+     * Whether every geometry whose 2D envelope lies within the box {@code [minX, maxX] x [minY, maxY]} satisfies
+     * {@link #matches}. A {@code true} answer lets the reader accept a whole row range from its statistics without
+     * decoding one geometry; {@code false} only means the question is open and each row is tested. Edges are inclusive
+     * and Z is ignored. The default answers {@code false}.
+     *
+     * <p>The box must be a real one: {@code minX <= maxX}, {@code minY <= maxY}, and all four coordinates finite. For
+     * any other argument the answer is undefined, a box wrapping the antimeridian included, which is encoded with its
+     * minimum east of its maximum. The caller is the one that establishes this.
+     */
+    default boolean coversRegion(double minX, double minY, double maxX, double maxY) {
+        return false;
+    }
 }
