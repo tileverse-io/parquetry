@@ -205,6 +205,9 @@ budget and the spill directory individually overridable.
 
 ## 6. Cross-reference: tileverse-storage `DiskCachingRangeReader`
 
+Written against tileverse-storage 2.0; the 2.1 line removed `DiskCachingRangeReader`, and this section stays as
+the record of the mechanism it had.
+
 tileverse-storage's `DiskCachingRangeReader` already implements most of the
 section-4 *mechanism*: block-aligned files (one block per file), a size cap with
 eviction that deletes the file (Caffeine's weighted LRU standing in for the idle
@@ -232,8 +235,9 @@ Two mechanism upgrades move the shared store toward the section-4 design:
 - **Map, don't copy.** The reader copies through `FileChannel.read`/`write` into a
   pooled buffer. The spill win is mmap - the slot *is* the `MemorySegment`,
   zero-copy, and `unload()` reclaims its pages. It already depends on
-  `ByteBufferPool`, which now vends parquetry's native segments through the SPI
-  provider, which is the natural seam for mapped slots.
+  `ByteBufferPool`, served in a parquetry process by the SPI provider that hands
+  out parquetry's native segments for direct borrows and a pooled heap free list
+  for heap borrows, which is the natural seam for mapped slots.
 - **Add the sparse / `unload()` / `PUNCH_HOLE` rung** from section 4 on top of the
   baseline `FileChannel` lifecycle it has today.
 

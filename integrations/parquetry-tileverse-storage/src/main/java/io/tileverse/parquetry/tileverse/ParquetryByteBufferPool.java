@@ -25,33 +25,47 @@ import io.tileverse.parquetry.runtime.ParquetRuntime;
 import io.tileverse.io.ByteBufferPool;
 
 /**
- * A tileverse {@link ByteBufferPool} that vends {@code asByteBuffer()} views of the default {@link ParquetRuntime}'s
- * {@link SegmentPool}, accounted against the same runtime's {@link FetchBudget} - the exact instances parquetry's own
- * reads draw from. A co-resident reader that borrows direct buffers here (for example a PMTiles or VersaTiles store on
- * the same instance) shares one off-heap pool and one budget with those reads instead of running two pools.
+ * The tileverse {@link ByteBufferPool} of a process that has parquetry on its classpath, discovered through
+ * {@link java.util.ServiceLoader}: {@link ByteBufferPool#getDefault()} returns it in preference to tileverse's built-in
+ * pool. Every tileverse reader in the process borrows its scratch here, whether it serves parquetry, a PMTiles store or
+ * a COG store next to it.
  *
- * <p>Discovered through {@link java.util.ServiceLoader}; {@link ByteBufferPool#getDefault()} prefers this provider over
- * the built-in pool when the integration module is on the classpath. The public no-argument constructor exists for that
- * discovery; the runtime's resources are resolved lazily on first borrow, keeping provider discovery free of runtime
- * construction side effects.
+ * <p><strong>Direct borrows</strong> come from the default {@link ParquetRuntime}'s {@link SegmentPool} and reserve
+ * their size against its {@link FetchBudget}, the same pool and budget parquetry's own reads draw from. The reservation
+ * is soft: an over-budget borrow still returns a usable buffer and holds no reservation to release. Closing the handle
+ * returns the segment and releases the reservation.
  *
- * <p><strong>Direct borrows</strong> reserve their size against the runtime's {@link FetchBudget} (soft accounting) and
- * borrow a native segment from the runtime's {@link SegmentPool}, returning a direct {@code ByteBuffer} view sized to
- * the request. Borrowing never blocks: an over-budget borrow still returns a usable buffer and simply holds no
- * reservation to release. Closing the handle returns the segment and releases any reservation.
+ * <p><strong>Heap borrows</strong> serve the merge scratch of batched reads and the header, directory and tile buffers
+ * of a PMTiles reader. They come from a heap-only pool built with tileverse's own {@link ByteBufferPool#builder()},
+ * with block-aligned reuse, idle release and leak detection as in the built-in pool, retaining at most
+ * {@link #HEAP_RETAINED_BUFFERS} buffers and {@link #HEAP_RETAINED_BYTES} bytes between borrows. A borrow above the
+ * retention quota is still served and is released, not retained, when closed. Heap borrows are never charged to the
+ * {@link FetchBudget}, which governs off-heap fetch memory: a heap charge there would push parquetry's own mandatory
+ * fetches onto the spill store.
  *
- * <p><strong>Heap borrows</strong> return a plain on-heap {@code ByteBuffer.allocate(size)} that supports
- * {@code array()}/{@code hasArray()} (tileverse callers rely on that) and are not routed through the arena.
+ * <p>Both pools are resolved on first borrow, never in the constructor: {@code ServiceLoader} instantiates this class
+ * from inside the built-in pool's own class initialization, and the runtime's resources must not be built there either.
  *
- * <p><strong>Thread-safety:</strong> {@link #borrowDirect} and {@link #borrowHeap} are concurrent-safe; each returned
- * {@link PooledByteBuffer} handle is owned by a single borrower and is not safe to share or close across threads. Its
- * {@link PooledByteBuffer#close()} is idempotent for that owner.
+ * <p><strong>Thread-safety:</strong> {@link #borrowDirect} and {@link #borrowHeap} are concurrent-safe, and a handle
+ * may be closed from a thread other than the one that borrowed it, as the S3 batch path does when a fetch completes on
+ * an SDK thread. Each handle's {@link PooledByteBuffer#close()} is idempotent.
+ *
+ * <p>{@link #getHeapPoolStatistics()} and {@link #getLeakCount()} report the heap pool.
+ * {@link #getDirectPoolStatistics()} reports the {@link SegmentPool}'s retained segments and bytes, with its total
+ * borrows counted as returns; the segment pool does not distinguish a fresh allocation from a reuse, and reports both
+ * as zero.
  */
 public final class ParquetryByteBufferPool implements ByteBufferPool {
 
+    /** Heap buffers retained between borrows: tileverse's own default. */
+    static final int HEAP_RETAINED_BUFFERS = ByteBufferPool.DEFAULT_MAX_HEAP_BUFFERS;
+
+    /** Heap bytes retained between borrows: tileverse's own default, one merged fetch at the 32 MiB fetch cap. */
+    static final long HEAP_RETAINED_BYTES = ByteBufferPool.DEFAULT_MAX_HEAP_BYTES;
+
     /** Public no-argument constructor for {@link java.util.ServiceLoader} discovery. */
     public ParquetryByteBufferPool() {
-        // resources come from ParquetRuntime.defaultRuntime() at borrow time, not construction time
+        // resources come from ParquetRuntime.defaultRuntime() and HeapScratch at borrow time, not construction time
     }
 
     private static SegmentPool segmentPool() {
@@ -60,6 +74,10 @@ public final class ParquetryByteBufferPool implements ByteBufferPool {
 
     private static FetchBudget fetchBudget() {
         return ParquetRuntime.defaultRuntime().fetchBudget();
+    }
+
+    private static ByteBufferPool heapScratch() {
+        return HeapScratch.POOL;
     }
 
     @Override
@@ -75,8 +93,30 @@ public final class ParquetryByteBufferPool implements ByteBufferPool {
     @Override
     public PooledByteBuffer borrowHeap(int size) {
         requireNonNegative(size);
-        ByteBuffer view = ByteBuffer.allocate(size);
-        return new Handle(view, () -> {});
+        return heapScratch().borrowHeap(size);
+    }
+
+    /** Releases the heap buffers retained between borrows. Direct segments are governed by the {@link SegmentPool}. */
+    @Override
+    public void clear() {
+        heapScratch().clear();
+    }
+
+    @Override
+    public long getLeakCount() {
+        return heapScratch().getLeakCount();
+    }
+
+    @Override
+    public PoolStatistics getHeapPoolStatistics() {
+        return heapScratch().getHeapPoolStatistics();
+    }
+
+    @Override
+    public PoolStatistics getDirectPoolStatistics() {
+        SegmentPool.PoolStats stats = segmentPool().stats();
+        long returned = stats.totalBorrows() - stats.outstandingBorrows();
+        return new PoolStatistics(0, stats.freeSegments(), stats.retainedBytes(), 0, 0, returned, 0);
     }
 
     private static SegmentPool.Pooled borrowOrRelease(int size, boolean reserved) {
@@ -103,6 +143,21 @@ public final class ParquetryByteBufferPool implements ByteBufferPool {
         if (size < 0) {
             throw new IllegalArgumentException("size must be non-negative, got " + size);
         }
+    }
+
+    /**
+     * The heap pool, built on the first heap borrow. A nested holder keeps its construction out of this class's
+     * constructor: {@code ServiceLoader} runs that constructor while the built-in pool's class is still initializing,
+     * and building another built-in pool there would re-enter that initialization.
+     */
+    private static final class HeapScratch {
+
+        static final ByteBufferPool POOL = ByteBufferPool.builder()
+                .maxHeapBuffers(HEAP_RETAINED_BUFFERS)
+                .maxHeapBytes(HEAP_RETAINED_BYTES)
+                .build();
+
+        private HeapScratch() {}
     }
 
     private static final class Handle implements PooledByteBuffer {
