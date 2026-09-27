@@ -45,7 +45,6 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
-import io.tileverse.parquetry.tileverse.ByteRangeSources;
 
 /**
  * parquetry's read arm. Opens the dataset once and reuses it across reads (the long-lived server model) and walks every
@@ -162,7 +161,7 @@ final class ParquetryReadEngine implements ReadEngine {
         URI container = fileUri.resolve(".");
         remoteStorage = StorageFactory.open(container, remoteStorageProperties());
         remoteReader = remoteStorage.openRangeReader(fileUri);
-        return ByteRangeSources.from(remoteReader);
+        return ByteRangeSource.of(remoteReader);
     }
 
     /**

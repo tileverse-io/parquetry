@@ -17,19 +17,15 @@ package io.tileverse.parquetry.iceberg;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.lang.foreign.MemorySegment;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.stream.Stream;
 
-import io.tileverse.storage.RangeReader;
 import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageEntry;
 import io.tileverse.storage.UnsupportedCapabilityException;
 
 import io.tileverse.parquetry.io.ByteRangeSource;
-import io.tileverse.parquetry.tileverse.ByteRangeSources;
 
 /**
  * An {@link IcebergFileIO} that serves locations under one logical table URI from a physically-rooted tileverse
@@ -72,11 +68,16 @@ public final class StorageIcebergFileIO implements IcebergFileIO {
         return new StorageIcebergFileIO(storage, logicalRoot, "", true);
     }
 
+    /**
+     * Opens the data file behind {@code location} through a fresh, source-owned reader, honoring the own-and-close
+     * contract of {@link IcebergFileIO#open}. The source is named after the physical object rather than the Iceberg
+     * location: two tables can record one logical location while their bytes live in different buckets, and their files
+     * must not answer to the same footer-cache key.
+     */
     @Override
     public ByteRangeSource open(String location) {
         Objects.requireNonNull(location, "location");
-        RangeReader reader = storage.openRangeReader(keyOf(location));
-        return new ReaderOwningByteRangeSource(ByteRangeSources.from(reader), reader);
+        return ByteRangeSource.owning(storage.openRangeReader(keyOf(location)));
     }
 
     @Override
@@ -148,45 +149,5 @@ public final class StorageIcebergFileIO implements IcebergFileIO {
 
     private static String stripTrailingSlash(String value) {
         return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
-    }
-
-    /**
-     * A {@link ByteRangeSource} that owns the {@link RangeReader} the bytes are read through. {@link Storage} hands out
-     * a fresh, caller-owned reader per {@code openRangeReader} call; {@link ByteRangeSources#from(RangeReader)} only
-     * borrows it. Closing this source closes the reader, honoring the {@link IcebergFileIO#open} own-and-close
-     * contract.
-     */
-    private record ReaderOwningByteRangeSource(ByteRangeSource delegate, RangeReader reader)
-            implements ByteRangeSource {
-
-        @Override
-        public long size() {
-            return delegate.size();
-        }
-
-        /**
-         * The name given to the object by the underlying reader, which is what lets a data file reopened after its memo
-         * entry was dropped find its footer in the shared cache instead of reading it again. It names the physical
-         * object rather than the Iceberg location: two tables can record one logical location while their bytes live in
-         * different buckets, and their files must not answer to the same cache key.
-         */
-        @Override
-        public Optional<String> sourceIdentifier() {
-            return delegate.sourceIdentifier();
-        }
-
-        @Override
-        public int read(long offset, MemorySegment dst) {
-            return delegate.read(offset, dst);
-        }
-
-        @Override
-        public void close() {
-            try {
-                reader.close();
-            } catch (IOException e) {
-                throw new UncheckedIOException("Failed to close RangeReader", e);
-            }
-        }
     }
 }

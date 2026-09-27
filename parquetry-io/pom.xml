@@ -8,7 +8,7 @@
   </parent>
   <artifactId>parquetry-io</artifactId>
   <name>Parquetry :: IO</name>
-  <description>Positional byte-range source and pooled native-segment SPIs. Pure JDK.</description>
+  <description>Positional byte-range source and pooled native-segment SPIs, with the adapter onto tileverse-storage range readers.</description>
 
   <dependencyManagement>
     <dependencies>
@@ -23,6 +23,12 @@
   </dependencyManagement>
 
   <dependencies>
+    <!-- The RangeReader adapted by ByteRangeSource.of and ByteRangeSource.owning. Managed by the tileverse BOM
+         through parquetry-dependencies. -->
+    <dependency>
+      <groupId>io.tileverse.storage</groupId>
+      <artifactId>tileverse-storage-core</artifactId>
+    </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>

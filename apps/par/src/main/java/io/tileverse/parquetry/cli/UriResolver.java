@@ -30,7 +30,6 @@ import io.tileverse.storage.StorageOutputStream;
 import io.tileverse.storage.WriteOptions;
 
 import io.tileverse.parquetry.io.ByteRangeSource;
-import io.tileverse.parquetry.tileverse.ByteRangeSources;
 import io.tileverse.parquetry.tileverse.ParquetStorage;
 
 /**
@@ -68,7 +67,7 @@ public final class UriResolver {
          * A remote URI read through tileverse-storage; the source borrows {@code reader}, closed with {@code storage}.
          */
         static OpenFile ofStorage(Storage storage, RangeReader reader) {
-            return new OpenFile(ByteRangeSources.from(reader), storage, reader);
+            return new OpenFile(ByteRangeSource.of(reader), storage, reader);
         }
 
         /** The open source, adapted to the parquetry read SPI. */

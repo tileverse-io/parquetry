@@ -73,7 +73,6 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 import io.tileverse.parquetry.schema.geo.projjson.Identifier;
-import io.tileverse.parquetry.tileverse.ByteRangeSources;
 
 import io.tileverse.stac.StacFormatException;
 import io.tileverse.stac.StacItem;
@@ -769,7 +768,7 @@ public final class StacDataset implements GeoParquetDataset {
         Storage storage = storages.storageFor(assetUri.resolve("."));
         RangeReader reader = storage.openRangeReader(assetUri);
         try {
-            ByteRangeSource source = ByteRangeSources.from(reader);
+            ByteRangeSource source = ByteRangeSource.of(reader);
             ParquetSource opened = ParquetSource.open(source, openOptions);
             PartLease lease = new PartLease(opened, reader);
             openLeases.add(lease);

@@ -50,6 +50,7 @@ import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -59,7 +60,6 @@ import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.schema.geo.geoparquet.BboxCovering;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 import io.tileverse.parquetry.testkit.TestCorpus;
-import io.tileverse.parquetry.tileverse.ByteRangeSources;
 
 import picocli.CommandLine;
 
@@ -93,7 +93,7 @@ class CpCmdTest {
 
         try (Storage storage = StorageFactory.open(dir.toUri());
                 RangeReader reader = storage.openRangeReader("big.parquet")) {
-            ParquetSource out = ParquetSource.open(ByteRangeSources.from(reader));
+            ParquetSource out = ParquetSource.open(ByteRangeSource.of(reader));
             assertThat(out.schema().leafColumns()).extracting(p -> p.dot()).containsExactly("name", "pop");
             try (Stream<ParquetRecord> rows = out.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 assertThat(rows.count()).isEqualTo(3L);
@@ -315,7 +315,7 @@ class CpCmdTest {
         ColumnPath xmax = ColumnPath.of("bbox", "xmax");
         try (Storage storage = StorageFactory.open(dst.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(dst.getFileName().toString())) {
-            ParquetSource out = ParquetSource.open(ByteRangeSources.from(reader));
+            ParquetSource out = ParquetSource.open(ByteRangeSource.of(reader));
             try (Stream<ParquetRecord> rows = out.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 List<ParquetRecord> records = rows.map(ParquetRecord::detach).toList();
                 assertThat(records).hasSize(2);
@@ -345,7 +345,7 @@ class CpCmdTest {
         ColumnPath xmax = ColumnPath.of("bbox", "xmax");
         try (Storage storage = StorageFactory.open(dst.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(dst.getFileName().toString())) {
-            ParquetSource out = ParquetSource.open(ByteRangeSources.from(reader));
+            ParquetSource out = ParquetSource.open(ByteRangeSource.of(reader));
             try (Stream<ParquetRecord> rows = out.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 List<ParquetRecord> records = rows.map(ParquetRecord::detach).toList();
                 assertThat(records).hasSize(2);
@@ -589,7 +589,7 @@ class CpCmdTest {
     private static long rowCount(Path file) throws Exception {
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ParquetSource source = ParquetSource.open(ByteRangeSources.from(reader));
+            ParquetSource source = ParquetSource.open(ByteRangeSource.of(reader));
             try (Stream<ParquetRecord> rows =
                     source.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 return rows.count();
@@ -600,7 +600,7 @@ class CpCmdTest {
     private static BboxCovering coveringOf(Path file) throws Exception {
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ParquetSource source = ParquetSource.open(ByteRangeSources.from(reader));
+            ParquetSource source = ParquetSource.open(ByteRangeSource.of(reader));
             GeoParquetMetadata geo =
                     GeoParquetMetadata.parse(source.keyValueMetadata().get("geo"));
             return geo.columns().get("geometry").covering().orElseThrow().bbox();
@@ -610,7 +610,7 @@ class CpCmdTest {
     private static List<String> leafPaths(Path file) throws Exception {
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ParquetSource source = ParquetSource.open(ByteRangeSources.from(reader));
+            ParquetSource source = ParquetSource.open(ByteRangeSource.of(reader));
             return source.schema().leafColumns().stream().map(ColumnPath::dot).toList();
         }
     }
@@ -618,7 +618,7 @@ class CpCmdTest {
     private static int rowGroupCount(Path file) throws Exception {
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ParquetSource source = ParquetSource.open(ByteRangeSources.from(reader));
+            ParquetSource source = ParquetSource.open(ByteRangeSource.of(reader));
             return source.rowGroups().size();
         }
     }

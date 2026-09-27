@@ -8,8 +8,8 @@ manifest semantics.
 ## Why it exists
 
 Reading Iceberg metadata otherwise pulls `apache-avro` (and, through `parquet-avro`, Hadoop and Commons). This module
-replaces that with a focused reader whose only dependencies are `parquetry-io` (`ByteRangeSource`),
-`parquetry-compression`, and `jackson-core` (streaming parse of the header schema JSON). It is the same species as
+replaces that with a focused reader whose dependencies are `parquetry-io` (`ByteRangeSource`, which brings
+`tileverse-storage-core`), `parquetry-compression`, and `jackson-core` (streaming parse of the header schema JSON). It is the same species as
 `parquetry-format`: a hand-rolled wire reader that replaces a heavy external library rather than adapting to one.
 
 ## Scope

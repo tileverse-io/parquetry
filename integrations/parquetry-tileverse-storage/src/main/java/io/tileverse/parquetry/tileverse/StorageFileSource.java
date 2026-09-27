@@ -146,7 +146,7 @@ public final class StorageFileSource implements FileSource {
 
         @Override
         public ByteRangeSource open() {
-            return ByteRangeSources.from(storage.openRangeReader(key));
+            return ByteRangeSource.of(storage.openRangeReader(key));
         }
     }
 }

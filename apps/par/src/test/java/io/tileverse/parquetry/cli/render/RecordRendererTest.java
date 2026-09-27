@@ -44,6 +44,7 @@ import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.format.LogicalType;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -52,7 +53,6 @@ import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.schema.UuidConverter;
 import io.tileverse.parquetry.testkit.TestCorpus;
-import io.tileverse.parquetry.tileverse.ByteRangeSources;
 
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -128,7 +128,7 @@ class RecordRendererTest {
     private static String renderAll(Path file, Path dir, RecordRenderer.Mode mode) throws Exception {
         try (Storage storage = StorageFactory.open(dir.toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ParquetSource source = ParquetSource.open(ByteRangeSources.from(reader));
+            ParquetSource source = ParquetSource.open(ByteRangeSource.of(reader));
             ParquetSchema schema = source.schema();
             StringWriter sw = new StringWriter();
             RecordRenderer renderer = new RecordRenderer(mode, schema, new PrintWriter(sw));

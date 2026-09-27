@@ -60,4 +60,4 @@ Compile:
 
 Test: JUnit 5 + AssertJ; the OGC `geoparquet` test corpus's PROJJSON fixtures (committed under `src/test/resources/`).
 
-No `libthrift`, `parquet-*`, `hadoop-*`, or `avro` at compile or runtime - that's the whole point of this module. Also free of any `io.tileverse.storage` dependency: footer and index reads go through the pure-JDK `ByteRangeSource` SPI in `parquetry-io`.
+No `libthrift`, `parquet-*`, `hadoop-*`, or `avro` at compile or runtime - that's the whole point of this module. Footer and index reads go through the `ByteRangeSource` SPI in `parquetry-io`, whose only third-party dependency is `tileverse-storage-core`, for the `RangeReader` adapted by `ByteRangeSource`.

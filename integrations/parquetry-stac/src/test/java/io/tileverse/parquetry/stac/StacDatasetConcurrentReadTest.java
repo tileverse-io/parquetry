@@ -44,7 +44,6 @@ import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.runtime.FetchBudget;
 import io.tileverse.parquetry.runtime.ParquetRuntime;
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.tileverse.ByteRangeSources;
 
 /**
  * Covers the survivor fan-out on {@link StacDataset}: a probe-less read over many parts drains them concurrently
@@ -151,7 +150,7 @@ class StacDatasetConcurrentReadTest {
         List<String> keys = new ArrayList<>();
         try (Storage storage = StorageFactory.open(dir.toUri())) {
             for (int i = 0; i < POINT_COUNTS.length; i++) {
-                try (ByteRangeSource source = ByteRangeSources.from(storage.openRangeReader(partName(i)))) {
+                try (ByteRangeSource source = ByteRangeSource.of(storage.openRangeReader(partName(i)))) {
                     ParquetSource single = ParquetSource.open(source);
                     try (Stream<ParquetRecord> rows =
                             single.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {

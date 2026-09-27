@@ -63,7 +63,7 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 /**
  * End-to-end integration tests that drive the parquetry pipeline through a real cloud-storage {@link RangeReader} -
  * specifically tileverse-storage's S3 reader pointed at a LocalStack container, opened through the
- * {@link ByteRangeSources} adapter.
+ * {@link ByteRangeSource#of(io.tileverse.storage.RangeReader)} adapter.
  *
  * <p>Each read opens with the default runtime. Column values are materialized into heap-owned {@code byte[]}
  * <em>inside</em> the stream's try-with-resources scope, while the decode buffers are still live. That lets the
@@ -160,7 +160,7 @@ class CloudStorageIT {
     private static List<byte[]> readFooColumn(Storage storage, String key) throws IOException {
         try (storage;
                 RangeReader reader = storage.openRangeReader(key);
-                ByteRangeSource bytes = ByteRangeSources.from(reader)) {
+                ByteRangeSource bytes = ByteRangeSource.of(reader)) {
             ParquetSource source = ParquetSource.open(bytes);
             try (Stream<ParquetRecord> stream =
                     source.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
