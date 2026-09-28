@@ -24,6 +24,7 @@ import java.util.ServiceLoader;
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.io.ByteBufferPool;
+import io.tileverse.io.ByteBufferPool.PoolStatistics;
 import io.tileverse.io.ByteBufferPool.PooledByteBuffer;
 
 class ParquetryByteBufferPoolTest {
@@ -62,8 +63,88 @@ class ParquetryByteBufferPoolTest {
         try (PooledByteBuffer pooled = pool.borrowHeap(size)) {
             ByteBuffer buffer = pooled.buffer();
             assertThat(buffer.hasArray()).as("heap buffer is array-backed").isTrue();
+            assertThat(buffer.arrayOffset())
+                    .as("array offset seen by callers writing through array()")
+                    .isZero();
             assertThat(buffer.capacity()).as("heap buffer capacity").isEqualTo(size);
+            assertThat(buffer.position()).as("position").isZero();
+            assertThat(buffer.limit()).as("limit").isEqualTo(size);
         }
+    }
+
+    @Test
+    void heapBorrowsAreReusedBetweenBorrows() {
+        int size = 64 * 1024;
+        long reusedBefore = pool.getHeapPoolStatistics().reused();
+        pool.borrowHeap(size).close();
+        pool.borrowHeap(size).close();
+
+        PoolStatistics stats = pool.getHeapPoolStatistics();
+        assertThat(stats.reused())
+                .as("second borrow of the same size served from the free list")
+                .isGreaterThan(reusedBefore);
+        assertThat(stats.returned()).as("returns retained in the free list").isPositive();
+    }
+
+    @Test
+    void heapHandleClosesFromAnotherThread() throws InterruptedException {
+        long returnedBefore = pool.getHeapPoolStatistics().returned();
+        PooledByteBuffer pooled = pool.borrowHeap(64 * 1024);
+
+        Thread closer = new Thread(pooled::close, "heap-handle-closer");
+        closer.start();
+        closer.join();
+
+        assertThat(pool.getHeapPoolStatistics().returned())
+                .as("a close on another thread returns the buffer to the free list")
+                .isGreaterThan(returnedBefore);
+    }
+
+    @Test
+    void aHeapBorrowAboveTheRetentionQuotaIsServedAndReleasedOnClose() {
+        int size = Math.toIntExact(ParquetryByteBufferPool.HEAP_RETAINED_BYTES + 1);
+        long discardedBefore = pool.getHeapPoolStatistics().discarded();
+
+        try (PooledByteBuffer pooled = pool.borrowHeap(size)) {
+            ByteBuffer buffer = pooled.buffer();
+            assertThat(buffer.capacity())
+                    .as("an over-quota borrow is still served")
+                    .isEqualTo(size);
+            buffer.put(size - 1, (byte) 1);
+        }
+
+        PoolStatistics stats = pool.getHeapPoolStatistics();
+        assertThat(stats.discarded())
+                .as("the over-quota buffer is released, not retained")
+                .isGreaterThan(discardedBefore);
+        assertThat(stats.bytesSize())
+                .as("bytes retained in the free list")
+                .isLessThanOrEqualTo(ParquetryByteBufferPool.HEAP_RETAINED_BYTES);
+    }
+
+    @Test
+    void clearReleasesTheRetainedHeapBuffers() {
+        pool.borrowHeap(64 * 1024).close();
+        assertThat(pool.getHeapPoolStatistics().poolSize())
+                .as("free list before clear")
+                .isPositive();
+
+        pool.clear();
+
+        assertThat(pool.getHeapPoolStatistics().poolSize())
+                .as("free list after clear")
+                .isZero();
+    }
+
+    @Test
+    void directStatisticsReportTheSegmentPoolRetention() {
+        pool.borrowDirect(64 * 1024).close();
+
+        PoolStatistics stats = pool.getDirectPoolStatistics();
+        assertThat(stats.returned())
+                .as("direct borrows returned to the segment pool")
+                .isPositive();
+        assertThat(stats.bytesSize()).as("bytes retained by the segment pool").isNotNegative();
     }
 
     @Test
@@ -89,9 +170,16 @@ class ParquetryByteBufferPoolTest {
     }
 
     @Test
-    void getDefaultResolvesToThisProvider() {
-        assertThat(ByteBufferPool.getDefault())
+    void getDefaultResolvesToThisProviderAndServesHeapBorrows() {
+        ByteBufferPool shared = ByteBufferPool.getDefault();
+        assertThat(shared)
                 .as("getDefault() must win as the registered provider that vends parquetry's shared pool to tileverse")
                 .isInstanceOf(ParquetryByteBufferPool.class);
+
+        // A heap borrow through the discovered provider builds the heap pool outside the built-in pool's class
+        // initialization, which is what the lazy holder exists for.
+        try (PooledByteBuffer pooled = ByteBufferPool.heapBuffer(8192)) {
+            assertThat(pooled.buffer().capacity()).isEqualTo(8192);
+        }
     }
 }

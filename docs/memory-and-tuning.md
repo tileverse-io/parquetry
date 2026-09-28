@@ -92,6 +92,9 @@ To stay under a pod limit, keep `maxHeap + off-heap + margin <= pod limit`:
 - `DecodeBudget` is inside `-Xmx` and does not add to the formula beyond `-Xmx`;
   it bounds how much of the heap speculative decode-ahead may occupy, leaving the
   remainder for the consumer.
+- The heap scratch retained by parquetry's tileverse `ByteBufferPool` provider
+  (the merge scratch of batched reads, a PMTiles reader's buffers) is also inside
+  `-Xmx`: at most 32 MiB between borrows, released after 30 s idle.
 - `FetchBudget` adds to the off-heap term directly. Raising it improves
   fetch/decode overlap on high-latency byte sources (S3) at the cost of off-heap
   headroom.
