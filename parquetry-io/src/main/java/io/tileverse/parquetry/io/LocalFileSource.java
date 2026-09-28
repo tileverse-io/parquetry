@@ -19,7 +19,9 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.URI;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Predicate;
@@ -58,7 +60,10 @@ public final class LocalFileSource implements FileSource {
         return new LocalFileSource(directory, new Listing.GlobMatches(compile(glob)));
     }
 
-    /** A source over exactly one file; {@link #root()} is the file's parent directory. */
+    /**
+     * A source over exactly one file; {@link #root()} is the file's parent directory. Listing looks at that file alone,
+     * never at its siblings, and lists nothing when the file or its directory is missing.
+     */
     public static LocalFileSource file(Path file) {
         Objects.requireNonNull(file, "file");
         Path abs = file.toAbsolutePath().normalize();
@@ -89,8 +94,22 @@ public final class LocalFileSource implements FileSource {
     public Stream<FileEntry> list() {
         return switch (listing) {
             case Listing.GlobMatches(Predicate<String> matcher) -> listMatches(matcher);
-            case Listing.NamedFile(String fileName) -> listMatches(fileName::equals);
+            case Listing.NamedFile(String fileName) -> listNamedFile(root.resolve(fileName));
         };
+    }
+
+    private Stream<FileEntry> listNamedFile(Path file) {
+        try {
+            BasicFileAttributes attributes = Files.readAttributes(file, BasicFileAttributes.class);
+            if (!attributes.isRegularFile()) {
+                return Stream.empty();
+            }
+            return Stream.of(new LocalFileEntry(file, relativePathOf(file), attributes.size()));
+        } catch (NoSuchFileException _) {
+            return Stream.empty();
+        } catch (IOException e) {
+            throw new UncheckedIOException("Inspecting " + file, e);
+        }
     }
 
     private Stream<FileEntry> listMatches(Predicate<String> matcher) {
