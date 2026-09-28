@@ -17,6 +17,7 @@ package io.tileverse.parquetry.io;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.io.IOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.file.Files;
@@ -68,5 +69,20 @@ class LocalFileSourceTest {
                     .isEqualTo("HELLO");
         }
         source.close();
+    }
+
+    @Test
+    void singleFileNameIsNeverReadAsAGlob(@TempDir Path dir) throws IOException {
+        Path file = dir.resolve("f[z-a].parquet");
+        Files.writeString(file, "x");
+
+        assertThat(relativePathsOf(LocalFileSource.file(file))).containsExactly("f[z-a].parquet");
+    }
+
+    private static List<String> relativePathsOf(FileSource source) {
+        try (source;
+                Stream<FileEntry> entries = source.list()) {
+            return entries.map(FileEntry::relativePath).toList();
+        }
     }
 }

@@ -187,7 +187,7 @@ public final class DatasetResolver {
         int lastSeparator = Math.max(pathOrUri.lastIndexOf('/', meta), pathOrUri.lastIndexOf('\\', meta));
         String base = lastSeparator < 0 ? "." : pathOrUri.substring(0, lastSeparator);
         String glob = lastSeparator < 0 ? pathOrUri : pathOrUri.substring(lastSeparator + 1);
-        // GlobMatcher matches against forward-slash-canonical relative paths; canonicalize the glob suffix to match.
+        // File sources match the glob against forward-slash relative paths; canonicalize the glob suffix to match.
         return new InputKind.Fileset(UriResolver.normalizeToUri(base), glob.replace('\\', '/'));
     }
 

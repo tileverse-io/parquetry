@@ -22,33 +22,62 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Predicate;
 import java.util.stream.Stream;
 
-/** A JDK-only {@link FileSource} over a local directory (with a glob) or a single file. */
+import io.tileverse.storage.Storage;
+import io.tileverse.storage.StoragePattern;
+
+/**
+ * A {@link FileSource} over a local directory (with a glob) or a single file.
+ *
+ * <p>The glob follows tileverse's {@link StoragePattern} syntax (DuckDB-style, with brace alternation) and is matched
+ * against the {@code /}-separated path of every regular file relative to the directory, at any depth; a backslash in
+ * the glob is an ordinary character on every platform. A pattern without glob metacharacters names exactly one relative
+ * path, where a storage listing would list that prefix unfiltered.
+ */
 public final class LocalFileSource implements FileSource {
 
     private final Path root;
-    private final String glob;
-    private final boolean singleFile;
+    private final Listing listing;
 
-    private LocalFileSource(Path root, String glob, boolean singleFile) {
+    private LocalFileSource(Path root, Listing listing) {
         this.root = root.toAbsolutePath().normalize();
-        this.glob = glob;
-        this.singleFile = singleFile;
+        this.listing = listing;
     }
 
-    /** A source over every file under {@code directory} matching {@code glob} (e.g. {@code "*.parquet"}). */
+    /**
+     * A source over every file under {@code directory} matching {@code glob} (e.g. {@code "*.parquet"}).
+     *
+     * @throws IllegalArgumentException if {@code glob} is empty, starts with {@code /}, has a {@code .} or {@code ..}
+     *     segment, contains a NUL character, or does not compile
+     */
     public static LocalFileSource directory(Path directory, String glob) {
         Objects.requireNonNull(directory, "directory");
         Objects.requireNonNull(glob, "glob");
-        return new LocalFileSource(directory, glob, false);
+        return new LocalFileSource(directory, new Listing.GlobMatches(compile(glob)));
     }
 
     /** A source over exactly one file; {@link #root()} is the file's parent directory. */
     public static LocalFileSource file(Path file) {
         Objects.requireNonNull(file, "file");
         Path abs = file.toAbsolutePath().normalize();
-        return new LocalFileSource(abs.getParent(), abs.getFileName().toString(), true);
+        return new LocalFileSource(
+                abs.getParent(), new Listing.NamedFile(abs.getFileName().toString()));
+    }
+
+    /**
+     * The predicate over relative paths for {@code glob}, validated and compiled as tileverse does. A pattern without
+     * glob metacharacters has no matcher there, because a storage backend lists that prefix unfiltered; here it names
+     * one relative path exactly.
+     */
+    private static Predicate<String> compile(String glob) {
+        if (glob.isEmpty()) {
+            throw new IllegalArgumentException("glob must not be empty");
+        }
+        Storage.requireSafePattern(glob);
+        StoragePattern pattern = StoragePattern.parse(glob);
+        return pattern.matcher().orElse(glob::equals);
     }
 
     @Override
@@ -58,11 +87,16 @@ public final class LocalFileSource implements FileSource {
 
     @Override
     public Stream<FileEntry> list() {
-        GlobMatcher matcher = GlobMatcher.compile(glob);
+        return switch (listing) {
+            case Listing.GlobMatches(Predicate<String> matcher) -> listMatches(matcher);
+            case Listing.NamedFile(String fileName) -> listMatches(fileName::equals);
+        };
+    }
+
+    private Stream<FileEntry> listMatches(Predicate<String> matcher) {
         try (Stream<Path> walk = Files.walk(root)) {
             List<FileEntry> matches = walk.filter(Files::isRegularFile)
-                    .filter(path ->
-                            singleFile ? path.equals(root.resolve(glob)) : matcher.matches(relativePathOf(path)))
+                    .filter(path -> matcher.test(relativePathOf(path)))
                     .map(this::toFileEntry)
                     .toList();
             return matches.stream();
@@ -92,6 +126,14 @@ public final class LocalFileSource implements FileSource {
     @Override
     public void close() {
         // nothing to release: list() opens and closes its own directory walk
+    }
+
+    /** What {@link #list()} reports under {@link #root}: every regular file matching a glob, or one named file. */
+    private sealed interface Listing {
+
+        record GlobMatches(Predicate<String> matcher) implements Listing {}
+
+        record NamedFile(String fileName) implements Listing {}
     }
 
     private record LocalFileEntry(Path path, String relativePath, long sizeBytes) implements FileEntry {
