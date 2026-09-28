@@ -13,8 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.tileverse;
+package io.tileverse.parquetry.io;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.util.Optional;
@@ -22,26 +24,35 @@ import java.util.OptionalLong;
 
 import io.tileverse.storage.RangeReader;
 
-import io.tileverse.parquetry.io.ByteRangeSource;
-
 /**
- * Adapts a tileverse-storage {@link RangeReader} to a parquetry {@link ByteRangeSource}. BORROWS the reader: the
- * adapter's {@link #close()} is a no-op, and the caller closes the {@code RangeReader} after the last read. A
- * {@code RangeReader} is typically shared and cached across reads, which is why the adapter never closes it.
+ * Adapts a tileverse-storage {@link RangeReader} to a {@link ByteRangeSource}. The adapter either borrows the reader,
+ * leaving {@link #close()} a no-op for a reader shared and cached across reads, or owns it, closing the reader with the
+ * source for a reader handed out fresh by a {@code Storage}.
  */
 final class RangeReaderByteRangeSource implements ByteRangeSource {
 
     private final RangeReader reader;
+    private final boolean ownsReader;
     private final long size;
 
-    RangeReaderByteRangeSource(RangeReader reader) {
+    /**
+     * @throws IllegalStateException if the reader cannot report its size; an owned reader is closed before the throw
+     */
+    RangeReaderByteRangeSource(RangeReader reader, boolean ownsReader) {
         this.reader = reader;
+        this.ownsReader = ownsReader;
+        this.size = sizeOf(reader, ownsReader);
+    }
+
+    private static long sizeOf(RangeReader reader, boolean ownsReader) {
         OptionalLong knownSize = reader.size();
-        if (knownSize.isEmpty()) {
-            throw new IllegalStateException(
-                    "RangeReader cannot determine source size: " + reader.getSourceIdentifier());
+        if (knownSize.isPresent()) {
+            return knownSize.getAsLong();
         }
-        this.size = knownSize.getAsLong();
+        if (ownsReader) {
+            closeReader(reader);
+        }
+        throw new IllegalStateException("RangeReader cannot determine source size: " + reader.getSourceIdentifier());
     }
 
     @Override
@@ -90,6 +101,16 @@ final class RangeReaderByteRangeSource implements ByteRangeSource {
 
     @Override
     public void close() {
-        // borrows the RangeReader; the caller owns and closes it
+        if (ownsReader) {
+            closeReader(reader);
+        }
+    }
+
+    private static void closeReader(RangeReader reader) {
+        try {
+            reader.close();
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to close RangeReader " + reader.getSourceIdentifier(), e);
+        }
     }
 }

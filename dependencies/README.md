@@ -10,7 +10,7 @@ Third-party dependency BOM. Pins the versions of every external library parquetr
 
 Currently manages: Jackson 3 (`tools.jackson.core`), OpenTelemetry API, aircompressor-v3, Brotli `dec`, SLF4J API, Error Prone annotations, JSpecify, JTS 1.20.0, Lombok, JUnit 5, AssertJ, Testcontainers, parquet-avro (test-only oracle).
 
-tileverse-storage versions are deliberately **not** managed here: the `parquetry-tileverse-storage` adapter is the one module that depends on tileverse-storage, and it imports the upstream tileverse BOM itself, keeping that coupling out of the rest of the reactor.
+tileverse-storage versions come from the upstream `io.tileverse:tileverse-bom`, re-imported here like the other upstream BOMs; `parquetry-core` reads it for `tileverse-storage-core` and the `parquetry-tileverse-storage` adapter for the provider modules.
 
 ## Where it fits
 

@@ -13,14 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.tileverse;
+package io.tileverse.parquetry.io;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.MemorySegment;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.OptionalLong;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -28,8 +31,6 @@ import org.junit.jupiter.api.io.TempDir;
 import io.tileverse.storage.RangeReader;
 import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
-
-import io.tileverse.parquetry.io.ByteRangeSource;
 
 class RangeReaderByteRangeSourceTest {
 
@@ -41,7 +42,7 @@ class RangeReaderByteRangeSourceTest {
         Files.write(file, CONTENT);
         try (Storage storage = StorageFactory.open(dir.toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString());
-                ByteRangeSource viaReader = ByteRangeSources.from(reader);
+                ByteRangeSource viaReader = ByteRangeSource.of(reader);
                 ByteRangeSource viaFile = ByteRangeSource.ofFile(file)) {
 
             assertThat(viaReader.size()).isEqualTo(viaFile.size());
@@ -60,7 +61,7 @@ class RangeReaderByteRangeSourceTest {
         Files.write(file, CONTENT);
         try (Storage storage = StorageFactory.open(dir.toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString());
-                ByteRangeSource source = ByteRangeSources.from(reader)) {
+                ByteRangeSource source = ByteRangeSource.of(reader)) {
             assertThat(source.read(CONTENT.length, MemorySegment.ofArray(new byte[4])))
                     .isEqualTo(-1);
         }
@@ -72,7 +73,7 @@ class RangeReaderByteRangeSourceTest {
         Files.write(file, CONTENT);
         try (Storage storage = StorageFactory.open(dir.toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString());
-                ByteRangeSource source = ByteRangeSources.from(reader)) {
+                ByteRangeSource source = ByteRangeSource.of(reader)) {
 
             // An in-bounds request must deliver every requested byte.
             byte[] inBounds = new byte[8];
@@ -91,9 +92,74 @@ class RangeReaderByteRangeSourceTest {
         Files.write(file, CONTENT);
         try (Storage storage = StorageFactory.open(dir.toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
-            ByteRangeSource source = ByteRangeSources.from(reader);
+            ByteRangeSource source = ByteRangeSource.of(reader);
             source.close();
             assertThat(reader.size()).isPresent();
+        }
+    }
+
+    @Test
+    void closeClosesTheOwnedReader() {
+        RecordingRangeReader reader = new RecordingRangeReader(OptionalLong.of(0));
+
+        ByteRangeSource.owning(reader).close();
+
+        assertThat(reader.closed).isTrue();
+    }
+
+    @Test
+    void owningSourceForwardsTheReaderIdentity() {
+        RecordingRangeReader reader = new RecordingRangeReader(OptionalLong.of(0));
+
+        assertThat(ByteRangeSource.owning(reader).sourceIdentifier()).contains("recording");
+    }
+
+    @Test
+    void anOwnedReaderWithoutASizeIsClosedBeforeTheFailureIsReported() {
+        RecordingRangeReader reader = new RecordingRangeReader(OptionalLong.empty());
+
+        assertThatThrownBy(() -> ByteRangeSource.owning(reader)).isInstanceOf(IllegalStateException.class);
+
+        assertThat(reader.closed).isTrue();
+    }
+
+    @Test
+    void aBorrowedReaderWithoutASizeStaysOpenWhenTheFailureIsReported() {
+        RecordingRangeReader reader = new RecordingRangeReader(OptionalLong.empty());
+
+        assertThatThrownBy(() -> ByteRangeSource.of(reader)).isInstanceOf(IllegalStateException.class);
+
+        assertThat(reader.closed).isFalse();
+    }
+
+    /** A reader over an empty object that reports a configurable size and records its close. */
+    private static final class RecordingRangeReader implements RangeReader {
+
+        private final OptionalLong size;
+        private boolean closed;
+
+        RecordingRangeReader(OptionalLong size) {
+            this.size = size;
+        }
+
+        @Override
+        public void close() {
+            closed = true;
+        }
+
+        @Override
+        public OptionalLong size() {
+            return size;
+        }
+
+        @Override
+        public int readRange(long offset, int length, ByteBuffer target) {
+            return 0;
+        }
+
+        @Override
+        public String getSourceIdentifier() {
+            return "recording";
         }
     }
 }

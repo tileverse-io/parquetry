@@ -39,7 +39,6 @@ import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.runtime.ParquetRuntime;
-import io.tileverse.parquetry.tileverse.ByteRangeSources;
 
 /**
  * Measures the wall-clock cost of reading N remote Parquet files, either one file at a time or through the shared
@@ -181,7 +180,7 @@ public final class MultiFileReadProbe {
         URI container = fileUri.resolve(".");
         try (Storage storage = StorageFactory.open(container, storageProperties());
                 RangeReader rangeReader = storage.openRangeReader(fileUri);
-                ByteRangeSource source = ByteRangeSources.from(rangeReader)) {
+                ByteRangeSource source = ByteRangeSource.of(rangeReader)) {
             ParquetFileReader reader =
                     ParquetFileReader.open(source, ParquetRuntime.defaultRuntime(), Optional.empty());
             return switch (mode) {
@@ -277,7 +276,7 @@ public final class MultiFileReadProbe {
             RangeReader rangeReader = storage.openRangeReader(fileUri);
             storages.add(storage);
             rangeReaders.add(rangeReader);
-            sources.add(ByteRangeSources.from(rangeReader));
+            sources.add(ByteRangeSource.of(rangeReader));
         }
     }
 

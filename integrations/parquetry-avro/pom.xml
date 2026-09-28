@@ -8,7 +8,7 @@
   </parent>
   <artifactId>parquetry-avro</artifactId>
   <name>Parquetry :: Avro</name>
-  <description>Clean-room read-only Avro Object Container File reader. Depends only on parquetry-io, parquetry-compression and jackson-core.</description>
+  <description>Clean-room read-only Avro Object Container File reader. Depends on parquetry-io, parquetry-compression and jackson-core.</description>
 
   <dependencyManagement>
     <dependencies>

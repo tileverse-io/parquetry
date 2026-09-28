@@ -31,9 +31,9 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.SchemaNode;
-import io.tileverse.parquetry.tileverse.ByteRangeSources;
 
 class FixturesTest {
 
@@ -43,7 +43,7 @@ class FixturesTest {
         Fixtures.writeCities(file);
         try (Storage storage = StorageFactory.open(dir.toUri());
                 RangeReader reader = storage.openRangeReader("cities.parquet")) {
-            ParquetSource source = ParquetSource.open(ByteRangeSources.from(reader));
+            ParquetSource source = ParquetSource.open(ByteRangeSource.of(reader));
             try (Stream<ParquetRecord> rows =
                     source.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 assertThat(rows.count()).isEqualTo(4L);
@@ -57,7 +57,7 @@ class FixturesTest {
         Fixtures.writeGeoCities(file);
         try (Storage storage = StorageFactory.open(dir.toUri());
                 RangeReader reader = storage.openRangeReader("geo-cities.parquet")) {
-            ParquetSource source = ParquetSource.open(ByteRangeSources.from(reader));
+            ParquetSource source = ParquetSource.open(ByteRangeSource.of(reader));
             boolean hasGeometry = source.schema().root().children().stream()
                     .filter(node -> node instanceof SchemaNode.Primitive)
                     .map(node -> (SchemaNode.Primitive) node)

@@ -23,6 +23,8 @@ import java.nio.file.Path;
 import java.util.Objects;
 import java.util.Optional;
 
+import io.tileverse.storage.RangeReader;
+
 /**
  * A thread-safe, positional, read-only byte source of known size. parquetry's single read dependency.
  *
@@ -106,5 +108,25 @@ public interface ByteRangeSource extends AutoCloseable {
      */
     static ByteRangeSource ofChannel(FileChannel channel) {
         return FileChannelByteRangeSource.borrowing(Objects.requireNonNull(channel, "channel"));
+    }
+
+    /**
+     * Reads through a tileverse-storage {@link RangeReader} and BORROWS it - {@link #close()} does not close the
+     * reader, which the caller closes after the last read. The fit for a reader shared and cached across reads.
+     *
+     * @throws IllegalStateException if the reader cannot report its size
+     */
+    static ByteRangeSource of(RangeReader reader) {
+        return new RangeReaderByteRangeSource(Objects.requireNonNull(reader, "reader"), false);
+    }
+
+    /**
+     * Reads through a tileverse-storage {@link RangeReader} and OWNS it - {@link #close()} closes the reader. The fit
+     * for a reader handed out fresh by a {@code Storage} for this source alone.
+     *
+     * @throws IllegalStateException if the reader cannot report its size; the reader is closed before the throw
+     */
+    static ByteRangeSource owning(RangeReader reader) {
+        return new RangeReaderByteRangeSource(Objects.requireNonNull(reader, "reader"), true);
     }
 }

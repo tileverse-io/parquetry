@@ -44,12 +44,12 @@ import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.format.LogicalType;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.SchemaNode;
-import io.tileverse.parquetry.tileverse.ByteRangeSources;
 
 import io.tileverse.stac.StacAsset;
 import io.tileverse.stac.StacCatalog;
@@ -113,7 +113,7 @@ public final class GeoParquetStacReader implements StacCatalogReader {
     private List<StacCollection> readCollections(URI itemTableUri, Storage storage) {
         String key = storageKey(itemTableUri);
         try (RangeReader reader = storage.openRangeReader(key)) {
-            ParquetSource source = ParquetSource.open(ByteRangeSources.from(reader));
+            ParquetSource source = ParquetSource.open(ByteRangeSource.of(reader));
             SequencedMap<String, EmbeddedCollection> declared = readDeclaredCollections(source);
             ItemTable table = itemTable(itemTableUri, key, source.schema(), declared);
             SequencedMap<String, List<StacItem>> byCollection = readItems(source, table);
