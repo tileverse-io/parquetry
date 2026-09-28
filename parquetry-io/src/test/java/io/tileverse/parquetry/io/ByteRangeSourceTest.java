@@ -36,6 +36,7 @@ import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -148,6 +149,23 @@ class ByteRangeSourceTest {
         ByteRangeSource source = ByteRangeSource.ofFile(write(dir));
         source.close();
         assertThat(source.size()).isEqualTo(CONTENT.length);
+    }
+
+    @Test
+    void ofFileRejectsANegativeIdleTimeout(@TempDir Path dir) throws Exception {
+        Path file = write(dir);
+        Duration negative = Duration.ofSeconds(-1);
+
+        assertThatThrownBy(() -> ByteRangeSource.ofFile(file, negative)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void ofFileRejectsASubMillisecondIdleTimeout(@TempDir Path dir) throws Exception {
+        Path file = write(dir);
+        Duration subMillisecond = Duration.ofNanos(500_000);
+
+        assertThatThrownBy(() -> ByteRangeSource.ofFile(file, subMillisecond))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

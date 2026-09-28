@@ -104,7 +104,21 @@ public interface ByteRangeSource extends AutoCloseable {
      * @throws IllegalArgumentException if {@code path} is a directory
      */
     static ByteRangeSource ofFile(Path path) {
-        return RangeReaderByteRangeSource.openFile(Objects.requireNonNull(path, "path"), Duration.ZERO);
+        return ofFile(path, Duration.ZERO);
+    }
+
+    /**
+     * As {@link #ofFile(Path)}, releasing the file once it sits unread for {@code idleTimeout} and reopening it, by its
+     * real path, on the next read; {@link Duration#ZERO} holds the file until {@link #close()}. The reopen finds
+     * whatever file sits at that path by then, while metadata cached under the source's name still describes the
+     * previous file.
+     *
+     * @throws IllegalArgumentException if {@code idleTimeout} is negative, or above zero and below one millisecond
+     */
+    static ByteRangeSource ofFile(Path path, Duration idleTimeout) {
+        Objects.requireNonNull(path, "path");
+        Objects.requireNonNull(idleTimeout, "idleTimeout");
+        return RangeReaderByteRangeSource.openFile(path, idleTimeout);
     }
 
     /**
