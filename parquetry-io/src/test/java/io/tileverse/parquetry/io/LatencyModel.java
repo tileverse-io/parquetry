@@ -17,9 +17,9 @@ package io.tileverse.parquetry.io;
 
 /**
  * Analytic wall-clock projection for a recorded read: one round trip per request plus payload transfer at the given
- * bandwidth. No sleeping; CI assertions project several round-trip/bandwidth points from one recorded run. The serial
- * model is faithful per row group (a row group's coalesced ranges are issued serially); under cross-row-group prefetch
- * parallelism it is an upper bound.
+ * bandwidth. No sleeping; CI assertions project several round-trip/bandwidth points from one recorded run. A row
+ * group's ranges go out in one call, and an implementation may serve them in parallel. The serial model is therefore an
+ * upper bound both within a row group and across row groups under prefetch parallelism.
  */
 public final class LatencyModel {
 

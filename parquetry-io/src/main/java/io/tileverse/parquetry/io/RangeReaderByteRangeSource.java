@@ -15,6 +15,7 @@
  */
 package io.tileverse.parquetry.io;
 
+import java.io.EOFException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.lang.foreign.MemorySegment;
@@ -23,13 +24,18 @@ import java.nio.channels.ClosedChannelException;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
 
+import io.tileverse.storage.BatchReadResult;
 import io.tileverse.storage.NotFoundException;
 import io.tileverse.storage.RangeReader;
+import io.tileverse.storage.RangeRequest;
 import io.tileverse.storage.StorageException;
 import io.tileverse.storage.file.FileStorageProvider;
+
+import io.tileverse.io.ByteRange;
 
 /**
  * Adapts a tileverse-storage {@link RangeReader} to a {@link ByteRangeSource}. The adapter either borrows the reader,
@@ -184,6 +190,36 @@ final class RangeReaderByteRangeSource implements ByteRangeSource {
                 : new IOException(failure.getMessage());
         io.initCause(failure);
         return new UncheckedIOException(message, io);
+    }
+
+    /**
+     * Hands the whole batch to the reader in one call, which lets the backend merge, reorder and parallelize the ranges
+     * under its own policy, and passes the reader's own accounting of the call back to the caller. The reader validates
+     * the batch before any I/O and fills in full every request that it can serve; the one thing left to this source is
+     * to turn the reader's end-of-source signal (a short count) into the exception promised by this source.
+     */
+    @Override
+    public BatchReadResult readFully(List<RangeRequest> requests) {
+        BatchReadResult result = reader.readRanges(requests);
+        for (int i = 0; i < requests.size(); i++) {
+            requireFullyRead(requests.get(i), result.bytesRead(i));
+        }
+        return result;
+    }
+
+    /**
+     * A count short of the request's length means the range ran past end of source, because a reader fills in full
+     * every request that it can serve at all; {@link ByteRangeSource#readFully(List)} promises an exception for that
+     * case rather than a partly filled target.
+     */
+    private void requireFullyRead(RangeRequest request, int bytesRead) {
+        ByteRange range = request.range();
+        if (bytesRead == range.length()) {
+            return;
+        }
+        throw new UncheckedIOException(new EOFException("Reached end of source at offset " + range.offset() + " with "
+                + (range.length() - bytesRead) + " bytes still requested in "
+                + sourceIdentifier().orElse("an unnamed source")));
     }
 
     @Override
