@@ -78,8 +78,6 @@ import io.tileverse.parquetry.testsupport.RecordingByteRangeSource;
 class ParallelDecodeCoordinatorTest {
 
     private static final int DEFAULT_PREFETCH_DEPTH = 2;
-    private static final int NO_COALESCE_GAP = 0;
-    private static final int MAX_SPAN = 8 << 20;
 
     private static final ColumnPath PAGED_COLUMN = ColumnPath.of("id");
     private static final int PAGED_ROWS_PER_GROUP = 16;
@@ -463,8 +461,8 @@ class ParallelDecodeCoordinatorTest {
 
         private RowGroupPrefetcher prefetcher(
                 ByteRangeSource source, List<RowGroupSurvivor> survivors, RowGroupPlans plans, int prefetchDepth) {
-            RowGroupFetcher fetcher = TestFetchers.over(
-                    source, schema, schema, SegmentPool.create(), FetchAccumulator.NONE, NO_COALESCE_GAP, MAX_SPAN);
+            RowGroupFetcher fetcher =
+                    TestFetchers.over(source, schema, schema, SegmentPool.create(), FetchAccumulator.NONE);
             ExecutorService executor = Executors.newThreadPerTaskExecutor(
                     Thread.ofVirtual().name("test-fetch-", 0).factory());
             return new RowGroupPrefetcher(

@@ -43,8 +43,8 @@ import java.util.concurrent.locks.ReentrantLock;
  * <ul>
  *   <li><b>Small buffers</b> (rounded capacity at most {@code largeBufferThreshold}) reuse up to {@code maxPooledBytes}
  *       of idle retention.
- *   <li><b>Large buffers</b> (above the threshold) reuse up to {@code maxLargePooledBytes}. Coalesced fetch ranges land
- *       here; reusing them across row groups is the bulk of the saved zeroing.
+ *   <li><b>Large buffers</b> (above the threshold) reuse up to {@code maxLargePooledBytes}. A row group's fetch buffer
+ *       lands here; reusing it across row groups is the bulk of the saved zeroing.
  * </ul>
  *
  * <p>In each class a borrow takes the smallest free backing that fits, or allocates a fresh one; a return is retained
@@ -111,7 +111,7 @@ final class DefaultSegmentPool implements SegmentPool {
     /** Reuse pool for buffers at or below {@link #largeBufferThreshold}. */
     private final SizeClass smallClass;
 
-    /** Reuse pool for buffers above {@link #largeBufferThreshold} (coalesced fetch ranges, large decode buffers). */
+    /** Reuse pool for buffers above {@link #largeBufferThreshold} (row-group fetch buffers, large decode buffers). */
     private final SizeClass largeClass;
 
     /**

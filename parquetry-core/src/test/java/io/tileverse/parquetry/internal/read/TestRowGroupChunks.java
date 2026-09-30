@@ -18,20 +18,49 @@ package io.tileverse.parquetry.internal.read;
 import java.util.ArrayList;
 import java.util.List;
 
+import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.FileMetaData;
+import io.tileverse.parquetry.format.OffsetIndex;
+import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
+import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.footer.CompactFooter;
 import io.tileverse.parquetry.internal.footer.LeafIndex;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
  * Builds {@link RowGroupChunks} views for tests that start from a wire footer, packing it into the compact planning
  * form built by the reader at open. A test holding a {@link FileMetaData} asks for one row group's view, or for every
- * row group's view in file order.
+ * row group's view in file order, and takes from {@link #reading} the {@link IndexSectionLoader} behind those views.
  */
 final class TestRowGroupChunks {
 
     private TestRowGroupChunks() {}
+
+    /**
+     * A loader that reads each index section straight from {@code source}, one section per read and with no batching.
+     * Bloom filters are out of its reach: a test needing one drives the read path itself.
+     */
+    static IndexSectionLoader reading(ByteRangeSource source) {
+        return new IndexSectionLoader() {
+
+            @Override
+            public OffsetIndex readOffsetIndex(long offset, int length) {
+                return ParquetFormat.readOffsetIndex(source, offset, length);
+            }
+
+            @Override
+            public ColumnIndex readColumnIndex(long offset, int length) {
+                return ParquetFormat.readColumnIndex(source, offset, length);
+            }
+
+            @Override
+            public SplitBlockBloomFilter readBloom(long offset, int length) {
+                throw new UnsupportedOperationException("a bloom filter is not read through this loader");
+            }
+        };
+    }
 
     static RowGroupChunks of(
             FileMetaData footer, int rowGroupIndex, ParquetSchema fileSchema, IndexSectionLoader loader) {

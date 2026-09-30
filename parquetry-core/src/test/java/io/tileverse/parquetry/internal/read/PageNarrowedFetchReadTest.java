@@ -85,9 +85,8 @@ import io.tileverse.parquetry.testsupport.CorpusFixtures;
  * {@code PLAIN}). A {@value #PAGE_BYTE_LIMIT}-byte page limit and no compression split each long column into many small
  * pages per row group, which lets an {@code id} range name the pages that must survive.
  *
- * <p>Byte-exact assertions build the runtime with a zero coalesce gap, since the default 1 MiB gap re-merges the holes
- * between surviving runs. The parity and alignment cases deliberately keep a gap wider than any hole, exercising the
- * merged-range path where a mis-seeded page ordinal would silently return the wrong rows.
+ * <p>A fetch asks for the ranges of its plan and joins two of them only where they abut, which makes every byte
+ * assertion below exact: a page dropped by the selection is a page covered by no read.
  */
 class PageNarrowedFetchReadTest {
 
@@ -98,9 +97,6 @@ class PageNarrowedFetchReadTest {
     private static final int ROWS_PER_ROW_GROUP = 1_000;
     private static final int ROW_COUNT = 2 * ROWS_PER_ROW_GROUP;
     private static final int PAGE_BYTE_LIMIT = 256;
-
-    private static final int NO_COALESCE_GAP = 0;
-    private static final int GAP_WIDER_THAN_ANY_HOLE = 1 << 20;
 
     /** A file whose footer records no offset index, hence no page can be located and no fetch can be narrowed. */
     private static final String CORPUS_FILE_WITHOUT_PAGE_INDEX = "alltypes_plain.parquet";
@@ -163,8 +159,8 @@ class PageNarrowedFetchReadTest {
     @MethodSource("parityCases")
     void narrowedReadReturnsExactlyTheRowsOfTheWholeChunkRead(
             String shape, Predicate predicate, Projection projection) {
-        Leg<List<Object>> narrowed = readRows(file, predicate, projection, narrowing(true), GAP_WIDER_THAN_ANY_HOLE);
-        Leg<List<Object>> baseline = readRows(file, predicate, projection, narrowing(false), GAP_WIDER_THAN_ANY_HOLE);
+        Leg<List<Object>> narrowed = readRows(file, predicate, projection, narrowing(true));
+        Leg<List<Object>> baseline = readRows(file, predicate, projection, narrowing(false));
 
         assertThat(baseline.rows())
                 .as("the predicate must match rows for a parity check to mean anything: %s", shape)
@@ -178,9 +174,8 @@ class PageNarrowedFetchReadTest {
     }
 
     /**
-     * Shapes whose narrowed leg was measured to fetch strictly less than its whole-chunk leg even at
-     * {@link #GAP_WIDER_THAN_ANY_HOLE}, where coalescing gives back most of the saving: each one keeps at least a fifth
-     * of it, which is what lets the parity test double as an engagement guard.
+     * Shapes whose narrowed leg fetches strictly less than its whole-chunk leg: the surviving pages of each column plus
+     * its dictionary prefix, against both whole chunks.
      */
     private static Stream<Arguments> parityCases() {
         return Stream.of(
@@ -193,23 +188,20 @@ class PageNarrowedFetchReadTest {
     }
 
     @Test
-    void multiRunSurvivorsWithAHoleSmallerThanTheCoalesceGapStayAligned() {
-        Leg<List<Object>> narrowed =
-                readRows(file, FIRST_AND_LAST_PAGES, Projection.ALL, narrowing(true), GAP_WIDER_THAN_ANY_HOLE);
-        Leg<List<Object>> baseline =
-                readRows(file, FIRST_AND_LAST_PAGES, Projection.ALL, narrowing(false), GAP_WIDER_THAN_ANY_HOLE);
+    void multiRunSurvivorsStayAlignedAcrossTheHoleBetweenThem() {
+        Leg<List<Object>> narrowed = readRows(file, FIRST_AND_LAST_PAGES, Projection.ALL, narrowing(true));
+        Leg<List<Object>> baseline = readRows(file, FIRST_AND_LAST_PAGES, Projection.ALL, narrowing(false));
         ByteExtent deadPage = firstPageWithoutASurvivingRow(ID);
 
         assertThat(idsOf(narrowed))
                 .as("a run seeded with the wrong page ordinal decodes the wrong rows without failing")
                 .isEqualTo(idsMatchingFirstAndLastPages());
         assertThat(narrowed.bytesRead())
-                .as("the merged range must still be narrower than the whole chunks it was cut from, or nothing here"
-                        + " exercises the merged-range path this test exists for")
+                .as("two runs of one column must cost less than the chunk from which they were cut")
                 .isLessThan(baseline.bytesRead());
         assertThat(narrowed.bytesInRange(deadPage.start(), deadPage.end()))
-                .as("a gap wider than the hole between the two runs merges them into one range that spans dead pages")
-                .isPositive();
+                .as("the hole between the two runs is never crossed")
+                .isZero();
     }
 
     // -------------------------------------------------------------------------
@@ -218,10 +210,8 @@ class PageNarrowedFetchReadTest {
 
     @Test
     void narrowedFetchReadsFewerBytesAndSkipsDeadPages() {
-        Leg<List<Object>> narrowed =
-                readRows(file, FIRST_AND_LAST_PAGES, Projection.ALL, narrowing(true), NO_COALESCE_GAP);
-        Leg<List<Object>> baseline =
-                readRows(file, FIRST_AND_LAST_PAGES, Projection.ALL, narrowing(false), NO_COALESCE_GAP);
+        Leg<List<Object>> narrowed = readRows(file, FIRST_AND_LAST_PAGES, Projection.ALL, narrowing(true));
+        Leg<List<Object>> baseline = readRows(file, FIRST_AND_LAST_PAGES, Projection.ALL, narrowing(false));
         ByteExtent deadPage = firstPageWithoutASurvivingRow(ID);
 
         assertThat(narrowed.rows()).isEqualTo(baseline.rows());
@@ -241,10 +231,8 @@ class PageNarrowedFetchReadTest {
     @Test
     void dictionaryPrefixIsFetchedAndDecodes() {
         Projection withDictionaryColumn = Projection.ofPhysical(List.of(ID, NAME));
-        Leg<List<Object>> narrowed =
-                readRows(file, ONE_MID_FILE_PAGE, withDictionaryColumn, narrowing(true), NO_COALESCE_GAP);
-        Leg<List<Object>> baseline =
-                readRows(file, ONE_MID_FILE_PAGE, withDictionaryColumn, narrowing(false), NO_COALESCE_GAP);
+        Leg<List<Object>> narrowed = readRows(file, ONE_MID_FILE_PAGE, withDictionaryColumn, narrowing(true));
+        Leg<List<Object>> baseline = readRows(file, ONE_MID_FILE_PAGE, withDictionaryColumn, narrowing(false));
         ByteExtent prefix = dictionaryPrefixOfFirstRowGroup(NAME);
 
         assertThat(narrowed.rows())
@@ -264,10 +252,8 @@ class PageNarrowedFetchReadTest {
     void narrowingDisablesExactlyWhenTheMaskDoes(String why, Corpus corpus, Predicate predicate, ReadOptions base) {
         Path target = pathOf(corpus);
 
-        Leg<List<Object>> narrowed =
-                readRows(target, predicate, Projection.ALL, narrowing(base, true), NO_COALESCE_GAP);
-        Leg<List<Object>> baseline =
-                readRows(target, predicate, Projection.ALL, narrowing(base, false), NO_COALESCE_GAP);
+        Leg<List<Object>> narrowed = readRows(target, predicate, Projection.ALL, narrowing(base, true));
+        Leg<List<Object>> baseline = readRows(target, predicate, Projection.ALL, narrowing(base, false));
 
         assertThat(baseline.rows())
                 .as("the read must produce rows for the byte comparison to mean anything")
@@ -305,20 +291,10 @@ class PageNarrowedFetchReadTest {
         long expectedRows = rowCountOf(nested);
 
         // A nested shape's cell values are views that do not outlive the stream; this leg asserts row counts and bytes.
-        Leg<Integer> narrowed = read(
-                nested,
-                Predicate.ALWAYS_TRUE,
-                Projection.ALL,
-                narrowing(true),
-                NO_COALESCE_GAP,
-                ParquetRecord::columnCount);
-        Leg<Integer> baseline = read(
-                nested,
-                Predicate.ALWAYS_TRUE,
-                Projection.ALL,
-                narrowing(false),
-                NO_COALESCE_GAP,
-                ParquetRecord::columnCount);
+        Leg<Integer> narrowed =
+                read(nested, Predicate.ALWAYS_TRUE, Projection.ALL, narrowing(true), ParquetRecord::columnCount);
+        Leg<Integer> baseline =
+                read(nested, Predicate.ALWAYS_TRUE, Projection.ALL, narrowing(false), ParquetRecord::columnCount);
 
         assertThat(narrowed.rows()).hasSize(Math.toIntExact(expectedRows));
         assertThat(narrowed.bytesRead())
@@ -332,10 +308,8 @@ class PageNarrowedFetchReadTest {
 
     @Test
     void latencyModelProjectsTheNarrowedWinOnSlowLinks() {
-        Leg<List<Object>> narrowed =
-                readRows(file, FIRST_AND_LAST_PAGES, Projection.ALL, narrowing(true), NO_COALESCE_GAP);
-        Leg<List<Object>> baseline =
-                readRows(file, FIRST_AND_LAST_PAGES, Projection.ALL, narrowing(false), NO_COALESCE_GAP);
+        Leg<List<Object>> narrowed = readRows(file, FIRST_AND_LAST_PAGES, Projection.ALL, narrowing(true));
+        Leg<List<Object>> baseline = readRows(file, FIRST_AND_LAST_PAGES, Projection.ALL, narrowing(false));
 
         long savedBytes = baseline.bytesRead() - narrowed.bytesRead();
         long extraRequests = narrowed.requestCount() - baseline.requestCount();
@@ -369,7 +343,7 @@ class PageNarrowedFetchReadTest {
         QueryStats baseline = analyze(FIRST_AND_LAST_PAGES, Projection.ALL, narrowing(false));
 
         assertThat(narrowed.totalFetch().pageBytes())
-                .as("analyze reports the bytes the fetch really moved, not the whole-chunk plan")
+                .as("analyze reports the bytes requested by the narrowed plan, not the whole-chunk plan")
                 .isLessThan(baseline.totalFetch().pageBytes());
         assertThat(narrowed.pagesDecoded())
                 .as("the same pages decode either way; narrowing changes only what is fetched")
@@ -400,8 +374,8 @@ class PageNarrowedFetchReadTest {
     }
 
     private static Leg<List<Object>> readRows(
-            Path target, Predicate predicate, Projection projection, ReadOptions options, int coalesceGap) {
-        return read(target, predicate, projection, options, coalesceGap, PageNarrowedFetchReadTest::stableCellsOf);
+            Path target, Predicate predicate, Projection projection, ReadOptions options) {
+        return read(target, predicate, projection, options, PageNarrowedFetchReadTest::stableCellsOf);
     }
 
     /**
@@ -413,10 +387,8 @@ class PageNarrowedFetchReadTest {
             Predicate predicate,
             Projection projection,
             ReadOptions options,
-            int coalesceGap,
             Function<ParquetRecord, T> cells) {
-        ParquetRuntime runtime =
-                ParquetRuntime.builder().maxCoalesceGap(coalesceGap).build();
+        ParquetRuntime runtime = ParquetRuntime.builder().build();
         RecordingByteRangeSource recording = new RecordingByteRangeSource(ByteRangeSource.ofFile(target));
         List<T> rows = new ArrayList<>();
         try (recording) {
@@ -450,8 +422,7 @@ class PageNarrowedFetchReadTest {
     }
 
     private static QueryStats analyze(Predicate predicate, Projection projection, ReadOptions options) {
-        ParquetRuntime runtime =
-                ParquetRuntime.builder().maxCoalesceGap(NO_COALESCE_GAP).build();
+        ParquetRuntime runtime = ParquetRuntime.builder().build();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ExplainPlan plan = ParquetFileReader.open(source, runtime, Optional.empty())
                     .explainAnalyze(predicate, projection, options);

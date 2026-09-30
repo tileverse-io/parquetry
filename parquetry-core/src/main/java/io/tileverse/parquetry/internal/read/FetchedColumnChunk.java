@@ -27,8 +27,7 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import lombok.NonNull;
 
 /**
- * One projected column chunk as a read-only view into a coalesced fetch buffer, plus the metadata needed to walk it
- * page by page.
+ * One projected column chunk as a read-only view into a fetch buffer, plus the metadata needed to walk it page by page.
  *
  * <p>This is the unit produced by {@link RowGroupFetcher} and consumed by the per-row-group readers.
  * {@code dataPageRuns} covers the chunk's data-page region (after any dictionary page was consumed during the fetch): a

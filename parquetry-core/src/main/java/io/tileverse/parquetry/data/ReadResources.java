@@ -44,10 +44,10 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
- * The runtime-bound read machinery for one file: the coalescing fetcher, the prefetch pipeline, the parallel decode
- * coordinator, and the decode buffer valve, all built from the reader's {@link ByteRangeSource}, file
- * {@link ParquetSchema}, and {@link ParquetRuntime}. Each {@code read} builds its own collaborators here; closing the
- * returned stream shuts the per-read fetch executor down.
+ * The runtime-bound read machinery for one file: the fetcher, the prefetch pipeline, the parallel decode coordinator,
+ * and the decode buffer valve, all built from the reader's {@link ByteRangeSource}, file {@link ParquetSchema}, and
+ * {@link ParquetRuntime}. Each {@code read} builds its own collaborators here; closing the returned stream shuts the
+ * per-read fetch executor down.
  */
 final class ReadResources {
 
@@ -138,9 +138,9 @@ final class ReadResources {
     }
 
     /**
-     * Builds the coalescing fetcher and the prefetch pipeline for one read. The prefetcher owns a fresh per-read
-     * virtual-thread executor; closing the returned stream cascades to {@link RowGroupPrefetcher#close()}, which shuts
-     * the executor down. No executor outlives the read.
+     * Builds the fetcher and the prefetch pipeline for one read. The prefetcher owns a fresh per-read virtual-thread
+     * executor; closing the returned stream cascades to {@link RowGroupPrefetcher#close()}, which shuts the executor
+     * down. No executor outlives the read.
      */
     private RowGroupPrefetcher newPrefetcher(
             List<RowGroupSurvivor> survivors,
@@ -152,14 +152,7 @@ final class ReadResources {
         FetchBufferAllocator mandatoryAllocator =
                 new FetchBufferAllocator(runtime.segmentPool(), runtime.fetchBudget(), spillStore);
         RowGroupFetcher fetcher = new RowGroupFetcher(
-                source,
-                fileSchema,
-                projectedSchema,
-                runtime.segmentPool(),
-                mandatoryAllocator,
-                runtime.maxCoalesceGap(),
-                runtime.maxCoalescedSpan(),
-                accumulator);
+                source, fileSchema, projectedSchema, runtime.segmentPool(), mandatoryAllocator, accumulator);
         ExecutorService executor = Executors.newThreadPerTaskExecutor(
                 Thread.ofVirtual().name("parquetry-fetch-", 0).factory());
         try {

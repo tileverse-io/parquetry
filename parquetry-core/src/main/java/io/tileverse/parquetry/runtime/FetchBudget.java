@@ -21,12 +21,13 @@ import java.util.concurrent.atomic.AtomicLong;
 import com.sun.management.HotSpotDiagnosticMXBean;
 
 /**
- * Bounds the total in-flight coalesced bytes a read may speculatively prefetch. Shared process-wide so that, regardless
- * of how many concurrent reads run, peak speculative fetch memory stays under one cap.
+ * Bounds the total in-flight bytes of speculative prefetch. Shared process-wide: however many concurrent reads run,
+ * peak speculative fetch memory stays under one cap.
  *
- * <p>{@link #tryReserve(long)} is non-blocking: it gates speculative prefetch only. The current row group's fetch is
- * never gated (it is mandatory for progress), so peak fetch memory is at most one row group's coalesced span plus the
- * reserved prefetch bytes. Reservations are byte-granular and released when the owning {@code RowGroupFetch} is closed.
+ * <p>{@link #tryReserve(long)} is non-blocking and controls speculative prefetch only. The current row group's fetch is
+ * mandatory for progress and always proceeds. Peak fetch memory is therefore at most one row group's requested span
+ * plus the reserved prefetch bytes. Reservations are byte-granular and released when the owning {@code RowGroupFetch}
+ * is closed.
  */
 public final class FetchBudget {
 

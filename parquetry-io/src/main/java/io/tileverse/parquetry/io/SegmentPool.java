@@ -108,11 +108,11 @@ public sealed interface SegmentPool permits DefaultSegmentPool {
         }
 
         /**
-         * The pod-sized policy: a 4 MB threshold (page-value segments and most coalesced fetch spans stay poolable), a
-         * small-buffer idle cap of one eighth of the off-heap allowance clamped to [16 MB, 512 MB], a large-buffer idle
-         * cap of one quarter clamped to [64 MB, 1 GB] (coalesced fetch ranges dominate the large class, which gets the
-         * wider cap), and a 60-second idle-retention window after which the background reaper returns idle buffers to
-         * the OS. Computed once; the limits probe reads container and filesystem facts.
+         * The pod-sized policy: a 4 MB threshold (page-value segments and most row-group fetch buffers stay poolable),
+         * a small-buffer idle cap of one eighth of the off-heap allowance clamped to [16 MB, 512 MB], a large-buffer
+         * idle cap of one quarter clamped to [64 MB, 1 GB] (row-group fetch buffers dominate the large class, which
+         * gets the wider cap), and a 60-second idle-retention window after which the background reaper returns idle
+         * buffers to the OS. Computed once; the limits probe reads container and filesystem facts.
          */
         public static Options elastic() {
             return ElasticHolder.OPTIONS;

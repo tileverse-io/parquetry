@@ -22,9 +22,9 @@ import io.tileverse.parquetry.io.SegmentPool.Pooled;
 import lombok.NonNull;
 
 /**
- * The coalesced segments and column views for one row group. Owns the pooled segments borrowed for its coalesced
- * ranges; {@link #close()} returns them to the pool and releases the budget reservation. The {@link FetchedColumnChunk}
- * views it exposes share these segments and are valid only until close. Close is idempotent.
+ * The fetch buffer and column views for one row group. Owns the pooled segments borrowed for its ranges;
+ * {@link #close()} returns them to the pool and releases the budget reservation. The {@link FetchedColumnChunk} views
+ * it exposes share these segments and are valid only until close. Close is idempotent.
  */
 public final class RowGroupFetch implements AutoCloseable {
 

@@ -18,8 +18,14 @@ package io.tileverse.parquetry.internal.read;
 import java.io.IOException;
 import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+
+import io.tileverse.storage.BatchReadResult;
+import io.tileverse.storage.RangeRequest;
 
 import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.OffsetIndex;
@@ -40,44 +46,48 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import lombok.NonNull;
 
 /**
- * Plans and fetches one row group's projected column chunks as a small set of coalesced range reads. Replaces the
- * former per-column fetch: instead of one {@code readRange} per column chunk, it issues one read per coalesced range
- * and hands out zero-copy {@link FetchedColumnChunk} views into the range buffers.
+ * Plans and fetches one row group's projected column chunks as the exact byte ranges of its plan. The fetch asks for no
+ * byte outside them, joins two of them only where they abut, reads them into one pooled buffer, and hands out zero-copy
+ * {@link FetchedColumnChunk} views into it.
  */
 public final class RowGroupFetcher {
+
+    /**
+     * Longest single read. A read's length is an int at the byte-source seam, and a run of abutting units longer than
+     * this becomes more than one read.
+     */
+    private static final long MAX_MERGED_READ_BYTES = Integer.MAX_VALUE;
+
+    /**
+     * Ranges per batch call. A plan wider than this is issued as several calls, which bounds both the fan-out put in
+     * flight by an implementation and the scratch memory held by one call.
+     */
+    private static final int MAX_REQUESTS_PER_CALL = 256;
 
     private final ByteRangeSource source;
     private final ParquetSchema fileSchema;
     private final ParquetSchema projectedSchema;
     private final SegmentPool pool;
     private final FetchBufferAllocator mandatoryAllocator;
-    private final int maxCoalesceGap;
-    private final int maxCoalescedSpan;
     private final FetchAccumulator accumulator;
 
-    // internal fetcher wiring: the eight parameters are cohesive collaborators of one row-group fetch
-    @SuppressWarnings("java:S107")
     public RowGroupFetcher(
             @NonNull ByteRangeSource source,
             @NonNull ParquetSchema fileSchema,
             @NonNull ParquetSchema projectedSchema,
             @NonNull SegmentPool pool,
             @NonNull FetchBufferAllocator mandatoryAllocator,
-            int maxCoalesceGap,
-            int maxCoalescedSpan,
             @NonNull FetchAccumulator accumulator) {
         this.source = source;
         this.fileSchema = fileSchema;
         this.projectedSchema = projectedSchema;
         this.pool = pool;
         this.mandatoryAllocator = mandatoryAllocator;
-        this.maxCoalesceGap = maxCoalesceGap;
-        this.maxCoalescedSpan = maxCoalescedSpan;
         this.accumulator = accumulator;
     }
 
     /**
-     * Builds the coalescing plan for {@code survivor} without performing any I/O (used to size budget reservations).
+     * Builds the fetch plan for {@code survivor} without performing any I/O (used to size budget reservations).
      *
      * <p>The plan's bytes are a superset of every page any reader will touch. Narrowing to the surviving pages happens
      * exactly when {@code mask} is present - the same mask the row group's column readers receive - and never from a
@@ -97,7 +107,17 @@ public final class RowGroupFetcher {
                 units.add(wholeChunkUnit(path, meta));
             }
         }
-        return CoalescingFetchPlanner.plan(units, maxCoalesceGap, maxCoalescedSpan);
+        return orderedPlan(units);
+    }
+
+    /**
+     * The units ordered by file offset. That order lets the fetch lay them out back to back in one buffer and keep each
+     * column's runs in page order.
+     */
+    private static FetchPlan orderedPlan(List<FetchUnit> units) {
+        List<FetchUnit> ordered = new ArrayList<>(units);
+        ordered.sort(Comparator.comparingLong(FetchUnit::fileOffset));
+        return new FetchPlan(ordered);
     }
 
     private FetchUnit wholeChunkUnit(ColumnPath path, ChunkMeta meta) {
@@ -158,12 +178,12 @@ public final class RowGroupFetcher {
     }
 
     /**
-     * Reads {@code plan}'s coalesced ranges into pooled buffers and slices each projected column out of them. On any
-     * failure, closes every buffer borrowed so far and releases {@code reservation} before propagating.
+     * Reads {@code plan}'s ranges into one pooled buffer and slices each projected column out of it. On any failure,
+     * returns the buffer and releases {@code reservation} before propagating.
      *
-     * <p>A speculative prefetch arrives with a real {@code reservation} that already reserved its whole span against
-     * the {@link FetchBudget}; its range buffers come straight from the {@link SegmentPool} to avoid reserving the same
-     * bytes twice. A mandatory fetch arrives with {@link BudgetReservation#NONE} and routes each range through the
+     * <p>A speculative prefetch arrives with a real {@code reservation} that already reserved the plan's span against
+     * the {@link FetchBudget}; its buffer comes straight from the {@link SegmentPool} to avoid reserving the same bytes
+     * twice. A mandatory fetch arrives with {@link BudgetReservation#NONE} and routes the buffer through the
      * {@link FetchBufferAllocator} valve, which reserves RAM when the budget has room and maps a spill file otherwise.
      */
     public RowGroupFetch fetch(RowGroupSurvivor survivor, FetchPlan plan, BudgetReservation reservation)
@@ -180,88 +200,181 @@ public final class RowGroupFetcher {
             RowGroupSurvivor survivor, FetchPlan plan, BudgetReservation reservation, boolean wantsTimings)
             throws IOException {
         long startNanos = wantsTimings ? System.nanoTime() : 0L;
-        RowGroupChunks chunks = survivor.chunks();
         boolean speculative = reservation != BudgetReservation.NONE;
-        List<Pooled> buffers = new ArrayList<>(plan.ranges().size());
-        List<MemorySegment> rangeSegments = new ArrayList<>(plan.ranges().size());
+        Pooled buffer = acquireRangeBuffer(plan.requestedBytes(), speculative);
         try {
-            for (CoalescedRange range : plan.ranges()) {
-                Pooled pooled = acquireRangeBuffer(range.length(), speculative);
-                buffers.add(pooled);
-                MemorySegment rangeSegment = pooled.segment();
-                int read = source.read(range.fileOffset(), rangeSegment);
-                if (read != range.length()) {
-                    throw new IOException("Short read for coalesced range at offset " + range.fileOffset()
-                            + ": expected " + range.length() + " bytes, got " + read);
-                }
-                accumulator.add(FetchPurpose.PAGES, read);
-                rangeSegments.add(rangeSegment);
-            }
-            List<FetchedColumnChunk> columns = sliceColumns(plan, chunks, rangeSegments);
+            List<PlacedUnit> placed = placeUnits(plan, buffer.segment());
+            readPlacedUnits(placed, buffer.segment());
+            List<FetchedColumnChunk> columns = sliceColumns(byColumn(placed), survivor.chunks());
             long fetchNanos = wantsTimings ? System.nanoTime() - startNanos : 0L;
-            return new RowGroupFetch(buffers, columns, reservation, fetchNanos);
+            return new RowGroupFetch(List.of(buffer), columns, reservation, fetchNanos);
         } catch (IOException | RuntimeException e) {
-            for (Pooled buffer : buffers) {
-                try {
-                    buffer.close();
-                } catch (RuntimeException _) {
-                    // best-effort cleanup; rethrow the original failure
-                }
-            }
+            closeQuietly(buffer);
             reservation.release();
             throw e;
         }
     }
 
     /**
-     * A speculative prefetch already reserved its span; it borrows RAM directly. A mandatory fetch reserves RAM-or-mmap
-     * per range through the valve, retiring the former unconditional-RAM allocation.
+     * A speculative prefetch already reserved its span and borrows RAM directly. A mandatory fetch takes RAM-or-mmap
+     * through the valve.
      */
-    private Pooled acquireRangeBuffer(int length, boolean speculative) {
+    private Pooled acquireRangeBuffer(long length, boolean speculative) {
         if (speculative) {
             return pool.borrow(length);
         }
         return mandatoryAllocator.acquireMandatory(length);
     }
 
+    /** The plan's units laid out back to back in {@code buffer}, in the plan's file order. */
+    private static List<PlacedUnit> placeUnits(FetchPlan plan, MemorySegment buffer) {
+        List<PlacedUnit> placed = new ArrayList<>(plan.units().size());
+        long bufferOffset = 0;
+        for (FetchUnit unit : plan.units()) {
+            placed.add(new PlacedUnit(unit, bufferOffset, buffer.asSlice(bufferOffset, unit.length())));
+            bufferOffset += unit.length();
+        }
+        return placed;
+    }
+
+    /** One unit, where its bytes begin in the fetch buffer, and the view of the buffer holding them. */
+    private record PlacedUnit(FetchUnit unit, long bufferOffset, MemorySegment bytes) {}
+
+    /** One contiguous read: the file offset to read from and the stretch of the fetch buffer to fill. */
+    private record MergedRead(long fileOffset, MemorySegment target) {
+
+        int length() {
+            return Math.toIntExact(target.byteSize());
+        }
+    }
+
+    /** Issues the plan's reads as batch calls of at most {@link #MAX_REQUESTS_PER_CALL} ranges each. */
+    private void readPlacedUnits(List<PlacedUnit> placed, MemorySegment buffer) {
+        List<MergedRead> reads = mergeAbutting(placed, buffer);
+        for (int from = 0; from < reads.size(); from += MAX_REQUESTS_PER_CALL) {
+            int to = Math.min(from + MAX_REQUESTS_PER_CALL, reads.size());
+            issue(reads.subList(from, to));
+        }
+    }
+
+    private void issue(List<MergedRead> reads) {
+        List<RangeRequest> requests = new ArrayList<>(reads.size());
+        long bytes = 0;
+        for (MergedRead read : reads) {
+            int length = read.length();
+            requests.add(
+                    RangeRequest.of(read.fileOffset(), length, read.target().asByteBuffer()));
+            bytes += length;
+        }
+        BatchReadResult result = source.readFully(requests);
+        accumulator.add(
+                FetchPurpose.PAGES,
+                bytes,
+                requests.size(),
+                result.fetches(),
+                result.bytesTransferred(),
+                result.bytesFromCache());
+    }
+
+    /**
+     * One read per maximal run of units whose file ranges touch byte for byte. Joining those costs no unrequested byte
+     * and keeps a whole-chunk row group at a single read; a hole between two runs always ends a read.
+     */
+    private static List<MergedRead> mergeAbutting(List<PlacedUnit> placed, MemorySegment buffer) {
+        List<MergedRead> reads = new ArrayList<>(placed.size());
+        int runStart = 0;
+        for (int index = 1; index <= placed.size(); index++) {
+            if (index < placed.size() && continuesRun(placed, runStart, index)) {
+                continue;
+            }
+            reads.add(readOver(placed.subList(runStart, index), buffer));
+            runStart = index;
+        }
+        return reads;
+    }
+
+    private static boolean continuesRun(List<PlacedUnit> placed, int runStart, int index) {
+        FetchUnit previous = placed.get(index - 1).unit();
+        FetchUnit next = placed.get(index).unit();
+        if (previous.fileOffset() + previous.length() != next.fileOffset()) {
+            return false;
+        }
+        long runLength =
+                next.fileOffset() + next.length() - placed.get(runStart).unit().fileOffset();
+        return runLength <= MAX_MERGED_READ_BYTES;
+    }
+
+    private static MergedRead readOver(List<PlacedUnit> run, MemorySegment buffer) {
+        PlacedUnit first = run.get(0);
+        PlacedUnit last = run.get(run.size() - 1);
+        long length = last.bufferOffset() + last.unit().length() - first.bufferOffset();
+        return new MergedRead(first.unit().fileOffset(), buffer.asSlice(first.bufferOffset(), length));
+    }
+
+    /** The placed units of each column, in the plan's file order, which for data pages is page-ordinal order. */
+    private static Map<ColumnPath, List<PlacedUnit>> byColumn(List<PlacedUnit> placed) {
+        Map<ColumnPath, List<PlacedUnit>> byPath = new HashMap<>();
+        for (PlacedUnit placedUnit : placed) {
+            byPath.computeIfAbsent(placedUnit.unit().path(), _ -> new ArrayList<>())
+                    .add(placedUnit);
+        }
+        return byPath;
+    }
+
     private List<FetchedColumnChunk> sliceColumns(
-            FetchPlan plan, RowGroupChunks chunks, List<MemorySegment> rangeSegments) throws IOException {
-        List<FetchedColumnChunk> columns = new ArrayList<>(plan.slices().size());
-        for (ColumnPath path : projectedSchema.leafColumns()) {
-            ColumnSlices slices = requireSlices(plan, path);
+            Map<ColumnPath, List<PlacedUnit>> placedByColumn, RowGroupChunks chunks) throws IOException {
+        List<ColumnPath> leaves = projectedSchema.leafColumns();
+        List<FetchedColumnChunk> columns = new ArrayList<>(leaves.size());
+        for (ColumnPath path : leaves) {
+            List<PlacedUnit> placed = requirePlacedUnits(placedByColumn, path);
             ChunkMeta meta = requireMeta(chunks, path);
-            Optional<MemorySegment> dictionaryPrefix =
-                    slices.dictionaryPrefix().map(slice -> segmentFor(slice, rangeSegments));
-            List<DataPageRun> runs = dataPageRuns(slices, rangeSegments);
+            Optional<MemorySegment> dictionaryPrefix = dictionaryPrefixOf(placed);
+            List<DataPageRun> runs = dataPageRunsOf(placed);
             columns.add(ColumnChunkSlicer.slice(dictionaryPrefix, runs, meta, path, fileSchema));
         }
         return columns;
     }
 
     /**
-     * The slices {@code plan} recorded for {@code path}. A projected column absent from the plan means the plan and the
-     * projection disagree, which would otherwise yield a chunk with no bytes and silently wrong rows.
+     * The placed units of {@code path}. A projected column with none means the plan and the projection disagree, which
+     * would otherwise yield a chunk with no bytes and silently wrong rows.
      */
-    private static ColumnSlices requireSlices(FetchPlan plan, ColumnPath path) {
-        ColumnSlices slices = plan.slices().get(path);
-        if (slices == null) {
+    private static List<PlacedUnit> requirePlacedUnits(
+            Map<ColumnPath, List<PlacedUnit>> placedByColumn, ColumnPath path) {
+        List<PlacedUnit> placed = placedByColumn.get(path);
+        if (placed == null) {
             throw new IllegalStateException(
-                    "Fetch plan has no slices for projected column " + path.dot() + "; plan and projection disagree");
+                    "Fetch plan has no bytes for projected column " + path.dot() + "; plan and projection disagree");
         }
-        return slices;
+        return placed;
     }
 
-    private static List<DataPageRun> dataPageRuns(ColumnSlices slices, List<MemorySegment> rangeSegments) {
-        List<DataPageRun> runs = new ArrayList<>(slices.runs().size());
-        for (RunSlice run : slices.runs()) {
-            MemorySegment segment = rangeSegments.get(run.rangeIndex()).asSlice(run.offsetWithinRange(), run.length());
-            runs.add(new DataPageRun(segment, run.firstPageOrdinal()));
+    private static Optional<MemorySegment> dictionaryPrefixOf(List<PlacedUnit> placed) {
+        for (PlacedUnit placedUnit : placed) {
+            if (placedUnit.unit().dictionaryPrefix()) {
+                return Optional.of(placedUnit.bytes());
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static List<DataPageRun> dataPageRunsOf(List<PlacedUnit> placed) {
+        List<DataPageRun> runs = new ArrayList<>(placed.size());
+        for (PlacedUnit placedUnit : placed) {
+            FetchUnit unit = placedUnit.unit();
+            if (!unit.dictionaryPrefix()) {
+                runs.add(new DataPageRun(placedUnit.bytes(), unit.firstPageOrdinal()));
+            }
         }
         return runs;
     }
 
-    private static MemorySegment segmentFor(ColumnSlice slice, List<MemorySegment> rangeSegments) {
-        return rangeSegments.get(slice.rangeIndex()).asSlice(slice.offsetWithinRange(), slice.length());
+    private static void closeQuietly(Pooled buffer) {
+        try {
+            buffer.close();
+        } catch (RuntimeException _) {
+            // best-effort cleanup; the failure being handled is the one to report
+        }
     }
 
     /**
