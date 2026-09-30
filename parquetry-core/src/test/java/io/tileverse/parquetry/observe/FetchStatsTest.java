@@ -27,22 +27,26 @@ class FetchStatsTest {
 
         assertThat(empty.totalBytes()).isZero();
         assertThat(empty.fetchCount()).isZero();
+        assertThat(empty.requestCount()).isZero();
+        assertThat(empty.backendFetches()).isZero();
+        assertThat(empty.bytesTransferred()).isZero();
+        assertThat(empty.bytesFromCache()).isZero();
     }
 
     @Test
     void totalBytesSumsEveryPurpose() {
-        FetchStats stats = new FetchStats(10, 20, 30, 40, 50, 3);
+        FetchStats stats = new FetchStats(10, 20, 30, 40, 50, 3, 7, 2, 4096, 512);
 
         assertThat(stats.totalBytes()).isEqualTo(150);
     }
 
     @Test
     void combineAddsEveryFieldPairwise() {
-        FetchStats a = new FetchStats(1, 2, 3, 4, 5, 1);
-        FetchStats b = new FetchStats(10, 20, 30, 40, 50, 2);
+        FetchStats a = new FetchStats(1, 2, 3, 4, 5, 1, 2, 1, 10, 3);
+        FetchStats b = new FetchStats(10, 20, 30, 40, 50, 2, 4, 3, 100, 30);
 
         FetchStats sum = a.combine(b);
 
-        assertThat(sum).isEqualTo(new FetchStats(11, 22, 33, 44, 55, 3));
+        assertThat(sum).isEqualTo(new FetchStats(11, 22, 33, 44, 55, 3, 6, 4, 110, 33));
     }
 }

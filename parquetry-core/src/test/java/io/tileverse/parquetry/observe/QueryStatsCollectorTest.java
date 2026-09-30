@@ -62,8 +62,8 @@ class QueryStatsCollectorTest {
             final int index = i;
             pool.submit(() -> {
                 await(start);
-                collector.onRowGroupRead(
-                        new RowGroupRead(index, 10, 4, 2, 1, new FetchStats(100, 0, 0, 0, 0, 1), Optional.empty()));
+                collector.onRowGroupRead(new RowGroupRead(
+                        index, 10, 4, 2, 1, new FetchStats(100, 0, 0, 0, 0, 1, 0, 0, 0, 0), Optional.empty()));
             });
         }
         start.countDown();

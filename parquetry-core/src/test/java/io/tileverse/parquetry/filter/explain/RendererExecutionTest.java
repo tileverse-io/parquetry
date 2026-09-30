@@ -72,7 +72,7 @@ class RendererExecutionTest {
     @Test
     void timeColumnAbsentWhenNoTimings() {
         RowGroupRead noTimings =
-                new RowGroupRead(0, 100, 17, 3, 1, new FetchStats(4096, 0, 0, 0, 0, 1), Optional.empty());
+                new RowGroupRead(0, 100, 17, 3, 1, new FetchStats(4096, 0, 0, 0, 0, 1, 0, 0, 0, 0), Optional.empty());
         QueryStats noCpu = new QueryStats(
                 5_000_000L,
                 100,
@@ -82,7 +82,7 @@ class RendererExecutionTest {
                 1,
                 3,
                 1,
-                new FetchStats(4096, 0, 0, 0, 0, 1),
+                new FetchStats(4096, 0, 0, 0, 0, 1, 0, 0, 0, 0),
                 SpillStats.EMPTY,
                 Optional.empty());
         ExplainPlan plan = planWithAllTiersActive().withExecution(noCpu, Map.of(0, noTimings));
@@ -148,7 +148,7 @@ class RendererExecutionTest {
                 1,
                 3,
                 1,
-                new FetchStats(4096, 0, 0, 0, 0, 1),
+                new FetchStats(4096, 0, 0, 0, 0, 1, 0, 0, 0, 0),
                 SpillStats.EMPTY,
                 Optional.of(new PhaseTimings(5_000_000L, 1_000_000L, 3_000_000L, 500_000L)));
     }
@@ -160,7 +160,7 @@ class RendererExecutionTest {
                 17,
                 3,
                 1,
-                new FetchStats(4096, 0, 0, 0, 0, 1),
+                new FetchStats(4096, 0, 0, 0, 0, 1, 0, 0, 0, 0),
                 Optional.of(new PhaseTimings(5_000_000L, 1_000_000L, 3_000_000L, 500_000L)));
     }
 

@@ -26,11 +26,31 @@ final class ConcurrentFetchAccumulator implements FetchAccumulator {
     private final LongAdder offsetIndexBytes = new LongAdder();
     private final LongAdder bloomFilterBytes = new LongAdder();
     private final LongAdder fetchCount = new LongAdder();
+    private final LongAdder requestCount = new LongAdder();
+    private final LongAdder backendFetches = new LongAdder();
+    private final LongAdder bytesTransferred = new LongAdder();
+    private final LongAdder bytesFromCache = new LongAdder();
 
     @Override
-    public void add(FetchPurpose purpose, long bytes) {
+    public void add(
+            FetchPurpose purpose,
+            long bytes,
+            int requests,
+            long backendFetches,
+            long bytesTransferred,
+            long bytesFromCache) {
         bucketFor(purpose).add(bytes);
         fetchCount.increment();
+        requestCount.add(requests);
+        this.backendFetches.add(backendFetches);
+        this.bytesTransferred.add(bytesTransferred);
+        this.bytesFromCache.add(bytesFromCache);
+    }
+
+    @Override
+    public void addRangesOfSameCall(FetchPurpose purpose, long bytes, int requests) {
+        bucketFor(purpose).add(bytes);
+        requestCount.add(requests);
     }
 
     @Override
@@ -41,7 +61,11 @@ final class ConcurrentFetchAccumulator implements FetchAccumulator {
                 columnIndexBytes.sum(),
                 offsetIndexBytes.sum(),
                 bloomFilterBytes.sum(),
-                (int) fetchCount.sum());
+                (int) fetchCount.sum(),
+                (int) requestCount.sum(),
+                backendFetches.sum(),
+                bytesTransferred.sum(),
+                bytesFromCache.sum());
     }
 
     private LongAdder bucketFor(FetchPurpose purpose) {

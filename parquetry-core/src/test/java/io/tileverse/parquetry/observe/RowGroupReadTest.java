@@ -25,8 +25,10 @@ class RowGroupReadTest {
 
     @Test
     void combineAddsCountsAndFetchStatsAndKeepsLowestIndex() {
-        RowGroupRead a = new RowGroupRead(0, 100, 40, 8, 2, new FetchStats(10, 0, 1, 1, 0, 2), Optional.empty());
-        RowGroupRead b = new RowGroupRead(3, 50, 10, 4, 1, new FetchStats(5, 0, 1, 1, 0, 1), Optional.empty());
+        RowGroupRead a =
+                new RowGroupRead(0, 100, 40, 8, 2, new FetchStats(10, 0, 1, 1, 0, 2, 0, 0, 0, 0), Optional.empty());
+        RowGroupRead b =
+                new RowGroupRead(3, 50, 10, 4, 1, new FetchStats(5, 0, 1, 1, 0, 1, 0, 0, 0, 0), Optional.empty());
 
         RowGroupRead sum = a.combine(b);
 
@@ -35,7 +37,7 @@ class RowGroupReadTest {
         assertThat(sum.rowsMatched()).isEqualTo(50);
         assertThat(sum.pagesDecoded()).isEqualTo(12);
         assertThat(sum.pagesPruned()).isEqualTo(3);
-        assertThat(sum.fetch()).isEqualTo(new FetchStats(15, 0, 2, 2, 0, 3));
+        assertThat(sum.fetch()).isEqualTo(new FetchStats(15, 0, 2, 2, 0, 3, 0, 0, 0, 0));
     }
 
     @Test

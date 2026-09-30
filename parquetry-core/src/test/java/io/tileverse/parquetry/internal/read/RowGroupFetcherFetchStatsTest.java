@@ -67,11 +67,14 @@ class RowGroupFetcherFetchStatsTest {
             try (RowGroupFetch _ = fetcher.fetch(survivor, plan, BudgetReservation.NONE)) {
                 FetchStats stats = accumulator.snapshot();
                 assertThat(stats.pageBytes())
-                        .as("page bytes recorded match the plan's total range bytes")
-                        .isEqualTo(plan.totalBytes());
+                        .as("page bytes recorded match the bytes requested by the plan")
+                        .isEqualTo(plan.requestedBytes());
                 assertThat(stats.fetchCount())
-                        .as("at least one coalesced range was fetched")
-                        .isGreaterThanOrEqualTo(1);
+                        .as("one call takes the whole row group")
+                        .isEqualTo(1);
+                assertThat(stats.requestCount())
+                        .as("one range asked for, the chunk read whole")
+                        .isEqualTo(1);
             }
         }
     }
