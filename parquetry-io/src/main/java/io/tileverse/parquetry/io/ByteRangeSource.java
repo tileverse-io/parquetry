@@ -20,6 +20,7 @@ import java.io.UncheckedIOException;
 import java.lang.foreign.MemorySegment;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -92,12 +93,32 @@ public interface ByteRangeSource extends AutoCloseable {
     void close();
 
     /**
-     * Opens a {@link FileChannel} over {@code path} and OWNS it; {@link #close()} closes the channel.
+     * Opens {@code path} through tileverse-storage's local file reader and OWNS it; {@link #close()} releases the file.
+     * The channel opens on the first read and stays open until close, and a read failing on a stale NFS handle or a
+     * closed channel is retried on a fresh channel. The source is named by the file's real path, symbolic links
+     * resolved.
      *
-     * @throws UncheckedIOException if the file cannot be opened or its size cannot be determined
+     * @throws UncheckedIOException over a {@link java.nio.file.NoSuchFileException} when the file does not exist, or
+     *     over the failure raised while inspecting it; a file unreadable by the caller opens and fails on its first
+     *     read
+     * @throws IllegalArgumentException if {@code path} is a directory
      */
     static ByteRangeSource ofFile(Path path) {
-        return FileChannelByteRangeSource.owning(Objects.requireNonNull(path, "path"));
+        return ofFile(path, Duration.ZERO);
+    }
+
+    /**
+     * As {@link #ofFile(Path)}, releasing the file once it sits unread for {@code idleTimeout} and reopening it, by its
+     * real path, on the next read; {@link Duration#ZERO} holds the file until {@link #close()}. The reopen finds
+     * whatever file sits at that path by then, while metadata cached under the source's name still describes the
+     * previous file.
+     *
+     * @throws IllegalArgumentException if {@code idleTimeout} is negative, or above zero and below one millisecond
+     */
+    static ByteRangeSource ofFile(Path path, Duration idleTimeout) {
+        Objects.requireNonNull(path, "path");
+        Objects.requireNonNull(idleTimeout, "idleTimeout");
+        return RangeReaderByteRangeSource.openFile(path, idleTimeout);
     }
 
     /**
@@ -107,7 +128,7 @@ public interface ByteRangeSource extends AutoCloseable {
      * @throws UncheckedIOException if the channel size cannot be determined
      */
     static ByteRangeSource ofChannel(FileChannel channel) {
-        return FileChannelByteRangeSource.borrowing(Objects.requireNonNull(channel, "channel"));
+        return new BorrowedChannelByteRangeSource(Objects.requireNonNull(channel, "channel"));
     }
 
     /**
@@ -115,6 +136,7 @@ public interface ByteRangeSource extends AutoCloseable {
      * reader, which the caller closes after the last read. The fit for a reader shared and cached across reads.
      *
      * @throws IllegalStateException if the reader cannot report its size
+     * @throws UncheckedIOException if asking the reader for its size fails
      */
     static ByteRangeSource of(RangeReader reader) {
         return new RangeReaderByteRangeSource(Objects.requireNonNull(reader, "reader"), false);
@@ -125,6 +147,7 @@ public interface ByteRangeSource extends AutoCloseable {
      * for a reader handed out fresh by a {@code Storage} for this source alone.
      *
      * @throws IllegalStateException if the reader cannot report its size; the reader is closed before the throw
+     * @throws UncheckedIOException if asking the reader for its size fails; the reader is closed before the throw
      */
     static ByteRangeSource owning(RangeReader reader) {
         return new RangeReaderByteRangeSource(Objects.requireNonNull(reader, "reader"), true);

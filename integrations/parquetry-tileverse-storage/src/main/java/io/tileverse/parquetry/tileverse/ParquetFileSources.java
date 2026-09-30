@@ -24,11 +24,10 @@ import io.tileverse.parquetry.io.FileSource;
 import io.tileverse.parquetry.io.LocalFileSource;
 
 /**
- * Opens a {@link FileSource} for a dataset container, routing local files to parquetry's native filesystem source and
- * remote URIs (S3/Azure/GCS/HTTP) to tileverse-storage. Because parquetry opens and closes a source per operation and
- * reads positionally, a local file is best served by the thin native {@code FileChannel} source rather than
- * tileverse-storage's reader, which keeps a channel open across idle periods for long-lived tile serving. Remote URIs
- * go through {@link StorageFileSource}, which applies parquetry's cache tuning (see {@link ParquetStorage}).
+ * Opens a {@link FileSource} for a dataset container: a local directory or file through {@link LocalFileSource}, each
+ * entry read through tileverse-storage's file reader with its idle close off (parquetry opens and closes a source per
+ * operation), and a remote URI (S3/Azure/GCS/HTTP) through {@link StorageFileSource}, with parquetry's cache tuning
+ * applied (see {@link ParquetStorage}).
  *
  * <p>A {@code file} scheme or a scheme-less URI is local; every other scheme is remote.
  */

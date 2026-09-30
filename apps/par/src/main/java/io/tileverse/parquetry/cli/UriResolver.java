@@ -43,8 +43,8 @@ public final class UriResolver {
 
     /**
      * Holds the open {@link ByteRangeSource} and, for a remote URI, the tileverse-storage handles backing it. A local
-     * file is read through parquetry's native source, which owns its channel; a remote URI is read through a
-     * tileverse-storage {@link RangeReader} that the source borrows. Closing releases whichever backs this source.
+     * file is read through a source owning its tileverse-storage file reader; a remote URI is read through a
+     * tileverse-storage {@link RangeReader} borrowed by the source. Closing releases whichever backs this source.
      */
     public static final class OpenFile implements AutoCloseable {
 
@@ -58,7 +58,7 @@ public final class UriResolver {
             this.reader = reader;
         }
 
-        /** A local file read through parquetry's native source; {@link #close()} closes the source's channel. */
+        /** A local file read through a source owning its file reader; {@link #close()} releases the file. */
         static OpenFile ofLocal(ByteRangeSource source) {
             return new OpenFile(source, null, null);
         }
@@ -160,9 +160,9 @@ public final class UriResolver {
     }
 
     /**
-     * Opens the path or URI. A local {@code file} URI is read through parquetry's native filesystem source; a remote
-     * URI is opened through tileverse-storage with the given {@code storage.*} properties (and parquetry's cache
-     * tuning, see {@link ParquetStorage}). {@code storage.uri} is set by the factory and must not be included.
+     * Opens the path or URI. A local {@code file} URI is read through tileverse-storage's file reader; a remote URI is
+     * opened through tileverse-storage with the given {@code storage.*} properties (and parquetry's cache tuning, see
+     * {@link ParquetStorage}). {@code storage.uri} is set by the factory and must not be included.
      */
     public static OpenFile open(String pathOrUri, Properties storageProperties) {
         URI target = toAbsoluteUri(pathOrUri);
