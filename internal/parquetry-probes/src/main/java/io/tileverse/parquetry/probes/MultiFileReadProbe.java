@@ -44,8 +44,8 @@ import io.tileverse.parquetry.runtime.ParquetRuntime;
  * Measures the wall-clock cost of reading N remote Parquet files, either one file at a time or through the shared
  * per-file fan-out. Runs against a latency-injecting HTTP server standing in for object storage; the files are expected
  * at {@code <baseUrl>/f000.parquet} ... {@code f{N-1}.parquet}. Every file is fetched through tileverse-storage exactly
- * as {@link ParquetryReadEngine} opens a remote source, with the same Parquet-tuned cache configuration (caching on,
- * block alignment off).
+ * as {@link ParquetryReadEngine} opens a remote source, with the byte-range cache on as a probe choice rather than the
+ * shipped default.
  *
  * <h2>Pipelines</h2>
  *
@@ -317,8 +317,8 @@ public final class MultiFileReadProbe {
     }
 
     /**
-     * The Parquet-tuned storage cache configuration, matching {@link ParquetryReadEngine}: caching on, one entry per
-     * coalesced Parquet range.
+     * The storage configuration for the remote reads: the byte-range cache on, matching {@link ParquetryReadEngine}. It
+     * is a probe choice rather than the shipped default, which leaves the cache off.
      */
     private static Properties storageProperties() {
         Properties props = new Properties();

@@ -17,37 +17,41 @@ package io.tileverse.parquetry.tileverse;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.io.IOException;
+import java.net.URI;
 import java.util.Properties;
 
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.storage.RangeReader;
+import io.tileverse.storage.Storage;
+import io.tileverse.storage.cache.CachingRangeReader;
+
 class ParquetStorageTest {
 
-    @Test
-    void appliesCacheDefaultWhenCallerLeavesItUnset() {
-        Properties tuned = ParquetStorage.withParquetDefaults(new Properties());
+    /**
+     * An HTTP container, because the local-file provider registers no caching parameters at all and answers the same
+     * whatever the property says. Opening it and asking for a reader touches no network: an HTTP reader fetches its
+     * metadata on the first read, and these cases never issue one.
+     */
+    private static final URI CONTAINER = URI.create("http://localhost:1/parquet/");
 
-        assertThat(tuned.getProperty("storage.caching.enabled")).isEqualTo("true");
+    @Test
+    void aDefaultOpenLeavesTheByteRangeCacheOff() throws IOException {
+        try (Storage storage = ParquetStorage.open(CONTAINER);
+                RangeReader reader = storage.openRangeReader("data.parquet")) {
+            assertThat(reader).isNotInstanceOf(CachingRangeReader.class);
+        }
     }
 
     @Test
-    void callerValueOverridesTheDefault() {
+    void aDeploymentThatAsksForTheByteRangeCacheGetsIt() throws IOException {
         Properties caller = new Properties();
-        caller.setProperty("storage.caching.enabled", "false");
+        caller.setProperty("storage.caching.enabled", "true");
 
-        Properties tuned = ParquetStorage.withParquetDefaults(caller);
-
-        assertThat(tuned.getProperty("storage.caching.enabled")).isEqualTo("false");
-    }
-
-    @Test
-    void preservesUnrelatedCallerProperties() {
-        Properties caller = new Properties();
-        caller.setProperty("storage.http.timeout-millis", "5000");
-
-        Properties tuned = ParquetStorage.withParquetDefaults(caller);
-
-        assertThat(tuned.getProperty("storage.http.timeout-millis")).isEqualTo("5000");
-        assertThat(tuned.getProperty("storage.caching.enabled")).isEqualTo("true");
+        try (Storage storage = ParquetStorage.open(CONTAINER, caller);
+                RangeReader reader = storage.openRangeReader("data.parquet")) {
+            assertThat(reader).isInstanceOf(CachingRangeReader.class);
+        }
     }
 }

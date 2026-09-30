@@ -9,7 +9,7 @@
 
   <artifactId>parquetry-tileverse-storage</artifactId>
   <name>Parquetry :: Integrations :: Tileverse Storage</name>
-  <description>Storage-backed file discovery, cache-tuned Storage opening and the ByteBufferPool provider over tileverse-storage (S3/Azure/GCS/HTTP).</description>
+  <description>Storage-backed file discovery, Storage opening and the ByteBufferPool provider over tileverse-storage (S3/Azure/GCS/HTTP).</description>
 
   <dependencyManagement>
     <dependencies>
