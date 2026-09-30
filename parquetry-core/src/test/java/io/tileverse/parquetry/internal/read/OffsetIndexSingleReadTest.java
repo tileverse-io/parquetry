@@ -106,8 +106,8 @@ class OffsetIndexSingleReadTest {
 
     /**
      * Counts the recorded reads that start exactly at {@code offset}. {@link ParquetFormat} reads each OffsetIndex /
-     * ColumnIndex section starting exactly at its recorded offset; column-data fetches read at the coalesced data-range
-     * offsets and never start at an index-section offset.
+     * ColumnIndex section starting exactly at its recorded offset; column-data fetches read at the offsets of the
+     * planned data ranges and never start at an index-section offset.
      */
     private static long readsStartingAt(RecordingByteRangeSource recording, long offset) {
         return recording.ranges().stream()

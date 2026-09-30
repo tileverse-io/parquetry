@@ -15,15 +15,25 @@
  */
 package io.tileverse.parquetry.internal.read;
 
-/** A contiguous byte range to read in one {@code readRange} call. */
-public record CoalescedRange(long fileOffset, int length) {
+import io.tileverse.parquetry.observe.FetchPurpose;
 
-    public CoalescedRange {
+import lombok.NonNull;
+
+/**
+ * Where one index section lies in the file and what its bytes count as, named ahead of the read that fetches it.
+ *
+ * @param purpose which tally counts the section's bytes
+ * @param fileOffset absolute offset of the section's first byte
+ * @param length the section's byte length
+ */
+public record IndexSectionRange(@NonNull FetchPurpose purpose, long fileOffset, int length) {
+
+    public IndexSectionRange {
         if (fileOffset < 0) {
-            throw new IllegalArgumentException("fileOffset must be >= 0, got " + fileOffset);
+            throw new IllegalArgumentException("Index section offset must be non-negative, got " + fileOffset);
         }
         if (length <= 0) {
-            throw new IllegalArgumentException("length must be > 0, got " + length);
+            throw new IllegalArgumentException("Index section length must be positive, got " + length);
         }
     }
 }

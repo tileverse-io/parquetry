@@ -63,8 +63,13 @@ public final class CoveringPageBounds {
     /**
      * One unit per page of the covering's {@code xmin} leaf in row order, or an empty list when any of the four leaves
      * has no column index or offset index in this row group, or when an index is inconsistent.
+     *
+     * <p>The four leaves are named before the first of them is asked for, hence their eight index sections are read
+     * together. A leaf already loaded by the COLUMN_INDEX tier is left to the memo.
      */
     public List<PageUnit> pageUnits(RowGroupChunks chunks) {
+        List<ColumnPath> leaves = List.of(covering.xmin(), covering.xmax(), covering.ymin(), covering.ymax());
+        chunks.warmPageStats(leaves);
         Optional<ColumnPageStats> xmin = chunks.pageStats(covering.xmin());
         Optional<ColumnPageStats> xmax = chunks.pageStats(covering.xmax());
         Optional<ColumnPageStats> ymin = chunks.pageStats(covering.ymin());

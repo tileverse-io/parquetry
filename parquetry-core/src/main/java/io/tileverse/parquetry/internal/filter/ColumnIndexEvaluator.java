@@ -61,6 +61,8 @@ final class ColumnIndexEvaluator {
      */
     public static PruningDecision evaluate(
             Predicate predicate, FilterPipeline.ColumnPageStatsLookup columns, long rowGroupRowCount) {
+        List<ColumnPath> consulted = consultedColumns(predicate);
+        columns.warm(consulted);
         Optional<RowRanges> surviving = matchRanges(predicate, columns, rowGroupRowCount);
         if (surviving.isEmpty()) {
             return new PruningDecision.NotApplied(TIER, "no applicable column index for predicate");
@@ -75,6 +77,44 @@ final class ColumnIndexEvaluator {
         }
         return new PruningDecision.NarrowedTo(
                 TIER, ranges, "narrowed to " + ranges.totalRows() + "/" + total + " rows");
+    }
+
+    /**
+     * The leaf columns consulted by {@link #matchRanges} for page statistics, in encounter order. A leaf for which this
+     * tier resolves no ranges - a spatial relation, a geometry filter, a row-position delete, a quantified leaf - names
+     * no column here, because reading its index sections would fetch bytes never looked at by the tier.
+     *
+     * <p>An upper bound, not an exact set: a conjunction stops early once its intersection empties, and asks for fewer
+     * columns.
+     */
+    static List<ColumnPath> consultedColumns(Predicate predicate) {
+        List<ColumnPath> columns = new ArrayList<>();
+        collectConsultedColumns(predicate, columns);
+        return columns;
+    }
+
+    private static void collectConsultedColumns(Predicate predicate, List<ColumnPath> columns) {
+        switch (predicate) {
+            case Predicate.And and -> and.children().forEach(child -> collectConsultedColumns(child, columns));
+            case Predicate.Or or -> or.children().forEach(child -> collectConsultedColumns(child, columns));
+            case Predicate.Not not -> collectConsultedColumns(not.child(), columns);
+            case Predicate.Eq eq -> columns.add(eq.col());
+            case Predicate.NotEq notEq -> columns.add(notEq.col());
+            case Predicate.Lt lt -> columns.add(lt.col());
+            case Predicate.LtEq ltEq -> columns.add(ltEq.col());
+            case Predicate.Gt gt -> columns.add(gt.col());
+            case Predicate.GtEq gtEq -> columns.add(gtEq.col());
+            case Predicate.In in -> columns.add(in.col());
+            case Predicate.IsNull isNull -> columns.add(isNull.col());
+            case Predicate.IsNotNull isNotNull -> columns.add(isNotNull.col());
+            case Predicate.Always _,
+                    Predicate.Spatial _,
+                    Predicate.GeometryFilterPredicate _,
+                    Predicate.RowIndexExcluded _,
+                    Predicate.Quantified _ -> {
+                /* this tier resolves no ranges for these, hence it reads no section for them */
+            }
+        }
     }
 
     /**

@@ -23,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.lang.foreign.MemorySegment;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +31,7 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.filter.RowRanges.Range;
@@ -197,6 +199,47 @@ class ColumnIndexEvaluatorTest {
         assertThat(d).isInstanceOf(PruningDecision.NarrowedTo.class);
         RowRanges r = ((PruningDecision.NarrowedTo) d).ranges();
         assertThat(r.ranges()).containsExactly(new Range(100, 199));
+    }
+
+    @Test
+    void consultedColumnsNamesEveryComparisonLeaf() {
+        Predicate predicate =
+                new Predicate.And(List.of(col("year").eq(2020), col("count").gt(3)));
+
+        assertThat(ColumnIndexEvaluator.consultedColumns(predicate))
+                .containsExactly(ColumnPath.of("year"), ColumnPath.of("count"));
+    }
+
+    @Test
+    void consultedColumnsOmitsALeafThisTierCannotEvaluate() {
+        Predicate spatial = new Predicate.Spatial.BboxIntersects(ColumnPath.of("geometry"), Bbox.of2d(-1, -1, 1, 1));
+        Predicate predicate =
+                new Predicate.And(List.of(spatial, col("bbox", "xmin").lt(1.0)));
+
+        assertThat(ColumnIndexEvaluator.consultedColumns(predicate))
+                .as("a spatial leaf resolves to no page statistics, hence naming it would read sections for nothing")
+                .containsExactly(ColumnPath.of("bbox", "xmin"));
+    }
+
+    @Test
+    void evaluateWarmsTheColumnsItIsAboutToAsk() {
+        List<List<ColumnPath>> warmed = new ArrayList<>();
+        FilterPipeline.ColumnPageStatsLookup pages = year3Pages();
+        FilterPipeline.ColumnPageStatsLookup recording = new FilterPipeline.ColumnPageStatsLookup() {
+            @Override
+            public Optional<FilterPipeline.ColumnPageStats> get(ColumnPath path) {
+                return pages.get(path);
+            }
+
+            @Override
+            public void warm(List<ColumnPath> paths) {
+                warmed.add(List.copyOf(paths));
+            }
+        };
+
+        ColumnIndexEvaluator.evaluate(col("year").eq(2020), recording, ROW_GROUP_ROWS);
+
+        assertThat(warmed).containsExactly(List.of(ColumnPath.of("year")));
     }
 
     // --- helpers ---

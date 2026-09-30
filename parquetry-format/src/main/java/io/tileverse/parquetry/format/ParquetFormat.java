@@ -108,6 +108,28 @@ public final class ParquetFormat {
     }
 
     /**
+     * Decodes a {@link ColumnIndex} from bytes already read by the caller. The {@link #readColumnIndex(ByteRangeSource,
+     * long, int)} form reads and decodes in one step; this one decodes one section of a batched fetch.
+     *
+     * @param section exactly the column index's bytes, over a byte array or over native memory
+     * @throws ParquetFormatException if the bytes don't conform to the {@code ColumnIndex} layout
+     */
+    public static ColumnIndex readColumnIndex(MemorySegment section) {
+        return ParquetFormatDeserializer.readColumnIndex(toInputStream(section.asByteBuffer()));
+    }
+
+    /**
+     * Decodes an {@link OffsetIndex} from bytes already read by the caller, the counterpart of
+     * {@link #readColumnIndex(MemorySegment)}.
+     *
+     * @param section exactly the offset index's bytes, over a byte array or over native memory
+     * @throws ParquetFormatException if the bytes don't conform to the {@code OffsetIndex} layout
+     */
+    public static OffsetIndex readOffsetIndex(MemorySegment section) {
+        return ParquetFormatDeserializer.readOffsetIndex(toInputStream(section.asByteBuffer()));
+    }
+
+    /**
      * Reads the {@link FileMetaData} footer from {@code source}.
      *
      * @throws ParquetFormatException if the file is too small, has wrong magic bytes, uses encryption (PARE magic),

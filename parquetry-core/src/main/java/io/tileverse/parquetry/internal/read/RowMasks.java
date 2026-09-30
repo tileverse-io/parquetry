@@ -47,8 +47,11 @@ public final class RowMasks {
     /**
      * The mask narrowing {@code scanLeaves} to {@code rows}, or empty when one of those leaves has no offset index. A
      * leaf with no offset index cannot map rows to pages, and its row group is read in full.
+     *
+     * <p>Every leaf's offset index is named before the first one is asked for, hence they are read together.
      */
     public static Optional<RowMask> maskFor(RowGroupChunks chunks, RowRanges rows, List<ColumnPath> scanLeaves) {
+        chunks.warmOffsetIndexes(scanLeaves);
         Map<ColumnPath, OffsetIndex> offsetIndexes = LinkedHashMap.newLinkedHashMap(scanLeaves.size());
         for (ColumnPath leaf : scanLeaves) {
             Optional<OffsetIndex> offsetIndex = chunks.offsetIndex(leaf);

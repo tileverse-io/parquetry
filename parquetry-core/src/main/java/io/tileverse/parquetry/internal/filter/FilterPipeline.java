@@ -180,6 +180,14 @@ public final class FilterPipeline {
     public interface ColumnPageStatsLookup {
 
         Optional<ColumnPageStats> get(ColumnPath path);
+
+        /**
+         * Reads the page statistics of every path in {@code paths} together, ahead of the {@link #get} calls that ask
+         * for them. The default does nothing, which leaves each column to load itself on its first lookup.
+         */
+        default void warm(List<ColumnPath> paths) {
+            // intentional no-op: a lookup with nothing to read ahead lets each column load on demand
+        }
     }
 
     /**

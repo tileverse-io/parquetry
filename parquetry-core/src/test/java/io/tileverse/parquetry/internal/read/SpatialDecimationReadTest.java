@@ -337,7 +337,6 @@ class SpatialDecimationReadTest {
 
             RecordingByteRangeSource spy = new RecordingByteRangeSource(ByteRangeSource.ofFile(file));
             ParquetRuntime runtime = ParquetRuntime.builder()
-                    .maxCoalesceGap(0)
                     .maxDecodeAhead(ahead)
                     .prefetchDepth(ahead)
                     .build();
@@ -357,6 +356,10 @@ class SpatialDecimationReadTest {
                         .as("the first page of each cell substitutes, the second finds the cell painted")
                         .isEqualTo(GROUPS * ROWS_PER_GROUP / ROWS_PER_CELL);
                 assertThat(probe.painted()).containsExactlyInAnyOrderElementsOf(everyCellInRowOrder());
+                assertThat(spy.sourceCalls())
+                        .as("each row group reads the eight index sections of its four covering leaves in one call,"
+                                + " and no geometry page is fetched")
+                        .isEqualTo(GROUPS);
                 for (int page = 0; page < geometryPages.size(); page++) {
                     ByteSpan span = geometryPages.get(page);
                     assertThat(spy.readAnyByteIn(span.start(), span.end()))
@@ -364,6 +367,41 @@ class SpatialDecimationReadTest {
                             .isFalse();
                 }
             }
+        }
+
+        /**
+         * With the COLUMN_INDEX tier off, the page-level plan is the first asker of the covering's page statistics, and
+         * it reads the eight index sections of its four leaves in one call per row group. In the case above the tier
+         * reads those leaves through the covering rewrite of the bbox predicate; turning it off leaves the plan to read
+         * them itself.
+         */
+        @Test
+        void thePagePlanReadsTheCoveringsIndexSectionsInOneCallPerRowGroup() throws Exception {
+            Path file = writeTwoPagesPerCell();
+
+            RecordingByteRangeSource spy = new RecordingByteRangeSource(ByteRangeSource.ofFile(file));
+            try (spy) {
+                ParquetFileReader reader = ParquetFileReader.open(spy, serialRuntime(), Optional.empty());
+                ReadOptions decimating = ReadOptions.builder()
+                        .spatialReadProbe(new CellProbe())
+                        .useColumnIndexFilter(false)
+                        .build();
+
+                spy.reset();
+                List<Integer> survivingCells = readIntegerXCells(reader, coveringEverything(), decimating);
+
+                assertThat(survivingCells)
+                        .as("every page is substituted; no row is emitted")
+                        .isEmpty();
+                assertThat(spy.sourceCalls())
+                        .as("one call per row group, not one per index section")
+                        .isEqualTo(GROUPS);
+            }
+        }
+
+        /** A runtime that neither prefetches nor decodes ahead, which keeps the recorded call count deterministic. */
+        private ParquetRuntime serialRuntime() {
+            return ParquetRuntime.builder().maxDecodeAhead(0).prefetchDepth(0).build();
         }
 
         /** The one integer-X cell of each substituted page, in file order. */
