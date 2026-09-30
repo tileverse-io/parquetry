@@ -21,20 +21,24 @@ container's memory limit, are invisible to `-Xmx`, and the kernel kills the
 process before the JVM can throw `OutOfMemoryError`. This document is about that
 off-heap term.
 
-A read fetches each row group's projected column chunks as a small set of
-coalesced range reads, each read into a native segment borrowed from a
-`SegmentPool`. Peak native fetch memory is approximately:
+A read fetches each row group's projected column chunks as batch range reads into
+a single native segment borrowed from a `SegmentPool`. That segment holds the
+bytes requested by the plan and nothing between them, and a plan wider than the
+per-call range cap goes out as several calls. Peak native fetch memory is
+approximately:
 
 ```
-concurrency  x  (current row group's coalesced span)  +  speculative prefetch
+concurrency  x  (current row group's requested bytes)  +  speculative prefetch
 ```
 
-`FetchBudget` bounds only the speculative prefetch term. The current row group's
-fetch is mandatory for progress and is never bounded, which leaves the first
-term, `concurrency x span`, with no cap of its own. With small row groups it is
-modest. With the 128 MB+ row groups that Spark, DuckDB, and large GeoParquet
-writers emit, a handful of concurrent reads can hold gigabytes of native memory
-at once. That term is the subject of sections 3 and 4.
+`FetchBudget` bounds only the speculative prefetch term, and a prefetch reserves
+the plan's first-to-last byte span rather than its bytes, which keeps the
+reservation a ceiling on the scratch memory of the byte source as well. The
+current row group's fetch is mandatory for progress and is never bounded, which
+leaves the first term, `concurrency x requested bytes`, with no cap of its own.
+With small row groups it is modest. With the 128 MB+ row groups that Spark,
+DuckDB, and large GeoParquet writers emit, a handful of concurrent reads can hold
+gigabytes of native memory at once. That term is the subject of sections 3 and 4.
 
 ---
 
@@ -73,13 +77,13 @@ See `parquetry-io/.../io/DefaultSegmentPool.java`.
 
 ## 3. The overflow valve: spill to a mapped file — *Implemented*
 
-Section 2 bounds *retention*. It does not bound *peak*: the mandatory current
-row group still allocates `concurrency x span`, and under wide row groups that
-can exceed the container limit regardless of any budget. A hard byte cap on the
-fetch path cannot be the answer, because the read holds buffers while acquiring
-more (fetch, decompress, decode, release), and a blocking cap on that path
-deadlocks - the in-order work cannot release until it finishes, and it cannot
-finish without the buffer the cap is withholding.
+Section 2 bounds *retention*. It does not bound *peak*: the mandatory current row
+group still allocates `concurrency x requested bytes`, and under wide row groups
+that can exceed the container limit regardless of any budget. A hard byte cap on
+the fetch path cannot be the answer, because the read holds buffers while
+acquiring more (fetch, decompress, decode, release), and a blocking cap on that
+path deadlocks - the in-order work cannot release until it finishes, and it
+cannot finish without the buffer the cap is withholding.
 
 The deadlock-free answer is to make the resource non-blocking: when the RAM
 budget is exhausted, the buffer is backed by a **memory-mapped temp file** instead
@@ -103,7 +107,7 @@ the decode-batch spill on the decode side.
 
 This is the *reclaimable-overflow* design: the fetch pipeline is left whole, the
 overflow lands on reclaimable page cache, and bounding the in-order working set
-more tightly (by streaming a row group's coalesced groups one at a time) is a
+more tightly (by streaming a row group's ranges one at a time) is a
 deferred, measurement-driven refinement rather than a prerequisite.
 
 As built: `FetchBufferAllocator` and `DecodeBufferAllocator` take a RAM segment
@@ -149,17 +153,18 @@ resource in a container, more than a disk one. A pool miss degrades to the
 baseline per-buffer-file path - it never parks, exactly as a segment-pool miss
 allocates fresh.
 
-**Sparse, single-class slots.** *(Planned.)* Make the kept-open files **sparse** and one
-generous block-aligned size (for example 8 MiB or the max coalesced span) rather
-than a tier of size classes. A sparse file holding a 64 KiB buffer physically
-occupies only the pages it touches: the unused capacity costs nothing, and the
-size tiers collapse to one reusable slot that serves any buffer up to the cap. On
-release, `MemorySegment.unload()` (a `madvise(MADV_DONTNEED)`-class hint) sheds the
-**resident pages** - the scarce, OOM-driving resource. Note it does not deallocate
-the file's disk blocks; reclaiming idle-slot *disk* needs `fallocate(PUNCH_HOLE)`,
-which is Linux-only and bound through a foreign-function downcall. Because disk is
-plentiful and bounded by the disk budget, hole-punching is only a Linux extra to
-keep idle disk near zero, not a correctness requirement.
+**Sparse, single-class slots.** *(Planned.)* Make the kept-open files **sparse**
+and one generous block-aligned size (for example 8 MiB) rather than a tier of
+size classes. A sparse file holding a 64 KiB buffer physically occupies only the
+pages it touches: the unused capacity costs nothing, and the size tiers collapse
+to one reusable slot that serves any buffer up to the cap. On release,
+`MemorySegment.unload()` (a `madvise(MADV_DONTNEED)`-class hint) sheds the
+**resident pages** - the scarce, OOM-driving resource. Note it does not
+deallocate the file's disk blocks; reclaiming idle-slot *disk* needs
+`fallocate(PUNCH_HOLE)`, which is Linux-only and bound through a
+foreign-function downcall. Because disk is plentiful and bounded by the disk
+budget, hole-punching is only a Linux extra to keep idle disk near zero, not a
+correctness requirement.
 
 Sparseness, like the unlink trick, is a Linux physical optimization that is
 correctness-neutral elsewhere: automatic on Linux (the deployment target),

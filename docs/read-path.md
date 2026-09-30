@@ -51,7 +51,7 @@ flowchart LR
         pipe["5-tier FilterPipeline<br/>-> ExplainPlan -> survivors + masks"]
     end
     subgraph fetch["3. Fetch (per read, IO)"]
-        pre["coalesce + prefetch byte ranges<br/>RowGroupFetcher / RowGroupPrefetcher"]
+        pre["plan + prefetch byte ranges<br/>RowGroupFetcher / RowGroupPrefetcher"]
     end
     subgraph decode["4. Decode (per read, CPU)"]
         dec["stream page-batches in file order<br/>ParallelDecodeCoordinator"]
@@ -68,7 +68,7 @@ flowchart LR
 |------|------|-------|-----------|
 | Open | decode the footer once, build the schema | footer bytes | `ParquetFileReader`, `FileMetaData`, `ParquetSchema` |
 | Filter | drop row groups and pages that cannot match, using metadata only | footer + index sections | `FilterPipeline`, `ExplainPlan`, `RowGroupSurvivor`, `RowMask` |
-| Fetch | turn the surviving column chunks into a few coalesced range reads, prefetched | column-chunk bytes | `RowGroupFetcher`, `RowGroupPrefetcher`, `FetchedColumnChunk` |
+| Fetch | turn the surviving column chunks into the exact byte ranges named by the plan, prefetched | column-chunk bytes | `RowGroupFetcher`, `RowGroupPrefetcher`, `FetchedColumnChunk` |
 | Decode | decompress + decode pages into columnar batches, streamed in file order, decoding upcoming row groups ahead within a heap budget | (in memory) | `ParallelDecodeCoordinator`, `DecodeBudget`, `BatchRowGroupReader`, `BatchColumnReader` |
 | Materialize | flatten batches into the caller's record shape | (in memory) | `BatchPipeline`, `Materializer`, `ParquetRecord` |
 
@@ -113,7 +113,7 @@ sequenceDiagram
     C->>BP: pull next record
     BP->>DC: next() decoded row group (file order)
     DC->>PF: take(rowGroupIndex) fetched bytes
-    PF-->>DC: RowGroupFetch (coalesced, prefetched)
+    PF-->>DC: RowGroupFetch (prefetched)
     DC->>DC: decode columns -> batches (parallel, page-skip, predicate in scan)
     DC-->>BP: DecodedRowGroup
     BP->>BP: flatten batch -> rows
@@ -195,14 +195,14 @@ and COLUMN_INDEX tiers above. See [Spatial filtering](spatial-filtering.md).
 
 ## 5. Fetch and decode
 
-Surviving row groups still hold raw bytes. Fetch turns them into a handful of
-coalesced range reads; decode turns those into columnar batches, in parallel,
-while preserving file order.
+Surviving row groups still hold raw bytes. Fetch turns them into exactly the
+byte ranges named by the plan; decode turns those into columnar batches, in
+parallel, while preserving file order.
 
 ```mermaid
 flowchart TD
     subgraph fetchsub["Fetch (IO, virtual threads)"]
-        plan["RowGroupFetcher.planFor<br/>coalesce adjacent chunks (CoalescingFetchPlanner)"]
+        plan["RowGroupFetcher.planFor<br/>the exact ranges to read, in file order"]
         pref["RowGroupPrefetcher<br/>fetch ahead within FetchBudget"]
         fetched["RowGroupFetch<br/>FetchedColumnChunk slices (pooled buffers)"]
         plan --> pref --> fetched
@@ -222,8 +222,9 @@ flowchart TD
 
 What each piece guarantees:
 
-- **`RowGroupFetcher`** issues one read per coalesced range, not one per column,
-  and hands out zero-copy `FetchedColumnChunk` views into pooled buffers.
+- **`RowGroupFetcher`** issues batch range reads over the whole row group, not
+  one read per column, and hands out zero-copy `FetchedColumnChunk` views into
+  pooled buffers. A plan above the per-call range cap goes out as several calls.
 - **`RowGroupPrefetcher`** fetches upcoming row groups ahead of consumption on a
   per-read virtual-thread pool, bounded by a process-wide `FetchBudget` that caps
   the off-heap bytes a read may speculatively prefetch.
@@ -368,7 +369,7 @@ classDiagram
     ParquetFileReader --> RowMask : page-skip mask
     ParquetFileReader --> ParallelDecodeCoordinator : per read
     ParallelDecodeCoordinator --> RowGroupPrefetcher : pulls fetched bytes
-    RowGroupPrefetcher --> RowGroupFetcher : coalesced reads
+    RowGroupPrefetcher --> RowGroupFetcher : batch range reads
     ParallelDecodeCoordinator --> ClassicRowGroupDriver : unfiltered or MATCHED
     ParallelDecodeCoordinator --> MaskedScanRowGroupDriver : filtered row group
     ClassicRowGroupDriver --> BatchRowGroupReader : full decode
@@ -392,7 +393,7 @@ classDiagram
 | Filter pipeline + tiers | `internal/filter/FilterPipeline.java`, `internal/filter/*Evaluator.java`, `filter/explain/ExplainPlan.java` |
 | Per-call chunk view | `internal/read/RowGroupChunks.java` |
 | Survivors + page-skip mask | `internal/read/RowGroupSurvivor.java`, `internal/read/RowMask.java`, `internal/read/page/PageSelection.java` |
-| Fetch | `internal/read/RowGroupFetcher.java`, `internal/read/RowGroupPrefetcher.java`, `internal/read/CoalescingFetchPlanner.java` |
+| Fetch | `internal/read/RowGroupFetcher.java`, `internal/read/RowGroupPrefetcher.java` |
 | Parallel decode + budgets | `internal/read/ParallelDecodeCoordinator.java`, `internal/read/StreamingBatchSource.java`, `runtime/DecodeBudget.java`, `internal/read/BatchRowGroupReader.java` |
 | Column / page decode | `internal/read/BatchColumnReader.java`, `internal/read/page/PageCursor.java`, `internal/read/page/PageDecoder.java` |
 | Masked scan (filtered decode) | `internal/read/MaskedScanRowGroupReader.java`, `internal/read/MaskedScanRowGroupDriver.java`, `internal/read/MaskedValues.java`, `internal/read/ValueDecode.java` |

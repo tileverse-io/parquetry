@@ -48,10 +48,8 @@ class ParquetRuntimeTest {
     }
 
     @Test
-    void defaultsProvideConservativeFetchTunables() {
+    void defaultsProvideConservativeBudgets() {
         ParquetRuntime rt = ParquetRuntime.defaultRuntime();
-        assertThat(rt.maxCoalesceGap()).isEqualTo(1 << 20);
-        assertThat(rt.maxCoalescedSpan()).isEqualTo(8 << 20);
         assertThat(rt.fetchBudget().capacity())
                 .isEqualTo(IoLimits.from(ResourceLimits.getDefault()).maxOffHeapBytes());
         assertThat(rt.computeExecutor()).isSameAs(ComputeExecutor.shared());
@@ -61,14 +59,8 @@ class ParquetRuntimeTest {
 
     @Test
     void rejectsNonPositiveScalars() {
-        ParquetRuntime.Builder span = ParquetRuntime.builder().maxCoalescedSpan(0);
-        assertThatIllegalArgumentException().isThrownBy(span::build);
-
         ParquetRuntime.Builder fetches = ParquetRuntime.builder().maxConcurrentFetchesPerRead(0);
         assertThatIllegalArgumentException().isThrownBy(fetches::build);
-
-        ParquetRuntime.Builder gap = ParquetRuntime.builder().maxCoalesceGap(-1);
-        assertThatIllegalArgumentException().isThrownBy(gap::build);
 
         ParquetRuntime.Builder builder = ParquetRuntime.builder();
         assertThatIllegalArgumentException().isThrownBy(() -> builder.maxDecodeAhead(-1));

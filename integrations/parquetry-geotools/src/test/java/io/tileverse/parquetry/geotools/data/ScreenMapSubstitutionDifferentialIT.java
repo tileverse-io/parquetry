@@ -145,7 +145,7 @@ class ScreenMapSubstitutionDifferentialIT {
      * that never substitutes, and compares what the two reads left painted.
      *
      * @param compareBytes whether to assert that the substituting read fetched fewer bytes, which only a runtime
-     *     without coalescing or prefetching answers reproducibly
+     *     without prefetching answers reproducibly
      */
     private void assertPaintWithinOnePixel(
             Screen screen, Case queryCase, Path file, ParquetRuntime runtime, boolean compareBytes) {
@@ -235,15 +235,11 @@ class ScreenMapSubstitutionDifferentialIT {
     }
 
     /**
-     * A runtime that fetches exactly the ranges requested by the plan, one row group at a time: the byte comparison
-     * needs a read without coalescing, prefetching, or decode-ahead.
+     * A runtime that reads one row group at a time: the byte comparison needs a read without prefetching or
+     * decode-ahead.
      */
     private static ParquetRuntime serialRuntime() {
-        return ParquetRuntime.builder()
-                .maxCoalesceGap(0)
-                .maxDecodeAhead(0)
-                .prefetchDepth(0)
-                .build();
+        return ParquetRuntime.builder().maxDecodeAhead(0).prefetchDepth(0).build();
     }
 
     private static Predicate wholeExtent() {
