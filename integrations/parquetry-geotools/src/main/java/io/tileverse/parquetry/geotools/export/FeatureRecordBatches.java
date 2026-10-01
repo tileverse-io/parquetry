@@ -196,6 +196,8 @@ public final class FeatureRecordBatches {
                 base.bloomFilters(),
                 crs,
                 base.keyValueMetadata(),
+                base.pageValueLimits(),
+                base.coveringPageValueLimit(),
                 base.tempDir(),
                 base.writeObserver(),
                 base.writeObserverCadenceRows(),

@@ -187,6 +187,35 @@ class WriteOptionsTest {
     }
 
     @Test
+    void perColumnPageValueLimitOverridesTheSharedOne() {
+        WriteOptions o = WriteOptions.builder()
+                .pageValueLimit(8_192)
+                .pageValueLimit("bbox.xmin", 512)
+                .build();
+
+        assertThat(o.pageValueLimit()).isEqualTo(8_192);
+        assertThat(o.pageValueLimits()).containsEntry("bbox.xmin", 512);
+    }
+
+    @Test
+    void perColumnPageValueLimitsAreUnmodifiable() {
+        WriteOptions o = WriteOptions.builder().pageValueLimit("bbox.xmin", 512).build();
+
+        assertThatThrownBy(() -> o.pageValueLimits().put("bbox.ymin", 512))
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    void invalidPerColumnAndCoveringPageValueLimitsRejected() {
+        WriteOptions.Builder b = WriteOptions.builder();
+
+        assertThatThrownBy(() -> b.pageValueLimit("bbox.xmin", 0)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> b.pageValueLimit("bbox.xmin", -1)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> b.coveringPageValueLimit(0)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> b.coveringPageValueLimit(-1)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void invalidPrimitiveLimitsRejected() {
         WriteOptions.Builder b = WriteOptions.builder();
 

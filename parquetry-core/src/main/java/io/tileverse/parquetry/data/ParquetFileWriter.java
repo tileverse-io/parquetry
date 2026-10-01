@@ -49,6 +49,7 @@ import io.tileverse.parquetry.format.SchemaElement;
 import io.tileverse.parquetry.internal.write.BboxCoveringPlan;
 import io.tileverse.parquetry.internal.write.GeoColumnSummary;
 import io.tileverse.parquetry.internal.write.GeoMetadataWriter;
+import io.tileverse.parquetry.internal.write.PageValueLimits;
 import io.tileverse.parquetry.internal.write.RowGroupFlushResult;
 import io.tileverse.parquetry.internal.write.RowGroupWriter;
 import io.tileverse.parquetry.io.ByteSink;
@@ -95,6 +96,7 @@ public final class ParquetFileWriter implements AutoCloseable {
     private final ParquetSchema schema;
     private final ParquetSchema appenderSchema;
     private final BboxCoveringPlan covering;
+    private final PageValueLimits pageValueLimits;
     private final Path tempDir;
     private final GeoMetadataWriter geoWriter;
     private final long maxRowGroupBytesLimit;
@@ -161,7 +163,9 @@ public final class ParquetFileWriter implements AutoCloseable {
         Path tempDir = WriterTempDirectory.createTempDir(options);
         writeLeadingMagic(sink, tempDir);
         ComputeExecutor computeExecutor = runtime.computeExecutor();
-        RowGroupWriter first = openRowGroupWriter(options, writtenSchema, tempDir, sink.position(), computeExecutor);
+        PageValueLimits pageValueLimits = pageValueLimits(options, covering);
+        RowGroupWriter first =
+                openRowGroupWriter(options, writtenSchema, tempDir, sink.position(), computeExecutor, pageValueLimits);
         return new ParquetFileWriter(
                 sink,
                 options,
@@ -222,6 +226,7 @@ public final class ParquetFileWriter implements AutoCloseable {
         this.schema = writtenSchema;
         this.appenderSchema = appenderSchema;
         this.covering = covering;
+        this.pageValueLimits = pageValueLimits(options, covering);
         this.tempDir = tempDir;
         this.geoWriter = geoWriter;
         this.currentRowGroup = first;
@@ -464,7 +469,8 @@ public final class ParquetFileWriter implements AutoCloseable {
         accumulateColumnDataBytes(patched, flushed);
         fireRowGroupFlushed(rowGroupIndex, patched, flushed);
         fireIndexesWritten(patched);
-        currentRowGroup = openRowGroupWriter(options, schema, tempDir, out.position(), computeExecutor);
+        currentRowGroup =
+                openRowGroupWriter(options, schema, tempDir, out.position(), computeExecutor, pageValueLimits);
         currentRowGroupStart = Instant.now();
     }
 
@@ -620,8 +626,20 @@ public final class ParquetFileWriter implements AutoCloseable {
             ParquetSchema schema,
             Path tempDir,
             long baseFileOffset,
-            ComputeExecutor computeExecutor) {
-        return new RowGroupWriter(options, schema, tempDir, baseFileOffset, computeExecutor);
+            ComputeExecutor computeExecutor,
+            PageValueLimits pageValueLimits) {
+        return new RowGroupWriter(options, schema, tempDir, baseFileOffset, computeExecutor, pageValueLimits);
+    }
+
+    /**
+     * The page caps of this file: the covering limit reaches the leaves named by {@code covering} when the write emits
+     * one, and the other leaves keep the limit shared by the write.
+     */
+    private static PageValueLimits pageValueLimits(WriteOptions options, BboxCoveringPlan covering) {
+        if (!covering.active()) {
+            return PageValueLimits.of(options);
+        }
+        return PageValueLimits.of(options, List.of(covering.xmin(), covering.ymin(), covering.xmax(), covering.ymax()));
     }
 
     /** Throws when the writer has been closed or marked failed. */

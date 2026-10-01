@@ -21,6 +21,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.Set;
 
@@ -60,6 +61,11 @@ import lombok.NonNull;
  * @param crs per-column CRS overrides keyed by dotted column path; unmodifiable
  * @param keyValueMetadata caller-supplied file-level key/value metadata merged into the footer alongside the
  *     writer-managed GeoParquet entry; the reserved {@code "geo"} key is rejected; unmodifiable
+ * @param pageValueLimits per-column page value limits keyed by dotted column path, each overriding
+ *     {@code pageValueLimit} for that leaf alone; unmodifiable
+ * @param coveringPageValueLimit page value limit for the bbox covering leaves of a geo write, applied to the leaves
+ *     named by the covering, and overridden by an explicit {@code pageValueLimits} entry; empty leaves them on
+ *     {@code pageValueLimit}
  * @param tempDir working directory for column-chunk temp files
  * @param writeObserver write-observability callback target; defaults to {@link WriteObserver#NONE}
  * @param writeObserverCadenceRows row cadence between {@link WriteObserver#onRowsWritten(long)} callbacks
@@ -83,6 +89,8 @@ public record WriteOptions(
         @NonNull Map<String, BloomFilterConfig> bloomFilters,
         @NonNull Map<String, CoordinateReferenceSystem> crs,
         @NonNull Map<String, String> keyValueMetadata,
+        @NonNull Map<String, Integer> pageValueLimits,
+        @NonNull OptionalInt coveringPageValueLimit,
         @NonNull Path tempDir,
         @NonNull WriteObserver writeObserver,
         long writeObserverCadenceRows,
@@ -101,6 +109,12 @@ public record WriteOptions(
         if (pageValueLimit <= 0) {
             throw new IllegalArgumentException("pageValueLimit must be positive: " + pageValueLimit);
         }
+        rejectNonPositiveLimits(pageValueLimits);
+        if (coveringPageValueLimit.isPresent() && coveringPageValueLimit.getAsInt() <= 0) {
+            throw new IllegalArgumentException(
+                    "coveringPageValueLimit must be positive: " + coveringPageValueLimit.getAsInt());
+        }
+        pageValueLimits = Map.copyOf(pageValueLimits);
         if (pageByteLimit <= 0) {
             throw new IllegalArgumentException("pageByteLimit must be positive: " + pageByteLimit);
         }
@@ -393,6 +407,8 @@ public record WriteOptions(
         private final Map<String, BloomFilterConfig> bloomFilters = new LinkedHashMap<>();
         private final Map<String, CoordinateReferenceSystem> crs = new LinkedHashMap<>();
         private final Map<String, String> keyValueMetadata = new LinkedHashMap<>();
+        private final Map<String, Integer> pageValueLimits = new LinkedHashMap<>();
+        private OptionalInt coveringPageValueLimit = OptionalInt.empty();
         private Path tempDir = Path.of(System.getProperty("java.io.tmpdir"));
         private WriteObserver writeObserver = WriteObserver.NONE;
         private long writeObserverCadenceRows = 100_000L;
@@ -471,6 +487,26 @@ public record WriteOptions(
 
         public Builder bloomFilter(@NonNull String columnPath, @NonNull BloomFilterConfig cfg) {
             this.bloomFilters.put(columnPath, cfg);
+            return this;
+        }
+
+        /**
+         * Caps the pages of one leaf at {@code n} values, overriding the limit shared by all columns. The key is the
+         * dotted column path, for example {@code bbox.xmin}. A key naming no leaf of the written schema is ignored.
+         */
+        public Builder pageValueLimit(@NonNull String columnPath, int n) {
+            this.pageValueLimits.put(columnPath, requirePositive("pageValueLimit(" + columnPath + ")", n));
+            return this;
+        }
+
+        /**
+         * Caps the pages of a geo write's bbox covering leaves at {@code n} values. Finer covering pages give a spatial
+         * read finer pruning units without re-encoding the geometry column, at the cost of more column-index and
+         * offset-index entries for those leaves. An explicit {@link #pageValueLimit(String, int)} entry wins over this
+         * limit.
+         */
+        public Builder coveringPageValueLimit(int n) {
+            this.coveringPageValueLimit = OptionalInt.of(requirePositive("coveringPageValueLimit", n));
             return this;
         }
 
@@ -577,6 +613,8 @@ public record WriteOptions(
                     bloomFilters,
                     crs,
                     keyValueMetadata,
+                    pageValueLimits,
+                    coveringPageValueLimit,
                     tempDir,
                     writeObserver,
                     writeObserverCadenceRows,
@@ -589,6 +627,16 @@ public record WriteOptions(
                 throw new IllegalArgumentException(name + " must be positive: " + value);
             }
             return value;
+        }
+    }
+
+    private static void rejectNonPositiveLimits(Map<String, Integer> limits) {
+        for (Map.Entry<String, Integer> entry : limits.entrySet()) {
+            Integer limit = entry.getValue();
+            if (limit == null || limit <= 0) {
+                throw new IllegalArgumentException(
+                        "pageValueLimit for " + entry.getKey() + " must be positive: " + limit);
+            }
         }
     }
 

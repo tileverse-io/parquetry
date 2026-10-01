@@ -155,9 +155,27 @@ public final class ColumnChunkWriter implements AutoCloseable {
     private boolean finished;
     private boolean closed;
 
+    /** Page cap for this column alone, which a per-column or covering limit may narrow below the shared one. */
+    private final int pageValueLimit;
+
     public ColumnChunkWriter(@NonNull WriteOptions options, @NonNull SchemaNode.Primitive leaf, @NonNull Path tempFile)
             throws IOException {
-        this(options, leaf, tempFile, new LevelMaxima(maxRepetitionLevelFor(leaf), maxDefinitionLevelFor(leaf)));
+        this(options, leaf, tempFile, options.pageValueLimit());
+    }
+
+    /** Constructs a writer whose pages are capped at {@code pageValueLimit} values rather than the shared limit. */
+    public ColumnChunkWriter(
+            @NonNull WriteOptions options,
+            @NonNull SchemaNode.Primitive leaf,
+            @NonNull Path tempFile,
+            int pageValueLimit)
+            throws IOException {
+        this(
+                options,
+                leaf,
+                tempFile,
+                new LevelMaxima(maxRepetitionLevelFor(leaf), maxDefinitionLevelFor(leaf)),
+                pageValueLimit);
     }
 
     /**
@@ -169,8 +187,13 @@ public final class ColumnChunkWriter implements AutoCloseable {
             @NonNull WriteOptions options,
             @NonNull SchemaNode.Primitive leaf,
             @NonNull Path tempFile,
-            @NonNull LevelMaxima levelMaxima)
+            @NonNull LevelMaxima levelMaxima,
+            int pageValueLimit)
             throws IOException {
+        if (pageValueLimit <= 0) {
+            throw new IllegalArgumentException("pageValueLimit must be positive: " + pageValueLimit);
+        }
+        this.pageValueLimit = pageValueLimit;
         this.options = options;
         this.leaf = leaf;
         this.tempFile = tempFile;
@@ -830,7 +853,7 @@ public final class ColumnChunkWriter implements AutoCloseable {
     }
 
     private void maybeFlushPage() {
-        if (pageCellCount >= options.pageValueLimit() || pageByteEstimate >= options.pageByteLimit()) {
+        if (pageCellCount >= pageValueLimit || pageByteEstimate >= options.pageByteLimit()) {
             try {
                 flushPage();
             } catch (IOException e) {

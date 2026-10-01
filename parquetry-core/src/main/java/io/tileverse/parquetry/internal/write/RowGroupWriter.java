@@ -109,6 +109,20 @@ public final class RowGroupWriter implements AutoCloseable {
             @NonNull Path tempDir,
             long baseFileOffset,
             @NonNull ComputeExecutor computeExecutor) {
+        this(options, schema, tempDir, baseFileOffset, computeExecutor, PageValueLimits.of(options));
+    }
+
+    /**
+     * Constructs a writer whose leaves take their page caps from {@code pageValueLimits}, which the file writer
+     * resolves once the covering of the write is planned.
+     */
+    public RowGroupWriter(
+            @NonNull WriteOptions options,
+            @NonNull ParquetSchema schema,
+            @NonNull Path tempDir,
+            long baseFileOffset,
+            @NonNull ComputeExecutor computeExecutor,
+            @NonNull PageValueLimits pageValueLimits) {
         if (baseFileOffset < 0L) {
             throw new IllegalArgumentException("baseFileOffset must be non-negative: " + baseFileOffset);
         }
@@ -120,7 +134,7 @@ public final class RowGroupWriter implements AutoCloseable {
 
         createTempDir(tempDir);
 
-        this.leaves = openLeafBindings(options, schema, tempDir);
+        this.leaves = openLeafBindings(options, schema, tempDir, pageValueLimits);
         this.leafByPath = indexByPath(leaves);
     }
 
@@ -476,7 +490,8 @@ public final class RowGroupWriter implements AutoCloseable {
         }
     }
 
-    private static List<LeafBinding> openLeafBindings(WriteOptions options, ParquetSchema schema, Path tempDir) {
+    private static List<LeafBinding> openLeafBindings(
+            WriteOptions options, ParquetSchema schema, Path tempDir, PageValueLimits pageValueLimits) {
         List<ColumnPath> leafPaths = schema.leafColumns();
         List<LeafBinding> bindings = new ArrayList<>(leafPaths.size());
         for (ColumnPath path : leafPaths) {
@@ -487,7 +502,7 @@ public final class RowGroupWriter implements AutoCloseable {
                 throw new ParquetWriteException("Leaf path " + path.dot() + " resolved to a group node");
             }
             boolean nested = needsSchemaDerivedLevels(path, leaf);
-            bindings.add(openLeafBinding(options, schema, tempDir, path, leaf, nested));
+            bindings.add(openLeafBinding(options, schema, tempDir, path, leaf, nested, pageValueLimits.forLeaf(path)));
         }
         return bindings;
     }
@@ -498,10 +513,11 @@ public final class RowGroupWriter implements AutoCloseable {
             Path tempDir,
             ColumnPath path,
             SchemaNode.Primitive leaf,
-            boolean nested) {
+            boolean nested,
+            int pageValueLimit) {
         try {
             Path tempFile = Files.createTempFile(tempDir, "rgw-" + safeFileName(path) + "-", ".tmp");
-            ColumnChunkWriter writer = openLeafWriter(options, schema, leaf, path, tempFile, nested);
+            ColumnChunkWriter writer = openLeafWriter(options, schema, leaf, path, tempFile, nested, pageValueLimit);
             Compression compression = resolveCompression(options, leaf.name());
             boolean requiresStriping = requiresStriping(schema, path, leaf);
             return new LeafBinding(
@@ -519,15 +535,16 @@ public final class RowGroupWriter implements AutoCloseable {
             SchemaNode.Primitive leaf,
             ColumnPath path,
             Path tempFile,
-            boolean nested)
+            boolean nested,
+            int pageValueLimit)
             throws IOException {
         if (!nested) {
-            return new ColumnChunkWriter(options, leaf, tempFile);
+            return new ColumnChunkWriter(options, leaf, tempFile, pageValueLimit);
         }
         // For nested leaves the definition level is the count of optional ancestors plus the leaf's own optionality;
         // this cannot be derived from the leaf node alone and must be computed from the full path.
         LevelMaxima levelMaxima = schema.maxLevels(path);
-        return new ColumnChunkWriter(options, leaf, tempFile, levelMaxima);
+        return new ColumnChunkWriter(options, leaf, tempFile, levelMaxima, pageValueLimit);
     }
 
     /**
