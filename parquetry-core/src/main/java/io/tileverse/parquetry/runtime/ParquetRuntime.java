@@ -48,9 +48,6 @@ import lombok.NonNull;
  * @param spillDir directory that holds decode and fetch spill files
  * @param spillEnabled whether a batch exceeding the decode budget may spill to disk instead of blocking its producer
  * @param maxDecodeAhead per-read speculative decode-ahead window, in row groups; must be {@code >= 0}
- * @param maxCoalesceGap largest gap, in bytes, between two adjacent fetch ranges still merged into a single request;
- *     must be {@code >= 0}
- * @param maxCoalescedSpan largest span, in bytes, a single coalesced fetch may cover; must be {@code > 0}
  * @param prefetchDepth how many row groups ahead to speculatively fetch before the current one is consumed; must be
  *     {@code >= 0}
  * @param maxConcurrentFetchesPerRead maximum concurrent column-chunk fetches a single read may have in flight; must be
@@ -68,8 +65,6 @@ public record ParquetRuntime(
         @NonNull Path spillDir,
         boolean spillEnabled,
         int maxDecodeAhead,
-        int maxCoalesceGap,
-        int maxCoalescedSpan,
         int prefetchDepth,
         int maxConcurrentFetchesPerRead,
         int maxConcurrentFiles) {
@@ -86,12 +81,6 @@ public record ParquetRuntime(
     public ParquetRuntime {
         if (maxDecodeAhead < 0) {
             throw new IllegalArgumentException("maxDecodeAhead must be >= 0, got " + maxDecodeAhead);
-        }
-        if (maxCoalesceGap < 0) {
-            throw new IllegalArgumentException("maxCoalesceGap must be >= 0, got " + maxCoalesceGap);
-        }
-        if (maxCoalescedSpan <= 0) {
-            throw new IllegalArgumentException("maxCoalescedSpan must be > 0, got " + maxCoalescedSpan);
         }
         if (prefetchDepth < 0) {
             throw new IllegalArgumentException("prefetchDepth must be >= 0, got " + prefetchDepth);
@@ -126,8 +115,6 @@ public record ParquetRuntime(
                 spillDir,
                 spillEnabled,
                 maxDecodeAhead,
-                maxCoalesceGap,
-                maxCoalescedSpan,
                 prefetchDepth,
                 maxConcurrentFetchesPerRead,
                 maxConcurrentFiles);
@@ -145,8 +132,6 @@ public record ParquetRuntime(
                 spillDir,
                 spillEnabled,
                 maxDecodeAhead,
-                maxCoalesceGap,
-                maxCoalescedSpan,
                 prefetchDepth,
                 maxConcurrentFetchesPerRead,
                 maxConcurrentFiles);
@@ -164,8 +149,6 @@ public record ParquetRuntime(
                 spillDir,
                 spillEnabled,
                 maxDecodeAhead,
-                maxCoalesceGap,
-                maxCoalescedSpan,
                 prefetchDepth,
                 maxConcurrentFetchesPerRead,
                 maxConcurrentFiles);
@@ -183,8 +166,6 @@ public record ParquetRuntime(
                 spillDir,
                 spillEnabled,
                 maxDecodeAhead,
-                maxCoalesceGap,
-                maxCoalescedSpan,
                 prefetchDepth,
                 maxConcurrentFetchesPerRead,
                 maxConcurrentFiles);
@@ -212,8 +193,6 @@ public record ParquetRuntime(
         private boolean spillEnabled = true;
         private ComputeExecutor computeExecutor = ComputeExecutor.shared();
         private int maxDecodeAhead = UNSET_DECODE_AHEAD;
-        private int maxCoalesceGap = 1 << 20;
-        private int maxCoalescedSpan = 8 << 20;
         private int prefetchDepth = 2;
         private int maxConcurrentFetchesPerRead = 4;
         private int maxConcurrentFiles = 8;
@@ -277,16 +256,6 @@ public record ParquetRuntime(
             return this;
         }
 
-        public Builder maxCoalesceGap(int maxCoalesceGap) {
-            this.maxCoalesceGap = maxCoalesceGap;
-            return this;
-        }
-
-        public Builder maxCoalescedSpan(int maxCoalescedSpan) {
-            this.maxCoalescedSpan = maxCoalescedSpan;
-            return this;
-        }
-
         public Builder prefetchDepth(int prefetchDepth) {
             this.prefetchDepth = prefetchDepth;
             return this;
@@ -327,8 +296,6 @@ public record ParquetRuntime(
                     resolvedSpillDir,
                     spillEnabled,
                     resolvedDecodeAhead,
-                    maxCoalesceGap,
-                    maxCoalescedSpan,
                     prefetchDepth,
                     maxConcurrentFetchesPerRead,
                     maxConcurrentFiles);

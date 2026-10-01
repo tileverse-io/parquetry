@@ -128,7 +128,7 @@ public final class RowGroupPrefetcher implements AutoCloseable {
 
     private void trySubmit(int index) {
         FetchPlan plan = fetcher.planFor(survivors.get(index), plans.fetchMask(index));
-        long span = plan.totalBytes();
+        long span = plan.spanBytes();
         if (!budget.tryReserve(span)) {
             return;
         }

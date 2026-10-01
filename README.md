@@ -20,7 +20,7 @@ Parquetry is a clean-room implementation of the Parquet format. It depends on ne
 - All standard codecs: Snappy, Zstd, LZ4_RAW, GZip, Brotli.
 - Multi-tier filter pushdown with an explain plan: row-group statistics, dictionaries, column index, bloom filter, and record-level predicates.
 - Vectorized columnar batch API backed by off-heap `MemorySegment`.
-- Parallel, coalesced range fetch and parallel row-group decode within a fixed memory budget.
+- Parallel multi-range fetch and parallel row-group decode within a fixed memory budget.
 - Native GeoParquet: Geometry and Geography logical types, typed PROJJSON and CRS models, and an optional JTS materializer.
 
 ## Requirements

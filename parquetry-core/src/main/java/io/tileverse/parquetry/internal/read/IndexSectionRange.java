@@ -15,22 +15,25 @@
  */
 package io.tileverse.parquetry.internal.read;
 
-/**
- * Where a column chunk's dictionary prefix - its bytes up to the first data page - lives inside a
- * {@link CoalescedRange}: which range, and the offset/length within it. Data pages are located by {@link RunSlice}
- * instead, one per fetched run.
- */
-public record ColumnSlice(int rangeIndex, int offsetWithinRange, int length) {
+import io.tileverse.parquetry.observe.FetchPurpose;
 
-    public ColumnSlice {
-        if (rangeIndex < 0) {
-            throw new IllegalArgumentException("rangeIndex must be >= 0, got " + rangeIndex);
-        }
-        if (offsetWithinRange < 0) {
-            throw new IllegalArgumentException("offsetWithinRange must be >= 0, got " + offsetWithinRange);
+import lombok.NonNull;
+
+/**
+ * Where one index section lies in the file and what its bytes count as, named ahead of the read that fetches it.
+ *
+ * @param purpose which tally counts the section's bytes
+ * @param fileOffset absolute offset of the section's first byte
+ * @param length the section's byte length
+ */
+public record IndexSectionRange(@NonNull FetchPurpose purpose, long fileOffset, int length) {
+
+    public IndexSectionRange {
+        if (fileOffset < 0) {
+            throw new IllegalArgumentException("Index section offset must be non-negative, got " + fileOffset);
         }
         if (length <= 0) {
-            throw new IllegalArgumentException("length must be > 0, got " + length);
+            throw new IllegalArgumentException("Index section length must be positive, got " + length);
         }
     }
 }

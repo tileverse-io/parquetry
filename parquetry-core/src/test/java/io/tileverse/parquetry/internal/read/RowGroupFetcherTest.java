@@ -48,7 +48,7 @@ import io.tileverse.parquetry.testsupport.CorpusFixtures;
  * valve. Constructing a {@link RowGroupFetcher} in isolation needs a footer-derived {@code RowGroupChunks}, a
  * {@code FetchPlan}, and an {@code IndexSectionLoader}, which only the read pipeline assembles. A read against a real
  * file with a tiny {@link FetchBudget} exercises the exact wiring this test guards: the prefetcher's inline path calls
- * {@code RowGroupFetcher.fetch}, which now allocates each coalesced range through the valve. The test pins a
+ * {@code RowGroupFetcher.fetch}, which now allocates one buffer per row group through the valve. The test pins a
  * tiny-RAM/ample-disk runtime and asserts both that the mandatory fetch spilled to a disk mapping and that the rows
  * read are byte-identical to a default RAM runtime.
  */
@@ -63,7 +63,8 @@ class RowGroupFetcherTest {
         ParquetRuntime ramRuntime = ParquetRuntime.builder().build();
         DiskBudget spillDisk = DiskBudget.ofBytes(ampleDisk);
         ParquetRuntime spillingRuntime = ParquetRuntime.builder()
-                .fetchBudget(FetchBudget.ofBytes(1)) // below any coalesced range, forcing the mandatory fetch to spill
+                // below the bytes requested by any row group's plan, forcing the mandatory fetch to spill
+                .fetchBudget(FetchBudget.ofBytes(1))
                 .diskBudget(spillDisk)
                 .build();
 

@@ -153,6 +153,10 @@ final class JsonRenderer {
         sb.append(",\"offsetIndexBytes\":").append(fetch.offsetIndexBytes());
         sb.append(",\"bloomFilterBytes\":").append(fetch.bloomFilterBytes());
         sb.append(",\"fetchCount\":").append(fetch.fetchCount());
+        sb.append(",\"requestCount\":").append(fetch.requestCount());
+        sb.append(",\"backendFetches\":").append(fetch.backendFetches());
+        sb.append(",\"bytesTransferred\":").append(fetch.bytesTransferred());
+        sb.append(",\"bytesFromCache\":").append(fetch.bytesFromCache());
         sb.append('}');
     }
 

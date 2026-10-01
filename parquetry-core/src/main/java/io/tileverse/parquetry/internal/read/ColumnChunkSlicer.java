@@ -43,7 +43,7 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
- * Slices one column chunk's fetched bytes out of coalesced range segments and decodes its dictionary, producing a
+ * Slices one column chunk's fetched bytes out of the fetch buffer and decodes its dictionary, producing a
  * {@link FetchedColumnChunk} view whose runs cover just the data-page region.
  */
 final class ColumnChunkSlicer {

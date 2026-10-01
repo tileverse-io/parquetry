@@ -18,9 +18,16 @@ package io.tileverse.parquetry.observe;
 /**
  * Immutable per-purpose byte tally for one read, mergeable across files via {@link #combine}.
  *
- * <p>{@code pageBytes} counts column-chunk payload fetched for decode (data pages plus any dictionary page coalesced
- * into the chunk). {@code dictionaryBytes} counts bytes fetched specifically for dictionary-based pruning, kept
- * separate from decode payload on purpose.
+ * <p>{@code pageBytes} counts column-chunk payload requested for decode (data pages plus any dictionary page inside the
+ * chunk). {@code dictionaryBytes} counts bytes requested specifically for dictionary-based pruning, kept separate from
+ * decode payload on purpose. All five byte tallies are bytes requested by parquetry; what the transport moved to serve
+ * them is reported on its own below.
+ *
+ * <p>{@code fetchCount} counts calls made to the byte source and {@code requestCount} the ranges asked for by those
+ * calls; {@code requestCount} is the larger of the two because one batch call asks for several ranges.
+ * {@code backendFetches}, {@code bytesTransferred} (wire bytes, bridged gaps included) and {@code bytesFromCache} come
+ * from the transport below the byte source. Only a call that reports its cost contributes to them, which leaves them at
+ * zero for a single-range read.
  */
 public record FetchStats(
         long pageBytes,
@@ -28,9 +35,13 @@ public record FetchStats(
         long columnIndexBytes,
         long offsetIndexBytes,
         long bloomFilterBytes,
-        int fetchCount) {
+        int fetchCount,
+        int requestCount,
+        long backendFetches,
+        long bytesTransferred,
+        long bytesFromCache) {
 
-    public static final FetchStats EMPTY = new FetchStats(0, 0, 0, 0, 0, 0);
+    public static final FetchStats EMPTY = new FetchStats(0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
 
     public long totalBytes() {
         return pageBytes + dictionaryBytes + columnIndexBytes + offsetIndexBytes + bloomFilterBytes;
@@ -43,6 +54,10 @@ public record FetchStats(
                 columnIndexBytes + other.columnIndexBytes,
                 offsetIndexBytes + other.offsetIndexBytes,
                 bloomFilterBytes + other.bloomFilterBytes,
-                fetchCount + other.fetchCount);
+                fetchCount + other.fetchCount,
+                requestCount + other.requestCount,
+                backendFetches + other.backendFetches,
+                bytesTransferred + other.bytesTransferred,
+                bytesFromCache + other.bytesFromCache);
     }
 }

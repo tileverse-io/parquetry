@@ -37,7 +37,7 @@ class QueryStatsTest {
                 5,
                 40,
                 4,
-                new FetchStats(10, 0, 1, 1, 0, 3),
+                new FetchStats(10, 0, 1, 1, 0, 3, 0, 0, 0, 0),
                 SpillStats.EMPTY,
                 Optional.empty());
         QueryStats b = new QueryStats(
@@ -49,7 +49,7 @@ class QueryStatsTest {
                 5,
                 20,
                 2,
-                new FetchStats(5, 0, 1, 1, 0, 2),
+                new FetchStats(5, 0, 1, 1, 0, 2, 0, 0, 0, 0),
                 SpillStats.EMPTY,
                 Optional.empty());
 
@@ -63,7 +63,7 @@ class QueryStatsTest {
         assertThat(sum.rowGroupsTotal()).isEqualTo(10);
         assertThat(sum.pagesDecoded()).isEqualTo(60);
         assertThat(sum.pagesPruned()).isEqualTo(6);
-        assertThat(sum.totalFetch()).isEqualTo(new FetchStats(15, 0, 2, 2, 0, 5));
+        assertThat(sum.totalFetch()).isEqualTo(new FetchStats(15, 0, 2, 2, 0, 5, 0, 0, 0, 0));
     }
 
     @Test
@@ -82,7 +82,7 @@ class QueryStatsTest {
                 SpillStats.EMPTY,
                 Optional.of(timings));
 
-        FetchStats measured = new FetchStats(99, 1, 2, 3, 4, 7);
+        FetchStats measured = new FetchStats(99, 1, 2, 3, 4, 7, 0, 0, 0, 0);
         QueryStats overridden = original.withTotalFetch(measured);
 
         assertThat(overridden.totalFetch()).isEqualTo(measured);

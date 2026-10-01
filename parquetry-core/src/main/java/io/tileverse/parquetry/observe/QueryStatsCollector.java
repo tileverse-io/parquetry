@@ -43,6 +43,10 @@ public final class QueryStatsCollector implements QueryObserver {
     private final LongAdder offsetIndexBytes = new LongAdder();
     private final LongAdder bloomFilterBytes = new LongAdder();
     private final LongAdder fetchCount = new LongAdder();
+    private final LongAdder requestCount = new LongAdder();
+    private final LongAdder backendFetches = new LongAdder();
+    private final LongAdder bytesTransferred = new LongAdder();
+    private final LongAdder bytesFromCache = new LongAdder();
 
     private final Object tierLock = new Object();
     private final EnumMap<Tier, Integer> eliminatedByTier = new EnumMap<>(Tier.class);
@@ -108,6 +112,10 @@ public final class QueryStatsCollector implements QueryObserver {
         offsetIndexBytes.add(fetch.offsetIndexBytes());
         bloomFilterBytes.add(fetch.bloomFilterBytes());
         fetchCount.add(fetch.fetchCount());
+        requestCount.add(fetch.requestCount());
+        backendFetches.add(fetch.backendFetches());
+        bytesTransferred.add(fetch.bytesTransferred());
+        bytesFromCache.add(fetch.bytesFromCache());
     }
 
     private void addTimings(PhaseTimings delta) {
@@ -128,6 +136,10 @@ public final class QueryStatsCollector implements QueryObserver {
                 columnIndexBytes.sum(),
                 offsetIndexBytes.sum(),
                 bloomFilterBytes.sum(),
-                (int) fetchCount.sum());
+                (int) fetchCount.sum(),
+                (int) requestCount.sum(),
+                backendFetches.sum(),
+                bytesTransferred.sum(),
+                bytesFromCache.sum());
     }
 }

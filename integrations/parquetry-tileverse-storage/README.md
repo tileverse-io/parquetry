@@ -1,13 +1,13 @@
 # parquetry-tileverse-storage
 
-The tileverse-storage side of parquetry's dataset access: discovers Parquet files in a tileverse `Storage` (S3, Azure, GCS, HTTP, or local), opens that Storage with parquetry's cache tuning, and registers parquetry's buffer pool as the process-wide `ByteBufferPool` for every tileverse reader.
+The tileverse-storage side of parquetry's dataset access: discovers Parquet files in a tileverse `Storage` (S3, Azure, GCS, HTTP, or local), opens that Storage, and registers parquetry's buffer pool as the process-wide `ByteBufferPool` for every tileverse reader.
 
 Reading one object through a tileverse `RangeReader` needs none of this module: `parquetry-io` adapts a `RangeReader` directly with `ByteRangeSource.of(reader)` (borrowed) or `ByteRangeSource.owning(reader)` (closed with the source). What this module adds is the provider modules for S3, Azure and GCS, and the listing and opening of whole datasets.
 
 ## What it does
 
 - **`ParquetFileSources.open(URI, glob, properties)`** yields a `FileSource` for a dataset container, routing local directories to parquetry's own filesystem source and remote URIs to **`StorageFileSource`**, which lists the blobs matching a shell-style glob and opens each through the Storage's range reader. `StorageFileSource.object(...)` opens one known key without ever listing, for credentials that may GET but not LIST.
-- **`ParquetStorage.open(URI, properties)`** opens a tileverse `Storage` from parquetry's storage properties. Caller-supplied properties win over its defaults.
+- **`ParquetStorage.open(URI, properties)`** opens a tileverse `Storage` from the given `storage.*` properties; parquetry adds no defaults of its own.
 - **`ParquetryByteBufferPool`** is a `ByteBufferPool` provider, discovered through `ServiceLoader`, that serves tileverse's direct borrows from parquetry's `SegmentPool` under parquetry's fetch budget. On a GeoServer instance running parquetry next to a PMTiles or COG store, both then draw from one off-heap pool instead of two.
 
 ## Where it fits
@@ -37,7 +37,7 @@ import io.tileverse.parquetry.tileverse.ParquetStorage;
 import io.tileverse.storage.RangeReader;
 import io.tileverse.storage.Storage;
 
-// One object, through a Storage opened with parquetry's cache tuning:
+// One object, through a Storage opened for the given properties:
 try (Storage storage = ParquetStorage.open(URI.create("s3://bucket/"), properties);
         RangeReader reader = storage.openRangeReader("data.parquet");
         ByteRangeSource source = ByteRangeSource.of(reader)) {

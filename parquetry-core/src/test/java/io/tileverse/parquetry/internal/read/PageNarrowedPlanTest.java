@@ -72,8 +72,8 @@ import io.tileverse.parquetry.schema.SchemaNode;
  *
  * <p>The fixture holds one row group of two long columns split into twenty pages each. Column {@code a} is written
  * {@code PLAIN} and has no dictionary page; column {@code b} is written dictionary-encoded, which puts a dictionary
- * page ahead of its first data page. The fetcher coalesces with a zero gap, hence only abutting byte ranges merge and
- * each planned run stays visible as its own range boundary.
+ * page ahead of its first data page. A plan holds exactly the planned ranges, hence each surviving run stays visible as
+ * its own unit.
  */
 class PageNarrowedPlanTest {
 
@@ -84,8 +84,6 @@ class PageNarrowedPlanTest {
     private static final int PAGE_COUNT = ROW_COUNT / PAGE_VALUE_LIMIT;
     private static final int LAST_PAGE = PAGE_COUNT - 1;
     private static final int DEAD_MIDDLE_PAGE = PAGE_COUNT / 2;
-    private static final int NO_COALESCE_GAP = 0;
-    private static final int AMPLE_COALESCED_SPAN = 8 << 20;
 
     private static final ParquetSchema SCHEMA = twoLongColumnsSchema();
 
@@ -108,7 +106,7 @@ class PageNarrowedPlanTest {
 
             assertWholeChunk(plan, fixture.meta(A), A);
             assertWholeChunk(plan, fixture.meta(B), B);
-            assertThat(plan.totalBytes())
+            assertThat(plan.requestedBytes())
                     .as("a whole-chunk plan reads every byte of both chunks and nothing else")
                     .isEqualTo(fixture.meta(A).totalCompressedSize()
                             + fixture.meta(B).totalCompressedSize());
@@ -125,9 +123,9 @@ class PageNarrowedPlanTest {
             FetchPlan whole = fixture.plan(Optional.empty());
             FetchPlan narrowed = fixture.plan(Optional.of(fixture.maskOver(firstAndLastRows())));
 
-            assertThat(narrowed.totalBytes())
+            assertThat(narrowed.requestedBytes())
                     .as("skipping eighteen of twenty pages per column must read fewer bytes")
-                    .isLessThan(whole.totalBytes());
+                    .isLessThan(whole.requestedBytes());
             for (ColumnPath path : List.of(A, B)) {
                 List<PageLocation> pages = fixture.offsetIndex(path).pageLocations();
                 assertPageFetched(narrowed, pages.get(0), path);
@@ -137,9 +135,9 @@ class PageNarrowedPlanTest {
                         .as("one run per surviving page, seeded with that page's offset-index ordinal, %s", path.dot())
                         .containsExactly(0, LAST_PAGE);
             }
-            assertThat(narrowed.slices().get(A).dictionaryPrefix())
+            assertThat(unitsOf(narrowed, A).stream().anyMatch(FetchUnit::dictionaryPrefix))
                     .as("a PLAIN column's chunk starts at its first data page, leaving no prefix to fetch")
-                    .isEmpty();
+                    .isFalse();
             assertDictionaryPrefix(narrowed, fixture, B);
         }
     }
@@ -245,8 +243,8 @@ class PageNarrowedPlanTest {
 
             FetchPlan plan = fixture.fetcher().planFor(impalaShaped, Optional.of(fixture.maskOver(firstAndLastRows())));
 
-            ColumnSlice prefix = plan.slices().get(B).dictionaryPrefix().orElseThrow();
-            assertThat(absoluteOffset(plan, prefix.rangeIndex(), prefix.offsetWithinRange()))
+            FetchUnit prefix = dictionaryPrefixOf(plan, B);
+            assertThat(prefix.fileOffset())
                     .as("the prefix starts at the chunk's first byte even with dictionaryPageOffset unset")
                     .isEqualTo(dictionaryPageOffset);
             assertThat(prefix.length())
@@ -273,7 +271,7 @@ class PageNarrowedPlanTest {
     void fetchingWithAColumnMissingFromThePlanFailsLoud() {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             Fixture fixture = Fixture.open(source);
-            FetchPlan withoutB = fixture.planWithoutSlicesFor(B);
+            FetchPlan withoutB = fixture.planWithoutUnitsFor(B);
 
             assertThatIllegalStateException()
                     .isThrownBy(() -> fixture.fetcher().fetch(fixture.survivor(), withoutB, BudgetReservation.NONE))
@@ -317,16 +315,15 @@ class PageNarrowedPlanTest {
     // -------------------------------------------------------------------------
 
     private static void assertWholeChunk(FetchPlan plan, ChunkMeta meta, ColumnPath path) {
-        ColumnSlices slices = plan.slices().get(path);
-        assertThat(slices.dictionaryPrefix())
+        List<FetchUnit> units = unitsOf(plan, path);
+        assertThat(units).as("whole-chunk column %s", path.dot()).hasSize(1);
+        FetchUnit unit = units.get(0);
+        assertThat(unit.dictionaryPrefix())
                 .as("a whole-chunk column reaches its dictionary through the head of its single run, %s", path.dot())
-                .isEmpty();
-        assertThat(slices.runs()).as("whole-chunk column %s", path.dot()).hasSize(1);
-        RunSlice run = slices.runs().get(0);
-        assertThat(run.firstPageOrdinal()).isZero();
-        assertThat(run.length()).isEqualTo(meta.totalCompressedSize());
-        assertThat(absoluteOffset(plan, run.rangeIndex(), run.offsetWithinRange()))
-                .isEqualTo(meta.chunkStart());
+                .isFalse();
+        assertThat(unit.firstPageOrdinal()).isZero();
+        assertThat(unit.length()).isEqualTo(meta.totalCompressedSize());
+        assertThat(unit.fileOffset()).isEqualTo(meta.chunkStart());
     }
 
     private static void assertDictionaryPrefix(FetchPlan plan, Fixture fixture, ColumnPath path) {
@@ -334,27 +331,26 @@ class PageNarrowedPlanTest {
         assertThat(meta.dictionaryPageOffset())
                 .as("the fixture's column %s must be dictionary-encoded for the prefix to exist", path.dot())
                 .isPresent();
-        ColumnSlice prefix = plan.slices().get(path).dictionaryPrefix().orElseThrow();
+        FetchUnit prefix = dictionaryPrefixOf(plan, path);
         long firstDataPageOffset =
                 fixture.offsetIndex(path).pageLocations().get(0).offset();
-        assertThat(absoluteOffset(plan, prefix.rangeIndex(), prefix.offsetWithinRange()))
-                .isEqualTo(meta.chunkStart());
+        assertThat(prefix.fileOffset()).isEqualTo(meta.chunkStart());
         assertThat(prefix.length()).isEqualTo(Math.toIntExact(firstDataPageOffset - meta.chunkStart()));
     }
 
     private static void assertPageFetched(FetchPlan plan, PageLocation page, ColumnPath path) {
-        boolean covered = plan.ranges().stream()
-                .anyMatch(range ->
-                        range.fileOffset() <= page.offset() && pageEnd(page) <= range.fileOffset() + range.length());
+        boolean covered = plan.units().stream()
+                .anyMatch(unit ->
+                        unit.fileOffset() <= page.offset() && pageEnd(page) <= unit.fileOffset() + unit.length());
         assertThat(covered)
                 .as("surviving page at %s of column %s must be fetched whole", page.offset(), path.dot())
                 .isTrue();
     }
 
     private static void assertPageNotFetched(FetchPlan plan, PageLocation page, ColumnPath path) {
-        boolean touched = plan.ranges().stream()
-                .anyMatch(range ->
-                        range.fileOffset() < pageEnd(page) && page.offset() < range.fileOffset() + range.length());
+        boolean touched = plan.units().stream()
+                .anyMatch(
+                        unit -> unit.fileOffset() < pageEnd(page) && page.offset() < unit.fileOffset() + unit.length());
         assertThat(touched)
                 .as("skipped page at %s of column %s must not be read at all", page.offset(), path.dot())
                 .isFalse();
@@ -366,14 +362,23 @@ class PageNarrowedPlanTest {
 
     private static List<Integer> runOrdinals(FetchPlan plan, ColumnPath path) {
         List<Integer> ordinals = new ArrayList<>();
-        for (RunSlice run : plan.slices().get(path).runs()) {
-            ordinals.add(Integer.valueOf(run.firstPageOrdinal()));
+        for (FetchUnit unit : unitsOf(plan, path)) {
+            if (!unit.dictionaryPrefix()) {
+                ordinals.add(Integer.valueOf(unit.firstPageOrdinal()));
+            }
         }
         return ordinals;
     }
 
-    private static long absoluteOffset(FetchPlan plan, int rangeIndex, int offsetWithinRange) {
-        return plan.ranges().get(rangeIndex).fileOffset() + offsetWithinRange;
+    private static List<FetchUnit> unitsOf(FetchPlan plan, ColumnPath path) {
+        return plan.units().stream().filter(unit -> unit.path().equals(path)).toList();
+    }
+
+    private static FetchUnit dictionaryPrefixOf(FetchPlan plan, ColumnPath path) {
+        return unitsOf(plan, path).stream()
+                .filter(FetchUnit::dictionaryPrefix)
+                .findFirst()
+                .orElseThrow();
     }
 
     /** The byte just past the chunk's last, the exclusive end of the extent the read path trusts an offset index in. */
@@ -385,21 +390,15 @@ class PageNarrowedPlanTest {
     // Fixture
     // -------------------------------------------------------------------------
 
-    /** The fixture file's single row group, its chunk view, and a fetcher that coalesces nothing but abutting runs. */
+    /** The fixture file's single row group, its chunk view, and a fetcher over it. */
     private record Fixture(ByteRangeSource source, RowGroup rowGroup, RowGroupChunks chunks, RowGroupFetcher fetcher) {
 
         static Fixture open(ByteRangeSource source) {
             FileMetaData footer = ParquetFormat.readFooter(source);
             RowGroup rowGroup = footer.rowGroups().get(0);
             RowGroupChunks chunks = TestRowGroupChunks.of(footer, 0, SCHEMA, indexLoader(source));
-            RowGroupFetcher fetcher = TestFetchers.over(
-                    source,
-                    SCHEMA,
-                    SCHEMA,
-                    SegmentPool.getDefault(),
-                    FetchAccumulator.NONE,
-                    NO_COALESCE_GAP,
-                    AMPLE_COALESCED_SPAN);
+            RowGroupFetcher fetcher =
+                    TestFetchers.over(source, SCHEMA, SCHEMA, SegmentPool.getDefault(), FetchAccumulator.NONE);
             return new Fixture(source, rowGroup, chunks, fetcher);
         }
 
@@ -423,12 +422,15 @@ class PageNarrowedPlanTest {
             return new RowMask(surviving, Map.of(A, offsetIndex(A), B, offsetIndex(B)));
         }
 
-        /** A whole-chunk plan whose ranges still cover both columns but whose slice map forgot {@code path}. */
-        FetchPlan planWithoutSlicesFor(ColumnPath path) {
-            FetchPlan whole = plan(Optional.empty());
-            Map<ColumnPath, ColumnSlices> slices = new HashMap<>(whole.slices());
-            slices.remove(path);
-            return new FetchPlan(whole.ranges(), slices);
+        /** A whole-chunk plan with every unit of {@code path} removed. The fetch must refuse to slice it. */
+        FetchPlan planWithoutUnitsFor(ColumnPath path) {
+            List<FetchUnit> kept = new ArrayList<>();
+            for (FetchUnit unit : plan(Optional.empty()).units()) {
+                if (!unit.path().equals(path)) {
+                    kept.add(unit);
+                }
+            }
+            return new FetchPlan(kept);
         }
 
         /**

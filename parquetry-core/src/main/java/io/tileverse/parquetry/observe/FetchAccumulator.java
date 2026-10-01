@@ -24,7 +24,30 @@ public sealed interface FetchAccumulator permits ConcurrentFetchAccumulator, Fet
 
     FetchAccumulator NONE = new NoOp();
 
-    void add(FetchPurpose purpose, long bytes);
+    /**
+     * Records one call to the byte source: {@code requests} ranges totalling {@code bytes}, served below at a cost of
+     * {@code backendFetches} requests, {@code bytesTransferred} bytes across the wire and {@code bytesFromCache} bytes
+     * out of a cache.
+     */
+    void add(
+            FetchPurpose purpose,
+            long bytes,
+            int requests,
+            long backendFetches,
+            long bytesTransferred,
+            long bytesFromCache);
+
+    /**
+     * Records {@code requests} further ranges of a call already counted by {@link #add}, totalling {@code bytes} for
+     * {@code purpose}. A call with ranges of several purposes reports one of them through {@link #add} and the rest
+     * through this, splitting the bytes by purpose without counting the call more than once.
+     */
+    void addRangesOfSameCall(FetchPurpose purpose, long bytes, int requests);
+
+    /** Records one call to the byte source for a single range, through a verb that reports no transport cost. */
+    default void add(FetchPurpose purpose, long bytes) {
+        add(purpose, bytes, 1, 0, 0, 0);
+    }
 
     FetchStats snapshot();
 
@@ -38,7 +61,18 @@ public sealed interface FetchAccumulator permits ConcurrentFetchAccumulator, Fet
         private NoOp() {}
 
         @Override
-        public void add(FetchPurpose purpose, long bytes) {
+        public void add(
+                FetchPurpose purpose,
+                long bytes,
+                int requests,
+                long backendFetches,
+                long bytesTransferred,
+                long bytesFromCache) {
+            // intentional no-op: the null object discards every measurement
+        }
+
+        @Override
+        public void addRangesOfSameCall(FetchPurpose purpose, long bytes, int requests) {
             // intentional no-op: the null object discards every measurement
         }
 

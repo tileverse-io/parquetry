@@ -20,8 +20,8 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import lombok.NonNull;
 
 /**
- * One plannable byte range of a column chunk, the {@link CoalescingFetchPlanner}'s input unit: a whole chunk, one run
- * of surviving data pages, or the chunk's dictionary prefix. A unit is never split across coalesced ranges.
+ * One byte range of a column chunk to read: a whole chunk, one run of surviving data pages, or the chunk's dictionary
+ * prefix. The element of a {@link FetchPlan}.
  *
  * @param path the leaf column the range belongs to
  * @param fileOffset absolute offset of the range's first byte in the file

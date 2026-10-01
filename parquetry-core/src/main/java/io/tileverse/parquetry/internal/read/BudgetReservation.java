@@ -25,7 +25,7 @@ import io.tileverse.parquetry.runtime.FetchBudget;
  */
 public final class BudgetReservation {
 
-    /** Sentinel for fetches that were never gated: the mandatory current row group and inline fallbacks. */
+    /** Sentinel for a fetch that reserved nothing up front: the mandatory current row group and inline fallbacks. */
     public static final BudgetReservation NONE = new BudgetReservation(null, 0);
 
     private final FetchBudget budget;

@@ -37,19 +37,19 @@ import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.runtime.ParquetRuntime;
 
 /**
- * Proves two properties of the coalesced+prefetched read path:
+ * Proves two properties of an un-narrowed, prefetched read:
  *
  * <ol>
  *   <li>A full read returns the correct number of records (parity with the written data).
- *   <li>The number of {@link ByteRangeSource#read} calls during data-page fetching is significantly fewer than one call
- *       per column per row group, confirming that column chunks within a row group are coalesced into a single range
- *       read.
+ *   <li>The number of {@link ByteRangeSource#read} calls during data-page fetching is far below one call per column per
+ *       row group: a row group goes out as one batch call, and the column chunks inside it lie back to back, hence the
+ *       call holds a single range.
  * </ol>
  */
-class CoalescedFullReadParityTest {
+class FullReadOneRangePerRowGroupTest {
 
     @Test
-    void fullReadIsCorrectAndCoalescesRangeReads(@TempDir Path tmp) throws Exception {
+    void fullReadIsCorrectAndReadsOneRangePerRowGroup(@TempDir Path tmp) throws Exception {
         int rows = 4_000;
         Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(tmp, rows);
         int rowGroups = TestParquetFiles.rowGroupCount(file);
@@ -65,7 +65,7 @@ class CoalescedFullReadParityTest {
             try (Stream<ParquetRecord> stream =
                     dataset.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 // Footer and filter-plan reads have already happened inside read().
-                // Counting from here isolates the coalesced data-page fetches only.
+                // Counting from here isolates the data-page fetches only.
                 int before = recording.requestCount();
                 stream.forEach(records::add);
                 dataReads = recording.requestCount() - before;
@@ -76,7 +76,7 @@ class CoalescedFullReadParityTest {
         assertThat(rowGroups).as("fixture must span multiple row groups").isGreaterThan(1);
         assertThat(dataReads)
                 .as(
-                        "each row group's columns coalesce into about one range read, far below %d cols x %d row groups",
+                        "each row group's columns arrive as about one range read, far below %d cols x %d row groups",
                         columns, rowGroups)
                 .isLessThanOrEqualTo(rowGroups)
                 .isLessThan(columns * rowGroups);

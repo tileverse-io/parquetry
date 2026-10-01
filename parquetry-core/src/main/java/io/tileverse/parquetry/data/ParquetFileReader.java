@@ -47,6 +47,7 @@ import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.PageLocation;
 import io.tileverse.parquetry.internal.filter.FilterPipeline;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.BloomFilterLookup;
+import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnPageStats;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnPageStatsLookup;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnStatsLookup;
 import io.tileverse.parquetry.internal.filter.PredicateNormalizer;
@@ -1422,13 +1423,24 @@ public final class ParquetFileReader {
     /**
      * Returns the column-index tier lookup for {@code chunks}, or the no-op lookup when {@code useColumnIndexFilter} is
      * off. Each call to the returned lookup delegates to {@link RowGroupChunks#pageStats}, which memoizes the result so
-     * each column's index sections are read at most once per call.
+     * each column's index sections are read at most once per call. The tier warms every consultable column before the
+     * first lookup, and the row group reads their index sections in one call.
      */
     private ColumnPageStatsLookup pageStatsLookupFor(RowGroupChunks chunks, ReadOptions options) {
         if (!options.useColumnIndexFilter()) {
             return noColumnPageStatsLookup();
         }
-        return chunks::pageStats;
+        return new ColumnPageStatsLookup() {
+            @Override
+            public Optional<ColumnPageStats> get(ColumnPath path) {
+                return chunks.pageStats(path);
+            }
+
+            @Override
+            public void warm(List<ColumnPath> paths) {
+                chunks.warmPageStats(paths);
+            }
+        };
     }
 
     /**

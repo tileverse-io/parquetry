@@ -16,10 +16,14 @@
 package io.tileverse.parquetry.internal.read;
 
 import java.lang.foreign.MemorySegment;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.Set;
 
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.LogicalType;
@@ -31,6 +35,7 @@ import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.footer.ChunkMeta;
 import io.tileverse.parquetry.internal.footer.CompactFooter;
 import io.tileverse.parquetry.internal.footer.LeafIndex;
+import io.tileverse.parquetry.observe.FetchPurpose;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -46,12 +51,16 @@ import lombok.NonNull;
  * pipeline stages ask.
  *
  * <p>Construction is cheap and side-effect free. Index sections load on first access through the injected
- * {@link IndexSectionLoader}. A missing section, a non-primitive column, or a read failure all degrade to
- * {@link Optional#empty()}; the read still succeeds with that tier off for the column.
+ * {@link IndexSectionLoader}. When a phase knows its whole set of sections up front, it calls
+ * {@link #warmOffsetIndexes} or {@link #warmPageStats} first to read them together; that leaves the memo below
+ * unchanged, and every lookup still goes through it. A missing section, a non-primitive column, or a read failure all
+ * degrade to {@link Optional#empty()}; the read still succeeds with that tier off for the column.
  *
- * <p>This view is confined to the calling thread. Index sections are loaded during filter evaluation and mask building,
- * both of which run on the consumer thread before decode workers start; the view holds no state touched by decode
- * workers. A future change that loads sections from a worker thread would need to guard the memo.
+ * <p>This view is confined to the calling thread, together with the {@link IndexSectionLoader} behind it: one loader
+ * serves every row-group view of a read and holds the bytes of its last batch in a mutable map. Index sections are
+ * loaded during filter evaluation and mask building, both of which run on the consumer thread before decode workers
+ * start; neither the view nor the loader holds state touched by decode workers. A future change that loads sections
+ * from a worker thread would need to guard the memo below and that map.
  */
 public final class RowGroupChunks {
 
@@ -152,6 +161,84 @@ public final class RowGroupChunks {
     private static boolean hasStatistics(
             Optional<MemorySegment> minValue, Optional<MemorySegment> maxValue, OptionalLong nullCount) {
         return nullCount.isPresent() || minValue.isPresent() || maxValue.isPresent();
+    }
+
+    /**
+     * Reads the offset index of every path in {@code paths} that has one and is not memoized yet, in one call. A later
+     * {@link #offsetIndex} of any of them decodes bytes already in hand. A path outside {@code paths} still loads on
+     * its own.
+     */
+    public void warmOffsetIndexes(@NonNull List<ColumnPath> paths) {
+        List<IndexSectionRange> ranges = new ArrayList<>(paths.size());
+        for (ColumnPath path : distinct(paths)) {
+            addOffsetIndexRange(path, ranges);
+        }
+        prefetchOrLeaveToTheLookups(ranges);
+    }
+
+    /**
+     * Reads the column index and the offset index of every path in {@code paths} that has them and is not memoized yet,
+     * in one call. A later {@link #pageStats}, {@link #columnIndex} or {@link #offsetIndex} of any of them decodes
+     * bytes already in hand.
+     */
+    public void warmPageStats(@NonNull List<ColumnPath> paths) {
+        List<IndexSectionRange> ranges = new ArrayList<>(paths.size() * 2);
+        for (ColumnPath path : distinct(paths)) {
+            addColumnIndexRange(path, ranges);
+            addOffsetIndexRange(path, ranges);
+        }
+        prefetchOrLeaveToTheLookups(ranges);
+    }
+
+    /**
+     * Hands the batch to the loader, dropping a failed read. A section degrades to {@link Optional#empty()} at its own
+     * lookup when its bytes cannot be read, and a warm must not turn that into a failed read.
+     */
+    private void prefetchOrLeaveToTheLookups(List<IndexSectionRange> ranges) {
+        try {
+            loader.prefetch(ranges);
+        } catch (RuntimeException _) {
+            // every section still reads itself on its lookup, where a failure degrades to Optional.empty()
+        }
+    }
+
+    /**
+     * The paths to warm, each once. A path named twice would put the same range in the batch twice, and a batch read
+     * satisfies each of its requests independently.
+     */
+    private static Set<ColumnPath> distinct(List<ColumnPath> paths) {
+        return new LinkedHashSet<>(paths);
+    }
+
+    private void addOffsetIndexRange(ColumnPath path, List<IndexSectionRange> ranges) {
+        if (offsetIndexMemo.containsKey(path)) {
+            return;
+        }
+        chunk(path)
+                .ifPresent(chunk -> addRange(
+                        ranges, FetchPurpose.OFFSET_INDEX, chunk.offsetIndexOffset(), chunk.offsetIndexLength()));
+    }
+
+    private void addColumnIndexRange(ColumnPath path, List<IndexSectionRange> ranges) {
+        if (columnIndexMemo.containsKey(path)) {
+            return;
+        }
+        chunk(path)
+                .ifPresent(chunk -> addRange(
+                        ranges, FetchPurpose.COLUMN_INDEX, chunk.columnIndexOffset(), chunk.columnIndexLength()));
+    }
+
+    /**
+     * Adds the section to the batch when the footer locates it where a read can reach it. A chunk with no such section
+     * contributes nothing, and neither does a section placed by the footer at an impossible offset or length: such a
+     * section is left to fail at its own lookup, where the failure degrades to {@link Optional#empty()}.
+     */
+    private static void addRange(
+            List<IndexSectionRange> ranges, FetchPurpose purpose, OptionalLong offset, int length) {
+        if (offset.isEmpty() || offset.getAsLong() < 0 || length <= 0) {
+            return;
+        }
+        ranges.add(new IndexSectionRange(purpose, offset.getAsLong(), length));
     }
 
     /** The memoized {@link OffsetIndex}, or empty when absent or unreadable. */

@@ -18,13 +18,21 @@ package io.tileverse.parquetry.io;
 import java.io.EOFException;
 import java.io.UncheckedIOException;
 import java.lang.foreign.MemorySegment;
+import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
+import io.tileverse.storage.BatchReadResult;
 import io.tileverse.storage.RangeReader;
+import io.tileverse.storage.RangeRequest;
+
+import io.tileverse.io.ByteRange;
 
 /**
  * A thread-safe, positional, read-only byte source of known size. parquetry's single read dependency.
@@ -82,10 +90,149 @@ public interface ByteRangeSource extends AutoCloseable {
             int read = read(offset + done, remaining);
             if (read < 0) {
                 throw new UncheckedIOException(new EOFException("Reached end of source at offset " + (offset + done)
-                        + " with " + (length - done) + " bytes still requested"));
+                        + " with " + (length - done) + " bytes still requested in "
+                        + sourceIdentifier().orElse("an unnamed source")));
             }
             done += read;
         }
+    }
+
+    /**
+     * Reads every request's range into its target, each filled to its full length, and reports what the call cost. The
+     * batch form of {@link #readFully(long, MemorySegment)}, for a plan whose ranges are all known before the first
+     * byte is asked for.
+     *
+     * <p>Targets must be distinct buffers or non-overlapping windows on one buffer. Each is written from its current
+     * position and left with its position advanced by its range length. An implementation may write a target in any
+     * order and from a thread other than the caller's, which rules out a target backed by a segment allocated from
+     * {@link java.lang.foreign.Arena#ofConfined()}. Once the call returns or throws, no thread of the implementation is
+     * still writing to any target: the caller may reuse or release every target at that point, after a failure
+     * included.
+     *
+     * <p>Every count in the returned result equals its request's length, because a short read fails the call instead.
+     * The transport numbers beside those counts describe what serving the call cost below this source. A caller reads
+     * them to weigh bytes moved against bytes asked for.
+     *
+     * <p>The default reads the ranges in file order, joining only the ranges that touch byte for byte over one
+     * contiguous target, and never asks for a byte that no request named. It reports one fetch per read that it issued,
+     * and nothing served from a cache. An implementation overrides it when its backend serves several ranges in one
+     * round trip.
+     *
+     * @param requests the ranges to read and their landing buffers
+     * @return the bytes landed per request, and what the call cost
+     * @throws IllegalArgumentException if a request is null or its target no longer holds its range
+     * @throws UncheckedIOException wrapping an {@link EOFException} when a range runs past end of source
+     */
+    default BatchReadResult readFully(List<RangeRequest> requests) {
+        RangeRequest.validate(requests);
+        long readsIssued = 0;
+        long bytesTransferred = 0;
+        for (List<RangeRequest> run : runsOfTouchingRanges(requests)) {
+            int runLength = totalLength(run);
+            if (runLength == 0) {
+                continue;
+            }
+            readRunAsOneRead(run, runLength);
+            readsIssued++;
+            bytesTransferred += runLength;
+        }
+        return BatchReadResult.of(requests, requestedLengths(requests), readsIssued, bytesTransferred, 0);
+    }
+
+    /**
+     * The requests in ascending offset order, grouped into runs, each run served by one read. Request order would
+     * otherwise turn a row group into preads that jump between columns, the access pattern served worst by a network
+     * filesystem.
+     */
+    private static List<List<RangeRequest>> runsOfTouchingRanges(List<RangeRequest> requests) {
+        List<RangeRequest> ordered = new ArrayList<>(requests);
+        ordered.sort(Comparator.comparingLong(request -> request.range().offset()));
+        List<List<RangeRequest>> runs = new ArrayList<>();
+        List<RangeRequest> current = null;
+        for (RangeRequest request : ordered) {
+            boolean joins = current != null && joinsRun(current, request);
+            if (!joins) {
+                current = new ArrayList<>();
+                runs.add(current);
+            }
+            current.add(request);
+        }
+        return runs;
+    }
+
+    /**
+     * Whether {@code next} extends {@code run} with no hole: its range starts where the run's last range ends, its
+     * target starts where that target's range ends, and the run's first target has the capacity to span them all.
+     */
+    private static boolean joinsRun(List<RangeRequest> run, RangeRequest next) {
+        RangeRequest last = run.getLast();
+        ByteRange lastRange = last.range();
+        ByteRange nextRange = next.range();
+        if (lastRange.end() != nextRange.offset()) {
+            return false;
+        }
+        ByteBuffer runTarget = run.getFirst().target();
+        long joinedLength = (long) totalLength(run) + nextRange.length();
+        if (joinedLength > runTarget.capacity() - runTarget.position()) {
+            return false;
+        }
+        return adjacentInMemory(last, next);
+    }
+
+    /** Whether the right target begins exactly where the left target's range ends, in one region of memory. */
+    private static boolean adjacentInMemory(RangeRequest left, RangeRequest right) {
+        MemorySegment leftBytes = MemorySegment.ofBuffer(left.target());
+        MemorySegment rightBytes = MemorySegment.ofBuffer(right.target());
+        if (!shareOneRegion(leftBytes, rightBytes)) {
+            return false;
+        }
+        return leftBytes.address() + left.range().length() == rightBytes.address();
+    }
+
+    /**
+     * Whether two windows sit in the same array, or under the same arena. Two native segments of one arena need not
+     * come from one allocation; {@link #joinsRun} keeps a joined write inside the room left in the run's first target
+     * by checking that target's capacity.
+     */
+    private static boolean shareOneRegion(MemorySegment left, MemorySegment right) {
+        Object leftBase = left.heapBase().orElse(null);
+        Object rightBase = right.heapBase().orElse(null);
+        if (leftBase != null || rightBase != null) {
+            return leftBase == rightBase;
+        }
+        return left.scope().equals(right.scope());
+    }
+
+    private void readRunAsOneRead(List<RangeRequest> run, int runLength) {
+        RangeRequest first = run.getFirst();
+        ByteBuffer span = first.target().duplicate();
+        span.limit(span.position() + runLength);
+        readFully(first.range().offset(), MemorySegment.ofBuffer(span));
+        advancePositions(run);
+    }
+
+    private static void advancePositions(List<RangeRequest> run) {
+        for (RangeRequest request : run) {
+            ByteBuffer target = request.target();
+            target.position(target.position() + request.range().length());
+        }
+    }
+
+    private static int totalLength(List<RangeRequest> run) {
+        int total = 0;
+        for (RangeRequest request : run) {
+            total += request.range().length();
+        }
+        return total;
+    }
+
+    /** Each request's own length, equal to the bytes landed for it because every request is filled to completion. */
+    private static int[] requestedLengths(List<RangeRequest> requests) {
+        int[] lengths = new int[requests.size()];
+        for (int i = 0; i < requests.size(); i++) {
+            lengths[i] = requests.get(i).range().length();
+        }
+        return lengths;
     }
 
     /** Narrowed: no checked exception (matches parquetry's RuntimeException-only public API). */

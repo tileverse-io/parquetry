@@ -16,30 +16,46 @@
 package io.tileverse.parquetry.internal.read;
 
 import java.util.List;
-import java.util.Map;
-
-import io.tileverse.parquetry.schema.ColumnPath;
 
 import lombok.NonNull;
 
 /**
- * The output of {@link CoalescingFetchPlanner}: the minimal set of byte ranges to read for one row group, plus a map
- * from each projected column to the slices of those ranges that hold its compressed bytes.
+ * One row group's byte ranges to read: exactly the bytes named by the plan, with no hole bridged. Built by
+ * {@link RowGroupFetcher#planFor(RowGroupSurvivor, java.util.Optional)}, the only producer, which orders the units by
+ * file offset. The fetch relies on that order both to lay the units out in one buffer and to keep each column's runs in
+ * data-page ordinal order.
+ *
+ * @param units the ranges to read, ordered by file offset
  */
-public record FetchPlan(
-        @NonNull List<CoalescedRange> ranges, @NonNull Map<ColumnPath, ColumnSlices> slices) {
+public record FetchPlan(@NonNull List<FetchUnit> units) {
 
     public FetchPlan {
-        ranges = List.copyOf(ranges);
-        slices = Map.copyOf(slices);
+        units = List.copyOf(units);
     }
 
-    /** Total bytes this plan reads: the bound on the plan's contribution to in-flight fetch memory. */
-    public long totalBytes() {
+    /** The bytes requested by the plan: the size of the single pooled buffer borrowed by one fetch. */
+    public long requestedBytes() {
         long total = 0;
-        for (CoalescedRange range : ranges) {
-            total += range.length();
+        for (FetchUnit unit : units) {
+            total += unit.length();
         }
         return total;
+    }
+
+    /**
+     * First to last requested byte, holes included: the ceiling on the scratch memory held by a byte source while it
+     * serves the plan, and the amount reserved against the fetch budget by a speculative prefetch.
+     */
+    public long spanBytes() {
+        if (units.isEmpty()) {
+            return 0;
+        }
+        long lowest = Long.MAX_VALUE;
+        long highest = Long.MIN_VALUE;
+        for (FetchUnit unit : units) {
+            lowest = Math.min(lowest, unit.fileOffset());
+            highest = Math.max(highest, unit.fileOffset() + unit.length());
+        }
+        return highest - lowest;
     }
 }

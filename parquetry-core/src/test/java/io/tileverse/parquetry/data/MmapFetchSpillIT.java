@@ -42,9 +42,9 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.testsupport.CorpusFixtures;
 
 /**
- * Acceptance test for the read path under a pinned tiny native budget: a full read whose every coalesced row-group
- * range exceeds the fetch budget must route its mandatory fetch through a disk mapping rather than fail, and return the
- * same values it would on an unconstrained RAM read.
+ * Acceptance test for the read path under a pinned tiny native budget: a full read whose every row-group range exceeds
+ * the fetch budget must route its mandatory fetch through a disk mapping rather than fail, and return the same values
+ * it would on an unconstrained RAM read.
  *
  * <p>The pinned runtime is built from a {@link ResourceLimits#fixed deterministic} resource fact: a memory of 10 bytes
  * derives a fetch budget of {@code max(1, 10 * 0.1) = 1} byte (below any real range, forcing every mandatory fetch to
@@ -69,7 +69,7 @@ class MmapFetchSpillIT {
                 .build();
 
         assertThat(pinnedRuntime.fetchBudget().capacity())
-                .as("a 10-byte memory derives a 1-byte fetch budget, below any real coalesced range")
+                .as("a 10-byte memory derives a 1-byte fetch budget, below any real row-group range")
                 .isEqualTo(1L);
         assertThat(pinnedRuntime.diskBudget().capacity())
                 .as("an 8 GiB disk derives a 4 GiB disk budget, ample for the spill")

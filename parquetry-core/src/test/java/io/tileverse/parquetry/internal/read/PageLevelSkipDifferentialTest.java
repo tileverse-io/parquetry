@@ -117,7 +117,7 @@ class PageLevelSkipDifferentialTest {
         List<ByteSpan> geometryChunks = geometryColumnChunks();
         RecordingByteRangeSource spy = new RecordingByteRangeSource(ByteRangeSource.ofFile(file));
         try (spy) {
-            ParquetFileReader reader = ParquetFileReader.open(spy, ungroupedFetchRuntime(), Optional.empty());
+            ParquetFileReader reader = ParquetFileReader.open(spy, serialRuntime(), Optional.empty());
 
             SpanCellProbe substituting = new SpanCellProbe(4.0);
             spy.reset();
@@ -255,18 +255,6 @@ class PageLevelSkipDifferentialTest {
 
     private static ParquetRuntime serialRuntime() {
         return ParquetRuntime.defaultRuntime().withMaxDecodeAhead(0).withPrefetchDepth(0);
-    }
-
-    /**
-     * A serial runtime that fetches each byte range on its own. The default coalescing gap of one megabyte would span
-     * the dropped pages of this small file, which would hide the narrowing from a byte count.
-     */
-    private static ParquetRuntime ungroupedFetchRuntime() {
-        return ParquetRuntime.builder()
-                .maxCoalesceGap(0)
-                .maxDecodeAhead(0)
-                .prefetchDepth(0)
-                .build();
     }
 
     private static Predicate wholeExtent() {

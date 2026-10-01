@@ -20,7 +20,12 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
+import io.tileverse.storage.BatchReadResult;
+import io.tileverse.storage.RangeRequest;
+
 import io.tileverse.parquetry.io.ByteRangeSource;
+
+import io.tileverse.io.ByteRange;
 
 /**
  * A {@link ByteRangeSource} that delegates to a backing source and records the offset and length of every read. Tests
@@ -36,6 +41,7 @@ public final class RecordingByteRangeSource implements ByteRangeSource {
 
     private final ByteRangeSource delegate;
     private final List<long[]> reads = new ArrayList<>();
+    private int sourceCalls = 0;
 
     public RecordingByteRangeSource(ByteRangeSource delegate) {
         this.delegate = delegate;
@@ -52,14 +58,33 @@ public final class RecordingByteRangeSource implements ByteRangeSource {
         return delegate.read(offset, dst);
     }
 
+    /**
+     * Records every request's range, forwards the whole batch to the delegate in one call, and returns the cost
+     * reported by the delegate. Without this override the batch would fall back to the interface default's
+     * one-range-at-a-time loop, and a test counting calls would measure the decorator rather than the read path.
+     * Recording the requests rather than the reads issued for them records the same bytes: a read joins two ranges only
+     * where they touch byte for byte.
+     */
+    @Override
+    public BatchReadResult readFully(List<RangeRequest> requests) {
+        noteBatch(requests);
+        return delegate.readFully(requests);
+    }
+
     @Override
     public void close() {
         delegate.close();
     }
 
+    /** How many times the read path entered this source, whether with one range or with a batch of them. */
+    public synchronized int sourceCalls() {
+        return sourceCalls;
+    }
+
     /** Forgets every read recorded so far, which lets one test assert over several reads of the same source. */
     public synchronized void reset() {
         reads.clear();
+        sourceCalls = 0;
     }
 
     /** Whether any recorded read overlaps the byte span {@code [start, end)}. */
@@ -106,6 +131,15 @@ public final class RecordingByteRangeSource implements ByteRangeSource {
     }
 
     private synchronized void noteRead(long offset, long length) {
+        sourceCalls++;
         reads.add(new long[] {offset, length});
+    }
+
+    private synchronized void noteBatch(List<RangeRequest> requests) {
+        sourceCalls++;
+        for (RangeRequest request : requests) {
+            ByteRange range = request.range();
+            reads.add(new long[] {range.offset(), range.length()});
+        }
     }
 }

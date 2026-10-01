@@ -161,8 +161,8 @@ public final class UriResolver {
 
     /**
      * Opens the path or URI. A local {@code file} URI is read through tileverse-storage's file reader; a remote URI is
-     * opened through tileverse-storage with the given {@code storage.*} properties (and parquetry's cache tuning, see
-     * {@link ParquetStorage}). {@code storage.uri} is set by the factory and must not be included.
+     * opened through tileverse-storage with the given {@code storage.*} properties (see {@link ParquetStorage}).
+     * {@code storage.uri} is set by the factory and must not be included.
      */
     public static OpenFile open(String pathOrUri, Properties storageProperties) {
         URI target = toAbsoluteUri(pathOrUri);

@@ -18,16 +18,30 @@ package io.tileverse.parquetry.io;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.io.EOFException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -36,11 +50,15 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import io.tileverse.storage.BatchReadResult;
 import io.tileverse.storage.NotFoundException;
 import io.tileverse.storage.RangeReader;
+import io.tileverse.storage.RangeRequest;
 import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageException;
 import io.tileverse.storage.StorageFactory;
+
+import io.tileverse.io.ByteRange;
 
 class RangeReaderByteRangeSourceTest {
 
@@ -277,6 +295,117 @@ class RangeReaderByteRangeSourceTest {
      * {@code readFailure}, every size lookup throws {@code sizeFailure}, and closing throws {@code closeFailure}, each
      * when one is given.
      */
+    @Test
+    void oneBatchReachesTheReaderAsOneCall() {
+        OtherThreadRangeReader reader = new OtherThreadRangeReader(CONTENT);
+        try (ByteRangeSource source = ByteRangeSource.of(reader)) {
+            ByteBuffer first = ByteBuffer.allocate(6);
+            ByteBuffer second = ByteBuffer.allocate(5);
+
+            source.readFully(List.of(RangeRequest.of(0, 6, first), RangeRequest.of(20, 5, second)));
+
+            assertThat(reader.batchCalls).hasValue(1);
+            assertThat(reader.batchedRanges).hasValue(2);
+            assertThat(first.array()).isEqualTo(Arrays.copyOfRange(CONTENT, 0, 6));
+            assertThat(second.array()).isEqualTo(Arrays.copyOfRange(CONTENT, 20, 25));
+        }
+    }
+
+    @Test
+    void theReadersOwnAccountingOfTheCallReachesTheCaller() {
+        OtherThreadRangeReader reader = new OtherThreadRangeReader(CONTENT);
+        try (ByteRangeSource source = ByteRangeSource.of(reader)) {
+            List<RangeRequest> requests = List.of(
+                    RangeRequest.of(0, 6, ByteBuffer.allocate(6)), RangeRequest.of(20, 5, ByteBuffer.allocate(5)));
+
+            BatchReadResult result = source.readFully(requests);
+
+            assertThat(result.requests()).isEqualTo(2);
+            assertThat(result.bytesRead(0)).isEqualTo(6);
+            assertThat(result.bytesRead(1)).isEqualTo(5);
+            assertThat(result.bytesRequested()).isEqualTo(11);
+            assertThat(result.fetches())
+                    .as("the backend served the batch in one round trip")
+                    .isEqualTo(1);
+            assertThat(result.bytesTransferred()).isEqualTo(11);
+            assertThat(result.bytesFromCache()).isZero();
+        }
+    }
+
+    @Test
+    void aRangePastEndOfSourceFailsTheBatch() {
+        OtherThreadRangeReader reader = new OtherThreadRangeReader(CONTENT);
+        try (ByteRangeSource source = ByteRangeSource.of(reader)) {
+            List<RangeRequest> requests = List.of(RangeRequest.of(CONTENT.length - 4L, 10, ByteBuffer.allocate(10)));
+
+            assertThatThrownBy(() -> source.readFully(requests))
+                    .isInstanceOf(UncheckedIOException.class)
+                    .hasCauseInstanceOf(EOFException.class)
+                    .hasMessageContaining("offset " + (CONTENT.length - 4))
+                    .hasMessageContaining("6 bytes still requested")
+                    .hasMessageContaining("fake://content");
+        }
+    }
+
+    @Test
+    void aSharedArenaTargetTakesBytesWrittenByAnotherThread() {
+        OtherThreadRangeReader reader = new OtherThreadRangeReader(CONTENT);
+        try (Arena arena = Arena.ofShared();
+                ByteRangeSource source = ByteRangeSource.of(reader)) {
+            MemorySegment landing = arena.allocate(8);
+
+            source.readFully(List.of(RangeRequest.of(0, 8, landing.asByteBuffer())));
+
+            assertThat(landing.toArray(ValueLayout.JAVA_BYTE)).isEqualTo(Arrays.copyOfRange(CONTENT, 0, 8));
+        }
+    }
+
+    @Test
+    void aConfinedArenaTargetIsRefusedByTheWritingThread() {
+        OtherThreadRangeReader reader = new OtherThreadRangeReader(CONTENT);
+        try (Arena arena = Arena.ofConfined();
+                ByteRangeSource source = ByteRangeSource.of(reader)) {
+            MemorySegment landing = arena.allocate(8);
+            List<RangeRequest> requests = List.of(RangeRequest.of(0, 8, landing.asByteBuffer()));
+
+            assertThatThrownBy(() -> source.readFully(requests)).isInstanceOf(WrongThreadException.class);
+        }
+    }
+
+    @Test
+    void aTargetReleasedRightAfterTheCallIsNeverWrittenIntoAgain() throws InterruptedException {
+        LateWritingRangeReader breaksThePromise = new LateWritingRangeReader(CONTENT);
+        try (Arena arena = Arena.ofShared();
+                ByteRangeSource source = ByteRangeSource.of(breaksThePromise)) {
+            MemorySegment landing = arena.allocate(8);
+            source.readFully(List.of(RangeRequest.of(0, 8, landing.asByteBuffer())));
+        }
+
+        Optional<Throwable> lateWrite = breaksThePromise.releaseAndAwaitTheLateWrite();
+
+        assertThat(lateWrite)
+                .as("a write after the release is refused, never landed in a recycled region")
+                .containsInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void aTargetIsSafeToReuseAfterAFailedBatch() {
+        FailingAfterWriteRangeReader reader = new FailingAfterWriteRangeReader(CONTENT);
+        try (Arena arena = Arena.ofShared();
+                ByteRangeSource source = ByteRangeSource.of(reader)) {
+            MemorySegment landing = arena.allocate(8);
+            List<RangeRequest> doomed = List.of(RangeRequest.of(0, 8, landing.asByteBuffer()));
+
+            assertThatThrownBy(() -> source.readFully(doomed)).isInstanceOf(StorageException.class);
+
+            reader.stopFailing();
+            source.readFully(List.of(RangeRequest.of(8, 8, landing.asByteBuffer())));
+
+            assertThat(landing.toArray(ValueLayout.JAVA_BYTE)).isEqualTo(Arrays.copyOfRange(CONTENT, 8, 16));
+        }
+    }
+
+    /** A reader over an empty object that reports a configurable size and records its close. */
     private static final class RecordingRangeReader implements RangeReader {
 
         private final OptionalLong size;
@@ -346,6 +475,171 @@ class RangeReaderByteRangeSourceTest {
         @Override
         public String getSourceIdentifier() {
             return "recording";
+        }
+    }
+
+    /** Runs {@code work} on a thread other than the caller's and waits for it, as a streaming backend's I/O thread. */
+    private static <T> T onAnotherThread(Callable<T> work) {
+        try (ExecutorService worker = Executors.newSingleThreadExecutor()) {
+            return worker.submit(work).get();
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof RuntimeException runtime) {
+                throw runtime;
+            }
+            throw new IllegalStateException(cause);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** A reader over an in-memory object, serving one range at a time and reporting the object's length. */
+    private abstract static class ContentRangeReader implements RangeReader {
+
+        private final byte[] content;
+
+        ContentRangeReader(byte[] content) {
+            this.content = content;
+        }
+
+        @Override
+        public int readRange(long offset, int length, ByteBuffer target) {
+            if (offset >= content.length) {
+                return 0;
+            }
+            int available = (int) Math.min(length, content.length - offset);
+            target.put(content, (int) offset, available);
+            return available;
+        }
+
+        /** Fills every target in request order, and reports the whole batch as one backend request. */
+        BatchReadResult readEachRange(List<RangeRequest> requests) {
+            RangeRequest.validate(requests);
+            int[] counts = new int[requests.size()];
+            long transferred = 0;
+            for (int i = 0; i < requests.size(); i++) {
+                RangeRequest request = requests.get(i);
+                ByteRange range = request.range();
+                counts[i] = readRange(range.offset(), range.length(), request.target());
+                transferred += counts[i];
+            }
+            return BatchReadResult.of(requests, counts, 1, transferred, 0);
+        }
+
+        @Override
+        public OptionalLong size() {
+            return OptionalLong.of(content.length);
+        }
+
+        @Override
+        public String getSourceIdentifier() {
+            return "fake://content";
+        }
+
+        @Override
+        public void close() {
+            // holds no resource
+        }
+    }
+
+    /**
+     * A reader filling every batch target from a thread other than the caller's, as allowed by the {@code RangeReader}
+     * contract and done by a streaming backend. It waits for that thread before returning, as the contract requires,
+     * and counts the calls handed to it and the ranges that they asked for.
+     */
+    private static final class OtherThreadRangeReader extends ContentRangeReader {
+
+        private final AtomicInteger batchCalls = new AtomicInteger();
+        private final AtomicInteger batchedRanges = new AtomicInteger();
+
+        OtherThreadRangeReader(byte[] content) {
+            super(content);
+        }
+
+        @Override
+        public BatchReadResult readRanges(List<RangeRequest> requests) {
+            batchCalls.incrementAndGet();
+            batchedRanges.addAndGet(requests.size());
+            return onAnotherThread(() -> readEachRange(requests));
+        }
+    }
+
+    /**
+     * A reader that breaks the upstream promise on purpose: it reports every byte as read and returns while a worker is
+     * still about to write it. The negative control that gives the release case below something to catch.
+     */
+    private static final class LateWritingRangeReader extends ContentRangeReader {
+
+        private final CountDownLatch released = new CountDownLatch(1);
+        private final CountDownLatch finished = new CountDownLatch(1);
+        private final AtomicReference<Throwable> lateWriteFailure = new AtomicReference<>();
+
+        LateWritingRangeReader(byte[] content) {
+            super(content);
+        }
+
+        @Override
+        public BatchReadResult readRanges(List<RangeRequest> requests) {
+            Thread.ofVirtual().start(() -> writeWhenReleased(requests));
+            return BatchReadResult.perRange(requests, requestedLengths(requests));
+        }
+
+        private void writeWhenReleased(List<RangeRequest> requests) {
+            try {
+                released.await();
+                readEachRange(requests);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                lateWriteFailure.set(e);
+            } catch (RuntimeException e) {
+                lateWriteFailure.set(e);
+            } finally {
+                finished.countDown();
+            }
+        }
+
+        /** Lets the held-back write run, and reports how it ended. */
+        Optional<Throwable> releaseAndAwaitTheLateWrite() throws InterruptedException {
+            released.countDown();
+            if (!finished.await(10, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("the held-back write never finished");
+            }
+            return Optional.ofNullable(lateWriteFailure.get());
+        }
+
+        private static int[] requestedLengths(List<RangeRequest> requests) {
+            int[] lengths = new int[requests.size()];
+            for (int i = 0; i < requests.size(); i++) {
+                lengths[i] = requests.get(i).range().length();
+            }
+            return lengths;
+        }
+    }
+
+    /**
+     * A reader whose batch call writes on another thread, waits for that thread, and only then fails. A backend fails
+     * the same way: the promise that no thread is still writing holds after a failure too.
+     */
+    private static final class FailingAfterWriteRangeReader extends ContentRangeReader {
+
+        private volatile boolean failing = true;
+
+        FailingAfterWriteRangeReader(byte[] content) {
+            super(content);
+        }
+
+        @Override
+        public BatchReadResult readRanges(List<RangeRequest> requests) {
+            BatchReadResult result = onAnotherThread(() -> readEachRange(requests));
+            if (failing) {
+                throw new StorageException("the object went away mid-batch");
+            }
+            return result;
+        }
+
+        void stopFailing() {
+            failing = false;
         }
     }
 }

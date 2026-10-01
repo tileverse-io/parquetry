@@ -23,43 +23,29 @@ import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
 
 /**
- * Opens a tileverse-storage {@link Storage} tuned for parquetry's read pattern. Because parquetry coalesces a row
- * group's projected column chunks into row-group-sized byte ranges before reading, the storage cache should hold one
- * entry per coalesced range. The tileverse-storage cache stores exactly the requested ranges (since 2.1 it never
- * realigns them into fixed blocks), which is precisely that granularity; this helper only turns caching on.
+ * Opens a tileverse-storage {@link Storage} for parquetry's remote reads: every remote read reaches its backend through
+ * here, configured by a {@code storage.*} property map. Parquetry adds no defaults of its own, and every backend
+ * setting is the deployment's to choose.
  *
- * <p>Caller-supplied properties win: a deployment that explicitly sets {@code storage.caching.enabled} overrides the
- * default.
+ * <p>The byte-range cache is therefore off unless a deployment sets {@code storage.caching.enabled}; leaving it off is
+ * tileverse-storage's own default. A read asks for the exact ranges named by its plan - on a decimated read, hundreds
+ * of small page ranges per row group - and retaining each of them costs heap needed for decode in a tile-serving pod.
  */
 public final class ParquetStorage {
 
-    private static final String CACHE_ENABLED = "storage.caching.enabled";
-
     private ParquetStorage() {}
 
-    /** Opens a {@link Storage} for {@code container} with parquetry's cache defaults and no caller overrides. */
+    /** Opens a {@link Storage} for {@code container} with no backend properties. */
     public static Storage open(URI container) {
         return open(container, new Properties());
     }
 
     /**
-     * Opens a {@link Storage} for {@code container}, applying parquetry's cache defaults beneath {@code properties}.
-     * Any caching key present in {@code properties} takes precedence.
+     * Opens a {@link Storage} for {@code container}, configured by the {@code storage.*} entries of {@code properties}.
      */
     public static Storage open(URI container, Properties properties) {
         Objects.requireNonNull(container, "container");
         Objects.requireNonNull(properties, "properties");
-        return StorageFactory.open(container, withParquetDefaults(properties));
-    }
-
-    /**
-     * Returns a copy of {@code properties} with parquetry's cache default filled in when the caller left it unset:
-     * caching enabled. Caller-supplied values are preserved.
-     */
-    static Properties withParquetDefaults(Properties properties) {
-        Properties tuned = new Properties();
-        tuned.setProperty(CACHE_ENABLED, "true");
-        tuned.putAll(properties);
-        return tuned;
+        return StorageFactory.open(container, properties);
     }
 }

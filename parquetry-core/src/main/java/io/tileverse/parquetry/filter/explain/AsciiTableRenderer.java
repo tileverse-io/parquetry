@@ -20,6 +20,7 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 
+import io.tileverse.parquetry.observe.FetchStats;
 import io.tileverse.parquetry.observe.QueryStats;
 import io.tileverse.parquetry.observe.RowGroupRead;
 import io.tileverse.parquetry.observe.SpillStats;
@@ -140,7 +141,20 @@ final class AsciiTableRenderer {
                 + stats.totalFetch().totalBytes()
                 + " bytes, "
                 + formatDuration(stats.wallClockNanos());
-        return totals + spillSuffix(stats.spillStats());
+        return totals + fetchSuffix(stats.totalFetch()) + spillSuffix(stats.spillStats());
+    }
+
+    /** What the read asked the byte source for, and what the transport below reported it cost. */
+    private static String fetchSuffix(FetchStats fetch) {
+        if (fetch.fetchCount() == 0) {
+            return "";
+        }
+        String suffix = "\nFetch: " + fetch.fetchCount() + " calls, " + fetch.requestCount() + " ranges";
+        if (fetch.backendFetches() == 0) {
+            return suffix;
+        }
+        return suffix + ", " + fetch.backendFetches() + " backend requests, " + fetch.bytesTransferred()
+                + " bytes over the wire, " + fetch.bytesFromCache() + " from cache";
     }
 
     private static String spillSuffix(SpillStats spill) {

@@ -15,6 +15,8 @@
  */
 package io.tileverse.parquetry.internal.read;
 
+import java.util.List;
+
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
@@ -39,4 +41,17 @@ public interface IndexSectionLoader {
      * did not record the bloom-filter length; the implementation then reads the header first to learn the bitset size.
      */
     SplitBlockBloomFilter readBloom(long offset, int length);
+
+    /**
+     * Reads the bytes of every range in {@code sections} in one call and holds them, which lets a later
+     * {@link #readOffsetIndex} or {@link #readColumnIndex} of any of them decode without a read of its own. Bytes held
+     * from an earlier call are dropped: a phase consumes its own batch before the next phase asks for one.
+     *
+     * <p>Holding nothing is a correct implementation, and is the default: every section still reads itself when asked.
+     * An implementation is free to decline a batch on its own terms, and the one behind a file declines a batch of a
+     * single section, because a lone section reads itself in one call either way.
+     */
+    default void prefetch(List<IndexSectionRange> sections) {
+        // intentional no-op: a loader with no batch read beneath it lets each section read itself
+    }
 }

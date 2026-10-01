@@ -25,6 +25,9 @@ import java.util.List;
  * length)} range, where {@code length} is the byte count the delegate actually returned. Byte and request assertions in
  * read tests derive from the recorded list. Recording is thread-safe: prefetch reads run concurrently on virtual
  * threads.
+ *
+ * <p>Deliberately does not override the batch read: the inherited default resolves back through this decorator's own
+ * {@link #read(long, MemorySegment)}, and a forwarded batch would leave the record empty.
  */
 public final class RecordingByteRangeSource implements ByteRangeSource {
 

@@ -165,13 +165,9 @@ final class ParquetryReadEngine implements ReadEngine {
     }
 
     /**
-     * The Parquet-tuned storage cache configuration. Because parquetry already coalesces column chunks into
-     * row-group-sized ranges, the right cache granularity is one entry per coalesced range - exactly what the
-     * tileverse-storage cache stores. Defaults model the production intent - caching on - matching
-     * {@code parquetry-tileverse-storage}.
-     *
-     * <p>Override for benchmarking: {@code parquetry.probe.httpCache=false} turns caching off entirely, keeping the
-     * cross-read dedup from hiding fetch latency across measurement waves.
+     * The storage configuration for a remote probe run: the byte-range cache on, which is a probe choice rather than
+     * the shipped default. {@code parquetry.probe.httpCache=false} turns it off, keeping the cross-read dedup from
+     * hiding fetch latency across measurement waves.
      */
     private static Properties remoteStorageProperties() {
         Properties props = new Properties();
