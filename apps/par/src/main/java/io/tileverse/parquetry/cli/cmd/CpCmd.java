@@ -86,6 +86,14 @@ public final class CpCmd implements Callable<Integer> {
             description = "Directory for the writer's working files. Default: the system temporary directory.")
     private Path tempDir;
 
+    @Option(
+            names = "--covering-page-values",
+            paramLabel = "<n>",
+            description = "Cap the bbox covering columns at N values a page, leaving the other columns on the "
+                    + "writer's default. Finer covering pages give a spatial read finer pruning units, at the cost "
+                    + "of more index entries for those columns.")
+    private Integer coveringPageValues;
+
     @Mixin
     private GlobalOptions options;
 
@@ -158,7 +166,8 @@ public final class CpCmd implements Callable<Integer> {
             Map<String, String> sourceKeyValue)
             throws IOException {
         WriteOptions.RowGroupSize rowGroupSize = resolveRowGroupSize();
-        WriteOptions writeOptions = buildWriteOptions(writeSchema, tempDir, sourceKeyValue, rowGroupSize);
+        WriteOptions writeOptions =
+                buildWriteOptions(writeSchema, tempDir, sourceKeyValue, rowGroupSize, coveringPageValues);
         long limit = options.limit == null ? Long.MAX_VALUE : options.limit;
         Query query = buildQuery(predicate, projection, limit);
         UriResolver.OpenSink sink = UriResolver.openForWrite(dst, sourceFileName, overwrite, dstStorage.toProperties());
@@ -230,13 +239,17 @@ public final class CpCmd implements Callable<Integer> {
             ParquetSchema writeSchema,
             Path tempDir,
             Map<String, String> sourceKeyValue,
-            WriteOptions.RowGroupSize rowGroupSize) {
+            WriteOptions.RowGroupSize rowGroupSize,
+            Integer coveringPageValues) {
         WriteOptions.Builder builder = WriteOptions.builder();
         if (tempDir != null) {
             builder.tempDir(tempDir);
         }
         if (rowGroupSize != null) {
             builder.rowGroupSize(rowGroupSize);
+        }
+        if (coveringPageValues != null) {
+            builder.coveringPageValueLimit(coveringPageValues);
         }
         for (ColumnPath leaf : writeSchema.leafColumns()) {
             SchemaNode node = writeSchema.find(leaf).orElseThrow();

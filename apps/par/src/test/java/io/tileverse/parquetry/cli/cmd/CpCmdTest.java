@@ -50,6 +50,10 @@ import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.format.ColumnChunk;
+import io.tileverse.parquetry.format.ColumnMetaData;
+import io.tileverse.parquetry.format.FileMetaData;
+import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -604,6 +608,54 @@ class CpCmdTest {
             GeoParquetMetadata geo =
                     GeoParquetMetadata.parse(source.keyValueMetadata().get("geo"));
             return geo.columns().get("geometry").covering().orElseThrow().bbox();
+        }
+    }
+
+    @Test
+    void coveringPageValuesFlagSplitsOnlyTheCoveringColumns(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("geo-cities.parquet");
+        Path dst = dir.resolve("fine-covering.parquet");
+        Fixtures.writeGeoCities(src);
+
+        int code = Par.newCommandLine().execute("cp", src.toString(), dst.toString(), "--covering-page-values", "1");
+
+        assertThat(code).isZero();
+        assertThat(pageCount(dst, ColumnPath.of("bbox", "xmin")))
+                .as("two rows at one value a page")
+                .isEqualTo(2);
+        assertThat(pageCount(dst, ColumnPath.of("geometry")))
+                .as("the geometry column keeps the writer's default page sizing")
+                .isEqualTo(1);
+    }
+
+    @Test
+    void withoutTheFlagTheCoveringKeepsOnePage(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("geo-cities.parquet");
+        Path dst = dir.resolve("default-covering.parquet");
+        Fixtures.writeGeoCities(src);
+
+        int code = Par.newCommandLine().execute("cp", src.toString(), dst.toString());
+
+        assertThat(code).isZero();
+        assertThat(pageCount(dst, ColumnPath.of("bbox", "xmin"))).isEqualTo(1);
+    }
+
+    /** The number of data pages written for {@code column} in the file's first row group. */
+    private static int pageCount(Path file, ColumnPath column) throws Exception {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            FileMetaData footer = ParquetFormat.readFooter(source);
+            for (ColumnChunk chunk : footer.rowGroups().getFirst().columns()) {
+                ColumnMetaData meta = chunk.metaData().orElseThrow();
+                if (!column.equals(ColumnPath.of(meta.pathInSchema()))) {
+                    continue;
+                }
+                long offset = chunk.offsetIndexOffset().orElseThrow();
+                int length = chunk.offsetIndexLength().orElseThrow();
+                return ParquetFormat.readOffsetIndex(source, offset, length)
+                        .pageLocations()
+                        .size();
+            }
+            throw new IllegalStateException("the copy has no column chunk for " + column.dot());
         }
     }
 
