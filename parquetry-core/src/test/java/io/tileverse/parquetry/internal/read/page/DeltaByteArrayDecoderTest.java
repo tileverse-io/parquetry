@@ -17,12 +17,15 @@ package io.tileverse.parquetry.internal.read.page;
 
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.ByteArrayOutputStream;
 import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 
 import org.junit.jupiter.api.Test;
+
+import io.tileverse.parquetry.format.MalformedFileException;
 
 class DeltaByteArrayDecoderTest {
 
@@ -100,5 +103,39 @@ class DeltaByteArrayDecoderTest {
             out.write(suffix.getBytes(StandardCharsets.UTF_8));
         }
         return out.toByteArray();
+    }
+
+    @Test
+    void prefixLongerThanThePreviousValueIsAFormatError() {
+        // prefix lengths [2] (zigzag 4), suffix lengths [1] (zigzag 2), suffix bytes "a"
+        MemorySegment page = MemorySegment.ofArray(new byte[] {0x08, 0x01, 0x01, 0x04, 0x08, 0x01, 0x01, 0x02, 'a'});
+        DeltaByteArrayDecoder decoder = new DeltaByteArrayDecoder();
+
+        assertThatThrownBy(() -> decoder.load(page, 1))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("value 0 declares prefix length 2 and suffix length 1 after a value of 0 bytes");
+    }
+
+    @Test
+    void suffixesBeyondThePageAreAFormatError() {
+        // prefix lengths [0], suffix lengths [5] (zigzag 10), suffix bytes "ab"
+        MemorySegment page =
+                MemorySegment.ofArray(new byte[] {0x08, 0x01, 0x01, 0x00, 0x08, 0x01, 0x01, 0x0a, 'a', 'b'});
+        DeltaByteArrayDecoder decoder = new DeltaByteArrayDecoder();
+
+        assertThatThrownBy(() -> decoder.load(page, 1))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("suffix lengths add up to 5 bytes but the page holds 2 after them");
+    }
+
+    @Test
+    void lengthStreamsShorterThanThePageNeedsAreAFormatError() {
+        // one prefix length and one suffix length for a page needing two values
+        MemorySegment page = MemorySegment.ofArray(new byte[] {0x08, 0x01, 0x01, 0x00, 0x08, 0x01, 0x01, 0x02, 'a'});
+        DeltaByteArrayDecoder decoder = new DeltaByteArrayDecoder();
+
+        assertThatThrownBy(() -> decoder.load(page, 2))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("holds 1 prefix and 1 suffix lengths but needs 2 of each");
     }
 }

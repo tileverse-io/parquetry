@@ -199,6 +199,7 @@ final class ColumnChunkSlicer {
         if (headerEnd <= 0) {
             throw new MalformedFileException("Column " + path.dot() + " dictionary page advanced zero bytes");
         }
+        requireNonNegativePageSizes(header, path);
         int compressedSize = header.compressedPageSize();
         if (chunkSegment.byteSize() - headerEnd < compressedSize) {
             throw new MalformedFileException("Column " + path.dot() + " dictionary page compressed payload ("
@@ -211,6 +212,14 @@ final class ColumnChunkSlicer {
                 decodeDictionary(meta, path, fileSchema, dictHeader, compressedPayload, header.uncompressedPageSize());
         int dataPageOffset = Math.toIntExact(headerEnd + compressedSize);
         return new DictionaryAndOffset(Optional.of(dictionary), dataPageOffset);
+    }
+
+    private static void requireNonNegativePageSizes(PageHeader header, ColumnPath path) {
+        if (header.compressedPageSize() < 0 || header.uncompressedPageSize() < 0) {
+            throw new MalformedFileException("Column " + path.dot() + " dictionary page declares negative sizes:"
+                    + " compressed=" + header.compressedPageSize() + ", uncompressed="
+                    + header.uncompressedPageSize());
+        }
     }
 
     /**
@@ -233,6 +242,8 @@ final class ColumnChunkSlicer {
             MemorySegment dst = arena.allocate(uncompressedSize);
             codec.decompress(compressedPayload, dst);
             return DictionaryDecoder.read(dst, kind, dictHeader.numValues(), typeLength);
+        } catch (ParquetFormatException e) {
+            throw e.withContext("Column " + path.dot() + " dictionary page: " + e.getMessage());
         }
     }
 

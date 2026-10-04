@@ -32,6 +32,7 @@ import org.junit.jupiter.api.Test;
 import io.tileverse.parquetry.data.Compression;
 import io.tileverse.parquetry.format.DataPageHeaderV2;
 import io.tileverse.parquetry.format.Encoding;
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.PageHeader;
 import io.tileverse.parquetry.format.PageType;
 import io.tileverse.parquetry.internal.read.page.DataPageV2Reader;
@@ -162,6 +163,30 @@ class DataPageV2ReaderTest {
         page.close();
         // After close, the Arena is closed; any further allocation attempt must throw.
         assertThatThrownBy(() -> arena.allocate(1)).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void levelLengthsBeyondThePayloadAreAFormatError() {
+        byte[] payload = new byte[5];
+        PageHeader header = newV2Header(2, /*repLen*/ 3, /*defLen*/ 4, /*payloadLen*/ 10, /*compressed*/ false);
+
+        try (Arena arena = Arena.ofConfined()) {
+            assertThatThrownBy(() -> reader.read(header, IGNORED, MemorySegment.ofArray(payload), uncompressed, arena))
+                    .isInstanceOf(MalformedFileException.class)
+                    .hasMessageContaining("level byte lengths (3 + 4) exceed its payload of 5 bytes");
+        }
+    }
+
+    @Test
+    void uncompressedValuesShortOfTheirDeclaredSizeAreAFormatError() {
+        byte[] payload = encodeInt32sLittleEndian(new int[] {1, 2});
+        PageHeader header = newV2Header(3, 0, 0, /*payloadLen*/ 12, /*compressed*/ false);
+
+        try (Arena arena = Arena.ofConfined()) {
+            assertThatThrownBy(() -> reader.read(header, IGNORED, MemorySegment.ofArray(payload), uncompressed, arena))
+                    .isInstanceOf(MalformedFileException.class)
+                    .hasMessageContaining("stores 8 uncompressed value bytes but its header declares 12");
+        }
     }
 
     // --- fixture builders ---

@@ -29,6 +29,7 @@ public final class PlainFloatDecoder implements PageDecoder<Float> {
 
     @Override
     public void load(MemorySegment page, int valueCount) {
+        FixedWidthValues.requireBytesFor(page, valueCount, BYTES_PER_VALUE, "FLOAT");
         this.segment = page;
         this.offset = 0L;
     }

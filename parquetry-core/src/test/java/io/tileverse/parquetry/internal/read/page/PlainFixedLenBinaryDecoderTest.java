@@ -18,12 +18,15 @@ package io.tileverse.parquetry.internal.read.page;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
 import org.junit.jupiter.api.Test;
+
+import io.tileverse.parquetry.format.MalformedFileException;
 
 class PlainFixedLenBinaryDecoderTest {
 
@@ -131,5 +134,16 @@ class PlainFixedLenBinaryDecoderTest {
         assertThat(dst[0].toArray(JAVA_BYTE)).isEqualTo("AAAA".getBytes());
         assertThat(dst[1].toArray(JAVA_BYTE)).isEqualTo("BBBB".getBytes());
         assertThat(dst[2].toArray(JAVA_BYTE)).isEqualTo("CCCC".getBytes());
+    }
+
+    @Test
+    void pageShortOfItsValuesIsAFormatError() {
+        PlainFixedLenBinaryDecoder decoder = new PlainFixedLenBinaryDecoder(4);
+        // 100 values of 4 bytes need 400 bytes; the page holds 364
+        MemorySegment page = MemorySegment.ofArray(new byte[364]);
+
+        assertThatThrownBy(() -> decoder.load(page, 100))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("100 FIXED_LEN_BYTE_ARRAY(4) values need 400 bytes but the page holds 364");
     }
 }

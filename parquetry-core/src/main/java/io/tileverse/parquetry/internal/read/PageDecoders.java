@@ -18,6 +18,7 @@ package io.tileverse.parquetry.internal.read;
 import java.util.function.IntSupplier;
 
 import io.tileverse.parquetry.format.Encoding;
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.UnsupportedFeatureException;
 import io.tileverse.parquetry.internal.read.page.AlpDoubleDecoder;
 import io.tileverse.parquetry.internal.read.page.AlpFloatDecoder;
@@ -159,8 +160,8 @@ final class PageDecoders {
 
     private static PageDecoder<?> requireDictionaryDecoder(Dictionary<?> dict, String kindLabel) {
         if (dict == null) {
-            throw new IllegalStateException(
-                    "Dictionary-encoded data page requires a loaded Dictionary; none supplied for " + kindLabel);
+            throw new MalformedFileException("A dictionary-encoded " + kindLabel
+                    + " data page needs a dictionary page, but its column chunk has none");
         }
         return new RleDictionaryPageDecoder<>(dict);
     }

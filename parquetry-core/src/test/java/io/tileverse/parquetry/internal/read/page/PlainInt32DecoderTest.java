@@ -17,12 +17,14 @@ package io.tileverse.parquetry.internal.read.page;
 
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.ParquetLayouts;
 
 class PlainInt32DecoderTest {
@@ -158,5 +160,26 @@ class PlainInt32DecoderTest {
         assertThat(dst.getAtIndex(ParquetLayouts.INT32, 0)).isEqualTo(20);
         assertThat(dst.getAtIndex(ParquetLayouts.INT32, 1)).isEqualTo(30);
         assertThat(decoder.next()).isEqualTo(40);
+    }
+
+    @Test
+    void pageShortOfItsValuesIsAFormatError() {
+        PlainInt32Decoder decoder = new PlainInt32Decoder();
+        MemorySegment page = MemorySegment.ofArray(new byte[11]);
+
+        assertThatThrownBy(() -> decoder.load(page, 3))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("3 INT32 values need 12 bytes but the page holds 11");
+    }
+
+    @Test
+    void pageWithTrailingBytesLoads() {
+        PlainInt32Decoder decoder = new PlainInt32Decoder();
+        MemorySegment page = MemorySegment.ofArray(new byte[] {1, 0, 0, 0, 2, 0, 0, 0, 9});
+
+        decoder.load(page, 2);
+
+        assertThat(decoder.next()).isEqualTo(1);
+        assertThat(decoder.next()).isEqualTo(2);
     }
 }

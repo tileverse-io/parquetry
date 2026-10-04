@@ -29,6 +29,7 @@ public final class PlainDoubleDecoder implements PageDecoder<Double> {
 
     @Override
     public void load(MemorySegment page, int valueCount) {
+        FixedWidthValues.requireBytesFor(page, valueCount, BYTES_PER_VALUE, "DOUBLE");
         this.segment = page;
         this.offset = 0L;
     }

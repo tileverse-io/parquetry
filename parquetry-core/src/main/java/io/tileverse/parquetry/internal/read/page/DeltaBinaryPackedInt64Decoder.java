@@ -32,6 +32,7 @@ public final class DeltaBinaryPackedInt64Decoder implements PageDecoder<Long> {
     @Override
     public void load(MemorySegment page, int valueCount) {
         delegate.load(page);
+        delegate.requireDeclaredValues(valueCount);
     }
 
     @Override

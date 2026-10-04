@@ -65,6 +65,10 @@ public final class PageCursor {
     private PendingDataPage pendingPage;
     // Ordinal of the page most recently decoded, which the row-count disagreement error names.
     private int currentPageOrdinal;
+    // Whether the last row started by the decoded pages may continue into the next data page: the walk has decoded a
+    // page holding values and stepped over no data page since.
+    private boolean rowMayContinueIntoNextPage;
+    private boolean currentPageMayContinueRow;
     private long currentPageFirstRowIndex;
     private long nextPageFirstRowIndex;
     private int currentPageStatedRowCount = UNSTATED_ROW_COUNT;
@@ -132,6 +136,7 @@ public final class PageCursor {
             int ordinal = dataPageOrdinal++;
             MemorySegment pagePayload = sliceAndAdvance(compressedSize);
             if (selection == null || selection.isSurviving(ordinal)) {
+                requireNonNegativeCounts(header, ordinal);
                 pendingPage = new PendingDataPage(
                         header, pagePayload, ordinal, firstRowIndexOf(ordinal), statedRowCount(header, maxLevels));
                 return pendingPage;
@@ -143,17 +148,29 @@ public final class PageCursor {
 
     /**
      * Decompresses and decodes {@code pending}, which becomes the walk's current page: the one
-     * {@link #currentPageFirstRowIndex()} places and {@link #recordCurrentPageRowCount(int)} reports for.
+     * {@link #currentPageFirstRowIndex()} places and {@link #recordCurrentPageRowCount(int)} reports for. A page reader
+     * failure names the column and page, as page readers reject bytes without knowing their column. The catch stays in
+     * this method because one more method layer would push the decompressors' memory reads past the JIT's inlining
+     * depth.
      */
     public DecodedPage decodePending(PendingDataPage pending, LevelMaxima maxLevels, Compression codec, Arena pageArena)
             throws IOException {
         resolvePending(pending);
+        currentPageMayContinueRow = rowMayContinueIntoNextPage && pending.ordinal() == currentPageOrdinal + 1;
         currentPageOrdinal = pending.ordinal();
         currentPageFirstRowIndex = pending.firstRowIndex();
         currentPageStatedRowCount = pending.statedRowCount();
         decodedDataPageCount++;
         PageHeader header = pending.header();
-        return DataPageReader.forHeader(header).read(header, maxLevels, pending.payload(), codec, pageArena);
+        DecodedPage page;
+        try {
+            page = DataPageReader.forHeader(header).read(header, maxLevels, pending.payload(), codec, pageArena);
+        } catch (ParquetFormatException e) {
+            throw e.withContext(
+                    "Column " + columnPath.dot() + " data page " + pending.ordinal() + ": " + e.getMessage());
+        }
+        rowMayContinueIntoNextPage = currentPageMayContinueRow || page.valueCount() > 0;
+        return page;
     }
 
     /**
@@ -170,6 +187,32 @@ public final class PageCursor {
 
     private static boolean isDataPage(PageHeader header) {
         return header.type() == PageType.DATA_PAGE || header.type() == PageType.DATA_PAGE_V2;
+    }
+
+    /**
+     * Fails a data page header stating a negative value, null or row count. A negative count can neither size the
+     * page's level and value buffers nor place its rows.
+     */
+    private void requireNonNegativeCounts(PageHeader header, int ordinal) {
+        Optional<DataPageHeaderV2> v2 = header.dataPageHeaderV2();
+        if (v2.isPresent()) {
+            DataPageHeaderV2 counts = v2.orElseThrow();
+            requireNonNegative(counts.numValues(), "values", ordinal);
+            requireNonNegative(counts.numNulls(), "nulls", ordinal);
+            requireNonNegative(counts.numRows(), "rows", ordinal);
+            return;
+        }
+        Optional<DataPageHeader> v1 = header.dataPageHeader();
+        if (v1.isPresent()) {
+            requireNonNegative(v1.orElseThrow().numValues(), "values", ordinal);
+        }
+    }
+
+    private void requireNonNegative(int count, String countedItems, int ordinal) {
+        if (count < 0) {
+            throw new MalformedFileException(
+                    "Column " + columnPath.dot() + " data page " + ordinal + " declares " + count + " " + countedItems);
+        }
     }
 
     /** The row-group row index of a page's first row: the selection's mapping, or the walk's running row sum. */
@@ -224,6 +267,21 @@ public final class PageCursor {
      */
     public long currentPageFirstRowIndex() {
         return currentPageFirstRowIndex;
+    }
+
+    /** Offset-index ordinal, within the column chunk, of the page most recently decoded. */
+    public int currentPageOrdinal() {
+        return currentPageOrdinal;
+    }
+
+    /**
+     * True when the page most recently decoded may open mid-row, continuing the last row started by the pages decoded
+     * before it. That takes a decoded data page right before it in the chunk, and values in that page or in an unbroken
+     * run of decoded pages ending in it. The first page of a walk, or one reached across skipped pages, has no row to
+     * continue.
+     */
+    public boolean currentPageMayContinueRow() {
+        return currentPageMayContinueRow;
     }
 
     /**

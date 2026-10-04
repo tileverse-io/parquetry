@@ -29,6 +29,7 @@ public final class PlainInt64Decoder implements PageDecoder<Long> {
 
     @Override
     public void load(MemorySegment page, int valueCount) {
+        FixedWidthValues.requireBytesFor(page, valueCount, BYTES_PER_VALUE, "INT64");
         this.segment = page;
         this.offset = 0L;
     }

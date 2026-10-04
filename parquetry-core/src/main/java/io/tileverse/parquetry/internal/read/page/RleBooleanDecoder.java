@@ -19,6 +19,8 @@ import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
 
 import java.lang.foreign.MemorySegment;
 
+import io.tileverse.parquetry.format.MalformedFileException;
+
 /**
  * Boolean data-page decoder using Parquet's RLE encoding (RLE-Bit-Packed hybrid at bitWidth=1).
  *
@@ -28,13 +30,28 @@ import java.lang.foreign.MemorySegment;
  */
 public final class RleBooleanDecoder implements PageDecoder<Boolean> {
 
-    private final LevelDecoder delegate = new LevelDecoder(1);
+    private final LevelDecoder delegate = new LevelDecoder(1, "RLE boolean values");
 
     @Override
     public void load(MemorySegment page, int valueCount) {
-        int length = page.get(INT32, 0L);
+        int length = readPayloadLength(page);
         MemorySegment payload = page.asSlice(Integer.BYTES, length);
         delegate.load(payload);
+    }
+
+    /** The length prefix, required to announce a payload lying inside the page. */
+    private static int readPayloadLength(MemorySegment page) {
+        long available = page.byteSize() - Integer.BYTES;
+        if (available < 0) {
+            throw new MalformedFileException(
+                    "RLE boolean page of " + page.byteSize() + " bytes is too short for its 4-byte length prefix");
+        }
+        int length = page.get(INT32, 0L);
+        if (length < 0 || length > available) {
+            throw new MalformedFileException("RLE boolean page declares a payload of " + length + " bytes but holds "
+                    + available + " after its length prefix");
+        }
+        return length;
     }
 
     @Override

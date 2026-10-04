@@ -16,11 +16,14 @@
 package io.tileverse.parquetry.internal.read.page;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 
 import org.junit.jupiter.api.Test;
+
+import io.tileverse.parquetry.format.MalformedFileException;
 
 class PlainBooleanDecoderTest {
 
@@ -137,5 +140,15 @@ class PlainBooleanDecoderTest {
                 .containsExactly(
                         true, false, true, false, true, false, true, false, // byte 0 LSB-first
                         true, false, true, false, true); // byte 1 LSB-first, first 5 bits
+    }
+
+    @Test
+    void pageShortOfItsValuesIsAFormatError() {
+        PlainBooleanDecoder decoder = new PlainBooleanDecoder();
+        MemorySegment page = MemorySegment.ofArray(new byte[1]);
+
+        assertThatThrownBy(() -> decoder.load(page, 9))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("9 PLAIN BOOLEAN values need 9 bits but the page holds 8");
     }
 }

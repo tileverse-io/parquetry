@@ -122,7 +122,7 @@ class UnknownEncodingReadTest {
         assertThatThrownBy(() -> readAllRows(file))
                 .isInstanceOf(UnsupportedFeatureException.class)
                 .hasMessageContaining("ALP")
-                .hasMessageContaining("column " + UNDECODABLE.dot());
+                .hasMessageContaining("Column " + UNDECODABLE.dot() + " data page");
     }
 
     /**

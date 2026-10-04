@@ -70,6 +70,10 @@ public final class DataPageV2Reader implements DataPageReader {
             throw new MalformedFileException(
                     "V2 level byte lengths must be non-negative: repLen=" + repLen + ", defLen=" + defLen);
         }
+        if ((long) repLen + defLen > compressedPagePayload.byteSize()) {
+            throw new MalformedFileException("V2 page level byte lengths (" + repLen + " + " + defLen
+                    + ") exceed its payload of " + compressedPagePayload.byteSize() + " bytes");
+        }
         int valuesUncompressedSize = computeValuesUncompressedSize(header, repLen, defLen);
 
         MemorySegment repLevels = sliceOrNull(compressedPagePayload, 0L, repLen);
@@ -93,9 +97,17 @@ public final class DataPageV2Reader implements DataPageReader {
         if (compressed) {
             codec.decompress(valuesSlice, valueBytes);
         } else {
+            requireStoredValueBytes(valuesSlice, uncompressedSize);
             valueBytes.copyFrom(valuesSlice.asSlice(0L, uncompressedSize));
         }
         return valueBytes;
+    }
+
+    private static void requireStoredValueBytes(MemorySegment valuesSlice, int uncompressedSize) {
+        if (valuesSlice.byteSize() < uncompressedSize) {
+            throw new MalformedFileException("V2 page stores " + valuesSlice.byteSize()
+                    + " uncompressed value bytes but its header declares " + uncompressedSize);
+        }
     }
 
     /**

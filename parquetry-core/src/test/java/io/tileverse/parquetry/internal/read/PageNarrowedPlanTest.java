@@ -31,10 +31,14 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.data.Compression;
 import io.tileverse.parquetry.data.ParquetFileWriter;
@@ -310,6 +314,43 @@ class PageNarrowedPlanTest {
         }
     }
 
+    static Stream<Arguments> chunkStartsOutsideTheFile() {
+        // each vector is the data page offset given to column a, which has no dictionary page and starts there
+        return Stream.of(
+                // before the first byte of the file
+                Arguments.of(-1L),
+                // near Long.MAX_VALUE, where adding the chunk size to the start overflows
+                Arguments.of(Long.MAX_VALUE - 8));
+    }
+
+    @ParameterizedTest
+    @MethodSource("chunkStartsOutsideTheFile")
+    void chunkStartingOutsideTheFileFailsLoud(long dataPageOffset) {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            Fixture fixture = Fixture.open(source);
+            RowGroupSurvivor moved = fixture.survivorWithDataPageOffset(A, dataPageOffset);
+
+            assertThatThrownBy(() -> fixture.fetcher().planFor(moved, Optional.empty()))
+                    .isInstanceOf(MalformedFileException.class)
+                    .hasMessageContaining(A.dot())
+                    .hasMessageContaining("from offset " + dataPageOffset + ", outside the " + source.size());
+        }
+    }
+
+    @Test
+    void chunkEndingPastTheFileFailsLoud() {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            Fixture fixture = Fixture.open(source);
+            long lastByte = source.size() - 1;
+            RowGroupSurvivor moved = fixture.survivorWithDataPageOffset(A, lastByte);
+
+            assertThatThrownBy(() -> fixture.fetcher().planFor(moved, Optional.empty()))
+                    .isInstanceOf(MalformedFileException.class)
+                    .hasMessageContaining(A.dot())
+                    .hasMessageContaining("from offset " + lastByte + ", outside the " + source.size());
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Assertions
     // -------------------------------------------------------------------------
@@ -438,11 +479,19 @@ class PageNarrowedPlanTest {
          * dictionary page, the shape Impala and the Hadoop LZ4 fixtures write.
          */
         RowGroupSurvivor survivorWithDataPageOffsetAtTheDictionaryPage(ColumnPath path) {
+            long dictionaryPageOffset = meta(path).dictionaryPageOffset().orElseThrow();
+            return survivorWithDataPageOffset(path, dictionaryPageOffset);
+        }
+
+        /**
+         * A survivor with the dictionary offset of {@code path} unset and its data-page offset moved to {@code offset}.
+         */
+        RowGroupSurvivor survivorWithDataPageOffset(ColumnPath path, long offset) {
             List<ColumnChunk> columns = new ArrayList<>(rowGroup.columns().size());
             for (ColumnChunk chunk : rowGroup.columns()) {
                 ColumnMetaData meta = chunk.metaData().orElseThrow();
                 boolean isTarget = ColumnPath.of(meta.pathInSchema()).equals(path);
-                columns.add(isTarget ? withDataPageOffsetAtTheDictionaryPage(chunk, meta) : chunk);
+                columns.add(isTarget ? withDataPageOffset(chunk, meta, offset) : chunk);
             }
             RowGroup moved = new RowGroup(
                     columns,
@@ -473,8 +522,7 @@ class PageNarrowedPlanTest {
         }
     }
 
-    private static ColumnChunk withDataPageOffsetAtTheDictionaryPage(ColumnChunk chunk, ColumnMetaData meta) {
-        long dictionaryPageOffset = meta.dictionaryPageOffset().orElseThrow();
+    private static ColumnChunk withDataPageOffset(ColumnChunk chunk, ColumnMetaData meta, long dataPageOffset) {
         ColumnMetaData moved = new ColumnMetaData(
                 meta.type(),
                 meta.encodings(),
@@ -484,7 +532,7 @@ class PageNarrowedPlanTest {
                 meta.totalUncompressedSize(),
                 meta.totalCompressedSize(),
                 meta.keyValueMetadata(),
-                dictionaryPageOffset,
+                dataPageOffset,
                 meta.indexPageOffset(),
                 OptionalLong.empty(),
                 meta.statistics(),

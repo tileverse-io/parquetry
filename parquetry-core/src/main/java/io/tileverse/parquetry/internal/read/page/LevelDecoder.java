@@ -20,6 +20,8 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 
+import io.tileverse.parquetry.format.MalformedFileException;
+
 /**
  * Decodes Parquet repetition and definition level streams.
  *
@@ -33,14 +35,24 @@ import java.lang.foreign.ValueLayout;
  * </ul>
  *
  * <p>Used identically for both rep and def levels; the bit width per stream is computed from the column's max level
- * (see {@link #computeBitWidth(int)}).
+ * (see {@link #forMaxLevel(int, String)} and {@link #computeBitWidth(int)}).
  *
  * <p>The decoder reads its input one byte at a time from a {@link MemorySegment}, assembling multi-byte values itself.
+ * A stream that ends before the requested values, a run longer than a page can hold, or a value above the stream's
+ * maximum fails with a {@link MalformedFileException} naming the stream.
  */
 public final class LevelDecoder {
 
+    private static final int MAX_VARINT_SHIFT = 63;
+
     private final int bitWidth;
     private final int bytesPerRleValue;
+    // Largest legal value, compared unsigned and never above the largest value of the bit width: the max level of a
+    // level stream, the last entry of a dictionary for its indices.
+    private final int maxValue;
+    // Only a maximum below the largest value of the bit width leaves room for bit-packed values above it.
+    private final boolean checksBitPackedValues;
+    private final String streamName;
 
     private MemorySegment segment;
     private long position;
@@ -53,11 +65,58 @@ public final class LevelDecoder {
     private int bitsInBuffer;
 
     public LevelDecoder(int bitWidth) {
+        this(bitWidth, "levels");
+    }
+
+    /**
+     * A decoder accepting any value of the bit width.
+     *
+     * @param bitWidth the width of each value, in {@code [0, 32]}
+     * @param streamName what the stream holds, as a plural noun such as {@code "dictionary indices"}; error messages
+     *     name it
+     */
+    public LevelDecoder(int bitWidth, String streamName) {
+        this(bitWidth, largestValueOfWidth(bitWidth), streamName);
+    }
+
+    private LevelDecoder(int bitWidth, int maxValue, String streamName) {
         if (bitWidth < 0 || bitWidth > 32) {
             throw new IllegalArgumentException("bitWidth must be in [0, 32]; got " + bitWidth);
         }
+        int largestOfWidth = largestValueOfWidth(bitWidth);
         this.bitWidth = bitWidth;
         this.bytesPerRleValue = (bitWidth + 7) / 8;
+        this.maxValue = Integer.compareUnsigned(maxValue, largestOfWidth) < 0 ? maxValue : largestOfWidth;
+        this.checksBitPackedValues = this.maxValue != largestOfWidth;
+        this.streamName = streamName;
+    }
+
+    /**
+     * A decoder for the level stream of a column whose levels reach {@code maxLevel}: the bit width follows from the
+     * max level, and a level above it fails with a {@link MalformedFileException}.
+     *
+     * @param streamName what the stream holds, as a plural noun such as {@code "definition levels"}; error messages
+     *     name it
+     */
+    public static LevelDecoder forMaxLevel(int maxLevel, String streamName) {
+        return new LevelDecoder(computeBitWidth(maxLevel), maxLevel, streamName);
+    }
+
+    /**
+     * A decoder for values of {@code bitWidth} bits bounded by {@code maxValue}, such as dictionary indices bounded by
+     * the last dictionary entry. A value above {@code maxValue}, compared unsigned, fails with a
+     * {@link MalformedFileException}.
+     *
+     * @param streamName what the stream holds, as a plural noun such as {@code "dictionary indices"}; error messages
+     *     name it
+     */
+    public static LevelDecoder forMaxValue(int bitWidth, int maxValue, String streamName) {
+        return new LevelDecoder(bitWidth, maxValue, streamName);
+    }
+
+    /** The largest value of {@code bitWidth} bits, read as unsigned: all 32 bits set for a width of 32. */
+    private static int largestValueOfWidth(int bitWidth) {
+        return (int) ((1L << bitWidth) - 1L);
     }
 
     /** Compute the minimum bit width to encode level values in [0, maxLevel]. */
@@ -265,7 +324,7 @@ public final class LevelDecoder {
         if (bitWidth == 0) {
             return 0;
         }
-        if (remainingInRun == 0) {
+        while (remainingInRun == 0) {
             readNextRunHeader();
         }
         remainingInRun--;
@@ -275,21 +334,46 @@ public final class LevelDecoder {
         return readBitPackedValue();
     }
 
+    /**
+     * Reads the next run header. A run of zero values yields nothing: callers keep reading headers until a run holds
+     * values, and the end of the stream stops a stream made only of empty runs.
+     */
     private void readNextRunHeader() {
         long header = readVarint();
+        long runCount = header >>> 1;
         if ((header & 1L) == 1L) {
             // Bit-packed run: high bits are the number of groups of 8 values.
-            int groups = (int) (header >>> 1);
-            remainingInRun = groups * 8;
+            remainingInRun = bitPackedRunLength(runCount);
             currentRunIsRle = false;
             bitPackedBuffer = 0L;
             bitsInBuffer = 0;
         } else {
             // RLE run: high bits are the run length; followed by the repeated value.
-            remainingInRun = (int) (header >>> 1);
+            remainingInRun = rleRunLength(runCount);
             currentRunIsRle = true;
-            rleValue = readFixedWidthLE(bytesPerRleValue);
+            rleValue = readRleValue();
         }
+    }
+
+    private int bitPackedRunLength(long groups) {
+        if (groups > Integer.MAX_VALUE / 8) {
+            throw bitPackedRunTooLong(groups);
+        }
+        return (int) groups * 8;
+    }
+
+    private int rleRunLength(long length) {
+        if (length > Integer.MAX_VALUE) {
+            throw rleRunTooLong(length);
+        }
+        return (int) length;
+    }
+
+    /** The repeated value of an RLE run, checked once for the whole run against the stream's maximum. */
+    private int readRleValue() {
+        int value = readFixedWidthLE(bytesPerRleValue);
+        requireAtMostMaximum(value);
+        return value;
     }
 
     /**
@@ -306,7 +390,16 @@ public final class LevelDecoder {
         int value = (int) (bitPackedBuffer & mask);
         bitPackedBuffer >>>= bitWidth;
         bitsInBuffer -= bitWidth;
+        if (checksBitPackedValues) {
+            requireAtMostMaximum(value);
+        }
         return value;
+    }
+
+    private void requireAtMostMaximum(int value) {
+        if (Integer.compareUnsigned(value, maxValue) > 0) {
+            throw valueAboveMaximum(value);
+        }
     }
 
     private int readFixedWidthLE(int n) {
@@ -328,14 +421,49 @@ public final class LevelDecoder {
                 return result;
             }
             shift += 7;
-            if (shift > 70) {
-                throw new IllegalStateException("Varint too long in level stream");
+            if (shift > MAX_VARINT_SHIFT) {
+                throw varintTooLong();
             }
         }
     }
 
-    /** Read the next unsigned byte (0-255) from the loaded segment. */
+    /**
+     * Reads the next unsigned byte (0-255) from the loaded segment. Running out of bytes means the stream holds fewer
+     * values than its page declares. The segment's own bounds check detects it: translating that failure here costs
+     * nothing per byte, where a check of ours would repeat the segment's.
+     */
     private int readByte() {
-        return segment.get(JAVA_BYTE, position++) & 0xff;
+        try {
+            return segment.get(JAVA_BYTE, position++) & 0xff;
+        } catch (IndexOutOfBoundsException e) {
+            throw streamEnded();
+        }
+    }
+
+    // The failures below are built out of line: the methods raising them run once per value or byte, and the JIT only
+    // inlines them into the decode loops while they stay small.
+
+    private MalformedFileException streamEnded() {
+        return new MalformedFileException(
+                streamName + " end at byte " + segment.byteSize() + ", short of the values declared by their page");
+    }
+
+    private MalformedFileException varintTooLong() {
+        return new MalformedFileException(streamName + " hold a run header varint longer than 10 bytes");
+    }
+
+    private MalformedFileException bitPackedRunTooLong(long groups) {
+        return new MalformedFileException(streamName + " declare a bit-packed run of " + groups
+                + " groups of 8 values, more than a page can hold");
+    }
+
+    private MalformedFileException rleRunTooLong(long length) {
+        return new MalformedFileException(
+                streamName + " declare an RLE run of " + length + " values, more than a page can hold");
+    }
+
+    private MalformedFileException valueAboveMaximum(int value) {
+        return new MalformedFileException(streamName + " hold the value " + Integer.toUnsignedString(value)
+                + ", above their maximum " + Integer.toUnsignedString(maxValue));
     }
 }

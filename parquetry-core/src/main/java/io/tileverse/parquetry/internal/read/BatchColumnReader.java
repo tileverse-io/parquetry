@@ -48,9 +48,10 @@ import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.OffsetIndex;
-import io.tileverse.parquetry.format.UnsupportedFeatureException;
+import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.internal.read.page.DecodedPage;
 import io.tileverse.parquetry.internal.read.page.Dictionary;
+import io.tileverse.parquetry.internal.read.page.FixedWidthValues;
 import io.tileverse.parquetry.internal.read.page.LevelDecoder;
 import io.tileverse.parquetry.internal.read.page.PageCursor;
 import io.tileverse.parquetry.internal.read.page.PageDecoder;
@@ -97,8 +98,6 @@ final class BatchColumnReader {
     private final Compression codec;
     private final long totalValues;
     private final PageCursor pageCursor;
-    private final int defBitWidth;
-    private final int repBitWidth;
     private final Optional<Dictionary<?>> dictionary;
     private final RowRanges survivingRows; // null when this column is not masked
     private final ValueDecode valueDecode;
@@ -237,8 +236,6 @@ final class BatchColumnReader {
         this.maxLevels = new LevelMaxima(chunk.maxRepetitionLevel(), chunk.maxDefinitionLevel());
         this.codec = Compression.forWireCodec(chunk.codec());
         this.totalValues = chunk.numValues();
-        this.defBitWidth = LevelDecoder.computeBitWidth(maxLevels.maxDefinitionLevel());
-        this.repBitWidth = LevelDecoder.computeBitWidth(maxLevels.maxRepetitionLevel());
         this.dictionary = chunk.dictionary();
         if (survivingRows != null) {
             requireOffsetIndexForRowMask(chunk, offsetIndex);
@@ -711,14 +708,20 @@ final class BatchColumnReader {
 
     /**
      * Decodes the values at {@code keep} into a fresh window-sized payload, stepping the page decoder over the non-null
-     * slots the window drops. Returns the window's own null mask, indexed by kept slot.
+     * slots the window drops. Returns the window's own null mask, indexed by kept slot. A failure of the page decoder
+     * names the current page; the catch stays here, as one more method layer would push the decoder's memory reads past
+     * the JIT's inlining depth.
      */
     private Validity decodeKeptSlots(int[] keep) {
         clearTypedPayloads();
         allocateCompactedPayload(keep.length);
         BitSet keptValidity = new BitSet(keep.length);
         if (windowDecoder != null) {
-            materializeKeptSlots(keep, keptValidity);
+            try {
+                materializeKeptSlots(keep, keptValidity);
+            } catch (ParquetFormatException e) {
+                throw inCurrentPage(e);
+            }
         }
         if (maskedIndices != null) {
             pageIndices = IntSequence.of(maskedIndices);
@@ -1015,43 +1018,86 @@ final class BatchColumnReader {
         return pageCursor.decodePending(pending, maxLevels, codec, arena);
     }
 
+    /**
+     * Decodes the page's levels and then its values. The windowed lane decodes no value here: it opens the page's value
+     * decoder, and each window pulls its values from that decoder.
+     *
+     * <p>Both decode steps stay in this method rather than in helpers of their own. The JIT inlines the page decoders
+     * into their caller only up to a fixed call depth, and one more method layer here pushes the decoders' innermost
+     * memory reads past it.
+     */
     private void decodePage(DecodedPage page) {
-        pageSize = page.valueCount();
-        pageRepLevels = decodeRepLevels(page, pageSize);
-        if (canDecodeOriginValidity()) {
-            decodeOriginValidity(page);
-        } else {
-            pageDefLevels = decodeDefLevels(page, pageSize);
-            pageValidity = pageDefLevels == null
-                    ? Validity.allValid(pageSize)
-                    : pageDefLevels.validityAt(maxLevels.maxDefinitionLevel());
+        pageSize = requireValueCountWithinChunk(page.valueCount());
+        try {
+            pageRepLevels = decodeRepLevels(page, pageSize);
+            if (canDecodeOriginValidity()) {
+                decodeOriginValidity(page);
+            } else {
+                pageDefLevels = decodeDefLevels(page, pageSize);
+                pageValidity = pageDefLevels == null
+                        ? Validity.allValid(pageSize)
+                        : pageDefLevels.validityAt(maxLevels.maxDefinitionLevel());
+            }
+        } catch (ParquetFormatException e) {
+            throw inCurrentPage(e);
         }
+        requirePageOpensAtRowStartOrContinuation();
         pageLogicalRowCount = (pageRepLevels == null) ? pageSize : pageRepLevels.countOf(0);
         pageCursor.recordCurrentPageRowCount(pageLogicalRowCount);
         clearTypedPayloads();
         pageWasDictionary = PageDecoders.isDictionaryEncoded(page.valuesEncoding());
-        decodeValues(page);
+        try {
+            if (valueDecode == ValueDecode.WINDOWED_MASK) {
+                openWindowDecoder(page);
+                narrowRowSpaceToSurvivingRows();
+            } else {
+                decodePageValues(page);
+            }
+        } catch (ParquetFormatException e) {
+            throw inCurrentPage(e);
+        }
         valuesConsumedInCurrentPage = 0;
         logicalRowsConsumedInCurrentPage = 0;
         pageLoaded = true;
     }
 
-    /** Decodes the page's values for the reader's lane; an encoding without a decoder fails naming the column. */
-    private void decodeValues(DecodedPage page) {
-        try {
-            decodeValuesForLane(page);
-        } catch (UnsupportedFeatureException e) {
-            throw e.withContext("Cannot decode a data page of column " + columnPath.dot() + ": " + e.getMessage());
+    /**
+     * A page holds no more values than its whole column chunk. Checking before the levels decode keeps a corrupt page
+     * header from sizing the level and value buffers.
+     */
+    private int requireValueCountWithinChunk(int valueCount) {
+        if (valueCount > totalValues) {
+            throw new MalformedFileException("Column " + columnPath.dot() + " data page "
+                    + pageCursor.currentPageOrdinal() + " declares " + valueCount
+                    + " values but its column chunk holds " + totalValues);
+        }
+        return valueCount;
+    }
+
+    /**
+     * Fails a page opening with a repetition level above zero when no row is open for it to continue. Such a level
+     * places the page's leading values in a row with no start, and the assembly would attach them to an unrelated row.
+     * A V1 page may legally open mid-row, but only right after the decoded page holding the row's start.
+     */
+    private void requirePageOpensAtRowStartOrContinuation() {
+        if (pageRepLevels == null || pageSize == 0) {
+            return;
+        }
+        int firstLevel = pageRepLevels.get(0);
+        if (firstLevel != 0 && !pageCursor.currentPageMayContinueRow()) {
+            throw new MalformedFileException("Column " + columnPath.dot() + " data page "
+                    + pageCursor.currentPageOrdinal() + " opens with repetition level " + firstLevel
+                    + " but no row is open to continue; a row starts at repetition level 0");
         }
     }
 
-    private void decodeValuesForLane(DecodedPage page) {
-        if (valueDecode == ValueDecode.WINDOWED_MASK) {
-            openWindowDecoder(page);
-            narrowRowSpaceToSurvivingRows();
-        } else {
-            decodePageValues(page);
-        }
+    /**
+     * Prefixes a failure raised while decoding the current page's levels or values with the column and the page holding
+     * the bad bytes: page decoders reject bytes without knowing their column.
+     */
+    private ParquetFormatException inCurrentPage(ParquetFormatException e) {
+        return e.withContext(
+                "Column " + columnPath.dot() + " data page " + pageCursor.currentPageOrdinal() + ": " + e.getMessage());
     }
 
     /** The eager value lane: the page's values materialize before the first batch slices them. */
@@ -1233,7 +1279,7 @@ final class BatchColumnReader {
         SegmentPool.Pooled pooled = decodeBufferAllocator.acquireMandatory(byteSize);
         try {
             MemorySegment bitmap = pooled.segment();
-            LevelDecoder defDecoder = new LevelDecoder(defBitWidth);
+            LevelDecoder defDecoder = LevelDecoder.forMaxLevel(maxLevels.maxDefinitionLevel(), "definition levels");
             defDecoder.load(page.defLevelBytes());
             int validCount = defDecoder.decodeValidityBitmap(pageSize, maxLevels.maxDefinitionLevel(), bitmap);
             pageDefLevels = null;
@@ -1258,7 +1304,7 @@ final class BatchColumnReader {
         if (values == 0) {
             return EMPTY_LEVELS;
         }
-        LevelDecoder repDecoder = new LevelDecoder(repBitWidth);
+        LevelDecoder repDecoder = LevelDecoder.forMaxLevel(maxLevels.maxRepetitionLevel(), "repetition levels");
         repDecoder.load(page.repLevelBytes());
         return repLevelScratch.decode(repDecoder, values);
     }
@@ -1271,7 +1317,7 @@ final class BatchColumnReader {
         if (values == 0) {
             return EMPTY_LEVELS;
         }
-        LevelDecoder defDecoder = new LevelDecoder(defBitWidth);
+        LevelDecoder defDecoder = LevelDecoder.forMaxLevel(maxLevels.maxDefinitionLevel(), "definition levels");
         defDecoder.load(page.defLevelBytes());
         return defLevelScratch.decode(defDecoder, values);
     }
@@ -1314,7 +1360,7 @@ final class BatchColumnReader {
     /** Routes an INT32 page to its value backing: live-page slice, pooled segment, or the masked heap lane. */
     private void decodeInt32Page(MemorySegment valueBuf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
         if (canSliceFixedWidthFromLivePage(encoding, nonNullCount)) {
-            retainLiveValues(valueBuf);
+            retainLiveValues(valueBuf, nonNullCount, Integer.BYTES, "INT32");
         } else if (survivingRows == null) {
             decodeIntsIntoPageValues(valueBuf, encoding, nonNullCount, dict);
         } else {
@@ -1325,7 +1371,7 @@ final class BatchColumnReader {
     /** Routes an INT64 page to its value backing: live-page slice, pooled segment, or the masked heap lane. */
     private void decodeInt64Page(MemorySegment valueBuf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
         if (canSliceFixedWidthFromLivePage(encoding, nonNullCount)) {
-            retainLiveValues(valueBuf);
+            retainLiveValues(valueBuf, nonNullCount, Long.BYTES, "INT64");
         } else if (survivingRows == null) {
             decodeLongsIntoPageValues(valueBuf, encoding, nonNullCount, dict);
         } else {
@@ -1336,7 +1382,7 @@ final class BatchColumnReader {
     /** Routes a FLOAT page to its value backing: live-page slice, pooled segment, or the masked heap lane. */
     private void decodeFloatPage(MemorySegment valueBuf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
         if (canSliceFixedWidthFromLivePage(encoding, nonNullCount)) {
-            retainLiveValues(valueBuf);
+            retainLiveValues(valueBuf, nonNullCount, Float.BYTES, "FLOAT");
         } else if (survivingRows == null) {
             decodeFloatsIntoPageValues(valueBuf, encoding, nonNullCount, dict);
         } else {
@@ -1347,7 +1393,7 @@ final class BatchColumnReader {
     /** Routes a DOUBLE page to its value backing: live-page slice, pooled segment, or the masked heap lane. */
     private void decodeDoublePage(MemorySegment valueBuf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
         if (canSliceFixedWidthFromLivePage(encoding, nonNullCount)) {
-            retainLiveValues(valueBuf);
+            retainLiveValues(valueBuf, nonNullCount, Double.BYTES, "DOUBLE");
         } else if (survivingRows == null) {
             decodeDoublesIntoPageValues(valueBuf, encoding, nonNullCount, dict);
         } else {
@@ -1368,8 +1414,12 @@ final class BatchColumnReader {
         return encoding == Encoding.PLAIN && nonNullCount == pageSize;
     }
 
-    /** Keeps the live page segment as the page's value backing; the page Arena then stays open across the batches. */
-    private void retainLiveValues(MemorySegment valueBuf) {
+    /**
+     * Keeps the live page segment as the page's value backing; the page Arena then stays open across the batches. The
+     * segment must hold all {@code valueCount} values up front, because the batches slice it with no decoder to check.
+     */
+    private void retainLiveValues(MemorySegment valueBuf, int valueCount, int bytesPerValue, String valueType) {
+        FixedWidthValues.requireBytesFor(valueBuf, valueCount, bytesPerValue, valueType);
         pageValues = valueBuf.asReadOnly();
         pageBackingIsLivePage = true;
     }

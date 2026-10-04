@@ -19,6 +19,8 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 import java.lang.foreign.MemorySegment;
 
+import io.tileverse.parquetry.format.MalformedFileException;
+
 /**
  * PLAIN decoder for BOOLEAN: bit-packed, LSB-first, eight values per byte.
  *
@@ -33,20 +35,31 @@ public final class PlainBooleanDecoder implements PageDecoder<Boolean> {
 
     @Override
     public void load(MemorySegment page, int valueCount) {
+        long storedBits = page.byteSize() * Byte.SIZE;
+        if (storedBits < valueCount) {
+            throw new MalformedFileException(
+                    valueCount + " PLAIN BOOLEAN values need " + valueCount + " bits but the page holds " + storedBits);
+        }
         this.segment = page;
-        this.storedBitCount = Math.toIntExact(page.byteSize() * Byte.SIZE);
+        // The int bit cursor stops at Integer.MAX_VALUE: no bit past it is ever read.
+        this.storedBitCount = (int) Math.min(storedBits, Integer.MAX_VALUE);
         this.bitPosition = 0;
     }
 
     @Override
     public Boolean next() {
         if (bitPosition >= storedBitCount) {
-            throw new IllegalStateException(
-                    "PlainBooleanDecoder exhausted: position " + bitPosition + " >= storedBitCount " + storedBitCount);
+            throw exhausted(bitPosition, storedBitCount);
         }
         int index = bitPosition++;
         int b = segment.get(JAVA_BYTE, index >> 3) & 0xff;
         return ((b >> (index & 7)) & 1) != 0;
+    }
+
+    /** Built out of line: {@link #next()} runs once per value, and the JIT only inlines it while it stays small. */
+    private static IllegalStateException exhausted(int bitPosition, int storedBitCount) {
+        return new IllegalStateException(
+                "PlainBooleanDecoder exhausted: position " + bitPosition + " >= storedBitCount " + storedBitCount);
     }
 
     @Override
