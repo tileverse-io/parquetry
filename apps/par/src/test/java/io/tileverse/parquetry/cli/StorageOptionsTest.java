@@ -70,11 +70,13 @@ class StorageOptionsTest {
                 .containsEntry("storage.s3.aws-secret-access-key", "SK")
                 .containsEntry("storage.s3.force-path-style", "true")
                 .containsEntry("storage.s3.anonymous", "true")
+                .containsEntry("storage.gcs.anonymous", "true")
+                .containsEntry("storage.azure.anonymous", "true")
                 .containsEntry("storage.gcs.project-id", "proj")
                 .containsEntry("storage.s3.endpoint", "http://localhost:4443")
                 .containsEntry("storage.gcs.endpoint", "http://localhost:4443")
                 .containsEntry("storage.azure.endpoint", "http://localhost:4443")
-                .hasSize(10);
+                .hasSize(12);
     }
 
     @Test

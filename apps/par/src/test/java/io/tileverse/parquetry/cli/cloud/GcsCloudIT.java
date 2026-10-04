@@ -39,8 +39,9 @@ import io.aiven.testcontainers.fakegcsserver.FakeGcsServerContainer;
 
 /**
  * Drives the {@code par} CLI against a GCS bucket served by fake-gcs-server, exercising the {@code --endpoint} (GCS
- * host override) and {@code --gcs-project} flags end to end over a {@code gs://bucket/key} URL. With a host override in
- * effect the provider authenticates anonymously, matching the emulator.
+ * host override), {@code --gcs-project} and {@code --anonymous} flags end to end over a {@code gs://bucket/key} URL.
+ * The emulator accepts unsigned requests, and {@code --anonymous} is what keeps the provider from looking up
+ * Application Default Credentials.
  */
 @Testcontainers(disabledWithoutDocker = true)
 class GcsCloudIT {
@@ -90,7 +91,14 @@ class GcsCloudIT {
         String target = "gs://" + BUCKET + "/uploaded.parquet";
 
         CliRunner.Result copy = CliRunner.run(
-                "cp", local.toString(), target, "--dst-endpoint", endpoint(), "--dst-gcs-project", PROJECT);
+                "cp",
+                local.toString(),
+                target,
+                "--dst-endpoint",
+                endpoint(),
+                "--dst-gcs-project",
+                PROJECT,
+                "--dst-anonymous");
         assertThat(copy.exitCode())
                 .as("par cp local->gcs exit code; stderr was: %s", copy.stderr())
                 .isZero();
@@ -110,7 +118,8 @@ class GcsCloudIT {
                 "--endpoint",
                 endpoint(),
                 "--gcs-project",
-                PROJECT);
+                PROJECT,
+                "--anonymous");
         assertThat(copy.exitCode())
                 .as("par cp gcs->local exit code; stderr was: %s", copy.stderr())
                 .isZero();
@@ -127,7 +136,8 @@ class GcsCloudIT {
     }
 
     private static String run(String command, String uri) {
-        CliRunner.Result result = CliRunner.run(command, uri, "--endpoint", endpoint(), "--gcs-project", PROJECT);
+        CliRunner.Result result =
+                CliRunner.run(command, uri, "--endpoint", endpoint(), "--gcs-project", PROJECT, "--anonymous");
         assertThat(result.exitCode())
                 .as("par %s exit code; stderr was: %s", command, result.stderr())
                 .isZero();
