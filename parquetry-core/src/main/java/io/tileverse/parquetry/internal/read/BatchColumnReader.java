@@ -48,6 +48,7 @@ import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.OffsetIndex;
+import io.tileverse.parquetry.format.UnsupportedFeatureException;
 import io.tileverse.parquetry.internal.read.page.DecodedPage;
 import io.tileverse.parquetry.internal.read.page.Dictionary;
 import io.tileverse.parquetry.internal.read.page.LevelDecoder;
@@ -1029,15 +1030,28 @@ final class BatchColumnReader {
         pageCursor.recordCurrentPageRowCount(pageLogicalRowCount);
         clearTypedPayloads();
         pageWasDictionary = PageDecoders.isDictionaryEncoded(page.valuesEncoding());
+        decodeValues(page);
+        valuesConsumedInCurrentPage = 0;
+        logicalRowsConsumedInCurrentPage = 0;
+        pageLoaded = true;
+    }
+
+    /** Decodes the page's values for the reader's lane; an encoding without a decoder fails naming the column. */
+    private void decodeValues(DecodedPage page) {
+        try {
+            decodeValuesForLane(page);
+        } catch (UnsupportedFeatureException e) {
+            throw e.withContext("Cannot decode a data page of column " + columnPath.dot() + ": " + e.getMessage());
+        }
+    }
+
+    private void decodeValuesForLane(DecodedPage page) {
         if (valueDecode == ValueDecode.WINDOWED_MASK) {
             openWindowDecoder(page);
             narrowRowSpaceToSurvivingRows();
         } else {
             decodePageValues(page);
         }
-        valuesConsumedInCurrentPage = 0;
-        logicalRowsConsumedInCurrentPage = 0;
-        pageLoaded = true;
     }
 
     /** The eager value lane: the page's values materialize before the first batch slices them. */

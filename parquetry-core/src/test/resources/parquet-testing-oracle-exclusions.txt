@@ -6,3 +6,4 @@
 non_hadoop_lz4_compressed.parquet          # oracle cannot decode this raw LZ4 framing; parquetry reads it (raw-LZ4 fallback, matches pyarrow)
 flba12_timestamp.parquet                   # oracle rejects TIMESTAMP on FIXED_LEN_BYTE_ARRAY(12), allowed by the current format spec
 int32_with_uuid_logical_type.parquet       # oracle rejects the UUID annotation on INT32; readers are expected to ignore it
+alp_extended.zstd.parquet                  # oracle predates the ALP encoding (wire code 10); AlpEncodingConformanceIT checks it against its PLAIN columns

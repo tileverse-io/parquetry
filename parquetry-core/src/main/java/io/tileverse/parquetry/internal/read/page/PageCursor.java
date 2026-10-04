@@ -295,7 +295,10 @@ public final class PageCursor {
             position = stream.position();
             return header;
         } catch (ParquetFormatException e) {
-            throw e.withContext("Failed to read page header for column " + columnPath.dot(), -1L, "PageHeader");
+            throw e.withContext(
+                    "Failed to read page header for column " + columnPath.dot() + ": " + e.getMessage(),
+                    -1L,
+                    "PageHeader");
         }
     }
 

@@ -154,11 +154,16 @@ final class ColumnMetaDataDeserializer {
         };
     }
 
+    /**
+     * Reads the chunk's encodings list, leaving out codes unknown to parquetry: the list is informational, and a page
+     * in such an encoding fails when it is decoded.
+     */
     private static List<Encoding> readEncodingList(CompactProtocolReader r) throws IOException {
         CompactProtocolReader.ListHeader lh = r.readListHeader();
         List<Encoding> result = new ArrayList<>(lh.size());
         for (int i = 0; i < lh.size(); i++) {
-            result.add(Encoding.valueOf(r.readI32()));
+            Optional<Encoding> encoding = Encoding.fromCode(r.readI32());
+            encoding.ifPresent(result::add);
         }
         return result;
     }
@@ -181,11 +186,13 @@ final class ColumnMetaDataDeserializer {
         return result;
     }
 
+    /** Reads the chunk's page encoding counts, leaving out the entries counting an encoding unknown to parquetry. */
     private static List<EncodingStats> readEncodingStatsList(CompactProtocolReader r) throws IOException {
         CompactProtocolReader.ListHeader lh = r.readListHeader();
         List<EncodingStats> result = new ArrayList<>(lh.size());
         for (int i = 0; i < lh.size(); i++) {
-            result.add(EncodingStatsDeserializer.read(r));
+            Optional<EncodingStats> stats = EncodingStatsDeserializer.read(r);
+            stats.ifPresent(result::add);
         }
         return result;
     }

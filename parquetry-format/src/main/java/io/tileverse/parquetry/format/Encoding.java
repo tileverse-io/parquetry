@@ -15,12 +15,15 @@
  */
 package io.tileverse.parquetry.format;
 
+import java.util.Optional;
+
 /**
  * Value or level encoding applied within a page; mirror of {@code Encoding} in {@code parquet.thrift}.
  *
  * <p>The Thrift wire codes have a gap at 1 (a deprecated {@code GROUP_VAR_INT} that was never used in real files) and
  * skip {@link #PLAIN_DICTIONARY} ahead to 2. Each constant carries its code in {@link #value()}; deserializers resolve
- * incoming i32 values via {@link #valueOf(int)}, so the source-order of these constants is not load-bearing.
+ * incoming i32 values via {@link #valueOf(int)} or {@link #fromCode(int)}. With explicit codes, the source order of
+ * these constants is not load-bearing.
  */
 public enum Encoding {
     PLAIN(0),
@@ -31,7 +34,9 @@ public enum Encoding {
     DELTA_LENGTH_BYTE_ARRAY(6),
     DELTA_BYTE_ARRAY(7),
     RLE_DICTIONARY(8),
-    BYTE_STREAM_SPLIT(9);
+    BYTE_STREAM_SPLIT(9),
+    /** Adaptive Lossless floating-Point for FLOAT and DOUBLE values, specified in parquet-format's AlpEncoding.md. */
+    ALP(10);
 
     private final int value;
 
@@ -49,6 +54,18 @@ public enum Encoding {
      *     slot at 1, {@code GROUP_VAR_INT}, which the parquetry decoder rejects rather than mapping to a placeholder)
      */
     public static Encoding valueOf(int code) {
+        return fromCode(code).orElseThrow(() -> new UnknownCodeException("Unknown Encoding wire code: " + code));
+    }
+
+    /**
+     * The encoding with that wire code, or empty when parquetry does not know the code. A reader uses it where an
+     * encoding written by a newer Parquet writer is informational and must not fail the read.
+     */
+    public static Optional<Encoding> fromCode(int code) {
+        return Optional.ofNullable(knownEncodingOrNull(code));
+    }
+
+    private static Encoding knownEncodingOrNull(int code) {
         return switch (code) {
             case 0 -> PLAIN;
             case 2 -> PLAIN_DICTIONARY;
@@ -59,7 +76,8 @@ public enum Encoding {
             case 7 -> DELTA_BYTE_ARRAY;
             case 8 -> RLE_DICTIONARY;
             case 9 -> BYTE_STREAM_SPLIT;
-            default -> throw new UnknownCodeException("Unknown Encoding wire code: " + code);
+            case 10 -> ALP;
+            default -> null;
         };
     }
 }

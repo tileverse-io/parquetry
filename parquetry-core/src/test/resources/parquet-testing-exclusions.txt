@@ -23,9 +23,6 @@ incorrect_map_schema.parquet                        # intentionally malformed ma
 # the parquet-java oracle trips on total_uncompressed_size = Integer.MAX_VALUE + 102.
 large_string_map.brotli.parquet            # column chunk over 2 GB
 
-# ALP encoding (Encoding 10) is not decoded yet
-alp_extended.zstd.parquet                  # ALP-encoded FLOAT and DOUBLE columns
-
 # FOLLOW-UP parquetry read bugs: the parquet-java oracle reads these, parquetry does not yet match.
 map_no_value.parquet                       # FOLLOW-UP: parquetry read bug (oracle reads int32-keyed map; parquetry throws)
 nullable.impala.parquet                    # FOLLOW-UP: parquetry materializes an unannotated structural LIST/MAP group as a struct; oracle reads it as list/map

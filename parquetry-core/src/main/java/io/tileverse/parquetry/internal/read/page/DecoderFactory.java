@@ -63,6 +63,7 @@ public final class DecoderFactory {
             case DELTA_LENGTH_BYTE_ARRAY -> deltaLengthByteArrayDecoder(kind);
             case DELTA_BYTE_ARRAY -> deltaByteArrayDecoder(kind);
             case BYTE_STREAM_SPLIT -> byteStreamSplitDecoder(kind);
+            case ALP -> alpDecoder(kind);
             case BIT_PACKED ->
                 throw new UnsupportedOperationException(
                         "Legacy BIT_PACKED encoding is not supported; use RLE-Bit-Packed hybrid (Parquet 2.x).");
@@ -127,6 +128,14 @@ public final class DecoderFactory {
             case DOUBLE -> new ByteStreamSplitDoubleDecoder();
             default ->
                 throw new MalformedFileException("BYTE_STREAM_SPLIT is only valid for FLOAT/DOUBLE; got " + kind);
+        };
+    }
+
+    private static PageDecoder<?> alpDecoder(PrimitiveKind kind) {
+        return switch (kind) {
+            case FLOAT -> new AlpFloatDecoder();
+            case DOUBLE -> new AlpDoubleDecoder();
+            default -> throw new MalformedFileException("ALP is only valid for FLOAT/DOUBLE; got " + kind);
         };
     }
 }

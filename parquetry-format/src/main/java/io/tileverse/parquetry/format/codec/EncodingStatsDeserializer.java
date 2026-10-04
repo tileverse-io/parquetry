@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.format.codec;
 
 import java.io.IOException;
+import java.util.Optional;
 
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.EncodingStats;
@@ -36,9 +37,13 @@ final class EncodingStatsDeserializer {
 
     private EncodingStatsDeserializer() {}
 
-    static EncodingStats read(CompactProtocolReader r) throws IOException {
+    /**
+     * Reads one entry, empty when it counts pages in an encoding unknown to parquetry. The whole struct is consumed
+     * either way, leaving the reader at the next list element.
+     */
+    static Optional<EncodingStats> read(CompactProtocolReader r) throws IOException {
         PageType pageType = PageType.DATA_PAGE;
-        Encoding encoding = Encoding.PLAIN;
+        Optional<Encoding> encoding = Optional.of(Encoding.PLAIN);
         int count = 0;
         int lastFieldId = 0;
         while (true) {
@@ -49,11 +54,14 @@ final class EncodingStatsDeserializer {
             lastFieldId = fh.fieldId();
             switch (fh.fieldId()) {
                 case 1 -> pageType = PageType.valueOf(r.readI32());
-                case 2 -> encoding = Encoding.valueOf(r.readI32());
+                case 2 -> encoding = Encoding.fromCode(r.readI32());
                 case 3 -> count = r.readI32();
                 default -> r.skipField(fh.type());
             }
         }
-        return new EncodingStats(pageType, encoding, count);
+        if (encoding.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(new EncodingStats(pageType, encoding.get(), count));
     }
 }

@@ -276,7 +276,10 @@ final class ColumnChunkSlicer {
         try {
             return ParquetFormat.readPageHeader(stream);
         } catch (ParquetFormatException e) {
-            throw e.withContext("Failed to read dictionary page header for column " + path.dot(), -1L, "PageHeader");
+            throw e.withContext(
+                    "Failed to read dictionary page header for column " + path.dot() + ": " + e.getMessage(),
+                    -1L,
+                    "PageHeader");
         }
     }
 }

@@ -65,9 +65,18 @@ class EnumWireCodesTest {
         assertCode(Encoding.DELTA_BYTE_ARRAY, 7);
         assertCode(Encoding.RLE_DICTIONARY, 8);
         assertCode(Encoding.BYTE_STREAM_SPLIT, 9);
+        assertCode(Encoding.ALP, 10);
         assertThatThrownBy(() -> Encoding.valueOf(1))
                 .as("GROUP_VAR_INT slot must be rejected by the parquetry decoder")
                 .isInstanceOf(UnknownCodeException.class);
+    }
+
+    @Test
+    void encodingFromCodeIsEmptyForCodesUnknownToParquetry() {
+        assertThat(Encoding.fromCode(10)).contains(Encoding.ALP);
+        assertThat(Encoding.fromCode(1)).isEmpty();
+        assertThat(Encoding.fromCode(11)).isEmpty();
+        assertThat(Encoding.fromCode(-1)).isEmpty();
     }
 
     @Test

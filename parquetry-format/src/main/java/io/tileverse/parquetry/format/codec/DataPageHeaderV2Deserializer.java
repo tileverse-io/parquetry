@@ -64,7 +64,7 @@ final class DataPageHeaderV2Deserializer {
                 case 1 -> numValues = r.readI32();
                 case 2 -> numNulls = r.readI32();
                 case 3 -> numRows = r.readI32();
-                case 4 -> encoding = Encoding.valueOf(r.readI32());
+                case 4 -> encoding = PageHeaderEncodings.read(r, "DataPageHeaderV2.encoding");
                 case 5 -> definitionLevelsByteLength = r.readI32();
                 case 6 -> repetitionLevelsByteLength = r.readI32();
                 case 7 -> isCompressed = fh.type() == CompactType.BOOLEAN_TRUE;
