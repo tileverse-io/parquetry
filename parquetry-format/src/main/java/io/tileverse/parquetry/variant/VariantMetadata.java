@@ -26,10 +26,15 @@ import io.tileverse.parquetry.io.Segments;
  * Reads a Parquet Variant metadata buffer: the key dictionary shared by a value's objects. The buffer is a header byte,
  * the dictionary size, an offset table, then the concatenated UTF-8 key bytes. Lookups binary-search when the header
  * marks the dictionary sorted and scan linearly otherwise.
+ *
+ * <p>Construction validates the buffer structure in O(1) and throws {@link ParquetFormatException} on malformed bytes:
+ * the header and version, the dictionary size (an unsigned value bounded by the buffer), the offset table, and the end
+ * of the key bytes. The offsets of each key are checked when that key is read.
  */
 public final class VariantMetadata {
 
     private static final int SUPPORTED_VERSION = 1;
+    private static final long HEADER_BYTES = 1L;
 
     private final MemorySegment segment;
     private final boolean sorted;
@@ -37,19 +42,61 @@ public final class VariantMetadata {
     private final int dictionarySize;
     private final long offsetTableStart;
     private final long keyBytesStart;
+    private final long keyBytesLength;
 
     public VariantMetadata(MemorySegment metadata) {
         this.segment = metadata;
-        int header = readByte(0);
-        int version = header & 0x0F;
-        if (version != SUPPORTED_VERSION) {
-            throw new ParquetFormatException("Unsupported variant metadata version " + version);
-        }
+        int header = readHeader();
+        requireSupportedVersion(header);
         this.sorted = (header & 0x10) != 0;
         this.offsetSize = ((header >> 6) & 0x03) + 1;
-        this.dictionarySize = (int) readUnsigned(1, offsetSize);
-        this.offsetTableStart = 1L + offsetSize;
-        this.keyBytesStart = offsetTableStart + (long) (dictionarySize + 1) * offsetSize;
+        this.offsetTableStart = HEADER_BYTES + offsetSize;
+        this.dictionarySize = readDictionarySize();
+        this.keyBytesStart = offsetTableStart + ((long) dictionarySize + 1) * offsetSize;
+        this.keyBytesLength = metadata.byteSize() - keyBytesStart;
+        requireKeyBytesEndWithinBuffer();
+    }
+
+    private int readHeader() {
+        if (segment.byteSize() < HEADER_BYTES) {
+            throw new ParquetFormatException("Variant metadata is empty");
+        }
+        return readByte(0);
+    }
+
+    private static void requireSupportedVersion(int header) {
+        int version = header & 0x0F;
+        if (version != SUPPORTED_VERSION) {
+            throw new ParquetFormatException("Unsupported Variant metadata version " + version);
+        }
+    }
+
+    /**
+     * Reads the dictionary size, an unsigned integer per the spec, and rejects it when its offset table does not fit in
+     * the buffer. The {@code long} arithmetic cannot overflow: the size has at most 32 bits and an offset at most four
+     * bytes.
+     */
+    private int readDictionarySize() {
+        long bufferSize = segment.byteSize();
+        if (offsetTableStart > bufferSize) {
+            throw new ParquetFormatException("Variant metadata of " + bufferSize + " bytes is too short for its "
+                    + offsetSize + "-byte dictionary size");
+        }
+        long declaredSize = readUnsigned(HEADER_BYTES, offsetSize);
+        long offsetTableEnd = offsetTableStart + (declaredSize + 1) * offsetSize;
+        if (offsetTableEnd > bufferSize || declaredSize > Integer.MAX_VALUE) {
+            throw new ParquetFormatException("Variant metadata declares " + declaredSize + " keys, more than its "
+                    + bufferSize + "-byte buffer can hold");
+        }
+        return (int) declaredSize;
+    }
+
+    private void requireKeyBytesEndWithinBuffer() {
+        long lastOffset = readOffset(dictionarySize);
+        if (lastOffset > keyBytesLength) {
+            throw new ParquetFormatException("Variant metadata key bytes end at offset " + lastOffset + " but only "
+                    + keyBytesLength + " key bytes follow the offset table");
+        }
     }
 
     public int dictionarySize() {
@@ -79,10 +126,18 @@ public final class VariantMetadata {
         if (id < 0 || id >= dictionarySize) {
             throw new IndexOutOfBoundsException("key id " + id + " out of [0," + dictionarySize + ")");
         }
-        long start = keyBytesStart + readOffset(id);
-        long end = keyBytesStart + readOffset(id + 1);
-        byte[] keyBytes = segment.asSlice(start, end - start).toArray(ValueLayout.JAVA_BYTE);
+        long start = readOffset(id);
+        long end = readOffset(id + 1);
+        requireKeyWithinKeyBytes(id, start, end);
+        byte[] keyBytes = segment.asSlice(keyBytesStart + start, end - start).toArray(ValueLayout.JAVA_BYTE);
         return new String(keyBytes, StandardCharsets.UTF_8);
+    }
+
+    private void requireKeyWithinKeyBytes(int id, long start, long end) {
+        if (start > end || end > keyBytesLength) {
+            throw new ParquetFormatException("Variant metadata key " + id + " has offsets [" + start + ", " + end
+                    + "), invalid for " + keyBytesLength + " key bytes");
+        }
     }
 
     public int idOf(String name) {

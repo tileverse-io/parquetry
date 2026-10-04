@@ -215,9 +215,10 @@ public final class JsonRecordEncoder {
 
     private static void renderVariantObject(JsonGenerator generator, Variant variant) {
         generator.writeStartObject();
-        for (String field : variant.fieldNames()) {
-            generator.writeName(field);
-            renderVariant(generator, variant.getField(field));
+        List<String> fieldNames = variant.fieldNames();
+        for (int index = 0; index < fieldNames.size(); index++) {
+            generator.writeName(fieldNames.get(index));
+            renderVariant(generator, variant.getFieldAtIndex(index));
         }
         generator.writeEndObject();
     }

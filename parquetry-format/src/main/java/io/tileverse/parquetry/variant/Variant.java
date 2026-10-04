@@ -37,8 +37,19 @@ import io.tileverse.parquetry.schema.UuidConverter;
  * A lazy, random-access view over one Parquet Variant value. Wraps the value buffer slice for this node plus the shared
  * metadata dictionary; navigation reads on demand and allocates proportional to the path actually read. Children are
  * fresh views over sub-slices of the same value buffer.
+ *
+ * <p>The view does not trust the buffer. Each read bounds-checks its headers, counts, offsets and lengths against the
+ * slice in O(1) and throws {@link ParquetFormatException} on malformed bytes; nothing validates the whole tree up
+ * front. A child view knows its nesting depth and a child deeper than {@value #MAX_DEPTH} levels is rejected,
+ * protecting recursive consumers from stack exhaustion on hostile input.
  */
 public final class Variant {
+
+    /**
+     * The deepest nesting level accepted for a child view, counting the top-level value as level 0. The limit matches
+     * the nesting limit of the parquet-java Variant JSON parser, the reference used by the parquet-testing corpus.
+     */
+    static final int MAX_DEPTH = 500;
 
     public enum Type {
         NULL,
@@ -65,26 +76,45 @@ public final class Variant {
         ARRAY
     }
 
+    private static final int BASIC_TYPE_MASK = 0x03;
     private static final int BASIC_TYPE_SHORT_STRING = 1;
     private static final int BASIC_TYPE_OBJECT = 2;
     private static final int BASIC_TYPE_ARRAY = 3;
 
     private static final long PAYLOAD_START = 1L;
     private static final int LENGTH_PREFIX_BYTES = Integer.BYTES;
+    private static final int DECIMAL_SCALE_BYTES = 1;
     private static final int INT128_BYTES = 16;
+    private static final int UUID_BYTES = 16;
     private static final int SMALL_COUNT_BYTES = 1;
     private static final int LARGE_COUNT_BYTES = 4;
 
     private final MemorySegment value;
     private final VariantMetadata metadata;
-
-    private Variant(MemorySegment value, VariantMetadata metadata) {
-        this.value = value;
-        this.metadata = metadata;
-    }
+    private final int depth;
 
     public static Variant of(MemorySegment value, VariantMetadata metadata) {
-        return new Variant(value, metadata);
+        return new Variant(value, metadata, 0);
+    }
+
+    private Variant(MemorySegment value, VariantMetadata metadata, int depth) {
+        requireDepthWithinLimit(depth);
+        requireHeaderByte(value);
+        this.value = value;
+        this.metadata = metadata;
+        this.depth = depth;
+    }
+
+    private static void requireDepthWithinLimit(int depth) {
+        if (depth > MAX_DEPTH) {
+            throw new ParquetFormatException("Variant nesting depth exceeds the maximum of " + MAX_DEPTH + " levels");
+        }
+    }
+
+    private static void requireHeaderByte(MemorySegment value) {
+        if (value.byteSize() == 0) {
+            throw new ParquetFormatException("Variant value is empty");
+        }
     }
 
     /** The canonical serialized form: the metadata bytes followed by the value bytes. */
@@ -100,16 +130,16 @@ public final class Variant {
     /**
      * Returns a copy of this value backed by fresh read-only heap segments, decoupled from the batch's page buffer.
      * Both the value bytes and the shared metadata dictionary are copied, letting the result outlive the batch it came
-     * from.
+     * from. The copy keeps this view's nesting depth.
      */
     public Variant detach() {
         MemorySegment detachedValue = Segments.toHeapReadOnly(value);
-        return new Variant(detachedValue, metadata.detach());
+        return new Variant(detachedValue, metadata.detach(), depth);
     }
 
     public Type type() {
         int header = header();
-        int basicType = header & 0x03;
+        int basicType = header & BASIC_TYPE_MASK;
         return switch (basicType) {
             case BASIC_TYPE_SHORT_STRING -> Type.STRING;
             case BASIC_TYPE_OBJECT -> Type.OBJECT;
@@ -150,57 +180,64 @@ public final class Variant {
     }
 
     public byte getByte() {
-        require(Type.INT8, "getByte");
+        requireScalar(Type.INT8, "getByte");
         return value.get(JAVA_BYTE, PAYLOAD_START);
     }
 
     public short getShort() {
-        require(Type.INT16, "getShort");
+        requireScalar(Type.INT16, "getShort");
         int low = value.get(JAVA_BYTE, PAYLOAD_START) & 0xFF;
         int high = value.get(JAVA_BYTE, PAYLOAD_START + 1) & 0xFF;
         return (short) (low | (high << 8));
     }
 
     public int getInt() {
-        require(Type.INT32, "getInt");
+        requireScalar(Type.INT32, "getInt");
         return value.get(INT32, PAYLOAD_START);
     }
 
     public long getLong() {
-        require(Type.INT64, "getLong");
+        requireScalar(Type.INT64, "getLong");
         return value.get(INT64, PAYLOAD_START);
     }
 
     public float getFloat() {
-        require(Type.FLOAT, "getFloat");
+        requireScalar(Type.FLOAT, "getFloat");
         return value.get(FLOAT, PAYLOAD_START);
     }
 
     public double getDouble() {
-        require(Type.DOUBLE, "getDouble");
+        requireScalar(Type.DOUBLE, "getDouble");
         return value.get(DOUBLE, PAYLOAD_START);
     }
 
     public String getString() {
         int header = header();
-        if ((header & 0x03) == BASIC_TYPE_SHORT_STRING) {
-            int length = header >> 2;
-            return readUtf8(PAYLOAD_START, length);
+        if ((header & BASIC_TYPE_MASK) == BASIC_TYPE_SHORT_STRING) {
+            return readUtf8(PAYLOAD_START, shortStringLength(header));
         }
         require(Type.STRING, "getString");
-        int length = value.get(INT32, PAYLOAD_START);
+        long length = lengthPrefixedPayloadLength(Type.STRING);
         return readUtf8(PAYLOAD_START + LENGTH_PREFIX_BYTES, length);
     }
 
     public BigDecimal getBigDecimal() {
-        Type actual = type();
-        BigInteger unscaled = unscaledDecimal(actual);
+        Type actual = requireDecimal();
+        requirePayload(actual);
         int scale = value.get(JAVA_BYTE, PAYLOAD_START) & 0xFF;
-        return new BigDecimal(unscaled, scale);
+        return new BigDecimal(unscaledDecimal(actual), scale);
+    }
+
+    private Type requireDecimal() {
+        Type actual = type();
+        if (actual != Type.DECIMAL4 && actual != Type.DECIMAL8 && actual != Type.DECIMAL16) {
+            throw new IllegalStateException("getBigDecimal called on " + actual);
+        }
+        return actual;
     }
 
     private BigInteger unscaledDecimal(Type type) {
-        long unscaledStart = PAYLOAD_START + 1;
+        long unscaledStart = PAYLOAD_START + DECIMAL_SCALE_BYTES;
         return switch (type) {
             case DECIMAL4 -> BigInteger.valueOf(value.get(INT32, unscaledStart));
             case DECIMAL8 -> BigInteger.valueOf(value.get(INT64, unscaledStart));
@@ -211,70 +248,68 @@ public final class Variant {
 
     public MemorySegment getBinary() {
         require(Type.BINARY, "getBinary");
-        int length = value.get(INT32, PAYLOAD_START);
+        long length = lengthPrefixedPayloadLength(Type.BINARY);
         return value.asSlice(PAYLOAD_START + LENGTH_PREFIX_BYTES, length).asReadOnly();
     }
 
     public UUID getUuid() {
-        require(Type.UUID, "getUuid");
+        requireScalar(Type.UUID, "getUuid");
         return UuidConverter.fromSegment(value, PAYLOAD_START);
     }
 
     public int getDateDays() {
-        require(Type.DATE, "getDateDays");
+        requireScalar(Type.DATE, "getDateDays");
         return value.get(INT32, PAYLOAD_START);
     }
 
     public long getTimeMicros() {
-        require(Type.TIME_NTZ, "getTimeMicros");
+        requireScalar(Type.TIME_NTZ, "getTimeMicros");
         return value.get(INT64, PAYLOAD_START);
     }
 
     public long getTimestampMicros() {
-        requireTimestampMicros();
+        Type actual = requireTimestampMicros();
+        requirePayload(actual);
         return value.get(INT64, PAYLOAD_START);
     }
 
     public long getTimestampNanos() {
-        requireTimestampNanos();
+        Type actual = requireTimestampNanos();
+        requirePayload(actual);
         return value.get(INT64, PAYLOAD_START);
     }
 
-    private void requireTimestampMicros() {
+    private Type requireTimestampMicros() {
         Type actual = type();
         if (actual != Type.TIMESTAMP_TZ && actual != Type.TIMESTAMP_NTZ) {
             throw new IllegalStateException("getTimestampMicros called on " + actual);
         }
+        return actual;
     }
 
-    private void requireTimestampNanos() {
+    private Type requireTimestampNanos() {
         Type actual = type();
         if (actual != Type.TIMESTAMP_NANOS_TZ && actual != Type.TIMESTAMP_NANOS_NTZ) {
             throw new IllegalStateException("getTimestampNanos called on " + actual);
         }
+        return actual;
     }
 
     public int numElements() {
         requireBasicType(BASIC_TYPE_ARRAY, "numElements");
-        return readElementCount();
+        return arrayLayout().count();
     }
 
     public Variant getElement(int index) {
         requireBasicType(BASIC_TYPE_ARRAY, "getElement");
-        int count = readElementCount();
-        if (index < 0 || index >= count) {
-            throw new IndexOutOfBoundsException("element index " + index + " out of [0," + count + ")");
-        }
-        int offsetSize = arrayOffsetSize();
-        long offsetTableStart = arrayOffsetTableStart();
-        long valuesStart = offsetTableStart + (long) (count + 1) * offsetSize;
-        long elementOffset = readUnsigned(offsetTableStart + (long) index * offsetSize, offsetSize);
-        return child(valuesStart + elementOffset);
+        ContainerLayout layout = arrayLayout();
+        requireIndexInRange(index, layout.count(), "element");
+        return childAt(layout, index);
     }
 
     public int numFields() {
         requireBasicType(BASIC_TYPE_OBJECT, "numFields");
-        return objectHeader().numFields();
+        return objectLayout().count();
     }
 
     public Variant getField(String key) {
@@ -283,39 +318,37 @@ public final class Variant {
         if (id < 0) {
             return null;
         }
-        ObjectHeader header = objectHeader();
-        int position = indexOfField(header, key);
+        ContainerLayout layout = objectLayout();
+        int position = indexOfField(layout, key);
         if (position < 0) {
             return null;
         }
-        return fieldAt(header, position);
+        return childAt(layout, position);
     }
 
     public List<String> fieldNames() {
         requireBasicType(BASIC_TYPE_OBJECT, "fieldNames");
-        ObjectHeader header = objectHeader();
-        List<String> names = new ArrayList<>(header.numFields());
-        for (int i = 0; i < header.numFields(); i++) {
-            names.add(metadata.key(fieldIdAt(header, i)));
+        ContainerLayout layout = objectLayout();
+        List<String> names = new ArrayList<>(layout.count());
+        for (int i = 0; i < layout.count(); i++) {
+            names.add(metadata.key(fieldIdAt(layout, i)));
         }
         return names;
     }
 
     public Variant getFieldAtIndex(int index) {
         requireBasicType(BASIC_TYPE_OBJECT, "getFieldAtIndex");
-        ObjectHeader header = objectHeader();
-        if (index < 0 || index >= header.numFields()) {
-            throw new IndexOutOfBoundsException("field index " + index + " out of [0," + header.numFields() + ")");
-        }
-        return fieldAt(header, index);
+        ContainerLayout layout = objectLayout();
+        requireIndexInRange(index, layout.count(), "field");
+        return childAt(layout, index);
     }
 
-    private int indexOfField(ObjectHeader header, String key) {
+    private int indexOfField(ContainerLayout layout, String key) {
         int low = 0;
-        int high = header.numFields() - 1;
+        int high = layout.count() - 1;
         while (low <= high) {
             int mid = (low + high) >>> 1;
-            String midKey = metadata.key(fieldIdAt(header, mid));
+            String midKey = metadata.key(fieldIdAt(layout, mid));
             int comparison = midKey.compareTo(key);
             if (comparison < 0) {
                 low = mid + 1;
@@ -329,76 +362,134 @@ public final class Variant {
     }
 
     /**
-     * The value bytes of the field at {@code index}, bounded to that field's exact length using the object's offset
-     * table. Unlike {@link #value()} on a child view (which slices open-ended from the field's start), this returns
-     * only the field's own bytes; a writer splicing a non-last field must not copy the trailing sibling fields.
+     * The value bytes of the field at {@code index}, bounded to that field's exact encoded length. A child view's
+     * {@link #value()} spans from the field's start to the end of the object's data; this returns only the field's own
+     * bytes, as required by a writer splicing a non-last field without its trailing siblings. The length comes from the
+     * field's own encoding because field offsets need not be monotonic: two fields may share one value.
      */
     public MemorySegment boundedFieldValueAtIndex(int index) {
         requireBasicType(BASIC_TYPE_OBJECT, "boundedFieldValueAtIndex");
-        ObjectHeader header = objectHeader();
-        if (index < 0 || index >= header.numFields()) {
-            throw new IndexOutOfBoundsException("field index " + index + " out of [0," + header.numFields() + ")");
+        ContainerLayout layout = objectLayout();
+        requireIndexInRange(index, layout.count(), "field");
+        Variant field = childAt(layout, index);
+        return field.value.asSlice(0, field.encodedSize()).asReadOnly();
+    }
+
+    /** The number of bytes encoding this node: its header plus its payload, or its whole container. */
+    private long encodedSize() {
+        int header = header();
+        return switch (header & BASIC_TYPE_MASK) {
+            case BASIC_TYPE_SHORT_STRING -> PAYLOAD_START + shortStringLength(header);
+            case BASIC_TYPE_OBJECT -> objectLayout().encodedSize();
+            case BASIC_TYPE_ARRAY -> arrayLayout().encodedSize();
+            default -> primitiveSize(type());
+        };
+    }
+
+    private long primitiveSize(Type type) {
+        if (type == Type.BINARY || type == Type.STRING) {
+            return PAYLOAD_START + LENGTH_PREFIX_BYTES + lengthPrefixedPayloadLength(type);
         }
-        long start = header.valuesStart() + fieldValueOffset(header, index);
-        long end = header.valuesStart() + fieldValueOffset(header, index + 1);
-        return value.asSlice(start, end - start).asReadOnly();
+        requirePayload(type);
+        return PAYLOAD_START + fixedPayloadBytes(type);
     }
 
-    private long fieldValueOffset(ObjectHeader header, int position) {
-        return readUnsigned(header.offsetTableStart() + (long) position * header.offsetSize(), header.offsetSize());
+    /**
+     * The checked shape of an object or array: the entry count, the field id table (objects only), the offset table,
+     * and the data region holding the entries' values. The last offset table entry is the data region size.
+     */
+    private record ContainerLayout(
+            Type type,
+            int count,
+            int idSize,
+            int offsetSize,
+            long idTableStart,
+            long offsetTableStart,
+            long valuesStart,
+            long dataSize) {
+
+        long encodedSize() {
+            return valuesStart + dataSize;
+        }
     }
 
-    private Variant fieldAt(ObjectHeader header, int position) {
-        return child(header.valuesStart() + fieldValueOffset(header, position));
-    }
-
-    private int fieldIdAt(ObjectHeader header, int position) {
-        return (int) readUnsigned(header.fieldIdStart() + (long) position * header.idSize(), header.idSize());
-    }
-
-    private record ObjectHeader(
-            int numFields, int idSize, int offsetSize, long fieldIdStart, long offsetTableStart, long valuesStart) {}
-
-    private ObjectHeader objectHeader() {
+    private ContainerLayout objectLayout() {
         int valueHeader = header() >> 2;
         int offsetSize = (valueHeader & 0x03) + 1;
         int idSize = ((valueHeader >> 2) & 0x03) + 1;
         boolean isLarge = ((valueHeader >> 4) & 0x01) != 0;
-        int countSize = isLarge ? LARGE_COUNT_BYTES : SMALL_COUNT_BYTES;
-        int numFields = (int) readUnsigned(PAYLOAD_START, countSize);
-        long fieldIdStart = PAYLOAD_START + countSize;
-        long offsetTableStart = fieldIdStart + (long) numFields * idSize;
-        long valuesStart = offsetTableStart + (long) (numFields + 1) * offsetSize;
-        return new ObjectHeader(numFields, idSize, offsetSize, fieldIdStart, offsetTableStart, valuesStart);
+        return containerLayout(Type.OBJECT, isLarge, idSize, offsetSize);
     }
 
-    private int readElementCount() {
-        return (int) readUnsigned(PAYLOAD_START, arrayCountSize());
-    }
-
-    private long arrayOffsetTableStart() {
-        return PAYLOAD_START + arrayCountSize();
-    }
-
-    private int arrayCountSize() {
-        return isLargeArray() ? LARGE_COUNT_BYTES : SMALL_COUNT_BYTES;
-    }
-
-    private int arrayOffsetSize() {
-        return ((header() >> 2) & 0x03) + 1;
-    }
-
-    private boolean isLargeArray() {
+    private ContainerLayout arrayLayout() {
         int valueHeader = header() >> 2;
-        return ((valueHeader >> 2) & 0x01) != 0;
+        int offsetSize = (valueHeader & 0x03) + 1;
+        boolean isLarge = ((valueHeader >> 2) & 0x01) != 0;
+        return containerLayout(Type.ARRAY, isLarge, 0, offsetSize);
     }
 
-    private Variant child(long start) {
-        return new Variant(value.asSlice(start), metadata);
+    private ContainerLayout containerLayout(Type type, boolean isLarge, int idSize, int offsetSize) {
+        int countSize = isLarge ? LARGE_COUNT_BYTES : SMALL_COUNT_BYTES;
+        long idTableStart = PAYLOAD_START + countSize;
+        requireAvailable(idTableStart, type, "entry count");
+        long count = readUnsigned(PAYLOAD_START, countSize);
+        long offsetTableStart = idTableStart + count * idSize;
+        long valuesStart = offsetTableStart + (count + 1) * offsetSize;
+        requireAvailable(valuesStart, type, "offset table");
+        long dataSize = readUnsigned(valuesStart - offsetSize, offsetSize);
+        requireAvailable(valuesStart + dataSize, type, "data");
+        return new ContainerLayout(
+                type,
+                indexableCount(count, type),
+                idSize,
+                offsetSize,
+                idTableStart,
+                offsetTableStart,
+                valuesStart,
+                dataSize);
+    }
+
+    private static int indexableCount(long count, Type type) {
+        if (count > Integer.MAX_VALUE) {
+            throw new ParquetFormatException(
+                    "Variant " + type + " declares " + count + " entries, more than a view can index");
+        }
+        return (int) count;
+    }
+
+    /**
+     * A child view over the entry at {@code position}, spanning from the entry's offset to the end of the container's
+     * data region.
+     */
+    private Variant childAt(ContainerLayout layout, int position) {
+        long offset = entryOffset(layout, position);
+        MemorySegment entry = value.asSlice(layout.valuesStart() + offset, layout.dataSize() - offset);
+        return new Variant(entry, metadata, depth + 1);
+    }
+
+    /** Reads an entry offset. An entry needs at least its header byte: the offset must lie strictly inside the data. */
+    private long entryOffset(ContainerLayout layout, int position) {
+        int offsetSize = layout.offsetSize();
+        long offset = readUnsigned(layout.offsetTableStart() + (long) position * offsetSize, offsetSize);
+        if (offset >= layout.dataSize()) {
+            throw new ParquetFormatException("Variant " + layout.type() + " entry " + position + " starts at offset "
+                    + offset + ", outside its " + layout.dataSize() + "-byte data region");
+        }
+        return offset;
+    }
+
+    private int fieldIdAt(ContainerLayout layout, int position) {
+        long id = readUnsigned(layout.idTableStart() + (long) position * layout.idSize(), layout.idSize());
+        int dictionarySize = metadata.dictionarySize();
+        if (id >= dictionarySize) {
+            throw new ParquetFormatException("Variant OBJECT field " + position + " has key id " + id
+                    + ", out of range for a dictionary of " + dictionarySize + " keys");
+        }
+        return (int) id;
     }
 
     private void requireBasicType(int basicType, String accessor) {
-        if ((header() & 0x03) != basicType) {
+        if ((header() & BASIC_TYPE_MASK) != basicType) {
             throw new IllegalStateException(accessor + " called on " + type());
         }
     }
@@ -424,7 +515,65 @@ public final class Variant {
         }
     }
 
-    private String readUtf8(long offset, int length) {
+    private static void requireIndexInRange(int index, int count, String kind) {
+        if (index < 0 || index >= count) {
+            throw new IndexOutOfBoundsException(kind + " index " + index + " out of [0," + count + ")");
+        }
+    }
+
+    private void requireScalar(Type expected, String accessor) {
+        require(expected, accessor);
+        requirePayload(expected);
+    }
+
+    private void requirePayload(Type type) {
+        requireAvailable(PAYLOAD_START + fixedPayloadBytes(type), type, "payload");
+    }
+
+    private static int fixedPayloadBytes(Type type) {
+        return switch (type) {
+            case NULL, BOOLEAN -> 0;
+            case INT8 -> Byte.BYTES;
+            case INT16 -> Short.BYTES;
+            case INT32, DATE, FLOAT -> Integer.BYTES;
+            case INT64, DOUBLE, TIME_NTZ, TIMESTAMP_TZ, TIMESTAMP_NTZ, TIMESTAMP_NANOS_TZ, TIMESTAMP_NANOS_NTZ ->
+                Long.BYTES;
+            case DECIMAL4 -> DECIMAL_SCALE_BYTES + Integer.BYTES;
+            case DECIMAL8 -> DECIMAL_SCALE_BYTES + Long.BYTES;
+            case DECIMAL16 -> DECIMAL_SCALE_BYTES + INT128_BYTES;
+            case UUID -> UUID_BYTES;
+            case BINARY, STRING, OBJECT, ARRAY ->
+                throw new IllegalArgumentException(type + " has no fixed payload size");
+        };
+    }
+
+    private long shortStringLength(int header) {
+        long length = header >> 2;
+        requireAvailable(PAYLOAD_START + length, Type.STRING, "short string");
+        return length;
+    }
+
+    private long lengthPrefixedPayloadLength(Type type) {
+        long payloadStart = PAYLOAD_START + LENGTH_PREFIX_BYTES;
+        requireAvailable(payloadStart, type, "length prefix");
+        long length = readUnsigned(PAYLOAD_START, LENGTH_PREFIX_BYTES);
+        requireAvailable(payloadStart + length, type, "payload");
+        return length;
+    }
+
+    /**
+     * Rejects a read reaching past this node's slice. A {@code long} holds each {@code end} without overflow: it adds a
+     * few header bytes to products of unsigned 32-bit counts and widths of at most four bytes.
+     */
+    private void requireAvailable(long end, Type type, String part) {
+        long available = value.byteSize();
+        if (end > available) {
+            throw new ParquetFormatException(
+                    "Variant " + type + " " + part + " needs " + end + " bytes but the value has " + available);
+        }
+    }
+
+    private String readUtf8(long offset, long length) {
         byte[] bytes = value.asSlice(offset, length).toArray(JAVA_BYTE);
         return new String(bytes, StandardCharsets.UTF_8);
     }
