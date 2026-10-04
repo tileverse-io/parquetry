@@ -258,6 +258,7 @@ class StatisticsPruningParityIT {
                         + in.values().stream()
                                 .map(StatisticsPruningParityIT::renderLiteral)
                                 .toList();
+            case Predicate.Not not -> "Not " + describe(not.child());
             default -> predicate.toString();
         };
     }
@@ -269,7 +270,9 @@ class StatisticsPruningParityIT {
         return literal.toString();
     }
 
-    /** Null checks, the six comparisons against each literal, and IN over each pair of neighboring literals. */
+    /**
+     * Null checks, the six comparisons against each literal, and IN and NOT IN over each pair of neighboring literals.
+     */
     private static List<Predicate> predicateGrid(ColumnPath column, List<Value> literals) {
         List<Predicate> grid = new ArrayList<>();
         grid.add(new Predicate.IsNull(column));
@@ -283,7 +286,9 @@ class StatisticsPruningParityIT {
             grid.add(new Predicate.GtEq(column, literal));
         }
         for (int i = 0; i + 1 < literals.size(); i++) {
-            grid.add(new Predicate.In(column, List.of(literals.get(i), literals.get(i + 1))));
+            Predicate in = new Predicate.In(column, List.of(literals.get(i), literals.get(i + 1)));
+            grid.add(in);
+            grid.add(in.negate());
         }
         return grid;
     }
@@ -391,8 +396,14 @@ class StatisticsPruningParityIT {
         return keysOf(matching);
     }
 
-    /** A null cell matches only a null check; a value comparison against it is false. */
+    /**
+     * A null cell matches only a null check; a value comparison against it is false. A negation matches the rows left
+     * out by its child, null cells included.
+     */
     private static boolean expectedMatch(Predicate predicate, Object cell) {
+        if (predicate instanceof Predicate.Not(Predicate child)) {
+            return !expectedMatch(child, cell);
+        }
         if (cell == null) {
             return predicate instanceof Predicate.IsNull;
         }

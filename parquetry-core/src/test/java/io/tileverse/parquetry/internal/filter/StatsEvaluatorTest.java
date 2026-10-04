@@ -308,6 +308,22 @@ class StatsEvaluatorTest {
     }
 
     @Test
+    void notInWithValuesOutsideTheBoundsPassesAll() {
+        // No row matches the IN, hence each row, a null one included, matches its negation.
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, 3));
+        Predicate notIn =
+                PredicateNormalizer.normalize(col("year").inInts(2030, 2040).negate());
+        assertThat(StatsEvaluator.evaluate(notIn, cols, ROW_COUNT)).isInstanceOf(PruningDecision.PassedAll.class);
+    }
+
+    @Test
+    void notInWithAValueInsideTheBoundsIsNotDecided() {
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, 0));
+        Predicate notIn = PredicateNormalizer.normalize(col("year").inInts(2015).negate());
+        assertThat(StatsEvaluator.evaluate(notIn, cols, ROW_COUNT)).isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
+    @Test
     void stringColumnEqInRange() {
         FilterPipeline.ColumnStatsLookup cols = single("name", binaryStats("alpha", "omega", 0));
         PruningDecision d = StatsEvaluator.evaluate(col("name").eq("mango"), cols, ROW_COUNT);

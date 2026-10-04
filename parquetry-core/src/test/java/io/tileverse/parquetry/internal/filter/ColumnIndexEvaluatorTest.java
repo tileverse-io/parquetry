@@ -223,6 +223,33 @@ class ColumnIndexEvaluatorTest {
     }
 
     @Test
+    void notInKeepsThePagesHoldingOtherValues() {
+        // The middle page [2018, 2022] may hold 2020, yet it also holds the rows 2018, 2019, 2021 and 2022.
+        Predicate notIn = PredicateNormalizer.normalize(col("year").inInts(2020).negate());
+
+        PruningDecision d = ColumnIndexEvaluator.evaluate(notIn, year3Pages(), ROW_GROUP_ROWS);
+
+        assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
+    @Test
+    void negationInsideAConjunctionLeavesTheOtherLeavesNarrowing() {
+        Predicate p = PredicateNormalizer.normalize(
+                col("year").inInts(2020).negate().and(col("year").gt(2023)));
+
+        PruningDecision d = ColumnIndexEvaluator.evaluate(p, year3Pages(), ROW_GROUP_ROWS);
+
+        assertThat(((PruningDecision.NarrowedTo) d).ranges().ranges()).containsExactly(new Range(200, 299));
+    }
+
+    @Test
+    void consultedColumnsOmitsANegation() {
+        Predicate notIn = PredicateNormalizer.normalize(col("year").inInts(2020).negate());
+
+        assertThat(ColumnIndexEvaluator.consultedColumns(notIn)).isEmpty();
+    }
+
+    @Test
     void evaluateWarmsTheColumnsItIsAboutToAsk() {
         List<List<ColumnPath>> warmed = new ArrayList<>();
         FilterPipeline.ColumnPageStatsLookup pages = year3Pages();

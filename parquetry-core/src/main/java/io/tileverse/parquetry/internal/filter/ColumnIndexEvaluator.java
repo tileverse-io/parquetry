@@ -41,7 +41,7 @@ import io.tileverse.parquetry.schema.ColumnPath;
  *   <li>{@link PruningDecision.PassedAll} when every page survives - i.e. the predicate doesn't help here.
  *   <li>{@link PruningDecision.NarrowedTo} when a strict subset of pages survives.
  *   <li>{@link PruningDecision.NotApplied} when the column has no ColumnIndex/OffsetIndex loaded, the value type isn't
- *       decodable, or the predicate doesn't translate to a column-index lookup (spatial predicates).
+ *       decodable, or the predicate doesn't translate to a column-index lookup (spatial predicates, negations).
  * </ul>
  *
  * <p>Assumes the predicate has already been normalized (Not pushed to leaves, Always folded, And/Or flattened).
@@ -81,8 +81,8 @@ final class ColumnIndexEvaluator {
 
     /**
      * The leaf columns consulted by {@link #matchRanges} for page statistics, in encounter order. A leaf for which this
-     * tier resolves no ranges - a spatial relation, a geometry filter, a row-position delete, a quantified leaf - names
-     * no column here, because reading its index sections would fetch bytes never looked at by the tier.
+     * tier resolves no ranges - a negation, a spatial relation, a geometry filter, a row-position delete, a quantified
+     * leaf - names no column here, because reading its index sections would fetch bytes never looked at by the tier.
      *
      * <p>An upper bound, not an exact set: a conjunction stops early once its intersection empties, and asks for fewer
      * columns.
@@ -97,7 +97,6 @@ final class ColumnIndexEvaluator {
         switch (predicate) {
             case Predicate.And and -> and.children().forEach(child -> collectConsultedColumns(child, columns));
             case Predicate.Or or -> or.children().forEach(child -> collectConsultedColumns(child, columns));
-            case Predicate.Not not -> collectConsultedColumns(not.child(), columns);
             case Predicate.Eq eq -> columns.add(eq.col());
             case Predicate.NotEq notEq -> columns.add(notEq.col());
             case Predicate.Lt lt -> columns.add(lt.col());
@@ -108,6 +107,7 @@ final class ColumnIndexEvaluator {
             case Predicate.IsNull isNull -> columns.add(isNull.col());
             case Predicate.IsNotNull isNotNull -> columns.add(isNotNull.col());
             case Predicate.Always _,
+                    Predicate.Not _,
                     Predicate.Spatial _,
                     Predicate.GeometryFilterPredicate _,
                     Predicate.RowIndexExcluded _,
@@ -128,8 +128,9 @@ final class ColumnIndexEvaluator {
                 Optional.of(value ? RowRanges.all(rowGroupRowCount) : RowRanges.empty());
             case Predicate.And(List<Predicate> children) -> combineAnd(children, columns, rowGroupRowCount);
             case Predicate.Or(List<Predicate> children) -> combineOr(children, columns, rowGroupRowCount);
-            case Predicate.Not(Predicate child) ->
-                matchRanges(child, columns, rowGroupRowCount).map(r -> complement(r, rowGroupRowCount));
+            // A child's ranges are a superset of its matching rows; their complement would drop pages holding rows
+            // matched by the negation.
+            case Predicate.Not _ -> Optional.empty();
             case Predicate.Eq(ColumnPath col, Value v) ->
                 leafRanges(col, columns, rowGroupRowCount, (min, max) -> mayEqual(v, min, max));
             case Predicate.NotEq(ColumnPath col, Value v) ->
@@ -311,25 +312,6 @@ final class ColumnIndexEvaluator {
         long first = pages.get(i).firstRowIndex();
         long last = (i + 1 < pages.size()) ? pages.get(i + 1).firstRowIndex() - 1 : totalRows - 1;
         return new Range(first, last);
-    }
-
-    /** Returns the complement of {@code ranges} within {@code [0, totalRows-1]}. */
-    private static RowRanges complement(RowRanges ranges, long totalRows) {
-        if (totalRows <= 0) {
-            return RowRanges.empty();
-        }
-        List<Range> out = new ArrayList<>();
-        long cursor = 0;
-        for (Range r : ranges.ranges()) {
-            if (r.first() > cursor) {
-                out.add(new Range(cursor, r.first() - 1));
-            }
-            cursor = Math.max(cursor, r.last() + 1);
-        }
-        if (cursor < totalRows) {
-            out.add(new Range(cursor, totalRows - 1));
-        }
-        return new RowRanges(out);
     }
 
     /** Returns the union of two sorted, disjoint row range sets. */
