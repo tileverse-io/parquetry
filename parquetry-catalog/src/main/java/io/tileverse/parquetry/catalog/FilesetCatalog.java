@@ -209,7 +209,7 @@ public final class FilesetCatalog implements DatasetCatalog {
 
         // The schema-equality check runs sequentially over the index-ordered gather results, keeping its failure
         // message deterministic (first file vs the first offender in listing order).
-        List<GeoParquetMetadata> perFileGeo = new ArrayList<>();
+        List<Optional<GeoParquetMetadata>> perFileGeo = new ArrayList<>(files.size());
         List<Map<String, String>> perFilePartitions = new ArrayList<>(files.size());
         List<FileStats> perFileFooterStats = new ArrayList<>(files.size());
         ParquetSchema unifiedSchema = null;
@@ -225,7 +225,7 @@ public final class FilesetCatalog implements DatasetCatalog {
                 throw new ParquetSchemaException("files '" + files.get(0).relativePath() + "' and '"
                         + files.get(index).relativePath() + "' do not share a schema by equality");
             }
-            parseGeoMetadata(file.geoJson(), files.get(index)).ifPresent(perFileGeo::add);
+            perFileGeo.add(parseGeoMetadata(file.geoJson(), files.get(index)));
             Map<String, String> partitions =
                     HivePartitionResolver.partitionValues(files.get(index).relativePath());
             perFilePartitions.add(partitions);

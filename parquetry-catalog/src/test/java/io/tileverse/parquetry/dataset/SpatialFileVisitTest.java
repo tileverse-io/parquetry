@@ -126,6 +126,17 @@ class SpatialFileVisitTest {
     }
 
     @Test
+    void neverSkipsAFileWhoseBoxHasNoExtent() {
+        BoundingBox emptyGeometries = box2d(
+                Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY);
+        IntFunction<Optional<BoundingBox>> boxes = boxesOf(Map.of(0, emptyGeometries));
+
+        SpatialFileVisit visit = SpatialFileVisit.plan(List.of(0), boxes, SKIPS_EVERY_REGION, NEVER_ACCEPTS);
+
+        assertThat(visit.skips(0)).isFalse();
+    }
+
+    @Test
     void consultsTheProbeWithTheFilesOwnBox() {
         List<double[]> consulted = new ArrayList<>();
         SpatialReadProbe recording = new SpatialReadProbe() {

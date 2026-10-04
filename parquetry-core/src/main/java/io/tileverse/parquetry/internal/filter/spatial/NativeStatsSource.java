@@ -126,9 +126,11 @@ final class NativeStatsSource implements SpatialBoundsSource {
         return boxes;
     }
 
+    /** The native box of a chunk, absent when the writer recorded none or recorded a NaN bound. */
     private static Optional<BoundingBox> boxAt(CompactFooter footer, int rowGroup, int leaf) {
         Optional<ChunkMeta> chunk = footer.chunkIfPresent(rowGroup, leaf);
-        return chunk.flatMap(ChunkMeta::geoExtent);
+        Optional<BoundingBox> recorded = chunk.flatMap(ChunkMeta::geoExtent);
+        return recorded.filter(box -> !box.hasNaNBound());
     }
 
     /**

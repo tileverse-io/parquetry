@@ -24,6 +24,49 @@ import org.junit.jupiter.api.Test;
 class BoundingBoxTest {
 
     @Test
+    void aRegularOrWrappingBoxHasAnExtent() {
+        BoundingBox regular =
+                BoundingBox.builder().xmin(10).xmax(20).ymin(-5).ymax(5).build();
+        BoundingBox wrapping =
+                BoundingBox.builder().xmin(170).xmax(-170).ymin(-5).ymax(5).build();
+
+        assertThat(regular.hasExtent()).isTrue();
+        assertThat(wrapping.hasExtent()).isTrue();
+    }
+
+    @Test
+    void anEmptyGeometryEnvelopeHasNoExtent() {
+        BoundingBox empty = BoundingBox.builder()
+                .xmin(Double.POSITIVE_INFINITY)
+                .xmax(Double.NEGATIVE_INFINITY)
+                .ymin(Double.POSITIVE_INFINITY)
+                .ymax(Double.NEGATIVE_INFINITY)
+                .build();
+        BoundingBox invertedLatitudes =
+                BoundingBox.builder().xmin(0).xmax(10).ymin(5).ymax(-5).build();
+        BoundingBox nan =
+                BoundingBox.builder().xmin(Double.NaN).xmax(10).ymin(0).ymax(5).build();
+
+        assertThat(empty.hasExtent()).isFalse();
+        assertThat(invertedLatitudes.hasExtent()).isFalse();
+        assertThat(nan.hasExtent()).isFalse();
+    }
+
+    /** The inverted infinite box of empty geometries has its minimum east of its maximum, yet bounds no longitudes. */
+    @Test
+    void aBoxWithoutAnExtentNeverWraps() {
+        BoundingBox empty = BoundingBox.builder()
+                .xmin(Double.POSITIVE_INFINITY)
+                .xmax(Double.NEGATIVE_INFINITY)
+                .ymin(Double.POSITIVE_INFINITY)
+                .ymax(Double.NEGATIVE_INFINITY)
+                .build();
+
+        assertThat(empty.wrapsAntimeridian()).isFalse();
+        assertThat(empty.planarEnclosure()).isSameAs(empty);
+    }
+
+    @Test
     void aBoxWithinTheLongitudeRangeIsItsOwnPlanarEnclosure() {
         BoundingBox regular =
                 BoundingBox.builder().xmin(10).xmax(20).ymin(-5).ymax(5).build();

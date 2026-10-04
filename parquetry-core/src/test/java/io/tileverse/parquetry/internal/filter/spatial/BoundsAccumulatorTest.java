@@ -87,6 +87,34 @@ class BoundsAccumulatorTest {
     }
 
     @Test
+    void theEnvelopeOfAnEmptyGeometryAddsNothing() {
+        BoundsAccumulator accumulator = new BoundsAccumulator();
+
+        accumulator.unionXy(
+                Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY);
+
+        assertThat(accumulator.snapshot()).isEmpty();
+    }
+
+    @Test
+    void aBoxWithoutAnExtentNeitherInvertsNorWidensTheExtent() {
+        BoundsAccumulator accumulator = new BoundsAccumulator();
+        BoundingBox noExtent = box(
+                Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY);
+
+        accumulator.union(noExtent);
+        assertThat(accumulator.snapshot()).isEmpty();
+
+        accumulator.union(box(30, 10, 40, 20));
+        accumulator.union(noExtent);
+        BoundingBox extent = accumulator.snapshot().orElseThrow();
+        assertThat(extent.xmin()).isEqualTo(30);
+        assertThat(extent.ymin()).isEqualTo(10);
+        assertThat(extent.xmax()).isEqualTo(40);
+        assertThat(extent.ymax()).isEqualTo(20);
+    }
+
+    @Test
     void zSurvivesOnlyWhenEveryContributionHasIt() {
         BoundsAccumulator accumulator = new BoundsAccumulator();
 

@@ -18,12 +18,14 @@ package io.tileverse.parquetry.dataset;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.format.BoundingBox;
+import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 class GeoMetadataAggregatorTest {
@@ -62,11 +64,15 @@ class GeoMetadataAggregatorTest {
     private static final String GEO_NORMAL =
             "{\"version\":\"1.1.0\",\"primary_column\":\"geometry\",\"columns\":{\"geometry\":{\"encoding\":\"WKB\",\"geometry_types\":[\"Point\"],\"bbox\":[0,-2,10,8]}}}";
 
+    // The primary "geometry" column without a bbox.
+    private static final String GEO_WITHOUT_BBOX =
+            "{\"version\":\"1.1.0\",\"primary_column\":\"geometry\",\"columns\":{\"geometry\":{\"encoding\":\"WKB\",\"geometry_types\":[\"Point\"]}}}";
+
     @Test
     void unionsBboxAndGeometryTypes() {
         GeoParquetMetadata a = GeoParquetMetadata.parse(GEO_A);
         GeoParquetMetadata b = GeoParquetMetadata.parse(GEO_B);
-        Optional<GeoParquetMetadata> merged = GeoMetadataAggregator.aggregate(List.of(a, b));
+        Optional<GeoParquetMetadata> merged = GeoMetadataAggregator.aggregate(eachFile(a, b));
         assertThat(merged).isPresent();
         BoundingBox bbox = merged.get().columns().get("geometry").bbox().orElseThrow();
         assertThat(bbox.xmin()).isZero();
@@ -80,7 +86,7 @@ class GeoMetadataAggregatorTest {
     @Test
     void preservesV2VersionSubtype() {
         GeoParquetMetadata v2 = GeoParquetMetadata.parse(GEO_V2);
-        Optional<GeoParquetMetadata> merged = GeoMetadataAggregator.aggregate(List.of(v2));
+        Optional<GeoParquetMetadata> merged = GeoMetadataAggregator.aggregate(eachFile(v2));
         assertThat(merged).isPresent();
         assertThat(merged.get()).isInstanceOf(GeoParquetMetadata.V2.class);
         assertThat(merged.get().version()).isEqualTo("2.0.0");
@@ -92,10 +98,49 @@ class GeoMetadataAggregatorTest {
     }
 
     @Test
+    void filesWithoutGeoMetadataAloneAggregateToNothing() {
+        assertThat(GeoMetadataAggregator.aggregate(List.of(Optional.empty(), Optional.empty())))
+                .isEmpty();
+    }
+
+    @Test
+    void aFileWithoutGeoMetadataLeavesTheBboxUnknown() {
+        GeoParquetMetadata a = GeoParquetMetadata.parse(GEO_A);
+
+        Optional<GeoParquetMetadata> merged =
+                GeoMetadataAggregator.aggregate(List.of(Optional.of(a), Optional.empty()));
+
+        GeoColumn geometry = merged.orElseThrow().columns().get("geometry");
+        assertThat(geometry.bbox()).isEmpty();
+        assertThat(geometry.geometryTypes()).containsExactly("Point");
+    }
+
+    @Test
+    void aFileWithoutTheColumnLeavesItsBboxUnknown() {
+        GeoParquetMetadata onlyGeometry = GeoParquetMetadata.parse(GEO_ONLY_GEOMETRY);
+        GeoParquetMetadata twoColumns = GeoParquetMetadata.parse(GEO_TWO_COLUMNS);
+
+        Optional<GeoParquetMetadata> merged = GeoMetadataAggregator.aggregate(eachFile(twoColumns, onlyGeometry));
+
+        assertThat(merged.orElseThrow().columns().get("geometry").bbox()).isPresent();
+        assertThat(merged.orElseThrow().columns().get("geometry2").bbox()).isEmpty();
+    }
+
+    @Test
+    void aFileWithoutABboxLeavesTheBboxUnknown() {
+        GeoParquetMetadata a = GeoParquetMetadata.parse(GEO_A);
+        GeoParquetMetadata withoutBbox = GeoParquetMetadata.parse(GEO_WITHOUT_BBOX);
+
+        Optional<GeoParquetMetadata> merged = GeoMetadataAggregator.aggregate(eachFile(a, withoutBbox));
+
+        assertThat(merged.orElseThrow().columns().get("geometry").bbox()).isEmpty();
+    }
+
+    @Test
     void rejectsDisagreeingPrimaryColumn() {
         GeoParquetMetadata a = GeoParquetMetadata.parse(GEO_A);
         GeoParquetMetadata other = GeoParquetMetadata.parse(GEO_OTHER_PRIMARY);
-        List<GeoParquetMetadata> disagreeing = List.of(a, other);
+        List<Optional<GeoParquetMetadata>> disagreeing = eachFile(a, other);
         assertThatThrownBy(() -> GeoMetadataAggregator.aggregate(disagreeing))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("primary column");
@@ -105,7 +150,7 @@ class GeoMetadataAggregatorTest {
     void rejectsDisagreeingCrs() {
         GeoParquetMetadata noCrs = GeoParquetMetadata.parse(GEO_A);
         GeoParquetMetadata withCrs = GeoParquetMetadata.parse(GEO_WITH_CRS);
-        List<GeoParquetMetadata> disagreeing = List.of(noCrs, withCrs);
+        List<Optional<GeoParquetMetadata>> disagreeing = eachFile(noCrs, withCrs);
         assertThatThrownBy(() -> GeoMetadataAggregator.aggregate(disagreeing))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("crs");
@@ -115,7 +160,7 @@ class GeoMetadataAggregatorTest {
     void unionsColumnSetAcrossFiles() {
         GeoParquetMetadata onlyGeometry = GeoParquetMetadata.parse(GEO_ONLY_GEOMETRY);
         GeoParquetMetadata twoColumns = GeoParquetMetadata.parse(GEO_TWO_COLUMNS);
-        Optional<GeoParquetMetadata> merged = GeoMetadataAggregator.aggregate(List.of(onlyGeometry, twoColumns));
+        Optional<GeoParquetMetadata> merged = GeoMetadataAggregator.aggregate(eachFile(onlyGeometry, twoColumns));
         assertThat(merged).isPresent();
         assertThat(merged.get().columns()).containsKeys("geometry", "geometry2");
     }
@@ -124,7 +169,7 @@ class GeoMetadataAggregatorTest {
     void wrappingBoxYieldsFullLongitudeSuperset() {
         GeoParquetMetadata wrapping = GeoParquetMetadata.parse(GEO_WRAPPING);
         GeoParquetMetadata normal = GeoParquetMetadata.parse(GEO_NORMAL);
-        Optional<GeoParquetMetadata> merged = GeoMetadataAggregator.aggregate(List.of(wrapping, normal));
+        Optional<GeoParquetMetadata> merged = GeoMetadataAggregator.aggregate(eachFile(wrapping, normal));
         assertThat(merged).isPresent();
         BoundingBox bbox = merged.get().columns().get("geometry").bbox().orElseThrow();
         assertThat(bbox.xmin()).isEqualTo(-180);
@@ -137,9 +182,18 @@ class GeoMetadataAggregatorTest {
     void rejectsDisagreeingEncoding() {
         GeoParquetMetadata wkb = GeoParquetMetadata.parse(GEO_A);
         GeoParquetMetadata point = GeoParquetMetadata.parse(GEO_POINT_ENCODING);
-        List<GeoParquetMetadata> disagreeing = List.of(wkb, point);
+        List<Optional<GeoParquetMetadata>> disagreeing = eachFile(wkb, point);
         assertThatThrownBy(() -> GeoMetadataAggregator.aggregate(disagreeing))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("encoding");
+    }
+
+    /** One entry per file, each file with geo metadata. */
+    private static List<Optional<GeoParquetMetadata>> eachFile(GeoParquetMetadata... files) {
+        List<Optional<GeoParquetMetadata>> perFile = new ArrayList<>(files.length);
+        for (GeoParquetMetadata file : files) {
+            perFile.add(Optional.of(file));
+        }
+        return perFile;
     }
 }

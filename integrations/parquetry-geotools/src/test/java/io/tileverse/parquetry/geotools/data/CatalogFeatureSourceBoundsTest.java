@@ -33,6 +33,10 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 
+import org.geotools.api.data.Query;
+import org.geotools.api.filter.Filter;
+import org.geotools.api.filter.FilterFactory;
+import org.geotools.factory.CommonFactoryFinder;
 import org.geotools.geometry.jts.ReferencedEnvelope;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -57,25 +61,27 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.testkit.TestCorpus;
 
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
-/**
- * Feature source bounds over a GeoParquet file with a {@code "geo"} metadata box wrapping the antimeridian. A
- * GEOGRAPHY-aware writer declares the extent of points at longitudes 175 and -175 that way; GeoTools receives the
- * planar enclosure of that box, never a box with its minimum east of its maximum.
- */
+/** Feature source bounds as received by GeoTools: finite, and never a box with its minimum east of its maximum. */
 class CatalogFeatureSourceBoundsTest {
 
     private static final String GEOMETRY = "geometry";
+    private static final FilterFactory FF = CommonFactoryFinder.getFilterFactory();
     private static final byte[] MAGIC = "PAR1".getBytes(StandardCharsets.US_ASCII);
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
     @TempDir
     Path dir;
 
+    /**
+     * A GEOGRAPHY-aware writer declares the extent of points at longitudes 175 and -175 as a {@code "geo"} metadata box
+     * wrapping the antimeridian; GeoTools receives the planar enclosure of that box.
+     */
     @Test
     void aDeclaredBboxWrappingTheAntimeridianIsReportedAsItsPlanarEnclosure() throws Exception {
         Path planar = writePoints(dir.resolve("planar.parquet"), new double[][] {{175, -5}, {-175, 5}});
@@ -92,6 +98,26 @@ class CatalogFeatureSourceBoundsTest {
             assertThat(bounds.getMaxX()).isEqualTo(180);
             assertThat(bounds.getMinY()).isEqualTo(-5);
             assertThat(bounds.getMaxY()).isEqualTo(5);
+        }
+    }
+
+    /**
+     * The corpus rows of empty geometries match the filter, and none of them has an extent: the bounds are unknown,
+     * never an envelope with infinite edges.
+     */
+    @Test
+    void theBoundsOfOnlyEmptyGeometriesAreUnknown() throws Exception {
+        Path file = TestCorpus.extractFile("parquet-testing/data/geospatial/geospatial.parquet", dir);
+        FilesetCatalog catalog = FilesetCatalog.open(
+                LocalFileSource.file(file),
+                CatalogOptions.builder().datasetName("geospatial").build());
+        try (GeoParquetDataStore store = new GeoParquetDataStore(catalog)) {
+            CatalogFeatureSource source = (CatalogFeatureSource) store.getFeatureSource("geospatial");
+            Filter emptyGeometries = FF.equals(FF.property("group"), FF.literal("empty-geometries"));
+
+            ReferencedEnvelope bounds = source.getBoundsInternal(new Query("geospatial", emptyGeometries));
+
+            assertThat(bounds).isNull();
         }
     }
 

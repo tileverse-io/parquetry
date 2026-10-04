@@ -106,6 +106,33 @@ class SpatialBoundsSourceTest {
         assertThat(source.rowGroupBounds(GEOMETRY, 1)).isEmpty();
     }
 
+    /** The inverted infinite box of a chunk of empty geometries holds no extent and adds nothing to the file bounds. */
+    @Test
+    void aRowGroupBoxWithoutAnExtentAddsNothingToTheFileBounds() {
+        BoundingBox emptyGeometries = bbox(
+                Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY);
+        BoundingBox real = bbox(0, 10, 0, 10);
+        FileMetaData footer = footer(geometryRowGroupWithNative(emptyGeometries), geometryRowGroupWithNative(real));
+
+        SpatialBoundsSource source = boundsSourceOf(footer, schemaWithGeometry(), empty());
+
+        assertThat(source.fileBounds(GEOMETRY)).contains(real);
+    }
+
+    /** A native box with a NaN bound bounds nothing known: its row group has no box and the file bounds are unknown. */
+    @Test
+    void aNativeBoxWithANaNBoundCountsAsNoBox() {
+        BoundingBox real = bbox(0, 10, 0, 10);
+        FileMetaData footer =
+                footer(geometryRowGroupWithNative(bbox(0, Double.NaN, 0, 10)), geometryRowGroupWithNative(real));
+
+        SpatialBoundsSource source = boundsSourceOf(footer, schemaWithGeometry(), empty());
+
+        assertThat(source.rowGroupBounds(GEOMETRY, 0)).isEmpty();
+        assertThat(source.rowGroupBounds(GEOMETRY, 1)).contains(real);
+        assertThat(source.fileBounds(GEOMETRY)).isEmpty();
+    }
+
     @Test
     void coveringFileBoundsAreUnknownWhenARowGroupHasNoCoveringStatistics() {
         ParquetSchema schema = schemaWithGeometryAndCoveringDoubles();

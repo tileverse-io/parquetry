@@ -39,9 +39,9 @@ import io.tileverse.parquetry.format.BoundingBox;
  * stand in for the whole file; either way it must be consulted only once every earlier file in the order has been
  * drained, which is where the probe has seen those files' paint.
  *
- * <p>A file without a box, or whose box wraps the antimeridian, is never dropped: an unknown extent might cover space
- * that the probe has not painted, and a wrapping box has {@code xmin > xmax}, which would reach the consultation as an
- * inverted rectangle. Both cases still take their place in the visit order.
+ * <p>A file without a box, with a box wrapping the antimeridian, or with a box without an extent is never dropped: an
+ * unknown extent might cover space that the probe has not painted, and the other two boxes would reach the consultation
+ * as inverted rectangles. These files still take their place in the visit order.
  */
 final class SpatialFileVisit {
 
@@ -97,8 +97,8 @@ final class SpatialFileVisit {
     /**
      * Whether the file at {@code index} is dropped before it opens: it has a box bounding a single rectangle and the
      * probe either reports that rectangle covered or, for a file proven inside the query, stands in for it with a
-     * substitute of its own. A file with no box, a file whose box wraps the antimeridian, and an index outside this
-     * plan are all kept.
+     * substitute of its own. A file with no box, with a box wrapping the antimeridian or without an extent, and an
+     * index outside this plan are all kept.
      */
     boolean skips(int index) {
         Optional<BoundingBox> box = boxes.getOrDefault(index, Optional.empty());
@@ -106,7 +106,7 @@ final class SpatialFileVisit {
             return false;
         }
         BoundingBox fileBox = box.orElseThrow();
-        if (fileBox.wrapsAntimeridian()) {
+        if (!fileBox.hasExtent() || fileBox.wrapsAntimeridian()) {
             return false;
         }
         if (acceptance.accepts(fileBox)) {

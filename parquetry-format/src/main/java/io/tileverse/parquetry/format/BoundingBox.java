@@ -27,12 +27,12 @@ import lombok.Builder;
  *
  * <h2>Antimeridian wrap</h2>
  *
- * <p>Per the parquet-format Geospatial specification, when {@link #xmin()} is greater than {@link #xmax()} the box
- * <em>wraps the antimeridian</em>: a candidate longitude {@code x} matches when {@code x >= xmin || x <= xmax} rather
- * than the usual {@code x >= xmin && x <= xmax}. Callers that aggregate bounding boxes coordinate-wise (for example
- * computing a dataset-wide extent) union their {@link #planarEnclosure()} instead; a plain min/max over the raw values
- * can land inside the gap between the two longitude ranges and lose them. {@link #wrapsAntimeridian()} exposes the case
- * explicitly.
+ * <p>Per the parquet-format Geospatial specification, when {@link #xmin()} is greater than {@link #xmax()} a box with
+ * an extent ({@link #hasExtent()}) <em>wraps the antimeridian</em>: a candidate longitude {@code x} matches when
+ * {@code x >= xmin || x <= xmax} rather than the usual {@code x >= xmin && x <= xmax}. Callers that aggregate bounding
+ * boxes coordinate-wise (for example computing a dataset-wide extent) union their {@link #planarEnclosure()} instead; a
+ * plain min/max over the raw values can land inside the gap between the two longitude ranges and lose them.
+ * {@link #wrapsAntimeridian()} exposes the case explicitly.
  *
  * @param xmin minimum X coordinate (or wrap-start when {@link #wrapsAntimeridian()})
  * @param xmax maximum X coordinate (or wrap-end when {@link #wrapsAntimeridian()})
@@ -65,11 +65,23 @@ public record BoundingBox(
     }
 
     /**
-     * Returns {@code true} when this box wraps the antimeridian (i.e. {@code xmin > xmax}). See the class-level note on
-     * aggregation semantics.
+     * Returns {@code true} when this box has an extent and wraps the antimeridian (i.e. {@code xmin > xmax}). A box
+     * without an extent, such as the inverted infinite box recorded for a chunk of empty geometries, never wraps. See
+     * the class-level note on aggregation semantics.
      */
     public boolean wrapsAntimeridian() {
-        return xmin > xmax;
+        return hasExtent() && xmin > xmax;
+    }
+
+    /**
+     * Whether this box bounds a region: finite X and Y bounds, with {@code ymin} at or below {@code ymax}. A box
+     * wrapping the antimeridian bounds one; a box with an infinite or NaN bound, or with inverted Y bounds, does not.
+     * The envelope of an empty geometry is such a box.
+     */
+    public boolean hasExtent() {
+        boolean finite =
+                Double.isFinite(xmin) && Double.isFinite(xmax) && Double.isFinite(ymin) && Double.isFinite(ymax);
+        return finite && ymin <= ymax;
     }
 
     /**

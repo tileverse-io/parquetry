@@ -639,13 +639,15 @@ public final class FilesetDataset implements GeoParquetDataset {
 
     /**
      * The answer to an unfiltered bounds query: the planar enclosure of the primary column's declared bbox, spanning
-     * the full longitude range when that bbox wraps the antimeridian.
+     * the full longitude range when that bbox wraps the antimeridian. A declared bbox without an extent answers
+     * nothing.
      */
     private static Optional<BoundingBox> declaredBounds(GeoParquetMetadata geo) {
         GeoColumn primary = geo.columns().get(geo.primaryColumn());
         if (primary == null) {
             return Optional.empty();
         }
-        return primary.bbox().map(BoundingBox::planarEnclosure);
+        Optional<BoundingBox> withExtent = primary.bbox().filter(BoundingBox::hasExtent);
+        return withExtent.map(BoundingBox::planarEnclosure);
     }
 }

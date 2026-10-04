@@ -56,6 +56,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.testkit.TestCorpus;
 import io.tileverse.parquetry.testsupport.FooterRewrite;
 
 /**
@@ -211,6 +212,41 @@ class ReaderBoundsTest {
     }
 
     /**
+     * Another writer records the inverted infinite box for a row group of empty geometries. That box holds no extent:
+     * the file bounds and statistics are the box of the other row group, not widened to all longitudes.
+     */
+    @Test
+    void aRowGroupBoxWithoutAnExtentAddsNothingToTheBounds() throws IOException {
+        List<Feature> features = List.of(
+                new Feature(0, Double.NaN, Double.NaN),
+                new Feature(1, Double.NaN, Double.NaN),
+                new Feature(2, 10.0, 10.0),
+                new Feature(3, 11.0, 11.0));
+        Path written = writeGeometryFixture("empty-group.parquet", 2L, features);
+        BoundingBox emptyGeometries = BoundingBox.builder()
+                .xmin(Double.POSITIVE_INFINITY)
+                .xmax(Double.NEGATIVE_INFINITY)
+                .ymin(Double.POSITIVE_INFINITY)
+                .ymax(Double.NEGATIVE_INFINITY)
+                .build();
+        Path file = FooterRewrite.rewrite(
+                written,
+                tempDir.resolve("empty-group-box.parquet"),
+                FooterRewrite.geospatialBbox("geometry", 0, emptyGeometries));
+        BoundingBox secondGroup =
+                BoundingBox.builder().xmin(10).xmax(11).ymin(10).ymax(11).build();
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+
+            Optional<BoundingBox> bounds = reader.bounds(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
+            BoundingBox statistics = reader.fileStats().geometryBounds().get(GEOMETRY);
+
+            assertSameBox2d(bounds.orElseThrow(), secondGroup);
+            assertSameBox2d(statistics, secondGroup);
+        }
+    }
+
+    /**
      * A row group without a box could hold any geometry, leaving the file without a geometry box. Bounds then scan that
      * row group, and file pruning keeps the file for a query reaching only its points.
      */
@@ -238,6 +274,23 @@ class ReaderBoundsTest {
             assertThat(reader.fileStats().geometryBounds()).doesNotContainKey(GEOMETRY);
             assertSameBox2d(unfiltered.orElseThrow(), allRows);
             assertThat(filePruning).isNotInstanceOf(PruningDecision.Eliminated.class);
+        }
+    }
+
+    /**
+     * The corpus row group of empty geometries matches the predicate, and none of its rows has an extent: the bounds
+     * are empty, not an inverted box with infinite edges.
+     */
+    @Test
+    void rowsHoldingOnlyEmptyGeometriesHaveNoBounds() {
+        Path file = TestCorpus.extractFile("parquet-testing/data/geospatial/geospatial.parquet", tempDir);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+
+            Optional<BoundingBox> bounds =
+                    reader.bounds(Pred.col("group").eq("empty-geometries"), ReadOptions.DEFAULTS);
+
+            assertThat(bounds).isEmpty();
         }
     }
 

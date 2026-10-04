@@ -98,6 +98,15 @@ public final class FooterRewrite {
     }
 
     /**
+     * An edit setting the geospatial statistics bbox of the top-level {@code column} in the row group at
+     * {@code rowGroup}.
+     */
+    public static UnaryOperator<FileMetaData> geospatialBbox(String column, int rowGroup, BoundingBox bbox) {
+        IntPredicate thatRowGroup = index -> index == rowGroup;
+        return footer -> withRowGroups(footer, rowGroupsWithBbox(footer, column, thatRowGroup, Optional.of(bbox)));
+    }
+
+    /**
      * An edit removing the geospatial statistics bbox of the top-level {@code column} in the row group at
      * {@code rowGroup}, as recorded by a writer that saw no geometry with an extent there.
      */
@@ -197,20 +206,44 @@ public final class FooterRewrite {
 
     /** An edit setting the 2D bbox declared for {@code column} by the GeoParquet {@code "geo"} metadata document. */
     public static UnaryOperator<FileMetaData> geoMetadataBbox(String column, BoundingBox bbox) {
-        return footer -> withKeyValues(footer, keyValuesWithGeoBbox(footer.keyValueMetadata(), column, bbox));
+        return geoDocumentEdited(geo -> withColumnBbox(geo, column, bbox));
     }
 
-    private static List<KeyValue> keyValuesWithGeoBbox(List<KeyValue> keyValues, String column, BoundingBox bbox) {
+    /** An edit removing the bbox declared for {@code column} by the GeoParquet {@code "geo"} metadata document. */
+    public static UnaryOperator<FileMetaData> geoMetadataBboxRemoved(String column) {
+        return geoDocumentEdited(geo -> withoutColumnBbox(geo, column));
+    }
+
+    /** An edit removing the GeoParquet {@code "geo"} metadata document. */
+    public static UnaryOperator<FileMetaData> geoMetadataRemoved() {
+        return footer -> withKeyValues(footer, keyValuesWithoutGeo(footer.keyValueMetadata()));
+    }
+
+    private static UnaryOperator<FileMetaData> geoDocumentEdited(UnaryOperator<String> edit) {
+        return footer -> withKeyValues(footer, keyValuesWithGeoEdited(footer.keyValueMetadata(), edit));
+    }
+
+    private static List<KeyValue> keyValuesWithGeoEdited(List<KeyValue> keyValues, UnaryOperator<String> edit) {
         List<KeyValue> edited = new ArrayList<>(keyValues.size());
         for (KeyValue keyValue : keyValues) {
             if (GEO_KEY.equals(keyValue.key())) {
                 String geo = keyValue.value().orElseThrow();
-                edited.add(new KeyValue(GEO_KEY, Optional.of(withColumnBbox(geo, column, bbox))));
+                edited.add(new KeyValue(GEO_KEY, Optional.of(edit.apply(geo))));
             } else {
                 edited.add(keyValue);
             }
         }
         return edited;
+    }
+
+    private static List<KeyValue> keyValuesWithoutGeo(List<KeyValue> keyValues) {
+        List<KeyValue> kept = new ArrayList<>(keyValues.size());
+        for (KeyValue keyValue : keyValues) {
+            if (!GEO_KEY.equals(keyValue.key())) {
+                kept.add(keyValue);
+            }
+        }
+        return kept;
     }
 
     private static String withColumnBbox(String geo, String column, BoundingBox bbox) {
@@ -221,6 +254,13 @@ public final class FooterRewrite {
         corners.add(bbox.ymin());
         corners.add(bbox.xmax());
         corners.add(bbox.ymax());
+        return JSON.writeValueAsString(document);
+    }
+
+    private static String withoutColumnBbox(String geo, String column) {
+        ObjectNode document = (ObjectNode) JSON.readTree(geo);
+        ObjectNode columnNode = (ObjectNode) document.get("columns").get(column);
+        columnNode.remove("bbox");
         return JSON.writeValueAsString(document);
     }
 
