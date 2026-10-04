@@ -17,8 +17,10 @@ package io.tileverse.parquetry.catalog;
 
 import static io.tileverse.parquetry.data.WriteOptions.GeoParquetMetadataMode.DUAL_V1_1_AND_V2_0;
 import static io.tileverse.parquetry.data.WriteOptions.GeoParquetMetadataMode.V1_1_ONLY;
+import static io.tileverse.parquetry.data.WriteOptions.GeoParquetMetadataMode.V2_0_ONLY;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 import org.junit.jupiter.api.Test;
@@ -36,6 +38,7 @@ import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.io.LocalFileSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.testsupport.FlatLongParquet;
+import io.tileverse.parquetry.testsupport.FooterRewrite;
 import io.tileverse.parquetry.testsupport.PointParquet;
 
 /**
@@ -113,6 +116,32 @@ class FooterAggregatePruningIT {
             DatasetExplainPlan plan = dataset.explain(eastOnly, Projection.ALL, ReadOptions.DEFAULTS);
             assertThat(skipCount(plan)).isEqualTo(1);
             assertThat(dataset.count(eastOnly, ReadOptions.DEFAULTS)).isEqualTo(3);
+        }
+    }
+
+    /**
+     * A row group without a geometry box could hold any geometry, leaving its file without a geometry box. That file is
+     * kept for a query reaching only the points of that row group, and the read returns them.
+     */
+    @Test
+    void aFileWithARowGroupWithoutABoxIsKeptForItsRows(@TempDir Path dir) throws Exception {
+        Path data = Files.createDirectories(dir.resolve("data"));
+        PointParquet.writePoints(
+                data.resolve("west.parquet"), "geometry", V2_0_ONLY, new double[][] {{0, 0}, {5, 5}, {10, 10}});
+        double[][] westGroup = {{0, 0}, {5, 5}};
+        double[][] eastGroup = {{100, 0}, {105, 5}};
+        Path boxed = PointParquet.writePointRowGroups(
+                dir.resolve("mixed.parquet"), "geometry", V2_0_ONLY, westGroup, eastGroup);
+        FooterRewrite.rewrite(boxed, data.resolve("mixed.parquet"), FooterRewrite.geospatialBboxRemoved("geometry", 1));
+
+        try (FilesetCatalog catalog =
+                FilesetCatalog.open(LocalFileSource.directory(data, "*.parquet"), CatalogOptions.defaults())) {
+            ParquetDataset dataset = catalog.dataset(catalog.datasets().get(0));
+            Predicate eastOnly = new Predicate.Spatial.BboxIntersects(ColumnPath.of("geometry"), EAST_QUERY);
+
+            DatasetExplainPlan plan = dataset.explain(eastOnly, Projection.ALL, ReadOptions.DEFAULTS);
+            assertThat(skipCount(plan)).isEqualTo(1);
+            assertThat(dataset.count(eastOnly, ReadOptions.DEFAULTS)).isEqualTo(2);
         }
     }
 

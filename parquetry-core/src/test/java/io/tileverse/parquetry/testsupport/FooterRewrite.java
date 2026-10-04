@@ -26,6 +26,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.IntPredicate;
 import java.util.function.UnaryOperator;
 
 import io.tileverse.parquetry.format.BoundingBox;
@@ -92,18 +93,36 @@ public final class FooterRewrite {
 
     /** An edit setting the geospatial statistics bbox of each column chunk of the top-level {@code column}. */
     public static UnaryOperator<FileMetaData> geospatialBbox(String column, BoundingBox bbox) {
-        return footer -> withRowGroups(footer, rowGroupsWithBbox(footer.rowGroups(), column, bbox));
+        IntPredicate eachRowGroup = index -> true;
+        return footer -> withRowGroups(footer, rowGroupsWithBbox(footer, column, eachRowGroup, Optional.of(bbox)));
     }
 
-    private static List<RowGroup> rowGroupsWithBbox(List<RowGroup> rowGroups, String column, BoundingBox bbox) {
-        List<RowGroup> edited = new ArrayList<>(rowGroups.size());
-        for (RowGroup rowGroup : rowGroups) {
-            edited.add(withColumns(rowGroup, chunksWithBbox(rowGroup.columns(), column, bbox)));
+    /**
+     * An edit removing the geospatial statistics bbox of the top-level {@code column} in the row group at
+     * {@code rowGroup}, as recorded by a writer that saw no geometry with an extent there.
+     */
+    public static UnaryOperator<FileMetaData> geospatialBboxRemoved(String column, int rowGroup) {
+        IntPredicate thatRowGroup = index -> index == rowGroup;
+        return footer -> withRowGroups(footer, rowGroupsWithBbox(footer, column, thatRowGroup, Optional.empty()));
+    }
+
+    private static List<RowGroup> rowGroupsWithBbox(
+            FileMetaData footer, String column, IntPredicate edited, Optional<BoundingBox> bbox) {
+        List<RowGroup> rowGroups = footer.rowGroups();
+        List<RowGroup> result = new ArrayList<>(rowGroups.size());
+        for (int index = 0; index < rowGroups.size(); index++) {
+            RowGroup rowGroup = rowGroups.get(index);
+            if (edited.test(index)) {
+                result.add(withColumns(rowGroup, chunksWithBbox(rowGroup.columns(), column, bbox)));
+            } else {
+                result.add(rowGroup);
+            }
         }
-        return edited;
+        return result;
     }
 
-    private static List<ColumnChunk> chunksWithBbox(List<ColumnChunk> chunks, String column, BoundingBox bbox) {
+    private static List<ColumnChunk> chunksWithBbox(
+            List<ColumnChunk> chunks, String column, Optional<BoundingBox> bbox) {
         List<ColumnChunk> edited = new ArrayList<>(chunks.size());
         for (ColumnChunk chunk : chunks) {
             ColumnMetaData metaData = chunk.metaData().orElseThrow();
@@ -116,9 +135,9 @@ public final class FooterRewrite {
         return edited;
     }
 
-    private static ColumnMetaData withBbox(ColumnMetaData metaData, BoundingBox bbox) {
+    private static ColumnMetaData withBbox(ColumnMetaData metaData, Optional<BoundingBox> bbox) {
         Optional<List<Integer>> types = metaData.geospatialStatistics().flatMap(GeospatialStatistics::geospatialTypes);
-        GeospatialStatistics statistics = new GeospatialStatistics(Optional.of(bbox), types);
+        GeospatialStatistics statistics = new GeospatialStatistics(bbox, types);
         return new ColumnMetaData(
                 metaData.type(),
                 metaData.encodings(),

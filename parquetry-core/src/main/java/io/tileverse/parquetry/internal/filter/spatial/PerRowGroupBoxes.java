@@ -15,9 +15,11 @@
  */
 package io.tileverse.parquetry.internal.filter.spatial;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.BinaryOperator;
 
 import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -41,5 +43,30 @@ final class PerRowGroupBoxes {
             }
         }
         return boxes;
+    }
+
+    /**
+     * The file-level box of each column: the {@code union} of its row-group boxes, absent for a column with a row group
+     * without a box. Such a row group could hold any geometry, and the file cannot bound it.
+     */
+    static Map<ColumnPath, BoundingBox> fileLevelUnions(
+            Map<ColumnPath, List<Optional<BoundingBox>>> perRowGroup, BinaryOperator<BoundingBox> union) {
+        Map<ColumnPath, BoundingBox> fileLevel = HashMap.newHashMap(perRowGroup.size());
+        perRowGroup.forEach(
+                (column, byGroup) -> unionOfEach(byGroup, union).ifPresent(box -> fileLevel.put(column, box)));
+        return fileLevel;
+    }
+
+    /** The union of the row-group boxes, or empty as soon as one row group has no box. */
+    private static Optional<BoundingBox> unionOfEach(
+            List<Optional<BoundingBox>> byGroup, BinaryOperator<BoundingBox> union) {
+        BoundingBox accumulated = null;
+        for (Optional<BoundingBox> box : byGroup) {
+            if (box.isEmpty()) {
+                return Optional.empty();
+            }
+            accumulated = accumulated == null ? box.orElseThrow() : union.apply(accumulated, box.orElseThrow());
+        }
+        return Optional.ofNullable(accumulated);
     }
 }

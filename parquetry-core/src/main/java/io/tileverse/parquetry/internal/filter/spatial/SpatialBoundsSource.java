@@ -57,7 +57,10 @@ public sealed interface SpatialBoundsSource
                 EmptyBoundsSource,
                 SuppliedBoundsSource {
 
-    /** Bounds for {@code geometryColumn} across the whole file, or {@link Optional#empty()} when not known. */
+    /**
+     * Bounds for {@code geometryColumn} across the whole file, or {@link Optional#empty()} when not known. A backing
+     * with per-row-group bounds knows the file bounds only when each row group has a box.
+     */
     Optional<BoundingBox> fileBounds(ColumnPath geometryColumn);
 
     /**

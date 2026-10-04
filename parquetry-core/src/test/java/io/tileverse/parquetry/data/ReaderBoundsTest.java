@@ -42,6 +42,8 @@ import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.SortedLongPositionSet;
+import io.tileverse.parquetry.filter.explain.PruningDecision;
+import io.tileverse.parquetry.filter.prune.FilePruner;
 import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.internal.filter.spatial.BoundsAccumulator;
 import io.tileverse.parquetry.internal.filter.spatial.WkbEnvelope;
@@ -205,6 +207,37 @@ class ReaderBoundsTest {
                     .contains(wrapping);
             assertSameBox2d(unfiltered.orElseThrow(), enclosure);
             assertSameBox2d(matched.orElseThrow(), enclosure);
+        }
+    }
+
+    /**
+     * A row group without a box could hold any geometry, leaving the file without a geometry box. Bounds then scan that
+     * row group, and file pruning keeps the file for a query reaching only its points.
+     */
+    @Test
+    void aRowGroupWithoutABoxLeavesTheFileBoxUnknown() throws IOException {
+        List<Feature> features = List.of(
+                new Feature(0, 0.0, 0.0),
+                new Feature(1, 1.0, 1.0),
+                new Feature(2, 10.0, 10.0),
+                new Feature(3, 11.0, 11.0),
+                new Feature(4, 50.0, 50.0),
+                new Feature(5, 51.0, 51.0));
+        Path boxed = writeGeometryFixture("boxed.parquet", 2L, features);
+        Path file = FooterRewrite.rewrite(
+                boxed, tempDir.resolve("box-less.parquet"), FooterRewrite.geospatialBboxRemoved("geometry", 2));
+        Predicate nearTheLastGroup = Pred.col("geometry").bboxIntersects(Bbox.of2d(49, 49, 52, 52));
+        BoundingBox allRows =
+                BoundingBox.builder().xmin(0).xmax(51).ymin(0).ymax(51).build();
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+
+            Optional<BoundingBox> unfiltered = reader.bounds(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
+            PruningDecision filePruning = FilePruner.evaluate(nearTheLastGroup, reader.fileStats());
+
+            assertThat(reader.fileStats().geometryBounds()).doesNotContainKey(GEOMETRY);
+            assertSameBox2d(unfiltered.orElseThrow(), allRows);
+            assertThat(filePruning).isNotInstanceOf(PruningDecision.Eliminated.class);
         }
     }
 

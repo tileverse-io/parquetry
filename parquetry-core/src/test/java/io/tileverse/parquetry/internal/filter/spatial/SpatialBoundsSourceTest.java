@@ -92,6 +92,33 @@ class SpatialBoundsSourceTest {
                 .contains(bbox(-180, 0, -100, 0));
     }
 
+    /** A row group without a box could hold any geometry: the file bounds are unknown, its row-group boxes stay. */
+    @Test
+    void nativeFileBoundsAreUnknownWhenARowGroupHasNoBox() {
+        BoundingBox rg0 = bbox(0, 10, 0, 10);
+        FileMetaData footer = footer(geometryRowGroupWithNative(rg0), noStatsRowGroup());
+
+        SpatialBoundsSource source = boundsSourceOf(footer, schemaWithGeometry(), empty());
+
+        assertThat(source).isInstanceOf(NativeStatsSource.class);
+        assertThat(source.fileBounds(GEOMETRY)).isEmpty();
+        assertThat(source.rowGroupBounds(GEOMETRY, 0)).contains(rg0);
+        assertThat(source.rowGroupBounds(GEOMETRY, 1)).isEmpty();
+    }
+
+    @Test
+    void coveringFileBoundsAreUnknownWhenARowGroupHasNoCoveringStatistics() {
+        ParquetSchema schema = schemaWithGeometryAndCoveringDoubles();
+        FileMetaData footer = footer(coveringRowGroup(0, 1, 2, 3), coveringRowGroupWithoutStatistics());
+
+        SpatialBoundsSource source = boundsSourceOf(footer, schema, of(geoWithCoveringAndFileBbox()));
+
+        assertThat(source).isInstanceOf(CoveringColumnSource.class);
+        assertThat(source.fileBounds(GEOMETRY)).isEmpty();
+        assertThat(source.rowGroupBounds(GEOMETRY, 0)).contains(bbox(0, 1, 2, 3));
+        assertThat(source.rowGroupBounds(GEOMETRY, 1)).isEmpty();
+    }
+
     /**
      * A file with no geospatial statistics at all is ruled out of the native tier by the count of geospatial entries in
      * the packed footer, without a walk of the chunk table. The dispatch then moves on to the tier below.
@@ -305,6 +332,16 @@ class SpatialBoundsSourceTest {
                 columnChunk(doubleStatsMeta("ymax", ymax, ymax))));
     }
 
+    /** The same shape as {@link #coveringRowGroup}, with no statistics on the four sidecar leaves. */
+    private static RowGroup coveringRowGroupWithoutStatistics() {
+        return rowGroup(List.of(
+                columnChunk(geometryMeta(empty())),
+                columnChunk(doubleMeta(List.of("xmin"), empty())),
+                columnChunk(doubleMeta(List.of("xmax"), empty())),
+                columnChunk(doubleMeta(List.of("ymin"), empty())),
+                columnChunk(doubleMeta(List.of("ymax"), empty()))));
+    }
+
     /** The same shape as {@link #coveringRowGroup}, with the four sidecar leaves nested under a {@code bbox} group. */
     private static RowGroup nestedCoveringRowGroup(double xmin, double xmax, double ymin, double ymax) {
         return rowGroup(List.of(
@@ -350,6 +387,10 @@ class SpatialBoundsSourceTest {
                 .minValue(littleEndianDouble(min))
                 .maxValue(littleEndianDouble(max))
                 .build();
+        return doubleMeta(path, of(stats));
+    }
+
+    private static ColumnMetaData doubleMeta(List<String> path, Optional<Statistics> stats) {
         return ColumnMetaData.builder()
                 .type(PhysicalType.DOUBLE)
                 .encodings(List.of(Encoding.PLAIN))
@@ -359,7 +400,7 @@ class SpatialBoundsSourceTest {
                 .totalUncompressedSize(8L)
                 .totalCompressedSize(8L)
                 .dataPageOffset(0L)
-                .statistics(of(stats))
+                .statistics(stats)
                 .build();
     }
 
