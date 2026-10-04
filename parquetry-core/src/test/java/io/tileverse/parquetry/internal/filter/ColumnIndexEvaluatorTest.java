@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.internal.filter;
 
 import static io.tileverse.parquetry.filter.Pred.col;
+import static io.tileverse.parquetry.format.ParquetLayouts.DOUBLE;
 import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
 import static io.tileverse.parquetry.format.ParquetLayouts.INT64;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -276,7 +277,73 @@ class ColumnIndexEvaluatorTest {
         assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
     }
 
+    @Test
+    void nanLiteralEqualityKeepsTheValuedPages() {
+        PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").eq(Double.NaN), priceWithANaNPage(), 300);
+        assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
+    }
+
+    @Test
+    void pageWithNaNBoundsSurvivesAnyComparison() {
+        PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").gt(10.0), priceWithANaNPage(), 300);
+        assertThat(d).isInstanceOf(PruningDecision.NarrowedTo.class);
+        RowRanges r = ((PruningDecision.NarrowedTo) d).ranges();
+        assertThat(r.ranges()).containsExactly(new Range(100, 199));
+    }
+
+    @Test
+    void orderedComparisonAgainstANaNLiteralLeavesNoPage() {
+        PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").lt(Double.NaN), priceWithANaNPage(), 300);
+        assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void notEqOnAFloatColumnKeepsTheValuedPages() {
+        PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").notEq(-5.0), singleValuePricePages(), 200);
+        assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
+    }
+
+    @Test
+    void zeroPageBoundsCompareEqualToEitherZero() {
+        PruningDecision above = ColumnIndexEvaluator.evaluate(col("price").gt(0.0), priceWithANaNPage(), 300);
+        assertThat(((PruningDecision.NarrowedTo) above).ranges().ranges())
+                .containsExactly(new Range(0, 99), new Range(100, 199));
+        PruningDecision atLeast = ColumnIndexEvaluator.evaluate(col("price").gtEq(0.0), priceWithANaNPage(), 300);
+        assertThat(atLeast).isInstanceOf(PruningDecision.PassedAll.class);
+    }
+
     // --- helpers ---
+
+    /**
+     * Three DOUBLE pages of 100 rows: [1.0, 5.0], a page of NaN values bounded by NaN as written under the IEEE 754
+     * total order, and [-5.0, -0.0].
+     */
+    private static FilterPipeline.ColumnPageStatsLookup priceWithANaNPage() {
+        return singleColumn(
+                "price",
+                PrimitiveKind.DOUBLE,
+                List.of(false, false, false),
+                List.of(encodeDouble(1.0), encodeDouble(Double.NaN), encodeDouble(-5.0)),
+                List.of(encodeDouble(5.0), encodeDouble(Double.NaN), encodeDouble(-0.0)),
+                List.of(0L, 100L, 200L));
+    }
+
+    /** Two DOUBLE pages of 100 rows, each bounded by -5.0 at both ends. */
+    private static FilterPipeline.ColumnPageStatsLookup singleValuePricePages() {
+        return singleColumn(
+                "price",
+                PrimitiveKind.DOUBLE,
+                List.of(false, false),
+                List.of(encodeDouble(-5.0), encodeDouble(-5.0)),
+                List.of(encodeDouble(-5.0), encodeDouble(-5.0)),
+                List.of(0L, 100L));
+    }
+
+    private static MemorySegment encodeDouble(double v) {
+        MemorySegment segment = MemorySegment.ofArray(new byte[8]);
+        segment.set(DOUBLE, 0, v);
+        return segment.asReadOnly();
+    }
 
     /** The pages of {@link #year3Pages()} under a column order unknown to the reader; only page 1 holds nulls. */
     private static FilterPipeline.ColumnPageStatsLookup year3PagesInAnUnknownOrder() {

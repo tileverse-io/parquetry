@@ -21,6 +21,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 
+import io.tileverse.parquetry.internal.filter.ComparisonOperator;
+import io.tileverse.parquetry.internal.filter.PredicateNormalizer;
 import io.tileverse.parquetry.internal.filter.ValueComparison;
 import io.tileverse.parquetry.schema.ColumnPath;
 
@@ -34,24 +36,31 @@ public final class ConstantFolding {
     private ConstantFolding() {}
 
     /**
+     * Folds the normalized form of {@code predicate}, the form evaluated by the read path. A negated comparison then
+     * folds as it filters a physical column: {@code NOT (c < 3)} becomes {@code c >= 3}, false for a null or NaN value,
+     * rather than the negation of a false leaf.
+     *
      * @param constants synthesized column path -&gt; its constant value for this file
-     * @param nulls synthesized columns whose value is null for this file; currently always empty (callers do not yet
-     *     produce null partition columns). Reserved as the hook a future schema-evolution / Iceberg field-id read path
-     *     reuses to fold predicates over a column that is null for the whole file (a field absent from a file, or a
-     *     typed-null partition).
+     * @param nulls synthesized columns whose value is null for this file, such as a column added to an Iceberg table
+     *     after the file was written
      */
-    @SuppressWarnings("java:S6878") // comparison arms reuse the whole leaf value, not just its components
     public static Predicate fold(Predicate predicate, Map<ColumnPath, Value> constants, Set<ColumnPath> nulls) {
+        return foldNormalized(PredicateNormalizer.normalize(predicate), constants, nulls);
+    }
+
+    @SuppressWarnings("java:S6878") // comparison arms reuse the whole leaf value, not just its components
+    private static Predicate foldNormalized(
+            Predicate predicate, Map<ColumnPath, Value> constants, Set<ColumnPath> nulls) {
         return switch (predicate) {
             case Predicate.And(List<Predicate> children) -> foldAnd(children, constants, nulls);
             case Predicate.Or(List<Predicate> children) -> foldOr(children, constants, nulls);
-            case Predicate.Not(Predicate child) -> negate(fold(child, constants, nulls));
-            case Predicate.Eq leaf -> foldLeaf(leaf, leaf.col(), constants, nulls, sign -> sign == 0);
-            case Predicate.NotEq leaf -> foldLeaf(leaf, leaf.col(), constants, nulls, sign -> sign != 0);
-            case Predicate.Lt leaf -> foldLeaf(leaf, leaf.col(), constants, nulls, sign -> sign < 0);
-            case Predicate.LtEq leaf -> foldLeaf(leaf, leaf.col(), constants, nulls, sign -> sign <= 0);
-            case Predicate.Gt leaf -> foldLeaf(leaf, leaf.col(), constants, nulls, sign -> sign > 0);
-            case Predicate.GtEq leaf -> foldLeaf(leaf, leaf.col(), constants, nulls, sign -> sign >= 0);
+            case Predicate.Not(Predicate child) -> negate(foldNormalized(child, constants, nulls));
+            case Predicate.Eq leaf -> foldLeaf(leaf, leaf.col(), constants, nulls, ComparisonOperator.EQ);
+            case Predicate.NotEq leaf -> foldLeaf(leaf, leaf.col(), constants, nulls, ComparisonOperator.NOT_EQ);
+            case Predicate.Lt leaf -> foldLeaf(leaf, leaf.col(), constants, nulls, ComparisonOperator.LT);
+            case Predicate.LtEq leaf -> foldLeaf(leaf, leaf.col(), constants, nulls, ComparisonOperator.LT_EQ);
+            case Predicate.Gt leaf -> foldLeaf(leaf, leaf.col(), constants, nulls, ComparisonOperator.GT);
+            case Predicate.GtEq leaf -> foldLeaf(leaf, leaf.col(), constants, nulls, ComparisonOperator.GT_EQ);
             case Predicate.In in -> foldIn(in, constants, nulls);
             case Predicate.IsNull isNull -> foldIsNull(isNull.col(), constants, nulls, true);
             case Predicate.IsNotNull isNotNull -> foldIsNull(isNotNull.col(), constants, nulls, false);
@@ -59,12 +68,12 @@ public final class ConstantFolding {
         };
     }
 
-    private interface SignTest {
-        boolean holds(int sign);
-    }
-
     private static Predicate foldLeaf(
-            Predicate leaf, ColumnPath col, Map<ColumnPath, Value> constants, Set<ColumnPath> nulls, SignTest test) {
+            Predicate leaf,
+            ColumnPath col,
+            Map<ColumnPath, Value> constants,
+            Set<ColumnPath> nulls,
+            ComparisonOperator op) {
         if (nulls.contains(col)) {
             return Predicate.ALWAYS_FALSE;
         }
@@ -73,26 +82,25 @@ public final class ConstantFolding {
             return leaf;
         }
         Value bound = boundOf(leaf);
-        int sign = compareWidening(constant, bound);
-        return test.holds(sign) ? Predicate.ALWAYS_TRUE : Predicate.ALWAYS_FALSE;
+        return holdsWidening(op, constant, bound) ? Predicate.ALWAYS_TRUE : Predicate.ALWAYS_FALSE;
     }
 
     /**
-     * Compares a synthetic column's constant against a predicate literal, widening across integer subtypes that
-     * {@link ValueComparison#compareValues} does not bridge. A constant inferred as {@code LONG} compared against an
-     * {@code INT} literal (or the reverse) would otherwise fall to the {@code default -> 0} arm and mis-fold. When both
-     * sides are numeric they compare as a common widened type: {@code double} if either side is floating, else
-     * {@code long}. Non-numeric pairs (String/Date/Bool/Uuid/...) defer to {@code compareValues}. The result keeps the
-     * sign-of (constant - bound) convention the fold {@code SignTest} arms expect.
+     * Whether {@code op} holds between a synthetic column's constant and a predicate literal, widening across numeric
+     * subtypes not bridged by {@link ValueComparison#compareValues}. A constant inferred as {@code LONG} compared
+     * against an {@code INT} literal (or the reverse) would otherwise fall to the {@code default -> 0} arm and
+     * mis-fold. When both sides are numeric they compare as a common widened type: {@code double} under the IEEE 754
+     * rules of the record level if either side is floating, else {@code long}. Non-numeric pairs
+     * (String/Date/Bool/Uuid/...) defer to {@code compareValues}.
      */
-    private static int compareWidening(Value constant, Value bound) {
+    private static boolean holdsWidening(ComparisonOperator op, Value constant, Value bound) {
         if (isNumeric(constant) && isNumeric(bound)) {
             if (isFloating(constant) || isFloating(bound)) {
-                return Double.compare(asDouble(constant), asDouble(bound));
+                return op.holds(asDouble(constant), asDouble(bound));
             }
-            return Long.compare(asLong(constant), asLong(bound));
+            return op.holds(Long.compare(asLong(constant), asLong(bound)));
         }
-        return ValueComparison.compareValues(constant, bound);
+        return op.holds(ValueComparison.compareValues(constant, bound));
     }
 
     private static boolean isNumeric(Value value) {
@@ -145,7 +153,7 @@ public final class ConstantFolding {
             return in;
         }
         for (Value candidate : in.values()) {
-            if (compareWidening(constant, candidate) == 0) {
+            if (holdsWidening(ComparisonOperator.EQ, constant, candidate)) {
                 return Predicate.ALWAYS_TRUE;
             }
         }
@@ -167,7 +175,7 @@ public final class ConstantFolding {
             List<Predicate> children, Map<ColumnPath, Value> constants, Set<ColumnPath> nulls) {
         List<Predicate> kept = new ArrayList<>();
         for (Predicate child : children) {
-            Predicate folded = fold(child, constants, nulls);
+            Predicate folded = foldNormalized(child, constants, nulls);
             if (folded.equals(Predicate.ALWAYS_FALSE)) {
                 return Predicate.ALWAYS_FALSE;
             }
@@ -181,7 +189,7 @@ public final class ConstantFolding {
     private static Predicate foldOr(List<Predicate> children, Map<ColumnPath, Value> constants, Set<ColumnPath> nulls) {
         List<Predicate> kept = new ArrayList<>();
         for (Predicate child : children) {
-            Predicate folded = fold(child, constants, nulls);
+            Predicate folded = foldNormalized(child, constants, nulls);
             if (folded.equals(Predicate.ALWAYS_TRUE)) {
                 return Predicate.ALWAYS_TRUE;
             }

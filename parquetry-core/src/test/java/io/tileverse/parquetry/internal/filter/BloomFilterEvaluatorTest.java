@@ -22,6 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -215,6 +216,44 @@ class BloomFilterEvaluatorTest {
                 .isInstanceOf(PruningDecision.Eliminated.class);
         assertThat(BloomFilterEvaluator.evaluate(Pred.col("ratio").eq(present), blooms))
                 .isInstanceOf(PruningDecision.Inconclusive.class);
+    }
+
+    @Test
+    void zeroLiteralFindsTheOtherZeroInAFloatBloom() {
+        FilterPipeline.BloomFilterLookup blooms =
+                single("ratio", PrimitiveKind.FLOAT, bloomOver(SplitBlockBloomFilter.hashFloat(-0.0f)));
+        assertThat(BloomFilterEvaluator.evaluate(Pred.col("ratio").eq(0.0f), blooms))
+                .isInstanceOf(PruningDecision.Inconclusive.class);
+    }
+
+    @Test
+    void zeroLiteralFindsTheOtherZeroInADoubleBloom() {
+        FilterPipeline.BloomFilterLookup blooms =
+                single("ratio", PrimitiveKind.DOUBLE, bloomOver(SplitBlockBloomFilter.hashDouble(0.0)));
+        assertThat(BloomFilterEvaluator.evaluate(Pred.col("ratio").eq(-0.0), blooms))
+                .isInstanceOf(PruningDecision.Inconclusive.class);
+        Predicate inZero = new Predicate.In(ColumnPath.of("ratio"), List.of(new Value.DoubleVal(-0.0)));
+        assertThat(BloomFilterEvaluator.evaluate(inZero, blooms)).isInstanceOf(PruningDecision.Inconclusive.class);
+    }
+
+    @Test
+    void zeroLiteralAbsentAsEitherZeroIsEliminated() {
+        FilterPipeline.BloomFilterLookup blooms =
+                single("ratio", PrimitiveKind.DOUBLE, bloomOver(SplitBlockBloomFilter.hashDouble(1.0)));
+        assertThat(BloomFilterEvaluator.evaluate(Pred.col("ratio").eq(0.0), blooms))
+                .isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void nanLiteralIsNeverRuledOut() {
+        float payloadNaN = Float.intBitsToFloat(0x7FC00001);
+        FilterPipeline.BloomFilterLookup blooms =
+                single("ratio", PrimitiveKind.FLOAT, bloomOver(SplitBlockBloomFilter.hashFloat(payloadNaN)));
+        assertThat(BloomFilterEvaluator.evaluate(Pred.col("ratio").eq(Float.NaN), blooms))
+                .isInstanceOf(PruningDecision.NotApplied.class);
+        Predicate inNaN = new Predicate.In(
+                ColumnPath.of("ratio"), List.of(new Value.FloatVal(9.0f), new Value.FloatVal(Float.NaN)));
+        assertThat(BloomFilterEvaluator.evaluate(inNaN, blooms)).isInstanceOf(PruningDecision.NotApplied.class);
     }
 
     @Test

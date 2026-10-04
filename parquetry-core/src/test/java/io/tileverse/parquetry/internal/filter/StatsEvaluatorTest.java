@@ -26,6 +26,7 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
@@ -246,6 +247,64 @@ class StatsEvaluatorTest {
         FilterPipeline.ColumnStatsLookup cols = single("price", doubleStats(1.0, 5.0, 0));
         PruningDecision d = StatsEvaluator.evaluate(col("price").lt(0.5), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void nanBoundIsIgnored() {
+        FilterPipeline.ColumnStatsLookup cols = single("price", doubleStats(Double.NaN, 5.0, 0));
+        PruningDecision d = StatsEvaluator.evaluate(col("price").gt(10.0), cols, ROW_COUNT);
+        assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
+    @Test
+    void summaryLeavesANaNBoundOut() {
+        StatsEvaluator.ColumnSummary summary = StatsEvaluator.summarize(doubleStats(1.0, Double.NaN, 0));
+        assertThat(summary.min()).contains(new Value.DoubleVal(1.0));
+        assertThat(summary.max()).isEmpty();
+    }
+
+    @Test
+    void nanLiteralEqualityIsNotEliminatedByTheBounds() {
+        FilterPipeline.ColumnStatsLookup cols = single("price", doubleStats(1.0, 5.0, 0));
+        PruningDecision d = StatsEvaluator.evaluate(col("price").eq(Double.NaN), cols, ROW_COUNT);
+        assertThat(d).isNotInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void inWithANaNLiteralIsNotEliminatedByTheBounds() {
+        FilterPipeline.ColumnStatsLookup cols = single("price", doubleStats(1.0, 5.0, 0));
+        Predicate p = new Predicate.In(
+                ColumnPath.of("price"), List.of(new Value.DoubleVal(100.0), new Value.DoubleVal(Double.NaN)));
+        assertThat(StatsEvaluator.evaluate(p, cols, ROW_COUNT)).isNotInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void notEqOnASingleValueFloatColumnIsNotEliminated() {
+        // NaN cells lie outside [2.0, 2.0] and differ from 2.0
+        FilterPipeline.ColumnStatsLookup cols = single("price", doubleStats(2.0, 2.0, 0));
+        PruningDecision d = StatsEvaluator.evaluate(col("price").notEq(2.0), cols, ROW_COUNT);
+        assertThat(d).isNotInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void orderedComparisonAgainstANaNLiteralIsEliminated() {
+        FilterPipeline.ColumnStatsLookup cols = single("price", doubleStats(1.0, 5.0, 0));
+        assertThat(StatsEvaluator.evaluate(col("price").lt(Double.NaN), cols, ROW_COUNT))
+                .isInstanceOf(PruningDecision.Eliminated.class);
+        assertThat(StatsEvaluator.evaluate(col("price").gtEq(Double.NaN), cols, ROW_COUNT))
+                .isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void zeroBoundsCompareEqualToEitherZero() {
+        FilterPipeline.ColumnStatsLookup fromPositiveZero = single("price", doubleStats(0.0, 5.0, 0));
+        FilterPipeline.ColumnStatsLookup toNegativeZero = single("price", doubleStats(-5.0, -0.0, 0));
+        assertThat(StatsEvaluator.evaluate(col("price").eq(-0.0), fromPositiveZero, ROW_COUNT))
+                .isNotInstanceOf(PruningDecision.Eliminated.class);
+        assertThat(StatsEvaluator.evaluate(col("price").gtEq(0.0), toNegativeZero, ROW_COUNT))
+                .isNotInstanceOf(PruningDecision.Eliminated.class);
+        assertThat(StatsEvaluator.evaluate(col("price").gt(0.0), toNegativeZero, ROW_COUNT))
+                .isInstanceOf(PruningDecision.Eliminated.class);
     }
 
     @Test

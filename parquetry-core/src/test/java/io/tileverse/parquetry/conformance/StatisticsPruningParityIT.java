@@ -47,9 +47,10 @@ import io.tileverse.parquetry.testkit.TestCorpus;
 
 /**
  * Proves that pruning never changes the rows matched by a predicate on the {@code apache/parquet-testing} fixtures with
- * statistics in an order other than the byte order of their cells. For a grid of predicates built from each column's
- * own cells, {@code read} with all tiers on, {@code read} with pruning off, {@code readBatches} both ways, and
- * {@code count} select the rows computed independently by this test.
+ * statistics in an order other than the byte order of their cells, and with floating-point columns holding NaN and both
+ * zeros. For a grid of predicates built from each column's own cells, {@code read} with all tiers on, {@code read} with
+ * pruning off, {@code readBatches} both ways, and {@code count} select the rows computed independently by this test
+ * under the IEEE 754 rules documented on {@link Predicate}.
  */
 class StatisticsPruningParityIT {
 
@@ -64,6 +65,72 @@ class StatisticsPruningParityIT {
 
     @TempDir
     Path tempDir;
+
+    @Test
+    void floatColumnsMatchTheSameRowsWithAndWithoutPruning() {
+        assertPruningParity(
+                "floating_orders_nan_count.parquet",
+                List.of("float_ieee754", "float_typedef"),
+                StatisticsPruningParityIT::floatingLiterals);
+    }
+
+    @Test
+    void doubleColumnsMatchTheSameRowsWithAndWithoutPruning() {
+        assertPruningParity(
+                "floating_orders_nan_count.parquet",
+                List.of("double_ieee754", "double_typedef"),
+                StatisticsPruningParityIT::floatingLiterals);
+    }
+
+    /**
+     * Negating an ordered comparison flips its operator, as documented on {@link Predicate}: the negation matches the
+     * rows of the flipped comparison, leaving out the NaN and null cells, with pruning on or off.
+     */
+    @Test
+    void negatedOrderedComparisonsOnFloatingColumnsMatchTheFlippedOperator() {
+        Path file = TestCorpus.extractFile(DATA + "floating_orders_nan_count.parquet", tempDir);
+        List<String> columns = List.of("float_ieee754", "float_typedef", "double_ieee754", "double_typedef");
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+            List<Map<ColumnPath, Object>> rows = readRows(reader, Predicate.ALWAYS_TRUE, PRUNING_OFF);
+            SoftAssertions softly = new SoftAssertions();
+            for (String column : columns) {
+                ColumnPath path = ColumnPath.of(column);
+                for (Value literal : floatingLiterals(cellsOf(rows, path))) {
+                    assertNegatedOrderedComparisons(softly, reader, rows, path, literal);
+                }
+            }
+            softly.assertAll();
+        }
+    }
+
+    private static void assertNegatedOrderedComparisons(
+            SoftAssertions softly,
+            ParquetFileReader reader,
+            List<Map<ColumnPath, Object>> rows,
+            ColumnPath column,
+            Value literal) {
+        List<Predicate> ordered = List.of(
+                new Predicate.Lt(column, literal),
+                new Predicate.LtEq(column, literal),
+                new Predicate.Gt(column, literal),
+                new Predicate.GtEq(column, literal));
+        for (Predicate comparison : ordered) {
+            List<String> expected = expectedRowKeys(rows, column, flipped(comparison));
+            assertReadPathsSelect(softly, reader, comparison.negate(), expected);
+        }
+    }
+
+    /** The comparison matching the rows of the negated {@code comparison}. */
+    private static Predicate flipped(Predicate comparison) {
+        return switch (comparison) {
+            case Predicate.Lt lt -> new Predicate.GtEq(lt.col(), lt.v());
+            case Predicate.LtEq ltEq -> new Predicate.Gt(ltEq.col(), ltEq.v());
+            case Predicate.Gt gt -> new Predicate.LtEq(gt.col(), gt.v());
+            case Predicate.GtEq gtEq -> new Predicate.Lt(gtEq.col(), gtEq.v());
+            default -> throw new IllegalArgumentException("not an ordered comparison: " + comparison);
+        };
+    }
 
     @Test
     void halfFloatColumnsMatchTheSameRowsWithAndWithoutPruning() {
@@ -201,6 +268,32 @@ class StatisticsPruningParityIT {
         return literals;
     }
 
+    /**
+     * The distinct cells of a FLOAT or DOUBLE column, NaN payloads included, plus both zeros, both infinities and NaN,
+     * each as a float literal and as a double literal.
+     */
+    private static List<Value> floatingLiterals(List<Object> cells) {
+        Map<Long, Double> distinct = new LinkedHashMap<>();
+        for (Object cell : cells) {
+            if (cell instanceof Number number) {
+                double value = number.doubleValue();
+                distinct.put(Double.doubleToRawLongBits(value), value);
+            }
+        }
+        double[] specials = {0.0, -0.0, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.NaN};
+        for (double special : specials) {
+            distinct.put(Double.doubleToRawLongBits(special), special);
+        }
+        List<Value> literals = new ArrayList<>(distinct.size() * 2);
+        for (double value : distinct.values()) {
+            literals.add(new Value.FloatVal((float) value));
+        }
+        for (double value : distinct.values()) {
+            literals.add(new Value.DoubleVal(value));
+        }
+        return literals;
+    }
+
     /** The distinct cells of an INT32 column in ascending order, plus one value below and one above them all. */
     private static List<Value> integerLiterals(List<Object> cells) {
         TreeSet<Integer> distinct = new TreeSet<>();
@@ -250,7 +343,11 @@ class StatisticsPruningParityIT {
         };
     }
 
+    /** A NaN literal equals a NaN cell, whatever their payloads, as IEEE 754 equality is extended by the reader. */
     private static boolean equal(Object cell, Value literal) {
+        if (isNaN(cell) && isNaN(literal)) {
+            return true;
+        }
         OptionalInt sign = order(cell, literal);
         return sign.isPresent() && sign.getAsInt() == 0;
     }
@@ -260,12 +357,42 @@ class StatisticsPruningParityIT {
         return sign.isPresent() && test.holds(sign.getAsInt());
     }
 
-    /** The sign of {@code cell - literal}: unsigned byte order for binary cells, signed order for integers. */
+    /**
+     * The sign of {@code cell - literal}: unsigned byte order for binary cells, signed order for integers, and the
+     * numeric IEEE 754 order for floating-point values. Empty when the two are unordered, as a NaN is against anything.
+     */
     private static OptionalInt order(Object cell, Value literal) {
         return switch (literal) {
             case Value.BinaryVal binary -> OptionalInt.of(Arrays.compareUnsigned((byte[]) cell, bytesOf(binary)));
             case Value.IntVal integer -> OptionalInt.of(Integer.compare((Integer) cell, integer.value()));
+            case Value.FloatVal floating -> ieeeOrder(((Number) cell).doubleValue(), floating.value());
+            case Value.DoubleVal floating -> ieeeOrder(((Number) cell).doubleValue(), floating.value());
             default -> throw new IllegalArgumentException("no expectation for literal " + literal);
+        };
+    }
+
+    private static OptionalInt ieeeOrder(double cell, double literal) {
+        if (cell < literal) {
+            return OptionalInt.of(-1);
+        }
+        if (cell > literal) {
+            return OptionalInt.of(1);
+        }
+        if (cell == literal) {
+            return OptionalInt.of(0);
+        }
+        return OptionalInt.empty();
+    }
+
+    private static boolean isNaN(Object cell) {
+        return cell instanceof Number number && Double.isNaN(number.doubleValue());
+    }
+
+    private static boolean isNaN(Value literal) {
+        return switch (literal) {
+            case Value.FloatVal floating -> Float.isNaN(floating.value());
+            case Value.DoubleVal floating -> Double.isNaN(floating.value());
+            default -> false;
         };
     }
 

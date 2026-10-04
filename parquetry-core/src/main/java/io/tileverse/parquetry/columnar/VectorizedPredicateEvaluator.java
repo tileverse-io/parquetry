@@ -23,7 +23,6 @@ import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.List;
 import java.util.Optional;
-import java.util.function.IntPredicate;
 import java.util.function.IntToLongFunction;
 
 import io.tileverse.parquetry.filter.GeometryFilter;
@@ -31,6 +30,7 @@ import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.RowPositionSet;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.format.LogicalType;
+import io.tileverse.parquetry.internal.filter.ComparisonOperator;
 import io.tileverse.parquetry.internal.filter.DecimalValues;
 import io.tileverse.parquetry.internal.filter.RecordAccessors;
 import io.tileverse.parquetry.internal.filter.RecordLevelEvaluator;
@@ -73,12 +73,12 @@ public final class VectorizedPredicateEvaluator {
             case Predicate.Not(Predicate child) -> negate(eval(child, batch), rowCount);
             case Predicate.IsNull(ColumnPath col) -> nulls(batch, col, rowCount);
             case Predicate.IsNotNull(ColumnPath col) -> validityOf(batch, col);
-            case Predicate.Eq(ColumnPath col, Value v) -> compareMask(batch, col, v, c -> c == 0);
-            case Predicate.NotEq(ColumnPath col, Value v) -> compareMask(batch, col, v, c -> c != 0);
-            case Predicate.Lt(ColumnPath col, Value v) -> compareMask(batch, col, v, c -> c < 0);
-            case Predicate.LtEq(ColumnPath col, Value v) -> compareMask(batch, col, v, c -> c <= 0);
-            case Predicate.Gt(ColumnPath col, Value v) -> compareMask(batch, col, v, c -> c > 0);
-            case Predicate.GtEq(ColumnPath col, Value v) -> compareMask(batch, col, v, c -> c >= 0);
+            case Predicate.Eq(ColumnPath col, Value v) -> compareMask(batch, col, v, ComparisonOperator.EQ);
+            case Predicate.NotEq(ColumnPath col, Value v) -> compareMask(batch, col, v, ComparisonOperator.NOT_EQ);
+            case Predicate.Lt(ColumnPath col, Value v) -> compareMask(batch, col, v, ComparisonOperator.LT);
+            case Predicate.LtEq(ColumnPath col, Value v) -> compareMask(batch, col, v, ComparisonOperator.LT_EQ);
+            case Predicate.Gt(ColumnPath col, Value v) -> compareMask(batch, col, v, ComparisonOperator.GT);
+            case Predicate.GtEq(ColumnPath col, Value v) -> compareMask(batch, col, v, ComparisonOperator.GT_EQ);
             case Predicate.In(ColumnPath col, List<Value> values) -> inMask(batch, col, values);
             case Predicate.Spatial spatial -> spatialMask(batch, spatial, rowCount, false);
             case Predicate.GeometryFilterPredicate(GeometryFilter<?> filter) ->
@@ -247,7 +247,7 @@ public final class VectorizedPredicateEvaluator {
     // S6541 (Brain Method): the per-vector-type loops are an intentional dispatch table on the hot count path.
     // Collapsing them to lower the metric would reintroduce per-row megamorphic dispatch (see the in-body note).
     @SuppressWarnings({"java:S3776", "java:S6541"})
-    private static BitSet compareMask(ParquetRecordBatch batch, ColumnPath col, Value v, IntPredicate accept) {
+    private static BitSet compareMask(ParquetRecordBatch batch, ColumnPath col, Value v, ComparisonOperator op) {
         ColumnVector vec = vectorOf(batch, col);
         Validity validity = vec.validity();
         BitSet out = new BitSet(batch.rowCount());
@@ -257,10 +257,10 @@ public final class VectorizedPredicateEvaluator {
         switch (vec) {
             case IntVector iv -> {
                 if (v instanceof Value.DecimalVal(BigDecimal query)) {
-                    integerDecimalMask(iv::getInt, validity, query, decimalScale(batch, col), accept, out);
+                    integerDecimalMask(iv::getInt, validity, query, decimalScale(batch, col), op, out);
                 } else {
                     for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
-                        if (accept.test(ValueComparison.compareInt(iv.getInt(r), v))) {
+                        if (op.holds(ValueComparison.compareInt(iv.getInt(r), v))) {
                             out.set(r);
                         }
                     }
@@ -268,46 +268,34 @@ public final class VectorizedPredicateEvaluator {
             }
             case LongVector lv -> {
                 if (v instanceof Value.DecimalVal(BigDecimal query)) {
-                    integerDecimalMask(lv::getLong, validity, query, decimalScale(batch, col), accept, out);
+                    integerDecimalMask(lv::getLong, validity, query, decimalScale(batch, col), op, out);
                 } else if (v instanceof Value.TimestampVal || v instanceof Value.TimeVal) {
                     long query = temporalQueryUnit(v, batch, col);
                     for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
-                        if (accept.test(Long.compare(lv.getLong(r), query))) {
+                        if (op.holds(Long.compare(lv.getLong(r), query))) {
                             out.set(r);
                         }
                     }
                 } else {
                     for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
-                        if (accept.test(ValueComparison.compareLong(lv.getLong(r), v))) {
+                        if (op.holds(ValueComparison.compareLong(lv.getLong(r), v))) {
                             out.set(r);
                         }
                     }
                 }
             }
-            case DoubleVector dv -> {
-                for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
-                    if (accept.test(ValueComparison.compareDouble(dv.getDouble(r), v))) {
-                        out.set(r);
-                    }
-                }
-            }
-            case FloatVector fv -> {
-                for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
-                    if (accept.test(ValueComparison.compareFloat(fv.getFloat(r), v))) {
-                        out.set(r);
-                    }
-                }
-            }
+            case DoubleVector dv -> doubleMask(dv, validity, v, op, out);
+            case FloatVector fv -> floatMask(fv, validity, v, op, out);
             case BooleanVector bvec -> {
                 for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
-                    if (accept.test(ValueComparison.compareBoolean(bvec.getBoolean(r), v))) {
+                    if (op.holds(ValueComparison.compareBoolean(bvec.getBoolean(r), v))) {
                         out.set(r);
                     }
                 }
             }
             case BinaryVector bin -> {
                 for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
-                    if (accept.test(ValueComparison.compareBinary(bin.get(r), v))) {
+                    if (op.holds(ValueComparison.compareBinary(bin.get(r), v))) {
                         out.set(r);
                     }
                 }
@@ -315,16 +303,10 @@ public final class VectorizedPredicateEvaluator {
             case FixedLenBinaryVector fixed -> {
                 if (v instanceof Value.DecimalVal(BigDecimal query)) {
                     decimalMask(
-                            fixed,
-                            validity,
-                            query,
-                            decimalScale(batch, col),
-                            decimalByteLength(batch, col),
-                            accept,
-                            out);
+                            fixed, validity, query, decimalScale(batch, col), decimalByteLength(batch, col), op, out);
                 } else {
                     for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
-                        if (accept.test(ValueComparison.compareBinary(fixed.get(r), v))) {
+                        if (op.holds(ValueComparison.compareBinary(fixed.get(r), v))) {
                             out.set(r);
                         }
                     }
@@ -332,7 +314,7 @@ public final class VectorizedPredicateEvaluator {
             }
             case Int96Vector int96 -> {
                 for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
-                    if (accept.test(ValueComparison.compareBinary(int96.get(r), v))) {
+                    if (op.holds(ValueComparison.compareBinary(int96.get(r), v))) {
                         out.set(r);
                     }
                 }
@@ -342,6 +324,42 @@ public final class VectorizedPredicateEvaluator {
             }
         }
         return out;
+    }
+
+    // The literal is resolved once per column, leaving one primitive IEEE 754 comparison per row. A literal of another
+    // type cannot reach a floating-point column past validation; such a literal keeps the outcome of an unknown pair
+    // and compares as equal.
+    private static void doubleMask(DoubleVector dv, Validity validity, Value v, ComparisonOperator op, BitSet out) {
+        if (!ValueComparison.isFloating(v)) {
+            unknownPairMask(validity, op, out);
+            return;
+        }
+        double literal = ValueComparison.floatingValue(v);
+        for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
+            if (op.holds(dv.getDouble(r), literal)) {
+                out.set(r);
+            }
+        }
+    }
+
+    // A float cell widens to double exactly, comparing as the double literal does.
+    private static void floatMask(FloatVector fv, Validity validity, Value v, ComparisonOperator op, BitSet out) {
+        if (!ValueComparison.isFloating(v)) {
+            unknownPairMask(validity, op, out);
+            return;
+        }
+        double literal = ValueComparison.floatingValue(v);
+        for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
+            if (op.holds(fv.getFloat(r), literal)) {
+                out.set(r);
+            }
+        }
+    }
+
+    private static void unknownPairMask(Validity validity, ComparisonOperator op, BitSet out) {
+        if (op.holds(0)) {
+            out.or(validity.copy());
+        }
     }
 
     private static long temporalQueryUnit(Value v, ParquetRecordBatch batch, ColumnPath col) {
@@ -370,7 +388,7 @@ public final class VectorizedPredicateEvaluator {
             BigDecimal query,
             int columnScale,
             int byteLength,
-            IntPredicate accept,
+            ComparisonOperator op,
             BitSet out) {
         if (query.scale() == columnScale
                 && byteLength >= 1
@@ -378,15 +396,14 @@ public final class VectorizedPredicateEvaluator {
                 && query.unscaledValue().bitLength() < 64) {
             long queryUnscaled = query.unscaledValue().longValue();
             for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
-                if (accept.test(Long.compare(DecimalValues.signedLong(fixed.get(r)), queryUnscaled))) {
+                if (op.holds(Long.compare(DecimalValues.signedLong(fixed.get(r)), queryUnscaled))) {
                     out.set(r);
                 }
             }
             return;
         }
         for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
-            if (accept.test(
-                    DecimalValues.toBigDecimal(fixed.get(r), columnScale).compareTo(query))) {
+            if (op.holds(DecimalValues.toBigDecimal(fixed.get(r), columnScale).compareTo(query))) {
                 out.set(r);
             }
         }
@@ -401,19 +418,19 @@ public final class VectorizedPredicateEvaluator {
             Validity validity,
             BigDecimal query,
             int columnScale,
-            IntPredicate accept,
+            ComparisonOperator op,
             BitSet out) {
         if (query.scale() == columnScale && query.unscaledValue().bitLength() < 64) {
             long queryUnscaled = query.unscaledValue().longValue();
             for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
-                if (accept.test(Long.compare(unscaledAt.applyAsLong(r), queryUnscaled))) {
+                if (op.holds(Long.compare(unscaledAt.applyAsLong(r), queryUnscaled))) {
                     out.set(r);
                 }
             }
             return;
         }
         for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
-            if (accept.test(
+            if (op.holds(
                     BigDecimal.valueOf(unscaledAt.applyAsLong(r), columnScale).compareTo(query))) {
                 out.set(r);
             }
@@ -446,7 +463,7 @@ public final class VectorizedPredicateEvaluator {
     private static BitSet inMask(ParquetRecordBatch batch, ColumnPath col, List<Value> values) {
         BitSet acc = new BitSet(batch.rowCount());
         for (Value v : values) {
-            acc.or(compareMask(batch, col, v, c -> c == 0));
+            acc.or(compareMask(batch, col, v, ComparisonOperator.EQ));
         }
         return acc;
     }

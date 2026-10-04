@@ -803,7 +803,8 @@ public final class ColumnChunkWriter implements AutoCloseable {
             emitDictionaryAndBufferedPages();
         }
 
-        ColumnIndex columnIndex = columnIndexBuilder != null ? columnIndexBuilder.finishChunk() : null;
+        ColumnIndex columnIndex =
+                columnIndexBuilder != null ? columnIndexBuilder.finishChunk().orElse(null) : null;
         OffsetIndex offsetIndex = offsetIndexBuilder != null ? offsetIndexBuilder.finishChunk() : null;
         Statistics statistics = chunkStats.finishChunk();
         GeospatialStatistics geospatialStatistics = geoStats != null ? geoStats.finish() : null;

@@ -15,11 +15,8 @@
  */
 package io.tileverse.parquetry.internal.filter;
 
-import java.lang.foreign.MemorySegment;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 import java.util.function.Predicate;
 
 import io.tileverse.parquetry.filter.MatchAction;
@@ -28,7 +25,6 @@ import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.filter.explain.Tier;
 import io.tileverse.parquetry.internal.read.page.Dictionary;
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.parquetry.schema.UuidConverter;
 
 /**
  * Tier-2 (DICTIONARY) evaluator. Inspects a row group's loaded dictionary pages: if no dictionary value can satisfy the
@@ -36,8 +32,9 @@ import io.tileverse.parquetry.schema.UuidConverter;
  * PassedAll. It returns {@link PruningDecision.Eliminated}, {@link PruningDecision.Inconclusive} (at least one
  * dictionary value matches), or {@link PruningDecision.NotApplied} (no dictionary loaded or an ineligible predicate).
  *
- * <p>The evaluator assumes the predicate has already been normalized (Not pushed to leaves, Always folded, nested
- * And/Or flattened).
+ * <p>A dictionary value matches a comparison exactly as a record cell does at record level, through
+ * {@link ValueComparison#holds}. The evaluator assumes the predicate has already been normalized (Not pushed to leaves,
+ * Always folded, nested And/Or flattened).
  */
 final class DictionaryEvaluator {
 
@@ -60,20 +57,20 @@ final class DictionaryEvaluator {
             case io.tileverse.parquetry.filter.Predicate.Not(io.tileverse.parquetry.filter.Predicate child) ->
                 evalNotLeaf(child, dictionaries);
             case io.tileverse.parquetry.filter.Predicate.Eq(ColumnPath col, Value v) ->
-                leafOrSkip(col, dictionaries, v, dv -> equals(v, dv), "Eq");
+                leafOrSkip(col, dictionaries, v, matching(ComparisonOperator.EQ, v), "Eq");
             case io.tileverse.parquetry.filter.Predicate.NotEq(ColumnPath col, Value v) ->
-                leafOrSkip(col, dictionaries, v, dv -> !equals(v, dv), "NotEq");
+                leafOrSkip(col, dictionaries, v, matching(ComparisonOperator.NOT_EQ, v), "NotEq");
             case io.tileverse.parquetry.filter.Predicate.Lt(ColumnPath col, Value v) ->
-                leafOrSkip(col, dictionaries, v, dv -> compare(dv, v) < 0, "Lt");
+                leafOrSkip(col, dictionaries, v, matching(ComparisonOperator.LT, v), "Lt");
             case io.tileverse.parquetry.filter.Predicate.LtEq(ColumnPath col, Value v) ->
-                leafOrSkip(col, dictionaries, v, dv -> compare(dv, v) <= 0, "LtEq");
+                leafOrSkip(col, dictionaries, v, matching(ComparisonOperator.LT_EQ, v), "LtEq");
             case io.tileverse.parquetry.filter.Predicate.Gt(ColumnPath col, Value v) ->
-                leafOrSkip(col, dictionaries, v, dv -> compare(dv, v) > 0, "Gt");
+                leafOrSkip(col, dictionaries, v, matching(ComparisonOperator.GT, v), "Gt");
             case io.tileverse.parquetry.filter.Predicate.GtEq(ColumnPath col, Value v) ->
-                leafOrSkip(col, dictionaries, v, dv -> compare(dv, v) >= 0, "GtEq");
+                leafOrSkip(col, dictionaries, v, matching(ComparisonOperator.GT_EQ, v), "GtEq");
             case io.tileverse.parquetry.filter.Predicate.In(ColumnPath col, List<Value> values) ->
                 values.stream().allMatch(DictionaryEvaluator::dictComparable)
-                        ? evalLeaf(col, dictionaries, dv -> values.stream().anyMatch(v -> equals(v, dv)), "In")
+                        ? evalLeaf(col, dictionaries, matchingAny(values), "In")
                         : new PruningDecision.NotApplied(TIER, "In " + col.dot() + ": type not dictionary-comparable");
             case io.tileverse.parquetry.filter.Predicate.IsNull _ ->
                 new PruningDecision.NotApplied(TIER, "IsNull: dictionaries don't track nulls");
@@ -165,6 +162,17 @@ final class DictionaryEvaluator {
         return evalLeaf(col, dicts, matches, op);
     }
 
+    /** The dictionary values for which {@code op} holds against {@code literal}, as it would for record cells. */
+    private static Predicate<Object> matching(ComparisonOperator op, Value literal) {
+        return dictValue -> ValueComparison.holds(op, dictValue, literal);
+    }
+
+    /** The dictionary values equal to one of {@code literals}, as record cells would be. */
+    private static Predicate<Object> matchingAny(List<Value> literals) {
+        return dictValue ->
+                literals.stream().anyMatch(literal -> ValueComparison.holds(ComparisonOperator.EQ, dictValue, literal));
+    }
+
     /**
      * Evaluates a leaf predicate against the column's dictionary by walking every dictionary entry. If no entry
      * satisfies {@code matches}, the row group is eliminated.
@@ -184,50 +192,5 @@ final class DictionaryEvaluator {
             }
         }
         return new PruningDecision.Eliminated(TIER, opLabel + " " + col.dot() + ": no dictionary value matches");
-    }
-
-    // S7475 (bare _ in nested record patterns) is informational only - palantirJavaFormat 2.90 cannot
-    // parse the bare-underscore form Sonar suggests; see memory feedback-palantir-unnamed-pattern.
-    @SuppressWarnings("java:S7475")
-    private static boolean equals(Value v, Object dictValue) {
-        return switch (v) {
-            case Value.BoolVal(boolean qv) when dictValue instanceof Boolean dv -> qv == dv;
-            case Value.IntVal(int qv) when dictValue instanceof Integer dv -> qv == dv;
-            case Value.LongVal(long qv) when dictValue instanceof Long dv -> qv == dv;
-            case Value.FloatVal(float qv) when dictValue instanceof Float dv -> Float.compare(qv, dv) == 0;
-            case Value.DoubleVal(double qv) when dictValue instanceof Double dv -> Double.compare(qv, dv) == 0;
-            case Value.StringVal(String qv)
-            when dictValue instanceof MemorySegment dv ->
-                ValueComparison.compareBytes(MemorySegment.ofArray(qv.getBytes(StandardCharsets.UTF_8)), dv) == 0;
-            case Value.BinaryVal(MemorySegment qv)
-            when dictValue instanceof MemorySegment dv -> ValueComparison.compareBytes(qv, dv) == 0;
-            case Value.UuidVal(UUID qv)
-            when dictValue instanceof MemorySegment dv -> UuidConverter.compareSegmentToUuid(dv, qv) == 0;
-            case Value.DateVal(java.time.LocalDate qv)
-            when dictValue instanceof Integer dv -> (int) qv.toEpochDay() == dv;
-            default -> false;
-        };
-    }
-
-    /** Returns negative/zero/positive comparing {@code dictValue} to predicate-side {@code v}. */
-    @SuppressWarnings("java:S7475") // see equals(): palantirJavaFormat 2.90 cannot parse bare _ in nested patterns
-    private static int compare(Object dictValue, Value v) {
-        return switch (v) {
-            case Value.BoolVal(boolean qv) when dictValue instanceof Boolean dv -> Boolean.compare(dv, qv);
-            case Value.IntVal(int qv) when dictValue instanceof Integer dv -> Integer.compare(dv, qv);
-            case Value.LongVal(long qv) when dictValue instanceof Long dv -> Long.compare(dv, qv);
-            case Value.FloatVal(float qv) when dictValue instanceof Float dv -> Float.compare(dv, qv);
-            case Value.DoubleVal(double qv) when dictValue instanceof Double dv -> Double.compare(dv, qv);
-            case Value.StringVal(String qv)
-            when dictValue instanceof MemorySegment dv ->
-                ValueComparison.compareBytes(dv, MemorySegment.ofArray(qv.getBytes(StandardCharsets.UTF_8)));
-            case Value.BinaryVal(MemorySegment qv)
-            when dictValue instanceof MemorySegment dv -> ValueComparison.compareBytes(dv, qv);
-            case Value.UuidVal(UUID qv)
-            when dictValue instanceof MemorySegment dv -> UuidConverter.compareSegmentToUuid(dv, qv);
-            case Value.DateVal(java.time.LocalDate qv)
-            when dictValue instanceof Integer dv -> Integer.compare(dv, (int) qv.toEpochDay());
-            default -> 0;
-        };
     }
 }

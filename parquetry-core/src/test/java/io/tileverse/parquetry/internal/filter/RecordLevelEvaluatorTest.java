@@ -32,6 +32,7 @@ import org.junit.jupiter.api.Test;
 import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.GeometryFilter;
 import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.testsupport.Wkb;
 
@@ -113,6 +114,54 @@ class RecordLevelEvaluatorTest {
     void doubleLtMatches() {
         RecordLevelEvaluator.RecordAccessor row = row(Map.of("price", 1.5));
         assertThat(RecordLevelEvaluator.test(col("price").lt(2.0), row)).isTrue();
+    }
+
+    @Test
+    void nanLiteralEqualityMatchesANaNCell() {
+        RecordLevelEvaluator.RecordAccessor row = row(Map.of("price", Float.NaN));
+        assertThat(RecordLevelEvaluator.test(col("price").eq(Double.NaN), row)).isTrue();
+        assertThat(RecordLevelEvaluator.test(col("price").notEq(Double.NaN), row))
+                .isFalse();
+    }
+
+    @Test
+    void nanCellDiffersFromANumber() {
+        RecordLevelEvaluator.RecordAccessor row = row(Map.of("price", Double.NaN));
+        assertThat(RecordLevelEvaluator.test(col("price").eq(1.0), row)).isFalse();
+        assertThat(RecordLevelEvaluator.test(col("price").notEq(1.0), row)).isTrue();
+    }
+
+    @Test
+    void orderedComparisonNeverMatchesANaNCell() {
+        RecordLevelEvaluator.RecordAccessor row = row(Map.of("price", Double.NaN));
+        assertThat(RecordLevelEvaluator.test(col("price").lt(1.0), row)).isFalse();
+        assertThat(RecordLevelEvaluator.test(col("price").ltEq(1.0), row)).isFalse();
+        assertThat(RecordLevelEvaluator.test(col("price").gt(1.0), row)).isFalse();
+        assertThat(RecordLevelEvaluator.test(col("price").gtEq(1.0), row)).isFalse();
+    }
+
+    @Test
+    void orderedComparisonAgainstANaNLiteralMatchesNothing() {
+        RecordLevelEvaluator.RecordAccessor row = row(Map.of("price", 1.5));
+        assertThat(RecordLevelEvaluator.test(col("price").lt(Double.NaN), row)).isFalse();
+        assertThat(RecordLevelEvaluator.test(col("price").gtEq(Double.NaN), row))
+                .isFalse();
+    }
+
+    @Test
+    void negatedOrderedComparisonLeavesANaNCellUnmatched() {
+        RecordLevelEvaluator.RecordAccessor row = row(Map.of("price", Double.NaN));
+        Predicate notAbove = PredicateNormalizer.normalize(col("price").gt(1.0).negate());
+        assertThat(RecordLevelEvaluator.test(notAbove, row)).isFalse();
+    }
+
+    @Test
+    void negativeZeroEqualsPositiveZero() {
+        RecordLevelEvaluator.RecordAccessor row = row(Map.of("price", -0.0));
+        assertThat(RecordLevelEvaluator.test(col("price").eq(0.0), row)).isTrue();
+        assertThat(RecordLevelEvaluator.test(col("price").lt(0.0), row)).isFalse();
+        Predicate inZero = new Predicate.In(ColumnPath.of("price"), List.of(new Value.DoubleVal(0.0)));
+        assertThat(RecordLevelEvaluator.test(inZero, row)).isTrue();
     }
 
     @Test

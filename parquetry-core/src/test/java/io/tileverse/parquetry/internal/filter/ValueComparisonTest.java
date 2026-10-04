@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.internal.filter;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.MemorySegment;
 import java.math.BigDecimal;
@@ -34,6 +35,9 @@ import org.junit.jupiter.params.provider.MethodSource;
 import io.tileverse.parquetry.filter.Value;
 
 class ValueComparisonTest {
+
+    /** A NaN whose payload differs from {@link Float#NaN}, as written by some producers. */
+    private static final float PAYLOAD_NAN = Float.intBitsToFloat(0xFFC00001);
 
     @Test
     void boxedIntComparesToIntVal() {
@@ -167,13 +171,16 @@ class ValueComparisonTest {
     }
 
     @Test
-    void compareFloatWidensAgainstDoubleBound() {
-        assertThat(ValueComparison.compareFloat(2.0f, new Value.DoubleVal(1.5))).isPositive();
+    void floatingValueWidensAFloatLiteralExactly() {
+        assertThat(ValueComparison.floatingValue(new Value.FloatVal(0.1f))).isEqualTo((double) 0.1f);
+        assertThat(ValueComparison.floatingValue(new Value.DoubleVal(1.5))).isEqualTo(1.5);
     }
 
     @Test
-    void compareDoubleWidensAgainstFloatBound() {
-        assertThat(ValueComparison.compareDouble(1.5, new Value.FloatVal(2.0f))).isNegative();
+    void floatingValueRejectsALiteralOfAnotherType() {
+        Value integer = new Value.IntVal(1);
+
+        assertThatThrownBy(() -> ValueComparison.floatingValue(integer)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @ParameterizedTest(name = "compareBoxed({0}, {1}) sign == {2}")
@@ -246,5 +253,83 @@ class ValueComparisonTest {
         Value.DecimalVal small = new Value.DecimalVal(new BigDecimal("1.00"));
         Value.DecimalVal big = new Value.DecimalVal(new BigDecimal("9.00"));
         assertThat(ValueComparison.compareValues(small, big)).isNegative();
+    }
+
+    static Stream<Arguments> ieeeComparisons() {
+        return Stream.of(
+                // a NaN literal in an equality selects the NaN cells, whatever their payload
+                Arguments.of(ComparisonOperator.EQ, Float.NaN, new Value.FloatVal(Float.NaN), true),
+                Arguments.of(ComparisonOperator.EQ, PAYLOAD_NAN, new Value.FloatVal(Float.NaN), true),
+                Arguments.of(ComparisonOperator.EQ, Double.NaN, new Value.FloatVal(Float.NaN), true),
+                Arguments.of(ComparisonOperator.EQ, 1.0f, new Value.FloatVal(Float.NaN), false),
+                Arguments.of(ComparisonOperator.NOT_EQ, Float.NaN, new Value.FloatVal(Float.NaN), false),
+                Arguments.of(ComparisonOperator.NOT_EQ, 1.0f, new Value.FloatVal(Float.NaN), true),
+                // a NaN cell differs from any number
+                Arguments.of(ComparisonOperator.EQ, Float.NaN, new Value.FloatVal(1.0f), false),
+                Arguments.of(ComparisonOperator.NOT_EQ, Float.NaN, new Value.FloatVal(1.0f), true),
+                // ordered comparisons never match a NaN cell nor anything against a NaN literal
+                Arguments.of(ComparisonOperator.LT, Float.NaN, new Value.FloatVal(1.0f), false),
+                Arguments.of(ComparisonOperator.LT_EQ, Float.NaN, new Value.FloatVal(1.0f), false),
+                Arguments.of(ComparisonOperator.GT, Float.NaN, new Value.FloatVal(1.0f), false),
+                Arguments.of(ComparisonOperator.GT_EQ, Double.NaN, new Value.DoubleVal(1.0), false),
+                Arguments.of(ComparisonOperator.LT, 1.0f, new Value.FloatVal(Float.NaN), false),
+                Arguments.of(ComparisonOperator.GT, 1.0, new Value.DoubleVal(Double.NaN), false),
+                Arguments.of(ComparisonOperator.LT_EQ, Float.NaN, new Value.FloatVal(Float.NaN), false),
+                Arguments.of(ComparisonOperator.GT_EQ, Double.NaN, new Value.DoubleVal(Double.NaN), false),
+                // the two zeros are equal
+                Arguments.of(ComparisonOperator.EQ, -0.0f, new Value.FloatVal(0.0f), true),
+                Arguments.of(ComparisonOperator.EQ, 0.0, new Value.DoubleVal(-0.0), true),
+                Arguments.of(ComparisonOperator.NOT_EQ, -0.0, new Value.DoubleVal(0.0), false),
+                Arguments.of(ComparisonOperator.LT, -0.0f, new Value.FloatVal(0.0f), false),
+                Arguments.of(ComparisonOperator.LT_EQ, 0.0, new Value.DoubleVal(-0.0), true),
+                Arguments.of(ComparisonOperator.GT_EQ, -0.0f, new Value.DoubleVal(0.0), true),
+                // infinities order as numbers
+                Arguments.of(ComparisonOperator.GT, Float.POSITIVE_INFINITY, new Value.FloatVal(Float.MAX_VALUE), true),
+                Arguments.of(
+                        ComparisonOperator.LT, Double.NEGATIVE_INFINITY, new Value.DoubleVal(-Double.MAX_VALUE), true),
+                Arguments.of(
+                        ComparisonOperator.EQ,
+                        Float.POSITIVE_INFINITY,
+                        new Value.DoubleVal(Double.POSITIVE_INFINITY),
+                        true));
+    }
+
+    @ParameterizedTest(name = "{1} {0} {2} is {3}")
+    @MethodSource("ieeeComparisons")
+    void floatingPointComparisonsFollowIeee754(ComparisonOperator op, Object cell, Value literal, boolean expected) {
+        assertThat(ValueComparison.holds(op, cell, literal)).isEqualTo(expected);
+    }
+
+    @ParameterizedTest(name = "{1} {0} {2} is {3}")
+    @MethodSource("ieeeComparisons")
+    void primitiveFloatingPointComparisonsAgreeWithTheBoxedOnes(
+            ComparisonOperator op, Object cell, Value literal, boolean expected) {
+        double primitive = ((Number) cell).doubleValue();
+        assertThat(op.holds(primitive, ValueComparison.floatingValue(literal))).isEqualTo(expected);
+    }
+
+    @Test
+    void nullCellMatchesNoComparison() {
+        assertThat(ValueComparison.holds(ComparisonOperator.EQ, null, new Value.FloatVal(Float.NaN)))
+                .isFalse();
+        assertThat(ValueComparison.holds(ComparisonOperator.NOT_EQ, null, new Value.FloatVal(1.0f)))
+                .isFalse();
+    }
+
+    @Test
+    void boundOrderTreatsTheTwoZerosAsEqual() {
+        assertThat(ValueComparison.compareValues(new Value.FloatVal(-0.0f), new Value.FloatVal(0.0f)))
+                .isZero();
+        assertThat(ValueComparison.compareValues(new Value.DoubleVal(0.0), new Value.FloatVal(-0.0f)))
+                .isZero();
+    }
+
+    @Test
+    void isNaNRecognizesOnlyFloatingPointNaNLiterals() {
+        assertThat(ValueComparison.isNaN(new Value.FloatVal(PAYLOAD_NAN))).isTrue();
+        assertThat(ValueComparison.isNaN(new Value.DoubleVal(Double.NaN))).isTrue();
+        assertThat(ValueComparison.isNaN(new Value.DoubleVal(Double.POSITIVE_INFINITY)))
+                .isFalse();
+        assertThat(ValueComparison.isNaN(new Value.IntVal(0))).isFalse();
     }
 }

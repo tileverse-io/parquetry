@@ -131,23 +131,23 @@ final class ColumnIndexEvaluator {
             case Predicate.Not(Predicate child) ->
                 matchRanges(child, columns, rowGroupRowCount).map(r -> complement(r, rowGroupRowCount));
             case Predicate.Eq(ColumnPath col, Value v) ->
-                leafRanges(col, columns, rowGroupRowCount, (min, max) -> within(v, min, max));
+                leafRanges(col, columns, rowGroupRowCount, (min, max) -> mayEqual(v, min, max));
             case Predicate.NotEq(ColumnPath col, Value v) ->
-                leafRanges(col, columns, rowGroupRowCount, (min, max) -> !singleValueEqual(v, min, max));
+                leafRanges(col, columns, rowGroupRowCount, (min, max) -> mayDiffer(v, min, max));
             case Predicate.Lt(ColumnPath col, Value v) ->
-                leafRanges(col, columns, rowGroupRowCount, (min, max) -> compare(v, min) > 0);
+                orderedLeafRanges(col, v, columns, rowGroupRowCount, (min, max) -> compare(v, min) > 0);
             case Predicate.LtEq(ColumnPath col, Value v) ->
-                leafRanges(col, columns, rowGroupRowCount, (min, max) -> compare(v, min) >= 0);
+                orderedLeafRanges(col, v, columns, rowGroupRowCount, (min, max) -> compare(v, min) >= 0);
             case Predicate.Gt(ColumnPath col, Value v) ->
-                leafRanges(col, columns, rowGroupRowCount, (min, max) -> compare(v, max) < 0);
+                orderedLeafRanges(col, v, columns, rowGroupRowCount, (min, max) -> compare(v, max) < 0);
             case Predicate.GtEq(ColumnPath col, Value v) ->
-                leafRanges(col, columns, rowGroupRowCount, (min, max) -> compare(v, max) <= 0);
+                orderedLeafRanges(col, v, columns, rowGroupRowCount, (min, max) -> compare(v, max) <= 0);
             case Predicate.In(ColumnPath col, List<Value> values) ->
                 leafRanges(
                         col,
                         columns,
                         rowGroupRowCount,
-                        (min, max) -> values.stream().anyMatch(v -> within(v, min, max)));
+                        (min, max) -> values.stream().anyMatch(v -> mayEqual(v, min, max)));
             case Predicate.IsNull(ColumnPath col) -> nullLeafRanges(col, columns, rowGroupRowCount, true);
             case Predicate.IsNotNull(ColumnPath col) -> nullLeafRanges(col, columns, rowGroupRowCount, false);
             case Predicate.Spatial _ -> Optional.empty();
@@ -193,6 +193,19 @@ final class ColumnIndexEvaluator {
         return Optional.of(acc);
     }
 
+    /** An ordered comparison against a NaN literal matches no cell, and no page survives it. */
+    private static Optional<RowRanges> orderedLeafRanges(
+            ColumnPath col,
+            Value literal,
+            FilterPipeline.ColumnPageStatsLookup cols,
+            long rowGroupRowCount,
+            PageMatcher matcher) {
+        if (ValueComparison.isNaN(literal)) {
+            return cols.get(col).map(stats -> RowRanges.empty());
+        }
+        return leafRanges(col, cols, rowGroupRowCount, matcher);
+    }
+
     private static Optional<RowRanges> leafRanges(
             ColumnPath col, FilterPipeline.ColumnPageStatsLookup cols, long rowGroupRowCount, PageMatcher matcher) {
         Optional<FilterPipeline.ColumnPageStats> opt = cols.get(col);
@@ -221,11 +234,22 @@ final class ColumnIndexEvaluator {
             if (minVal.isEmpty() || maxVal.isEmpty()) {
                 return Optional.empty(); // unsupported type; bail to NotApplied
             }
-            if (matcher.matches(minVal.orElseThrow(), maxVal.orElseThrow())) {
+            if (pageMayMatch(minVal.orElseThrow(), maxVal.orElseThrow(), matcher)) {
                 surviving.add(pageRange(off.pageLocations(), i, rowGroupRowCount));
             }
         }
         return Optional.of(new RowRanges(surviving));
+    }
+
+    /**
+     * A page with a NaN bound is kept whatever the predicate: the format asks a reader to ignore a NaN bound, leaving
+     * the page unbounded.
+     */
+    private static boolean pageMayMatch(Value min, Value max, PageMatcher matcher) {
+        if (ValueComparison.isNaN(min) || ValueComparison.isNaN(max)) {
+            return true;
+        }
+        return matcher.matches(min, max);
     }
 
     private static Optional<RowRanges> nullLeafRanges(
@@ -326,14 +350,27 @@ final class ColumnIndexEvaluator {
         return new RowRanges(merged);
     }
 
-    /** True if {@code v} is within {@code [min, max]} (inclusive). */
-    private static boolean within(Value v, Value min, Value max) {
+    /**
+     * True if a page bounded by {@code [min, max]} may hold a cell equal to {@code v}: {@code v} lies within the bounds
+     * (inclusive), or {@code v} is NaN and may match NaN cells left out of the page bounds.
+     */
+    private static boolean mayEqual(Value v, Value min, Value max) {
+        if (ValueComparison.isNaN(v)) {
+            return true;
+        }
         return compare(v, min) >= 0 && compare(v, max) <= 0;
     }
 
-    /** True when min == max == v (so the page has exactly one distinct value equal to {@code v}). */
-    private static boolean singleValueEqual(Value v, Value min, Value max) {
-        return compare(min, max) == 0 && compare(v, min) == 0;
+    /**
+     * True if a page bounded by {@code [min, max]} may hold a cell different from {@code v}. A page with both bounds
+     * equal to {@code v} holds none, unless the page is floating-point: its NaN cells lie outside the bounds and differ
+     * from a number.
+     */
+    private static boolean mayDiffer(Value v, Value min, Value max) {
+        if (ValueComparison.isFloating(v)) {
+            return true;
+        }
+        return !(compare(min, max) == 0 && compare(v, min) == 0);
     }
 
     /** Orders two decoded {@link Value}s through the shared {@link ValueComparison} ordering. */
