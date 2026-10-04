@@ -30,7 +30,12 @@ final class StorageProperties {
     private static final String KEY_S3_ACCESS_KEY = "storage.s3.aws-access-key-id";
     private static final String KEY_S3_SECRET_KEY = "storage.s3.aws-secret-access-key";
     private static final String KEY_S3_PATH_STYLE = "storage.s3.force-path-style";
+    // Each provider names its own anonymous switch, and without one GCS looks up Application Default Credentials
+    // while Azure walks its credential chain. The single --anonymous flag sets the three keys; the resolved provider
+    // reads its own.
     private static final String KEY_S3_ANONYMOUS = "storage.s3.anonymous";
+    private static final String KEY_GCS_ANONYMOUS = "storage.gcs.anonymous";
+    private static final String KEY_AZURE_ANONYMOUS = "storage.azure.anonymous";
     private static final String KEY_GCS_PROJECT = "storage.gcs.project-id";
     // Each provider exposes its own endpoint-override key. The single --endpoint flag sets all of them, and only
     // the key for the resolved provider is read; the others are ignored.
@@ -74,6 +79,8 @@ final class StorageProperties {
         }
         if (anonymous) {
             props.setProperty(KEY_S3_ANONYMOUS, "true");
+            props.setProperty(KEY_GCS_ANONYMOUS, "true");
+            props.setProperty(KEY_AZURE_ANONYMOUS, "true");
         }
         if (gcsProject != null) {
             props.setProperty(KEY_GCS_PROJECT, gcsProject);
