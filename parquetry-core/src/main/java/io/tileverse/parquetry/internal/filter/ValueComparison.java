@@ -121,6 +121,8 @@ public final class ValueComparison {
             when actual instanceof Integer av -> Integer.compare(av, (int) bv.toEpochDay());
             case Value.TimestampVal(LocalDateTime bv, boolean _)
             when actual instanceof LocalDateTime av -> av.compareTo(bv);
+            case Value.TimestampVal(LocalDateTime bv, boolean _)
+            when actual instanceof MemorySegment av && isInt96Cell(av) -> Int96Timestamps.compare(av, bv);
             case Value.DecimalVal(BigDecimal bv) when actual instanceof BigDecimal av -> av.compareTo(bv);
             case Value.TimeVal(LocalTime bv) when actual instanceof LocalTime av -> av.compareTo(bv);
             case Value.UuidVal(UUID bv) when actual instanceof MemorySegment av -> compareSegmentToUuidValue(av, bv);
@@ -213,17 +215,28 @@ public final class ValueComparison {
 
     /**
      * Compares a binary {@link MemorySegment} actual value against a predicate-side {@link Value}, mirroring the
-     * {@link Value.BinaryVal} and {@link Value.StringVal} arms of {@link #compareBoxed}. Returns 0 for unknown bound
-     * kinds.
+     * {@link Value.BinaryVal}, {@link Value.StringVal}, {@link Value.UuidVal} and INT96 {@link Value.TimestampVal} arms
+     * of {@link #compareBoxed}. Returns 0 for unknown bound kinds.
      */
+    @SuppressWarnings("java:S7475") // palantirJavaFormat 2.90 cannot parse bare _ in nested record patterns
     public static int compareBinary(MemorySegment actual, Value bound) {
         return switch (bound) {
             case Value.BinaryVal(MemorySegment bv) -> compareBytes(actual, bv);
             case Value.StringVal(String bv) ->
                 compareBytes(actual, MemorySegment.ofArray(bv.getBytes(StandardCharsets.UTF_8)));
             case Value.UuidVal(UUID bv) -> compareSegmentToUuidValue(actual, bv);
+            case Value.TimestampVal(LocalDateTime bv, boolean _)
+            when isInt96Cell(actual) -> Int96Timestamps.compare(actual, bv);
             default -> 0;
         };
+    }
+
+    /**
+     * Whether a binary cell compared against a timestamp literal is an INT96 timestamp. A timestamp predicate reaches a
+     * binary cell only on an INT96 column, and the width check keeps a malformed cell from being read past its end.
+     */
+    private static boolean isInt96Cell(MemorySegment cell) {
+        return cell.byteSize() == Int96Timestamps.CELL_BYTES;
     }
 
     /**

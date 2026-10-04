@@ -18,7 +18,11 @@ package io.tileverse.parquetry.conformance;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 import java.lang.foreign.MemorySegment;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.file.Path;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HexFormat;
@@ -157,9 +161,48 @@ class StatisticsPruningParityIT {
     }
 
     @Test
-    void int96NullChecksMatchTheSameRowsWithAndWithoutPruning() {
-        assertPruningParity("int96_timestamp_order.parquet", List.of("ts"), cells -> List.of());
+    void int96TimestampsMatchTheSameRowsWithAndWithoutPruning() {
+        assertPruningParity(
+                "int96_timestamp_order.parquet", List.of("ts"), StatisticsPruningParityIT::timestampLiterals);
     }
+
+    @Test
+    void sparkInt96TimestampsBeyondTheNanosecondRangeMatchTheSameRowsWithAndWithoutPruning() {
+        assertPruningParity("int96_from_spark.parquet", List.of("a"), StatisticsPruningParityIT::timestampLiterals);
+    }
+
+    @Test
+    void int96DocumentedTimestampsSelectTheDocumentedRows() {
+        // The four rows of int96_timestamp_order.md, written out of chronological order.
+        LocalDateTime early = LocalDateTime.parse("1968-05-23T00:00:00.000000123");
+        LocalDateTime sameDayEarly = LocalDateTime.parse("1970-01-01T00:00:00.000001");
+        LocalDateTime lateInDay = LocalDateTime.parse("1970-01-01T23:59:59.999999999");
+        LocalDateTime nextDay = LocalDateTime.parse("1970-01-02T00:00");
+        ColumnPath ts = ColumnPath.of("ts");
+        List<DocumentedCount> documented = List.of(
+                new DocumentedCount(new Predicate.Eq(ts, timestamp(nextDay)), 1L),
+                new DocumentedCount(new Predicate.NotEq(ts, timestamp(early)), 3L),
+                new DocumentedCount(new Predicate.Lt(ts, timestamp(sameDayEarly)), 1L),
+                new DocumentedCount(new Predicate.LtEq(ts, timestamp(sameDayEarly)), 2L),
+                new DocumentedCount(new Predicate.Gt(ts, timestamp(early)), 3L),
+                new DocumentedCount(new Predicate.GtEq(ts, timestamp(lateInDay)), 2L),
+                new DocumentedCount(new Predicate.In(ts, List.of(timestamp(early), timestamp(nextDay))), 2L));
+
+        Path file = TestCorpus.extractFile(DATA + "int96_timestamp_order.parquet", tempDir);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+            SoftAssertions softly = new SoftAssertions();
+            for (DocumentedCount expected : documented) {
+                softly.assertThat(reader.count(expected.predicate(), ReadOptions.DEFAULTS))
+                        .as("count: %s", describe(expected.predicate()))
+                        .isEqualTo(expected.rows());
+            }
+            softly.assertAll();
+        }
+    }
+
+    /** A predicate and the number of rows selected by it according to the fixture's documentation. */
+    private record DocumentedCount(Predicate predicate, long rows) {}
 
     // --- the parity check ---
 
@@ -294,6 +337,30 @@ class StatisticsPruningParityIT {
         return literals;
     }
 
+    /**
+     * The distinct timestamps of an INT96 column in chronological order, plus one nanosecond before the first and one
+     * after the last.
+     */
+    private static List<Value> timestampLiterals(List<Object> cells) {
+        TreeSet<LocalDateTime> distinct = new TreeSet<>();
+        for (Object cell : cells) {
+            if (cell instanceof byte[] bytes) {
+                distinct.add(int96Timestamp(bytes));
+            }
+        }
+        distinct.add(distinct.first().minusNanos(1));
+        distinct.add(distinct.last().plusNanos(1));
+        List<Value> literals = new ArrayList<>(distinct.size());
+        for (LocalDateTime value : distinct) {
+            literals.add(timestamp(value));
+        }
+        return literals;
+    }
+
+    private static Value timestamp(LocalDateTime value) {
+        return new Value.TimestampVal(value, true);
+    }
+
     /** The distinct cells of an INT32 column in ascending order, plus one value below and one above them all. */
     private static List<Value> integerLiterals(List<Object> cells) {
         TreeSet<Integer> distinct = new TreeSet<>();
@@ -367,6 +434,8 @@ class StatisticsPruningParityIT {
             case Value.IntVal integer -> OptionalInt.of(Integer.compare((Integer) cell, integer.value()));
             case Value.FloatVal floating -> ieeeOrder(((Number) cell).doubleValue(), floating.value());
             case Value.DoubleVal floating -> ieeeOrder(((Number) cell).doubleValue(), floating.value());
+            case Value.TimestampVal timestamp ->
+                OptionalInt.of(int96Timestamp((byte[]) cell).compareTo(timestamp.value()));
             default -> throw new IllegalArgumentException("no expectation for literal " + literal);
         };
     }
@@ -394,6 +463,18 @@ class StatisticsPruningParityIT {
             case Value.DoubleVal floating -> Double.isNaN(floating.value());
             default -> false;
         };
+    }
+
+    /**
+     * Decodes an INT96 cell: eight little-endian bytes of nanoseconds within the day, then four of the Julian day, with
+     * Julian day 2440588 on 1970-01-01.
+     */
+    private static LocalDateTime int96Timestamp(byte[] cell) {
+        ByteBuffer buffer = ByteBuffer.wrap(cell).order(ByteOrder.LITTLE_ENDIAN);
+        long nanosOfDay = buffer.getLong(0);
+        long julianDay = buffer.getInt(Long.BYTES);
+        LocalDate date = LocalDate.ofEpochDay(julianDay - 2_440_588L);
+        return date.atStartOfDay().plusNanos(nanosOfDay);
     }
 
     private static byte[] bytesOf(Value.BinaryVal binary) {
