@@ -120,7 +120,7 @@ public final class FilesetDataset implements GeoParquetDataset {
         this.locations = List.copyOf(locations);
         this.capabilities = Objects.requireNonNull(capabilities, "capabilities");
         this.geoMetadata = Objects.requireNonNull(geoMetadata, "geoMetadata");
-        this.aggregatedBounds = geoMetadata.flatMap(FilesetDataset::primaryBbox);
+        this.aggregatedBounds = geoMetadata.flatMap(FilesetDataset::declaredBounds);
         this.openOptions = Objects.requireNonNull(openOptions, "openOptions");
     }
 
@@ -637,8 +637,15 @@ public final class FilesetDataset implements GeoParquetDataset {
         return predicate instanceof Predicate.Always(boolean value) && value;
     }
 
-    private static Optional<BoundingBox> primaryBbox(GeoParquetMetadata geo) {
+    /**
+     * The answer to an unfiltered bounds query: the planar enclosure of the primary column's declared bbox, spanning
+     * the full longitude range when that bbox wraps the antimeridian.
+     */
+    private static Optional<BoundingBox> declaredBounds(GeoParquetMetadata geo) {
         GeoColumn primary = geo.columns().get(geo.primaryColumn());
-        return primary == null ? Optional.empty() : primary.bbox();
+        if (primary == null) {
+            return Optional.empty();
+        }
+        return primary.bbox().map(BoundingBox::planarEnclosure);
     }
 }

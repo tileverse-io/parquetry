@@ -146,6 +146,16 @@ class FilePrunerTest {
     }
 
     @Test
+    void antimeridianWrapEliminatesAQueryOutsideItsLatitudes() {
+        FileStats stats = FileStats.builder()
+                .recordCount(100)
+                .geometryBounds(GEOM, box(170, -10, -170, 10))
+                .build();
+        Predicate p = new Predicate.Spatial.BboxIntersects(GEOM, Bbox.of2d(175, 20, 180, 30));
+        assertThat(eliminated(FilePruner.evaluate(p, stats))).isTrue();
+    }
+
+    @Test
     void alwaysTrueKeeps() {
         FileStats stats = FileStats.builder().recordCount(100).build();
         assertThat(eliminated(FilePruner.evaluate(Predicate.ALWAYS_TRUE, stats)))

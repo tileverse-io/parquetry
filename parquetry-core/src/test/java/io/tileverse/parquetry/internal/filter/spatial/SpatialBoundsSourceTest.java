@@ -149,6 +149,18 @@ class SpatialBoundsSourceTest {
         assertThat(source.fileBounds(GEOMETRY)).contains(bbox(0, 20, 2, 40));
     }
 
+    /** A NaN covering statistic bounds nothing: its row group is left without a box rather than with a NaN edge. */
+    @Test
+    void aNaNCoveringStatisticLeavesItsRowGroupWithoutABox() {
+        ParquetSchema schema = schemaWithGeometryAndCoveringDoubles();
+        FileMetaData footer = footer(coveringRowGroup(0, 1, 2, 3), coveringRowGroup(10, Double.NaN, 30, 40));
+
+        SpatialBoundsSource source = boundsSourceOf(footer, schema, of(geoWithCoveringAndFileBbox()));
+
+        assertThat(source.rowGroupBounds(GEOMETRY, 0)).contains(bbox(0, 1, 2, 3));
+        assertThat(source.rowGroupBounds(GEOMETRY, 1)).isEmpty();
+    }
+
     @Test
     void geoJsonFileBboxUsedWhenNeitherNativeNorCoveringPresent() {
         FileMetaData footer = footer(noStatsRowGroup());
@@ -197,6 +209,29 @@ class SpatialBoundsSourceTest {
         assertThat(source.rowGroupBounds(GEOMETRY, 0))
                 .as("antimeridian-wrap bbox must round-trip verbatim; SpatialBoundsSource does not normalize")
                 .contains(wrap);
+    }
+
+    @Test
+    void aLoneWrappingRowGroupIsTheFileBoundsAsWritten() {
+        BoundingBox wrap = bbox(170, -170, -10, 10);
+        FileMetaData footer = footer(geometryRowGroupWithNative(wrap));
+
+        SpatialBoundsSource source = boundsSourceOf(footer, schemaWithGeometry(), empty());
+
+        assertThat(source.fileBounds(GEOMETRY)).contains(wrap);
+    }
+
+    @Test
+    void aFileUnionWithAWrappingRowGroupSpansTheFullLongitudeRange() {
+        BoundingBox wrap = bbox(170, -170, -10, 10);
+        BoundingBox regular = bbox(-20, 20, 0, 30);
+        FileMetaData footer = footer(geometryRowGroupWithNative(wrap), geometryRowGroupWithNative(regular));
+
+        SpatialBoundsSource source = boundsSourceOf(footer, schemaWithGeometry(), empty());
+
+        assertThat(source.fileBounds(GEOMETRY))
+                .as("the wrapped longitudes [170, 180] and [-180, -170] stay inside the union")
+                .contains(bbox(-180, 180, -10, 30));
     }
 
     /**

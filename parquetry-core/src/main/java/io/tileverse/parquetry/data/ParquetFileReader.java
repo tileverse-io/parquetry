@@ -724,7 +724,8 @@ public final class ParquetFileReader {
      * the whole answer came from metadata boxes, and any scanned row drops them.
      *
      * <p>The box is exact relative to the file's declared geometry statistics, which are trusted as tight; a writer
-     * that declared rounded boxes widens the answer accordingly.
+     * that declared rounded boxes widens the answer accordingly. The box never wraps the antimeridian: a declared box
+     * wrapping it contributes its {@link BoundingBox#planarEnclosure() planar enclosure}.
      *
      * <p>Cost mirrors {@link #count}: an eliminated row group contributes nothing, a row group whose statistics prove
      * every row matches unions its tight geometry box without decoding, and the rest decode only the geometry and the
@@ -787,12 +788,12 @@ public final class ParquetFileReader {
     /**
      * Bounds for an unfiltered read of {@code geometryColumn}: the tight file-level metadata box when the file records
      * one (zero I/O), otherwise the union of every row group's tight metadata box with a scan of the row groups that
-     * expose none.
+     * expose none. A metadata box wrapping the antimeridian is answered as its planar enclosure.
      */
     private Optional<BoundingBox> unfilteredBounds(ColumnPath geometryColumn, ReadOptions options) {
         Optional<BoundingBox> fileBox = spatialBounds.fileBounds(geometryColumn);
         if (fileBox.isPresent()) {
-            return fileBox;
+            return fileBox.map(BoundingBox::planarEnclosure);
         }
         return unionRowGroupBoundsAndScanTheRest(geometryColumn, options);
     }
@@ -1034,7 +1035,9 @@ public final class ParquetFileReader {
     /**
      * One residual row group to fold into the bounds: its materialization-ready survivor, its file ordinal (the true
      * index reported to an observer), and its conservative metadata box when the file records one. A box-less row group
-     * reports a {@link Double#NEGATIVE_INFINITY} area that sorts it last, and is never containment-skipped.
+     * reports a {@link Double#NEGATIVE_INFINITY} area that sorts it last, and is never containment-skipped. The area of
+     * a box is that of its planar enclosure, the full longitude band for a box wrapping the antimeridian; a box without
+     * a finite area sorts with the smallest real boxes.
      */
     private record ResidualGroup(RowGroupSurvivor survivor, int rowGroupIndex, Optional<BoundingBox> box) {
 
@@ -1042,8 +1045,9 @@ public final class ParquetFileReader {
             if (box.isEmpty()) {
                 return Double.NEGATIVE_INFINITY;
             }
-            BoundingBox b = box.orElseThrow();
-            return (b.xmax() - b.xmin()) * (b.ymax() - b.ymin());
+            BoundingBox planar = box.orElseThrow().planarEnclosure();
+            double area = (planar.xmax() - planar.xmin()) * (planar.ymax() - planar.ymin());
+            return Double.isFinite(area) ? area : 0;
         }
     }
 

@@ -131,9 +131,9 @@ final class NativeStatsSource implements SpatialBoundsSource {
     }
 
     /**
-     * Returns the per-column union (file-level bbox) of every row-group bbox known to this source. Antimeridian-wrap
-     * boxes ({@link BoundingBox#wrapsAntimeridian()}) are passed through verbatim: combining wrap-aware boxes requires
-     * splitting them in two, and that policy belongs at the aggregator layer, not here.
+     * Returns the per-column union (file-level bbox) of the row-group bboxes known to this source. A lone box is the
+     * union as written, even one wrapping the antimeridian ({@link BoundingBox#wrapsAntimeridian()}); a union involving
+     * a wrapping box spans the full longitude range (see {@link BoundingBox#planarEnclosure()}).
      */
     private static Map<ColumnPath, BoundingBox> unionAcrossRowGroups(
             Map<ColumnPath, List<Optional<BoundingBox>>> perRowGroup) {
@@ -152,7 +152,9 @@ final class NativeStatsSource implements SpatialBoundsSource {
         return result;
     }
 
-    private static BoundingBox union(BoundingBox a, BoundingBox b) {
+    private static BoundingBox union(BoundingBox first, BoundingBox second) {
+        BoundingBox a = first.planarEnclosure();
+        BoundingBox b = second.planarEnclosure();
         return new BoundingBox(
                 Math.min(a.xmin(), b.xmin()),
                 Math.max(a.xmax(), b.xmax()),

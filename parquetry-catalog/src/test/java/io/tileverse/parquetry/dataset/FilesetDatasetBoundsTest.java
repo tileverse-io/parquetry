@@ -42,6 +42,7 @@ import io.tileverse.parquetry.internal.filter.spatial.BoundsAccumulator;
 import io.tileverse.parquetry.internal.filter.spatial.WkbEnvelope;
 import io.tileverse.parquetry.io.LocalFileSource;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.testsupport.FooterRewrite;
 import io.tileverse.parquetry.testsupport.PointParquet;
 
 /**
@@ -141,6 +142,34 @@ class FilesetDatasetBoundsTest {
         assertThat(outer.ymin()).isLessThanOrEqualTo(inner.ymin());
         assertThat(outer.xmax()).isGreaterThanOrEqualTo(inner.xmax());
         assertThat(outer.ymax()).isGreaterThanOrEqualTo(inner.ymax());
+    }
+
+    /**
+     * A GEOGRAPHY-aware writer declares the extent of points at longitudes 175 and -175 as a box wrapping the
+     * antimeridian. The unfiltered answer and its estimate are both the planar enclosure of that declared box.
+     */
+    @Test
+    void aDeclaredBboxWrappingTheAntimeridianIsReportedAsItsPlanarEnclosure() throws Exception {
+        double[][] points = {{175.0, -5.0}, {-175.0, 5.0}};
+        Path planar = PointParquet.writePoints(
+                root.resolve("planar.parquet"), "geometry", GeoParquetMetadataMode.V1_1_ONLY, points);
+        BoundingBox wrapping =
+                BoundingBox.builder().xmin(175).xmax(-175).ymin(-5).ymax(5).build();
+        Path file = FooterRewrite.rewrite(
+                planar, root.resolve("wrapping.parquet"), FooterRewrite.geoMetadataBbox("geometry", wrapping));
+        BoundingBox enclosure =
+                BoundingBox.builder().xmin(-180).xmax(180).ymin(-5).ymax(5).build();
+        CatalogOptions options =
+                CatalogOptions.builder().datasetName("wrapping").build();
+        try (FilesetCatalog catalog = FilesetCatalog.open(LocalFileSource.file(file), options)) {
+            ParquetDataset dataset = onlyDataset(catalog);
+
+            Optional<BoundingBox> bounds = dataset.bounds(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
+            Optional<BoundingBox> estimated = dataset.estimatedBounds(Predicate.ALWAYS_TRUE);
+
+            assertSameBox2d(bounds.orElseThrow(), enclosure);
+            assertSameBox2d(estimated.orElseThrow(), enclosure);
+        }
     }
 
     @Test

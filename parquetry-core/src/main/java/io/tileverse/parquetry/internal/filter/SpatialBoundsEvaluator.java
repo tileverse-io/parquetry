@@ -38,7 +38,12 @@ import io.tileverse.parquetry.internal.filter.spatial.SpatialBoundsSource;
  * statistics (every file parquetry itself writes).
  *
  * <p>The check is conservative: a row group is eliminated only when its union bounding box rules out every relation a
- * matching row could have. A negated spatial leaf or an absent bounding box leaves the row group in place.
+ * matching row could have. A negated spatial leaf, an absent bounding box or a box with a NaN bound leaves the row
+ * group in place.
+ *
+ * <p>The relations are planar rectangle tests on a row's WKB vertices, and the row-group box encloses those vertices. A
+ * box wrapping the antimeridian ({@link BoundingBox#wrapsAntimeridian()}) still bounds their y values, but its x
+ * interval bounds no planar range: a line from longitude 179 to -179 spans x [-179, 179]. Such a box constrains y only.
  */
 public final class SpatialBoundsEvaluator {
 
@@ -98,26 +103,45 @@ public final class SpatialBoundsEvaluator {
             return false;
         }
         BoundingBox union = rowGroupBox.orElseThrow();
+        if (union.hasNaNBound()) {
+            return false;
+        }
         Bbox query = spatial.bbox();
         return switch (spatial) {
             case Predicate.Spatial.BboxIntersects _ -> disjoint(union, query);
             case Predicate.Spatial.BboxCoveredBy _ -> disjoint(union, query);
             case Predicate.Spatial.BboxEquals _ -> disjoint(union, query);
-            case Predicate.Spatial.BboxContains _ -> !unionCanEnclose(union, query);
+            case Predicate.Spatial.BboxContains _ -> !canEnclose(union, query);
         };
     }
 
     private static boolean disjoint(BoundingBox union, Bbox query) {
-        return union.xmax() < query.minX()
-                || union.xmin() > query.maxX()
-                || union.ymax() < query.minY()
-                || union.ymin() > query.maxY();
+        return disjointInX(union, query) || disjointInY(union, query);
     }
 
-    private static boolean unionCanEnclose(BoundingBox union, Bbox query) {
-        return union.xmin() <= query.minX()
-                && union.xmax() >= query.maxX()
-                && union.ymin() <= query.minY()
-                && union.ymax() >= query.maxY();
+    private static boolean disjointInX(BoundingBox union, Bbox query) {
+        if (union.wrapsAntimeridian()) {
+            return false;
+        }
+        return union.xmax() < query.minX() || union.xmin() > query.maxX();
+    }
+
+    private static boolean disjointInY(BoundingBox union, Bbox query) {
+        return union.ymax() < query.minY() || union.ymin() > query.maxY();
+    }
+
+    private static boolean canEnclose(BoundingBox union, Bbox query) {
+        return canEncloseInX(union, query) && canEncloseInY(union, query);
+    }
+
+    private static boolean canEncloseInX(BoundingBox union, Bbox query) {
+        if (union.wrapsAntimeridian()) {
+            return true;
+        }
+        return union.xmin() <= query.minX() && union.xmax() >= query.maxX();
+    }
+
+    private static boolean canEncloseInY(BoundingBox union, Bbox query) {
+        return union.ymin() <= query.minY() && union.ymax() >= query.maxY();
     }
 }

@@ -21,7 +21,6 @@ import java.util.Optional;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
-import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.internal.filter.PredicateNormalizer;
 import io.tileverse.parquetry.internal.filter.SpatialBoundsEvaluator;
 import io.tileverse.parquetry.internal.filter.StatsEvaluator;
@@ -32,7 +31,8 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
 /**
  * Decides whether a whole file can be skipped for a predicate, given the file's statistics. Pure work-avoidance: a kept
  * file is still filtered at row-group and record level during the read; an eliminated file would have produced no
- * matching rows. Geometry bounds that wrap the antimeridian are kept conservatively.
+ * matching rows. A geometry box wrapping the antimeridian prunes on its y extent alone, as the row-group SPATIAL tier
+ * does.
  */
 public final class FilePruner {
 
@@ -44,9 +44,6 @@ public final class FilePruner {
 
         PruningDecision numeric = StatsEvaluator.evaluate(normalized, typedColumns(stats), stats.recordCount());
         if (numeric instanceof PruningDecision.Eliminated) {
-            return numeric;
-        }
-        if (hasWrappedBounds(stats)) {
             return numeric;
         }
         SuppliedBoundsSource bounds = new SuppliedBoundsSource(stats.geometryBounds());
@@ -65,15 +62,6 @@ public final class FilePruner {
     private static StatsEvaluator.ColumnSummary summary(ColumnStatistics c) {
         PrimitiveKind kind = c.min().or(c::max).map(FilePruner::kindOf).orElse(PrimitiveKind.BYTE_ARRAY);
         return new StatsEvaluator.ColumnSummary(kind, c.min(), c.max(), c.nullCount());
-    }
-
-    private static boolean hasWrappedBounds(FileStats stats) {
-        for (BoundingBox box : stats.geometryBounds().values()) {
-            if (box.wrapsAntimeridian()) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private static PrimitiveKind kindOf(Value value) {

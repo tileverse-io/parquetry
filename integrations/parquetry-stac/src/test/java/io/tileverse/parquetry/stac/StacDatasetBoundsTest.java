@@ -174,6 +174,29 @@ class StacDatasetBoundsTest {
     }
 
     @Test
+    void aCollectionExtentWrappingTheAntimeridianIsReportedAsItsPlanarEnclosure() throws Exception {
+        BoundingBox declared = BoundingBox.builder()
+                .xmin(170.0)
+                .ymin(-1.0)
+                .xmax(-170.0)
+                .ymax(121.0)
+                .build();
+        StacDataset dataset = dataset(GeoParquetMetadataMode.DUAL_V1_1_AND_V2_0, Optional.of(declared));
+
+        Optional<BoundingBox> bounds = dataset.bounds(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
+        Optional<BoundingBox> estimated = dataset.estimatedBounds(Predicate.ALWAYS_TRUE);
+
+        BoundingBox enclosure = BoundingBox.builder()
+                .xmin(-180.0)
+                .ymin(-1.0)
+                .xmax(180.0)
+                .ymax(121.0)
+                .build();
+        assertSameBox2d(bounds.orElseThrow(), enclosure);
+        assertSameBox2d(estimated.orElseThrow(), enclosure);
+    }
+
+    @Test
     void capabilitiesAdvertiseCheapBoundsOnlyWithADeclaredCollectionExtent() throws Exception {
         BoundingBox declared = BoundingBox.builder()
                 .xmin(0.0)

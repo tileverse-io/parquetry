@@ -20,6 +20,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
 
@@ -31,21 +32,25 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.filter.SpatialReadProbe;
 import io.tileverse.parquetry.filter.SpatialReadProbe.Decision;
+import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
+import io.tileverse.parquetry.internal.filter.spatial.SpatialBoundsSource;
+import io.tileverse.parquetry.internal.filter.spatial.SuppliedBoundsSource;
 import io.tileverse.parquetry.internal.read.IndexSectionLoader;
 import io.tileverse.parquetry.internal.read.RowGroupChunks;
 import io.tileverse.parquetry.internal.read.RowGroupGate;
 import io.tileverse.parquetry.internal.read.RowGroupSurvivor;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 /**
  * Drives the row-group gate of a decimated read over a two-point GeoParquet file through a scripted probe. The gate
  * offers the row group's bounding box to the read-only region consultation: it drops the group reported as already
  * covered, reads the group left undecided by the probe, and refuses a substitute, which would stand for rows never
- * proven to satisfy the query.
+ * proven to satisfy the query. A group with a box wrapping the antimeridian is read without consulting the probe.
  */
 class SpatialReadGatesTest {
 
@@ -106,6 +111,21 @@ class SpatialReadGatesTest {
                 .hasMessageContaining("Substitute");
     }
 
+    /**
+     * A box wrapping the antimeridian has its minimum longitude east of its maximum. Offered to the probe as a
+     * rectangle, it would read as the gap between its two longitude ranges, a region the probe might report covered.
+     */
+    @Test
+    void aRowGroupWhoseBoxWrapsTheAntimeridianIsRead() throws Exception {
+        BoundingBox wrapping =
+                BoundingBox.builder().xmin(170).xmax(-170).ymin(0).ymax(10).build();
+        SpatialBoundsSource wrappingBounds = new SuppliedBoundsSource(Map.of(ColumnPath.of(GEOMETRY), wrapping));
+
+        RowGroupGate gate = gateOver(openTwoPointFile(), wrappingBounds, regionProbe(Decision.skip()));
+
+        assertThat(gate.skip(0)).isFalse();
+    }
+
     /** The two answers that leave the row group to be read: the probe cannot decide it, or wants it whole. */
     private static Stream<Decision> undecidedAnswers() {
         return Stream.of(Decision.descend(), Decision.keep());
@@ -113,12 +133,21 @@ class SpatialReadGatesTest {
 
     /** The row-group gate of a read over a freshly written single-row-group file, consulting {@code probe}. */
     private RowGroupGate gateOver(SpatialReadProbe probe) throws Exception {
-        Path file = FileStatsFixtures.writePoints(tempDir, GEOMETRY, new double[][] {{1, 1}, {2, 2}});
-        source = ByteRangeSource.ofFile(file);
-        ParquetFileReader reader = ParquetFileReader.open(source);
-        SpatialReadGates gates = new SpatialReadGates(reader.spatialBounds(), reader.schema(), geoMetadataOf(reader));
+        ParquetFileReader reader = openTwoPointFile();
+        return gateOver(reader, reader.spatialBounds(), probe);
+    }
+
+    /** The row-group gate of a read over {@code reader}, taking the row group's bounds from {@code bounds}. */
+    private static RowGroupGate gateOver(ParquetFileReader reader, SpatialBoundsSource bounds, SpatialReadProbe probe) {
+        SpatialReadGates gates = new SpatialReadGates(bounds, reader.schema(), geoMetadataOf(reader));
         ReadOptions options = ReadOptions.builder().spatialReadProbe(probe).build();
         return gates.rowGroupGate(survivorsOf(reader), options).orElseThrow();
+    }
+
+    private ParquetFileReader openTwoPointFile() throws Exception {
+        Path file = FileStatsFixtures.writePoints(tempDir, GEOMETRY, new double[][] {{1, 1}, {2, 2}});
+        source = ByteRangeSource.ofFile(file);
+        return ParquetFileReader.open(source);
     }
 
     /** The file's one row group, as the filter pipeline hands it over once it has cleared it in full. */

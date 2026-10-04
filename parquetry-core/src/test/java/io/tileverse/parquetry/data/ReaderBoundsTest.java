@@ -54,6 +54,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.testsupport.FooterRewrite;
 
 /**
  * Exercises {@link ParquetFileReader#bounds} against written GeoParquet fixtures whose native geometry statistics equal
@@ -176,6 +177,34 @@ class ReaderBoundsTest {
 
             assertThat(reader.bounds(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS))
                     .isEmpty();
+        }
+    }
+
+    /**
+     * A GEOGRAPHY writer records the box of points at longitudes 175 and -175 as one wrapping the antimeridian. Both
+     * the file-level answer and the fold of a statistics-matched row group report its planar enclosure.
+     */
+    @Test
+    void aRowGroupBoxWrappingTheAntimeridianIsReportedAsItsPlanarEnclosure() throws IOException {
+        List<Feature> features = List.of(new Feature(0, 175.0, -5.0), new Feature(1, -175.0, 5.0));
+        Path planar = writeGeometryFixture("antimeridian-planar.parquet", 4L, features);
+        BoundingBox wrapping =
+                BoundingBox.builder().xmin(175).xmax(-175).ymin(-5).ymax(5).build();
+        Path file = FooterRewrite.rewrite(
+                planar, tempDir.resolve("antimeridian.parquet"), FooterRewrite.geospatialBbox("geometry", wrapping));
+        BoundingBox enclosure =
+                BoundingBox.builder().xmin(-180).xmax(180).ymin(-5).ymax(5).build();
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+
+            Optional<BoundingBox> unfiltered = reader.bounds(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
+            Optional<BoundingBox> matched = reader.bounds(Pred.col("id").gtEq(0), ReadOptions.DEFAULTS);
+
+            assertThat(reader.spatialBounds().rowGroupBounds(GEOMETRY, 0))
+                    .as("the row-group box stays as written for the SPATIAL tier")
+                    .contains(wrapping);
+            assertSameBox2d(unfiltered.orElseThrow(), enclosure);
+            assertSameBox2d(matched.orElseThrow(), enclosure);
         }
     }
 

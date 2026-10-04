@@ -206,13 +206,20 @@ final class CoveringColumnSource implements SpatialBoundsSource {
     /**
      * Decodes a Parquet PLAIN-encoded min/max value as a {@code double}. The Parquet spec writes FLOAT / DOUBLE
      * little-endian; other kinds (and short / malformed payloads) decode as empty, which leaves the row group's bbox
-     * unknown rather than wrong.
+     * unknown rather than wrong. A NaN value bounds nothing and decodes as empty too.
      */
     static OptionalDouble decodeDouble(PrimitiveKind kind, Optional<MemorySegment> raw) {
         if (raw.isEmpty()) {
             return OptionalDouble.empty();
         }
-        MemorySegment value = raw.orElseThrow();
+        OptionalDouble decoded = decodePlain(kind, raw.orElseThrow());
+        if (decoded.isPresent() && Double.isNaN(decoded.getAsDouble())) {
+            return OptionalDouble.empty();
+        }
+        return decoded;
+    }
+
+    private static OptionalDouble decodePlain(PrimitiveKind kind, MemorySegment value) {
         long size = value.byteSize();
         return switch (kind) {
             case DOUBLE -> size >= 8 ? OptionalDouble.of(value.get(DOUBLE, 0)) : OptionalDouble.empty();

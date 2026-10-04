@@ -61,6 +61,32 @@ class BoundsAccumulatorTest {
     }
 
     @Test
+    void aBoxWrappingTheAntimeridianWidensTheExtentToTheFullLongitudeRange() {
+        BoundsAccumulator accumulator = new BoundsAccumulator();
+
+        accumulator.union(box(-10, 0, 10, 5));
+        accumulator.union(box(170, 10, -170, 20));
+
+        BoundingBox extent = accumulator.snapshot().orElseThrow();
+        assertThat(extent.xmin()).isEqualTo(-180);
+        assertThat(extent.ymin()).isZero();
+        assertThat(extent.xmax()).isEqualTo(180);
+        assertThat(extent.ymax()).isEqualTo(20);
+    }
+
+    @Test
+    void aBoxWrappingTheAntimeridianIsCoveredOnlyByTheFullLongitudeRange() {
+        BoundsAccumulator accumulator = new BoundsAccumulator();
+        BoundingBox wrapping = box(170, 10, -170, 20);
+
+        accumulator.union(box(-100, 0, 100, 50));
+        assertThat(accumulator.covers(wrapping)).isFalse();
+
+        accumulator.union(box(-180, 0, 180, 50));
+        assertThat(accumulator.covers(wrapping)).isTrue();
+    }
+
+    @Test
     void zSurvivesOnlyWhenEveryContributionHasIt() {
         BoundsAccumulator accumulator = new BoundsAccumulator();
 
