@@ -46,6 +46,9 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
  * ({@link Value.BoolVal}, {@link Value.IntVal}, {@link Value.LongVal}, etc.). Plain BYTE_ARRAY and non-decimal FLBA
  * decode to {@link Value.BinaryVal} for unsigned lexicographic comparison.
  *
+ * <p>A bound decodes only when its order matches the order used by the filter to compare the column's cells. A bound in
+ * another order decodes to nothing, keeping the column out of min/max pruning.
+ *
  * <p>The reflexive comparison arms in {@link ValueComparison#compareValues} then resolve pruning correctly once both
  * the predicate value and the decoded bound are of the same typed subtype.
  */
@@ -55,14 +58,17 @@ public final class StatisticsValueDecoder {
 
     /**
      * Decodes {@code raw} to a {@link Value} using {@code kind} for the physical layout and {@code logicalType} for the
-     * semantic type. Returns empty only for kinds that have no statistics path (INT96) or for segments too short to
-     * hold the required bytes.
+     * semantic type. Returns empty for kinds that have no statistics path (INT96), for bounds ordered unlike the
+     * compared cells of the column, and for segments too short to hold the required bytes.
      *
      * <p>The decoded value shares no memory with {@code raw}. Callers keep a bound long after the form that it was read
      * from has been released: a catalog holds one min and one max per file column for the lifetime of its store, while
      * the packed footer behind them is cached and evicted on its own schedule.
      */
     public static Optional<Value> decode(PrimitiveKind kind, Optional<LogicalType> logicalType, MemorySegment raw) {
+        if (!orderedAsCompared(kind, logicalType)) {
+            return Optional.empty();
+        }
         long size = raw.byteSize();
         return switch (kind) {
             case BOOLEAN -> size >= 1 ? Optional.of(new Value.BoolVal(raw.get(JAVA_BYTE, 0) != 0)) : Optional.empty();
@@ -75,6 +81,52 @@ public final class StatisticsValueDecoder {
             // INT96 is a legacy 12-byte timestamp with no defined statistics ordering; skip it.
             case INT96 -> Optional.empty();
         };
+    }
+
+    /**
+     * Whether the statistics of a {@code kind} column annotated {@code logicalType} follow the order used by the filter
+     * to compare the column's cells. A writer orders the bounds by the annotation, and a bound compared in another
+     * order lets a pruning tier drop matching rows: a half float or a wide timestamp read as unsigned bytes, a binary
+     * decimal read as unsigned bytes, a full-width unsigned integer read as a signed one. An annotation not defined for
+     * the physical type, or one with an order left undefined by the format, takes its statistics out of pruning too.
+     */
+    private static boolean orderedAsCompared(PrimitiveKind kind, Optional<LogicalType> logicalType) {
+        if (logicalType.isEmpty()) {
+            return true;
+        }
+        return switch (logicalType.orElseThrow()) {
+            case LogicalType.Decimal _ ->
+                kind == PrimitiveKind.INT32
+                        || kind == PrimitiveKind.INT64
+                        || kind == PrimitiveKind.FIXED_LEN_BYTE_ARRAY;
+            case LogicalType.StringType _, LogicalType.EnumType _, LogicalType.JsonType _, LogicalType.BsonType _ ->
+                kind == PrimitiveKind.BYTE_ARRAY;
+            case LogicalType.UuidType _ -> kind == PrimitiveKind.FIXED_LEN_BYTE_ARRAY;
+            case LogicalType.DateType _ -> kind == PrimitiveKind.INT32;
+            case LogicalType.Time _ -> kind == PrimitiveKind.INT32 || kind == PrimitiveKind.INT64;
+            case LogicalType.Timestamp _ -> kind == PrimitiveKind.INT64;
+            case LogicalType.IntType intType -> integerOrderedAsCompared(kind, intType);
+            case LogicalType.UnknownType _ -> true;
+            // A half float is ordered by the value it represents; the format defines no order for the others.
+            case LogicalType.Float16Type _,
+                    LogicalType.Geometry _,
+                    LogicalType.Geography _,
+                    LogicalType.MapType _,
+                    LogicalType.ListType _,
+                    LogicalType.Variant _ -> false;
+        };
+    }
+
+    /**
+     * Integer cells compare as signed values. An unsigned annotation agrees with that order only when its width leaves
+     * the physical sign bit clear.
+     */
+    private static boolean integerOrderedAsCompared(PrimitiveKind kind, LogicalType.IntType intType) {
+        if (kind != PrimitiveKind.INT32 && kind != PrimitiveKind.INT64) {
+            return false;
+        }
+        int physicalBits = kind == PrimitiveKind.INT32 ? Integer.SIZE : Long.SIZE;
+        return intType.isSigned() || intType.bitWidth() < physicalBits;
     }
 
     private static Optional<Value> decodeInt32(Optional<LogicalType> logicalType, int value) {

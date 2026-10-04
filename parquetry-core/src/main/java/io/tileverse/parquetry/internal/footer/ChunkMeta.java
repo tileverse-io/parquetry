@@ -125,14 +125,30 @@ public final class ChunkMeta {
         return longOrAbsent(CompactFooter.CHUNK_NULL_COUNT);
     }
 
-    /** PLAIN-encoded minimum value of the chunk, empty when the writer recorded none. */
+    /**
+     * PLAIN-encoded minimum value of the chunk, empty when the writer recorded none or only a deprecated one in an
+     * order unlike the compared one; see {@link ChunkBounds}.
+     */
     public Optional<MemorySegment> minValue() {
         return statisticValue(CompactFooter.CHUNK_MIN_OFFSET, CompactFooter.CHUNK_MIN_LENGTH);
     }
 
-    /** PLAIN-encoded maximum value of the chunk, empty when the writer recorded none. */
+    /**
+     * PLAIN-encoded maximum value of the chunk, empty when the writer recorded none or only a deprecated one in an
+     * order unlike the compared one; see {@link ChunkBounds}.
+     */
     public Optional<MemorySegment> maxValue() {
         return statisticValue(CompactFooter.CHUNK_MAX_OFFSET, CompactFooter.CHUNK_MAX_LENGTH);
+    }
+
+    /**
+     * Whether {@link #minValue()}, {@link #maxValue()} and the page bounds of the chunk's column index follow an order
+     * applied by this reader. False when the footer gives the column an order unknown to the reader or defined for
+     * another physical type, and for a legacy {@code INTERVAL} column; pruning then ignores those bounds, while the
+     * null counts stay usable.
+     */
+    public boolean boundsOrdered() {
+        return (flags() & CompactFooter.FLAG_BOUNDS_UNORDERED) == 0;
     }
 
     /**

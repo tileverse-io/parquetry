@@ -130,9 +130,26 @@ public final class FilterPipeline {
      * Per-column input to the COLUMN_INDEX-tier evaluator: the column's primitive kind plus its loaded
      * {@link ColumnIndex} (page min/max + null markers), {@link OffsetIndex} (page row offsets), and an optional
      * logical type annotation used for typed decoding of per-page min/max bounds.
+     *
+     * @param boundsOrdered whether the page min/max follow an order applied by this reader; when false the tier ignores
+     *     them and consults the null markers only
      */
     public record ColumnPageStats(
-            PrimitiveKind kind, ColumnIndex columnIndex, OffsetIndex offsetIndex, Optional<LogicalType> logicalType) {
+            PrimitiveKind kind,
+            ColumnIndex columnIndex,
+            OffsetIndex offsetIndex,
+            Optional<LogicalType> logicalType,
+            boolean boundsOrdered) {
+
+        /** Constructor for page bounds in the type-defined order of the column. */
+        public ColumnPageStats(
+                PrimitiveKind kind,
+                ColumnIndex columnIndex,
+                OffsetIndex offsetIndex,
+                Optional<LogicalType> logicalType) {
+            this(kind, columnIndex, offsetIndex, logicalType, true);
+        }
+
         /** Back-compat constructor for call sites that do not pass a logical type. */
         public ColumnPageStats(PrimitiveKind kind, ColumnIndex columnIndex, OffsetIndex offsetIndex) {
             this(kind, columnIndex, offsetIndex, Optional.empty());

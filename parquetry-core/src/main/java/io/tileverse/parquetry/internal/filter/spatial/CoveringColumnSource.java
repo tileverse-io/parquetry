@@ -199,8 +199,9 @@ final class CoveringColumnSource implements SpatialBoundsSource {
         return decodeDouble(axis.kind(), max);
     }
 
+    /** The axis chunk of {@code rowGroup}, empty when its bounds follow an order not applied by this reader. */
     private static Optional<ChunkMeta> chunkAt(CompactFooter footer, int rowGroup, AxisRef axis) {
-        return footer.chunkIfPresent(rowGroup, axis.leaf());
+        return footer.chunkIfPresent(rowGroup, axis.leaf()).filter(ChunkMeta::boundsOrdered);
     }
 
     /**

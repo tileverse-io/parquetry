@@ -242,7 +242,59 @@ class ColumnIndexEvaluatorTest {
         assertThat(warmed).containsExactly(List.of(ColumnPath.of("year")));
     }
 
+    @Test
+    void unorderedPageBoundsLeaveValueComparisonsUnpruned() {
+        FilterPipeline.ColumnPageStatsLookup cols = year3PagesInAnUnknownOrder();
+        PruningDecision d = ColumnIndexEvaluator.evaluate(col("year").eq(1999), cols, ROW_GROUP_ROWS);
+        assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
+    @Test
+    void unorderedPageBoundsKeepTheNullMarkersUsable() {
+        FilterPipeline.ColumnPageStatsLookup cols = year3PagesInAnUnknownOrder();
+        PruningDecision d = ColumnIndexEvaluator.evaluate(col("year").isNull(), cols, ROW_GROUP_ROWS);
+        assertThat(d).isInstanceOf(PruningDecision.NarrowedTo.class);
+        RowRanges r = ((PruningDecision.NarrowedTo) d).ranges();
+        assertThat(r.ranges()).containsExactly(new Range(100, 199));
+    }
+
+    @Test
+    void halfFloatPageBoundsLeaveValueComparisonsUnpruned() {
+        // 0x3C00 is 1.0 and 0xC000 is -2.0: an unsigned byte order would put -2.0 above 1.0.
+        MemorySegment one = MemorySegment.ofArray(new byte[] {0x00, 0x3C}).asReadOnly();
+        MemorySegment minusTwo =
+                MemorySegment.ofArray(new byte[] {0x00, (byte) 0xC0}).asReadOnly();
+        FilterPipeline.ColumnPageStatsLookup cols = singleColumn(
+                "h",
+                PrimitiveKind.FIXED_LEN_BYTE_ARRAY,
+                List.of(false),
+                List.of(minusTwo),
+                List.of(one),
+                List.of(0L),
+                new LogicalType.Float16Type());
+        PruningDecision d = ColumnIndexEvaluator.evaluate(col("h").eq(minusTwo), cols, 100);
+        assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
     // --- helpers ---
+
+    /** The pages of {@link #year3Pages()} under a column order unknown to the reader; only page 1 holds nulls. */
+    private static FilterPipeline.ColumnPageStatsLookup year3PagesInAnUnknownOrder() {
+        ColumnIndex idx = new ColumnIndex(
+                List.of(false, false, false),
+                List.of(encodeInt(2010), encodeInt(2018), encodeInt(2025)),
+                List.of(encodeInt(2015), encodeInt(2022), encodeInt(2030)),
+                BoundaryOrder.ASCENDING,
+                Optional.of(List.of(0L, 5L, 0L)),
+                Optional.empty(),
+                Optional.empty());
+        List<PageLocation> pages =
+                List.of(new PageLocation(0L, 0, 0L), new PageLocation(0L, 0, 100L), new PageLocation(0L, 0, 200L));
+        OffsetIndex off = new OffsetIndex(pages, Optional.empty());
+        FilterPipeline.ColumnPageStats stats =
+                new FilterPipeline.ColumnPageStats(PrimitiveKind.INT32, idx, off, Optional.empty(), false);
+        return path -> path.equals(ColumnPath.of("year")) ? Optional.of(stats) : Optional.empty();
+    }
 
     private static FilterPipeline.ColumnPageStatsLookup year3Pages() {
         return singleColumn(

@@ -20,26 +20,39 @@ import java.io.IOException;
 import io.tileverse.parquetry.format.ColumnOrder;
 
 /**
- * Serializer mirror of {@link ColumnOrderDeserializer}. The only known case is {@link ColumnOrder.TypeDefined} (Thrift
- * field id 1), encoded as an empty nested struct payload.
+ * Serializer mirror of {@link ColumnOrderDeserializer}. Each case is written as its union field id with an empty nested
+ * struct payload; a {@link ColumnOrder.Unknown} case keeps the field id read with it, and one naming no case is written
+ * back as an empty union.
  */
 final class ColumnOrderSerializer {
+
+    private static final short TYPE_ORDER = 1;
+    private static final short IEEE_754_TOTAL_ORDER = 2;
+    private static final short INT96_TIMESTAMP_ORDER = 3;
 
     private ColumnOrderSerializer() {}
 
     static void serialize(CompactProtocolWriter w, ColumnOrder order) throws IOException {
-        // Union outer struct: one field set with the case id, value is an empty nested struct.
         w.writeStructBegin();
-        switch (order) {
-            case ColumnOrder.TypeDefined _ -> writeTypeDefined(w);
+        short fieldId = fieldIdOf(order);
+        if (fieldId != ColumnOrder.Unknown.NO_CASE) {
+            writeEmptyCase(w, fieldId);
         }
         w.writeFieldStop();
         w.writeStructEnd();
     }
 
-    private static void writeTypeDefined(CompactProtocolWriter w) throws IOException {
-        w.writeFieldBegin((short) 1, CompactType.STRUCT);
-        // Nested TypeDefinedOrder struct is empty -> just a STOP byte.
+    private static short fieldIdOf(ColumnOrder order) {
+        return switch (order) {
+            case ColumnOrder.TypeDefined _ -> TYPE_ORDER;
+            case ColumnOrder.Ieee754TotalOrder _ -> IEEE_754_TOTAL_ORDER;
+            case ColumnOrder.Int96TimestampOrder _ -> INT96_TIMESTAMP_ORDER;
+            case ColumnOrder.Unknown unknown -> unknown.fieldId();
+        };
+    }
+
+    private static void writeEmptyCase(CompactProtocolWriter w, short fieldId) throws IOException {
+        w.writeFieldBegin(fieldId, CompactType.STRUCT);
         w.writeStructBegin();
         w.writeFieldStop();
         w.writeStructEnd();

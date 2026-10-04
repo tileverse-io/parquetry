@@ -172,6 +172,33 @@ class StatsEvaluatorTest {
     }
 
     @Test
+    void halfFloatBoundsLeaveAPresentValueUnpruned() {
+        // Ordered by value, -2.0 (0xC000) is the min and 1.0 (0x3C00) the max; as unsigned bytes -2.0 sorts above 1.0.
+        MemorySegment minusTwo =
+                MemorySegment.ofArray(new byte[] {0x00, (byte) 0xC0}).asReadOnly();
+        MemorySegment one = MemorySegment.ofArray(new byte[] {0x00, 0x3C}).asReadOnly();
+        FilterPipeline.ColumnStatsLookup cols = single(
+                "h", annotatedStats(PrimitiveKind.FIXED_LEN_BYTE_ARRAY, minusTwo, one, new LogicalType.Float16Type()));
+        PruningDecision d = StatsEvaluator.evaluate(col("h").eq(minusTwo), cols, ROW_COUNT);
+        assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
+    @Test
+    void unsignedFullWidthIntegerBoundsLeaveAPresentValueUnpruned() {
+        // Unsigned, 3_000_000_000 is the max; its bits read as a signed int are negative.
+        int threeBillionBits = (int) 3_000_000_000L;
+        FilterPipeline.ColumnStatsLookup cols = single(
+                "u",
+                annotatedStats(
+                        PrimitiveKind.INT32,
+                        encodeInt(1),
+                        encodeInt(threeBillionBits),
+                        new LogicalType.IntType((byte) 32, false)));
+        PruningDecision d = StatsEvaluator.evaluate(col("u").gt(0), cols, ROW_COUNT);
+        assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
+    @Test
     void andEliminatesIfAnyChildEliminates() {
         FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, 0));
         Predicate p = col("year").eq(2030).and(col("year").eq(2015));

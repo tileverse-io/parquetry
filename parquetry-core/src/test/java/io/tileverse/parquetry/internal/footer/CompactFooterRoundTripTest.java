@@ -130,9 +130,10 @@ class CompactFooterRoundTripTest {
             assertThat(compact.rowGroupCount()).isEqualTo(wire.rowGroups().size());
             assertThat(compact.leafCount()).isEqualTo(schema.leafColumns().size());
 
+            ChunkBounds bounds = ChunkBounds.of(wire);
             for (int rg = 0; rg < compact.rowGroupCount(); rg++) {
                 assertRowGroupMatchesWire(compact, rg, wire.rowGroups().get(rg));
-                assertEveryLeafMatchesWire(compact, leaves, rg, wire.rowGroups().get(rg));
+                assertEveryLeafMatchesWire(compact, leaves, rg, wire.rowGroups().get(rg), bounds);
             }
         }
     }
@@ -514,6 +515,7 @@ class CompactFooterRoundTripTest {
                     compact.chunk(0, 1),
                     metaDataByPath(malformedGroup).get(intact),
                     chunkByPath(malformedGroup).get(intact),
+                    ChunkBounds.of(wire),
                     "the column beside the oversized one");
             assertThatThrownBy(() -> planWholeChunkFetch(source, schema, compact, oversized))
                     .isInstanceOf(ParquetFormatException.class)
@@ -625,7 +627,7 @@ class CompactFooterRoundTripTest {
     }
 
     private static void assertEveryLeafMatchesWire(
-            CompactFooter compact, LeafIndex leaves, int rg, RowGroup wireGroup) {
+            CompactFooter compact, LeafIndex leaves, int rg, RowGroup wireGroup, ChunkBounds bounds) {
         Map<ColumnPath, ColumnMetaData> wireByPath = metaDataByPath(wireGroup);
         Map<ColumnPath, ColumnChunk> chunkByPath = chunkByPath(wireGroup);
         assertThat(wireByPath)
@@ -639,8 +641,8 @@ class CompactFooterRoundTripTest {
                 assertAbsentChunkFailsLoud(compact, rg, leaf, path);
                 continue;
             }
-            assertChunkMatchesWire(
-                    compact.chunk(rg, leaf), meta, chunkByPath.get(path), "row group " + rg + " leaf " + path.dot());
+            String where = "row group " + rg + " leaf " + path.dot();
+            assertChunkMatchesWire(compact.chunk(rg, leaf), meta, chunkByPath.get(path), bounds, where);
         }
     }
 
@@ -652,7 +654,7 @@ class CompactFooterRoundTripTest {
     }
 
     private static void assertChunkMatchesWire(
-            ChunkMeta chunk, ColumnMetaData meta, ColumnChunk wireChunk, String where) {
+            ChunkMeta chunk, ColumnMetaData meta, ColumnChunk wireChunk, ChunkBounds bounds, String where) {
         assertThat(chunk.dataPageOffset()).as("%s dataPageOffset", where).isEqualTo(meta.dataPageOffset());
         assertThat(chunk.dictionaryPageOffset())
                 .as("%s dictionaryPageOffset", where)
@@ -667,7 +669,7 @@ class CompactFooterRoundTripTest {
         assertColumnIndexMatchesWire(chunk, wireChunk, where);
         assertOffsetIndexMatchesWire(chunk, wireChunk, where);
         assertBloomFilterMatchesWire(chunk, meta, where);
-        assertStatisticsMatchWire(chunk, meta, where);
+        assertStatisticsMatchWire(chunk, meta, bounds, where);
         assertGeoExtentMatchesWire(chunk, meta, where);
         assertChunkStartMatchesWire(chunk, meta, where);
     }
@@ -714,13 +716,15 @@ class CompactFooterRoundTripTest {
         assertThat(chunk.bloomFilterLength()).as("%s bloomFilterLength", where).isEqualTo(expectedLength);
     }
 
-    private static void assertStatisticsMatchWire(ChunkMeta chunk, ColumnMetaData meta, String where) {
+    /** The chunk keeps the wire null count and the bounds chosen by {@link ChunkBounds}. */
+    private static void assertStatisticsMatchWire(
+            ChunkMeta chunk, ColumnMetaData meta, ChunkBounds bounds, String where) {
         Optional<Statistics> stats = meta.statistics();
         assertThat(chunk.nullCount())
                 .as("%s nullCount", where)
                 .isEqualTo(stats.map(Statistics::nullCount).orElse(OptionalLong.empty()));
-        assertBytesMatch(chunk.minValue(), stats.map(Statistics::preferredMin), where + " minValue");
-        assertBytesMatch(chunk.maxValue(), stats.map(Statistics::preferredMax), where + " maxValue");
+        assertBytesMatch(chunk.minValue(), Optional.of(bounds.min(meta)), where + " minValue");
+        assertBytesMatch(chunk.maxValue(), Optional.of(bounds.max(meta)), where + " maxValue");
     }
 
     /** Every component of the wire box, down to which optional halves it records. */
@@ -854,17 +858,15 @@ class CompactFooterRoundTripTest {
         return count;
     }
 
-    /** Statistics min/max bytes across every chunk, after the min/max precedence rule: the size of the arena. */
+    /** The bytes of the statistics bounds chosen by {@link ChunkBounds} for the chunks: the size of the arena. */
     private static long statisticsByteCount(FileMetaData wire) {
+        ChunkBounds bounds = ChunkBounds.of(wire);
         long bytes = 0;
         for (RowGroup group : wire.rowGroups()) {
             for (ColumnChunk chunk : group.columns()) {
-                Optional<Statistics> stats = chunk.metaData().orElseThrow().statistics();
-                if (stats.isPresent()) {
-                    Statistics recorded = stats.orElseThrow();
-                    bytes += recorded.preferredMin().byteSize();
-                    bytes += recorded.preferredMax().byteSize();
-                }
+                ColumnMetaData meta = chunk.metaData().orElseThrow();
+                bytes += bounds.min(meta).byteSize();
+                bytes += bounds.max(meta).byteSize();
             }
         }
         return bytes;

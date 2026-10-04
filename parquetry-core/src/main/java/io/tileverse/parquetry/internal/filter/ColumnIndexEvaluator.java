@@ -200,6 +200,9 @@ final class ColumnIndexEvaluator {
             return Optional.empty();
         }
         FilterPipeline.ColumnPageStats stats = opt.get();
+        if (!stats.boundsOrdered()) {
+            return Optional.empty();
+        }
         ColumnIndex idx = stats.columnIndex();
         OffsetIndex off = stats.offsetIndex();
         int pageCount = idx.minValues().size();
