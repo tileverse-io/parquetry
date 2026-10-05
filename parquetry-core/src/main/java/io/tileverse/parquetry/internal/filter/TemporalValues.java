@@ -15,9 +15,11 @@
  */
 package io.tileverse.parquetry.internal.filter;
 
+import java.math.BigInteger;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
+import java.util.OptionalLong;
 
 import io.tileverse.parquetry.format.LogicalType.TimeUnit;
 
@@ -39,13 +41,31 @@ public final class TemporalValues {
         return LocalDateTime.ofEpochSecond(seconds, (int) nanoOfSecond, ZoneOffset.UTC);
     }
 
-    /** The INT64 encoding, in {@code unit}, of a wall-clock timestamp. */
+    /**
+     * The INT64 encoding, in {@code unit}, of a wall-clock timestamp.
+     *
+     * @throws ArithmeticException for a timestamp beyond the instants of INT64 in that unit
+     */
     public static long toEpochUnit(LocalDateTime value, TimeUnit unit) {
-        long seconds = value.toEpochSecond(ZoneOffset.UTC);
-        long subSecond = value.getNano() / nanosPerUnit(unit);
-        // The multiply keeps the value in the INT64 physical range, overflowing only outside it (past
-        // year ~2262 for NANOS) - the same boundary the physical representation already has.
-        return seconds * perSecond(unit) + subSecond;
+        OptionalLong encoded = toEpochUnitIfInRange(value, unit);
+        return encoded.orElseThrow(() -> beyondInt64(value, unit));
+    }
+
+    /**
+     * The INT64 encoding, in {@code unit}, of a wall-clock timestamp; empty for a timestamp beyond the instants of
+     * INT64 in that unit. A count of nanoseconds reaches from the year 1677 to the year 2262.
+     */
+    public static OptionalLong toEpochUnitIfInRange(LocalDateTime value, TimeUnit unit) {
+        BigInteger seconds = BigInteger.valueOf(value.toEpochSecond(ZoneOffset.UTC));
+        BigInteger subSecond = BigInteger.valueOf(value.getNano() / nanosPerUnit(unit));
+        BigInteger wholeSeconds = seconds.multiply(BigInteger.valueOf(perSecond(unit)));
+        BigInteger count = wholeSeconds.add(subSecond);
+        boolean fitsInt64 = count.bitLength() < Long.SIZE;
+        return fitsInt64 ? OptionalLong.of(count.longValue()) : OptionalLong.empty();
+    }
+
+    private static ArithmeticException beyondInt64(LocalDateTime value, TimeUnit unit) {
+        return new ArithmeticException(value + " is beyond the instants of INT64 in " + unit);
     }
 
     /** The time-of-day an INT64 {@code value} (count since midnight) in {@code unit} encodes. */
