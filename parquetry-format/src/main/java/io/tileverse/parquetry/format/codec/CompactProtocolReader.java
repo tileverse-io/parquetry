@@ -35,7 +35,13 @@ final class CompactProtocolReader {
     // Names, statistics and most metadata values are shorter; a corrupt length up to it wastes that much at most.
     private static final int LARGEST_LENGTH_ALLOCATED_UP_FRONT = 64 * 1024;
 
+    // The recursion limit of the Apache Thrift libraries, far above the nesting of the format's own structures.
+    private static final int DEEPEST_SKIPPED_NESTING = 64;
+
     private final InputStream in;
+
+    // The lists, sets and structs entered by the skip of an unknown field and not left yet.
+    private int skippedContainers;
 
     public CompactProtocolReader(InputStream in) {
         this.in = in;
@@ -268,13 +274,8 @@ final class CompactProtocolReader {
             case I16, I32, I64 -> readVarLong();
             case DOUBLE -> readN(8);
             case BINARY -> skipBinary();
-            case LIST, SET -> {
-                ListHeader lh = readListHeader();
-                for (int i = 0; i < lh.size(); i++) {
-                    skipElement(lh.elementType());
-                }
-            }
-            case STRUCT -> skipStruct();
+            case LIST, SET -> skipList();
+            case STRUCT -> skipNestedStruct();
             case MAP -> throw new MalformedFileException("MAP not used in parquet.thrift");
             case STOP -> throw new MalformedFileException("unexpected STOP in skipField");
         }
@@ -283,6 +284,15 @@ final class CompactProtocolReader {
     private void skipBinary() throws IOException {
         int length = sizeOf(readVarLong(), "binary length");
         in.skipNBytes(length);
+    }
+
+    private void skipList() throws IOException {
+        enterSkippedContainer();
+        ListHeader lh = readListHeader();
+        for (int i = 0; i < lh.size(); i++) {
+            skipElement(lh.elementType());
+        }
+        skippedContainers--;
     }
 
     /**
@@ -295,5 +305,23 @@ final class CompactProtocolReader {
             return;
         }
         skipField(type);
+    }
+
+    private void skipNestedStruct() throws IOException {
+        enterSkippedContainer();
+        skipStruct();
+        skippedContainers--;
+    }
+
+    /**
+     * Counts one more list, set or struct entered by a skip, malformed beyond {@link #DEEPEST_SKIPPED_NESTING}. The
+     * nesting comes from untrusted bytes, and a skip descends by recursion.
+     */
+    private void enterSkippedContainer() {
+        skippedContainers++;
+        if (skippedContainers > DEEPEST_SKIPPED_NESTING) {
+            throw new MalformedFileException(
+                    "unknown field nests more than " + DEEPEST_SKIPPED_NESTING + " lists and structs");
+        }
     }
 }
