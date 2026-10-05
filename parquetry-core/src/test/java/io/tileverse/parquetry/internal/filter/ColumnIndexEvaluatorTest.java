@@ -29,8 +29,12 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.Predicate;
@@ -316,6 +320,41 @@ class ColumnIndexEvaluatorTest {
                 new LogicalType.Float16Type());
         PruningDecision d = ColumnIndexEvaluator.evaluate(col("h").eq(minusTwo), cols, 100);
         assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("comparisonsOfATimestampColumnWithAnInteger")
+    void integerLiteralOnATimestampColumnKeepsEachPage(String name, Predicate predicate) {
+        // The page bounds decode to timestamps, while the scan compares the literal with the stored integers.
+        PruningDecision d = ColumnIndexEvaluator.evaluate(predicate, timestampPagesOfOneInstant(), ROW_GROUP_ROWS);
+
+        assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
+    }
+
+    static Stream<Arguments> comparisonsOfATimestampColumnWithAnInteger() {
+        ColumnPath ts = ColumnPath.of("ts");
+        Value five = new Value.LongVal(5L);
+        return Stream.of(
+                Arguments.of("Eq", new Predicate.Eq(ts, five)),
+                Arguments.of("NotEq", new Predicate.NotEq(ts, five)),
+                Arguments.of("Lt", new Predicate.Lt(ts, five)),
+                Arguments.of("LtEq", new Predicate.LtEq(ts, five)),
+                Arguments.of("Gt", new Predicate.Gt(ts, five)),
+                Arguments.of("GtEq", new Predicate.GtEq(ts, five)),
+                Arguments.of("In", new Predicate.In(ts, List.of(five))));
+    }
+
+    /** Three pages of 100 rows of a TIMESTAMP column, each page holding one instant. */
+    private static FilterPipeline.ColumnPageStatsLookup timestampPagesOfOneInstant() {
+        List<MemorySegment> instants = List.of(encodeLong(1_000L), encodeLong(2_000L), encodeLong(3_000L));
+        return singleColumn(
+                "ts",
+                PrimitiveKind.INT64,
+                List.of(false, false, false),
+                instants,
+                instants,
+                List.of(0L, 100L, 200L),
+                new LogicalType.Timestamp(true, LogicalType.TimeUnit.MICROS));
     }
 
     @Test

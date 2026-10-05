@@ -39,6 +39,40 @@ class ValueComparisonTest {
     /** A NaN whose payload differs from {@link Float#NaN}, as written by some producers. */
     private static final float PAYLOAD_NAN = Float.intBitsToFloat(0xFFC00001);
 
+    @ParameterizedTest(name = "{0} against {1}")
+    @MethodSource("literalsAndBoundsOfAnotherType")
+    void literalIsNotOrderedAgainstABoundOfAnotherType(Value literal, Value bound) {
+        assertThat(ValueComparison.ordered(literal, bound)).isFalse();
+    }
+
+    static Stream<Arguments> literalsAndBoundsOfAnotherType() {
+        LocalDateTime instant = LocalDateTime.of(2020, 1, 1, 0, 0);
+        Value bytes = new Value.BinaryVal(MemorySegment.ofArray(new byte[] {0, 0, 0, 1}));
+        return Stream.of(
+                Arguments.of(new Value.LongVal(5L), new Value.TimestampVal(instant, true)),
+                Arguments.of(new Value.IntVal(5), new Value.TimeVal(LocalTime.NOON)),
+                Arguments.of(bytes, new Value.DecimalVal(BigDecimal.ONE)),
+                Arguments.of(new Value.UuidVal(new UUID(0L, 1L)), new Value.DecimalVal(BigDecimal.ONE)));
+    }
+
+    @ParameterizedTest(name = "{0} against {1}")
+    @MethodSource("literalsAndBoundsOfTheirType")
+    void literalIsOrderedAgainstABoundOfItsTypeOrOfAWidenedOne(Value literal, Value bound) {
+        assertThat(ValueComparison.ordered(literal, bound)).isTrue();
+    }
+
+    static Stream<Arguments> literalsAndBoundsOfTheirType() {
+        LocalDateTime instant = LocalDateTime.of(2020, 1, 1, 0, 0);
+        Value bytes = new Value.BinaryVal(MemorySegment.ofArray(new byte[] {0x61}));
+        return Stream.of(
+                Arguments.of(new Value.LongVal(5L), new Value.LongVal(7L)),
+                Arguments.of(new Value.IntVal(5), new Value.LongVal(7L)),
+                Arguments.of(new Value.DoubleVal(1.5), new Value.FloatVal(2.5f)),
+                Arguments.of(new Value.DateVal(LocalDate.EPOCH), new Value.IntVal(3)),
+                Arguments.of(new Value.StringVal("a"), bytes),
+                Arguments.of(new Value.TimestampVal(instant, true), new Value.TimestampVal(instant, false)));
+    }
+
     @Test
     void boxedIntComparesToIntVal() {
         assertThat(ValueComparison.compareBoxed(5, new Value.IntVal(3))).isPositive();

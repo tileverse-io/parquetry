@@ -192,7 +192,10 @@ final class ColumnIndexEvaluator {
         return Optional.of(acc);
     }
 
-    /** An ordered comparison against a NaN literal matches no cell, and no page survives it. */
+    /**
+     * An ordered comparison against a NaN literal matches no cell, and no page survives it. Bounds of another type than
+     * the literal rule no page out.
+     */
     private static Optional<RowRanges> orderedLeafRanges(
             ColumnPath col,
             Value literal,
@@ -202,7 +205,7 @@ final class ColumnIndexEvaluator {
         if (ValueComparison.isNaN(literal)) {
             return cols.get(col).map(stats -> RowRanges.empty());
         }
-        return leafRanges(col, cols, rowGroupRowCount, page -> numbersMayMatch(page, matcher));
+        return leafRanges(col, cols, rowGroupRowCount, page -> !page.orders(literal) || numbersMayMatch(page, matcher));
     }
 
     private static Optional<RowRanges> leafRanges(
@@ -386,11 +389,14 @@ final class ColumnIndexEvaluator {
 
     /**
      * True if {@code page} may hold a cell equal to {@code v}: a number within its bounds (inclusive), or for a NaN
-     * literal a NaN cell, ruled out only by the NaN count.
+     * literal a NaN cell, ruled out only by the NaN count. Bounds of another type than {@code v} rule nothing out.
      */
     private static boolean mayEqual(Value v, PageSummary page) {
         if (ValueComparison.isNaN(v)) {
             return page.nans() != NaNCells.ABSENT;
+        }
+        if (!page.orders(v)) {
+            return true;
         }
         return numbersMayMatch(page, (min, max) -> compare(v, min) >= 0 && compare(v, max) <= 0);
     }
@@ -398,13 +404,14 @@ final class ColumnIndexEvaluator {
     /**
      * True if {@code page} may hold a cell different from {@code v}. A page of only NaN cells holds cells different
      * from a number literal, and none different from a NaN literal. A page with both bounds equal to the number
-     * {@code v} holds no other number, and differs from it only through a NaN cell.
+     * {@code v} holds no other number, and differs from it only through a NaN cell. Bounds of another type than
+     * {@code v} rule nothing out.
      */
     private static boolean mayDiffer(Value v, PageSummary page) {
         if (page.holdsOnlyNaN()) {
             return !ValueComparison.isNaN(v);
         }
-        if (ValueComparison.isNaN(v) || !page.bounded()) {
+        if (ValueComparison.isNaN(v) || !page.bounded() || !page.orders(v)) {
             return true;
         }
         boolean holdsOtherNumbers = compare(page.min(), page.max()) != 0 || compare(v, page.min()) != 0;
@@ -425,6 +432,14 @@ final class ColumnIndexEvaluator {
         /** Whether the index tells that the non-null cells of the page are NaN. */
         boolean holdsOnlyNaN() {
             return nans == NaNCells.ALL;
+        }
+
+        /**
+         * Whether the bounds have an order against {@code literal}. A literal of the physical type of the column has
+         * none against bounds decoded to its logical type, and the scan compares it with the stored cells.
+         */
+        boolean orders(Value literal) {
+            return ValueComparison.ordered(literal, min);
         }
 
         /** Whether the two bounds enclose the numbers of the page: neither is NaN, and they are not inverted. */
