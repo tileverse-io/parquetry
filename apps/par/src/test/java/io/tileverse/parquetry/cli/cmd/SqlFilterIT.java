@@ -57,6 +57,19 @@ class SqlFilterIT {
     }
 
     @Test
+    void notInFilterSelectsNoRowWithANullCell(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("cities.parquet");
+        Fixtures.writeCities(file);
+
+        CliRunner.Result result = CliRunner.run("cat", file.toString(), "--filter", "name NOT IN ('Rosario')");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.stdout()).contains("Cordoba", "Buenos Aires");
+        assertThat(result.stdout()).as("the city without a name").doesNotContain("\"id\":4");
+        assertThat(result.stdout()).doesNotContain("Rosario");
+    }
+
+    @Test
     void spatialFilterSelectsRowsInEnvelope(@TempDir Path tmp) throws Exception {
         Path file = tmp.resolve("geocities.parquet");
         Fixtures.writeGeoCities(file);

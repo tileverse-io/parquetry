@@ -36,6 +36,15 @@ class FilterSyntaxTest {
     }
 
     @Test
+    void referenceTellsHowNullCellsCompare() {
+        String reference = FilterSyntax.reference();
+
+        assertThat(reference)
+                .contains("a NULL cell matches no comparison and no negation of one")
+                .contains("x NOT IN (1)");
+    }
+
+    @Test
     void referenceListsEverySpatialFunctionTheTranslatorRecognizes() {
         String reference = FilterSyntax.reference();
         for (String relation : SpatialFilterTranslator.relationFunctionNames()) {

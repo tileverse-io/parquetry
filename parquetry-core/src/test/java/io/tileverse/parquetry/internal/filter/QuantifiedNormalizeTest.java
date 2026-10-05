@@ -17,6 +17,8 @@ package io.tileverse.parquetry.internal.filter;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.List;
+
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.filter.MatchAction;
@@ -51,6 +53,23 @@ class QuantifiedNormalizeTest {
         Predicate one = new Predicate.Quantified(MatchAction.ONE, new Predicate.Eq(LEAF, x()));
         Predicate normalized = PredicateNormalizer.normalize(new Predicate.Not(one));
         assertThat(normalized).isEqualTo(new Predicate.Not(one));
+    }
+
+    @Test
+    void notInUnderAQuantifierStaysNegatedPerElement() {
+        Predicate notIn = new Predicate.Not(new Predicate.In(LEAF, List.of(x())));
+        Predicate any = new Predicate.Quantified(MatchAction.ANY, notIn);
+
+        assertThat(PredicateNormalizer.normalize(any)).isEqualTo(any);
+    }
+
+    @Test
+    void notOverAQuantifiedInStaysWrapped() {
+        Predicate any = new Predicate.Quantified(MatchAction.ANY, new Predicate.In(LEAF, List.of(x())));
+
+        Predicate normalized = PredicateNormalizer.normalize(new Predicate.Not(any));
+
+        assertThat(normalized).isEqualTo(new Predicate.Not(any));
     }
 
     @Test

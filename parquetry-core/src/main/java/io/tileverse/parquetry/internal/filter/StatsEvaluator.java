@@ -246,8 +246,9 @@ public final class StatsEvaluator {
     }
 
     /**
-     * Handles {@code Not} wrappers that survived normalization (only In and the spatial relations do). Both turn into
-     * NotApplied at the stats tier.
+     * Complements the decision of a negation left by normalization: a negated spatial relation, geometry filter,
+     * row-position exclusion or quantifier, and a negated IN without values or under a quantifier. A child decided for
+     * the whole row group is decided the other way, and an undecided child stays undecided.
      */
     private static PruningDecision evaluateNotLeaf(Predicate child, TypedColumns cols, long rowCount) {
         PruningDecision inner = evaluate(child, cols, rowCount);

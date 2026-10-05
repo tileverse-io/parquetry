@@ -397,17 +397,15 @@ class StatisticsPruningParityIT {
     }
 
     /**
-     * A null cell matches only a null check; a value comparison against it is false. A negation matches the rows left
-     * out by its child, null cells included.
+     * A null cell matches only a null check: a value comparison against it is false, and its negation too. A negation
+     * matches the other cells left out by its child.
      */
     private static boolean expectedMatch(Predicate predicate, Object cell) {
-        if (predicate instanceof Predicate.Not(Predicate child)) {
-            return !expectedMatch(child, cell);
-        }
         if (cell == null) {
             return predicate instanceof Predicate.IsNull;
         }
         return switch (predicate) {
+            case Predicate.Not(Predicate child) -> !expectedMatch(child, cell);
             case Predicate.IsNull _ -> false;
             case Predicate.IsNotNull _ -> true;
             case Predicate.Eq eq -> equal(cell, eq.v());

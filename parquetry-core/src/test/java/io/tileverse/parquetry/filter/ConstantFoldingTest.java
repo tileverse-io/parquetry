@@ -149,6 +149,13 @@ class ConstantFoldingTest {
     }
 
     @Test
+    void addedNullColumnSatisfiesNoNegatedIn() {
+        Predicate in = new Predicate.In(VALUE, List.of(new Value.IntVal(3), new Value.IntVal(4)));
+
+        assertThat(ConstantFolding.fold(in.negate(), Map.of(), Set.of(VALUE))).isEqualTo(Predicate.ALWAYS_FALSE);
+    }
+
+    @Test
     void longZeroConstantEqualsANegativeZeroLiteral() {
         Map<ColumnPath, Value> zero = Map.of(VALUE, new Value.LongVal(0L));
 

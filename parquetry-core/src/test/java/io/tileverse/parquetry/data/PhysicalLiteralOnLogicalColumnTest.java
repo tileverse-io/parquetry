@@ -107,7 +107,11 @@ class PhysicalLiteralOnLogicalColumnTest {
                 Arguments.of(
                         "ts IN (5, 150)",
                         new Predicate.In(TS, List.of(five, oneFifty)),
-                        timestamps(cell -> cell == 5L || cell == 150L)));
+                        timestamps(cell -> cell == 5L || cell == 150L)),
+                Arguments.of(
+                        "ts NOT IN (5, 150)",
+                        new Predicate.In(TS, List.of(five, oneFifty)).negate(),
+                        timestamps(cell -> cell != 5L && cell != 150L)));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -120,7 +124,9 @@ class PhysicalLiteralOnLogicalColumnTest {
         Value five = new Value.BinaryVal(MemorySegment.ofArray(bigEndian(5)));
         return Stream.of(
                 Arguments.of("amount = bytes of 5", new Predicate.Eq(AMOUNT, five), 1L),
-                Arguments.of("amount <> bytes of 5", new Predicate.NotEq(AMOUNT, five), ROWS - 1L));
+                Arguments.of("amount <> bytes of 5", new Predicate.NotEq(AMOUNT, five), ROWS - 1L),
+                Arguments.of(
+                        "amount NOT IN (bytes of 5)", new Predicate.In(AMOUNT, List.of(five)).negate(), ROWS - 1L));
     }
 
     /** The number of non-null timestamp cells matching {@code test}. */
