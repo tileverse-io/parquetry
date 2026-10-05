@@ -88,7 +88,8 @@ public final class FilesetDataset implements GeoParquetDataset {
      * Builds a dataset over the given files. The files behind {@code sources} must agree on {@code fileSchema} by
      * equality; the catalog verifies this when it gathers them, and a dataset built directly must be given files that
      * already agree. {@code singleFile} holds the source already parsed by the gather pass, and is present exactly for
-     * a one-file dataset.
+     * a one-file dataset. The dataset advertises cheap bounds when {@code geoMetadata} declares them, whatever
+     * {@code capabilities} says about them.
      */
     // The construction inputs are cohesive dataset state the catalog resolves in one place, not a long argument
     // list worth bundling into a parameter object.
@@ -118,10 +119,26 @@ public final class FilesetDataset implements GeoParquetDataset {
         this.partitionStats = partitions.partitionStats();
         this.sources = List.copyOf(sources);
         this.locations = List.copyOf(locations);
-        this.capabilities = Objects.requireNonNull(capabilities, "capabilities");
         this.geoMetadata = Objects.requireNonNull(geoMetadata, "geoMetadata");
         this.aggregatedBounds = geoMetadata.flatMap(FilesetDataset::declaredBounds);
+        Objects.requireNonNull(capabilities, "capabilities");
+        this.capabilities = advertisingDeclaredBounds(capabilities, aggregatedBounds.isPresent());
         this.openOptions = Objects.requireNonNull(openOptions, "openOptions");
+    }
+
+    /**
+     * The capabilities with cheap bounds advertised exactly when the dataset declares its bounds: an unfiltered bounds
+     * query then answers from the declared box, and visits the files otherwise.
+     */
+    private static DatasetCapabilities advertisingDeclaredBounds(DatasetCapabilities given, boolean declaresBounds) {
+        return new DatasetCapabilities(
+                given.mergeOnRead(),
+                given.fieldIdResolved(),
+                given.fileStats(),
+                given.fileSpatialBounds(),
+                given.partitionModel(),
+                given.cheapCount(),
+                declaresBounds);
     }
 
     /**

@@ -300,7 +300,6 @@ public final class FilesetCatalog implements DatasetCatalog {
                                 ? DatasetCapabilities.FileSpatialBounds.NATIVE_GEO
                                 : DatasetCapabilities.FileSpatialBounds.NONE)
                 .cheapCount(true)
-                .cheapBounds(aggregatedGeo.isPresent())
                 .build();
     }
 

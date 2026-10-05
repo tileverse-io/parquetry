@@ -215,12 +215,7 @@ class FilesetDatasetBoundsTest {
     @MethodSource("undeclaringEdits")
     void aFileWithoutADeclaredBboxLeavesTheDeclaredBoundsUnknown(
             String label, GeoParquetMetadataMode mode, UnaryOperator<FileMetaData> undeclare) throws Exception {
-        Path data = Files.createDirectories(root.resolve("data"));
-        double[][] westPoints = {{0, 0}, {10, 10}};
-        double[][] eastPoints = {{100, 0}, {110, 10}};
-        PointParquet.writePoints(data.resolve("west.parquet"), "geometry", mode, westPoints);
-        Path east = PointParquet.writePoints(root.resolve("east.parquet"), "geometry", mode, eastPoints);
-        FooterRewrite.rewrite(east, data.resolve("east.parquet"), undeclare);
+        Path data = writeWestAndEditedEast(mode, undeclare);
         RowGroupReadCounter counter = new RowGroupReadCounter();
         ReadOptions observed = ReadOptions.builder().queryObserver(counter).build();
         BoundingBox bothFiles =
@@ -238,6 +233,41 @@ class FilesetDatasetBoundsTest {
                     .as("the per-file boxes answer without a scan")
                     .isZero();
         }
+    }
+
+    @Test
+    void cheapBoundsAreAdvertisedWhenEachFileDeclaresABbox() throws Exception {
+        try (FilesetCatalog catalog = openCatalog()) {
+            ParquetDataset dataset = onlyDataset(catalog);
+
+            assertThat(dataset.capabilities().cheapBounds()).isTrue();
+        }
+    }
+
+    /** Without declared bounds, an unfiltered bounds query visits the files; the dataset does not call it cheap. */
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("undeclaringEdits")
+    void cheapBoundsAreNotAdvertisedWhenAFileDeclaresNoBbox(
+            String label, GeoParquetMetadataMode mode, UnaryOperator<FileMetaData> undeclare) throws Exception {
+        Path data = writeWestAndEditedEast(mode, undeclare);
+        try (FilesetCatalog catalog =
+                FilesetCatalog.open(FileSource.directory(data, "*.parquet"), CatalogOptions.defaults())) {
+            ParquetDataset dataset = onlyDataset(catalog);
+
+            assertThat(dataset.capabilities().cheapBounds()).isFalse();
+        }
+    }
+
+    /** Writes a west file and an east file of two points each, the footer of the east one edited by {@code edit}. */
+    private Path writeWestAndEditedEast(GeoParquetMetadataMode mode, UnaryOperator<FileMetaData> edit)
+            throws Exception {
+        Path data = Files.createDirectories(root.resolve("data"));
+        double[][] westPoints = {{0, 0}, {10, 10}};
+        double[][] eastPoints = {{100, 0}, {110, 10}};
+        PointParquet.writePoints(data.resolve("west.parquet"), "geometry", mode, westPoints);
+        Path east = PointParquet.writePoints(root.resolve("east.parquet"), "geometry", mode, eastPoints);
+        FooterRewrite.rewrite(east, data.resolve("east.parquet"), edit);
+        return data;
     }
 
     /**
