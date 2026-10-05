@@ -22,7 +22,6 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.storage.Storage;
-import io.tileverse.storage.s3.S3StorageProvider;
 
 /**
  * Runs the backend-agnostic read assertions against the {@code v3_geometry} table uploaded into an S3 bucket served by
@@ -30,8 +29,8 @@ import io.tileverse.storage.s3.S3StorageProvider;
  * and data files, and prunes by manifest bounds over the real S3 protocol with credentials, while the catalog still
  * uses the table's baked-in logical location.
  *
- * <p>The Storage borrows the harness's shared {@code S3Client}; closing a {@link Backend} between tests closes only the
- * Storage, not the client. The client opens and closes once per class in {@link AbstractS3ProxyIcebergIT}.
+ * <p>Each {@link Backend} owns the Storage opened for it from the harness properties, and closing the Backend between
+ * tests closes that Storage.
  */
 class S3IcebergReadIT extends AbstractS3ProxyIcebergIT implements IcebergStorageReadAssertions {
 
@@ -49,7 +48,7 @@ class S3IcebergReadIT extends AbstractS3ProxyIcebergIT implements IcebergStorage
 
     @Override
     public Backend openBackend() {
-        Storage storage = S3StorageProvider.open(URI.create("s3://" + BUCKET + "/" + TABLE + "/"), s3Client);
+        Storage storage = openStorage(URI.create("s3://" + BUCKET + "/" + TABLE + "/"));
         return new Backend(storage, TABLE_LOCATION);
     }
 }

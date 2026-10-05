@@ -25,7 +25,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.storage.Storage;
-import io.tileverse.storage.s3.S3StorageProvider;
 
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
@@ -37,8 +36,8 @@ import io.tileverse.parquetry.testkit.TestCorpus;
  * discovers every table through the recursive metadata scan and reads them all through ONE shared Storage over the real
  * S3 protocol with credentials, relocating each table's baked logical root onto its warehouse subtree.
  *
- * <p>The Storage borrows the harness's shared {@code S3Client}; the warehouse catalog owns the Storage and closes it,
- * not the client. The client opens and closes once per class in {@link AbstractS3ProxyIcebergIT}.
+ * <p>The Storage is opened from the harness properties and handed to the warehouse catalog. The catalog owns it and
+ * closes it.
  */
 class S3IcebergWarehouseReadIT extends AbstractS3ProxyIcebergIT {
 
@@ -58,7 +57,7 @@ class S3IcebergWarehouseReadIT extends AbstractS3ProxyIcebergIT {
 
     @Test
     void discoversAndReadsThroughASharedStorage() {
-        Storage storage = S3StorageProvider.open(URI.create("s3://" + BUCKET + "/" + WAREHOUSE_PREFIX + "/"), s3Client);
+        Storage storage = openStorage(URI.create("s3://" + BUCKET + "/" + WAREHOUSE_PREFIX + "/"));
 
         try (IcebergWarehouseCatalog catalog = IcebergWarehouseCatalog.open(WAREHOUSE_LOCATION, storage)) {
             assertThat(catalog.datasets()).containsExactly("ns1.tableA", "tableB");
