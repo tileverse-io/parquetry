@@ -160,7 +160,8 @@ final class CoveringColumnSource implements SpatialBoundsSource {
 
     /**
      * For each geometry column with a resolvable covering, computes the per-row-group bbox from the four sidecar
-     * columns' statistics. A row group that misses any of the four bounds gets {@link Optional#empty()} for that slot.
+     * columns' statistics. A row group missing any of the four bounds, or with bounds proving nothing about its
+     * geometries, gets {@link Optional#empty()} for that slot.
      */
     private static Map<ColumnPath, List<Optional<BoundingBox>>> buildPerRowGroupBoxes(
             CompactFooter footer, Map<ColumnPath, BboxAxes> axesByGeometry) {
@@ -184,12 +185,16 @@ final class CoveringColumnSource implements SpatialBoundsSource {
         if (xmin.isEmpty() || xmax.isEmpty() || ymin.isEmpty() || ymax.isEmpty()) {
             return Optional.empty();
         }
-        return Optional.of(BoundingBox.builder()
+        BoundingBox box = BoundingBox.builder()
                 .xmin(xmin.getAsDouble())
                 .xmax(xmax.getAsDouble())
                 .ymin(ymin.getAsDouble())
                 .ymax(ymax.getAsDouble())
-                .build());
+                .build();
+        if (box.provesNothing()) {
+            return Optional.empty();
+        }
+        return Optional.of(box);
     }
 
     private static OptionalDouble statsMin(CompactFooter footer, int rowGroup, AxisRef axis) {

@@ -64,6 +64,10 @@ class GeoMetadataAggregatorTest {
     private static final String GEO_NORMAL =
             "{\"version\":\"1.1.0\",\"primary_column\":\"geometry\",\"columns\":{\"geometry\":{\"encoding\":\"WKB\",\"geometry_types\":[\"Point\"],\"bbox\":[0,-2,10,8]}}}";
 
+    // A bbox with an xmin overflowing a double: it parses as positive infinity.
+    private static final String GEO_WITH_AN_INFINITE_BOUND =
+            "{\"version\":\"1.1.0\",\"primary_column\":\"geometry\",\"columns\":{\"geometry\":{\"encoding\":\"WKB\",\"geometry_types\":[\"Point\"],\"bbox\":[1e999,0,110,10]}}}";
+
     // The primary "geometry" column without a bbox.
     private static final String GEO_WITHOUT_BBOX =
             "{\"version\":\"1.1.0\",\"primary_column\":\"geometry\",\"columns\":{\"geometry\":{\"encoding\":\"WKB\",\"geometry_types\":[\"Point\"]}}}";
@@ -124,6 +128,17 @@ class GeoMetadataAggregatorTest {
 
         assertThat(merged.orElseThrow().columns().get("geometry").bbox()).isPresent();
         assertThat(merged.orElseThrow().columns().get("geometry2").bbox()).isEmpty();
+    }
+
+    /** A declared bbox with an infinite bound proves nothing about its file, like a missing one. */
+    @Test
+    void aFileDeclaringABboxWithAnInfiniteBoundLeavesTheBboxUnknown() {
+        GeoParquetMetadata a = GeoParquetMetadata.parse(GEO_A);
+        GeoParquetMetadata infiniteBound = GeoParquetMetadata.parse(GEO_WITH_AN_INFINITE_BOUND);
+
+        Optional<GeoParquetMetadata> merged = GeoMetadataAggregator.aggregate(eachFile(a, infiniteBound));
+
+        assertThat(merged.orElseThrow().columns().get("geometry").bbox()).isEmpty();
     }
 
     @Test

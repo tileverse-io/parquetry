@@ -52,6 +52,49 @@ class BoundingBoxTest {
         assertThat(nan.hasExtent()).isFalse();
     }
 
+    @Test
+    void aBoxWithABoundOutOfAnyExtentProvesNothing() {
+        BoundingBox nan =
+                BoundingBox.builder().xmin(Double.NaN).xmax(10).ymin(0).ymax(5).build();
+        BoundingBox infiniteMinimum = BoundingBox.builder()
+                .xmin(Double.POSITIVE_INFINITY)
+                .xmax(110)
+                .ymin(0)
+                .ymax(10)
+                .build();
+        BoundingBox unbounded = BoundingBox.builder()
+                .xmin(Double.NEGATIVE_INFINITY)
+                .xmax(Double.POSITIVE_INFINITY)
+                .ymin(Double.NEGATIVE_INFINITY)
+                .ymax(Double.POSITIVE_INFINITY)
+                .build();
+        BoundingBox invertedLatitudes =
+                BoundingBox.builder().xmin(0).xmax(10).ymin(5).ymax(-5).build();
+
+        assertThat(nan.provesNothing()).isTrue();
+        assertThat(infiniteMinimum.provesNothing()).isTrue();
+        assertThat(unbounded.provesNothing()).isTrue();
+        assertThat(invertedLatitudes.provesNothing()).isTrue();
+    }
+
+    @Test
+    void aRegionAndTheEnvelopeOfNoGeometryProveWhereTheirGeometriesLie() {
+        BoundingBox regular =
+                BoundingBox.builder().xmin(10).xmax(20).ymin(-5).ymax(5).build();
+        BoundingBox wrapping =
+                BoundingBox.builder().xmin(170).xmax(-170).ymin(-5).ymax(5).build();
+        BoundingBox noGeometry = BoundingBox.builder()
+                .xmin(Double.POSITIVE_INFINITY)
+                .xmax(Double.NEGATIVE_INFINITY)
+                .ymin(Double.POSITIVE_INFINITY)
+                .ymax(Double.NEGATIVE_INFINITY)
+                .build();
+
+        assertThat(regular.provesNothing()).isFalse();
+        assertThat(wrapping.provesNothing()).isFalse();
+        assertThat(noGeometry.provesNothing()).isFalse();
+    }
+
     /** The inverted infinite box of empty geometries has its minimum east of its maximum, yet bounds no longitudes. */
     @Test
     void aBoxWithoutAnExtentNeverWraps() {

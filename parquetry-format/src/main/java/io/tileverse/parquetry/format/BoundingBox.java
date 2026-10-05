@@ -102,4 +102,23 @@ public record BoundingBox(
     public boolean hasNaNBound() {
         return Double.isNaN(xmin) || Double.isNaN(xmax) || Double.isNaN(ymin) || Double.isNaN(ymax);
     }
+
+    /**
+     * Whether this box proves nothing about where its geometries lie: it neither bounds a region nor is the envelope of
+     * no geometry. A NaN bound, an infinite bound out of that envelope, and inverted Y bounds make such a box; a reader
+     * takes it as a missing box.
+     */
+    public boolean provesNothing() {
+        return !hasExtent() && !isEnvelopeOfNoGeometry();
+    }
+
+    /**
+     * The inverted infinite box recorded for a chunk of empty geometries: minimums at +infinity, maximums at -infinity.
+     */
+    private boolean isEnvelopeOfNoGeometry() {
+        return xmin == Double.POSITIVE_INFINITY
+                && ymin == Double.POSITIVE_INFINITY
+                && xmax == Double.NEGATIVE_INFINITY
+                && ymax == Double.NEGATIVE_INFINITY;
+    }
 }

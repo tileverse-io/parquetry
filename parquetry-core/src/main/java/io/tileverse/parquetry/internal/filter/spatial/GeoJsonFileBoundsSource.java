@@ -42,13 +42,15 @@ final class GeoJsonFileBoundsSource implements SpatialBoundsSource {
 
     /**
      * Returns a {@code GeoJsonFileBoundsSource} when at least one column in {@code geo} carries a bbox. Columns with no
-     * bbox are skipped; a file with no geo columns or no bboxes falls through to {@link EmptyBoundsSource}.
+     * bbox, or with one proving nothing about its geometries, are skipped; a file with no geo columns or no such bbox
+     * falls through to {@link EmptyBoundsSource}.
      */
     static Optional<SpatialBoundsSource> tryBuild(GeoParquetMetadata geo) {
         Map<ColumnPath, BoundingBox> byPath = new LinkedHashMap<>();
-        geo.columns()
-                .forEach(
-                        (name, geoColumn) -> geoColumn.bbox().ifPresent(bbox -> byPath.put(ColumnPath.of(name), bbox)));
+        geo.columns().forEach((name, geoColumn) -> {
+            Optional<BoundingBox> declared = geoColumn.bbox().filter(bbox -> !bbox.provesNothing());
+            declared.ifPresent(bbox -> byPath.put(ColumnPath.of(name), bbox));
+        });
         if (byPath.isEmpty()) {
             return Optional.empty();
         }
