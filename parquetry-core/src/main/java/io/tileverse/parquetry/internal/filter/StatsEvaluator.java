@@ -128,13 +128,26 @@ public final class StatsEvaluator {
         return path -> columns.get(path).map(StatsEvaluator::summarize);
     }
 
-    /** Decodes one column's PLAIN-encoded min/max statistic bytes into a typed {@link ColumnSummary}. */
+    /**
+     * Decodes one column's PLAIN-encoded min/max statistic bytes into a typed {@link ColumnSummary}. A minimum above
+     * its maximum leaves both out; see {@link ValueComparison#inverted}.
+     */
     public static ColumnSummary summarize(FilterPipeline.ColumnStats cs) {
         PrimitiveKind kind = cs.kind();
         Optional<LogicalType> logicalType = cs.logicalType();
         Optional<Value> min = decodeBound(kind, logicalType, cs.minValue());
         Optional<Value> max = decodeBound(kind, logicalType, cs.maxValue());
+        if (inverted(min, max)) {
+            return new ColumnSummary(kind, Optional.empty(), Optional.empty(), cs.nullCount());
+        }
         return new ColumnSummary(kind, min, max, cs.nullCount());
+    }
+
+    private static boolean inverted(Optional<Value> min, Optional<Value> max) {
+        if (min.isEmpty() || max.isEmpty()) {
+            return false;
+        }
+        return ValueComparison.inverted(min.orElseThrow(), max.orElseThrow());
     }
 
     /**

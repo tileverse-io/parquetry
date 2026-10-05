@@ -244,10 +244,13 @@ final class ColumnIndexEvaluator {
 
     /**
      * A page with a NaN bound is kept whatever the predicate: the format asks a reader to ignore a NaN bound, leaving
-     * the page unbounded.
+     * the page unbounded. A page with its minimum above its maximum is kept too; see {@link ValueComparison#inverted}.
      */
     private static boolean pageMayMatch(Value min, Value max, PageMatcher matcher) {
         if (ValueComparison.isNaN(min) || ValueComparison.isNaN(max)) {
+            return true;
+        }
+        if (ValueComparison.inverted(min, max)) {
             return true;
         }
         return matcher.matches(min, max);

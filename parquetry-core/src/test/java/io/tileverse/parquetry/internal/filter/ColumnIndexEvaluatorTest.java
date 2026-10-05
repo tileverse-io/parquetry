@@ -319,6 +319,27 @@ class ColumnIndexEvaluatorTest {
     }
 
     @Test
+    void pageWithInvertedBoundsIsKept() {
+        // 3 pages of 100 rows at scale 2. The middle page spans [-49.95, 49.91] and has the bounds left by a writer
+        // ordering a binary decimal by its unsigned bytes: 5.50 as its minimum, -1.11 as its maximum.
+        FilterPipeline.ColumnPageStatsLookup cols = singleColumn(
+                "amount",
+                PrimitiveKind.FIXED_LEN_BYTE_ARRAY,
+                List.of(false, false, false),
+                List.of(encodeSignedFlba(-900), encodeSignedFlba(550), encodeSignedFlba(100)),
+                List.of(encodeSignedFlba(-800), encodeSignedFlba(-111), encodeSignedFlba(200)),
+                List.of(0L, 100L, 200L),
+                new LogicalType.Decimal(2, 9));
+        Predicate p = new Predicate.Gt(ColumnPath.of("amount"), new Value.DecimalVal(BigDecimal.valueOf(1000, 2)));
+
+        PruningDecision d = ColumnIndexEvaluator.evaluate(p, cols, ROW_GROUP_ROWS);
+
+        assertThat(d).isInstanceOf(PruningDecision.NarrowedTo.class);
+        RowRanges r = ((PruningDecision.NarrowedTo) d).ranges();
+        assertThat(r.ranges()).containsExactly(new Range(100, 199));
+    }
+
+    @Test
     void orderedComparisonAgainstANaNLiteralLeavesNoPage() {
         PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").lt(Double.NaN), priceWithANaNPage(), 300);
         assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);

@@ -424,6 +424,44 @@ class StatsEvaluatorTest {
     }
 
     @Test
+    void invertedDecimalBoundsAreIgnored() {
+        // The bounds left by a writer ordering a binary decimal by its unsigned bytes: a chunk spanning
+        // [-49.95, 49.91] gets 5.50 as its minimum and -1.11 as its maximum.
+        FilterPipeline.ColumnStatsLookup cols = singleDecimal("amount", 550, -111, 2);
+        Predicate p = new Predicate.Gt(ColumnPath.of("amount"), new Value.DecimalVal(BigDecimal.valueOf(1000, 2)));
+
+        PruningDecision d = StatsEvaluator.evaluate(p, cols, ROW_COUNT);
+
+        assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
+    @Test
+    void invertedIntegerBoundsAreIgnored() {
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2020, 2010, 0));
+
+        PruningDecision d = StatsEvaluator.evaluate(col("year").eq(2015), cols, ROW_COUNT);
+
+        assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
+    @Test
+    void summaryLeavesInvertedBoundsOut() {
+        StatsEvaluator.ColumnSummary summary = StatsEvaluator.summarize(intStats(2020, 2010, 3));
+
+        assertThat(summary.min()).isEmpty();
+        assertThat(summary.max()).isEmpty();
+        assertThat(summary.nullCount()).hasValue(3L);
+    }
+
+    @Test
+    void summaryKeepsEqualBounds() {
+        StatsEvaluator.ColumnSummary summary = StatsEvaluator.summarize(intStats(2020, 2020, 0));
+
+        assertThat(summary.min()).contains(new Value.IntVal(2020));
+        assertThat(summary.max()).contains(new Value.IntVal(2020));
+    }
+
+    @Test
     void int32DecimalLtBelowMinIsEliminated() {
         // column range [-3.00, 5.00] at scale 2, stored as the unscaled integers [-300, 500]
         FilterPipeline.ColumnStatsLookup cols = singleInt32Decimal("amount", -300, 500, 2);
